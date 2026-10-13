@@ -67,9 +67,9 @@ function settingsCard(flow, onChange, rerender) {
       h("summary", {}, `Variables (${vars.length})`),
       h("div", { class: "kv" },
         vars.flatMap(([k, v], i) => [
-          h("input", { class: "mono", value: k, placeholder: "name", "aria-label": `Variable ${i + 1} name`, onChange: (e) => { vars[i][0] = e.target.value.trim(); movePublishVar(flow, k, vars[i][0]); setVars(vars); rerender(); } }),
+          h("input", { class: "mono", value: k, placeholder: "name", "aria-label": `Variable ${i + 1} name`, onChange: (e) => { vars[i][0] = e.target.value.trim(); movePublishVar(flow, k, vars[i][0]); moveVarInfo(flow, k, vars[i][0]); setVars(vars); rerender(); } }),
           h("input", { class: "mono", "data-field": k, value: String(v), placeholder: "value", "aria-label": `Variable ${i + 1} value`, onInput: (e) => { vars[i][1] = e.target.value; setVars(vars); } }),
-          h("button", { class: "icon", title: "Remove", "aria-label": "Remove variable", onClick: () => { movePublishVar(flow, k, undefined); vars.splice(i, 1); setVars(vars); rerender(); } }, glyph("✕")),
+          h("button", { class: "icon", title: "Remove", "aria-label": "Remove variable", onClick: () => { movePublishVar(flow, k, undefined); moveVarInfo(flow, k, undefined); vars.splice(i, 1); setVars(vars); rerender(); } }, glyph("✕")),
         ])),
       h("button", { class: "small mt-8", onClick: () => { vars.push([`var${vars.length + 1}`, ""]); setVars(vars); rerender(); } }, "+ Variable"),
       h("small", { class: "muted block mt-6" }, "Use as {{vars.name}} in prompts and shell commands; override per run.")),
@@ -195,7 +195,7 @@ const isObject = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 export function editable(flow) {
   if (!isObject(flow)) return false;
   if (flow.steps != null && !(Array.isArray(flow.steps) && flow.steps.every(isObject))) return false;
-  return ["defaults", "vars", "limits", "sandbox", "publish"].every((k) => flow[k] == null || isObject(flow[k]));
+  return ["defaults", "vars", "limits", "sandbox", "publish", "var_info"].every((k) => flow[k] == null || isObject(flow[k]));
 }
 
 /**
@@ -259,6 +259,15 @@ export function movePublishVar(flow, from, to) {
   if (!vars || !Object.hasOwn(vars, from) || from === to) return;
   const entries = Object.entries(vars).flatMap(([k, v]) => (k !== from ? [[k, v]] : to ? [[to, v]] : []));
   flow.publish.vars = Object.fromEntries(entries);
+}
+
+/** Follows a variable that was renamed (`to` is the new name) or removed (`to` is undefined). */
+export function moveVarInfo(flow, from, to) {
+  const info = flow.var_info;
+  if (!info || !Object.hasOwn(info, from) || from === to) return;
+  const entries = Object.entries(info).flatMap(([k, v]) => (k !== from ? [[k, v]] : to ? [[to, v]] : []));
+  if (entries.length) flow.var_info = Object.fromEntries(entries);
+  else delete flow.var_info;
 }
 
 const MODES = [["hidden", "Hidden (admin default)"], ["fixed", "Fixed (shown, read-only)"], ["input", "User fills in"]];

@@ -1121,6 +1121,8 @@ vars:
 
 The editor keeps empty values (`issue: ""`), so a variable you have just added stays.
 
+A flow author can describe each variable in `var_info` (label, help, kind, range; see "Describing variables" in `docs/FLOW_AUTHORING.md`). A flow whose `var_info` does not fit its variables cannot be saved, and the editor shows the problem in the Variables section. The description does not change the fields of a run yet.
+
 ### The block library
 
 ![Block library](images/library.png)

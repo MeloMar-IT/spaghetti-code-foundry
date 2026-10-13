@@ -77,6 +77,102 @@ describe("flow schema", () => {
   });
 });
 
+describe("var_info", () => {
+  const withInfo = (vars: string, info: string) => `name: t\nvars:\n${vars}\nvar_info:\n${info}\nsteps:\n  - {id: a, type: shell, run: echo}`;
+  const parseWith = (vars: string, info: string) => parseFlow(withInfo(vars, info));
+
+  it("is optional and adds no key to a flow without it", () => {
+    const flow = parseFlow(minimal("  - {id: a, type: shell, run: echo}"));
+    expect("var_info" in flow).toBe(false);
+  });
+
+  it("parses an entry of each kind, with kind defaulting to text", () => {
+    const flow = parseWith(
+      "  n: '5'\n  y: 'yes'\n  t: hi\n  l: 'a,b'\n  c: b\n  d: x",
+      "  n: {label: N, kind: number, min: 0, max: 5}\n  y: {kind: yes_no}\n  t: {kind: text}\n  l: {kind: list, separator: space}\n  c: {kind: choice, choices: [a, 1, b]}\n  d: {help: only help}",
+    );
+    expect(flow.var_info?.n).toMatchObject({ kind: "number", min: 0, max: 5 });
+    expect(flow.var_info?.c?.choices).toEqual(["a", "1", "b"]);
+    expect(flow.var_info?.d?.kind).toBe("text");
+    expect(flow.var_info?.l?.separator).toBe("space");
+  });
+
+  it("refuses an entry for a variable that is not in vars, naming it", () => {
+    expect(() => parseWith("  a: x", "  nope: {kind: text}")).toThrow(/var_info\.nope: unknown variable "nope"/);
+  });
+
+  it.each([
+    ["min on text", "t: x", "t: {kind: text, min: 1}", /min is only for kind number/],
+    ["max on list", "t: x", "t: {kind: list, max: 1}", /max is only for kind number/],
+    ["choices on number", "t: '1'", "t: {kind: number, choices: [a]}", /choices are only for kind choice/],
+    ["separator on text", "t: x", "t: {kind: text, separator: comma}", /separator is only for kind list/],
+    ["min above max", "t: '1'", "t: {kind: number, min: 5, max: 1}", /min must not be above max/],
+    ["choice without choices", "t: a", "t: {kind: choice}", /kind choice needs choices/],
+    ["duplicate choices", "t: a", "t: {kind: choice, choices: [a, a]}", /duplicate choice "a"/],
+    ["unknown key", "t: x", "t: {foo: 1}", /invalid flow/],
+    ["unknown kind", "t: x", "t: {kind: color}", /invalid flow/],
+    ["label too long", "t: x", `t: {label: ${"x".repeat(81)}}`, /invalid flow/],
+    ["help too long", "t: x", `t: {help: ${"x".repeat(301)}}`, /invalid flow/],
+  ])("refuses %s", (_name, vars, info, message) => {
+    expect(() => parseWith(`  ${vars}`, `  ${info}`)).toThrow(message);
+  });
+
+  it.each([
+    ["a text for a number", "'abc'", "{kind: number}", /is not a number/],
+    ["an empty number", "''", "{kind: number}", /is not a number/],
+    ["an overflowing number", "'1e999'", "{kind: number}", /is not a number/],
+    ["a number below min", "'0'", "{kind: number, min: 1}", /below min 1/],
+    ["a number above max", "'9'", "{kind: number, max: 5}", /above max 5/],
+    ["true for yes_no", "true", "{kind: yes_no}", /must be yes or no/],
+    ["maybe for yes_no", "maybe", "{kind: yes_no}", /must be yes or no/],
+    ["a default outside the choices", "z", "{kind: choice, choices: [a, b]}", /not one of the choices/],
+  ])("refuses %s as a default", (_name, value, info, message) => {
+    expect(() => parseWith(`  t: ${value}`, `  t: ${info}`)).toThrow(message);
+  });
+
+  it("accepts small and large numbers in exponent form, also as plain YAML numbers", () => {
+    expect(() => parseWith("  t: 0.0000001", "  t: {kind: number, min: 0, max: 1}")).not.toThrow();
+    expect(() => parseWith("  t: '1.5E3'", "  t: {kind: number, min: 1, max: 2000}")).not.toThrow();
+    expect(() => parseWith("  t: 0.0000001", "  t: {kind: number, min: 1}")).toThrow(/below min 1/);
+  });
+
+  it("accepts the boundary values and a run-set entry", () => {
+    expect(() => parseWith("  t: '1'", "  t: {kind: number, min: 1, max: 5}")).not.toThrow();
+    expect(() => parseWith("  t: '5'", "  t: {kind: number, min: 1, max: 5}")).not.toThrow();
+    expect(parseWith("  issue: ''", "  issue: {set_by_run: true}").var_info?.issue?.set_by_run).toBe(true);
+  });
+
+  it("describes every variable of the shipped flows", () => {
+    const issueGitflow = [
+      "risk_threshold", "auto_split_max_risk", "revise_above_risk", "review_twice_above_risk", "max_files", "max_code_lines", "test_cmd",
+      "quick_test_cmd", "test_slots", "reuse_test_results", "develop_branch", "main_branch", "feature_prefix", "hotfix_prefix", "hotfix_labels",
+      "forbidden_paths", "docs_required", "union_merge_files", "agent_env", "review_plan_label", "trigger_label", "delete_merged_branches", "close_when_merged",
+    ];
+    for (const f of readdirSync("flows").filter((n) => n.endsWith(".yaml"))) {
+      const flow = parseFlow(readFileSync(`flows/${f}`, "utf8"), f);
+      const info = flow.var_info ?? {};
+      expect(Object.keys(info).sort(), f).toEqual(Object.keys(flow.vars).sort());
+      for (const [k, v] of Object.entries(info)) {
+        if (v.set_by_run) continue;
+        expect(v.label, `${f} ${k} label`).toBeTruthy();
+        expect(v.help, `${f} ${k} help`).toBeTruthy();
+      }
+      for (const k of ["github_repo", "issue"]) if (k in info) expect(info[k]?.set_by_run, `${f} ${k}`).toBe(true);
+    }
+    const gitflow = parseFlow(readFileSync("flows/issue-gitflow.yaml", "utf8")).var_info ?? {};
+    for (const k of issueGitflow) {
+      expect(gitflow[k], k).toBeDefined();
+      expect(gitflow[k]?.set_by_run, k).toBeFalsy();
+    }
+    expect(gitflow.hotfix_labels).toMatchObject({ kind: "list", separator: "comma" });
+    expect(gitflow.forbidden_paths).toMatchObject({ kind: "list", separator: "space" });
+    expect(gitflow.agent_env).toMatchObject({ kind: "list", separator: "line" });
+    expect(gitflow.review_twice_above_risk?.kind).toBe("text");
+    expect(gitflow.test_cmd?.kind).toBe("text");
+    expect(gitflow.risk_threshold).toMatchObject({ kind: "number", min: 0, max: 100 });
+  });
+});
+
 describe("template", () => {
   const ctx = { task: "do it", vars: { a: "1" }, steps: { x: { output: "out" } } };
 

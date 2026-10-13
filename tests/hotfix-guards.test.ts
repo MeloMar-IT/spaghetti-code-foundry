@@ -91,6 +91,15 @@ describe("hotfixState", () => {
     expect(hotfixState(parseFlow(readFileSync(join(dir, "issue-gitflow.yaml"), "utf8")), cfg)).toBe("on");
   });
 
+  it("ignores var_info: absent, or changed, still on", () => {
+    const without = shipped();
+    delete without.var_info;
+    expect(hotfixState(without, cfg)).toBe("on");
+    const changed = shipped();
+    changed.var_info = { main_branch: { kind: "text", label: "Other" } };
+    expect(hotfixState(changed, cfg)).toBe("on");
+  });
+
   it("is off when the setting is off", () => {
     expect(hotfixState(shipped(), ConfigSchema.parse({}))).toBe("off");
   });

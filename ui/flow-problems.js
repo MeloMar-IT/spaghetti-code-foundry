@@ -22,6 +22,7 @@ export function locate(path) {
     return { stepIndex: b, field: typeof c === "string" ? c : null, section: null };
   }
   if (SECTIONS.includes(a)) return { stepIndex: null, field: typeof b === "string" ? b : null, section: a };
+  if (a === "var_info") return { stepIndex: null, field: typeof b === "string" ? b : null, section: "vars" };
   if (a === "publish") {
     let field = null;
     if (path.length === 2 && typeof b === "string") field = b;

@@ -19,6 +19,22 @@ vars:
   needs_info_label: Factory_needs_info
   forbidden_paths: ""
   develop_branch: ""
+var_info:
+  github_repo:
+    set_by_run: true
+  issues:
+    set_by_run: true
+  needs_info_label:
+    set_by_run: true
+  forbidden_paths:
+    label: Forbidden paths
+    help: Paths the agents must not change. Separate paths with spaces.
+    kind: list
+    separator: space
+  develop_branch:
+    label: Develop branch
+    help: The branch that feature branches are merged into.
+    kind: text
 steps:
   - id: clone
     type: shell

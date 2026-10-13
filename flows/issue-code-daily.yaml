@@ -60,6 +60,38 @@ vars:
   forbidden_paths: ""
   docs_required: ""
   agent_env: ""
+var_info:
+  github_repo:
+    set_by_run: true
+  issue:
+    set_by_run: true
+  test_cmd:
+    label: Test command
+    help: Use auto to find the command from the project files, or type the command that builds and tests the project.
+    kind: text
+  branch_prefix:
+    label: Branch prefix
+    help: The day's branch starts with this text, followed by the date.
+    kind: text
+  timezone:
+    label: Time zone
+    help: The time zone that decides which day a run belongs to, for example Europe/Berlin.
+    kind: text
+  forbidden_paths:
+    label: Forbidden paths
+    help: Paths the agents must not change. Separate paths with spaces.
+    kind: list
+    separator: space
+  docs_required:
+    label: Required docs
+    help: Files that must be updated with every change. Separate files with spaces.
+    kind: list
+    separator: space
+  agent_env:
+    label: Agent environment
+    help: Environment variables for the agent steps, as KEY=value, one per line. A semicolon also separates them.
+    kind: list
+    separator: line
 steps:
   - id: pull_ticket
     type: shell

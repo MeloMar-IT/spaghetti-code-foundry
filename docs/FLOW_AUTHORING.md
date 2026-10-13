@@ -58,6 +58,7 @@ skills:                       # optional: how the run gets its skills; see "Skil
   ids: [rest-openapi]         # only with mode: explicit
 vars:                         # optional: variables with defaults; the user can override them per run
   test_cmd: npm test
+var_info: {...}               # optional: describes the variables for forms (label, help, kind, range); runs are not checked against it
 publish: {...}                # optional: publish the flow to users — leave it out unless asked; see below
 steps: [...]                  # required, at least one
 ```
@@ -69,6 +70,65 @@ steps: [...]                  # required, at least one
 | `worktree` | a fresh git worktree + branch of the local repository | almost everything (the default) |
 | `inplace` | the repository itself | rarely; changes land directly in the user's checkout |
 | `empty` | an empty directory | flows that clone something themselves (e.g. `gh repo clone`) |
+
+## Describing variables
+
+`vars` gives each variable its default. `var_info` describes the same variables so that a form can show a proper field for each one. It is optional, and a flow without it loads and runs as before.
+
+```yaml
+name: test-only
+description: Runs the project's tests
+vars:
+  test_cmd: npm test
+  test_slots: 2
+  reuse_test_results: "yes"
+  review_twice_above_risk: "off"
+var_info:
+  test_cmd:
+    label: Test command
+    help: Use auto to find the command from the project files, or type the command that tests the project.
+    kind: text
+  test_slots:
+    label: Parallel test runs
+    help: How many test runs may run at the same time on this machine.
+    kind: number
+    min: 0
+  reuse_test_results: {label: Reuse test results, help: "Skip a test run when the same code was already tested.", kind: yes_no}
+  review_twice_above_risk: {label: Review twice above risk, help: "Use off, or a risk score from 0 to 100. A plan above that score gets a second review.", kind: text}
+steps:
+  - id: test
+    type: shell
+    run: "{{vars.test_cmd}}"
+```
+
+Each entry is keyed by a variable name in `vars`:
+
+| Key | Meaning |
+|---|---|
+| `label` | The name of the field, up to 80 characters |
+| `help` | One sentence under the field, up to 300 characters |
+| `kind` | `number`, `yes_no`, `text` (the default), `list` or `choice` |
+| `min`, `max` | Range of a `number` (both optional) |
+| `choices` | The allowed values of a `choice` (1 to 50, no duplicates) |
+| `separator` | For a `list`: how its items are written in the text: `comma` (the default), `space` or `line` |
+| `set_by_run` | `true` for a variable the run sets itself (such as `github_repo` or `issue`): no form shows it |
+
+| Kind | Default must be | Notes |
+|---|---|---|
+| `number` | a number, within `min` and `max` | |
+| `yes_no` | `yes` or `no` | |
+| `text` | any text | Use it for a value that takes two forms, such as `off` or a number. Say both in `help`. |
+| `list` | the items, written with the `separator` | The list is still stored as text. |
+| `choice` | one of `choices` | `choices` is required |
+
+The flow is refused when it is saved if:
+
+- a `var_info` entry names a variable that is not in `vars` (the error names it);
+- `min` or `max` is used on a kind other than `number`, `choices` on a kind other than `choice`, or `separator` on a kind other than `list`;
+- `min` is above `max`, or a choice is listed twice;
+- the default in `vars` does not fit its own entry.
+
+A run is **not** checked against `var_info`. Values from `--var`, from `.claude-factory/config.yaml` and from existing watchers are accepted as before, even if they do not fit. `GET /api/flows/<name>` returns `var_info` with the flow (`{}` when it has none).
 
 ## Step fields (every type)
 
