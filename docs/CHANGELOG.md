@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Test runs no longer swamp the machine: they work at low priority, and the tests an agent starts itself count against the test slots.
+  - **Low priority.** `tools/test-slot` runs its command with `nice` 10 (`FACTORY_TEST_NICE`; `0` = normal priority) and sets `FACTORY_IN_TEST_SLOT=1` for it. A slots folder that cannot be made no longer stops the tests: they run without a slot.
+  - **Agent test gate.** New `tools/agent-bin`: small `npm`, `npx`, `pnpm`, `yarn`, `bun`, `bunx`, `pytest`, `py.test`, `python`, `python3`, `gradle`, `mvn`, `go` and `cargo` commands, first on the `PATH` of every agent step that is not in the OS sandbox (`testGateEnv` in `src/agents/run.ts`). A test command (`isTestCommand` in `_gate.mjs`) runs through `tools/test-slot` with the machine's slots folder; any other command runs the real one unchanged. Inside a slot nothing is gated again, so `npm test` calling `npx vitest` cannot wait for itself. An agent waits at most 300 s (`FACTORY_AGENT_TEST_WAIT_SEC`), then runs anyway.
+  - **Why.** Agents ran the full suite on their own, outside the slots, next to the flows' own test steps: the load reached 6 per core, pages took seconds, and a story's implement step ran out of time.
+  - **Not covered.** A wrapper started by path (`./gradlew test`) and steps in the OS sandbox.
+  - Tests: new `tests/agent-test-gate.test.ts`; `tests/test-slot.test.ts`. `docs/USER_GUIDE.md` updated.
 - A story that fixes failing tests can run: the red baseline stops only when a failing test is not named in the issue (#530).
   - **What it does.** An issue lists the tests it is meant to fix under a `## Failing tests to fix` heading, one per line, as `Class.method` (a class name alone covers its tests). When the tests fail before any change and every failing test is named, the run goes on instead of stopping at `baseline_failed`. The run log says `BASELINE: going on`, and the report on the issue has a "Tests before the change" section. A failing test that is not named still stops the run, and the stop lists the tests not named.
   - **Green baseline.** When the tests pass before the change, the named tests are noted as already passing. Nothing else changes.

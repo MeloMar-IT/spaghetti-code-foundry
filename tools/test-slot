@@ -5,9 +5,12 @@
 //   test-slot <slots-dir> <command> [args…]
 // The command's output and exit code pass through unchanged. A slot is a folder <slots-dir>/slot-N
 // with the pid of its holder; the slot of a process that is gone is taken over. If no slot comes
-// free in time, the command runs anyway — waiting must never stop a story.
+// free in time, the command runs anyway — waiting must never stop a story. The command runs at a lower priority
+// (nice), so the server, the pages and the agents stay responsive while tests work; it gets FACTORY_IN_TEST_SLOT=1,
+// so the test gate of agent steps (tools/agent-bin) does not ask for a second slot inside this one.
 // Env: FACTORY_VAR_TEST_SLOTS (how many at once; default 2, 0 = no limit),
-//      FACTORY_TEST_SLOT_WAIT_SEC (longest wait; default 5400), FACTORY_TEST_SLOT_POLL_MS (default 2000).
+//      FACTORY_TEST_SLOT_WAIT_SEC (longest wait; default 5400), FACTORY_TEST_SLOT_POLL_MS (default 2000),
+//      FACTORY_TEST_NICE (the nice value; default 10, 0 = normal priority).
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -69,8 +72,17 @@ function take() {
 }
 
 let slot;
+let usable = true;
 if (slots > 0) {
-  mkdirSync(dir, { recursive: true });
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    // a slots folder that cannot be made (no write access here) never stops the tests
+    usable = false;
+    console.log(`test-slot: the slots folder cannot be used (${e.code ?? "error"}) — running without a slot`);
+  }
+}
+if (slots > 0 && usable) {
   const start = Date.now();
   let said = false;
   while (!(slot = take())) {
@@ -89,7 +101,9 @@ const release = () => {
   if (slot) rmSync(slot, { recursive: true, force: true });
   slot = undefined;
 };
-const child = spawn(cmd, args, { stdio: "inherit" });
+const nice = num(process.env.FACTORY_TEST_NICE, 10);
+const env = { ...process.env, FACTORY_IN_TEST_SLOT: "1" };
+const child = nice > 0 ? spawn("nice", ["-n", String(Math.min(nice, 19)), cmd, ...args], { stdio: "inherit", env }) : spawn(cmd, args, { stdio: "inherit", env });
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { child.kill(sig); });
 child.on("error", (e) => {
   release();
