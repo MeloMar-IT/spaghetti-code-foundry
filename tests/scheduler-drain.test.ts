@@ -41,4 +41,23 @@ describe("Scheduler.drain", () => {
     expect(next.queue().active.map((a) => a.runId)).toEqual([queued]);
     expect(next.queue().pending.map((p) => p.runId)).toEqual([late]);
   });
+
+  it("resume() starts the queued jobs again; without a drain it does nothing", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "drain-"));
+    dirs.push(tmp);
+    const repo = join(tmp, "repo");
+    mkdirSync(repo);
+    const config = () => ({ ...ConfigSchema.parse({}), concurrency: 1 });
+    const job = (): Job => ({ kind: "run", flow: parseFlow(SLOW), task: "t", repo, vars: {} });
+    const s = new Scheduler({ runsDir: join(tmp, "runs"), queueFile: join(tmp, "queue.json"), config });
+    s.resume();
+    expect(s.draining).toBe(false);
+    s.drain();
+    const id = s.submit(job(), { source: "ui" });
+    expect(s.queue().pending.map((p) => p.runId)).toEqual([id]);
+    s.resume();
+    expect(s.draining).toBe(false);
+    expect(s.queue().active.map((a) => a.runId)).toEqual([id]);
+    await s.idle();
+  });
 });

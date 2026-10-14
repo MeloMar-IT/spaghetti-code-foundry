@@ -14,6 +14,7 @@ import { listBlocks } from "./flow/blocks.js";
 import { pinBuiltinSkillsAtStart } from "./skills/registry.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
 import { startServer } from "./server/server.js";
+import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
 import { runEval } from "./evals.js";
@@ -437,11 +438,14 @@ async function main(argv: string[]): Promise<number> {
         log,
       });
       watchDataHome({ idle, beforeExit, log, busy: () => {
-        ctx.restart ??= { why: "data_folder", since: new Date().toISOString() };
+        // takes over a wait for a changed setting: it can no longer be cancelled, and this restart applies the settings too
+        if (!ctx.restart || ctx.restart.why === "settings") ctx.restart = { why: "data_folder", since: new Date().toISOString() };
         ctx.scheduler.drain();
         ctx.watchers.stopAll(); // drain, as for a new version: start nothing new while the restart waits
       } });
       ctx.selfUpdate = updater;
+      const settingsRestart: SettingsRestart = settingsRestartFor(ctx, { idle, beforeExit: () => { settingsRestart.stop(); beforeExit(); }, log });
+      ctx.settingsRestart = settingsRestart;
       void confirmStart(url, { stamp, log });
       updater.start();
       return new Promise<number>(() => {}); // run until killed

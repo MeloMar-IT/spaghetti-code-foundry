@@ -29,10 +29,15 @@ describe("serverFrom", () => {
 });
 
 /** Renders Settings against a stubbed API; returns the page and the PUT bodies. */
-async function render(server: Record<string, unknown>, listening = "127.0.0.1", putStatus = 200, extra: Record<string, unknown> = {}) {
+async function render(server: Record<string, unknown>, listening = "127.0.0.1", putStatus = 200, extra: Record<string, unknown> = {}, restart?: unknown) {
   const config = { ...ConfigSchema.parse({}), server: { listen: "127.0.0.1", allowed_hosts: [], allow_insecure_http: false, ...server }, ...extra };
   const puts: any[] = [];
+  const restarts: string[] = [];
   (globalThis as any).fetch = async (url: string, init?: { method?: string; body?: string }) => {
+    if (url.endsWith("/api/restart") && restart !== undefined) {
+      restarts.push(init?.method ?? "GET");
+      return { ok: true, status: 200, statusText: "OK", json: async () => restart };
+    }
     if (init?.method === "PUT") {
       puts.push(JSON.parse(init.body!));
       return { ok: putStatus === 200, status: putStatus, statusText: "x", json: async () => (putStatus === 200 ? config : { error: "invalid config: nope" }) };
@@ -41,11 +46,13 @@ async function render(server: Record<string, unknown>, listening = "127.0.0.1", 
     return { ok: true, status: 200, statusText: "OK", json: async () => body };
   };
   const main = new FakeElement("main");
-  await ui.renderSettings(main);
+  offs.push(await ui.renderSettings(main));
   const cards = main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes("card"));
   const card = cards.find((c) => c.all("h3")[0]?.textContent === "Network")!;
-  return { main, card, puts };
+  return { main, card, puts, restarts };
 }
+const offs: any[] = [];
+afterEach(() => { for (const o of offs.splice(0)) o?.(); });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -69,11 +76,10 @@ describe("Settings → Network", () => {
     expect(card.textContent).toContain("passwords and session cookies cross the network unencrypted");
   });
 
-  it("says when a restart is needed", async () => {
+  it("says nothing about a restart on a server without the restart route", async () => {
     const differ = await render({ listen: "0.0.0.0" }, "127.0.0.1");
-    expect(differ.card.textContent).toContain("Now listening on 127.0.0.1 — restart the server to use 0.0.0.0");
-    const same = await render({ listen: "127.0.0.1" }, "127.0.0.1");
-    expect(same.card.textContent).not.toContain("Now listening on");
+    expect(differ.main.textContent).not.toContain("Now listening on");
+    expect(differ.main.textContent).not.toContain("A restart is needed");
   });
 
   it("saves the three controls and keeps the other settings", async () => {
@@ -351,5 +357,58 @@ describe("Settings → Slack webhook", () => {
     await save(main);
     expect(slackInput(main).value).toBe("");
     expect(main.textContent).toContain("Slack webhook: set");
+  });
+});
+
+describe("Settings → restart box", () => {
+  const need = [{ key: "server.listen", label: "Listen on", running: "127.0.0.1", saved: "0.0.0.0" }];
+  const buttons = (el: any) => (el ? el.all("button").map((b: FakeElement) => b.textContent) : []);
+
+  it("offers the restart when the server can restart itself", () => {
+    const hits: string[] = [];
+    const box = ui.restartBox({ needed: need, canRestart: true }, { onRequest: () => hits.push("request") });
+    expect(box.textContent).toContain("A restart is needed: Listen on 127.0.0.1 → 0.0.0.0.");
+    expect(buttons(box)).toEqual(["Restart when no story is running"]);
+    box.all("button")[0].click();
+    expect(hits).toEqual(["request"]);
+  });
+
+  it("says how to restart by hand when it cannot", () => {
+    const box = ui.restartBox({ needed: need, canRestart: false, manual: "Stop it and start it again." });
+    expect(box.textContent).toContain("Stop it and start it again.");
+    expect(buttons(box)).toEqual([]);
+  });
+
+  it("shows the wait, its reason and the active runs, and lets a settings wait be cancelled", () => {
+    const hits: string[] = [];
+    const view = { needed: need, canRestart: true, waiting: { why: "settings", since: "x", activeRuns: 2, cancellable: true } };
+    const box = ui.restartBox(view, { onCancel: () => hits.push("cancel") });
+    expect(box.textContent).toContain("waits to restart for a changed setting");
+    expect(box.textContent).toContain("2 active runs");
+    expect(buttons(box)).toEqual(["Cancel the restart"]);
+    box.all("button")[0].click();
+    expect(hits).toEqual(["cancel"]);
+    expect(ui.restartBox({ ...view, waiting: { ...view.waiting, activeRuns: 0 } }, {}).textContent).toContain("restarts in a moment");
+  });
+
+  it("has no cancel for a new version, and no buttons when read-only", () => {
+    const wait = { why: "new_version", since: "x", activeRuns: 1, cancellable: false };
+    expect(buttons(ui.restartBox({ needed: [], canRestart: true, waiting: wait }, {}))).toEqual([]);
+    expect(buttons(ui.restartBox({ needed: need, canRestart: true, waiting: { ...wait, why: "settings", cancellable: true } }, { readOnly: true }))).toEqual([]);
+    expect(buttons(ui.restartBox({ needed: need, canRestart: true }, { readOnly: true }))).toEqual([]);
+  });
+
+  it("draws nothing for an answer that is not a restart view, or when nothing is needed", () => {
+    expect(ui.restartBox({ concurrency: 2 }, {})).toBeNull();
+    expect(ui.restartBox(undefined, {})).toBeNull();
+    expect(ui.restartBox({ needed: [], canRestart: true }, {})).toBeNull();
+  });
+
+  it("is on the page, and the button posts the request", async () => {
+    const { main, restarts } = await render({ listen: "0.0.0.0" }, "127.0.0.1", 200, {}, { needed: need, canRestart: true });
+    expect(main.textContent).toContain("A restart is needed: Listen on 127.0.0.1 → 0.0.0.0.");
+    main.all("button").find((b) => b.textContent === "Restart when no story is running")!.click();
+    await flush();
+    expect(restarts).toContain("POST");
   });
 });

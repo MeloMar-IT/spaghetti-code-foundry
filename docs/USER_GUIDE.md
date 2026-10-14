@@ -2313,6 +2313,8 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 
 **Saving keeps your file.** A save changes only the settings you changed in `config.yaml`: your comments and the order of the keys stay, and a setting you put back to its default is removed from the file. If someone else saved, or the file was edited by hand, since you opened the page, the save is refused with "the settings changed since you loaded them — reload first". Reload the page and make the change again. A hand edit shows on the page at once, but the server uses it only after the next save or a restart.
 
+**Restart when no story is running.** Some settings, such as **Listen on**, take effect only after a restart. After a save that changed one, the page says "A restart is needed" with the running and the saved value. When the server runs under the supervisor (also when you started it with `scf ui` in a terminal), the page offers **Restart when no story is running**. Otherwise it says to stop the server and start it again. The restart works like a new version: no new runs start and the watchers stop until the active runs are done, then the server starts again by itself. While it waits, the box says why, how many runs are still active, and offers **Cancel the restart**; cancelling starts the runs and watchers again. A restart for a new version or a moved data folder takes over a waiting restart, and then it cannot be cancelled. The box is refreshed every 5 seconds. Asking for the restart and cancelling it are written to the audit log (`restart-request`, `restart-cancel`).
+
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
 
@@ -2560,6 +2562,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
+| `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no story is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
 | `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
 | `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
 | `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
@@ -2971,6 +2974,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set |
 | `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number |
 | `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
+| `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
+| `POST /api/restart` | yes | no | restart when no story is running: no new runs start and the watchers stop until the active runs are done; only when the server runs under the supervisor; writes an audit line |
+| `DELETE /api/restart` | yes | no | cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
 | `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |

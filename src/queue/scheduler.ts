@@ -516,6 +516,13 @@ export class Scheduler {
     this.paused = true;
   }
 
+  /** Ends a drain: queued jobs start again (a cancelled restart). */
+  resume(): void {
+    if (!this.paused) return;
+    this.paused = false;
+    this.pump();
+  }
+
   get draining(): boolean {
     return this.paused;
   }

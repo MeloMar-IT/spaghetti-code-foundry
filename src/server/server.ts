@@ -27,6 +27,7 @@ import { boardRoutes } from "./board.js";
 import { searchRoutes } from "./search.js";
 import { TurnNotifier } from "./notifier.js";
 import { ClarityRecorder, clarityRoutes } from "./clarity.js";
+import { restartRoutes, type SettingsRestart } from "./api-restart.js";
 import { CSP, HSTS, listenProblem, localUrl, requestAccess } from "./net.js";
 import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.js";
 import { adoptRuns } from "../auth/run-owner.js";
@@ -108,6 +109,10 @@ export interface ApiContext {
   selfUpdate?: { view(): UpdateView };
   /** The address the server is bound to (a changed setting applies after a restart). */
   listen: string;
+  /** The restart an admin asked for after a settings change; only on a server started by the CLI. */
+  settingsRestart?: SettingsRestart;
+  /** config.yaml as it was when the server started (settings that apply after a restart). */
+  started?: Config;
   /**
    * The log without redaction, only for diagnostics the code built itself from fixed words (a file name and a kind),
    * never for exception text. They must stay readable when the credential store is the thing that is broken.
@@ -118,7 +123,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes];
+const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
@@ -226,6 +231,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       rebuild();
     },
     listen,
+    started: config,
   };
   // a stored watcher without a repository is removed before the lists are built
   try {
