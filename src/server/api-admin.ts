@@ -18,6 +18,10 @@ import { HttpError, readJson, send } from "./http.js";
 import { hostAllowed, listenCovers, listenProblem } from "./net.js";
 import { configIdProblem, fileWatcherProblem } from "../repos/watchers.js";
 import { watcherRows } from "./api-repos.js";
+import { FACTORY_HOME } from "../flow/load.js";
+import { describeSettings, startupSettings } from "../settings/describe.js";
+import { resolveClaudeBinAsync } from "../steps/claude.js";
+import { resolveCodexBin } from "../steps/codex.js";
 import type { Route } from "./server.js";
 
 /** The settings in this text of the file; undefined when it cannot be read (the running ones are used then). */
@@ -44,6 +48,20 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       redesign: config.ui.redesign,
       listening: ctx.listen,
       clickThrough: process.platform === "darwin" ? clickThrough() : undefined,
+    }), true;
+  }
+
+  if (seg[0] === "settings" && !seg[1] && method === "GET") {
+    return send(res, 200, {
+      settings: describeSettings(),
+      startup: startupSettings({
+        home: process.env.FACTORY_HOME ?? FACTORY_HOME,
+        port: opts.port,
+        repo: opts.repo,
+        claudeBin: opts.claudeBin ?? (await resolveClaudeBinAsync()),
+        codexBin: resolveCodexBin(),
+        ghBin: process.env.FACTORY_GH_BIN ?? "gh",
+      }),
     }), true;
   }
 

@@ -180,6 +180,115 @@ describe("field", () => {
   });
 });
 
+describe("settingControl", () => {
+  const base = { effectText: "at once", optional: false, default: 5, label: "Resumes", help: "How many resumes." };
+  const number = { ...base, key: "a", kind: "number", integer: true, min: 1, max: 49 };
+  const records = { ...base, key: "r", kind: "list", maxItems: 50, default: [], fields: [{ key: "catalogue", kind: "text" }, { key: "version", kind: "text" }, { key: "digest", kind: "text" }] };
+  const control = (e: FakeElement, tag: string) => e.all(tag)[0]!;
+  const hint = (e: FakeElement) => e.all("small")[0]!.textContent;
+
+  it("number: an input with its range; a Number or undefined", () => {
+    const onChange = vi.fn();
+    const f = kit.settingControl(number, { value: 7, onChange }) as FakeElement;
+    const i = control(f, "input");
+    expect([i.getAttribute("type"), i.getAttribute("min"), i.getAttribute("max"), i.getAttribute("step"), i.value]).toEqual(["number", "1", "49", "1", "7"]);
+    i.fire("change", { target: { value: "7" } });
+    expect(onChange).toHaveBeenLastCalledWith(7);
+    i.fire("change", { target: { value: "" } });
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+    expect(control(kit.settingControl({ ...number, integer: false }), "input").getAttribute("step")).toBe("any");
+  });
+
+  it("yes-no: a switch", () => {
+    const onChange = vi.fn();
+    const f = kit.settingControl({ ...base, kind: "yes-no", default: true }, { value: true, onChange }) as FakeElement;
+    const i = control(f, "input");
+    expect(i.getAttribute("role")).toBe("switch");
+    expect(i.checked).toBe(true);
+    i.fire("change", { target: { checked: true } });
+    expect(onChange).toHaveBeenCalledWith(true);
+    expect(hint(f)).toContain("Default: yes.");
+  });
+
+  it("text: an empty value is undefined only when optional", () => {
+    const onChange = vi.fn();
+    control(kit.settingControl({ ...base, kind: "text", optional: true, default: undefined }, { onChange }), "input").fire("change", { target: { value: "" } });
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+    control(kit.settingControl({ ...base, kind: "text" }, { onChange }), "input").fire("change", { target: { value: "" } });
+    expect(onChange).toHaveBeenLastCalledWith("");
+  });
+
+  it("list: one item per line", () => {
+    const onChange = vi.fn();
+    const f = kit.settingControl({ ...base, kind: "list", default: [], maxItems: 50 }, { value: ["x", "y"], onChange }) as FakeElement;
+    const t = control(f, "textarea");
+    expect(t.value).toBe("x\ny");
+    t.fire("change", { target: { value: "a\n\n b " } });
+    expect(onChange).toHaveBeenCalledWith(["a", "b"]);
+    expect(hint(f)).toContain("One per line.");
+    expect(hint(f)).toContain("Default: none.");
+    expect(hint(f)).toContain("At most 50 items.");
+  });
+
+  it("list of records: parts in the order of the fields", () => {
+    const onChange = vi.fn();
+    const f = kit.settingControl(records, { value: [{ catalogue: "core", version: "1.0.0", digest: "sha256:ab" }], onChange }) as FakeElement;
+    const t = control(f, "textarea");
+    expect(t.value).toBe("core 1.0.0 sha256:ab");
+    t.fire("change", { target: { value: "core 1.0.0 sha256:ab\n\nx 2.0.0" } });
+    expect(onChange).toHaveBeenLastCalledWith([{ catalogue: "core", version: "1.0.0", digest: "sha256:ab" }, { catalogue: "x", version: "2.0.0" }]);
+    t.fire("change", { target: { value: "a b c d e" } });
+    expect(onChange).toHaveBeenLastCalledWith([{ catalogue: "a", version: "b", digest: "c d e" }]);
+    expect(hint(f)).toContain("One per line: catalogue version digest.");
+  });
+
+  it("choice: a select; Not set only when optional", () => {
+    const onChange = vi.fn();
+    const choice = { ...base, kind: "choice", choices: ["read", "write"], default: "write" };
+    const s = control(kit.settingControl(choice, { value: "read", onChange }), "select");
+    expect(s.all("option").map((o) => o.value)).toEqual(["read", "write"]);
+    s.fire("change", { target: { value: "write" } });
+    expect(onChange).toHaveBeenLastCalledWith("write");
+    const o = control(kit.settingControl({ ...choice, optional: true }, { onChange }), "select");
+    expect(o.all("option").map((x) => [x.value, x.textContent])[0]).toEqual(["", "Not set"]);
+    o.fire("change", { target: { value: "" } });
+    expect(onChange).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("hint: help, default, range and when it takes effect", () => {
+    expect(hint(kit.settingControl(number))).toBe("How many resumes. Default: 5. Allowed: 1 to 49. Takes effect at once.");
+    expect(hint(kit.settingControl({ ...number, min: undefined, max: undefined, exclusiveMin: 0 }))).toContain("More than 0.");
+    expect(hint(kit.settingControl({ ...number, min: 2, max: undefined }))).toContain("At least 2.");
+    expect(hint(kit.settingControl({ ...number, min: undefined }))).toContain("At most 49.");
+    expect(hint(kit.settingControl({ ...records, default: [{ catalogue: "a", version: "1.0.0" }, { catalogue: "b", version: "2.0.0" }] }))).toContain("Default: a 1.0.0, b 2.0.0.");
+  });
+
+  it("error: one alert, aria-invalid and the id in aria-describedby", () => {
+    for (const d of [number, { ...base, kind: "yes-no" }]) {
+      const f = kit.settingControl(d, { error: "Too big." }) as FakeElement;
+      const alerts = f.all("div").filter((x) => x.getAttribute("role") === "alert");
+      expect(alerts.length).toBe(1);
+      expect(alerts[0]!.textContent).toBe("Too big.");
+      const i = control(f, "input");
+      expect(i.getAttribute("aria-invalid")).toBe("true");
+      expect(i.getAttribute("aria-describedby")).toContain(alerts[0]!.getAttribute("id"));
+      expect(cls(f)).toContain("scf-field--error");
+    }
+    expect(control(kit.settingControl(number), "input").getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("disabled reaches the control", () => {
+    expect(control(kit.settingControl(number, { disabled: true }), "input").getAttribute("disabled")).toBe("");
+    expect(control(kit.settingControl({ ...base, kind: "yes-no" }, { disabled: true }), "input").getAttribute("disabled")).toBe("");
+  });
+
+  it("throws for an unknown kind, a blank label and a style prop", () => {
+    expect(() => kit.settingControl({ ...number, kind: "color" })).toThrow(/unknown setting kind/);
+    expect(() => kit.settingControl({ ...number, label: " " })).toThrow(/needs a label/);
+    expect(() => kit.settingControl(number, { style: {} })).toThrow(/inline style/);
+  });
+});
+
 describe("kit forms: CSS and source", () => {
   it("forms.css has only kit selectors and tokens, and resets the global input width for checkboxes", () => {
     const css = readFileSync("ui/kit/forms.css", "utf8");

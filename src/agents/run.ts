@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
-import { resolveClaudeBin, runClaude } from "../steps/claude.js";
+import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { codexExecFlags, resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
@@ -67,7 +67,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
       // a Codex read-only step keeps the workspace read-only: Codex's own sandbox is off, so the profile holds it
       const readOnly = t.agent === "codex" && codexSandbox(step, scope, agentSandboxed(step, scope, engine)) === "read-only";
       // the exact program the step will start (also one under the home, like the Claude desktop app's): the profile opens it, and runClaude/runCodex get the same path
-      bin = t.agent === "codex" ? (engine.codexBin ?? resolveCodexBin()) : (engine.claudeBin ?? resolveClaudeBin());
+      bin = t.agent === "codex" ? (engine.codexBin ?? resolveCodexBin()) : (engine.claudeBin ?? (await resolveClaudeBinAsync()));
       profile = sandboxProfile(
         stepSandboxPaths({
           runDir,
