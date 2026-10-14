@@ -1,6 +1,27 @@
 // The Skills card of the Settings page: one generated control for each described skills key of this part.
-import { h } from "./dom.js";
+import { h, mount } from "./dom.js";
 import { settingControl } from "./kit/forms.js";
+
+/** The longest key that is `path` or a dotted prefix of it; undefined when none is. */
+export function issueKey(path, keys) {
+  if (typeof path !== "string") return undefined;
+  let best;
+  for (const k of keys) {
+    if ((path === k || path.startsWith(`${k}.`)) && (best === undefined || k.length > best.length)) best = k;
+  }
+  return best;
+}
+
+/** The text shown at a control: `Line N` for a list entry, `Row N, <field>` for a record, else the plain message. */
+export function issueText(path, key, message, description) {
+  const rest = path === key ? [] : path.slice(key.length + 1).split(".");
+  if (description?.kind === "list" && /^\d+$/.test(rest[0] ?? "")) {
+    const n = Number(rest[0]) + 1;
+    if (description.fields) return rest[1] ? `Row ${n}, ${rest[1]}: ${message}` : `Row ${n}: ${message}`;
+    return `Line ${n}: ${message}`;
+  }
+  return message;
+}
 
 /** Groups of the card. A pattern ending in "." is a prefix; any other pattern is an exact key. */
 export const SKILL_GROUPS = [
@@ -87,21 +108,56 @@ export function skillsSection(descriptions, skills, { disabled = false } = {}) {
       value: () => skills,
       risks: () => [],
       saved: () => {},
+      busy: () => {},
+      showIssues: (issues) => (Array.isArray(issues) ? issues : []),
     };
   }
+  const holders = {};
+  const descriptionOf = {};
+  let messages = {};
+  let locked = false;
+  const build = (d) => {
+    const rel = d.key.slice("skills.".length);
+    const texts = messages[d.key];
+    return settingControl(d, {
+      value: valueAt(draft, rel),
+      disabled: disabled || locked,
+      error: texts?.length ? texts.map((t) => h("div", {}, t)) : undefined,
+      onChange: (v) => { draft = withValue(draft, rel, v); },
+    });
+  };
+  const draw = (key) => mount(holders[key], build(descriptionOf[key]));
   const groups = SKILL_GROUPS.map((g) => {
     const mine = shown.filter((d) => groupOf(d.key) === g.title);
     if (!mine.length) return null;
     const controls = mine.map((d) => {
-      const rel = d.key.slice("skills.".length);
-      return settingControl(d, { value: valueAt(draft, rel), disabled, onChange: (v) => { draft = withValue(draft, rel, v); } });
+      descriptionOf[d.key] = d;
+      holders[d.key] = h("div", {}, build(d));
+      return holders[d.key];
     });
     return h("div", { class: "stack mt-10" }, h("h4", {}, g.title), h("div", { class: "grid" }, controls));
   });
+  const shownKeys = Object.keys(holders);
   return {
     el: h("div", { class: "card mb-14" }, h("h3", {}, "Skills"), ...groups),
     value: () => draft,
     risks: () => riskyChanges(baseline, draft),
     saved: (s) => { baseline = clone(s); },
+    /** Locks the controls while a save runs, so no typing is lost when the answer redraws them. */
+    busy: (on) => { locked = on === true; for (const k of shownKeys) draw(k); },
+    /** Shows each issue at its control, redraws the controls from the draft; returns the issues it could not place. */
+    showIssues: (issues) => {
+      const old = Object.keys(messages);
+      const next = {};
+      const unplaced = [];
+      for (const i of Array.isArray(issues) ? issues : []) {
+        const key = typeof i?.path === "string" && typeof i?.message === "string" ? issueKey(i.path, shownKeys) : undefined;
+        if (key === undefined) unplaced.push(i);
+        else (next[key] ??= []).push(issueText(i.path, key, i.message, descriptionOf[key]));
+      }
+      messages = next;
+      for (const k of new Set([...old, ...Object.keys(next)])) draw(k);
+      return unplaced;
+    },
   };
 }

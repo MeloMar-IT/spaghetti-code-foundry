@@ -191,8 +191,11 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     saveBtn.disabled = true;
     saveNote.setAttribute("class", "status");
     mount(saveNote, "Saving…");
+    skills.busy(true);
     try {
       const saved = await api.saveConfig(next, version);
+      skills.busy(false);
+      skills.showIssues([]);
       version = configVersion(saved) ?? version;
       skills.saved(next.skills);
       hookSet = saved?.notify?.slack_webhook_set === true;
@@ -209,9 +212,18 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       mount(saveNote, `Saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       toast("Settings saved");
     } catch (e) {
-      mount(err, h("div", { class: "errors", role: "alert" }, e.message));
+      skills.busy(false);
+      const issues = Array.isArray(e.data?.issues) ? e.data.issues : [];
+      const unplaced = skills.showIssues(issues);
+      const placed = issues.length - unplaced.length;
+      const onlyCard = placed > 0 && unplaced.length === 0 && issues.length < 50;
+      mount(err, h("div", { class: "errors", role: "alert" }, onlyCard ? "Not saved: see the messages in the Skills card." : e.message));
       const now = fieldsNow();
-      markInvalid(Object.values(now), e.status === 409 ? undefined : now[fieldFor(e.message, SETTINGS_PAIRS)]);
+      // With structured issues, only the ones left in the banner name a hand-built control.
+      // A path names its control directly (its last part is the key); the sentence is the fallback.
+      const named = placed > 0 ? unplaced.map((i) => (typeof i?.path === "string" ? i.path.split(".").pop() : undefined)).find((k) => k && Object.hasOwn(now, k)) : undefined;
+      const text = placed > 0 ? unplaced.map((i) => `${i?.path ?? ""} ${i?.message ?? ""}`).join(" ") : e.message;
+      markInvalid(Object.values(now), e.status === 409 || onlyCard ? undefined : now[named ?? fieldFor(text, SETTINGS_PAIRS)]);
       extra.restore();
       saveNote.setAttribute("class", "status bad");
       mount(saveNote, "Not saved.");

@@ -1,4 +1,5 @@
 import { YAMLParseError } from "yaml";
+import { ZodError } from "zod";
 import { ConfigIssuesError, type Config } from "../config.js";
 
 type View = Omit<Config, "notify"> & { notify: Omit<Config["notify"], "slack_webhook"> & { slack_webhook_set: boolean } };
@@ -30,4 +31,14 @@ export function storedConfigProblem(e: unknown): string {
   if (e instanceof ConfigIssuesError) return e.message;
   const line = e instanceof YAMLParseError ? e.linePos?.[0]?.line : undefined;
   return `config.yaml is not valid YAML${line !== undefined ? ` (line ${line})` : ""}; fix the file by hand`;
+}
+
+/** One problem of a refused save: the dotted key path and the rule's message. */
+export type ConfigIssue = { path: string; message: string };
+export const MAX_CONFIG_ISSUES = 50;
+
+/** The problems of a schema error, at most MAX_CONFIG_ISSUES; undefined when `e` is not a ZodError. */
+export function configIssues(e: unknown): ConfigIssue[] | undefined {
+  if (!(e instanceof ZodError)) return undefined;
+  return e.issues.slice(0, MAX_CONFIG_ISSUES).map((i) => ({ path: i.path.map(String).join("."), message: i.message }));
 }

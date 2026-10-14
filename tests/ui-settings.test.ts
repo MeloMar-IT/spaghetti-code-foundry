@@ -616,6 +616,64 @@ describe("Settings → Skills", () => {
     expect(puts).toHaveLength(1);
   });
 
+  it("shows the server's issues at their fields, then clears them on a save", async () => {
+    const { main } = await render({});
+    const real = (globalThis as any).fetch;
+    const issues = [
+      { path: "skills.selection.include.0", message: '"x" is also in exclude' },
+      { path: "skills.catalogue.include", message: "more pinned skills than max_candidates" },
+      { path: "skills.roots.1", message: "personal agent folders are never scanned" },
+    ];
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: 'invalid config: [{"message":"name"}]', issues }) }
+      : real(url, init));
+    save(main);
+    await flush();
+    const inField = (key: string) => labelled(main, labelOf(key)).parent!.textContent;
+    expect(inField("skills.selection.include")).toContain('"x" is also in exclude');
+    expect(inField("skills.catalogue.include")).toContain("more pinned skills than max_candidates");
+    expect(inField("skills.roots")).toContain("Line 2: personal agent folders are never scanned");
+    expect(main.textContent).toContain("Not saved: see the messages in the Skills card.");
+    expect(main.all("input").concat(main.all("select")).filter((c) => c.attrs["aria-invalid"] === "true" && !String(c.attrs.id ?? "").startsWith("scf-field"))).toHaveLength(0);
+    (globalThis as any).fetch = real;
+    save(main);
+    await flush();
+    const card = main.all("h3").find((h3) => h3.textContent === "Skills")!.parent!;
+    expect(card.all("div").filter((d) => d.attrs.role === "alert")).toHaveLength(0);
+    expect(main.textContent).not.toContain("Not saved: see the messages");
+  });
+
+  it("keeps the whole error in the banner and marks the control when an issue is not at the card", async () => {
+    const { main } = await render({});
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: "invalid config: BANNER-TEXT", issues: [
+        { path: "skills.roots.0", message: "bad folder" },
+        { path: "concurrency", message: "concurrency is too low" },
+      ] }) }
+      : real(url, init));
+    save(main);
+    await flush();
+    expect(labelled(main, labelOf("skills.roots")).parent!.textContent).toContain("Line 1: bad folder");
+    expect(main.textContent).toContain("BANNER-TEXT");
+    expect(main.all("input").some((i) => i.attrs["aria-invalid"] === "true" && i.attrs.type === "number")).toBe(true);
+  });
+
+  it("marks the control a structured path names, also for a key the sentence does not quote", async () => {
+    const { main } = await render({});
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: "invalid config: BANNER-TEXT", issues: [
+        { path: "skills.roots.0", message: "bad folder" },
+        { path: "self_update.repo", message: "Invalid string" },
+      ] }) }
+      : real(url, init));
+    save(main);
+    await flush();
+    const repo = main.all("input").find((i) => i.attrs.placeholder === "owner/name")!;
+    expect(repo.attrs["aria-invalid"]).toBe("true");
+  });
+
   it("shows a message and keeps skills when the server cannot describe them", async () => {
     oldServer = true;
     const skills = skillsOf();
