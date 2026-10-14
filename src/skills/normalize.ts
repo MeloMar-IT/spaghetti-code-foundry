@@ -8,6 +8,7 @@ import { canonicalJson, plainProblem } from "./normalize-values.js";
 import {
   FIELD_ALIASES, MCP_TOOL_PREFIX, NORMALIZE_ID_HEADER, NORMALIZE_LIMITS, SKILL_LAYOUTS, STANDARD_KEYS, TOOL_EFFECTS,
 } from "./normalize-rules.js";
+import { providerAssumptions, type ProviderAssumption } from "./provider-assumptions.js";
 import { skillDigest, splitFrontmatter } from "./package.js";
 import { skillContextTokens } from "./resolve.js";
 import {
@@ -68,6 +69,8 @@ export interface SkillProvenance {
   workflow?: SkillWorkflow;
   /** Absent for a portable skill and in provenance written before #509. */
   provider?: SkillProvider;
+  /** Provider assumptions found in tools, compatibility and instructions. Absent when none and in provenance written before #217. */
+  assumes?: ProviderAssumption[];
 }
 export interface NormalizedSkill {
   package: SkillPackage;
@@ -649,6 +652,7 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
     files,
   });
 
+  const assumes = providerAssumptions({ requiredTools: [...toolNames], ...(compatibility === undefined ? {} : { compatibility }), instructions: body });
   const layout = mf ? "foundry" : fromExtended ? "extended" : fromMetadata ? "metadata" : "plain";
   return {
     ok: true,
@@ -673,6 +677,7 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
         context: { instructions: skillContextTokens(pkg), text: textTokens },
         upstream: sortedUpstream,
         ...(provider !== undefined ? { provider } : {}),
+        ...(assumes.length > 0 ? { assumes } : {}),
       },
     },
   };

@@ -509,3 +509,16 @@ describe("community review", () => {
     });
   });
 });
+
+describe("licence.reviewed", () => {
+  const D = "sha256:" + "ab".repeat(32);
+  it("is accepted and returned, and a file without it is unchanged", () => {
+    const r = parseSources(file(valid({ licence: { allow: ["MIT"], reviewed: D } })));
+    expect(r.problems).toEqual([]);
+    expect(r.manifest!.sources[0]!.licence).toEqual({ allow: ["MIT"], reviewed: D });
+    expect(parseSources(file(valid())).manifest!.sources[0]!.licence).not.toHaveProperty("reviewed");
+  });
+  it.each([["a bad form", "abc"], ["upper case hex", "sha256:" + "AB".repeat(32)], ["a number", 5], ["null", null]])("refuses %s with the field name", (_n, v) => {
+    expect(text(check(valid({ licence: { allow: ["MIT"], reviewed: v } })))).toContain("licence.reviewed");
+  });
+});

@@ -17,6 +17,8 @@ export interface SkillSourceConnector {
   licences: string[];
   /** The branch to watch; never a commit. */
   track: string;
+  /** Promotion needs a matching licence.reviewed. */
+  licenceReview?: "required";
 }
 
 export const SOURCE_CONNECTORS: readonly SkillSourceConnector[] = Object.freeze([
@@ -29,6 +31,17 @@ export const SOURCE_CONNECTORS: readonly SkillSourceConnector[] = Object.freeze(
     trust: "community" as const,
     licences: Object.freeze(["MIT"]) as string[],
     track: "main",
+  }),
+  Object.freeze({
+    id: "anthropic-skills",
+    repository: "https://github.com/anthropics/skills",
+    repositoryKey: "github.com/anthropics/skills",
+    roots: Object.freeze(["skills"]) as string[],
+    adapter: "agent-skills" as const,
+    trust: "verified" as const,
+    licences: Object.freeze(["Apache-2.0"]) as string[],
+    track: "main",
+    licenceReview: "required" as const,
   }),
 ]);
 

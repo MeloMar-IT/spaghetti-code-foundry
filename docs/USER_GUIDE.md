@@ -3348,14 +3348,14 @@ sources:
       licence: MIT
 ```
 
-- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
+- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `licence.reviewed` (optional; the licence review digest, see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
 - **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
 - **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
 - **Review of a community source.** `review` records who checked the maintainer and the licence, and when. It has four fields: `by` (a GitHub user or team, as `owner`), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id, equal to `ref.approved`) and `licence` (one of `licence.allow`). An enabled `trust: community` source is refused without `review`, and when `review.commit` is not `ref.approved`. A new commit needs a new review, so changing one word cannot raise the trust.
 - **Known community repositories.** The Foundry ships a list of community repositories (`src/skills/community-rules.ts`). `github.com/jiangxianze/spring-agent-skills` is on it, so a source with that repository must say `trust: community`; any other trust is refused and the message names `trust`.
 - **Owner and policy.** Every source has an owner and an update cadence.
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
-- **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The first connector is `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`. Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
+- **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
 - **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. A reviewed source is listed with `reviewed by <by> on <on>`. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
 - **Import and scan.** `scf skills import` and `scf skills scan` read the same file. A community source without a current `review` is refused as an invalid source list: a `PROBLEM` line names the missing or stale review, and nothing is fetched or read.
 
@@ -3535,6 +3535,45 @@ CHECKED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 promo
 - **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, or with an open high finding. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
 - **Reasons.** Reasons never show credential-like text; it shows as `(hidden)`. Licence texts are never printed.
 - **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, or an invalid exception file).
+
+#### Licence review and provider assumptions
+
+A source that needs a licence review (the `anthropic-skills` connector, or any source with `licence.reviewed`) is promoted only when its `licence.reviewed` is the digest of the licence evidence a person has reviewed. `promote check` prints the digest and the state of the review:
+
+```
+LICENCES sha256:… 3 licence and notice files: not reviewed; check the lines above, then set licence.reviewed to this digest
+```
+
+- **What the digest covers.** Every licence and notice file that can apply to a skill folder of the import, with its path, its kind and its SHA-256 (or its problem, when it cannot be read), and the decision for each skill folder: its status, licences, declared licence and the file that governs it. It does not cover the commit id or the attribution text.
+- **When it changes.** Any licence or notice file in or above a skill folder changes, appears or disappears, including the repository's root `LICENSE`. A licence-like file in a parent folder counts even when it governs no skill. Also when a skill folder is added or removed, or the licence decision of a folder changes (for example its `license:` line in `SKILL.md`).
+- **How to review.** Read the lines `promote check` printed above the `LICENCES` line, then set `licence.reviewed` to the printed digest in `skill-sources.yaml`, by pull request. The state `not reviewed` means the field is missing; `changed since the review` means it is an older digest.
+- **Refusals.** Until the digest matches, every path of the source is refused with status `review`, and `promote check` exits 1.
+- **Example entry.** Placeholders are shown in angle brackets; use the commit you reviewed and the digest that `promote check` printed for it:
+
+```yaml
+- id: anthropic-skills
+  repository: https://github.com/anthropics/skills
+  status: enabled
+  ref:
+    approved: <full commit id>
+  paths: [skills]
+  adapter: agent-skills
+  trust: verified
+  licence:
+    allow: [Apache-2.0]
+    reviewed: sha256:<64 hex digits>
+  update: { cadence: manual }
+  owner: "@acme/skills"
+```
+
+The document skills of that repository are source-available, not open source. Their licence is not in `allow`, so they are refused as `rejected` or `ambiguous`; the Apache-2.0 skills can be promoted. Whether the upstream layout and licence text match what the check expects is not verified by the tests: a skill whose licence cannot be identified is refused, never promoted.
+
+- **Provider assumptions.** `ASSUMES <id>: <codes>` is printed for each skill that has any. They are found in the tools the skill declares, its `compatibility` and its instructions:
+  - `claude-tools`: a Claude tool name, such as `WebFetch`, or `Read` next to the word "tool".
+  - `mcp-servers`: an MCP tool (`mcp__…`), declared or named in the instructions.
+  - `claude-surface`: the Claude apps (claude.ai, Claude Code, Claude Desktop, or the skills folders of the apps).
+  - `anthropic-api`: the Anthropic API, its key variable or its SDK package.
+- **Assumptions grant nothing.** They are a declaration. They never block a skill and never change its tool profile: an imported `allowed-tools` field grants no tools. Reference files are not read.
 
 #### Skill identity and content fingerprint
 
@@ -4161,7 +4200,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
-| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
+| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

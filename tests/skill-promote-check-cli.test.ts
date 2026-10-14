@@ -241,7 +241,7 @@ describe("scf skills promote check", () => {
     expect(r.code).toBe(1);
     expect(r.lines[0]).toMatch(/^REFUSED skills\/a: missing/);
     expect(r.lines[1]).toBe(`PROMOTABLE ${idOf("b")} skills/b MIT`);
-    expect(r.lines[2]).toContain("1 promotable, 1 refused");
+    expect(r.lines.at(-1)).toContain("1 promotable, 1 refused");
   });
 
   it("never prints licence file content", async () => {
@@ -305,5 +305,39 @@ describe("scf skills promote syntax", () => {
     await bad(["promote", "check", "Bad_Id"]);
     await bad(["promote", "check", "lib", "a", "b"]);
     await bad(["promote", "check", "lib"], { replace: true });
+  });
+});
+
+describe("scf skills promote check: licence review", () => {
+  const digestOf = (lines: string[]) => lines.find((l) => l.startsWith("LICENCES "))!.split(" ")[1]!;
+  const withReviewed = (d: string) => sourceYaml().replace("licence: {allow: [MIT]}", `licence: {allow: [MIT], reviewed: '${d}'}`);
+
+  it("prints the digest and says the review is not set for a plain source", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    const r = await check();
+    expect(r.code).toBe(0);
+    expect(r.lines.at(-2)).toMatch(/^LICENCES sha256:[0-9a-f]{64} 1 licence and notice file: licence\.reviewed is not set$/);
+    expect(r.lines.at(-1)).toMatch(/^CHECKED /);
+  });
+
+  it("matches a reviewed digest and refuses a stale one", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    const digest = digestOf((await check()).lines);
+    writeFileSync(join(cwd, "skill-sources.yaml"), withReviewed(digest));
+    const ok = await check();
+    expect(ok.code).toBe(0);
+    expect(ok.text).toContain("matches licence.reviewed");
+    writeFileSync(join(cwd, "skill-sources.yaml"), withReviewed("sha256:" + "0".repeat(64)));
+    const stale = await check();
+    expect(stale.code).toBe(1);
+    expect(stale.text).toMatch(/REFUSED skills\/a: review \(.*changed since it was reviewed/);
+    expect(stale.text).toContain("changed since the review");
+    expect(digestOf(stale.lines)).toBe(digest);
+  });
+
+  it("prints ASSUMES for a skill that names a Claude tool", async () => {
+    stage({ ...BENIGN, "skills/a/SKILL.md": md("a").replace("Body.", "Use WebFetch."), LICENSE: MIT });
+    const r = await check();
+    expect(r.lines).toContain(`ASSUMES ${idOf("a")}: claude-tools`);
   });
 });
