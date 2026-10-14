@@ -54,6 +54,7 @@ const toastText = () => document.getElementById("toast")!.textContent as string;
 const root = () => document.getElementById("modal-root") as unknown as FakeElement;
 const button = (el: FakeElement, text: string) => el.all("button").find((b) => b.textContent === text)!;
 const status = (main: FakeElement) => main.all("span").find((s) => (s.attrs.class ?? "").startsWith("status") && s.attrs.role === "status")!;
+const userRuns = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "User runs")!;
 const draw = async () => {
   const main = new FakeElement("div");
   await admin.renderSettings(main);
@@ -108,7 +109,7 @@ describe("save", () => {
   });
   it("never reaches Saving… when a list at a new field is refused", async () => {
     const main = await draw();
-    const pass = main.all("textarea")[0]!;
+    const pass = userRuns(main).all("textarea")[0]!;
     pass.value = "GH_TOKEN";
     pass.fire("change", { target: pass });
     button(main, "Save").click();
@@ -123,13 +124,13 @@ describe("save", () => {
     button(main, "Save").click();
     await flush();
     expect(status(main).textContent).toBe("Saving…");
-    const pass = main.all("textarea")[0]!;
+    const pass = userRuns(main).all("textarea")[0]!;
     pass.value = "GH_TOKEN";
     pass.fire("change", { target: pass });
     g.release();
     await flush();
     expect(status(main).textContent).toMatch(/^Saved at /);
-    const now = main.all("textarea")[0]!;
+    const now = userRuns(main).all("textarea")[0]!;
     expect(now.attrs["aria-invalid"]).toBe("true");
     expect(main.all("div").filter((d) => d.attrs.role === "alert").map((d) => d.textContent).join("")).toContain("GH_TOKEN");
   });

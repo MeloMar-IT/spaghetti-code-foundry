@@ -855,7 +855,8 @@ describe("Settings", () => {
   };
   it("a refused list is one alert at its field, and nothing is sent", async () => {
     await show();
-    const area = controls(main()).filter((c) => c.tag === "textarea")[0]!;
+    const userRuns = () => main().all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "User runs")!;
+    const area = userRuns().all("textarea")[0]!;
     area.value = "GH_TOKEN";
     area.fire("change", { target: area });
     press(button(main(), "Save"));
@@ -863,7 +864,7 @@ describe("Settings", () => {
     expect(alerts(main()).map((a) => a.textContent)).toHaveLength(1);
     expect(alerts(main())[0]!.textContent).toContain("GH_TOKEN");
     // the field is drawn again with its message, so the element is a new one
-    const shown = controls(main()).filter((c) => c.tag === "textarea")[0]!;
+    const shown = userRuns().all("textarea")[0]!;
     expect(invalid(main())).toEqual([shown]);
     expect(doc().activeElement).toBe(shown);
     expect(sent.some((s) => s.key === "PUT /api/config")).toBe(false);
