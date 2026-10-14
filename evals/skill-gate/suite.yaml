@@ -1,0 +1,30 @@
+# Example suite for the skill gate (schema 1). It scores one candidate skill offline: nothing of the skill is run and no
+# model is called. It is not an `scf eval` suite (see ../example.yaml). Fixtures are small folders next to this file.
+schema: 1
+selection:
+  - id: kafka-dependency
+    repo: fixtures/kafka-consumer
+    task: Add a retry to the consumer.
+    expect: offered
+  - id: kafka-named
+    repo: fixtures/rest-service
+    task: Publish price changes to Kafka
+    expect: offered
+  - id: rest-only
+    repo: fixtures/rest-service
+    task: Refactor the pricing service.
+    expect: not-offered
+  - id: events-mention
+    repo: fixtures/rest-service
+    task: Publish an event when the price changes and consume the events in the report
+    expect: not-offered
+conflicts:
+  - id: against-approved
+    with: all
+context:
+  - id: coder-budget
+    max_instruction_tokens: 3000
+    max_description_chars: 160
+tools:
+  - id: read-only
+    policy: { shell: false, network: false, filesystem: read }
