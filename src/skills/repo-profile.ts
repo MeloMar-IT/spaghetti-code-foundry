@@ -88,6 +88,7 @@ const baseOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const BAD_NAME = /[\u0000-\u001f\u007f\\]/;
 const CONFIG_PATH = ".claude-factory/config.yaml";
 const READ_DEPS = /^(?:package\.json|composer\.json|go\.mod|Cargo\.toml|pyproject\.toml|requirements[\w.-]*\.txt|pom\.xml|build\.gradle(?:\.kts)?|Gemfile)$/;
+const READ_WRAPPER = /(?:^|\/)(?:\.mvn\/wrapper\/maven-wrapper|gradle\/wrapper\/gradle-wrapper)\.properties$/;
 const READ_CMDS = /^(?:package\.json|go\.mod|Cargo\.toml|pyproject\.toml|Makefile)$/;
 const SEE_CMDS = /^(?:pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|gradlew|pom\.xml)$/;
 const IMPORT_LANGS = new Set(["typescript", "javascript", "python", "go", "java", "kotlin", "rust", "vue", "svelte"]);
@@ -284,12 +285,22 @@ export function buildRepoProfile(root: string, opts: RepoProfileOptions = {}): R
     }
   }
 
+  // Pass 3: Maven and Gradle wrapper versions. Last, so they never take bytes from the reads above.
+  for (const f of walked) {
+    if (!READ_WRAPPER.test(f.rel)) continue;
+    const text = readText(f);
+    if (text !== undefined) for (const d of dependenciesIn(f.rel, text)) addRaw(d, f.rel);
+  }
+
   // Cap per kind (shallowest first), sort, then fit the artifact size.
+  // Technology findings (Java, Spring Boot, wrappers) are newer than the other findings: they go last, so a full cap or size limit keeps the ones that were there before.
+  const isTechnology = (f: Finding) => f.detector.startsWith("technology-");
+  const late = (f: Finding) => (isTechnology(f) ? 1 : 0);
   const depthOf = (p: string) => p.split("/").length;
   const order = (a: Finding, b: Finding) => depthOf(a.path) - depthOf(b.path) || cmp(a.path, b.path) || cmp(a.name, b.name);
   const kept: Finding[] = [];
   for (const kind of FINDING_KINDS) {
-    const all = [...groups.values()].filter((f) => f.kind === kind).sort(order);
+    const all = [...groups.values()].filter((f) => f.kind === kind).sort((a, b) => late(a) - late(b) || order(a, b));
     if (all.length > L.findings[kind]) trunc.findings = true;
     kept.push(...all.slice(0, L.findings[kind]));
   }
@@ -306,7 +317,8 @@ export function buildRepoProfile(root: string, opts: RepoProfileOptions = {}): R
     findings: kept,
   };
   while (profile.findings.length > 0 && Buffer.byteLength(serializeRepoProfile(profile)) > L.artifactBytes) {
-    profile.findings.pop();
+    const last = profile.findings.map(isTechnology).lastIndexOf(true);
+    profile.findings.splice(last >= 0 ? last : profile.findings.length - 1, 1);
     trunc.findings = true;
   }
   return profile;

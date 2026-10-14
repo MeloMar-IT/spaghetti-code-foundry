@@ -44,7 +44,7 @@ const NAME_RE = /^@?[A-Za-z0-9._/:-]{1,120}$/;
 const baseOf = (p: string) => p.slice(p.lastIndexOf("/") + 1);
 const dirOf = (p: string) => p.slice(0, Math.max(0, p.lastIndexOf("/")));
 /** `p` is `dir` or inside it ("web" does not contain "website"). */
-const inside = (p: string, dir: string) => dir === "" || p === dir || p.startsWith(`${dir}/`);
+export const inside = (p: string, dir: string) => dir === "" || p === dir || p.startsWith(`${dir}/`);
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 function manifestEcosystem(path: string): Ecosystem | undefined {
@@ -70,14 +70,20 @@ function matches(pattern: string, name: string, eco: Ecosystem, cls: "dependency
 
 interface Hit { ev: CandidateEvidence; cls: "dependency" | "import" | "schema"; weight: number }
 
-/** Pure. Throws Error("invalid module path") for a module that is not "" and fails relativePathProblem. */
-export function detectIntegrationCandidates(profile: RepoProfile, opts: IntegrationCandidateOptions = {}): IntegrationCandidate[] {
+/** Folders from the caller: "." is the root, a trailing "/" is dropped. Throws Error("invalid module path") for a path that fails relativePathProblem. */
+export function normalizeModules(raw: readonly string[] | undefined): string[] {
   const modules: string[] = [];
-  for (const raw of opts.affectedModules ?? []) {
-    const m = raw === "." ? "" : raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  for (const r of raw ?? []) {
+    const m = r === "." ? "" : r.endsWith("/") ? r.slice(0, -1) : r;
     if (m !== "" && (relativePathProblem(m) || /[\u0000-\u001f\u007f]/.test(m))) throw new Error("invalid module path");
     modules.push(m);
   }
+  return modules;
+}
+
+/** Pure. Throws Error("invalid module path") for a module that is not "" and fails relativePathProblem. */
+export function detectIntegrationCandidates(profile: RepoProfile, opts: IntegrationCandidateOptions = {}): IntegrationCandidate[] {
+  const modules = normalizeModules(opts.affectedModules);
 
   const manifests = profile.findings.filter((f) => f.kind === "manifest" && f.value === undefined);
   const owned = (depPath: string, eco: Ecosystem, mod: string): boolean => {

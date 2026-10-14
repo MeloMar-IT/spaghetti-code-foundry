@@ -3,6 +3,7 @@ import { canonicalFromCollision } from "./canonical-facts.js";
 import { classifySkillCollisions, type CollisionCandidate, type CollisionReport } from "./collisions.js";
 import { AREA_TERMS, EVALUATION_AREAS, type EvaluationArea } from "./import-review-rules.js";
 import { byteCmp } from "./import-plan.js";
+import { supportStatus } from "./project-technologies.js";
 import type { LicenceStatus } from "./licence.js";
 import type { NormalizedSkill } from "./normalize.js";
 
@@ -25,7 +26,8 @@ export interface EvaluatedSkill {
   overlaps: { capability: string; existing: string[]; winner?: string }[];
   /** Sorted ids of the blocking collisions that hold this skill back. */
   blockedBy: string[];
-  outcome: "new" | "duplicate" | "blocked";
+  /** `stale`: the skill declares Java, Spring or build tool versions that fit no supported release line (see technology-rules.ts). */
+  outcome: "new" | "duplicate" | "blocked" | "stale";
 }
 export interface ImportEvaluation {
   schema: 1;
@@ -88,7 +90,7 @@ export function evaluateImport(input: {
       areas: evaluationAreas(e.skill),
       overlaps,
       blockedBy: [...e.blockedBy],
-      outcome: blocked ? "blocked" : overlaps.length > 0 ? "duplicate" : "new",
+      outcome: blocked ? "blocked" : supportStatus(e.skill.provenance.technologies) === "stale" ? "stale" : overlaps.length > 0 ? "duplicate" : "new",
     };
   });
   skills.sort((a, b) => byteCmp(a.id, b.id) || byteCmp(a.fingerprint, b.fingerprint));

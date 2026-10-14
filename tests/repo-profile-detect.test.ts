@@ -96,6 +96,7 @@ describe("dependenciesIn", () => {
     expect(deps("Gemfile", "source 'https://rubygems.org'\ngem 'rails', '~> 7.0'\ngem \"puma\"\n")).toEqual(["rails", "puma"]);
   });
   it("returns nothing for malformed or unknown files", () => {
+    expect(deps("gradle-wrapper.properties", "distributionBase=GRADLE_USER_HOME\n")).toEqual([]);
     expect(dependenciesIn("package.json", "{ not json")).toEqual([]);
     expect(dependenciesIn("package.json", "null")).toEqual([]);
     expect(dependenciesIn("notes.txt", "react")).toEqual([]);
@@ -113,6 +114,99 @@ describe("dependenciesIn", () => {
     const long = dependenciesIn("package.json", JSON.stringify({ dependencies: { big: "1".repeat(300) } }));
     expect(long).toHaveLength(1);
     expect(long[0]?.value).toBeUndefined();
+  });
+});
+
+describe("JVM technologies", () => {
+  const techs = (path: string, text: string) =>
+    dependenciesIn(path, text)
+      .filter((d) => d.detector.startsWith("technology-"))
+      .map((d) => `${d.name}${d.value ? ` ${d.value}` : ""}`);
+  const parent = (g: string, v: string) => `<parent>\n<groupId>${g}</groupId>\n<artifactId>spring-boot-starter-parent</artifactId>\n<version>${v}</version>\n</parent>\n`;
+  const plugin = (v?: string) =>
+    `<build><plugins>\n<plugin>\n<groupId>org.springframework.boot</groupId>\n<artifactId>spring-boot-maven-plugin</artifactId>\n${v ? `<version>${v}</version>\n` : ""}</plugin>\n</plugins></build>\n`;
+  const props = (p: Record<string, string>) => `<properties>\n${Object.entries(p).map(([k, v]) => `<${k}>${v}</${k}>`).join("\n")}\n</properties>\n`;
+
+  it("reads the Spring Boot parent and plugin of a pom.xml", () => {
+    expect(techs("pom.xml", parent("org.springframework.boot", "3.2.1"))).toEqual(["org.springframework.boot 3.2.1"]);
+    expect(techs("pom.xml", parent("com.example", "3.2.1"))).toEqual([]);
+    expect(techs("pom.xml", plugin())).toEqual(["org.springframework.boot"]);
+    expect(techs("pom.xml", parent("org.springframework.boot", "4.0.1") + plugin("4.0.1"))).toEqual(["org.springframework.boot 4.0.1"]);
+    expect(techs("pom.xml", parent("org.springframework.boot", "${boot.version}") + plugin("4.0.2"))).toEqual(["org.springframework.boot 4.0.2"]);
+    expect(dependenciesIn("pom.xml", parent("org.springframework.boot", "4.0.1"))[0]).toMatchObject({ kind: "dependency", detector: "technology-pom-xml" });
+  });
+  it("reads only the direct children of a plugin, not its nested dependencies", () => {
+    const nested = "<plugin>\n<groupId>org.springframework.boot</groupId>\n<artifactId>spring-boot-maven-plugin</artifactId>\n<dependencies>\n<dependency>\n<groupId>com.example</groupId>\n<artifactId>helper</artifactId>\n<version>1.2.3</version>\n</dependency>\n</dependencies>\n</plugin>\n";
+    expect(techs("pom.xml", nested)).toEqual(["org.springframework.boot"]);
+    expect(techs("pom.xml", nested.replace("</dependencies>\n", "</dependencies>\n<version>4.0.1</version>\n"))).toEqual(["org.springframework.boot 4.0.1"]);
+    expect(techs("pom.xml", "<plugin>\n<artifactId>x</artifactId>\n<dependencies>\n<dependency>\n<groupId>org.springframework.boot</groupId>\n</dependency>\n</dependencies>\n</plugin>\n")).toEqual([]);
+  });
+  it("ignores commented properties and plugins", () => {
+    expect(techs("pom.xml", "<!-- <java.version>8</java.version> -->\n" + props({ "java.version": "21" }))).toEqual(["java 21"]);
+    expect(techs("pom.xml", "<!--\n<java.version>8</java.version>\n-->\n" + props({ "java.version": "21" }))).toEqual(["java 21"]);
+    expect(techs("pom.xml", "<!--\n<java.version>8</java.version>\n")).toEqual([]);
+    expect(techs("pom.xml", "<!-- " + plugin("3.0.0").replace(/\n/g, " ") + " -->\n")).toEqual([]);
+  });
+  it("marks a Boot version that is declared but unreadable", () => {
+    expect(techs("pom.xml", parent("org.springframework.boot", "${boot.version}"))).toEqual(["org.springframework.boot unreadable"]);
+    expect(techs("pom.xml", plugin())).toEqual(["org.springframework.boot"]);
+  });
+  it("reads the Java version from the properties of a pom.xml", () => {
+    expect(techs("pom.xml", props({ "java.version": "17" }))).toEqual(["java 17"]);
+    expect(techs("pom.xml", props({ "maven.compiler.release": "${java.version}", "maven.compiler.source": "21" }))).toEqual(["java 21"]);
+    expect(techs("pom.xml", props({ "java.version": "${x}", "maven.compiler.release": "${y}", "maven.compiler.source": "${z}" }))).toEqual(["java unreadable"]);
+    expect(techs("pom.xml", props({ "java.version": "1.8", "maven.compiler.release": "17", "maven.compiler.source": "11" }))).toEqual(["java 1.8"]);
+  });
+  it("keeps only plain versions of Spring dependencies", () => {
+    const dependency = (g: string, a: string, v: string) => `<dependency>\n<groupId>${g}</groupId>\n<artifactId>${a}</artifactId>\n<version>${v}</version>\n</dependency>\n`;
+    const pom = dependency("org.springframework.boot", "spring-boot-starter-web", "3.+") + dependency("org.springframework", "spring-core", "latest") + dependency("org.springframework", "spring-web", "6.1.2");
+    expect(deps("pom.xml", pom)).toEqual(["org.springframework.boot:spring-boot-starter-web", "org.springframework:spring-core", "org.springframework:spring-web 6.1.2"]);
+    expect(deps("build.gradle", "dependencies {\n  implementation 'org.springframework.boot:spring-boot-starter:3.+'\n  implementation 'org.junit:junit:5.0'\n}\n")).toEqual([
+      "org.springframework.boot:spring-boot-starter",
+      "org.junit:junit 5.0",
+    ]);
+  });
+  it("reads the Java version of a Gradle build", () => {
+    expect(techs("build.gradle.kts", "java {\n  toolchain { languageVersion.set(JavaLanguageVersion.of(17)) }\n}\n")).toEqual(["java 17"]);
+    expect(techs("build.gradle", "java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }\n")).toEqual(["java 21"]);
+    expect(techs("build.gradle", "sourceCompatibility = JavaVersion.VERSION_17\n")).toEqual(["java 17"]);
+    expect(techs("build.gradle", "sourceCompatibility = JavaVersion.VERSION_1_8\n")).toEqual(["java 1.8"]);
+    expect(techs("build.gradle", "sourceCompatibility = '1.8'\n")).toEqual(["java 1.8"]);
+    expect(techs("build.gradle", "// sourceCompatibility = '1.8'\n")).toEqual([]);
+  });
+  it("reads the Spring Boot plugin of a Gradle build", () => {
+    expect(techs("build.gradle", "plugins {\n  id 'org.springframework.boot' version '4.0.1'\n}\n")).toEqual(["org.springframework.boot 4.0.1"]);
+    expect(techs("build.gradle.kts", 'plugins {\n  id("org.springframework.boot") version "4.0.1"\n}\n')).toEqual(["org.springframework.boot 4.0.1"]);
+    expect(techs("build.gradle", "plugins {\n  id 'org.springframework.boot'\n}\n")).toEqual(["org.springframework.boot"]);
+    expect(techs("build.gradle.kts", 'plugins {\n  id("org.springframework.boot")\n}\n')).toEqual(["org.springframework.boot"]);
+    expect(techs("build.gradle", "plugins {\n  id 'org.springframework.boot' version '3.+'\n}\n")).toEqual(["org.springframework.boot unreadable"]);
+  });
+  it("reads Spring BOMs of a Gradle build in both forms", () => {
+    expect(techs("build.gradle.kts", 'dependencies {\n  implementation(platform("org.springframework.boot:spring-boot-dependencies:4.0.1"))\n}\n')).toEqual(["org.springframework.boot 4.0.1"]);
+    expect(techs("build.gradle", "dependencies {\n  implementation platform('org.springframework.boot:spring-boot-dependencies:4.0.1')\n}\n")).toEqual(["org.springframework.boot 4.0.1"]);
+    expect(techs("build.gradle.kts", 'dependencies {\n  api(enforcedPlatform("org.springframework:spring-framework-bom:7.0.2"))\n}\n')).toEqual(["org.springframework:spring-framework-bom 7.0.2"]);
+    expect(techs("build.gradle", "dependencies {\n  implementation enforcedPlatform('org.springframework:spring-framework-bom:7.+')\n}\n")).toEqual(["org.springframework:spring-framework-bom unreadable"]);
+  });
+  it("skips a BOM whose coordinate is not plain", () => {
+    const text = 'dependencies {\n  implementation(platform("org.springframework:${frameworkArtifact}:7.0.2"))\n  implementation(platform("org.springframework.boot:$boot:4.0.1"))\n}\n';
+    expect(techs("build.gradle.kts", text)).toEqual([]);
+  });
+  it("reads the Maven and Gradle wrapper versions only", () => {
+    const url = (rest: string) => `distributionBase=PROJECT\ndistributionUrl=https\\://repo.example.org/${rest}\n`;
+    expect(techs("maven-wrapper.properties", url("maven/org/apache/maven/apache-maven/3.9.6/apache-maven-3.9.6-bin.zip"))).toEqual(["maven 3.9.6"]);
+    expect(techs("gradle-wrapper.properties", url("distributions/gradle-8.5-bin.zip"))).toEqual(["gradle 8.5"]);
+    expect(techs("gradle-wrapper.properties", "distributionUrl=https://services.example.org/distributions/gradle-9.1.0-all.zip\n")).toEqual(["gradle 9.1.0"]);
+    expect(techs("gradle-wrapper.properties", url("distributions/gradle-8.5-rc-1-all.zip"))).toEqual(["gradle 8.5-rc-1"]);
+    expect(techs("gradle-wrapper.properties", "# distributionUrl=https://x.example/gradle-7.0-bin.zip\n")).toEqual([]);
+    expect(techs("maven-wrapper.properties", "distributionUrl=not a url\n")).toEqual([]);
+    expect(techs("maven-wrapper.properties", url("apache-maven-latest-bin.zip"))).toEqual([]);
+  });
+  it("keeps URL text and user info out of the value", () => {
+    const withUserInfo = ["distributionUrl=https\\://", "u", ":", "p", "@repo.example/maven/apache-maven-3.9.6-bin.zip"].join("");
+    const found = dependenciesIn("maven-wrapper.properties", withUserInfo);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ name: "maven", value: "3.9.6" });
+    expect(JSON.stringify(found)).not.toMatch(/repo\.example|https/);
   });
 });
 

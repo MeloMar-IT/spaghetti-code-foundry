@@ -322,3 +322,61 @@ describe("schema, writer and compatibility", () => {
     expect(loadRun(runs, "old-run")).toMatchObject({ runId: "old-run", status: "succeeded" });
   });
 });
+
+describe("JVM technologies", () => {
+  const pomWithDeps = (n: number) =>
+    `<project>\n${Array.from({ length: n }, (_, i) => `<dependency>\n<groupId>g</groupId>\n<artifactId>a${i}</artifactId>\n</dependency>`).join("\n")}\n<parent>\n<groupId>org.springframework.boot</groupId>\n<artifactId>p</artifactId>\n<version>4.0.1</version>\n</parent>\n</project>\n`;
+
+  it("reads the wrapper versions with the wrapper path", () => {
+    const p = buildRepoProfile(
+      make({
+        ".mvn/wrapper/maven-wrapper.properties": "distributionUrl=https\\://repo.example/apache-maven-3.9.6-bin.zip\n",
+        "gradle/wrapper/gradle-wrapper.properties": "distributionUrl=https\\://services.example/distributions/gradle-9.1-bin.zip\n",
+      }),
+    );
+    expect(find(p, "dependency").map((f) => `${f.name} ${f.value} ${f.path}`)).toEqual([
+      "maven 3.9.6 .mvn/wrapper/maven-wrapper.properties",
+      "gradle 9.1 gradle/wrapper/gradle-wrapper.properties",
+    ]);
+    expect(RepoProfileSchema.safeParse(p).success).toBe(true);
+  });
+  it("gives the same profile without wrapper files as before", () => {
+    const p = buildRepoProfile(make({ "pom.xml": "<project/>\n", "a.txt": "x" }));
+    expect(find(p, "dependency")).toEqual([]);
+    expect(p.stats.bytesRead).toBe("<project/>\n".length);
+  });
+  it("keeps the dependency findings that were there before when the cap is full", () => {
+    const root = make({ "pom.xml": pomWithDeps(3) });
+    const full = buildRepoProfile(root, { limits: { findings: { dependency: 3 } } });
+    expect(find(full, "dependency").map((f) => f.detector)).toEqual(["dependency-pom-xml", "dependency-pom-xml", "dependency-pom-xml"]);
+    expect(full.truncated.findings).toBe(true);
+    const roomy = buildRepoProfile(root);
+    expect(find(roomy, "dependency").map((f) => f.name)).toEqual(["g:a0", "g:a1", "g:a2", "org.springframework.boot"]);
+  });
+  it("does not let a wrapper file take bytes from the import pass", () => {
+    const java = "import org.springframework.boot.SpringApplication;\n";
+    const wrapper = "distributionUrl=https\\://repo.example/apache-maven-3.9.6-bin.zip\n";
+    const root = make({ "src/App.java": java, ".mvn/wrapper/maven-wrapper.properties": wrapper });
+    const p = buildRepoProfile(root, { limits: { totalBytes: java.length } });
+    expect(find(p, "import").map((f) => f.name)).toEqual(["org.springframework.boot"]);
+    expect(find(p, "dependency")).toEqual([]);
+    expect(p.truncated.bytes).toBe(true);
+  });
+  it("drops technology findings first when the artifact is too large", () => {
+    const root = make({ "pom.xml": pomWithDeps(2), "a.ts": "x" });
+    // The limit is part of the artifact, so both limits have four digits.
+    const whole = buildRepoProfile(root, { limits: { artifactBytes: 9999 } });
+    const size = Buffer.byteLength(serializeRepoProfile(whole));
+    const tech = whole.findings.filter((f) => f.detector.startsWith("technology-"));
+    expect(tech).toHaveLength(1);
+    const p = buildRepoProfile(root, { limits: { artifactBytes: size - 1 } });
+    expect(p.findings.map((f) => f.name)).toEqual(whole.findings.filter((f) => f !== tech[0]).map((f) => f.name));
+    expect(p.truncated.findings).toBe(true);
+  });
+  it("never throws on a dynamic BOM coordinate", () => {
+    const text = 'dependencies {\n  implementation(platform("org.springframework:${frameworkArtifact}:7.0.2"))\n}\n';
+    const p = buildRepoProfile(make({ "build.gradle.kts": text }));
+    expect(() => serializeRepoProfile(p)).not.toThrow();
+    expect(find(p, "dependency")).toEqual([]);
+  });
+});
