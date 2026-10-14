@@ -1,4 +1,4 @@
-import type { SkillLibrarySource, SourceTrustTier } from "./sources.js";
+import type { SkillLibrarySource, SourceReview, SourceTrustTier } from "./sources.js";
 
 /**
  * A reviewed definition of one repository a skill source may use. Pure data: no file, no network,
@@ -70,7 +70,7 @@ export function connectorProblems(source: ConnectorChecked): string[] {
 /** A source entry for a connector at an approved commit. Does not validate; parseSources does. */
 export function connectorSource(
   connector: SkillSourceConnector,
-  o: { commit: string; owner: string; paths?: string[] },
+  o: { commit: string; owner: string; paths?: string[]; review?: SourceReview },
 ): SkillLibrarySource {
   return {
     id: connector.id,
@@ -84,5 +84,6 @@ export function connectorSource(
     licence: { allow: [...connector.licences] },
     update: { cadence: "manual" },
     owner: o.owner,
+    ...(o.review ? { review: o.review } : {}),
   };
 }

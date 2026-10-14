@@ -34,6 +34,7 @@ const sources = (repo: string) =>
     "    licence: {allow: [MIT]}",
     "    update: {cadence: weekly}",
     "    owner: '@octocat'",
+    `    review: {by: '@octocat', on: '2026-01-01', commit: '${COMMIT}', licence: MIT}`,
     "",
   ].join("\n");
 

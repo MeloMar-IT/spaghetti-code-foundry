@@ -46,6 +46,7 @@ const sourceYaml = (allow = "MIT") =>
     `    licence: {allow: [${allow}]}`,
     "    update: {cadence: weekly}",
     "    owner: '@octocat'",
+    `    review: {by: '@octocat', on: '2026-01-01', commit: '${COMMIT}', licence: MIT}`,
     "",
   ].join("\n");
 

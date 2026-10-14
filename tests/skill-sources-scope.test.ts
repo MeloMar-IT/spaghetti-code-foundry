@@ -16,6 +16,7 @@ const valid = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
   licence: { allow: ["MIT"] },
   update: { cadence: "weekly" },
   owner: "@octocat",
+  review: { by: "@octocat", on: "2026-01-01", commit: COMMIT, licence: "MIT" },
   ...o,
 });
 const file = (...sources: Record<string, unknown>[]) => ({ schema: 1, sources });

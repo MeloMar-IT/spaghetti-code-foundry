@@ -298,7 +298,7 @@ describe("scf skills sources check", () => {
 
 describe("connector rules", () => {
   const ac = (o: Record<string, unknown> = {}) =>
-    valid({ id: "my-copy", repository: "https://github.com/github/awesome-copilot", licence: { allow: ["MIT"] }, ...o });
+    valid({ id: "my-copy", repository: "https://github.com/github/awesome-copilot", trust: "community", licence: { allow: ["MIT"] }, review: { by: "@octocat", on: "2026-10-01", commit: COMMIT, licence: "MIT" }, ...o });
 
   it("accepts a source that follows the connector", () => {
     expect(check(ac())).toEqual([]);

@@ -35,6 +35,7 @@ const source = (over: Record<string, unknown> = {}) => ({
   licence: { allow: ["MIT"] },
   update: { cadence: "manual" },
   owner: "@example",
+  review: { by: "@example", on: "2026-01-01", commit: COMMIT, licence: "MIT" },
   ...over,
 });
 

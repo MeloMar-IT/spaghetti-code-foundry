@@ -111,8 +111,10 @@ describe("connectorSource", () => {
   });
 
   it("is accepted by parseSources", () => {
-    const { repositoryKey: _k, ...entry } = connectorSource(c, { commit: COMMIT, owner: "@octocat", paths: ["skills/demo"] });
+    const { repositoryKey: _k, ...entry } = connectorSource(c, { commit: COMMIT, owner: "@octocat", paths: ["skills/demo"], review: { by: "@octocat", on: "2026-01-01", commit: COMMIT, licence: "MIT" } });
     expect(parseSources({ schema: 1, sources: [entry] }).problems).toEqual([]);
+    const { review: _r, ...bare } = entry;
+    expect(parseSources({ schema: 1, sources: [bare] }).problems.map((p) => p.message).join()).toContain("needs a review");
   });
 
   it("stages only skill folders", () => {

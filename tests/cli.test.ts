@@ -391,6 +391,7 @@ describe("data folder", () => {
         "    licence: {allow: [MIT]}",
         "    update: {cadence: weekly}",
         "    owner: '@octocat'",
+        `    review: {by: '@octocat', on: '2026-01-01', commit: '${commit}', licence: MIT}`,
         "",
       ].join("\n"),
     );
