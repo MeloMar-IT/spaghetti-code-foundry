@@ -567,7 +567,7 @@ describe("Settings → Skills", () => {
 
   it("saves a non-risky change without a dialog and keeps releases and tools", async () => {
     const skills = skillsOf();
-    skills.releases.approved = [{ id: "x", name: "x", version: "1" }];
+    skills.releases.approved = [{ catalogue: "core", version: "1.0.0", digest: `sha256:${"a".repeat(64)}` }];
     skills.tools.network = true;
     const { main, puts } = await render({}, "127.0.0.1", 200, { skills });
     const input = labelled(main, labelOf("skills.selection.max_skills")) as any;
@@ -580,6 +580,53 @@ describe("Settings → Skills", () => {
     expect(puts[0].skills.selection.max_skills).toBe(3);
     expect(puts[0].skills.releases.approved).toEqual(skills.releases.approved);
     expect(puts[0].skills.tools).toEqual(skills.tools);
+  });
+
+  const group = (main: FakeElement, key: string) => main.all("div").find((g) => g.attrs.role === "group" && g.all("span").some((s) => s.attrs.id === g.attrs["aria-labelledby"] && s.textContent === labelOf(key)))!;
+
+  it("asks before turning network on", async () => {
+    const { main, puts } = await render({});
+    const box = main.all("label").find((l) => l.textContent.startsWith(labelOf("skills.tools.network")))!.all("input")[0] as any;
+    box.checked = true;
+    change(box);
+    save(main);
+    await flush();
+    expect(modalRoot().textContent).toContain("Skills that ask for network access may pass the plan gate.");
+    modalRoot().all("button").find((b) => b.textContent === "Save anyway")!.click();
+    await flush();
+    expect(puts).toHaveLength(1);
+    expect(puts[0].skills.tools.network).toBe(true);
+  });
+
+  it("saves approved releases edited as rows, trimmed", async () => {
+    const { main, puts } = await render({});
+    const g = group(main, "skills.releases.approved");
+    g.all("button").find((b) => b.textContent === "Add a row")!.click();
+    const values: Record<string, string> = { catalogue: " core ", version: "1.0.0 ", digest: ` sha256:${"b".repeat(64)}` };
+    for (const [k, v] of Object.entries(values)) {
+      const i = group(main, "skills.releases.approved").all("input").find((x) => x.attrs["aria-label"] === `Row 1, ${k}`)! as any;
+      i.value = v;
+      change(i);
+    }
+    save(main);
+    await flush();
+    expect(puts).toHaveLength(1);
+    expect(puts[0].skills.releases.approved).toEqual([{ catalogue: "core", version: "1.0.0", digest: `sha256:${"b".repeat(64)}` }]);
+  });
+
+  it("shows a release issue as Row N, field in the card, not as unplaced", async () => {
+    const skills = skillsOf();
+    skills.releases.approved = [{ catalogue: "core", version: "1.0.0", digest: "bad" }];
+    const { main } = await render({}, "127.0.0.1", 200, { skills });
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: "invalid config: x", issues: [{ path: "skills.releases.approved.0.digest", message: "must be sha256: and 64 hex digits" }] }) }
+      : real(url, init));
+    save(main);
+    await flush();
+    expect(group(main, "skills.releases.approved").textContent).toContain("Row 1, digest: must be sha256: and 64 hex digits");
+    expect(main.textContent).toContain("Not saved: see the messages in the Skills card.");
+    (globalThis as any).fetch = real;
   });
 
   it("asks before a risky change: Cancel sends nothing, Save anyway sends once", async () => {

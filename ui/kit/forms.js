@@ -1,6 +1,7 @@
-// Form controls: field, textInput, textArea, select, checkbox and settingControl. Unbound: they take `value` and `onInput`/`onChange`.
+// Form controls: field, textInput, textArea, select, checkbox and settingControl (a list of records is a row editor). Unbound: they take `value` and `onInput`/`onChange`.
 // Styles are in forms.css.
-import { h } from "../dom.js";
+import { h, mount } from "../dom.js";
+import { button, iconButton } from "./actions.js";
 import { cx, nextId, oneOf, rest, settingHint } from "./core.js";
 
 const blank = (s) => typeof s !== "string" || s.trim() === "";
@@ -54,15 +55,43 @@ const SETTING_KINDS = ["number", "yes-no", "text", "list", "choice"];
 
 const lines = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
 
-/** One line of a list of records: parts in `fields` order; extra parts are joined onto the last field. */
-function recordOf(line, fields) {
-  const parts = line.split(/\s+/);
-  const out = {};
-  fields.forEach((f, i) => {
-    const part = i === fields.length - 1 ? parts.slice(i).join(" ") : parts[i];
-    if (part) out[f.key] = part;
+/** The row editor for a list of records: one input per field and row, Remove per row, "Add a row". Empty fields and rows are left out of the value. */
+function recordRows(d, { value, onChange, error, disabled, cls, hint }) {
+  const id = nextId("scf-field");
+  const blankRow = () => Object.fromEntries(d.fields.map((f) => [f.key, ""]));
+  const rows = (Array.isArray(value) ? value : []).map((r) => Object.fromEntries(d.fields.map((f) => [f.key, r?.[f.key] == null ? "" : String(r[f.key])])));
+  const clean = () => rows
+    .map((r) => Object.fromEntries(d.fields.flatMap((f) => { const v = r[f.key].trim(); return v ? [[f.key, v]] : []; })))
+    .filter((r) => Object.keys(r).length > 0);
+  const group = h("div", {
+    class: cx("scf-field", "scf-rows", error && "scf-field--error", cls),
+    role: "group",
+    "aria-labelledby": `${id}-label`,
+    "aria-describedby": [`${id}-hint`, error ? `${id}-error` : ""].filter(Boolean).join(" "),
   });
-  return out;
+  const draw = (focusName) => {
+    mount(group,
+      h("span", { class: "scf-field__label", id: `${id}-label` }, d.label),
+      rows.map((r, i) => h("div", { class: "scf-rows__row" },
+        d.fields.map((f) => textInput({
+          value: r[f.key], mono: true, disabled,
+          "aria-label": `Row ${i + 1}, ${f.key}`, "data-focus": `${id}-${i}-${f.key}`,
+          onChange: (e) => { rows[i][f.key] = e.target.value; onChange(clean()); },
+        })),
+        iconButton({
+          icon: "x", label: `Remove row ${i + 1}`, disabled, "data-focus": `${id}-rm-${i}`,
+          onClick: () => { rows.splice(i, 1); draw(); onChange(clean()); },
+        }))),
+      button({
+        size: "small", disabled: disabled || (d.maxItems !== undefined && rows.length >= d.maxItems), "data-focus": `${id}-add`,
+        onClick: () => { rows.push(blankRow()); draw(`${id}-${rows.length - 1}-${d.fields[0].key}`); },
+      }, "Add a row"),
+      h("small", { class: "scf-field__hint", id: `${id}-hint` }, hint),
+      error ? h("div", { class: "scf-field__error", role: "alert", id: `${id}-error` }, error) : null);
+    if (focusName) [...group.querySelectorAll("input")].find((el) => el.getAttribute("data-focus") === focusName)?.focus();
+  };
+  draw();
+  return group;
 }
 
 /** A control made from one setting description of GET /api/settings. `onChange(value)` gets the typed value. */
@@ -73,6 +102,7 @@ export function settingControl(description, { value, onChange, error, disabled =
   if (blank(d.label)) throw new Error("a setting control needs a label");
   const emit = (v) => onChange?.(v);
   const hint = settingHint(d);
+  if (d.kind === "list" && d.fields) return recordRows(d, { value, onChange: emit, error, disabled, cls, hint });
   if (d.kind === "yes-no") {
     const id = nextId("scf-field");
     const describedBy = [`${id}-hint`, error ? `${id}-error` : ""].filter(Boolean).join(" ");
@@ -88,8 +118,7 @@ export function settingControl(description, { value, onChange, error, disabled =
     control = textInput({ value, disabled, onChange: (e) => emit(e.target.value === "" && d.optional ? undefined : e.target.value) });
   } else if (d.kind === "list") {
     const items = Array.isArray(value) ? value : [];
-    const text = d.fields ? items.map((r) => d.fields.map((f) => r?.[f.key]).filter((p) => p !== undefined && p !== "").join(" ")).join("\n") : items.join("\n");
-    control = textArea({ value: text, mono: !!d.fields, disabled, onChange: (e) => emit(d.fields ? lines(e.target.value).map((l) => recordOf(l, d.fields)) : lines(e.target.value)) });
+    control = textArea({ value: items.join("\n"), disabled, onChange: (e) => emit(lines(e.target.value)) });
   } else {
     control = select({ options: d.choices ?? [], value, emptyLabel: d.optional ? "Not set" : undefined, disabled, onChange: (e) => emit(e.target.value === "" ? undefined : e.target.value) });
   }

@@ -230,16 +230,93 @@ describe("settingControl", () => {
     expect(hint(f)).toContain("At most 50 items.");
   });
 
-  it("list of records: parts in the order of the fields", () => {
-    const onChange = vi.fn();
-    const f = kit.settingControl(records, { value: [{ catalogue: "core", version: "1.0.0", digest: "sha256:ab" }], onChange }) as FakeElement;
-    const t = control(f, "textarea");
-    expect(t.value).toBe("core 1.0.0 sha256:ab");
-    t.fire("change", { target: { value: "core 1.0.0 sha256:ab\n\nx 2.0.0" } });
-    expect(onChange).toHaveBeenLastCalledWith([{ catalogue: "core", version: "1.0.0", digest: "sha256:ab" }, { catalogue: "x", version: "2.0.0" }]);
-    t.fire("change", { target: { value: "a b c d e" } });
-    expect(onChange).toHaveBeenLastCalledWith([{ catalogue: "a", version: "b", digest: "c d e" }]);
-    expect(hint(f)).toContain("One per line: catalogue version digest.");
+  describe("list of records: a row editor", () => {
+    const rec = { catalogue: "core", version: "1.0.0", digest: "sha256:ab" };
+    const make = (props: Record<string, unknown> = {}, d: Record<string, unknown> = records) => {
+      const onChange = vi.fn();
+      const f = kit.settingControl(d, { value: [rec], onChange, ...props }) as FakeElement;
+      return { f, onChange };
+    };
+    const off = (e: FakeElement) => e.disabled || "disabled" in e.attrs;
+    const rowsOf =(f: FakeElement) => f.all("div").filter((x) => cls(x).includes("scf-rows__row"));
+    const byLabel = (f: FakeElement, label: string) => f.all("input").find((i) => i.getAttribute("aria-label") === label)!;
+    const add = (f: FakeElement) => f.all("button").find((b) => b.textContent === "Add a row")!;
+    const remove = (f: FakeElement, n: number) => f.all("button").find((b) => b.getAttribute("aria-label") === `Remove row ${n}`)!;
+
+    it("rows, names and group", () => {
+      const { f } = make();
+      expect(rowsOf(f)).toHaveLength(1);
+      expect(rowsOf(f)[0]!.all("input").map((i) => i.value)).toEqual(["core", "1.0.0", "sha256:ab"]);
+      expect(f.all("input").map((i) => i.getAttribute("aria-label"))).toEqual(["Row 1, catalogue", "Row 1, version", "Row 1, digest"]);
+      expect(remove(f, 1)).toBeDefined();
+      expect(add(f)).toBeDefined();
+      expect(f.getAttribute("role")).toBe("group");
+      const label = f.all("span").find((s) => s.getAttribute("id") === f.getAttribute("aria-labelledby"))!;
+      expect(label.textContent).toBe("Resumes");
+    });
+    it("trims, leaves out empty fields and rows", () => {
+      const { f, onChange } = make();
+      byLabel(f, "Row 1, digest").fire("change", { target: { value: "  sha256:cd " } });
+      expect(onChange).toHaveBeenLastCalledWith([{ ...rec, digest: "sha256:cd" }]);
+      byLabel(f, "Row 1, version").fire("change", { target: { value: " " } });
+      expect(onChange).toHaveBeenLastCalledWith([{ catalogue: "core", digest: "sha256:cd" }]);
+    });
+    it("add: an empty row emits nothing until it is filled", () => {
+      const { f, onChange } = make();
+      add(f).click();
+      expect(rowsOf(f)).toHaveLength(2);
+      expect(byLabel(f, "Row 2, catalogue").value).toBe("");
+      expect(onChange).not.toHaveBeenCalled();
+      byLabel(f, "Row 2, catalogue").fire("change", { target: { value: "" } });
+      expect(onChange).toHaveBeenLastCalledWith([rec]);
+      byLabel(f, "Row 2, catalogue").fire("change", { target: { value: "x" } });
+      expect(onChange).toHaveBeenLastCalledWith([rec, { catalogue: "x" }]);
+    });
+    it("remove: the rest moves up and the value is emitted", () => {
+      const second = { catalogue: "b", version: "2.0.0", digest: "sha256:cd" };
+      const { f, onChange } = make({ value: [rec, second] });
+      remove(f, 1).click();
+      expect(onChange).toHaveBeenLastCalledWith([second]);
+      expect(rowsOf(f)).toHaveLength(1);
+      expect(byLabel(f, "Row 1, catalogue").value).toBe("b");
+      remove(f, 1).click();
+      expect(onChange).toHaveBeenLastCalledWith([]);
+      expect(rowsOf(f)).toHaveLength(0);
+    });
+    it("maxItems: Add is disabled at the limit", () => {
+      const { f } = make({ value: [rec, rec] }, { ...records, maxItems: 2 });
+      expect(off(add(f))).toBe(true);
+      remove(f, 1).click();
+      expect(off(add(f))).toBe(false);
+    });
+    it("disabled: inputs, Remove and Add", () => {
+      const { f } = make({ disabled: true });
+      expect([...f.all("input"), ...f.all("button")].every(off)).toBe(true);
+    });
+    it("error: one alert named in aria-describedby", () => {
+      const { f } = make({ error: "Row 1, digest: bad" });
+      const alerts = f.all("div").filter((x) => x.getAttribute("role") === "alert");
+      expect(alerts.map((a) => a.textContent)).toEqual(["Row 1, digest: bad"]);
+      expect(f.getAttribute("aria-describedby")).toContain(alerts[0]!.getAttribute("id"));
+      expect(cls(f)).toContain("scf-field--error");
+    });
+    it("hint: no format text", () => {
+      const text = hint(make().f);
+      expect(text).toContain("How many resumes.");
+      expect(text).toContain("Default: none.");
+      expect(text).toContain("At most 50 items.");
+      expect(text).not.toContain("One per line");
+    });
+    it("a bad value gives no rows", () => {
+      for (const value of [undefined, "x", 3]) {
+        const { f } = make({ value });
+        expect(rowsOf(f)).toHaveLength(0);
+        expect(off(add(f))).toBe(false);
+      }
+    });
+    it("recordOf is gone", () => {
+      expect(readFileSync(new URL("../ui/kit/forms.js", import.meta.url), "utf8")).not.toContain("recordOf");
+    });
   });
 
   it("choice: a select; Not set only when optional", () => {

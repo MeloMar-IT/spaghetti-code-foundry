@@ -139,6 +139,18 @@ describe("pages", () => {
       expect(inLabel).toBe(true);
     }
   });
+  it("Settings: names for the approved release rows", async () => {
+    const withRelease = structuredClone(config) as any;
+    withRelease.skills.releases.approved = [{ catalogue: "core", version: "1.0.0", digest: `sha256:${"a".repeat(64)}` }];
+    routes = { "GET /api/config": withRelease, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" }, "GET /api/settings": settingsAnswer };
+    await m.admin.renderSettings(main());
+    noViolations(main());
+    const labels = main().all("input").map((i) => i.attrs["aria-label"]);
+    for (const k of ["catalogue", "version", "digest"]) expect(labels).toContain(`Row 1, ${k}`);
+    const buttons = main().all("button");
+    expect(buttons.some((b) => b.attrs["aria-label"] === "Remove row 1")).toBe(true);
+    expect(buttons.some((b) => b.textContent === "Add a row")).toBe(true);
+  });
   it("Watchers", async () => {
     routes = {
       "GET /api/watchers": watchers, "GET /api/flows": [{ name: "issue-gitflow" }], "GET /api/admin/repos": [repo()], "GET /api/monitor": monitorState,
