@@ -51,6 +51,7 @@ type Node = {
   maximum?: number;
   exclusiveMinimum?: number;
   maxItems?: number;
+  additionalProperties?: Node | boolean;
 };
 
 let cache: { leaves: SettingLeaf[]; unsupported: string[] } | undefined;
@@ -103,6 +104,31 @@ function load(): { leaves: SettingLeaf[]; unsupported: string[] } {
   return cache;
 }
 
+let keyCache: string[] | undefined;
+
+/**
+ * Every key of `ConfigSchema`, down to the leaves. A list of records (`watchers`, `router.rules`) or a record of records
+ * (`providers`) counts once, by its item shape, with the segment `*`; a list or record of plain values is one key.
+ */
+export function settingKeys(): string[] {
+  if (keyCache) return keyCache;
+  const root = z.toJSONSchema(ConfigSchema, { io: "input", unrepresentable: "any", reused: "inline" }) as Node;
+  const keys: string[] = [];
+  const walk = (n: Node, key: string): void => {
+    if (n.type === "object" && n.properties) {
+      for (const [k, v] of Object.entries(n.properties)) walk(v, key ? `${key}.${k}` : k);
+      return;
+    }
+    if (leafOf(key, n)) return void keys.push(key);
+    const item = n.type === "array" ? n.items : n.type === "object" && typeof n.additionalProperties === "object" ? n.additionalProperties : undefined;
+    if (item?.type === "object" && item.properties) return void walk(item, `${key}.*`);
+    keys.push(key);
+  };
+  walk(root, "");
+  keyCache = keys;
+  return keys;
+}
+
 /** Every setting of `ConfigSchema` that one control can edit, in schema order. */
 export function schemaLeaves(): SettingLeaf[] {
   return load().leaves;
@@ -115,8 +141,10 @@ export function unsupportedSettings(): string[] {
 
 /** Whether the key is one of the described settings. The prefixes end in a dot: `monitoring` is not covered. */
 export function isCovered(key: string): boolean {
-  if (["isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan"].includes(key)) return true;
-  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary."].some((p) => key.startsWith(p));
+  // No generated control can edit these safely: src/settings/exceptions.ts says why.
+  if (key === "help.disabled_accounts" || key === "help.sensitive_patterns") return false;
+  if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan"].includes(key)) return true;
+  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help."].some((p) => key.startsWith(p));
 }
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
@@ -126,7 +154,24 @@ const N = (label: string, help: string): Text => ({ label, help, effect: "new-ru
 /** A setting edited by a hand-built control of ui/admin.js (or another file under ui/). */
 const A = (label: string, help: string, effect: SettingEffect, control = "admin.js"): Text => ({ label, help, effect, control });
 
+/** A setting drawn by the generated control (no `control` file); it takes effect at once. */
+const G = (label: string, help: string): Text => ({ label, help, effect: "now" });
+
 export const SETTING_TEXTS: Record<string, Text> = {
+  "ui.redesign": A("Redesigned pages", "Show the redesigned pages, which are still being built.", "now"),
+  default_model: A("Default model", "The model of agent steps that name none in the step, the flow or a routing rule.", "new-runs", "models.js"),
+  "router.fallback": A("Fallback models", "Models tried in order when an agent step hits a rate or usage limit, or a budget for free targets.", "new-runs", "models.js"),
+  "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
+  "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
+  "help.audience": G("Who may ask", "Every account, or administrators only; not set means every account."),
+  "help.keep_days": G("Keep conversations (days)", "A conversation nobody changed for this many days is deleted; not set means 90."),
+  "help.model": G("Ask SCF model", "The model that answers, a Claude Code target; not set means the default model."),
+  "help.timeout_seconds": G("Time for one answer (seconds)", "A turn that takes longer is stopped."),
+  "help.max_parallel": G("Answers at the same time", "Turns answered at the same time, over all accounts."),
+  "help.max_queued": G("Questions that may wait", "Turns that may wait for a free place; one more is refused."),
+  "help.turns_per_user_per_day": G("Questions per account per day", "Turns one account may start per day, counted in UTC."),
+  "help.max_cost_usd_per_turn": G("Most cost of one answer ($)", "The most one turn may cost; not applied without cost limits or for a model without a price."),
+  "help.daily_budget_usd": G("Daily budget of Ask SCF ($)", "The most all turns of a day may cost together; not set means no daily limit."),
   "monitor.restart_loop.resumes": M("Resumes before a restart loop", "The same run resumed more than this many times within the time below is reported."),
   "monitor.restart_loop.within_minutes": M("Restart loop window (minutes)", "The time in which the resumes of one run are counted."),
   "monitor.watcher_error.checks": M("Failed checks of a watcher", "A watcher whose check failed more than this many checks in a row is reported."),
@@ -218,6 +263,48 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "github_app.installation_id": A("Installation ID", "Only for the bot identity: runs then commit and comment as the app.", "new-runs"),
   "failure_summary.enabled": A("Failure summary", "Ask a small model for one sentence on why a run failed; off uses the rules text only.", "new-runs", "admin-sections.js"),
   "failure_summary.model": A("Failure summary model", "The model that writes the sentence, such as haiku, or ollama:<model> for a local one.", "new-runs", "admin-sections.js"),
+};
+
+export interface ItemSettingText {
+  label: string;
+  help: string;
+  effect: SettingEffect;
+  /** Every item field (the part of the key after `*.`) with the file under ui/ that edits it. */
+  fields: Record<string, string>;
+}
+
+const on = (file: string, names: string[]): Record<string, string> => Object.fromEntries(names.map((n) => [n, file]));
+
+/**
+ * Lists of records (`watchers`, `providers`, `router.rules`): they count once, by their item shape. A new item field fails
+ * tests/settings-inventory.test.ts until it is listed here with the module that edits it, or is an exception.
+ */
+export const ITEM_SETTINGS: Record<string, ItemSettingText> = {
+  watchers: {
+    label: "Watchers",
+    help: "What each watcher follows and how it starts runs, with the variables of its flow.",
+    effect: "now",
+    fields: {
+      ...on("watcher-form.js", ["id", "enabled", "source", "flow", "github_repo", "label", "every", "max_per_tick", "vars", "task", "branch", "exclude_labels", "at", "timezone", "owner"]),
+      ...on("watcher-options.js", [
+        "priority_labels", "status_labels.working", "status_labels.done", "status_labels.needs_info", "status_labels.waiting", "status_labels.failed",
+        "wait_for_dependencies", "dependency_done_labels", "precheck_flow", "auto_defaults", "remove_on_done", "comment_on_failure", "status_comment",
+        "pause_while_pr_open", "one_at_a_time",
+      ]),
+    },
+  },
+  providers: {
+    label: "Providers",
+    help: "Where a model runs: its kind, address, key variable and default model.",
+    effect: "new-runs",
+    fields: on("models.js", ["kind", "base_url", "api_key_env", "default_model"]),
+  },
+  "router.rules": {
+    label: "Routing rules",
+    help: "The first rule that matches a step picks its model.",
+    effect: "new-runs",
+    fields: on("models.js", ["step", "flow", "min_visit", "model"]),
+  },
 };
 
 /** Walks `value` down the dotted key. */

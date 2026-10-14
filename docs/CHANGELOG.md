@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Settings 8: every setting has a control or a reviewed exception (#500). Part 11 of 11 of #407 (every setting can be changed in the interface).
+  - **The rule.** Every key of `ConfigSchema` (down to the leaves, watcher options included) and every variable of every shipped flow must have a control in the interface or a reviewed exception. `tests/settings-inventory.test.ts` fails otherwise, and the message names the key and says what to add.
+  - **Exceptions.** `src/settings/exceptions.ts` is the one list: each key has a reason, and an entry for a key that no longer exists, or that now has a control, fails the test. Four entries today: `help.disabled_accounts`, `help.sensitive_patterns` and the two `providers.*.price` fields.
+  - **Controls.** The Ask SCF card (`generatedSection` in `ui/admin-sections.js`) draws every `help.*` setting that has a generated control, with the same save and error rules as the other cards. `ui.redesign`, `default_model` and the `router.*` fallback settings are described too. `ITEM_SETTINGS` in `src/settings/describe.ts` lists the fields of records (`watchers`, `providers`, `router.rules`) with the module that edits each one.
+  - **Flow variables.** A variable of a shipped flow needs a `var_info` entry or `set_by_run: true`.
+  - **Docs.** `docs/USER_GUIDE.md`: the Ask SCF switch and its settings are in Settings, and section 7 has a short paragraph on the start-up settings. `docs/DESIGN.md` describes the rule.
+  - Tests: new `tests/settings-inventory.test.ts`; cases in `tests/settings-describe.test.ts`, `tests/ui-admin-sections.test.ts` and `tests/ui-settings.test.ts`.
 - Settings 6c: approved releases and tools in the Skills card (#529). Part 3 of 3 of #495 (Settings 6).
   - **Approved releases.** `skills.releases.approved` is a row editor: each row has inputs for catalogue, version and digest (each with an aria-label naming the row and the field), a **Remove** button, and **Add a row**, disabled at 50 rows and when the page is read-only. Empty rows and fields are left out of the value, and values are trimmed. A server issue of a row is shown as `Row N, <field>: …`. Its hint has the help sentence, the default and when it takes effect; the "one per line" text is gone from this setting only. No stored data changes.
   - **Tools.** New group "Tools a skill may ask for" with `skills.tools.shell`, `skills.tools.network`, `skills.tools.filesystem` and `skills.tools.missing`, each with its default, help and when it takes effect.

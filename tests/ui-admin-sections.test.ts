@@ -161,6 +161,49 @@ describe("describedSections", () => {
   });
 });
 
+describe("generatedSection", () => {
+  const stored = { enabled: false, sensitive_patterns: [" secret ", "a\nb", "x"], disabled_accounts: ["8f14e45f-ceea-467f-a0e6-1d2f9b5b5c11"], keep_days: 30 };
+  const make = (help: Record<string, unknown> = stored, readOnly = false, list = described) => sections.generatedSection("Ask SCF", "help.", { help }, list, { section, readOnly });
+  const change = (el: any, value: string) => {
+    el.value = value;
+    el.fire("change", { target: el });
+  };
+
+  it("draws one control per described help key, none for the two exceptions", () => {
+    const s = make();
+    const keys = described.filter((d) => d.key.startsWith("help.")).map((d) => d.key);
+    expect(keys).toHaveLength(10);
+    expect(Object.keys(s.inputs())).toEqual(keys);
+    expect(keys).not.toContain("help.sensitive_patterns");
+    expect(keys).not.toContain("help.disabled_accounts");
+    expect(s.card.all("h3")[0].textContent).toBe("Ask SCF");
+  });
+
+  it("keeps the stored private patterns and accounts exactly, and drops an emptied optional number", () => {
+    const s = make();
+    change(s.inputs()["help.max_queued"], "5");
+    change(s.inputs()["help.keep_days"], "");
+    const v = s.values();
+    expect(v.sensitive_patterns).toEqual([" secret ", "a\nb", "x"]);
+    expect(v.disabled_accounts).toEqual(stored.disabled_accounts);
+    expect(v.max_queued).toBe(5);
+    expect("keep_days" in v).toBe(false);
+    expect(ConfigSchema.safeParse({ help: v }).success).toBe(true);
+  });
+
+  it("locks the controls when read-only", () => {
+    const s = make(stored, true);
+    expect(s.inputs()["help.keep_days"].readOnly).toBe(true);
+  });
+
+  it("returns the stored object and no card when nothing is described", () => {
+    const s = make(stored, false, []);
+    expect(s.card).toBeNull();
+    expect(s.values()).toBe(stored);
+    expect(s.check()).toBeUndefined();
+  });
+});
+
 describe("startupSection", () => {
   it("shows label, value and how to change it, with no input", () => {
     const card = sections.startupSection([{ key: "port", label: "Port", value: 4000, change: "Start with --port.", effectText: "after a restart" }], section);

@@ -2409,6 +2409,10 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 
 **Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
+**Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the list of accounts that may not ask Ask SCF (`help.disabled_accounts`), the list of texts Ask SCF keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
+
+**Start-up settings.** The data folder, the port, the repository and the program paths are read only when the server starts, so they are not changed on this page. To change one, stop the server, change it where it is set, and start the server again; the **Set at start-up** card shows the values in use. Two things are set up once, not in settings: the first admin is made on the setup page when the server starts for the first time, and the login service is installed with `scf service install` (see [Upgrading](#11-upgrading-from-claude-factory)).
+
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
 
@@ -5554,7 +5558,7 @@ not stored.
 
 ### Ask SCF for administrators
 
-**It is off by default.** Switch it on in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
+**It is off by default.** Switch it on in **Settings → Ask SCF** (the card's switch is `help.enabled`; the limits are on the same card). The same settings are in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
 
 ```yaml
 help:
@@ -5599,8 +5603,8 @@ value.
 
 ### Who may ask, what is kept, and what is logged
 
-**Who may ask.** When Ask SCF is on, these settings of `help` in `config.yaml` decide, and the
-account is read again at every question:
+**Who may ask.** When Ask SCF is on, these settings of `help` decide (on the Ask SCF card, except
+`disabled_accounts`, which is only in `config.yaml`), and the account is read again at every question:
 
 | Setting | Default | Meaning |
 |---|---|---|
