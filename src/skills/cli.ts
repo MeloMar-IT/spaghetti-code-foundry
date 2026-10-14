@@ -13,9 +13,11 @@ import { exclusionReasons, importExclusions } from "./import-exclusions.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { flowDir, parseFlow } from "../flow/load.js";
-import type { ImportRecord } from "./import-plan.js";
+import { SkillImportError, type ImportRecord } from "./import-plan.js";
 import { readStagedImport } from "./import-stage.js";
+import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
+import { promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE, type ScanException } from "./scan-exceptions.js";
@@ -36,9 +38,10 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import, plus the connector report of a known source
        scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
        scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
+       scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence and findings allow promotion; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], promote: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -99,14 +102,15 @@ function sourcesCheck(file: string, out: (line: string) => void): number {
 const hidden = (s: string): string => (credentialProblem(s) ? "(hidden)" : s);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-interface StagedImport { source: SkillLibrarySource; commit: string; record: ImportRecord; files: Map<string, Uint8Array> }
+type StagedOk = Extract<ReturnType<typeof readStagedImport>, { state: "ok" }>;
+interface StagedImport { source: SkillLibrarySource; commit: string; record: ImportRecord; files: Map<string, Uint8Array>; licence: StagedOk["licence"] }
 
 /**
  * Finds the source, checks its approved commit, reads the staged import and proves it matches import.json. Prints a PROBLEM and
  * returns undefined when it cannot. `between` runs after the source is found and before the staged import is read; false stops
  * (it has printed its own PROBLEM).
  */
-function stagedImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string }, between?: () => boolean): StagedImport | undefined {
+function stagedImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string }, between?: () => boolean, done = "scanned"): StagedImport | undefined {
   const problem = (text: string): undefined => {
     out(`PROBLEM ${text}`);
     return undefined;
@@ -125,10 +129,32 @@ function stagedImport(id: string, out: (line: string) => void, opts: { cwd: stri
 
   const staged = readStagedImport(source.id, commit, { home: opts.home });
   if (staged.state === "none") return problem(`no staged import of ${source.id} at ${commit.slice(0, 12)}; run "scf skills import ${source.id}" first`);
-  if (staged.state === "invalid") return problem(`the staged import does not match import.json: ${staged.problem}; nothing was scanned`);
-  const { record, files } = staged;
-  if (record.repositoryKey !== source.repositoryKey) return problem("the staged import is from another repository; nothing was scanned");
-  return { source, commit, record, files };
+  if (staged.state === "invalid") return problem(`the staged import does not match import.json: ${staged.problem}; nothing was ${done}`);
+  if (staged.record.repositoryKey !== source.repositoryKey) return problem(`the staged import is from another repository; nothing was ${done}`);
+  return { source, commit, record: staged.record, files: staged.files, licence: staged.licence };
+}
+
+/** The exception file for `scan` and `promote check`; prints a PROBLEM and returns undefined when it cannot be used. */
+function loadExceptions(file: string | undefined, out: (line: string) => void, opts: { cwd: string; today: string }): ScanException[] | undefined {
+  const read = readScanExceptions(resolve(opts.cwd, file ?? SCAN_EXCEPTIONS_FILE), opts.today);
+  if (read.state === "invalid") {
+    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return undefined;
+  }
+  if (read.state === "none" && file !== undefined) {
+    out("PROBLEM the exception file does not exist");
+    return undefined;
+  }
+  return read.state === "ok" ? read.manifest.exceptions : [];
+}
+
+/** The files of one skill, with paths relative to its root. */
+function filesOf(root: string, files: ReadonlyMap<string, Uint8Array>): { path: string; content: Uint8Array }[] {
+  const mine: { path: string; content: Uint8Array }[] = [];
+  for (const [path, content] of files) {
+    if (root === "." || path === root || path.startsWith(root + "/")) mine.push({ path: root === "." ? path : path.slice(root.length + 1), content });
+  }
+  return mine;
 }
 
 /**
@@ -137,20 +163,11 @@ function stagedImport(id: string, out: (line: string) => void, opts: { cwd: stri
  */
 function scanImport(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
   let exceptions: ScanException[] = [];
-  const readExceptions = (): boolean => {
-    const read = readScanExceptions(resolve(opts.cwd, exceptionsFile ?? SCAN_EXCEPTIONS_FILE), opts.today);
-    if (read.state === "invalid") {
-      for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-      return false;
-    }
-    if (read.state === "none" && exceptionsFile !== undefined) {
-      out("PROBLEM the exception file does not exist");
-      return false;
-    }
-    exceptions = read.state === "ok" ? read.manifest.exceptions : [];
-    return true;
-  };
-  const staged = stagedImport(id, out, opts, readExceptions);
+  const staged = stagedImport(id, out, opts, () => {
+    const read = loadExceptions(exceptionsFile, out, opts);
+    if (read) exceptions = read;
+    return read !== undefined;
+  });
   if (!staged) return 1;
   const { source, commit, record, files } = staged;
 
@@ -158,10 +175,7 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
   const { skills: normalized, report: norm } = normalizeImport({ record: { ...record, rejected: [] }, files });
   let blocked = 0;
   for (const entry of record.skills) {
-    const mine: { path: string; content: Uint8Array }[] = [];
-    for (const [path, content] of files) {
-      if (entry.root === "." || path === entry.root || path.startsWith(entry.root + "/")) mine.push({ path: entry.root === "." ? path : path.slice(entry.root.length + 1), content });
-    }
+    const mine = filesOf(entry.root, files);
     const scan = scanSkill({ root: entry.root, files: mine });
     const pkg = normalized.find((s) => s.provenance.root === entry.root);
     if (pkg) {
@@ -271,6 +285,102 @@ function assessImport(id: string, out: (line: string) => void, opts: { cwd: stri
   return problems > 0 ? 1 : 0;
 }
 
+/** Passed for an import without licence evidence: every skill is `missing`, so the value reaches no package and is never printed. */
+const NO_EVIDENCE_TIME = "1970-01-01T00:00:00Z";
+
+/**
+ * `scf skills promote check`: offline and read-only. Prints per staged skill whether licence, provenance and findings
+ * allow promotion. Every decision is keyed by the full upstream root; the shown path is used only for printing.
+ * Returns 1 when a path is refused or a PROBLEM was printed.
+ */
+function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
+  let exceptions: ScanException[] = [];
+  const staged = stagedImport(
+    id,
+    out,
+    opts,
+    () => {
+      const read = loadExceptions(exceptionsFile, out, opts);
+      if (read) exceptions = read;
+      return read !== undefined;
+    },
+    "checked",
+  );
+  if (!staged) return 1;
+  const { source, commit, record, files } = staged;
+  if (source.status !== "enabled") {
+    out(`PROBLEM the source ${source.id} is ${source.status}; only an enabled source can be promoted`);
+    return 1;
+  }
+  // An import staged without licence files has no evidence: every path is `missing`.
+  const evidence = staged.licence ?? { repositoryKey: record.repositoryKey, commit: record.commit, files: [] };
+  const retrievedAt = record.retrievedAt ?? NO_EVIDENCE_TIME;
+  const { skills: normalized } = normalizeImport({ record: { ...record, rejected: [] }, files });
+  const byRoot = new Map(normalized.map((s) => [s.provenance.root, s]));
+
+  let promotable = 0;
+  let refused = 0;
+  const lines: string[] = [];
+  for (const entry of record.skills) {
+    const path = shownValue(entry.root);
+    const skill = byRoot.get(entry.root);
+    let status: string;
+    let licenceReasons: string[] = [];
+    let normReasons: string[] = [];
+    let n = 0;
+    let ok: { id: string; licences: string[] } | undefined;
+    if (skill) {
+      let result;
+      try {
+        result = promoteImport({ source, record, skills: [skill], evidence, retrievedAt });
+      } catch (e) {
+        if (!(e instanceof SkillImportError)) throw e;
+        // path-specific (for example the approved paths were narrowed): refuse this path, check the others
+        lines.push(`REFUSED ${path}: not-promotable (${hidden(e.message)})`);
+        refused++;
+        continue;
+      }
+      const p = result.promoted[0];
+      if (p) {
+        status = "allowed";
+        ok = { id: skill.package.id, licences: p.provenance.licences };
+      } else {
+        const r = result.manifest.refused[0]!;
+        status = r.status;
+        licenceReasons = r.reasons;
+      }
+      n = promotionBlockers(applyExceptions(skill.package.id, scanSkill({ root: entry.root, files: filesOf(entry.root, files) }), exceptions, opts.today)).length;
+    } else {
+      const verdict = evaluateLicence({ root: entry.root, allow: source.licence.allow, evidence });
+      status = verdict.status;
+      licenceReasons = verdict.reasons;
+      // Normalized alone, so the reasons belong to this full root and not to a shortened display string.
+      const alone = normalizeImport({ record: { ...record, skills: [entry], rejected: [] }, files });
+      normReasons = alone.report.quarantined[0]?.reasons ?? ["another skill of this source has the same name or id"];
+    }
+    const text = (xs: string[]) => xs.map(hidden).join("; ");
+    if (status !== "allowed") {
+      const more: string[] = [];
+      if (!skill) more.push(`not normalized: ${text(normReasons)}`);
+      if (n > 0) more.push(`${plural(n, "high finding")}`);
+      lines.push(`REFUSED ${path}: ${status} (${[text(licenceReasons), ...more].filter((x) => x !== "").join("; ")})`);
+      refused++;
+    } else if (!skill) {
+      lines.push(`REFUSED ${path}: not-normalized (${text(normReasons)})`);
+      refused++;
+    } else if (n > 0) {
+      lines.push(`REFUSED ${path}: blocked (${plural(n, "high finding")})`);
+      refused++;
+    } else {
+      lines.push(`PROMOTABLE ${ok!.id} ${path} ${ok!.licences.join(",")}`);
+      promotable++;
+    }
+  }
+  for (const l of lines) out(l);
+  out(`CHECKED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${promotable} promotable, ${refused} refused`);
+  return refused > 0 ? 1 : 0;
+}
+
 const syntax = (why: string) => new Error(`${why}\n${SKILLS_USAGE}`);
 
 /** `scf skills …`. `values` holds the options that were given; the syntax is checked before any read or write. */
@@ -333,6 +443,13 @@ export async function skillsCommand(
     if (operands.length !== 1) throw syntax("scf skills assess: expects one source id");
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills assess: the operand must be a source id");
     return assessImport(operands[0]!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home });
+  }
+
+  if (sub === "promote") {
+    if (operands[0] !== "check" || operands.length < 2 || operands.length > 3) throw syntax('scf skills promote: expects "check", a source id and at most one exception file');
+    if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills promote check: the first operand must be a source id");
+    const today = opts.today ?? new Date().toISOString().slice(0, 10);
+    return promoteCheck(operands[1]!, operands[2], out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today });
   }
 
   const { skills, cwd: _cwd, now: _now, today: _today, ...discover } = opts;

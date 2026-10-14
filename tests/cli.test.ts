@@ -437,6 +437,14 @@ describe("data folder", () => {
     }
   });
 
+  it("scf skills promote check is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills promote check <source-id>");
+    const r = scf(["skills", "promote"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("scf skills promote check <source-id> [<exceptions-file>]");
+  });
+
   it("--help shows the old folder while only that exists, and does not move it", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);

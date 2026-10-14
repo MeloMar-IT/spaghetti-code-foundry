@@ -3371,14 +3371,16 @@ scf skills import example-skills
 
 ```
 REJECTED skills/link: a symbolic link
+LICENCE FILES 2 staged, 0 not readable
 OK 2 skills staged from github.com/example/skills@0123456789ab sha256:… (staged)
 Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef0123456789abcdef01234567
 ```
 
 - **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`. The licence and notice files of the same commit are kept with them: `licence.json` and `licence/<upstream path>`.
-- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`. It keeps its form; the licence files are not listed in it.
+- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`. An import also has `retrievedAt` (the UTC time of the fetch) and `licenceFiles[]`: each file's `path` with `sha256` and `bytes`, or with a `problem` when it cannot be read or staged. The list is the same as in `licence.json`, and the two are checked against each other when the import is read. An import written before these fields existed has neither; it still reads, and its licence evidence is empty.
 - **Licence and notice files.** Every `LICENSE`, `NOTICE` and similar file of the staged skill roots is copied byte for byte into `licence/`, with its path, size and SHA-256 in `licence.json`. The copy is checked against that record when it is read. Limits: 200 files, 256 KiB per file and 4 MiB in total; more than that stages nothing and prints a `PROBLEM`.
 - **An import from before licence files were kept.** The first import of that commit after the upgrade replaces its folder. The old folder is kept as `.old-<commit>` until the new one is verified, and the next import removes it. Until then a reader of the old folder reports that there are no licence files and asks you to import again. `scf skills scan` works on it as before.
+- **Licence files.** They are untrusted bytes. The import never prints their content and never follows a link in them.
 - **How it fetches.** One commit, into a bare temporary repository. There is no checkout. Only https is used, with no redirects. Your git configuration, credential helper and `~/.netrc` are not used. The temporary folder is removed at the end.
 - **Limits.** 120 s for the fetch, 256 MiB during the fetch, 8 MiB for the file list, and the per-skill limits from the staging step (#457).
 - **Rejections.** A skill is rejected, and not staged, for example when it is a symbolic link, a submodule or too large (`is larger than 262144 bytes`), or has an unsafe path. Each prints a `REJECTED` line with the reasons. The other skills are still staged.
@@ -3489,6 +3491,26 @@ EVALUATED 1 skills from github.com/example/oracle-skills@0123456789ab sha256:…
 - **Overlap.** For each capability that an imported skill and an installed skill both provide, the report uses the canonical selection. `RECOMMEND` names the winner and why it won; `CONFLICT` means no winner can be chosen; `NONE` means no skill is eligible. A recommendation is not applied: nothing is pinned or changed.
 - **Exit codes.** 0 when every skill passes. 1 when a skill is refused or blocked by a high finding, its licence is not allowed, its compatibility is `incompatible` or `unchecked`, an installed skill fails the integrity check, or a conflict is found. A `PROBLEM` line also exits 1 and names the file or field.
 - **Limits.** The same fetch limits as `scf skills import`. An evaluation that is interrupted (Ctrl-C) prints `PROBLEM` and writes nothing.
+
+#### Check a promotion
+
+`scf skills promote check <source-id> [<exceptions-file>]` shows, for each skill of the staged import, whether its licence, its provenance and its findings allow promotion. It is offline and read-only, like [Scan an import](#scan-an-import): nothing is written, loaded, pinned or run, and no network or process is used. Promotion itself is not done by this command.
+
+```
+scf skills promote check example-skills
+```
+
+```
+PROMOTABLE example/skill-a skills/skill-a MIT
+REFUSED skills/skill-b: missing (skills/skill-b: no licence file for this skill or a folder above it)
+CHECKED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 promotable, 1 refused
+```
+
+- **What it checks.** The staged import is read and checked as in [Scan an import](#scan-an-import). Then, per skill path: the licence and notice evidence of the commit is checked against the source's licence allow list, the skill is normalized, the scanner runs with the exceptions, and the provenance is recorded.
+- **Lines.** `PROMOTABLE <id> <path> <licences>` for a path that may be promoted, with its licence names. `REFUSED <path>: <status> (<reasons>)` for every other path. The status is the licence status (for example `missing`, `ambiguous`, `review` or `rejected`), `blocked` when a high finding is not accepted, or `not-normalized` when the normalization step rejects the skill. Then one `CHECKED` line with the counts.
+- **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, or with an open high finding. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
+- **Reasons.** Reasons never show credential-like text; it shows as `(hidden)`. Licence texts are never printed.
+- **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, or an invalid exception file).
 
 #### Skill identity and content fingerprint
 
@@ -4088,6 +4110,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
+| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

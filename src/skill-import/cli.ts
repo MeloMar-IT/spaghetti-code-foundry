@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
-import { prepareLicenceEvidence, type PreparedLicence } from "../skills/import-licence.js";
-import { prepareImport, SkillImportError, type RejectedSkill } from "../skills/import-plan.js";
+import { addLicenceEvidence } from "../skills/import-evidence.js";
+import { prepareLicenceEvidence } from "../skills/import-licence.js";
+import { prepareImport, SkillImportError, type PreparedImport, type RejectedSkill } from "../skills/import-plan.js";
 import { publishImport } from "../skills/import-stage.js";
 import { collectLicenceEvidence } from "../skills/licence.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
@@ -19,6 +20,8 @@ export interface SkillImportOptions {
   remote?: string;
   env?: NodeJS.ProcessEnv;
   open?: typeof openGitTree;
+  /** Tests: the time recorded as `retrievedAt`. Default: now. */
+  now?: Date;
 }
 
 const syntax = (why: string) => new Error(`${why}\n${IMPORT_USAGE}`);
@@ -89,16 +92,16 @@ export async function skillImportCommand(
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
-    let prep: ReturnType<typeof prepareImport> | undefined;
-    let licence: PreparedLicence | undefined;
+    let prep: PreparedImport | undefined;
     let failed: unknown;
     try {
       const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: aborter.signal });
       try {
         prep = prepareImport(source, tree);
-        licence = prepareLicenceEvidence(
+        const licence = prepareLicenceEvidence(
           collectLicenceEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree),
         );
+        prep = addLicenceEvidence(prep, licence, (opts.now ?? new Date()).toISOString().slice(0, 19) + "Z");
       } finally {
         tree.close();
       }
@@ -115,10 +118,14 @@ export async function skillImportCommand(
     }
     try {
       if (failed !== undefined) throw failed;
-      const done = publishImport({ ...prep!, licence }, { home: opts.home });
+      const done = publishImport(prep!,{ home: opts.home });
       const rec = done.record;
       for (const s of rec.skills) out(`${shownValue(s.root).padEnd(40)} ${s.name} ${s.digest} ${s.files} files ${s.bytes} bytes`);
       rejectedLines(out, rec.rejected);
+      if (rec.licenceFiles) {
+        const staged = rec.licenceFiles.filter((f) => f.sha256 !== undefined).length;
+        out(`LICENCE FILES ${staged} staged, ${rec.licenceFiles.length - staged} not readable`);
+      }
       out(`OK ${rec.skills.length} skills staged from ${rec.repositoryKey}@${rec.commit.slice(0, 12)} ${rec.digest} (${done.state})`);
       out(`Quarantine: ${done.dir}`);
       return rec.rejected.length > 0 ? 1 : 0;
