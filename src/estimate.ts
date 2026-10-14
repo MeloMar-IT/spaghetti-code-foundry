@@ -8,11 +8,15 @@ export const MIN_SAMPLES = 3;
 const SLOW_FACTOR = 3;
 const SLOW_FLOOR_MS = 2 * 60_000;
 const MIN = 60_000;
+/** Steps that only split an issue into smaller ones; the run still ends as succeeded. */
+const SPLIT_STEPS = ["create_split", "force_split"];
 
 /** Samples of one flow in one repository. Every array has one sample per run, sorted. */
 export interface FlowHistory {
   /** Working time of a whole run. */
   totals: number[];
+  /** Working time of the runs that built a story: `totals` without the runs that only split the issue. */
+  built: number[];
   /** Time of one visit of a step ("id#visit"). */
   ms: Record<string, number[]>;
   /** Time from the start of a step visit ("id#visit") to the end of the run. */
@@ -67,10 +71,11 @@ export function buildHistory(runs: RunSummary[]): DurationHistory {
     if (!key) continue;
     const recs = counted(run);
     if (!recs.length || !recs.every((r) => validMs(r.durationMs))) continue;
-    const h = out.get(key) ?? { totals: [], ms: {}, left: {}, after: {} };
+    const h = out.get(key) ?? { totals: [], built: [], ms: {}, left: {}, after: {} };
     out.set(key, h);
     const total = recs.reduce((a, r) => a + r.durationMs, 0);
     h.totals.push(total);
+    if (!recs.some((r) => SPLIT_STEPS.includes(r.id))) h.built.push(total); // a run that ends in a split built nothing
     const seen: Record<string, number> = {};
     let done = 0;
     for (const r of recs) {
@@ -84,9 +89,28 @@ export function buildHistory(runs: RunSummary[]): DurationHistory {
   const sort = (a: number[]) => a.sort((x, y) => x - y);
   for (const h of out.values()) {
     sort(h.totals);
+    sort(h.built);
     for (const o of [h.ms, h.left, h.after]) for (const a of Object.values(o)) sort(a);
   }
   return out;
+}
+
+/** The flows that build one story. Planning, refinement, question and release runs are not story time. */
+export const STORY_FLOWS: readonly string[] = ["issue-gitflow", "issue-code-daily"];
+
+/**
+ * Median working time of a whole succeeded run that built a story (split-only runs are left out), from the same samples as the run
+ * estimate (`buildHistory`). Only the runs of `flows` count (default STORY_FLOWS). Undefined below MIN_SAMPLES.
+ */
+export function medianRunMs(history: DurationHistory, repo: string, flows: readonly string[] = STORY_FLOWS): number | undefined {
+  const all: number[] = [];
+  for (const [key, h] of history) {
+    const [r, flow] = key.split("\n");
+    if (r === repo && flow !== undefined && flows.includes(flow)) all.push(...h.built);
+  }
+  if (all.length < MIN_SAMPLES) return undefined;
+  all.sort((x, y) => x - y);
+  return Math.round(quantile(all, 0.5));
 }
 
 /** Progress of a run that is not finished: "Step N of M". */
