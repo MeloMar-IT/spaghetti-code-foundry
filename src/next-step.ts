@@ -1,6 +1,6 @@
 import type { WatcherConfig } from "./config.js";
 import { explainError } from "./errors.js";
-import { isUserBudgetStop, type RunSummary } from "./engine/state.js";
+import { isStoppedCancel, isUserBudgetStop, type RunSummary } from "./engine/state.js";
 import { classifyFailure, failureSummary, type FailureCause, type FailureSummary } from "./failure.js";
 import { statusHelp, statusName } from "./words.js";
 
@@ -10,7 +10,7 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "superseded" | "bug_first" | "issue_closed" | "user_limit";
+  | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked";
 
 export type NextWho = "You" | "Foundry" | "Another story" | "A time limit" | "Something is wrong";
 
@@ -54,6 +54,8 @@ export interface NextStep {
   issueUnchecked?: true;
   /** The flow of the run is gone: it cannot be resumed. */
   retired?: true;
+  /** `cancelled`: the run was cancelled while it was stopped, so nothing continues it. */
+  ended?: true;
 }
 
 /** How far a run is and how long it may take. Estimates come from earlier runs; see estimate.ts. */
@@ -125,6 +127,8 @@ export interface NextData {
   canResume?: boolean;
   /** The flow of the run is retired: it cannot be resumed, only started again. */
   retired?: boolean;
+  /** `cancelled`: the run was cancelled while it was stopped, so nothing continues it. */
+  ended?: boolean;
   /** `watcher_stale`: ISO time of the last finished check. */
   lastCheck?: string;
   /** `restart`: runs the server still waits for (without it the text is the one issue records use). */
@@ -219,6 +223,7 @@ function blockerClause(b: BlockerInfo): string {
     case "usage_limit": case "daily_budget": case "user_limit": return "which is paused by a limit";
     case "release": return n.until ? `which waits for the ${n.until}` : "which waits for the release pull request";
     case "issue_closed": return "which is closed";
+    case "parked": return "which is parked";
     case "failed": return "which failed";
     case "interrupted": case "stopped": case "cancelled": return "which is stopped";
     default: return "which is to be done";
@@ -556,7 +561,8 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
     case "cancelled":
       why = "The run was cancelled";
-      if (d.retired) { who = "You"; action = "Start a new run if you want it"; say = "start a new run if you want it"; w = runWhere ?? where; }
+      if (d.ended) { why = "The run was cancelled while it was stopped"; action = "Nothing — it was cancelled"; say = "nothing to do"; }
+      else if (d.retired) { who = "You"; action = "Start a new run if you want it"; say = "start a new run if you want it"; w = runWhere ?? where; }
       else if (d.watched) say = "nothing to do, it resumes at the next check";
       else { who = "You"; action = "Resume the run on its page if you want it"; say = "resume the run on its page if you want it"; w = runWhere ?? where; }
       break;
@@ -574,6 +580,11 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       why = `${issue ? `#${issue}` : "The issue"} is closed on GitHub`; say = "nothing to do";
       action = "Nothing — the issue is closed";
       break;
+    case "parked":
+      why = `${ref} is parked: it has no trigger label, so no watcher follows it`;
+      say = "nothing to do, add the trigger label again to start the story over";
+      action = "Nothing — the story is parked";
+      break;
     case "done":
       why = "It is done";
       say = "nothing to do";
@@ -581,7 +592,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,
@@ -591,6 +602,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     ...(kind === "dependency" ? { blockers: d.blockers ?? [] } : {}),
     ...(d.cause ? { cause: d.cause } : {}),
     ...(d.retired ? { retired: true as const } : {}),
+    ...(kind === "cancelled" && d.ended ? { ended: true as const } : {}),
     ...(kind === "failed" && d.failure ? { failure: d.failure } : {}),
     ...(kind === "monitor_needs_you" && d.evidence?.length ? { evidence: d.evidence } : {}),
     ...(kind === "monitor_needs_you" && d.stories?.length ? { stories: d.stories } : {}),
@@ -672,6 +684,13 @@ export function nextStepEnv(): Record<string, string> {
   };
 }
 
+/** The run stopped at a step that asks the person questions (`send_back` or `ask_for_info`). */
+export function asksQuestions(run: Pick<RunSummary, "status" | "reason">): boolean {
+  if (run.status !== "stopped") return false;
+  const step = stoppedStep(run.reason);
+  return step === "send_back" || step === "ask_for_info";
+}
+
 /** Last "stopped at step" id of a reason, without sub-flow prefix. */
 function stoppedStep(reason: string | undefined): string | undefined {
   const m = /stopped at step "((?:[\w-]+\/)*)([\w-]+)"/.exec(reason ?? "");
@@ -710,16 +729,18 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
       const k: NextKind = id === "approve_plan" ? "approve_plan" : id === "approve_split" ? "approve_split" : "approval";
       return make(k, { message: run.waiting?.message });
     }
-    case "cancelled": return make("cancelled");
+    case "cancelled": return make("cancelled", { ended: isStoppedCancel(reason) || undefined });
     case "stopped": {
+      // The watcher saw the issue without its trigger label: nothing continues the run, so nobody is asked.
+      if (asksQuestions(run) && run.parkedAt) return make("parked");
       // A retired run is not continued by a limit, a answer or a release: only an interruption keeps its own record.
       if (d.retired && !/interrupted/.test(reason)) return make("stopped");
       if (isUserBudgetStop(reason)) return make("user_limit", { userLimit: "budget" });
       if (/daily budget/.test(reason)) return make("daily_budget");
       if (/usage limit reached|signed out —/.test(reason)) return make("usage_limit", { unreachable: !/signed out —/.test(reason) && !!run.history?.at(-1)?.unreachable });
       if (/interrupted/.test(reason)) return make("interrupted");
+      if (asksQuestions(run)) return make("planner_questions", { questions: o.questions });
       const step = stoppedStep(reason);
-      if (step === "send_back" || step === "ask_for_info") return make("planner_questions", { questions: o.questions });
       if (step === "wait_for_area") return make("area_lock");
       if (step?.startsWith("wait_")) return make("release");
       return make("stopped");

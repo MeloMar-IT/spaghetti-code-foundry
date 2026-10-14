@@ -49,9 +49,11 @@ describe("pure helpers", () => {
 
   it("runActions offers Retry only with a step to continue at", () => {
     for (const s of ["failed", "stopped", "cancelled"]) {
-      expect(rh.runActions({ status: s })).toEqual([]);
-      expect(rh.runActions({ status: s, state: { next: "a" } })).toEqual(["retry"]);
+      expect(rh.runActions({ status: s })).toEqual(s === "stopped" ? ["cancel"] : []);
+      expect(rh.runActions({ status: s, state: { next: "a" } })).toEqual(s === "stopped" ? ["retry", "cancel"] : ["retry"]);
     }
+    expect(rh.runActions({ status: "stopped", refinement: "s1" })).toEqual([]);
+    expect(rh.runActions({ status: "stopped", next: { kind: "issue_closed" } })).toEqual(["cancel"]);
   });
 
   it("headerFacts: the keys per role", () => {

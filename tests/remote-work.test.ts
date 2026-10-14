@@ -152,7 +152,7 @@ describe("runs", () => {
     expect((await runOf(slow)).status).toBe("running");
     expect((await scf(["runs", "cancel", slow, "--yes"])).out).toBe(`run ${slow} is cancelled`);
     await until(slow, "cancelled");
-    expect((await scf(["runs", "cancel", slow, "--yes"])).out).toBe(`run ${slow} is not running or queued: nothing to cancel`);
+    expect((await scf(["runs", "cancel", slow, "--yes"])).out).toBe(`run ${slow} is not running, queued, waiting or stopped: nothing to cancel`);
   });
 
   it("gives a user their own runs only, and refuses the admin commands", async () => {

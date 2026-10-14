@@ -72,6 +72,8 @@ export interface RunSummary {
   repo: string;
   status: RunStatus;
   reason?: string;
+  /** When a watcher saw the run's open issue without its trigger label while the run waited for answers or was cancelled while stopped. A resume removes it. */
+  parkedAt?: string;
   runDir: string;
   workdir?: string;
   branch?: string;
@@ -279,6 +281,42 @@ export function adoptRun(runDir: string, owner: string, hooks: { beforeSwap?: ()
  * nothing is replaced. Returns true when the file was replaced. Never throws.
  */
 export function setRunArchived(runDir: string, at: string | null, by?: string, hooks: { beforeSwap?: () => void } = {}): boolean {
+  return rewriteRunMark(
+    runDir,
+    (s) => {
+      if (s.status === "running" && pidAlive(s.pid)) return undefined;
+      if ((typeof s.archivedAt === "string") === (at !== null)) return undefined;
+      let next: Record<string, unknown>;
+      if (at !== null) next = { ...s, archivedAt: at, ...(by ? { archivedBy: by } : {}) };
+      else {
+        next = { ...s };
+        delete next.archivedAt;
+        delete next.archivedBy;
+      }
+      return next;
+    },
+    hooks,
+  );
+}
+
+/** Sets the parked mark of a stopped or cancelled run (once). Changes nothing else. Returns true when the file was replaced. Never throws. */
+export function setRunParked(runDir: string, at: string): boolean {
+  return rewriteRunMark(runDir, (s) => {
+    if ((s.status !== "stopped" && s.status !== "cancelled") || typeof s.parkedAt === "string") return undefined;
+    return { ...s, parkedAt: at };
+  });
+}
+
+/** The reason of a run cancelled while it was stopped: it sets this cancel apart from an aborted running run, which a watcher resumes. */
+export const STOPPED_CANCEL_REASON = "cancelled by user while stopped";
+export const isStoppedCancel = (reason?: string): boolean => reason === STOPPED_CANCEL_REASON;
+
+/**
+ * Rewrites run.json with `change` and changes nothing else (not the file time or the mode). `change` returns the new
+ * content, or undefined to skip. Written beside the file and renamed over it; if run.json changed in between, nothing
+ * is replaced. Returns true when the file was replaced. Never throws.
+ */
+function rewriteRunMark(runDir: string, change: (s: Record<string, unknown>) => Record<string, unknown> | undefined, hooks: { beforeSwap?: () => void } = {}): boolean {
   const file = runFile(runDir);
   const tmp = `${file}.${randomBytes(6).toString("hex")}.tmp`;
   try {
@@ -286,15 +324,8 @@ export function setRunArchived(runDir: string, at: string | null, by?: string, h
     const text = readFileSync(file, "utf8");
     const s = JSON.parse(text) as Record<string, unknown>;
     if (!s || typeof s !== "object" || Array.isArray(s)) return false;
-    if (s.status === "running" && pidAlive(s.pid)) return false;
-    if ((typeof s.archivedAt === "string") === (at !== null)) return false;
-    let next: Record<string, unknown>;
-    if (at !== null) next = { ...s, archivedAt: at, ...(by ? { archivedBy: by } : {}) };
-    else {
-      next = { ...s };
-      delete next.archivedAt;
-      delete next.archivedBy;
-    }
+    const next = change(s);
+    if (!next) return false;
     writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: st.mode & 0o777, flag: "wx" });
     chmodSync(tmp, st.mode & 0o777);
     utimesSync(tmp, st.atime, new Date(Math.round(st.mtimeMs)));

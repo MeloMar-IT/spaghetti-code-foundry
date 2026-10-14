@@ -30,7 +30,7 @@ import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
 import { markRunning, sweepRunning, unmarkRunning } from "./running.js";
-import { answerRoom, appendLiveLog, loadRun, runFile, saveRun, spentToday, spentTodayBy, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
+import { answerRoom, appendLiveLog, isStoppedCancel, loadRun, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
@@ -183,7 +183,7 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   if (!summary.flowDef.steps.some((s) => s.id === from)) throw new Error(`unknown step "${from}"`);
 
   const decision = opts.decision && summary.waiting ? { ...opts.decision, stepId: summary.waiting.stepId } : undefined;
-  Object.assign(summary, { status: "running" as RunStatus, reason: undefined, failureNote: undefined, finishedAt: undefined, archivedAt: undefined, archivedBy: undefined, resumes: (summary.resumes ?? 0) + 1, resumeLog: [...(summary.resumeLog ?? []), { at: new Date().toISOString(), from }].slice(-50) });
+  Object.assign(summary, { status: "running" as RunStatus, reason: undefined, failureNote: undefined, finishedAt: undefined, archivedAt: undefined, archivedBy: undefined, parkedAt: undefined, resumes: (summary.resumes ?? 0) + 1, resumeLog: [...(summary.resumeLog ?? []), { at: new Date().toISOString(), from }].slice(-50) });
   summary.pid = process.pid;
   summary.stepStartedAt = undefined; // an old step time must not show on the resumed run
   claimRunStart(opts.runsDir, () => saveRun(summary));
@@ -348,6 +348,22 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   return s;
 }
 
+/** Cancel a run that stopped (no process runs for it). Returns the saved run; undefined when it is not stopped. */
+export function cancelStoppedRun(runsDir: string, runId: string, config: Config = loadConfig(), by?: Actor): RunSummary | undefined {
+  const s = loadRun(runsDir, runId);
+  if (!s || s.status !== "stopped") return undefined;
+  s.status = "cancelled";
+  s.reason = STOPPED_CANCEL_REASON;
+  s.finishedAt = new Date().toISOString();
+  if (!removeSignInDir(s.runDir)) appendLiveLog(s.runDir, "! the sign-in folder of this run could not be removed");
+  saveRun(s);
+  runRecorder(s).ended(s, { cancelledBy: by });
+  finalizeRunEvidence(s);
+  appendLiveLog(s.runDir, "■ cancelled while stopped");
+  void notifyRun(config, s).catch(() => {});
+  return s;
+}
+
 export class AnswerRefused extends Error {
   constructor(public kind: "state" | "size" | "secrets", message: string) {
     super(message);
@@ -398,6 +414,11 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
     }
   }
   await notifyRun(config, summary).catch(() => {});
+  if (summary.status === "stopped") {
+    // Cancelled while the notification ran: the saved cancel stands, and the caller must see it.
+    const disk = loadRun(opts.runsDir, summary.runId);
+    if (disk?.status === "cancelled" && isStoppedCancel(disk.reason)) Object.assign(summary, { status: disk.status, reason: disk.reason, finishedAt: disk.finishedAt });
+  }
   return summary;
 }
 

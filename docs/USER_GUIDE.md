@@ -614,8 +614,9 @@ a **What happens next** block with **You** as who and the approval message as th
 
   The private folder is `<run folder>/home/.codex`, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. A Codex reviewer step (`skill_role: reviewer`) always switches off MCP servers and hooks; it gets `--ignore-user-config` in login mode and, as before, when `isolate_agents` is off. `OPENAI_API_KEY` alone does not select it. The Foundry never passes `--ignore-rules`, so in login mode your command rules still apply. If the private folder cannot be made, the step is refused; it never falls back to your personal folder. With `isolate_agents: false`, or in a user's run held by the OS sandbox, nothing changes: no flag, no note, no "Codex:" line.
 - **Retry from step…** re-runs from any earlier step.
-- **Cancel** stops a running run, or a run that waits for approval; you can resume it later.
+- **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
+  A stopped run (for example one that waits for your answers) cancelled this way is saved as "cancelled — nothing to do": nothing continues it and it leaves every list of things that wait. `scf runs cancel <id>` and `POST /api/runs/:id/cancel` do the same. A refinement session is not cancelled this way.
 - **Archive** takes a finished run (succeeded, failed, cancelled or stopped) out of the list of runs,
   so the list shows current work. Nothing is deleted: `GET /api/runs?archived=1` lists the archived
   runs, and the run, its log and its changes open as before. **Unarchive** puts it back. On the runs
@@ -805,6 +806,8 @@ Every status in the app has a **?** that shows the two sentences from this table
 | working | The Foundry is working on it right now. Nothing to do — you can follow it on the run page. |
 | interrupted | The run was cut off, for example by a restart of the server. A watched issue resumes by itself at the next check, any other run you resume on its page. |
 | cancelled | Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it. |
+| cancelled — nothing to do | Someone cancelled the run while it was stopped, so nothing continues it. Nothing to do — resume it on its page if you still want the work. |
+| parked — not tracked by a watcher | The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run. |
 | failed | A step failed and the run could not go on. Fix the cause if needed, then start over or resume the run at the failed step. When the Foundry itself failed: The Foundry itself failed, not the code: a blocked command, a marker it could not read or a broken setting. Follow the suggested fix, then start over or resume the run. |
 | watcher error | The watcher could not do its check, so its issues do not move. Look at the error on the Watchers page and fix the cause, it then tries again at the next check. |
 | bug stories stopped | The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page. |
@@ -1606,6 +1609,16 @@ answered and cannot continue yet shows `factory:working`. The label comes back o
 unanswered questions. A waiting label on an issue that has no run is left alone: remove the label
 to start the issue.
 
+**Parked stories.** To park a story, remove its Foundry labels (or only the trigger label). A run
+that stopped with questions, or was cancelled while it was stopped, is then parked at the next
+check: the watcher marks the run as parked, and the overview shows "parked — not tracked by a
+watcher" with nothing to do. Nothing continues the run, and answering on the issue does not start
+it. **Needs you** leaves the story out too. Add the trigger label again and the story starts over
+with a new run, which the overview then follows; the old stopped run does not block it. A story that still has the trigger label after its stopped run was cancelled is not
+started again by itself; the overview says "cancelled — nothing to do". To start it again, remove
+and add the trigger label, or resume the run on its page. Stopped runs that wait for a release or
+a code area are not parked.
+
 More options are set in `~/.spaghetti-code-foundry/config.yaml` (the form keeps them when you edit the
 watcher). This is the watcher for the [one-label pipeline](#the-label-pipeline-one-label--plan--code--one-pull-request):
 
@@ -1917,6 +1930,7 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   later; the label stays `Factory_working`.
 - **The Foundry isn't running.** Watchers only run while `scf ui` / `scf serve` runs.
 - **It has an excluded label** such as `geni`.
+- **The story is parked.** Its trigger label was removed while its run waited for your answers, or the run was cancelled while stopped. Nothing is asked of you and nothing runs: the overview says "parked — not tracked by a watcher". Add the trigger label again to start the story over (see [How issue watchers use labels](#how-issue-watchers-use-labels)).
 - **The issue was closed on GitHub, but its run is still working.** The
   line says so and links to the run page. Cancel the run there if the work is no longer wanted;
   if the issue was closed by the run itself (report, split, merge) you see nothing.
@@ -3066,7 +3080,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
-| `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
+| `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
 | `POST /api/runs/:id/archive` | yes | own runs | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
 | `POST /api/runs/:id/unarchive` | yes | own runs | take a run out of the archive again |
 | `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see "A run of a closed issue" in chapter 3) |

@@ -28,6 +28,7 @@ if [ -n "$FAKE_GH_HOLD" ]; then case "$*" in *"$FAKE_GH_HOLD_ON"*) while [ -e "$
 if [ -n "$FAKE_GH_HOLD2" ]; then case "$*" in *"$FAKE_GH_HOLD2_ON"*) while [ -e "$FAKE_GH_HOLD2" ]; do sleep 0.05; done ;; esac; fi
 # $FAKE_GH_FAIL="issue list": that call prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
+# $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
 # $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" answers with that entry.
 # $FAKE_GH_COMMENTS_FROM_LOG=1: the same answer is built from the comments logged in $FAKE_GH_LOG when none of the above is set.
@@ -191,7 +192,10 @@ case "$1 $2" in
   "issue close") ;;
   "issue list")  case "$*" in *"--state closed"*) printf '%s' "${FAKE_GH_CLOSED_ISSUES:-[]}" ;;
                    *"--search"*) printf '%s' "${FAKE_GH_PRIORITY_ISSUES:-${FAKE_GH_ISSUES:-[]}}" ;;
-                   *) printf '%s' "${FAKE_GH_ISSUES:-[]}" ;; esac ;;
+                   *) if [ -n "$FAKE_GH_LABEL_FILTER" ]; then
+                        lab=""; prev=""; for a in "$@"; do [ "$prev" = "--label" ] && lab="$a"; prev="$a"; done
+                        node -e 'const l=JSON.parse(process.env.FAKE_GH_ISSUES||"[]"),w=process.argv[1];process.stdout.write(JSON.stringify(w?l.filter(i=>(i.labels||[]).some(y=>y.name===w)):l))' "$lab"
+                      else printf '%s' "${FAKE_GH_ISSUES:-[]}"; fi ;; esac ;;
   "pr list")     case "$*" in *"--state merged"*) printf '%s' "${FAKE_GH_MERGED_PRS:-[]}"; exit 0 ;; esac
                  if [ -n "$FAKE_GH_PRS" ]; then printf '%s' "$FAKE_GH_PRS"; elif [ -f "$FAKE_GH_LOG.prs.json" ]; then cat "$FAKE_GH_LOG.prs.json"; else echo '[]'; fi ;;
   "issue edit") case "$*" in *--body-file*) echo "--- issue body edit: $*" >> "$FAKE_GH_LOG"; cat >> "$FAKE_GH_LOG" ;; esac

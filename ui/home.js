@@ -16,7 +16,7 @@ const REFRESH_MS = 30_000;
 // Addresses the user display has a page for (see USER_HASH in auth.js).
 const USER_PAGE = /^#\/(home|start|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos)$/;
 // Records that end the story of a run: nothing is running and nothing waits.
-const ENDED = new Set(["cancelled", "superseded", "issue_closed"]);
+const ENDED = new Set(["cancelled", "superseded", "issue_closed", "parked"]);
 
 /**
  * The runs plus every active job whose run is not in the list (the list is the newest 200): those are fetched one by

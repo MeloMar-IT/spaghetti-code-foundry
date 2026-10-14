@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { WatcherSchema } from "../src/config.js";
-import { USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
+import { STOPPED_CANCEL_REASON, USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { statusName } from "../src/words.js";
 import type { RunNextOptions } from "../src/next-step.js";
 import { briefFailure, COMMENT_KINDS, REPORT_KINDS, reportFirst, commentFirst, commentText, firstLine, countQuestions, nextStep, nextStepEnv, releaseAtFor, releaseWatchersFor, runClosedIssue, runNextStep, trackingWatcher, type NextKind, type NextStep } from "../src/next-step.js";
@@ -537,6 +537,13 @@ describe("runNextStep", () => {
     expect(k({ status: "failed", reason: "run budget of $2 reached" })).toBe("failed");
     expect(k({ status: "failed", reason: 'step "x" failed: exit code 1' })).toBe("failed");
     expect(k({ status: "cancelled" })).toBe("cancelled");
+    expect(k({ status: "stopped", reason: 'stopped at step "send_back" — needs attention', parkedAt: "2026-10-01T09:00:00Z" })).toBe("parked");
+    expect(k({ status: "stopped", reason: 'stopped at step "ask_for_info" — needs attention', parkedAt: "2026-10-01T09:00:00Z" })).toBe("parked");
+    expect(k({ status: "stopped", reason: 'stopped at step "wait_for_merge" — needs attention', parkedAt: "2026-10-01T09:00:00Z" })).toBe("release");
+    const ended = runNextStep(run({ status: "cancelled", reason: STOPPED_CANCEL_REASON }), watched);
+    expect(ended).toMatchObject({ kind: "cancelled", ended: true, who: "Foundry", status: "cancelled — nothing to do" });
+    expect(runNextStep(run({ status: "cancelled", reason: STOPPED_CANCEL_REASON }), { ...watched, retired: true }).ended).toBe(true);
+    expect(runNextStep(run({ status: "cancelled" }), watched).ended).toBeUndefined();
     expect(k({ status: "running" })).toBe("running");
   });
   it("tells approval steps apart", () => {

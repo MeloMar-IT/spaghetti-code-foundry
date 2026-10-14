@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
 import { architectWorking } from "../src/refinement/architect.js";
 import { END_ON_GITHUB, beginPublishing, endPublishing, refinementsPath } from "../src/refinement/store.js";
@@ -283,6 +283,17 @@ describe("paused", () => {
     expect(s.architect).toMatchObject({ state: "failed", reason: "It was cancelled" });
     const again = (await ask(id)).json();
     expect(again.architect.runId).not.toBe(first);
+  });
+
+  it("drops a paused read through the scheduler, so a queued resume is removed too, and keeps its own reason", async () => {
+    const id = await make(ann, "acme/app", "CLAUDE_LIMIT please");
+    const first = (await ask(id)).json().architect.runId;
+    await paused(id);
+    const cancel = vi.spyOn(started!.ctx.scheduler, "cancel");
+    expect((await call(ann, "POST", `/api/refinement/${id}/drop`)).status).toBe(200);
+    expect(cancel).toHaveBeenCalledWith(first);
+    expect(runJson(first)).toMatchObject({ status: "cancelled", reason: "cancelled by user" });
+    cancel.mockRestore();
   });
 });
 
