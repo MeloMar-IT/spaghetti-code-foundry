@@ -1,5 +1,6 @@
 import { api, configVersion } from "./api.js";
-import { fieldFor, h, markInvalid, mount, toast } from "./dom.js";
+import { confirmDialog, fieldFor, h, markInvalid, mount, toast } from "./dom.js";
+import { skillsSection } from "./settings-skills.js";
 import { check, input, lockReadOnly } from "./fields.js";
 import { poller } from "./live.js";
 import { loadingState } from "./states.js";
@@ -69,7 +70,8 @@ export function restartBox(view, { onRequest, onCancel, readOnly = false } = {})
 
 export async function renderSettings(main, { readOnly = false } = {}) {
   mount(main, settingsPage({ title: "Settings", sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
-  const [c, info, restart] = await Promise.all([api.config(), api.info(), api.restartState().catch(() => undefined)]);
+  const [c, info, restart, described] = await Promise.all([api.config(), api.info(), api.restartState().catch(() => undefined), api.settings().catch(() => undefined)]);
+  const skills = skillsSection(described?.settings, c.skills, { disabled: readOnly });
   let version = configVersion(c);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
   const limits = check(c.cost_limits !== false, "Enforce cost limits (run, step and daily budgets)");
@@ -137,8 +139,15 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const SETTINGS_PAIRS = Object.keys(fields).map((k) => [new RegExp(k === "name" || k === "email" || k === "repo" || k === "command" ? `"${k}"` : `\\b${k}\\b`), k]);
 
   const save = async () => {
+    const risks = skills.risks();
+    if (risks.length && !(await confirmDialog({ title: "Lower the safety of skills?", text: risks.map((r) => r.text).join(" "), confirm: "Save anyway" }))) {
+      saveNote.setAttribute("class", "status bad");
+      mount(saveNote, "Not saved.");
+      return;
+    }
     const next = {
       ...c,
+      skills: skills.value(),
       ui: { ...c.ui, redesign: redesign.el.checked },
       audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
       server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, insecure: insecure.el.checked }),
@@ -165,6 +174,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     try {
       const saved = await api.saveConfig(next, version);
       version = configVersion(saved) ?? version;
+      skills.saved(next.skills);
       hookSet = saved?.notify?.slack_webhook_set === true;
       mount(slackState, hookSet ? "set" : "not set");
       slack.value = "";
@@ -220,6 +230,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       h("p", { class: "muted text-sm mt-4 mb-10" }, "Off by default. Without the sandbox, a shell step of a user's run can read this Mac account's files."),
       f("Docker image for sandboxed shell steps", sbxImage, "Steps marked “Run in Docker” (like tests) run in this image with only the workspace mounted."),
       f("Keep the audit log for … days", auditDays, "1 to 3650. Older lines are removed when the server starts and once a day.")),
+    skills.el,
     section("Notifications",
       macos.row,
       h("p", { class: "muted text-sm mt-4 mb-10" },

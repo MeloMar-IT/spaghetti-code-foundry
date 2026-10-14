@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { describeSettings } from "../src/settings/describe.js";
 import { audit } from "./helpers/a11y.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
@@ -122,7 +123,7 @@ const press = (el: FakeElement) => el.click();
 
 describe("pages", () => {
   it("Settings", async () => {
-    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" } };
+    routes = { "GET /api/config": config, "GET /api/settings": { settings: describeSettings(), startup: [] }, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" } };
     await m.admin.renderSettings(main());
     noViolations(main());
     const boxes = controls(main()).filter((c) => c.attrs.type === "checkbox");
@@ -848,7 +849,7 @@ describe("Models", () => {
 
 describe("Settings", () => {
   const show = async () => {
-    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" } };
+    routes = { "GET /api/config": config, "GET /api/settings": { settings: describeSettings(), startup: [] }, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" } };
     await m.admin.renderSettings(main());
   };
   it("a refused save is an alert", async () => {

@@ -180,6 +180,7 @@ export const api = {
   setEpic: (id, issue) => req("PUT", `/api/refinement/${enc(id)}/epic`, { issue }),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),
+  settings: () => req("GET", "/api/settings"),
   restartState: () => req("GET", "/api/restart"),
   requestRestart: () => req("POST", "/api/restart"),
   cancelRestart: () => req("DELETE", "/api/restart"),

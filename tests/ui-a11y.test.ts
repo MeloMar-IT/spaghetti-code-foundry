@@ -70,6 +70,16 @@ describe("field-label", () => {
     expect(rules(root(h("input", { "aria-label": "Name" })))).toEqual([]);
     expect(rules(root(h("span", { id: "n" }, "Name"), h("input", { "aria-labelledby": "n" })))).toEqual([]);
   });
+  it("passes with a label[for] that names the control's id", () => {
+    expect(rules(root(h("label", { for: "n" }, "Name"), h("input", { id: "n" })))).toEqual([]);
+    expect(rules(root(h("label", { for: "n" }, "Name"), h("select", { id: "n" })))).toEqual([]);
+    expect(rules(root(h("label", { for: "n" }, "Name"), h("textarea", { id: "n" })))).toEqual([]);
+  });
+  it("fails when label[for] names another id, has no text or the control has no id", () => {
+    expect(rules(root(h("label", { for: "x" }, "Name"), h("input", { id: "n" })))).toEqual(["field-label"]);
+    expect(rules(root(h("label", { for: "n" }), h("input", { id: "n" })))).toEqual(["field-label"]);
+    expect(rules(root(h("label", { for: "n" }, "Name"), h("input")))).toEqual(["field-label"]);
+  });
   it("does not accept a sibling label", () => {
     expect(rules(root(h("label", {}, "Name"), h("input")))).toEqual(["field-label"]);
   });

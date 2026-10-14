@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { describeSettings } from "../src/settings/describe.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -31,6 +32,7 @@ beforeEach(() => {
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET") {
       if (configGate) await configGate;
+      if (url === "/api/settings") return reply({ settings: describeSettings(), startup: [] });
       return url === "/api/config" ? reply(config) : reply(info);
     }
     sent.push({ method: init.method, url, body: init.body ? JSON.parse(init.body) : undefined });

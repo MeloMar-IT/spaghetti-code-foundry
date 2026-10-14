@@ -63,6 +63,9 @@ export function audit(root: FakeElement): Violation[] {
   const all = walk(root);
   const ids = new Map<string, FakeElement>();
   for (const el of all) if (attr(el, "id")) ids.set(attr(el, "id")!, el);
+  // a <label for="id"> with text names the control with that id
+  const labelFor = new Set<string>();
+  for (const el of all) if (el.tag === "label" && attr(el, "for") && text(el)) labelFor.add(attr(el, "for")!);
   const out: Violation[] = [];
   const add = (rule: string, el: FakeElement) => out.push({ rule, severity: "serious", element: describe(el) });
 
@@ -74,7 +77,8 @@ export function audit(root: FakeElement): Violation[] {
     if (["input", "select", "textarea"].includes(el.tag)) {
       let inLabel = false;
       for (let p = el.parent; p; p = p.parent) if (p.tag === "label") inLabel = true;
-      if (!inLabel && !named(el, ids)) add("field-label", el);
+      const id = attr(el, "id");
+      if (!inLabel && !named(el, ids) && !(id && labelFor.has(id))) add("field-label", el);
     }
     if (el.listeners.click?.length && !isNative(el) && attr(el, "data-a11y-skip") !== "stop") {
       if (!role || attr(el, "tabindex") !== "0" || !el.listeners.keydown?.length) add("click-needs-key", el);

@@ -2353,6 +2353,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 - **Approval steps** in flows let you decide before anything irreversible happens (the risk gate
   and the split approval are approval steps).
 
+**Skills** — the Skills card (after **Safety**) changes the skill folders, the sources and the limits without editing `config.yaml`. It has one control for each `skills.*` setting of the sources, the catalogue, the selection, the review checks and the skills that cannot be used (`skills.releases.approved` and `skills.tools` come later). Each control's hint gives the default; changes take effect when a run starts or resumes. Before a save, a change that lowers safety asks first in a dialog that names each risk, and **Cancel** saves nothing. The risky changes are: turning on **repository** skills or **unreleased** releases, adding a folder to **roots**, setting an unresolved case to `warn` (a skill that is unknown, not installed, not from an approved release, in conflict or too large no longer stops a run), and removing a term from the high-risk list. Turning a risky value back off, or removing a folder, asks nothing. The dialog exists because those settings let skills the approved catalogue does not vouch for reach the agents, or let a run continue past a skill it should stop for. If the server cannot describe the skills settings, the card says so and a save keeps them unchanged. Stored as `skills` in `config.yaml`.
+
 **Notifications** — macOS notifications and a Slack webhook tell you only when something new
 lands under **Needs you** on Home (a question, a risky plan or split, a release pull request, a failure, a
 watcher error). Nothing is sent for progress. A run that succeeds is told only if you switch on
@@ -3289,6 +3291,7 @@ skills:
 - **Problems are never silent:** a missing, unreadable or refused folder, an invalid package and a symlinked package are each named in health and in `scf skills`.
 - **Personal folders are never scanned:** the config refuses a root with a `.claude` or `.codex` path segment. The registry also refuses `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and symlinks into them.
 - **Limits:** 500 folders per root; 1000 packages or 64 MiB of files in all. The result is cached for 60 seconds.
+- **Settings card:** an admin can change these keys on the Skills card of Settings (see [Settings and safety](#7-settings-and-safety)); a change that lowers safety asks first.
 
 #### Credentials, endpoints and connectors
 
