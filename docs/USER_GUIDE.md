@@ -3683,6 +3683,31 @@ When two or more skills overlap, a collision is reported with one class, one rea
 - **What is held back.** An entry is held back from the planner when its approved copies are in `version-reuse`, `id-conflict` or `mirror.settings-differ`. An unapproved copy is never offered, and it cannot hold back an approved one. Forks and capability overlaps stay offered, each under its own id.
 - **Limits.** A collision check covers at most 1,000 skills. A larger set is refused.
 
+#### Overlap with the catalogue
+
+`scf skills overlap <source-id>` compares the staged import of a source with the skills already in the catalogue (built-in and administrator). For each capability the two share, it says which skill is canonical, or that the conflict is unresolved. It is offline and read-only, like [Check a promotion](#check-a-promotion): nothing is written, loaded, pinned or run, and no run reads its report.
+
+```
+scf skills overlap example-skills
+```
+
+```
+CANONICAL code-review: review-guide@2.0.0 (trust-tier)
+REJECTED community-review@0.4.0: outranked
+CONFLICT kafka-producer: tie kafka-basics@1.0.0, kafka-producer-pro@1.0.0
+NEW kafka-admin: kafka-admin@0.1.0 provider confluent
+OVERLAP 6 skills from github.com/example/skills@0123456789ab sha256:…: 4 shared, 1 new, 2 vendor-only, 1 conflicts
+```
+
+- **What it reads.** The staged import, normalized, with the source profile applied (see [Source profile](#skill-library-sources)), and the registered skills. Registered skills from the repository are not compared.
+- **Lines.** `CANONICAL <capability>: <id@version> (<level>)` names the winner and the level that decided it (`trust-tier`, `specificity`, and so on; `only-candidate` when nothing else competed). Each loser has a `REJECTED <id@version>: <code>` line under it. `CONFLICT <capability>: <rule> <ids>` names the skills that cannot be decided: `tie` (two skills tie on a high-risk capability and only age or name separates them), `mandatory` (a skill in `skills.selection.include` is not the canonical one) or `winners-overlap` (the best skill for one capability is not the best for another capability it also provides). `NONE <capability>: no skill can be used` means every candidate is rejected. `NEW <capability>: <id@version>` is a capability only the source declares. A skill with provider requirements prints its `provider <name>` on each line.
+- **Rejection codes.** `safety` (an open high finding of the scan, or a failed promotion blocker), `licence` (the licence is not allowed, or `licence.reviewed` is missing or stale), `tools` and the codes of the selection rules (`revoked`, `quarantined`, `discovery-only`, `incompatible`, `compatibility-unchecked`). A skill with a failed gate can never be canonical.
+- **Vendor scope.** A vendor-scoped capability (the source profile's `<provider>-<capability>`) is shared only with a registered skill of the same provider, never with a portable skill. The `OVERLAP` line says how many capabilities were kept vendor-only. A capability that is portable for one staged skill and vendor-scoped for another is a `PROBLEM`.
+- **Problems.** `PROBLEM` lines name the skill and a fixed code: `profile` (the source profile cannot be applied), `scope-collision`, `blocking-collision` (a collision with another skill holds it back), a skill that could not be normalized, or a catalogue that could not be read in full. A damaged staged import prints a fixed text and no reason.
+- **Exit codes.** 0 when there is no conflict and no `PROBLEM`. 1 for a conflict or a `PROBLEM`. `NEW`, `NONE` and `REJECTED` lines alone do not change the exit code.
+- **Order and text.** The same input in any order prints the same lines. Only slugs, versions, codes and levels are printed: no description, name or path of an upstream skill.
+- **Limits.** The staged skills and the registered skills together are at most 1,000. A larger set prints `PROBLEM too many skills or capabilities to compare` and exits 1.
+
 #### Discover candidate sources from Skills.sh
 
 `scf skills discover [<export-file> [<file>]]` proposes candidate sources from a saved Skills.sh export. It does not call Skills.sh and does not scrape it. Nothing it finds is approved, fetched or staged. You add a source to `skill-sources.yaml` by hand.
@@ -4246,6 +4271,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
+| `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `PROBLEM` and `OVERLAP` lines; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
