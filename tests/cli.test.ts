@@ -464,6 +464,40 @@ describe("data folder", () => {
     expect(r.stderr).toContain("scf skills promote check <source-id> [<exceptions-file>]");
   });
 
+  it("scf skills score and gate are in the help and check their syntax first", () => {
+    const { home } = withHome();
+    const help = scf(["--help"], home).stdout;
+    for (const sub of ["score", "gate"]) {
+      expect(help).toContain(`scf skills ${sub} <source-id> [<suite-file>]`);
+      const r = scf(["skills", sub], home);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain(`scf skills ${sub} <source-id> [<suite-file>]`);
+    }
+  });
+
+  it("scf skills score and gate leave an old data folder alone: no move, no copy, no lock", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    writeFileSync(
+      join(home, "skill-sources.yaml"),
+      ["schema: 1", "sources:", "  - id: example-skills", "    repository: https://github.com/example/skills", "    status: disabled", "    reason: domain not selected", "    ref: {track: main}", "    paths: [skills]", "    adapter: agent-skills", "    trust: community", "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'", ""].join("\n"),
+    );
+    const snap = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        const p = join(d, e.name);
+        return e.isDirectory() ? [p, ...snap(p)] : [`${p} ${readFileSync(p).toString("hex")}`];
+      });
+    const before = snap(home);
+    for (const sub of ["score", "gate"]) {
+      const r = spawnSync(process.execPath, [cli, "skills", sub, "example-skills"], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("PROBLEM source example-skills has no approved commit");
+      expect(r.stderr).not.toContain("note:");
+      expect(existsSync(newDir)).toBe(false);
+      expect(snap(home)).toEqual(before);
+    }
+  });
+
   it("--help shows the old folder while only that exists, and does not move it", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);

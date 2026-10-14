@@ -14,7 +14,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { SkillImportError, type ImportRecord } from "./import-plan.js";
-import { readStagedImport } from "./import-stage.js";
+import { EVALUATION_SUITE_DEFAULT } from "./evaluation-rules.js";
+import { evaluateOperandsProblem, gateImport, scoreImport } from "./evaluate-cli.js";
+import { filesOf, hidden, loadExceptions, plural, stagedImport } from "./cli-staged.js";
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
 import { licenceReviewProblem, reviewImport } from "./licence-review.js";
@@ -42,9 +44,11 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
        scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
        scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence and findings allow promotion; reads only
+       scf skills score <source-id> [<suite-file>]               Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT})
+       scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], promote: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], promote: [], score: [], gate: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -121,65 +125,6 @@ function selectionsCheck(file: string, out: (line: string) => void, today: strin
   }
   out(`OK ${r.manifest.selections.length} selections`);
   return 0;
-}
-
-/** Free text from a record is printed only when it holds no credential. */
-const hidden = (s: string): string => (credentialProblem(s) ? "(hidden)" : s);
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-type StagedOk = Extract<ReturnType<typeof readStagedImport>, { state: "ok" }>;
-interface StagedImport { source: SkillLibrarySource; commit: string; record: ImportRecord; files: Map<string, Uint8Array>; licence: StagedOk["licence"] }
-
-/**
- * Finds the source, checks its approved commit, reads the staged import and proves it matches import.json. Prints a PROBLEM and
- * returns undefined when it cannot. `between` runs after the source is found and before the staged import is read; false stops
- * (it has printed its own PROBLEM).
- */
-function stagedImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string; today?: string }, between?: () => boolean, done = "scanned"): StagedImport | undefined {
-  const problem = (text: string): undefined => {
-    out(`PROBLEM ${text}`);
-    return undefined;
-  };
-  const sources = readSources(resolve(opts.cwd, SOURCES_FILE), undefined, opts.today);
-  if (sources.state === "none") return problem("the skill source file does not exist");
-  if (sources.state === "invalid") {
-    for (const p of sources.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return undefined;
-  }
-  const source = sources.manifest.sources.find((s) => s.id === id);
-  if (!source) return problem(`unknown source ${shownValue(id)}`);
-  const commit = source.ref.approved;
-  if (!commit) return problem(`source ${source.id} has no approved commit (ref.approved)`);
-  if (between && !between()) return undefined;
-
-  const staged = readStagedImport(source.id, commit, { home: opts.home });
-  if (staged.state === "none") return problem(`no staged import of ${source.id} at ${commit.slice(0, 12)}; run "scf skills import ${source.id}" first`);
-  if (staged.state === "invalid") return problem(`the staged import does not match import.json: ${staged.problem}; nothing was ${done}`);
-  if (staged.record.repositoryKey !== source.repositoryKey) return problem(`the staged import is from another repository; nothing was ${done}`);
-  return { source, commit, record: staged.record, files: staged.files, licence: staged.licence };
-}
-
-/** The exception file for `scan` and `promote check`; prints a PROBLEM and returns undefined when it cannot be used. */
-function loadExceptions(file: string | undefined, out: (line: string) => void, opts: { cwd: string; today: string }): ScanException[] | undefined {
-  const read = readScanExceptions(resolve(opts.cwd, file ?? SCAN_EXCEPTIONS_FILE), opts.today);
-  if (read.state === "invalid") {
-    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return undefined;
-  }
-  if (read.state === "none" && file !== undefined) {
-    out("PROBLEM the exception file does not exist");
-    return undefined;
-  }
-  return read.state === "ok" ? read.manifest.exceptions : [];
-}
-
-/** The files of one skill, with paths relative to its root. */
-function filesOf(root: string, files: ReadonlyMap<string, Uint8Array>): { path: string; content: Uint8Array }[] {
-  const mine: { path: string; content: Uint8Array }[] = [];
-  for (const [path, content] of files) {
-    if (root === "." || path === root || path.startsWith(root + "/")) mine.push({ path: root === "." ? path : path.slice(root.length + 1), content });
-  }
-  return mine;
 }
 
 /**
@@ -499,6 +444,13 @@ export async function skillsCommand(
   }
 
   const { skills, cwd: _cwd, now: _now, today: _today, ...discover } = opts;
+  if (sub === "score" || sub === "gate") {
+    const why = evaluateOperandsProblem(sub, operands);
+    if (why) throw syntax(why);
+    const run = sub === "score" ? scoreImport : gateImport;
+    const today = opts.today ?? new Date().toISOString().slice(0, 10);
+    return run(operands[0]!, operands[1], out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
+  }
   if (sub === "unpin") {
     const key = operands[0]!;
     if (removeSkillPin(key)) {
