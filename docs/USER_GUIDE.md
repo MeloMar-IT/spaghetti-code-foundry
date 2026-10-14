@@ -1763,6 +1763,55 @@ reinterpreting scope, or anything that needs your decision, is high).
 
 The threshold is the `auto_split_max_risk` variable (default 50).
 
+#### Stories that fix failing tests
+
+A story can be written to repair tests that already fail on the branch. Without this, the run
+stops at `baseline_failed` before it changes anything, because the tests must pass first.
+
+**Name the tests.** Under a heading `## Failing tests to fix` in the issue body, list one test per
+line, as the JUnit XML reports print it: `Class.method`.
+
+```
+## Failing tests to fix
+
+- `com.example.BarTest.parsesEmptyInput`
+- `com.example.BazTest`
+```
+
+- A line with only a class name covers every test of that class. Otherwise a name must match
+  exactly, so a part of a name never matches.
+- A list item marker and backticks are fine. Code fences and blank lines are skipped. The list ends
+  at the next heading.
+- The names come from JUnit XML reports. If the test command writes none (`TEST-*.xml` or
+  `junit*.xml` in the repository), the run stops at `baseline_failed` and says so: turn on a JUnit
+  XML reporter in the test command.
+
+**What happens when the tests fail before any change** (the tests are run once more first, as before):
+
+- **Every failing test is named:** the run goes on. The run log says `BASELINE: going on`, and the
+  report on the issue has a **Tests before the change** section with the failing tests.
+- **A failing test is not named:** the run stops at `baseline_failed`. The failure summary says that
+  the tests failed before any change, lists the failing tests that are not named, and the log shows
+  the rest. Add them to the heading and resume the run; a resume reads the issue again.
+- **No test is named:** the run stops and lists the failing tests.
+- **The tests pass before the change:** the run goes on as always. If the issue names tests, the
+  report says that they already pass.
+
+**The merge rule.** A run that went on past a red baseline is checked again after its change, on
+`test_develop` and `test_main` (and on the hotfix path of `issue-gitflow`, which also starts from a
+baseline commit that passed or was named). The check passes only when:
+
+- every named test passes, and
+- every test that passed before the change still passes, and
+- every test that failed before the change is still reported and passes. A test that is deleted,
+  renamed or skipped counts as a failure.
+
+If it does not pass, the run stops at the test step, and the log lists what is not yet right.
+
+**Not covered.** A test that fails by chance is still run only once more, not fixed by this rule. The
+baseline on `main` for a release is not changed. You cannot switch the baseline check off for a
+repository with this.
+
 #### Labels the Foundry sets
 
 | Label | Means | What you do |
@@ -4396,7 +4445,9 @@ it fails. If the key is gone (for example the data folder was copied from anothe
 removal failed after a delete or rotation; `scf credential rotate-key` clears it.
 
 **Tests fail for reasons unrelated to the change.** Set the right command with the `test_cmd`
-variable, per repository in `<repo>/.claude-factory/config.yaml`.
+variable, per repository in `<repo>/.claude-factory/config.yaml`. If the tests already fail before
+any change and the issue is meant to fix them, name them under `## Failing tests to fix`; see
+[Stories that fix failing tests](#stories-that-fix-failing-tests).
 
 ---
 

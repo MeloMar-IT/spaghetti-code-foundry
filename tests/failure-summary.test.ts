@@ -222,3 +222,35 @@ describe("failureSummary", () => {
     expect(() => failureSummary({} as never)).not.toThrow();
   });
 });
+
+describe("failureSummary: the tests failed before any change (baseline_failed)", () => {
+  const stop = (output: string, over: Partial<RunSummary> = {}) =>
+    run("failed", 'step "baseline_failed" failed: exit code 1', [rec({ id: "baseline_failed", output, error: "exit code 1" })], over);
+
+  it("names the unexpected tests and is a code problem", () => {
+    const out = "The tests already fail on develop before any change — not starting.\nBASELINE: stopped — some failing tests are not named in the issue\nfailing before the change:\n  - a.B.c\n  - a.B.d\nnot named in the issue:\n  - a.B.d\n";
+    const s = failureSummary(stop(out));
+    expect(s.cause).toBe("code");
+    expect(s.why).toBe("The tests failed before any change, and these failing tests are not named in the issue as ones to fix: a.B.d.");
+    expect(s.byModel).toBeUndefined();
+  });
+
+  it("lists the failing tests when the issue names none, with a count for the rest", () => {
+    const list = ["a", "b", "c", "d", "e", "f"].map((n) => `  - t.${n}`).join("\n");
+    const s = failureSummary(stop(`failing before the change:\n${list}\n  … and 4 more\n`));
+    expect(s.why).toBe("The tests failed before any change. Failing tests: t.a, t.b, t.c, t.d, t.e and 5 more.");
+  });
+
+  it("points to the details when no report named the tests", () => {
+    expect(failureSummary(stop("BASELINE: stopped — the failing tests could not be named")).why).toMatch(/^The tests failed before any change; no JUnit XML report named the failing tests/);
+  });
+
+  it("ignores an environment note and a network line in the log", () => {
+    const r = stop("fatal: unable to access 'https://x/': Could not resolve host: x\n", { failureNote: { kind: "environment", why: "a broken local setup", by: "m" } } as Partial<RunSummary>);
+    const s = failureSummary(r);
+    expect(classifyFailure(r).cause).toBe("code");
+    expect(s.cause).toBe("code");
+    expect(s.why).not.toContain("broken local setup");
+    expect(s.byModel).toBeUndefined();
+  });
+});
