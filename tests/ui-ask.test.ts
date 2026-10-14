@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
-import { parseCss } from "./helpers/ui-css.js";
+import { parseCss, readUiCss } from "./helpers/ui-css.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 let restore: () => void;
@@ -884,6 +884,21 @@ describe("a reply by its parts", () => {
     expect(user.all.filter((e) => e.tag === "a" && e.attrs.href === "#/settings")).toEqual([]);
     const admin = await shown(r, { role: "admin" });
     expect(admin.all.filter((e) => e.tag === "a" && e.attrs.href === "#/settings")).toHaveLength(1);
+  });
+});
+
+describe("the drawer is not caught by the rules of the page's side bar", () => {
+  // The drawer is an <aside>. A rule for every aside (`.no-side aside { display: none }`) hid it on every page but Flows:
+  // the backdrop showed and the drawer did not.
+  it("every rule outside ask.css that names an aside names the side bar of the layout only", () => {
+    const rules = parseCss(readUiCss()).filter((r) => /(^|[\s>+~,(])aside\b/.test(r.selector));
+    expect(rules.length).toBeGreaterThan(0);
+    for (const r of rules) {
+      for (const part of r.selector.split(",")) {
+        if (!/(^|[\s>+~(])aside\b/.test(part.trim())) continue;
+        expect(part.trim(), r.selector).toMatch(/\.layout > aside\b|aside\.ask-drawer|\.ask-drawer/);
+      }
+    }
   });
 });
 
