@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Settings 6b: a refused skills save shows each problem at its control (#528). Part 2 of 3 of #495 (Settings 6), part 7 of 11 of #407.
+  - **The API.** A refused `PUT /api/config` still answers 400 with `error` starting `invalid config: `, and now also `issues`: up to 50 `{ path, message }` entries with dotted paths. No stored secret (such as the Slack webhook) appears in `issues` or `error`. Older clients keep working.
+  - **The card.** Each `skills.*` issue is shown under the control with the longest described key that is its path or a dotted prefix of it (`skills.catalogue.include_x` does not match `skills.catalogue.include`). A list entry shows `Line N: …` (`Row N, <field>: …` for a record). Issues outside the skills keys stay in the banner. A successful save clears all field messages, and each holder is redrawn from the current value.
+  - **Code.** `src/server/config-view.ts` adds `ConfigIssue` and `configIssues(e)` (undefined when `e` is not a `ZodError`); `src/server/api-admin.ts` passes the issues as `HttpError`'s `extra`. `ui/settings-skills.js` adds `issueKey`, `issueText` and `showIssues`; `ui/admin.js` calls `showIssues` on a save and on an error.
+  - **Docs.** The `PUT config` rule in `src/server/permissions.ts` and its row in `docs/USER_GUIDE.md` describe `issues`; the Skills paragraph of section 7 says where the messages appear.
+  - Tests: `tests/config-view.test.ts` (paths, the plain error, the cap of 50), `tests/audit-actions.test.ts` (the include/exclude conflict and the webhook check), `tests/ui-settings-skills.test.ts` (`issueKey`, `issueText`, the blank-line regression) and `tests/ui-settings.test.ts` (a 400 with issues shows each message in its field).
 - A story that fixes failing tests can run: the red baseline stops only when a failing test is not named in the issue (#530).
   - **What it does.** An issue lists the tests it is meant to fix under a `## Failing tests to fix` heading, one per line, as `Class.method` (a class name alone covers its tests). When the tests fail before any change and every failing test is named, the run goes on instead of stopping at `baseline_failed`. The run log says `BASELINE: going on`, and the report on the issue has a "Tests before the change" section. A failing test that is not named still stops the run, and the stop lists the tests not named.
   - **Green baseline.** When the tests pass before the change, the named tests are noted as already passing. Nothing else changes.

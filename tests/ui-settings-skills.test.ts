@@ -98,6 +98,88 @@ describe("riskyChanges", () => {
   });
 });
 
+describe("issueKey and issueText", () => {
+  const keys = () => covered().map((d) => d.key);
+  it("finds the longest key that is the path or a dotted prefix", () => {
+    expect(m.issueKey("skills.catalogue.include.0", keys())).toBe("skills.catalogue.include");
+    expect(m.issueKey("skills.catalogue.include", keys())).toBe("skills.catalogue.include");
+    expect(m.issueKey("skills.catalogue.include_x", keys())).toBeUndefined();
+    for (const p of ["skills.tools.shell", "notify.slack_webhook", "skills"]) expect(m.issueKey(p, keys())).toBeUndefined();
+    expect(m.issueKey("skills.a.b.0", ["skills.a", "skills.a.b"])).toBe("skills.a.b");
+    expect(m.issueKey(5, keys())).toBeUndefined();
+  });
+  it("words the message for lists, records and scalars", () => {
+    const list = { kind: "list" };
+    const records = { kind: "list", fields: [{ key: "digest" }] };
+    expect(m.issueText("skills.roots.1", "skills.roots", "m", list)).toBe("Line 2: m");
+    expect(m.issueText("skills.roots", "skills.roots", "m", list)).toBe("m");
+    expect(m.issueText("skills.roots.x", "skills.roots", "m", list)).toBe("m");
+    expect(m.issueText("skills.releases.approved.2.digest", "skills.releases.approved", "m", records)).toBe("Row 3, digest: m");
+    expect(m.issueText("skills.releases.approved.2", "skills.releases.approved", "m", records)).toBe("Row 3: m");
+    expect(m.issueText("skills.selection.max_skills", "skills.selection.max_skills", "m", { kind: "number" })).toBe("m");
+  });
+});
+
+describe("showIssues", () => {
+  const errorsIn = (el: FakeElement, label: string) => {
+    const f = control(el, label).parent!;
+    return f.all("div").filter((d: FakeElement) => d.attrs.role === "alert");
+  };
+  const label = (key: string) => descriptions().find((d) => d.key === key)!.label;
+  const issues = [
+    { path: "skills.selection.include.0", message: '"x" is also in exclude' },
+    { path: "skills.selection.include.0", message: 'a mandatory skill is excluded from the catalogue ("x")' },
+    { path: "skills.catalogue.include", message: "more pinned skills than max_candidates" },
+    { path: "skills.roots.1", message: "personal agent folders are never scanned" },
+  ];
+  it("shows each issue at its control and returns the others", () => {
+    const s = m.skillsSection(descriptions(), skills());
+    const other = [{ path: "skills.releases.approved.0", message: "a" }, { path: "concurrency", message: "b" }];
+    const before = structuredClone(s.value());
+    expect(s.showIssues([...issues, ...other])).toEqual(other);
+    const selected = errorsIn(s.el, label("skills.selection.include")).map((e: FakeElement) => e.textContent).join("|");
+    expect(selected).toContain('Line 1: "x" is also in exclude');
+    expect(selected).toContain('Line 1: a mandatory skill is excluded from the catalogue ("x")');
+    expect(errorsIn(s.el, label("skills.catalogue.include")).map((e: FakeElement) => e.textContent)).toEqual([issues[2].message]);
+    expect(errorsIn(s.el, label("skills.roots")).map((e: FakeElement) => e.textContent)).toEqual([`Line 2: ${issues[3].message}`]);
+    expect(control(s.el, label("skills.roots")).attrs["aria-invalid"]).toBe("true");
+    expect(s.value()).toEqual(before);
+    expect(s.showIssues([])).toEqual([]);
+    expect(s.el.all("div").filter((d: FakeElement) => d.attrs.role === "alert")).toHaveLength(0);
+  });
+  it("names the line an entry is on now, after blank lines are inserted", () => {
+    const s = m.skillsSection(descriptions(), skills());
+    const set = (text: string) => {
+      const a = control(s.el, label("skills.roots")) as any;
+      a.value = text;
+      a.fire("change", { target: a });
+    };
+    set("/a\n/b/.claude");
+    s.showIssues([{ path: "skills.roots.1", message: "m" }]);
+    expect(errorsIn(s.el, label("skills.roots"))[0].textContent).toBe("Line 2: m");
+    set("\n\n/a\n\n/b/.claude");
+    s.showIssues([{ path: "skills.roots.1", message: "m" }]);
+    const area = control(s.el, label("skills.roots")) as any;
+    const n = Number(/Line (\d+)/.exec(errorsIn(s.el, label("skills.roots"))[0].textContent)![1]);
+    expect(area.value.split("\n")[n - 1]).toBe("/b/.claude");
+    expect(area.value).not.toContain("\n\n");
+  });
+  it("keeps a disabled card disabled and locks it while busy", () => {
+    const s = m.skillsSection(descriptions(), skills(), { disabled: true });
+    s.showIssues([{ path: "skills.roots.0", message: "m" }]);
+    expect(control(s.el, label("skills.roots")).attrs.disabled).not.toBeUndefined();
+    const t = m.skillsSection(descriptions(), skills());
+    t.busy(true);
+    expect(control(t.el, label("skills.roots")).attrs.disabled).not.toBeUndefined();
+    t.busy(false);
+    expect(control(t.el, label("skills.roots")).attrs.disabled).toBeUndefined();
+  });
+  it("passes issues through when nothing is described", () => {
+    const s = m.skillsSection([], skills());
+    expect(s.showIssues(issues)).toEqual(issues);
+  });
+});
+
 describe("skillsSection", () => {
   it("has one control for each covered description, in groups", () => {
     const s = m.skillsSection(descriptions(), skills());
