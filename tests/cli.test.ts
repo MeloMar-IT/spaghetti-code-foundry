@@ -381,7 +381,8 @@ describe("data folder", () => {
       [
         "schema: 1", "sources:", "  - id: example-skills", "    repository: https://github.com/example/skills", "    status: enabled",
         `    ref: {track: main, approved: '${commit}'}`, "    paths: [skills]", "    adapter: agent-skills", "    trust: community",
-        "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'", "",
+        "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'",
+        `    review: {by: '@octocat', on: '2026-01-01', commit: '${commit}', licence: MIT}`, "",
       ].join("\n"),
     );
     const parsed = readSources(join(home, "skill-sources.yaml"));

@@ -31,7 +31,8 @@ const sourceYaml = (trust = "community") =>
   [
     "schema: 1", "sources:", "  - id: lib", "    repository: https://github.com/example/skills", "    status: enabled",
     `    ref: {track: main, approved: '${COMMIT}'}`, "    paths: [skills]", "    adapter: agent-skills", `    trust: ${trust}`,
-    "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'", "",
+    "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'",
+    `    review: {by: '@octocat', on: '2026-01-01', commit: '${COMMIT}', licence: MIT}`, "",
   ].join("\n");
 function sourceWith(trust: string): SkillLibrarySource {
   const file = join(dir, `sources-${trust}.yaml`);
