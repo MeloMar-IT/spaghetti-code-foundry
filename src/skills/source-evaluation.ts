@@ -17,6 +17,8 @@ import { skillNeeds } from "./tool-policy.js";
 // Evaluates what a source record offers: compatibility, tools, access, licence and overlap with the installed skills.
 // Pure: no file system, no process, no clock. Used by `scf skills evaluate`; it stages and writes nothing.
 
+export { evaluateSourceSkills, type SourceSkillsEvaluation, type SourceSkillsInput, type SourceSkillVerdict } from "./source-skill-evaluation.js";
+
 export type TechnologyOrigin = "skill" | "source";
 type Tech = { name: string; version?: string };
 

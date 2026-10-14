@@ -4,6 +4,18 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill source connector 3: one verdict per imported skill: selection, licence, provider scope and overlaps (#516). Part 3 of 4 of #221.
+  - **What it does.** New pure module `src/skills/source-skill-evaluation.ts` with `evaluateSourceSkills`, which takes the source, the normalized skills, the selections, the licence status per skill root, the blocked skill ids from the scan, the registered skills and a `CanonicalPolicy`. Each skill gets `eligible` and a sorted list of fixed reason codes (`SOURCE_SKILL_REASONS`). `src/skills/source-evaluation.ts` re-exports it. No file system, process or clock; no run calls it yet.
+  - **Selection.** A skill with no selection is `not-selected`; a selection whose digest differs from the skill is `selection-stale`.
+  - **Licence.** A skill whose licence status is not `allowed`, or is unknown, is `licence`.
+  - **Requirements.** Declared requirements become connectors on a copy of the package (`selectionConnectors`), and the risk is raised to at least `medium`. The input skill is never changed. Such a skill is `needs-unavailable-tools` and never wins.
+  - **Undeclared Azure needs.** New data-only `src/skills/provider-rules.ts` lists Azure markers: the `az` and `azd` CLIs, Azure identity classes such as `DefaultAzureCredential`, portal and service host names, and Azure MCP tool names. A marker in a skill declared `portable` is `provider-content-in-portable`; a marker whose requirement is not declared is `undeclared-requirement`. Reports name the rule, never the text.
+  - **Metadata.** Product and SDK become `technologies`, and the declared category and capabilities are added, so the compatibility and collision checks see them.
+  - **Overlaps.** Imported and registered skills go through `classifySkillCollisions` and `selectCanonicalSkills` unchanged. The result lists each collision id, class, reason and shared capabilities. A registered skill that is the same artifact as an imported one is not reported as a collision.
+  - **Provider rule.** A `provider` skill cannot win a capability that an eligible `portable` candidate also provides, unless `policy.pins` or `policy.overrides` names it. Otherwise it is `provider-without-policy` and the selection runs again.
+  - **Order and bounds.** The result is the same for any input order and is bounded by `COLLISION_LIMITS.candidates`.
+  - **Not changed.** `canonical.ts`, `collisions.ts`, their rule files and `canonical-facts.ts`.
+  - Tests: new `tests/skill-source-skill-evaluation.test.ts` (every reason code, the Cosmos DB skill against built-in `cassandra`, pin and override, order independence, input immutability); `tests/skill-no-network.test.ts` guards the new modules. `docs/USER_GUIDE.md` is not changed, because no user-visible behaviour changed.
 - Epics 3: build order, dependency chains and the critical path (#485). Part 3 of 7 of #408.
   - **What it does.** New pure module `src/epics/chains.ts`: `buildChains` takes an epic's stories (from `src/epics/model.ts`) and the saved issue records (`IssueRecord`), and returns the build order, the chains as a graph (nodes and "depends on" edges), the outside dependencies, the cycles and the critical path. No server, no GitHub, no files, no clock. The depends-on numbers come from the records; no issue text is read.
   - **Build order.** A story comes after everything it depends on; ties go to the lower issue number. The order is the same for any input order.
