@@ -1,5 +1,6 @@
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { FACTORY_HOME } from "../flow/load.js";
 import type { Forecast } from "./forecast.js";
 
@@ -87,6 +88,25 @@ function withLock<T>(file: string, waitMs: number, fn: () => T): T {
   }
 }
 
+/** Like `withLock`, but waits without blocking the event loop. Returns the release function. */
+async function acquire(file: string, waitMs: number): Promise<() => void> {
+  const lock = `${file}.lock`;
+  const until = Date.now() + waitMs;
+  for (;;) {
+    try {
+      closeSync(openSync(lock, "wx"));
+      return () => rmSync(lock, { force: true });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) rmSync(lock, { force: true });
+      } catch { /* released meanwhile */ }
+      if (Date.now() >= until) throw new Error("The epic forecasts are being saved by another process; try again", { cause: e });
+      await delay(20);
+    }
+  }
+}
+
 /** Written to a temporary file and renamed, so a reader never sees half a file and a failure keeps the old file. */
 function write(file: string, value: RepoForecasts) {
   const tmp = `${file}.${process.pid}.tmp`;
@@ -99,7 +119,7 @@ function write(file: string, value: RepoForecasts) {
   }
 }
 
-function toStored(f: Forecast, day: string, at: string): StoredForecast | undefined {
+export function toStored(f: Forecast, day: string, at: string): StoredForecast | undefined {
   if (f.kind === "finished") return undefined;
   if (f.kind === "too-early") return { day, at, kind: "too-early", reason: f.reason };
   return { day, at, kind: "range", left: f.left, earliest: f.earliest, expected: f.expected, latest: f.latest };
@@ -128,6 +148,39 @@ export function saveForecasts(repo: string, forecasts: ReadonlyMap<string, Forec
     }
     write(file, value);
   });
+}
+
+/**
+ * Saves today's (UTC) forecast of the epics in the map that have none for today yet; the check is made inside the
+ * lock, so a day that is saved stays as it was. Finished ones are skipped. The wait for the lock does not block the
+ * event loop. Returns the keys that were saved.
+ */
+export async function saveMissingForecasts(repo: string, forecasts: ReadonlyMap<string, Forecast>, now = new Date(), lockWaitMs = LOCK_WAIT_MS): Promise<string[]> {
+  const at = now.toISOString(), day = at.slice(0, 10);
+  const file = fileOf(repo);
+  const entries = [...forecasts].flatMap(([key, f]) => {
+    const s = toStored(f, day, at);
+    return s ? [[key, s] as const] : [];
+  });
+  if (!entries.length) return [];
+  mkdirSync(epicForecastsDir(), { recursive: true });
+  const release = await acquire(file, lockWaitMs);
+  try {
+    const value: RepoForecasts = readForecasts(repo) ?? { version: 1, repo, epics: {} };
+    const saved: string[] = [];
+    for (const [key, s] of entries) {
+      const list = value.epics[key] ?? [];
+      if (list.some((e) => e.day === day)) continue;
+      list.push(s);
+      list.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
+      value.epics[key] = list.slice(-MAX_FORECAST_DAYS);
+      saved.push(key);
+    }
+    if (saved.length) write(file, value);
+    return saved;
+  } finally {
+    release();
+  }
 }
 
 /** Removes the file of the repository. */

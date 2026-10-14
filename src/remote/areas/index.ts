@@ -15,6 +15,8 @@ export const API_ONLY: Record<string, string> = {
   "GET restart": "the state the Settings page shows next to its restart box; the restart itself is asked for in the interface",
   "POST restart": "restarts the server when no story is running; asked for in the interface after a settings change",
   "DELETE restart": "cancels that wait; done in the interface",
+  "GET repos/:id/epics": "the data of the Epics view; no command line use yet (a later part of #408 adds the view)",
+  "GET repos/:id/epics/:issue": "the data of the epic page; no command line use yet (a later part of #408 adds the view)",
   "GET settings": "the description the Settings page builds its controls from; no command line use",
   "POST settings/reset": "the \"Back to default\" button of the settings pages; no command line use yet",
 };

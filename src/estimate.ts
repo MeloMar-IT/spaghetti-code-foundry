@@ -126,7 +126,7 @@ export function runProgress(run: RunSummary): RunTiming | undefined {
 }
 
 /** "4 min", "25 min", "1.5 h". */
-function span(ms: number): string {
+export function span(ms: number): string {
   const min = ms / MIN;
   if (min < 10) return `${Math.max(1, Math.round(min))} min`;
   if (min < 90) return `${Math.round(min / 5) * 5} min`;

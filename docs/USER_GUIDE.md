@@ -3152,6 +3152,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
 | `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
+| `GET /api/repos/:id/epics` | yes | yes | the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository) |
+| `GET /api/repos/:id/epics/:issue` | yes | yes | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |

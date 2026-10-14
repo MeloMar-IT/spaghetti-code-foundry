@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, utimesSync, writ
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Forecast } from "../src/epics/forecast.js";
-import { dropForecasts, epicForecastsDir, forecastHistory, MAX_FORECAST_DAYS, readForecasts, saveForecasts } from "../src/epics/forecast-store.js";
+import { dropForecasts, epicForecastsDir, forecastHistory, MAX_FORECAST_DAYS, readForecasts, saveForecasts, saveMissingForecasts } from "../src/epics/forecast-store.js";
 
 const range = (n: number): Forecast => ({
   kind: "range", earliest: `2026-11-0${n}T00:00:00Z`, expected: `2026-11-0${n + 1}T00:00:00Z`, latest: `2026-11-0${n + 2}T00:00:00Z`,
@@ -92,5 +92,36 @@ describe("forecast store", () => {
     }
     expect(readdirSync(epicForecastsDir())).toEqual([fileName]);
     expect(forecastHistory(REPO, "#1")).toHaveLength(1);
+  });
+});
+
+describe("saveMissingForecasts", () => {
+  it("keeps a day that is saved, also against a writer with another time and forecast", async () => {
+    expect(await saveMissingForecasts(REPO, new Map([["#1", range(1)]]), D("2026-10-14", 8))).toEqual(["#1"]);
+    expect(await saveMissingForecasts(REPO, new Map([["#1", range(3)]]), D("2026-10-14", 18))).toEqual([]);
+    expect(forecastHistory(REPO, "#1")).toEqual([expect.objectContaining({ day: "2026-10-14", at: "2026-10-14T08:00:00.000Z", expected: "2026-11-02T00:00:00Z" })]);
+    expect(await saveMissingForecasts(REPO, new Map([["#1", range(2)], ["#2", range(2)]]), D("2026-10-15"))).toEqual(["#1", "#2"]);
+    expect(forecastHistory(REPO, "#1").map((e) => e.day)).toEqual(["2026-10-14", "2026-10-15"]);
+  });
+  it("saves one entry when two writers race", async () => {
+    const saved = await Promise.all([
+      saveMissingForecasts(REPO, new Map([["#1", range(1)]]), D("2026-10-14", 8)),
+      saveMissingForecasts(REPO, new Map([["#1", range(3)]]), D("2026-10-14", 9)),
+    ]);
+    expect(saved.flat()).toEqual(["#1"]);
+    expect(forecastHistory(REPO, "#1")).toHaveLength(1);
+    expect(readdirSync(epicForecastsDir())).toEqual([fileName]);
+  });
+  it("skips finished epics and writes nothing for them", async () => {
+    expect(await saveMissingForecasts(REPO, new Map<string, Forecast>([["#1", { kind: "finished" }]]), D("2026-10-14"))).toEqual([]);
+    expect(readForecasts(REPO)).toBeUndefined();
+  });
+  it("gives up when another process holds the lock", async () => {
+    mkdirSync(epicForecastsDir(), { recursive: true });
+    const lock = join(epicForecastsDir(), `${fileName}.lock`);
+    writeFileSync(lock, "");
+    await expect(saveMissingForecasts(REPO, new Map([["#1", range(1)]]), D("2026-10-14"), 60)).rejects.toThrow(/another process/);
+    expect(readForecasts(REPO)).toBeUndefined();
+    rmSync(lock);
   });
 });
