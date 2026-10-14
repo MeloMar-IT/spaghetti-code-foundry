@@ -9,6 +9,24 @@ const env = (extra: Record<string, string> = {}) => ({ ...process.env, FACTORY_T
 const dir = () => mkdtempSync(join(tmpdir(), "slots-"));
 
 describe("tools/test-slot", () => {
+  it("runs the command at low priority and marks it as inside a slot; FACTORY_TEST_NICE=0 keeps the normal priority", () => {
+    const d = dir();
+    const probe = 'echo "nice=$(ps -o nice= -p $$ | tr -d " ") slot=$FACTORY_IN_TEST_SLOT"';
+    const low = spawnSync(tool, [d, "sh", "-c", probe], { env: env({ FACTORY_VAR_TEST_SLOTS: "1" }), encoding: "utf8" });
+    expect(low.stdout).toMatch(/nice=(1\d) slot=1/);
+    const normal = spawnSync(tool, [d, "sh", "-c", probe], { env: env({ FACTORY_VAR_TEST_SLOTS: "1", FACTORY_TEST_NICE: "0" }), encoding: "utf8" });
+    expect(normal.stdout).toMatch(/nice=0 slot=1/);
+  });
+
+  it("runs without a slot when the slots folder cannot be made", () => {
+    const blocker = join(dir(), "file");
+    writeFileSync(blocker, "x");
+    const r = spawnSync(tool, [join(blocker, "slots"), "sh", "-c", "echo ran"], { env: env({ FACTORY_VAR_TEST_SLOTS: "1" }), encoding: "utf8" });
+    expect(r.stdout).toContain("running without a slot");
+    expect(r.stdout).toContain("ran");
+    expect(r.status).toBe(0);
+  });
+
   it("passes the output and the exit code of the command through, and frees its slot", () => {
     const d = dir();
     const r = spawnSync(tool, [d, "sh", "-c", "echo hello; exit 3"], { env: env({ FACTORY_VAR_TEST_SLOTS: "1" }), encoding: "utf8" });

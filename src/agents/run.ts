@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { codexExecFlags, resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
@@ -12,6 +12,7 @@ import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
+import { TOOLS_DIR } from "../engine/guards.js";
 import { render } from "../engine/template.js";
 import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
@@ -51,6 +52,8 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     const short = shortEnvRun(engine.summary.owner);
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
     if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, iso ? tokenVarNames(engine.config) : []) };
+    // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder.
+    if (!boxed) env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir) };
     let profile: string | undefined;
     let bin: string | undefined;
     if (boxed) {
@@ -425,6 +428,16 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     fallbackFrom = target.label;
     target = next;
   }
+}
+
+/**
+ * The environment of the test gate of agent steps: tools/agent-bin first on the PATH and the machine's slots folder
+ * (next to `runs/`, where the test steps of a flow take theirs). The gate sends test commands through tools/test-slot.
+ */
+export function testGateEnv(path: string | undefined, runDir: string): Record<string, string> {
+  const bin = join(TOOLS_DIR, "agent-bin");
+  const rest = (path ?? "").split(delimiter).filter((p) => p && p !== bin);
+  return { PATH: [bin, ...rest].join(delimiter), FACTORY_TEST_SLOTS_DIR: join(runDir, "..", "..", "test-slots") };
 }
 
 /**

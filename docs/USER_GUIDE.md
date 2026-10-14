@@ -1988,6 +1988,15 @@ flowchart LR
 - **A few test runs at a time.** At most `test_slots` test commands (default `2`) work on the
   machine at once, over all runs and repositories; the others wait their turn. Many test runs at
   once make each of them slow and let timing-sensitive tests fail. `0` switches the limit off.
+  Test runs work at a lower priority (`nice` 10; `FACTORY_TEST_NICE` changes it, `0` keeps the
+  normal priority), so the server, its pages and the agents stay responsive while tests work.
+- **Tests an agent starts itself count too.** In an agent step, `npm`/`pnpm`/`yarn`/`bun` test
+  scripts, `npx vitest` (and jest, mocha, playwright …), `pytest`, `python -m pytest`, `gradle`/`mvn`
+  test, check, build or verify, and `go test`/`cargo test` go through the same test slots and run at
+  the same low priority (the small commands in `tools/agent-bin` come first on the agent's `PATH`).
+  An agent waits at most 5 minutes for a slot (`FACTORY_AGENT_TEST_WAIT_SEC`), then its tests run
+  anyway. Every other command runs unchanged. Not covered: a project's own wrapper started by path,
+  such as `./gradlew test`, and steps of a user's run in the OS sandbox.
 - **Small sessions for easy steps.** Writing the docs and resolving a merge conflict each start a
   fresh session with only what they need, instead of continuing the whole coding conversation. If
   the tests fail after a resolved conflict, the coding session takes over.

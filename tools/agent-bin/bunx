@@ -1,0 +1,3 @@
+#!/bin/sh
+# See _gate.mjs: test runs of an agent step go through the machine's test slots.
+exec node "${0%/*}/_gate.mjs" bunx "$@"
