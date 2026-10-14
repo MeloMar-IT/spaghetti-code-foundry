@@ -57,7 +57,7 @@ describe("the registry", () => {
 
   it("has a section for every function a kit module exports, and no other", () => {
     const names = Object.values(kitExports).flat();
-    expect(names.length).toBe(32);
+    expect(names.length).toBe(33);
     expect(new Set(names).size).toBe(names.length);
     expect(missing(names, sections)).toEqual([]);
     for (const s of sections) expect(names, s.id).toContain(s.component);
