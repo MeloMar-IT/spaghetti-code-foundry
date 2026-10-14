@@ -1,6 +1,7 @@
 import { api, configVersion } from "./api.js";
-import { fieldFor, h, markInvalid, mount, toast } from "./dom.js";
+import { confirmDialog, fieldFor, h, markInvalid, mount, toast } from "./dom.js";
 import { describedSections, hintFor, hinted, startupSection } from "./admin-sections.js";
+import { skillsSection } from "./settings-skills.js";
 import { check, field as f, input, lockReadOnly } from "./fields.js";
 import { poller } from "./live.js";
 import { loadingState } from "./states.js";
@@ -74,6 +75,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const startup = Array.isArray(s?.startup) ? s.startup : [];
   const hint = (key, extra) => hintFor(described, key, extra);
   const section = (title, ...children) => h("div", { class: "card mb-14" }, h("h3", {}, title), ...children);
+  const skills = skillsSection(described, c.skills, { disabled: readOnly });
   let version = configVersion(c);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
   const limits = check(c.cost_limits !== false, "Enforce cost limits (run, step and daily budgets)");
@@ -153,9 +155,16 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       bad.focus();
       return;
     }
+    const risks = skills.risks();
+    if (risks.length && !(await confirmDialog({ title: "Lower the safety of skills?", text: risks.map((r) => r.text).join(" "), confirm: "Save anyway" }))) {
+      saveNote.setAttribute("class", "status bad");
+      mount(saveNote, "Not saved.");
+      return;
+    }
     const v = extra.values();
     const next = {
       ...c,
+      skills: skills.value(),
       ui: { ...c.ui, redesign: redesign.el.checked },
       audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
       server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, insecure: insecure.el.checked }),
@@ -185,6 +194,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     try {
       const saved = await api.saveConfig(next, version);
       version = configVersion(saved) ?? version;
+      skills.saved(next.skills);
       hookSet = saved?.notify?.slack_webhook_set === true;
       mount(slackState, hookSet ? "set" : "not set");
       slack.value = "";
@@ -240,6 +250,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       hinted(sbxOff.row, sbxOff.el, hint("sandbox.user_runs", "Without the sandbox, a shell step of a user's run can read this Mac account's files.")),
       f("Docker image for sandboxed shell steps", sbxImage, hint("sandbox.docker_image", "Steps marked “Run in Docker” run in this image with only the workspace mounted.")),
       f("Keep the audit log for … days", auditDays, hint("audit.retention_days"))),
+    skills.el,
     ...extra.cards,
     section("Notifications",
       hinted(macos.row, macos.el, hint("notify.macos")),

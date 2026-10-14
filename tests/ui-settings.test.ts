@@ -44,7 +44,7 @@ async function render(server: Record<string, unknown>, listening = "127.0.0.1", 
       return { ok: putStatus === 200, status: putStatus, statusText: "x", json: async () => (putStatus === 200 ? config : { error: "invalid config: nope" }) };
     }
     const body = url.endsWith("/api/info") ? { configPath: "/x/config.yaml", spentToday: 0, listening }
-      : url.endsWith("/api/settings") ? { settings: describeSettings(), startup: startupSettings({ home: "/data", port: 4000, repo: "/repo", claudeBin: "claude", codexBin: "codex", ghBin: "gh" }) }
+      : url.endsWith("/api/settings") ? (oldServer ? {} : { settings: describeSettings(), startup: startupSettings({ home: "/data", port: 4000, repo: "/repo", claudeBin: "claude", codexBin: "codex", ghBin: "gh" }) })
       : config;
     return { ok: true, status: 200, statusText: "OK", json: async () => body };
   };
@@ -54,8 +54,9 @@ async function render(server: Record<string, unknown>, listening = "127.0.0.1", 
   const card = cards.find((c) => c.all("h3")[0]?.textContent === "Network")!;
   return { main, card, puts, restarts };
 }
+let oldServer = false;
 const offs: any[] = [];
-afterEach(() => { for (const o of offs.splice(0)) o?.(); });
+afterEach(() => { for (const o of offs.splice(0)) o?.(); oldServer = false; });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
@@ -542,5 +543,86 @@ describe("Settings → restart box", () => {
     main.all("button").find((b) => b.textContent === "Restart when no story is running")!.click();
     await flush();
     expect(restarts).toContain("POST");
+  });
+});
+
+describe("Settings → Skills", () => {
+  const modalRoot = () => document.getElementById("modal-root") as unknown as FakeElement;
+  const labelled = (main: FakeElement, text: string) => {
+    const id = main.all("label").find((l) => l.textContent.startsWith(text))!.attrs.for;
+    return main.all("input").concat(main.all("select"), main.all("textarea")).find((c) => c.attrs.id === id)!;
+  };
+  const labelOf = (key: string) => describeSettings().find((d) => d.key === key)!.label;
+  const repoBox = (main: FakeElement) => main.all("label").find((l) => l.textContent.startsWith(labelOf("skills.repository")))!.all("input")[0] as any;
+  const change = (el: any) => el.fire("change", { target: el });
+  const save = (main: FakeElement) => main.all("button").find((b) => b.textContent === "Save")!.click();
+  const skillsOf = () => ConfigSchema.parse({}).skills as any;
+  const saveNote = (main: FakeElement) => main.all("span").find((s) => (s.attrs.class ?? "").startsWith("status"))!;
+
+  it("has the card right after Safety", async () => {
+    const { main } = await render({});
+    const titles = main.all("h3").map((x) => x.textContent);
+    expect(titles[titles.indexOf("Safety") + 1]).toBe("Skills");
+  });
+
+  it("saves a non-risky change without a dialog and keeps releases and tools", async () => {
+    const skills = skillsOf();
+    skills.releases.approved = [{ id: "x", name: "x", version: "1" }];
+    skills.tools.network = true;
+    const { main, puts } = await render({}, "127.0.0.1", 200, { skills });
+    const input = labelled(main, labelOf("skills.selection.max_skills")) as any;
+    input.value = "3";
+    change(input);
+    save(main);
+    await flush();
+    expect(modalRoot().children).toHaveLength(0);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].skills.selection.max_skills).toBe(3);
+    expect(puts[0].skills.releases.approved).toEqual(skills.releases.approved);
+    expect(puts[0].skills.tools).toEqual(skills.tools);
+  });
+
+  it("asks before a risky change: Cancel sends nothing, Save anyway sends once", async () => {
+    const { main, puts } = await render({});
+    const box = repoBox(main);
+    box.checked = true;
+    change(box);
+    save(main);
+    await flush();
+    expect(modalRoot().textContent).toContain("anyone who can push to that repository decides what is in it");
+    modalRoot().all("button").find((b) => b.textContent === "Cancel")!.click();
+    await flush();
+    expect(puts).toHaveLength(0);
+    expect(saveNote(main).textContent).toBe("Not saved.");
+    save(main);
+    await flush();
+    modalRoot().all("button").find((b) => b.textContent === "Save anyway")!.click();
+    await flush();
+    expect(puts).toHaveLength(1);
+    expect(puts[0].skills.repository).toBe(true);
+    save(main);
+    await flush();
+    expect(modalRoot().children).toHaveLength(0);
+    expect(puts).toHaveLength(2);
+  });
+
+  it("does not ask for a value that was already risky", async () => {
+    const skills = skillsOf();
+    skills.repository = true;
+    const { main, puts } = await render({}, "127.0.0.1", 200, { skills });
+    save(main);
+    await flush();
+    expect(modalRoot().children).toHaveLength(0);
+    expect(puts).toHaveLength(1);
+  });
+
+  it("shows a message and keeps skills when the server cannot describe them", async () => {
+    oldServer = true;
+    const skills = skillsOf();
+    const { main, puts } = await render({}, "127.0.0.1", 200, { skills });
+    expect(main.textContent).toContain("The skills settings could not be described by the server.");
+    save(main);
+    await flush();
+    expect(puts[0].skills).toEqual(skills);
   });
 });

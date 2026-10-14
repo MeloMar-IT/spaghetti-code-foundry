@@ -1,0 +1,107 @@
+// The Skills card of the Settings page: one generated control for each described skills key of this part.
+import { h } from "./dom.js";
+import { settingControl } from "./kit/forms.js";
+
+/** Groups of the card. A pattern ending in "." is a prefix; any other pattern is an exact key. */
+export const SKILL_GROUPS = [
+  { title: "Where skills come from", keys: ["skills.builtin", "skills.roots", "skills.repository", "skills.releases.allow_unreleased"] },
+  { title: "Catalogue for the planner", keys: ["skills.catalogue."] },
+  { title: "Selection", keys: ["skills.selection."] },
+  { title: "Review checks", keys: ["skills.review."] },
+  { title: "Skills that cannot be used", keys: ["skills.unresolved."] },
+];
+
+const matches = (key, p) => (p.endsWith(".") ? key.startsWith(p) : key === p);
+
+/** The title of the group a setting key belongs to, or undefined. */
+export const groupOf = (key) => SKILL_GROUPS.find((g) => g.keys.some((p) => matches(String(key), p)))?.title;
+
+/** The value at a dotted path (relative to `skills`); undefined when missing. */
+export function valueAt(obj, path) {
+  let cur = obj;
+  for (const k of path.split(".")) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = cur[k];
+  }
+  return cur;
+}
+
+/** A copy of `obj` with `value` at the dotted path. Copies each level on the path; the input is never changed. */
+export function withValue(obj, path, value) {
+  const [head, ...tail] = path.split(".");
+  const base = obj !== null && typeof obj === "object" ? obj : {};
+  return { ...base, [head]: tail.length ? withValue(base[head], tail.join("."), value) : value };
+}
+
+const list = (v) => (Array.isArray(v) ? v : []);
+
+const WORDS = { unknown: "unknown", missing: "not installed", untrusted: "not from an approved release", conflict: "in conflict", oversized: "too large" };
+
+const turnedOn = (key, text) => ({
+  key,
+  sentences: (before, after) => (valueAt(after, key) === true && valueAt(before, key) !== true ? [text] : []),
+});
+
+/** The changes that lower safety. `sentences(before, after)` works on the values of `skills`. */
+export const RISKS = [
+  turnedOn("repository", "The skills folder of the repository a run works on is read too; anyone who can push to that repository decides what is in it. Repository skills are listed but never selected for a run."),
+  turnedOn("releases.allow_unreleased", "Skill folders that are not an approved catalogue release are loaded; each skill must still match its pin. For development only."),
+  {
+    key: "roots",
+    sentences: (before, after) => {
+      const old = new Set(list(valueAt(before, "roots")));
+      return list(valueAt(after, "roots")).some((r) => !old.has(r))
+        ? ["Skills in a new folder can reach the agents once they are pinned; make sure only administrators can write to it."]
+        : [];
+    },
+  },
+  ...Object.entries(WORDS).map(([name, words]) => ({
+    key: `unresolved.${name}`,
+    sentences: (before, after) => (valueAt(after, `unresolved.${name}`) === "warn" && valueAt(before, `unresolved.${name}`) !== "warn"
+      ? [`A requested skill that is ${words} no longer stops the run; it only gives a warning.`] : []),
+  })),
+  {
+    key: "unresolved.high_risk",
+    sentences: (before, after) => {
+      const now = new Set(list(valueAt(after, "unresolved.high_risk")));
+      return list(valueAt(before, "unresolved.high_risk")).filter((t) => !now.has(t)).map((t) => `A skill marked high-risk by ${t} no longer always stops the run.`);
+    },
+  },
+];
+
+/** The risky changes from the saved skills to the draft: [{ key: "skills.<path>", text }]. */
+export function riskyChanges(saved, draft) {
+  return RISKS.flatMap((r) => r.sentences(saved, draft).map((text) => ({ key: `skills.${r.key}`, text })));
+}
+
+const clone = (v) => structuredClone(v ?? {});
+
+/** The card. `value()` is the `skills` to save, `risks()` the risky changes since the last save, `saved(skills)` moves the baseline. */
+export function skillsSection(descriptions, skills, { disabled = false } = {}) {
+  let baseline = clone(skills);
+  let draft = clone(skills);
+  const shown = (Array.isArray(descriptions) ? descriptions : []).filter((d) => groupOf(d?.key) !== undefined);
+  if (shown.length === 0) {
+    return {
+      el: h("div", { class: "card mb-14" }, h("h3", {}, "Skills"), h("p", { class: "muted flush" }, "The skills settings could not be described by the server.")),
+      value: () => skills,
+      risks: () => [],
+      saved: () => {},
+    };
+  }
+  const groups = SKILL_GROUPS.map((g) => {
+    const mine = shown.filter((d) => groupOf(d.key) === g.title);
+    if (!mine.length) return null;
+    const controls = mine.map((d) => {
+      const rel = d.key.slice("skills.".length);
+      return settingControl(d, { value: valueAt(draft, rel), disabled, onChange: (v) => { draft = withValue(draft, rel, v); } });
+    });
+    return h("div", { class: "stack mt-10" }, h("h4", {}, g.title), h("div", { class: "grid" }, controls));
+  });
+  return {
+    el: h("div", { class: "card mb-14" }, h("h3", {}, "Skills"), ...groups),
+    value: () => draft,
+    risks: () => riskyChanges(baseline, draft),
+    saved: (s) => { baseline = clone(s); },
+  };
+}
