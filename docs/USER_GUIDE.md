@@ -4470,7 +4470,7 @@ A session keeps story drafts, so that what you write is saved. A draft has a **t
 
 You can ask the architect for a proposal for one field of a draft. It is only a proposal: it waits beside the draft (`suggestions`) and is in no field and not in `preview` until you accept it.
 
-- `POST /api/refinement/:id/drafts/:did/suggest` with `{ "field": "title" }` (`title`, `who`, `what`, `why`, `criteria`, `outOfScope`, `dependsOn` or `notes`) starts an architect run and answers 202. The rules of a round apply: only the owner, a brief is needed, one architect run per session and per account, and a paused run is resumed by the same call (the same draft and field). `criteria` answers 409 when the map has no rule and no example.
+- `POST /api/refinement/:id/drafts/:did/suggest` with `{ "field": "title" }` (`title`, `who`, `what`, `why`, `criteria`, `outOfScope`, `dependsOn` or `notes`) starts an architect run and answers 202. The rules of a round apply: only the owner, a brief is needed, one architect run per session (the runs of your other sessions wait in line), and a paused run is resumed by the same call (the same draft and field). `criteria` answers 409 when the map has no rule and no example.
 - `POST …/drafts/:did/suggestions/:sid/accept` with `{}` puts it in as `accepted`: a text field is replaced, a list gets one more item. With `{ "text": "…" }` (Edit and accept) your text goes in as `accepted-edited`; this is not possible for depends on (400). The suggestion is gone after that.
 - `POST …/drafts/:did/suggestions/:sid/reject` with an optional `{ "reason": "…" }` (at most 300 characters) removes it and keeps its text and reason with the draft (the newest 30). The next suggestion run of the session gets them; they are used in this session only.
 
@@ -4498,7 +4498,7 @@ A suggested criterion shows the rule or example it comes from. Criteria are deci
 
 Remarks are advice. They never block a save or anything else.
 
-**Review by the architect.** `POST /api/refinement/:id/drafts/:did/review` (no body) starts an architect run and answers 202 with the session. The rules of a round apply: only the owner, a brief is needed, one architect run per session and per account, a paused run is resumed by the same call, and a failed run changes nothing. The architect gets the idea, the brief, the map and the draft. It only points out weak spots; it changes no field and proposes no new text. Only this call starts an AI call; saving a draft never does.
+**Review by the architect.** `POST /api/refinement/:id/drafts/:did/review` (no body) starts an architect run and answers 202 with the session. The rules of a round apply: only the owner, a brief is needed, one architect run per session (the runs of your other sessions wait in line), a paused run is resumed by the same call, and a failed run changes nothing. The architect gets the idea, the brief, the map and the draft. It only points out weak spots; it changes no field and proposes no new text. Only this call starts an AI call; saving a draft never does.
 
 The result is stored with the draft as `review`: `{ at, remarks }`, at most 20 remarks. Each remark has `field` (and `item` for a criterion), `kind` and `text` (one or two sentences). The kinds are `uncheckable` (a criterion that cannot be checked), `vague`, `contradiction` (with another criterion or a rule of the map), `how` (it says how to build, not what is wanted) and `plan`. A new review replaces the old one. A remark about a text that has changed or moved since the review has `stale: true`.
 
