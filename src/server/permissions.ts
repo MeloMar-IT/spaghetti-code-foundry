@@ -62,7 +62,7 @@ export const RULES: Rule[] = [
   r("GET", "run-filters", "yes", "the repositories and flows of the runs you can see, for the filter menus"),
   r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules)"),
   r("GET", "runs/:id", "own", "read a run (a user: without costs and setup)"),
-  r("POST", "runs/:id/cancel", "own", "cancel a run"),
+  r("POST", "runs/:id/cancel", "own", "cancel a run that runs, is queued, waits or is stopped"),
   r("POST", "runs/:id/archive", "own", "archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted"),
   r("POST", "runs/:id/unarchive", "own", "take a run out of the archive again"),
   r("POST", "runs/:id/resume", "own", "resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see \"A run of a closed issue\" in chapter 3)"),

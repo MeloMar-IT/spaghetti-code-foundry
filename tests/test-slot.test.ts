@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { getPriority, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -13,9 +13,10 @@ describe("tools/test-slot", () => {
     const d = dir();
     const probe = 'echo "nice=$(ps -o nice= -p $$ | tr -d " ") slot=$FACTORY_IN_TEST_SLOT"';
     const low = spawnSync(tool, [d, "sh", "-c", probe], { env: env({ FACTORY_VAR_TEST_SLOTS: "1" }), encoding: "utf8" });
-    expect(low.stdout).toMatch(/nice=(1\d) slot=1/);
+    expect(low.stdout).toMatch(/nice=(1\d) slot=1/); // at least 10, also when the test run itself already has a low priority
     const normal = spawnSync(tool, [d, "sh", "-c", probe], { env: env({ FACTORY_VAR_TEST_SLOTS: "1", FACTORY_TEST_NICE: "0" }), encoding: "utf8" });
-    expect(normal.stdout).toMatch(/nice=0 slot=1/);
+    // normal priority = the priority this test run itself has (it may already run at a low one)
+    expect(normal.stdout).toMatch(new RegExp(`nice=${getPriority()} slot=1`));
   });
 
   it("runs without a slot when the slots folder cannot be made", () => {
