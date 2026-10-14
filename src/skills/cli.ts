@@ -95,7 +95,8 @@ function sourcesCheck(file: string, out: (line: string) => void, today?: string)
     if (s.status === "enabled") enabled++;
     const head = `${s.id.padEnd(24)} ${s.status} ${s.trust} ${s.adapter} ${s.repositoryKey}@${(s.ref.approved ?? "-").slice(0, 12)} ${s.owner}`;
     const reviewed = s.review ? ` reviewed by ${s.review.by} on ${s.review.on}` : "";
-    out(`${head}${reviewed}${s.reason ? ` (${s.reason})` : ""}`);
+    const profile = s.profile ? ` provider ${s.profile.provider} (${s.profile.portable.length} portable)` : "";
+    out(`${head}${reviewed}${profile}${s.reason ? ` (${s.reason})` : ""}`);
   }
   out(`OK ${r.manifest.sources.length} sources, ${enabled} enabled`);
   return 0;

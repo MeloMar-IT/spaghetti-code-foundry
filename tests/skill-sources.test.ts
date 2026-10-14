@@ -509,3 +509,108 @@ describe("community review", () => {
     });
   });
 });
+
+describe("source profile", () => {
+  const PROFILE = { provider: "confluent", portable: { streams: "kafka-streams", "kafka-producer": "kafka-producer" }, products: { "confluent-platform": ">=7.0" } };
+  const profileOf = (p: unknown) => parseSources(file(valid({ profile: p }))).manifest?.sources[0]?.profile;
+  const problemsOf = (p: unknown) => text(check(valid({ profile: p })));
+  const runCheck = async (d: string) => {
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["sources", "check", "list.yaml"], values: {} }, (l) => lines.push(l), { cwd: d });
+    return { code, lines };
+  };
+
+  it("accepts a profile and sorts its lists", () => {
+    expect(profileOf(PROFILE)).toEqual({
+      provider: "confluent",
+      portable: [{ upstream: "kafka-producer", capability: "kafka-producer" }, { upstream: "streams", capability: "kafka-streams" }],
+      products: [{ name: "confluent-platform", version: ">=7.0" }],
+    });
+  });
+
+  it("accepts a provider alone and treats an empty portable map like an omitted one", () => {
+    expect(profileOf({ provider: "confluent" })).toEqual({ provider: "confluent", portable: [], products: [] });
+    expect(profileOf({ provider: "confluent", portable: {} })).toEqual(profileOf({ provider: "confluent" }));
+  });
+
+  it("accepts 64 portable entries and two upstream names for one target", () => {
+    const many = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`cap-${i}`, `target-${i}`]));
+    expect(check(valid({ profile: { provider: "c", portable: many } }))).toEqual([]);
+    expect(check(valid({ profile: { provider: "c", portable: { producer: "kafka-producer", publishing: "kafka-producer" } } }))).toEqual([]);
+  });
+
+  it("leaves a source without profile as it was", () => {
+    expect(parseSources(file(valid())).manifest!.sources[0]).not.toHaveProperty("profile");
+  });
+
+  it.each([
+    ["no provider", { portable: { a: "b" } }, "profile.provider: is required"],
+    ["provider not a slug", { provider: "Confluent" }, "profile.provider: must be a lower-case slug"],
+    ["not a map", "x", "profile: must be a map"],
+    ["unknown key", { provider: "c", extra: 1 }, 'profile: unknown key "extra"'],
+    ["bad portable key", { provider: "c", portable: { "Bad Key": "x" } }, "the upstream capability must be a lower-case slug"],
+    ["bad portable value", { provider: "c", portable: { a: "Not_Slug" } }, "profile.portable.a: must be a lower-case slug"],
+    ["blank portable value", { provider: "c", portable: { a: null } }, "must not be blank"],
+    ["portable not a map", { provider: "c", portable: ["a"] }, "profile.portable: must be a map of at most 64"],
+    ["65 portable", { provider: "c", portable: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`cap-${i}`, "x"])) }, "at most 64"],
+    ["bad range", { provider: "c", products: { kafka: "latest" } }, 'is not a version range like ">=3.7"'],
+    ["17 products", { provider: "c", products: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`p-${i}`, ">=1"])) }, "1 to 16 products"],
+    ["bad product name", { provider: "c", products: { "Not Slug": ">=1" } }, "the product name must be a lower-case slug"],
+  ])("refuses %s", (_n, profile, fragment) => {
+    const t = problemsOf(profile);
+    expect(t).toContain("sources[0] (example-skills)");
+    expect(t).toContain(fragment);
+    expect(parseSources(file(valid({ profile }))).manifest).toBeUndefined();
+  });
+
+  it("refuses a duplicate portable key in the YAML text", () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-sources-profile-"));
+    const yaml = [
+      "schema: 1",
+      "sources:",
+      "  - id: example-skills",
+      "    repository: https://github.com/example/skills",
+      "    status: disabled",
+      "    reason: test",
+      "    paths: [skills]",
+      "    adapter: agent-skills",
+      "    trust: verified",
+      "    licence: { allow: [MIT] }",
+      "    update: { cadence: manual }",
+      "    owner: \"@octocat\"",
+      "    profile:",
+      "      provider: c",
+      "      portable:",
+      "        a: a",
+      "        a: b",
+      "",
+    ].join("\n");
+    writeFileSync(join(d, "a.yaml"), yaml);
+    const r = readSources(join(d, "a.yaml"));
+    expect(r.state).toBe("invalid");
+    expect(JSON.stringify(r)).toContain("DUPLICATE_KEY");
+  });
+
+  it("does not print a credential-like provider or key", () => {
+    expect(problemsOf({ provider: TOKEN, portable: { [TOKEN]: "x" } })).not.toContain(TOKEN);
+    expect(UNSAFE.test(problemsOf({ provider: "c", portable: { [ESC]: "x" } }))).toBe(false);
+  });
+
+  it("is shown by sources check", async () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-sources-profile-cli-"));
+    const plain = valid({ id: "plain-skills", repository: "https://github.com/example/plain" });
+    writeFileSync(join(d, "list.yaml"), stringify(file(valid({ profile: PROFILE }), plain)));
+    const r = await runCheck(d);
+    expect(r.code).toBe(0);
+    expect(r.lines[0]).toContain(" provider confluent (2 portable)");
+    expect(r.lines[1]).not.toContain("provider");
+  });
+
+  it("fails sources check for a profile without provider", async () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-sources-profile-cli-"));
+    writeFileSync(join(d, "list.yaml"), stringify(file(valid({ profile: { portable: { a: "b" } } }))));
+    const r = await runCheck(d);
+    expect(r.code).toBe(1);
+    expect(r.lines[0]).toMatch(/^PROBLEM sources\[0\] \(example-skills\) profile\.provider: /);
+  });
+});

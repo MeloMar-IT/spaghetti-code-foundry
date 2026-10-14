@@ -7,7 +7,7 @@ import { connectorProblems } from "./connectors.js";
 import { credentialProblem } from "./credential-scan.js";
 import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
-import { relativePathProblem, SKILL_ID_RE } from "./schema.js";
+import { relativePathProblem, SKILL_ID_RE, SKILL_PROVIDER_LIMITS } from "./schema.js";
 
 export const SOURCES_FILE = "skill-sources.yaml";
 export const MAX_SOURCES_BYTES = 262144;
@@ -18,6 +18,7 @@ export const SOURCE_ADAPTERS = ["agent-skills"] as const;
 export const SOURCE_TRUST_TIERS = ["first-party", "verified", "community"] as const;
 export const SOURCE_CADENCES = ["manual", "daily", "weekly", "monthly"] as const;
 export const SOURCE_SCOPE_LIMITS = { capabilities: 8, technologies: 8 } as const;
+export const SOURCE_PROFILE_LIMITS = { portable: 64, products: SKILL_PROVIDER_LIMITS.products } as const;
 export const SOURCE_LICENCES = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "CC0-1.0", "CC-BY-4.0", "Unlicense"] as const;
 
 export type SourceStatus = (typeof SOURCE_STATUSES)[number];
@@ -30,6 +31,14 @@ export interface SourceReview {
   on: string;
   commit: string;
   licence: string;
+}
+
+export interface SourceProfile {
+  provider: string;
+  /** Upstream capability → catalogue capability, sorted by upstream. */
+  portable: { upstream: string; capability: string }[];
+  /** Default provider products with version ranges, sorted by name. */
+  products: { name: string; version: string }[];
 }
 
 export interface SkillLibrarySource {
@@ -47,6 +56,8 @@ export interface SkillLibrarySource {
   licence: { allow: string[] };
   /** What the maintainer states about the library that upstream does not: capabilities to add and technology version ranges. */
   scope?: { capabilities: string[]; technologies: { name: string; version: string }[] };
+  /** Which upstream capabilities are portable; every other one belongs to the vendor. Absent: capabilities stay as upstream wrote them. */
+  profile?: SourceProfile;
   update: { cadence: (typeof SOURCE_CADENCES)[number] };
   owner: string;
   review?: SourceReview;
@@ -208,7 +219,7 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
       return v;
     };
 
-    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "scope", "update", "owner", "review"], "");
+    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "scope", "profile", "update", "owner", "review"], "");
 
     // id
     const id = text(idRaw, "id");
@@ -383,6 +394,65 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
       }
     }
 
+    // profile
+    let profile: SourceProfile | undefined;
+    if (e.profile !== undefined) {
+      const before = problems.length;
+      const pr = sub(e.profile, "profile");
+      if (pr) {
+        keys(pr, ["provider", "portable", "products"], "profile");
+        const provider = text(pr.provider, "profile.provider");
+        if (provider !== undefined && !SKILL_ID_RE.test(provider)) err("profile.provider", "must be a lower-case slug");
+        const portable: SourceProfile["portable"] = [];
+        if (pr.portable !== undefined) {
+          const max = SOURCE_PROFILE_LIMITS.portable;
+          if (!isObject(pr.portable) || Object.keys(pr.portable).length > max) {
+            err("profile.portable", `must be a map of at most ${max} upstream capabilities`);
+          } else {
+            for (const [k, v] of Object.entries(pr.portable)) {
+              const field = `profile.portable.${shownValue(k)}`;
+              if (!SKILL_ID_RE.test(k)) {
+                err(field, "the upstream capability must be a lower-case slug");
+                continue;
+              }
+              const target = text(v, field);
+              if (target === undefined) continue;
+              if (!SKILL_ID_RE.test(target)) err(field, "must be a lower-case slug");
+              else portable.push({ upstream: k, capability: target });
+            }
+          }
+        }
+        const products: SourceProfile["products"] = [];
+        if (pr.products !== undefined) {
+          const max = SOURCE_PROFILE_LIMITS.products;
+          if (!isObject(pr.products) || Object.keys(pr.products).length < 1 || Object.keys(pr.products).length > max) {
+            err("profile.products", `must be a map of 1 to ${max} products`);
+          } else {
+            for (const [name, raw] of Object.entries(pr.products)) {
+              const field = `profile.products.${shownValue(name)}`;
+              if (!SKILL_ID_RE.test(name)) {
+                err(field, "the product name must be a lower-case slug");
+                continue;
+              }
+              const v = text(raw, field)?.trim();
+              if (v === undefined) continue;
+              if (v.length < 1 || v.length > NORMALIZE_LIMITS.rangeChars || rangeSatisfied(v, "0.0.0") === undefined) {
+                err(field, 'is not a version range like ">=3.7" or "^7.0"');
+              } else products.push({ name, version: v });
+            }
+          }
+        }
+        if (provider !== undefined && problems.length === before) {
+          const cmp = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+          profile = {
+            provider,
+            portable: portable.sort((a, b) => cmp(a.upstream, b.upstream)),
+            products: products.sort((a, b) => cmp(a.name, b.name)),
+          };
+        }
+      }
+    }
+
     // connector: a reviewed repository limits what an entry may select
     if (repositoryKey) for (const m of connectorProblems({ repositoryKey, paths, adapter, trust, licence: { allow } })) err("", m);
 
@@ -449,6 +519,7 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
         trust,
         licence: { allow },
         ...(scope ? { scope } : {}),
+        ...(profile ? { profile } : {}),
         update: { cadence },
         owner,
         ...(review ? { review } : {}),
