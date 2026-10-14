@@ -54,6 +54,7 @@ Usage:
   scf skills assess <source-id>                    Print the workflow report of a staged import
   scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
   scf skills promote check <source-id> [<exceptions-file>]  Print whether licence and findings allow promotion
+  scf skills review <source-id> [--markdown]     Print the licence, attribution and collision report of a staged import
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -214,6 +215,7 @@ async function main(argv: string[]): Promise<number> {
       dev: { type: "boolean" },
       admin: { type: "boolean" },
       replace: { type: "boolean" },
+      markdown: { type: "boolean" },
       builtin: { type: "boolean" },
       "stop-work": { type: "boolean" },
       name: { type: "string" },
@@ -230,8 +232,8 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `scan …`, `assess …`, `evaluate …`, `promote check …` and `connectors` only read: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "sources" || arg === "scan" || arg === "assess" || arg === "evaluate" || arg === "promote" || arg === "connectors"))) {
+  // `scf skills sources …`, `scan …`, `assess …`, `evaluate …`, `promote check …`, `review …` and `connectors` only read: they run without choosing or moving the data folder.
+  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "scan" || arg === "assess" || arg === "evaluate" || arg === "promote" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }

@@ -76,6 +76,11 @@ export function shownValue(value: string): string {
   return s.length > SHOWN_MAX ? s.slice(0, SHOWN_MAX) + "…" : s;
 }
 
+/** Like `shownValue`, but never cut: for reports that must hold the whole value (the caller bounds the document). */
+export function shownFull(value: string): string {
+  return credentialProblem(value) ? "(hidden)" : escapeUnsafe(value);
+}
+
 /** Undefined for a full commit id, else why it cannot name an approved release. */
 export function approvedRefProblem(ref: string): string | undefined {
   if (COMMIT_RE.test(ref)) return undefined;

@@ -346,6 +346,47 @@ describe("data folder", () => {
     expect(r.stderr).toContain("scf skills scan <source-id> [<exceptions-file>]");
   });
 
+  it("scf skills review is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills review <source-id> [--markdown]");
+    const r = scf(["skills", "review"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("scf skills review <source-id> [--markdown]");
+  });
+
+  it("scf skills review --markdown reads the old data folder and does not move, copy or lock it", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const commit = "a".repeat(40);
+    writeFileSync(
+      join(home, "skill-sources.yaml"),
+      [
+        "schema: 1", "sources:", "  - id: example-skills", "    repository: https://github.com/example/skills", "    status: enabled",
+        `    ref: {track: main, approved: '${commit}'}`, "    paths: [skills]", "    adapter: agent-skills", "    trust: community",
+        "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'", "",
+      ].join("\n"),
+    );
+    const parsed = readSources(join(home, "skill-sources.yaml"));
+    if (parsed.state !== "ok") throw new Error("bad sources");
+    const body = "---\nname: demo\ndescription: A demo skill.\n---\n\nBody.\n";
+    const entry: TreeEntry = { path: "skills/demo/SKILL.md", kind: "file", size: Buffer.byteLength(body), id: "id:1" };
+    expect(publishImport(prepareImport(parsed.manifest.sources[0]!, { list: () => [entry], read: () => [Buffer.from(body)] }), { home: oldDir }).state).toBe("staged");
+    const snap = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        const p = join(d, e.name);
+        const st = statSync(p);
+        return e.isDirectory() ? [`${p} ${st.mode} ${st.mtimeMs}`, ...snap(p)] : [`${p} ${st.mode} ${st.mtimeMs} ${readFileSync(p).toString("hex")}`];
+      });
+    const before = snap(home);
+    const r = spawnSync(process.execPath, [cli, "skills", "review", "example-skills", "--markdown"], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+    expect(r.stdout).toContain("## Skill import review");
+    expect(r.stdout).toContain("not promoted");
+    expect(r.status).toBe(1); // no licence file: the licence is missing
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    expect(snap(home)).toEqual(before);
+  });
+
   it("scf skills assess is in the help and checks its syntax first", () => {
     const { home } = withHome();
     expect(scf(["--help"], home).stdout).toContain("scf skills assess <source-id>");

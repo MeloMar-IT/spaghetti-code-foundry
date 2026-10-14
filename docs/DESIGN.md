@@ -161,6 +161,7 @@ Skills reach an agent in a fixed order. Each stage has its own module:
 - **Collisions** (`collisions.ts`, rules in `collision-rules.ts`): pure classification and merge of normalized skills; reached from `run-catalogue.ts` only through its optional `candidate` dependency, which no run supplies yet.
 - **Canonical selection** (`canonical.ts`, rules in `canonical-rules.ts`, facts in `canonical-facts.ts`): pure choice of one winner per exclusive capability, in the precedence order of `CANONICAL_LEVELS`; reached from `run-catalogue.ts` only through its optional `canonical` dependency, which no run supplies yet.
 - **Evaluation gate** (`evaluation.ts`, thresholds in `evaluation-rules.ts`): pure verdict of a candidate from its evaluation record; see "Evaluation gate" below. No run calls it yet.
+- **Import review** (`import-review.ts`, rules in `import-review-rules.ts`, command in `review-cli.ts`): pure report of a staged import against the registered skills (licence, attribution, scan, collisions, category); reads only, promotes nothing.
 - **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
 - **Check after the gate:** `planRunSkills`, `startRunSkills` and `recheckRunSkills` in `src/skills/run-plan.ts`, with `resolve.ts` and `assessSkills` in `unresolved.ts`.
 - **Plan record and carry:** `src/skills/plan-record.ts` and `carryRunSkills` in `src/engine/plan-carry.ts`.
