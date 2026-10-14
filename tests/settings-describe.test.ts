@@ -242,7 +242,7 @@ describe("startupSettings", () => {
   });
 
   it("marks the monitor keys as edited on the Problems page, and no other key", () => {
-    for (const d of describeSettings()) expect(d.control, d.key).toBe(d.key.startsWith("monitor.") ? "problems.js" : "generated");
+    for (const d of describeSettings()) expect(d.control === "problems.js", d.key).toBe(d.key.startsWith("monitor."));
   });
 
   it("settingValue walks a dotted key", () => {

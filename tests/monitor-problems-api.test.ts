@@ -115,7 +115,7 @@ describe("the settings of the monitor and their reset", () => {
   it("refuses a stale version, an unknown key and a missing key without writing", async () => {
     const before = readFileSync(cfgPath(), "utf8");
     expect((await reset("monitor.report_to", "stale")).status).toBe(409);
-    for (const key of ["concurrency", undefined, 5]) expect((await reset(key)).status).toBe(400);
+    for (const key of ["no.such.setting", "monitor", undefined, 5]) expect((await reset(key)).status).toBe(400);
     const res = await reset("monitor.report_to");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ key: "monitor.report_to", removed: false });
