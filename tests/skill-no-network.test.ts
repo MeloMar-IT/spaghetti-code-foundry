@@ -184,7 +184,7 @@ describe("the workflow gate runs nothing", () => {
 describe("scf skills scan is offline and read-only", () => {
   const PROCESS_OR_NET = /^(?:node:)?(?:child_process|vm|worker_threads|http|https|http2|net|tls|dns|dgram)$/;
   const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
-  for (const f of ["cli.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "import-plan.ts", "normalize.ts"]) {
+  for (const f of ["cli.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "selections.ts", "import-plan.ts", "normalize.ts"]) {
     it(`${f} imports no process or network module and uses no dynamic code`, () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m))).toEqual([]);
@@ -199,6 +199,11 @@ describe("scf skills scan is offline and read-only", () => {
       expect(modulesOf(text).filter((m) => /^(?:node:)?(?:fs|fs\/promises|child_process)$/.test(m)), f).toEqual([]);
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m)), f).toEqual([]);
     }
+  });
+  it("only src/skills/cli.ts imports selections.js, so no run reads the file", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)selections\.js$/.test(m)));
+    expect(users).toEqual([join("src", "skills", "cli.ts")]);
   });
   it("src/skills/cli.ts imports nothing from skill-import/", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "cli.ts"), "utf8")).filter((m) => /skill-import\//.test(m))).toEqual([]);

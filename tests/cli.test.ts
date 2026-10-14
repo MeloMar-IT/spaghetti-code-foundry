@@ -241,6 +241,22 @@ describe("data folder", () => {
     expect(scf(["--help"], home).status).toBe(0);
   });
 
+  it("scf skills selections check is in the help and does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const file = join(home, "skill-selections.yaml");
+    const entry = `{source: s, skill: k, digest: "sha256:${"a".repeat(64)}", scope: portable, category: c, capabilities: [x], owner: "@octocat", reviewed: "2026-01-01"}`;
+    writeFileSync(file, `schema: 1\nselections:\n  - ${entry}\n`);
+    expect(scf(["--help"], home).stdout).toContain("scf skills selections check [<file>]");
+    const r = scf(["skills", "selections", "check", file], home);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("OK 1 selections");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
+    expect(scf(["skills", "selections", "check", file], home).status).toBe(0);
+  });
+
   it("scf skills sources check does not choose or move the data folder", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);

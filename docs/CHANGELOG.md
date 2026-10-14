@@ -46,6 +46,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
   - **Not changed.** `evaluateLicence`, `promoteImport` and `collectLicenceEvidence` are reused unchanged. Nothing promotes a skill yet.
   - Tests: `tests/skill-import-evidence.test.ts`, `tests/skill-import-cli.test.ts`, new `tests/skill-promote-check-cli.test.ts`, `tests/skill-no-network.test.ts`, `tests/cli.test.ts`.
   - `docs/USER_GUIDE.md`: "Import a source into quarantine" and new "Check a promotion".
+- Skill selections: `skill-selections.yaml` and `scf skills selections check` (#515). Part 2 of 4 of #221.
+  - **File.** `skill-selections.yaml` next to `skill-sources.yaml` records the selected skills of a source: product and SDK version, `portable` or `provider` scope, the category, capabilities and what each skill requires (CLIs, MCP servers, credentials, services). It is changed by pull request. Nothing reads it in a run, and it grants nothing.
+  - **Command.** `scf skills selections check [<file>]` is offline and needs no data folder. It prints one line per entry and `OK <n> selections`, or `PROBLEM <where>: <message>` lines and exit 1. A missing file is a `PROBLEM` for the command.
+  - **Checks.** Unknown keys are refused. Slugs, digests, owners and dates follow the source and exception rules; a provider scope needs `product` and `sdk`, and a portable one refuses `provider`. `requires` holds at most 16 names in total, and a name may be listed once. At most 500 selections. No wildcards. Credential-like text and control characters are never printed.
+  - **Connectors.** `selectionConnectors` returns the sorted connector slugs `cli-…`, `mcp-…`, `credential-…` and `service-…` of one selection.
+  - **Code.** New `src/skills/selections.ts` (`parseSkillSelections`, `readSkillSelections`, `selectionConnectors`), wired into `src/skills/cli.ts` and the help text in `src/cli.ts`.
+  - **Tests.** New `tests/skill-selections.test.ts`; new cases in `tests/skill-cli.test.ts`, `tests/cli.test.ts` and `tests/skill-no-network.test.ts`.
+  - **Docs.** "Skill selections" in `docs/USER_GUIDE.md` under "Skill library sources".
 - Epics 2: which stories belong to an epic, and the counts (#484). Part 2 of 7 of #408.
   - **What it does.** New pure module `src/epics/model.ts`: `buildEpics` takes the saved issue records (`IssueRecord` from `src/queue/issue-list.ts`), the watchers' trigger labels and the run states the Foundry holds, and returns the epics. No server, no GitHub, no files, no clock (`now` is a parameter).
   - **Membership.** A story belongs to an epic through `**Epic:**`, `Parent: #N`, an `epic: …` label, or the story list of the epic issue. Parts of a split story belong to the epic of the story they replace, also for a part of a part. A story that matches no epic is listed under "No epic".
