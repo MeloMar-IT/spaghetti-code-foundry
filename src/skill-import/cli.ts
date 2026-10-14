@@ -97,10 +97,9 @@ export async function skillImportCommand(
       const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: aborter.signal });
       try {
         prep = prepareImport(source, tree);
-        // A licence file that cannot be read is kept as a problem; every other git failure ends the import.
-        const readFailed = (e: unknown) => e instanceof GitTreeError && e.code === "read-failed";
+        // Any git failure, a licence file that cannot be read included, ends the import (the fixed PROBLEM line).
         const licence = prepareLicenceEvidence(
-          collectImportEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree, { recoverable: readFailed }),
+          collectImportEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree),
         );
         prep = addLicenceEvidence(prep, licence, (opts.now ?? new Date()).toISOString().slice(0, 19) + "Z");
       } finally {

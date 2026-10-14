@@ -90,8 +90,8 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
   - **Example.** `evals/skill-gate/suite.yaml` with the fixtures `evals/skill-gate/fixtures/kafka-consumer` and `rest-service` scores one built-in skill end to end.
   - **Tests.** New `tests/skill-evaluation-suite.test.ts` and `tests/skill-evaluation-score.test.ts`. No agent, no server, no model.
   - **Not done.** Nothing calls the suite or the scorers yet: no command or run reads `suite.yaml`, stores a record or sets `CanonicalCandidate.evaluation`. So no user-visible behaviour changed, and `docs/USER_GUIDE.md` is not changed.
-- Skill source connector 1: an unreadable licence file no longer stops an import (#522). Part 1 of 4 of #222.
-  - **What it does.** Licence evidence is kept by #511 (`licence.json`, `licence/`). When git cannot read one licence or notice file (`read-failed`), `scf skills import` now lists that file with the problem `cannot be read` and goes on. Other git errors, timeouts, listing errors and interrupts still stop the import.
+- Skill source connector 1: `collectImportEvidence` can keep an unreadable licence file as a problem (#522). Part 1 of 4 of #222.
+  - **What it does.** Licence evidence is kept by #511 (`licence.json`, `licence/`). When a caller passes `recoverable` and git cannot read one licence or notice file (`read-failed`), that file is listed with the problem `cannot be read`. `scf skills import` does not pass it: it still stops with the fixed PROBLEM line and stages nothing.
   - **Code.** `collectImportEvidence` in `src/skills/import-evidence.ts`, used by `scf skills import` and by `stageImport` (option `recoverable`).
   - **Tests.** `tests/skill-import-read.test.ts`.
   - **Not done.** Nothing reads the evidence yet: no licence check runs on a staged import, and `promoteImport` is not called. `docs/USER_GUIDE.md` has a short note under "Import a source into quarantine".
