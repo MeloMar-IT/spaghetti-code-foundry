@@ -115,15 +115,16 @@ export function unsupportedSettings(): string[] {
 
 /** Whether the key is one of the described settings. The prefixes end in a dot: `monitoring` is not covered. */
 export function isCovered(key: string): boolean {
-  if (key === "isolate_agents") return true;
-  if (key === "sandbox.user_runs") return false;
-  return ["monitor.", "step_env.", "skills.", "sandbox."].some((p) => key.startsWith(p));
+  if (["isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan"].includes(key)) return true;
+  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary."].some((p) => key.startsWith(p));
 }
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
 
 const M = (label: string, help: string): Text => ({ label, help, effect: "now" });
 const N = (label: string, help: string): Text => ({ label, help, effect: "new-runs" });
+/** A setting edited by a hand-built control of ui/admin.js (or another file under ui/). */
+const A = (label: string, help: string, effect: SettingEffect, control = "admin.js"): Text => ({ label, help, effect, control });
 
 export const SETTING_TEXTS: Record<string, Text> = {
   "monitor.restart_loop.resumes": M("Resumes before a restart loop", "The same run resumed more than this many times within the time below is reported."),
@@ -154,11 +155,11 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "monitor.breaker.new_findings": M("Breaker: new findings", "Bug stories stop when more than this many different findings first appear within the window below."),
   "monitor.breaker.within_minutes": M("Breaker window (minutes)", "The time in which new findings are counted."),
   "monitor.breaker.failed_fixes": M("Breaker: failed fixes", "Bug stories stop when the newest runs of bug stories, this many, all failed."),
-  "step_env.pass": N("Variables for all steps", "Variables of the server that every step of a user's run may also see; a name, or a prefix ending in _*."),
-  "step_env.agent_pass": N("Variables for agent steps", "Variables of the server that only agent steps of a user's run may also see; a name, or a prefix ending in _*."),
-  "sandbox.claude": N("Sandbox Claude Code", "The default for flows that do not set their own: run Claude Code inside the sandbox."),
-  "sandbox.docker_image": N("Docker image", "The default Docker image for flows that do not set their own sandbox."),
-  "sandbox.user_read": N("Extra readable paths", "Absolute paths a sandboxed shell step of a user's run may read, besides its own folder."),
+  "step_env.pass": A("Variables for all steps", "Variables of the server that every step of a user's run may also see; a name, or a prefix ending in _*.", "new-runs", "admin-sections.js"),
+  "step_env.agent_pass": A("Variables for agent steps", "Variables of the server that only agent steps of a user's run may also see; a name, or a prefix ending in _*.", "new-runs", "admin-sections.js"),
+  "sandbox.claude": A("Sandbox Claude Code", "The default for flows that do not set their own: run Claude Code inside the sandbox.", "new-runs"),
+  "sandbox.docker_image": A("Docker image", "The default Docker image for flows that do not set their own sandbox.", "new-runs"),
+  "sandbox.user_read": A("Extra readable paths", "Absolute paths a sandboxed shell step of a user's run may read, besides its own folder.", "new-runs", "admin-sections.js"),
   "skills.builtin": N("Built-in skills", "Scan the skills shipped with the Foundry."),
   "skills.roots": N("Skill folders", "Extra folders, managed by an administrator, where skill packages are read from."),
   "skills.repository": N("Repository skills", "Also read the skills in the repository's own skills folder; off means repository skills are never loaded."),
@@ -185,7 +186,38 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "skills.tools.network": N("Skills may ask for the network", "Whether a skill may ask for network access."),
   "skills.tools.filesystem": N("Skills file access", "The most file access a skill may ask for."),
   "skills.tools.missing": N("Skill tool not available", "What to do when a tool a skill asks for is not available."),
-  isolate_agents: N("Isolate agents", "Run agent steps without your personal setup: no MCP servers, plugins, skills, hooks or user settings."),
+  isolate_agents: A("Isolate agents", "Run agent steps without your personal setup: no MCP servers, plugins, skills, hooks or user settings.", "new-runs", "admin-sections.js"),
+  cost_limits: A("Enforce cost limits", "Stop runs at the run, step and daily budgets; off still records costs but never stops a run because of money.", "new-runs"),
+  daily_budget_usd: A("Daily budget ($)", "When today's spending reaches this, runs pause and resume the next day.", "new-runs"),
+  concurrency: A("Runs at the same time", "The most runs that work at the same time, over all repositories.", "now"),
+  "server.listen": A("Listen on", "The address the server answers on: 127.0.0.1 or ::1 for this computer only, 0.0.0.0 or :: for all networks.", "restart"),
+  "server.allowed_hosts": A("Allowed host names", "Host names, besides localhost, that people may type to reach this page.", "now"),
+  "server.allow_insecure_http": A("Allow plain HTTP", "Accept other computers over plain HTTP, which sends passwords and cookies unencrypted.", "now"),
+  "audit.retention_days": A("Keep the audit log (days)", "Audit lines older than this are removed when the server starts and once a day.", "now"),
+  protected_branches: A("Protected branches", "Pushes to these branches are refused during runs; glob patterns are allowed.", "new-runs"),
+  hotfix_to_main: A("Hotfixes", "Build bug stories of the built-in issue-gitflow on a hotfix branch and merge them into main without a person.", "new-runs"),
+  secret_scan: A("Secret scan", "Refuse pushes whose new commits add secrets such as API keys, private keys or .env files.", "new-runs"),
+  "self_update.enabled": A("Self-update", "Build, test and restart on new commits of main of the Foundry's own repository without a person.", "now"),
+  "self_update.repo": A("Self-update repository", "The repository, as owner/name, that updates may come from.", "now"),
+  "sandbox.user_runs": A("OS sandbox for user runs", "required: a shell step of a user's run runs in the OS sandbox or the run is refused; off: it may run without it.", "new-runs"),
+  "notify.macos": A("macOS notifications", "Show a macOS notification when something waits for you.", "now"),
+  "notify.slack_webhook": A("Slack webhook", "The Slack address that gets the same notifications; it is never shown.", "now"),
+  "notify.command": A("Command", "A shell command run when a run ends, with $FACTORY_STATUS, $FACTORY_RUN_ID and $FACTORY_MESSAGE set.", "new-runs"),
+  "notify.on": A("Run the command when a run is", "The run outcomes that run the command.", "new-runs"),
+  "notify.successes": A("Notify on success", "Also notify when a run succeeds.", "now"),
+  "notify.throttle_minutes": A("Minutes between notifications", "At most one notification in this many minutes.", "now"),
+  "notify.quiet_hours.from": A("Quiet hours from", "No notifications from this time, on this computer's clock.", "now"),
+  "notify.quiet_hours.to": A("Quiet hours to", "No notifications until this time.", "now"),
+  "notify.daily_summary_at": A("Daily summary at", "The time, as HH:MM, a short summary is sent once a day.", "now"),
+  "bot.name": A("Commit author name", "The name on commits of runs; without it your git name is used.", "new-runs"),
+  "bot.email": A("Commit author email", "The e-mail on commits of runs; without it your git e-mail is used.", "new-runs"),
+  "bot.gh_token_env": A("Bot token variable", "The name of a server variable that holds the bot's GitHub token, used as GH_TOKEN.", "new-runs"),
+  "github_app.app_id": A("App ID", "The ID of the GitHub App.", "now"),
+  "github_app.slug": A("App name (slug)", "The last part of https://github.com/apps/<name>.", "now"),
+  "github_app.private_key_path": A("Private key file", "The .pem file of the app, readable only by the server's account.", "now"),
+  "github_app.installation_id": A("Installation ID", "Only for the bot identity: runs then commit and comment as the app.", "new-runs"),
+  "failure_summary.enabled": A("Failure summary", "Ask a small model for one sentence on why a run failed; off uses the rules text only.", "new-runs", "admin-sections.js"),
+  "failure_summary.model": A("Failure summary model", "The model that writes the sentence, such as haiku, or ollama:<model> for a local one.", "new-runs", "admin-sections.js"),
 };
 
 /** Walks `value` down the dotted key. */

@@ -180,6 +180,7 @@ export const api = {
   setEpic: (id, issue) => req("PUT", `/api/refinement/${enc(id)}/epic`, { issue }),
   queue: () => req("GET", "/api/queue"),
   config: () => req("GET", "/api/config"),
+  settings: () => req("GET", "/api/settings"),
   saveConfig: (config, version = configVersions.get(config)) => req("PUT", "/api/config", config, false, false, version ? { "x-config-version": version } : undefined),
   watchers: () => req("GET", "/api/watchers"),
   monitor: () => req("GET", "/api/monitor"),

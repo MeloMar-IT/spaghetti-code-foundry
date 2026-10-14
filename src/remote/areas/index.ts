@@ -12,5 +12,5 @@ export const ALL: Cmd[] = [...SYSTEM, ...WORK, ...SETUP, ...PEOPLE, ...REFINE, .
 /** Calls of the server that have no command, each with the reason. A test fails when a call is in neither list. */
 export const API_ONLY: Record<string, string> = {
   "GET runs/:id/events": "a live stream that does not end; the command line reads a whole answer before it prints",
-  "GET settings": "the description a settings page builds its controls from; no command line use yet (parts 4 to 6 of #407 add the pages)",
+  "GET settings": "the description the Settings page builds its controls from; no command line use",
 };

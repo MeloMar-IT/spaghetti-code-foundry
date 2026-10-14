@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { describeSettings, startupSettings } from "../src/settings/describe.js";
 import { audit } from "./helpers/a11y.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
@@ -107,6 +108,7 @@ const config = ConfigSchema.parse({
   providers: { local: { kind: "ollama" } },
   router: { rules: [{ step: "^review$", model: "codex" }] },
 });
+const settingsAnswer = { settings: describeSettings(), startup: startupSettings({ home: "/data", port: 4000, repo: "/repo", claudeBin: "claude", codexBin: "codex", ghBin: "gh" }) };
 const providers = {
   agents: [{ agent: "claude", installed: true, loggedIn: true, version: "1.0", detail: "" }],
   providers: [{ name: "local", kind: "ollama", base_url: "http://localhost:11434", ok: true, detail: "", models: ["qwen3-coder"], agents: ["claude"] }],
@@ -122,7 +124,7 @@ const press = (el: FakeElement) => el.click();
 
 describe("pages", () => {
   it("Settings", async () => {
-    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" } };
+    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" }, "GET /api/settings": settingsAnswer };
     await m.admin.renderSettings(main());
     noViolations(main());
     const boxes = controls(main()).filter((c) => c.attrs.type === "checkbox");
@@ -848,9 +850,24 @@ describe("Models", () => {
 
 describe("Settings", () => {
   const show = async () => {
-    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" } };
+    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" }, "GET /api/settings": settingsAnswer };
     await m.admin.renderSettings(main());
   };
+  it("a refused list is one alert at its field, and nothing is sent", async () => {
+    await show();
+    const area = controls(main()).filter((c) => c.tag === "textarea")[0]!;
+    area.value = "GH_TOKEN";
+    area.fire("change", { target: area });
+    press(button(main(), "Save"));
+    await settle();
+    expect(alerts(main()).map((a) => a.textContent)).toHaveLength(1);
+    expect(alerts(main())[0]!.textContent).toContain("GH_TOKEN");
+    // the field is drawn again with its message, so the element is a new one
+    const shown = controls(main()).filter((c) => c.tag === "textarea")[0]!;
+    expect(invalid(main())).toEqual([shown]);
+    expect(doc().activeElement).toBe(shown);
+    expect(sent.some((s) => s.key === "PUT /api/config")).toBe(false);
+  });
   it("a refused save is an alert", async () => {
     await show();
     fail("PUT", "/api/config", 400, "invalid config: nope");

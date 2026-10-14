@@ -1,7 +1,7 @@
 // Form controls: field, textInput, textArea, select, checkbox and settingControl. Unbound: they take `value` and `onInput`/`onChange`.
 // Styles are in forms.css.
 import { h } from "../dom.js";
-import { cx, nextId, oneOf, rest } from "./core.js";
+import { cx, nextId, oneOf, rest, settingHint } from "./core.js";
 
 const blank = (s) => typeof s !== "string" || s.trim() === "";
 
@@ -63,21 +63,6 @@ function recordOf(line, fields) {
     if (part) out[f.key] = part;
   });
   return out;
-}
-
-function shownDefault(d) {
-  if (typeof d === "boolean") return d ? "yes" : "no";
-  if (d === undefined || (Array.isArray(d) && d.length === 0)) return "none";
-  if (Array.isArray(d)) return d.map((x) => (typeof x === "object" && x !== null ? Object.values(x).join(" ") : String(x))).join(", ");
-  return String(d);
-}
-
-function settingHint(d) {
-  const keys = d.fields?.map((f) => f.key).join(" ");
-  const format = d.kind === "list" ? (d.fields ? ` One per line: ${keys}.` : " One per line.") : "";
-  const bounds = d.min !== undefined && d.max !== undefined ? ` Allowed: ${d.min} to ${d.max}.` : d.min !== undefined ? ` At least ${d.min}.` : d.max !== undefined ? ` At most ${d.max}.` : "";
-  const range = `${bounds}${d.exclusiveMin !== undefined ? ` More than ${d.exclusiveMin}.` : ""}${d.maxItems !== undefined ? ` At most ${d.maxItems} items.` : ""}`;
-  return `${d.help}${format} Default: ${shownDefault(d.default)}.${range} Takes effect ${d.effectText}.`;
 }
 
 /** A control made from one setting description of GET /api/settings. `onChange(value)` gets the typed value. */
