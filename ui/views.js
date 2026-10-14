@@ -5,7 +5,7 @@ import { confirmDialog, h, modal, mount, showError, toast } from "./dom.js";
 import { formatQuery, parseQuery, sameRepo, withQuery } from "./filters.js";
 import { ALL_REPOS } from "./ia.js";
 
-export const VIEW_PAGES = ["runs", "board", "refinement"];
+export const VIEW_PAGES = ["runs", "board", "refinement", "epics"];
 export const MAX_VIEWS = 20;
 export const MAX_NAME = 40;
 export const OUT_OF_DATE = "out of date";
@@ -162,6 +162,7 @@ export function viewHash(view) {
   const f = cleanFilters(view?.filters);
   const owner = f.owner ? { owner: f.owner } : {};
   if (view?.page === "board") return f.repo ? withQuery(`#/board/${encodeURIComponent(f.repo)}`, owner) : withQuery("#/board", { repo: ALL_REPOS, ...owner });
+  if (view?.page === "epics") return withQuery("#/epics", { repo: f.repo ?? ALL_REPOS });
   const path = view?.page === "refinement" ? "#/refinement" : "#/runs";
   return withQuery(path, { repo: f.repo ?? ALL_REPOS, ...(view?.page === "refinement" ? {} : owner) });
 }

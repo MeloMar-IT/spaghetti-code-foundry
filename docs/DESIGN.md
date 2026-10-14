@@ -945,13 +945,14 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 |---|---|---|
 | **Home** | — | What waits for you, what is running, what finished |
 | **Board** | — | Where every story is |
+| **Epics** | — | How far each epic is and its expected finish |
 | **Refinement** | — | From a rough idea to a story |
 | **Runs** | — | Every run, live log, steps and transcripts, changes |
 | **Repositories** | — | Repositories and how the Foundry signs in |
 | **Flows** | Flows, Library | Edit and create flows; reusable blocks |
 | **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, settings, workspace clean-up |
 
-**User display:** **Home**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
+**User display:** **Home**, **Epics**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
 
 ![A run that waits for a decision on a risky plan](images/run-waiting.png)
 

@@ -18,6 +18,7 @@ The page at `/`. 24 route rows (20 sections in `route()` at `ui/app.js:75` and 4
 | `#/home` | Home | `ui/turn.js`, `ui/turn-act.js` | `renderYourTurn` | `your-turn.ts`, `turn-actions.ts`, `api-admin.ts` (tick) | admin display only | Answer, approve, reject or retry what waits for the owner | Show questions / Show plan / Retry (button per item) | Answers by dialog (5 kinds in `dialogs.md`); a second run list next to Runs; polls every 5 s (`turn.js:166`) and every 30 s for the badge (`turn.js:52`) |
 | `#/board` | Board | `ui/board.js` | `renderBoard(main, arg)` | `board.ts`, `api-admin.ts` (tick) | admin display only | See where every story of one repository is | Pick a repository, then read the columns | Status shown here again (see F1); polls every 5 s (`board.js:156`) |
 | `#/board/:id` | — | `ui/board.js` | `renderBoard(main, arg)` | `board.ts` | admin display only | Same board for the repository in the address | Read the columns | Same module as the list; the repository id is the only difference |
+| `#/epics` | Epics | `ui/epics.js` | `renderEpics` | `api-epics.ts` | admin and user | See how far each epic is | Pick a repository | Shared with the user display |
 | `#/refinement` | Refinement | `ui/refinement.js` | `renderRefinement` (list) | `api-refinement.ts` | both displays | Find or start a refinement session | New session | Shares the renderer with the user display via `{ admin }`; 9 buttons in one module |
 | `#/refinement/:id` | — | `ui/refinement.js`, `refinement-workspace.js`, `refinement-draft.js` (709 lines), `-talk.js`, `-suggest.js`, `-ready.js`, `-impact.js`, `-remarks.js` | `renderRefinement` (session) | `api-refinement.ts`, `api-refinement-publish.ts` | both displays | Turn an idea into story drafts and publish them | Ask the architect, answer, edit drafts | Longest page: 7 modules, 6 modal call sites, 6 native confirms; `refinement-draft.js` alone is 709 lines |
 | `#/flows` | Flows | `ui/app.js` | `welcome()` | `api-flows.ts` (list), `api-admin.ts` (info) | admin display only | Start a flow: draft with Claude or blank; also the default page | Draft flow with Claude / Blank flow | The same two buttons are in the sidebar on every admin page (`app.js:78-79`) |
@@ -57,6 +58,7 @@ The page at `/user/`. 7 route rows. `USER_HASH` allows exactly these (`ui/auth.j
 | `/user/#/runs/:id` | — | `ui/user/runs.js` | `renderMyRun` | `api-runs.ts` (incl. event stream) | user; admin read-only preview | Follow one run, answer, approve, cancel | Send answer / Approve / Cancel | A second detail page for the same run (F3) |
 | `/user/#/repos` | My repositories | `ui/repos.js` | `renderRepos` with `admin: false` | `api-repos.ts` | user; admin read-only preview | Add and manage own repositories | Add repository | Same module as the admin page; a row has the next step and Open |
 | `/user/#/repos/:id` | — | `ui/repo-view.js` | `renderRepo` with `admin: false` | `api-repos.ts` | user; admin read-only preview | See one own repository: overview, connection, dangerous actions | Test connection / Change authentication; Generate a new key / Remove | Same module as the admin page; read-only preview shows no buttons |
+| `/user/#/epics` | Epics | `ui/epics.js` | `renderEpics` | `api-epics.ts` | user; admin read-only preview | See how far each epic is | Pick a repository | Shared with the admin display |
 | `/user/#/refinement` | Refinement | `ui/refinement.js` | `renderRefinement` (list) | `api-refinement.ts` | user; admin read-only preview | Find or start a session | New session | Shared with the admin display |
 | `/user/#/refinement/:id` | — | `ui/refinement.js` and six `refinement-*.js` | `renderRefinement` (session) | `api-refinement.ts`, `api-refinement-publish.ts` | user; admin read-only preview | Refine an idea | Ask the architect | Longest page, see `#/refinement/:id` above |
 
@@ -96,6 +98,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | Route | Empty | Errors | Live update |
 |---|---|---|---|
 | `#/home` | `data.empty` text from the server (`turn.js`), or `EMPTY` when nothing exists | errors box | poll 5 s (Your turn) and 30 s (runs, queue, health) |
+| `#/epics` | `emptyState` | `errorState` with Retry | none (Refresh button) |
 | `#/board` | `data.empty` (`board.js:77`) | errors box | poll 5 s |
 | `#/board/:id` | `data.empty` | errors box | poll 5 s |
 | `#/refinement` | "No refinement sessions yet..." (`refinement.js:472`) | errors box | none found |
@@ -130,6 +133,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `/user/#/runs/:id` | `NOT_FOUND` with a link back, `NO_STEPS`, `NO_CHANGES` | skeleton, `permissionState` or `errorState` with Retry on first load; stream loss gives a banner with Reconnect; a diff failure gives an inline `errorState` with Retry | stream and poll 30 s |
 | `/user/#/repos` | "No repositories yet..." | errors box | none |
 | `/user/#/repos/:id` | `NO_REPO` with a link back | same as the admin page | cleanup returned |
+| `/user/#/epics` | as admin | as admin | none (Refresh button) |
 | `/user/#/refinement` | as admin | errors box | none found |
 | `/user/#/refinement/:id` | as admin | errors box | none found |
 
@@ -140,6 +144,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | Route | At 768 (R1 only) | At 390 (R1 and R2) |
 |---|---|---|
 | `#/home` | Cards; 17-link nav is wider than 768 and has no wrap or scroll above 760 | Nav scrolls sideways; sidebar stacks above |
+| `#/epics` | `.table-box` scrolls | Rows are cards |
 | `#/board` | Board columns probably wider than main | Probably clipped; no rule |
 | `#/board/:id` | As `#/board` | As `#/board` |
 | `#/refinement` | Table in `.table-box` scrolls | Same |
@@ -174,6 +179,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `/user/#/runs/:id` | `.run-grid` one column | Long page |
 | `/user/#/repos` | `.table-box` scrolls | Same |
 | `/user/#/repos/:id` | Cards; fits | Same |
+| `/user/#/epics` | As admin | As admin |
 | `/user/#/refinement` | `.table-box` scrolls | Same |
 | `/user/#/refinement/:id` | As admin | As admin |
 
