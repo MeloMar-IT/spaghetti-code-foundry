@@ -130,6 +130,26 @@ describe("watchers of a repository: the routes", () => {
     expect(log).toContain(annRepo);
   });
 
+  it("stores the options of the form, removes cleared ones, and names a refused one", async () => {
+    const opts = {
+      auto_defaults: true, precheck_flow: "epic-questions", priority_labels: ["urgent"], status_labels: { working: "W" }, wait_for_dependencies: false,
+      dependency_done_labels: ["released"], remove_on_done: ["go"], comment_on_failure: false, status_comment: false, one_at_a_time: true, pause_while_pr_open: "factory/daily-",
+    };
+    expect((await call(admin, "POST", path(annRepo), { id: "opt-w", every: "5m", ...opts })).status).toBe(201);
+    expect(((await rows()).find((w) => w.id === "opt-w")) as unknown).toMatchObject(opts);
+    const cleared = await call(admin, "PUT", path(annRepo, "opt-w"), { pause_while_pr_open: null, precheck_flow: null, status_labels: {} });
+    expect(cleared.status).toBe(200);
+    const row = (await rows()).find((w) => w.id === "opt-w") as unknown as Record<string, unknown>;
+    expect(row.pause_while_pr_open).toBeUndefined();
+    expect(row.precheck_flow).toBeUndefined();
+    const bad = await call(admin, "PUT", path(annRepo, "opt-w"), { pause_while_pr_open: 5 });
+    expect(bad.status).toBe(400);
+    expect(String((bad.json() as { error: string }).error)).toMatch(/^pause_while_pr_open:/);
+    const bad2 = await call(admin, "PUT", path(annRepo, "opt-w"), { status_labels: { working: 5 } });
+    expect(String((bad2.json() as { error: string }).error)).toMatch(/^status_labels\.working:/);
+    await call(admin, "DELETE", path(annRepo, "opt-w"));
+  });
+
   it("keeps ids unique on the install, in the store and in config.yaml", async () => {
     expect((await call(admin, "POST", path(adminRepo), { id: "admin-w" })).status).toBe(409);
     expect((await call(admin, "POST", path(annRepo), { id: "admin-w" })).error()).toMatch(/exists already/);
