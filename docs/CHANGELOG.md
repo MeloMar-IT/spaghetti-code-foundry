@@ -4,6 +4,16 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill source connector 1: a staged import keeps its licence evidence (#514). Part 1 of 4 of #221.
+  - **What it keeps.** `scf skills import` collects the licence and notice files that apply to each staged skill (`collectLicenceEvidence`, in `src/skills/licence.ts`) while the commit is still open. They are written into the same quarantine folder and the same single rename as the skills: `licences.json` and `licences/<upstream path>`. Nothing is decided here; the policy is unchanged.
+  - **Reader.** `readStagedImport` returns the evidence as `licences` (a `LicenceEvidence`). It refuses the import (`invalid`, shown as `PROBLEM`) when a licence file is changed, missing, extra or a link, or when `licences.json` does not match the files. `scf skills scan` refuses the same way.
+  - **Older imports.** An import staged before this change has no `licences.json`. It still reads as `ok`, with the evidence absent, and `scf skills scan` works on it as before.
+  - **Same commit.** A second import of the same commit still prints `(unchanged)`. An older import without evidence is a `conflict`; the message says it was staged before licence evidence was kept, and removing the folder and importing again completes it.
+  - **Unchanged format.** `import.json` keeps `schema: 1` and its fields; the import digest does not change for the same skills. The new `licences.json` has `schema: 1` and is limited by `LICENCE_LIMITS`. No licence text is printed.
+  - **Code.** New `src/skills/import-licences.ts` (the writer `prepareLicences`, the reader `readStagedLicences` and the record check `parseLicenceRecord`). Changed: `src/skill-import/cli.ts`, `src/skills/import-stage.ts`, `src/skills/import-plan.ts` (`nameClash` and `takeName` exported).
+  - **Tests.** Extended `tests/skill-import-stage.test.ts`, `tests/skill-import-read.test.ts` and `tests/skill-import-cli.test.ts`; `tests/skill-no-network.test.ts` covers the new file.
+  - **Docs.** `docs/USER_GUIDE.md` ("Import a source into quarantine" and "Scan an import") describes the layout and the older imports.
+  - **Not done.** No code reads `licences` from the staged import yet. Eligibility is still decided by the promotion code in `src/skills/promotion.ts`, which takes its evidence from its caller.
 - Epics 2: which stories belong to an epic, and the counts (#484). Part 2 of 7 of #408.
   - **What it does.** New pure module `src/epics/model.ts`: `buildEpics` takes the saved issue records (`IssueRecord` from `src/queue/issue-list.ts`), the watchers' trigger labels and the run states the Foundry holds, and returns the epics. No server, no GitHub, no files, no clock (`now` is a parameter).
   - **Membership.** A story belongs to an epic through `**Epic:**`, `Parent: #N`, an `epic: …` label, or the story list of the epic issue. Parts of a split story belong to the epic of the story they replace, also for a part of a part. A story that matches no epic is listed under "No epic".

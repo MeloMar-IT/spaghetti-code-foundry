@@ -404,3 +404,104 @@ describe("quarantine name and path", () => {
     expect(quarantinePath(join(home, "skills"), home)).toBe(false);
   });
 });
+
+describe("licence evidence", () => {
+  const MIT = "MIT License\n\nCopyright (c) 2024 Example\n\nPermission is hereby granted.\n";
+  const WITH_LIC = { ...DEFAULT_FILES, LICENSE: MIT, "skills/a/LICENSE.txt": MIT + "a", "skills/NOTICE": "notice", "other/LICENSE": "elsewhere" };
+  const stage = (files: Record<string, string>, h = home) => stageImport(source(), tree(files), { home: h });
+
+  it("keeps the licence and notice files that apply, in byte order, with modes", () => {
+    const r = stage(WITH_LIC);
+    const rec = JSON.parse(readFileSync(join(r.dir, "licences.json"), "utf8"));
+    expect(rec.files.map((f: { path: string }) => f.path)).toEqual(["LICENSE", "skills/NOTICE", "skills/a/LICENSE.txt"]);
+    expect(rec.files[0]).toMatchObject({ kind: "licence", bytes: Buffer.byteLength(MIT) });
+    expect(readFileSync(join(r.dir, "licences/skills/a/LICENSE.txt"), "utf8")).toBe(MIT + "a");
+    expect(existsSync(join(r.dir, "licences/other"))).toBe(false);
+    expect(statSync(join(r.dir, "licences.json")).mode & 0o777).toBe(0o600);
+    expect(statSync(join(r.dir, "licences/skills")).mode & 0o777).toBe(0o700);
+  });
+
+  it("writes an empty list and no folder when the source has no licence file", () => {
+    const r = stage(DEFAULT_FILES);
+    expect(JSON.parse(readFileSync(join(r.dir, "licences.json"), "utf8")).files).toEqual([]);
+    expect(existsSync(join(r.dir, "licences"))).toBe(false);
+  });
+
+  it("leaves import.json and the digest as they are with and without evidence", () => {
+    const prep = prepareImport(source(), tree(WITH_LIC));
+    const a = publishImport(prep, { home });
+    const b = publishImport({ ...prep, licences: { repositoryKey: "github.com/example/skills", commit: COMMIT, files: [] } }, { home: fresh() });
+    expect(readFileSync(join(b.dir, IMPORT_RECORD_FILE))).toEqual(readFileSync(join(a.dir, IMPORT_RECORD_FILE)));
+    expect(b.record.digest).toBe(a.record.digest);
+  });
+
+  it("is unchanged the second time", () => {
+    stage(WITH_LIC);
+    expect(stage(WITH_LIC).state).toBe("unchanged");
+  });
+
+  it.each([
+    ["a changed file", (d: string) => writeFileSync(join(d, "licences/LICENSE"), "x".repeat(Buffer.byteLength(MIT)))],
+    ["a missing file", (d: string) => rmSync(join(d, "licences/LICENSE"))],
+    ["an extra file", (d: string) => writeFileSync(join(d, "licences/EXTRA"), "x", { mode: 0o600 })],
+    [
+      "a link",
+      (d: string) => {
+        rmSync(join(d, "licences/LICENSE"));
+        symlinkSync("/etc/hostname", join(d, "licences/LICENSE"));
+      },
+    ],
+    ["an edited licences.json", (d: string) => writeFileSync(join(d, "licences.json"), "{}\n")],
+  ])("refuses a folder with %s", (_n, change) => {
+    const r = stage(WITH_LIC);
+    change(r.dir);
+    let err: unknown;
+    try {
+      stage(WITH_LIC);
+    } catch (e) {
+      err = e;
+    }
+    expect((err as SkillImportError).code).toBe("conflict");
+    expect((err as Error).message).toContain("Remove that folder");
+  });
+
+  it("says so when the folder was staged before evidence was kept, and changes nothing", () => {
+    const old = publishImport(prepareImport(source(), tree(WITH_LIC)), { home });
+    const before = readdirSync(old.dir, { recursive: true }).sort();
+    expect(() => stage(WITH_LIC)).toThrow(/was staged before licence evidence was kept\. Remove that folder, then import again/);
+    expect(readdirSync(old.dir, { recursive: true }).sort()).toEqual(before);
+    rmSync(old.dir, { recursive: true });
+    expect(stage(WITH_LIC).state).toBe("staged");
+  });
+
+  it("lists a link as a problem and writes no file for it", () => {
+    const t = tree({ ...DEFAULT_FILES, LICENSE: MIT });
+    const t2: SourceTree = { list: (p) => t.list(p).map((e) => (e.path === "LICENSE" ? { ...e, kind: "symlink" as const } : e)), read: (es) => t.read(es) };
+    const r = stageImport(source(), t2, { home });
+    const rec = JSON.parse(readFileSync(join(r.dir, "licences.json"), "utf8"));
+    expect(rec.files).toEqual([{ path: "LICENSE", kind: "licence", problem: "a symbolic link" }]);
+    expect(existsSync(join(r.dir, "licences"))).toBe(false);
+  });
+
+  it("keeps the first of two names that clash on a case-insensitive disk", () => {
+    const r = stage({ ...DEFAULT_FILES, "skills/LICENSE": "one", "skills/license": "two" });
+    const rec = JSON.parse(readFileSync(join(r.dir, "licences.json"), "utf8"));
+    const bad = rec.files.filter((f: { problem?: string }) => f.problem?.startsWith("cannot be kept"));
+    expect(bad).toHaveLength(1);
+    expect(readdirSync(join(r.dir, "licences/skills"))).toHaveLength(1);
+  });
+
+  it("refuses evidence for another commit and writes nothing", () => {
+    const prep = prepareImport(source(), tree(DEFAULT_FILES));
+    expect(() => publishImport({ ...prep, licences: { repositoryKey: "github.com/example/skills", commit: "b".repeat(40), files: [] } }, { home })).toThrow(/another repository or commit/);
+    expect(existsSync(join(home, QUARANTINE_DIR))).toBe(false);
+  });
+
+  it("leaves nothing behind when the rename fails", () => {
+    importStoreSettings.rename = () => {
+      throw new Error("no");
+    };
+    expect(() => stage(WITH_LIC)).toThrow();
+    expect(readdirSync(join(home, QUARANTINE_DIR, "lib"))).toEqual([]);
+  });
+});

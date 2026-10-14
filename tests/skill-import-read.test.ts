@@ -1,9 +1,12 @@
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
+import { LICENCE_RECORD_BYTES, parseLicenceRecord, prepareLicences } from "../src/skills/import-licences.js";
 import { publishImport, readStagedImport } from "../src/skills/import-stage.js";
+import { collectLicenceEvidence } from "../src/skills/licence.js";
+import { LICENCE_LIMITS } from "../src/skills/licence-rules.js";
 import type { SkillLibrarySource } from "../src/skills/sources.js";
 
 const isRoot = process.getuid?.() === 0;
@@ -256,5 +259,127 @@ describe("parseImportRecord", () => {
     expect(made(101, 200, 0)).toEqual({ problem: expect.stringContaining("more files") });
     expect("record" in made(32, 1, 2097152)).toBe(true);
     expect(made(33, 1, 2097152)).toEqual({ problem: expect.stringContaining("more bytes") });
+  });
+});
+
+describe("licence evidence", () => {
+  const MIT = "MIT License\n\nCopyright (c) 2024 Example\n\nPermission is hereby granted.\n";
+  const LIC: Record<string, string> = { ...FILES, LICENSE: MIT, "skills/a/NOTICE": "n" };
+  const origin = { repositoryKey: "github.com/example/skills", commit: COMMIT };
+  const evidence = (files: Record<string, string> = LIC) => collectLicenceEvidence(origin, ["skills/a", "skills/b"], tree(files));
+  const stageLic = (files = LIC) => publishImport({ ...prepareImport(source(), tree(files)), licences: evidence(files) }, { home });
+  const ok = () => {
+    const r = read();
+    if (r.state !== "ok") throw new Error("expected ok, got " + JSON.stringify(r));
+    return r;
+  };
+  const dirOf = () => join(home, "skill-quarantine", "lib", COMMIT);
+
+  it("reads back the evidence", () => {
+    stageLic();
+    const r = ok();
+    const want = prepareLicences(evidence()).evidence;
+    const shape = (e: typeof want) => e.files.map((f) => [f.path, f.kind, f.dir, f.problem, Buffer.from(f.content ?? []).toString("hex")]);
+    expect(r.licences!.repositoryKey).toBe(origin.repositoryKey);
+    expect(r.licences!.commit).toBe(COMMIT);
+    expect(shape(r.licences!)).toEqual(shape(want));
+    expect(r.licences!.files.map((f) => f.path)).toEqual(["LICENSE", "skills/a/NOTICE"]);
+  });
+  it("reads an import without evidence as ok with none", () => {
+    stage();
+    expect(ok().licences).toBeUndefined();
+  });
+  it("reads empty evidence as an empty list", () => {
+    stageLic(FILES);
+    expect(ok().licences!.files).toEqual([]);
+  });
+
+  const cases: [string, (d: string) => void, string][] = [
+    ["same size, other content", (d) => writeFileSync(join(d, "licences/LICENSE"), "x".repeat(Buffer.byteLength(MIT))), "changed"],
+    ["other size", (d) => writeFileSync(join(d, "licences/LICENSE"), "x"), "changed"],
+    ["removed", (d) => rmSync(join(d, "licences/LICENSE")), "is missing"],
+    ["extra file", (d) => writeFileSync(join(d, "licences/EXTRA"), "x", { mode: 0o600 }), "is not part of the import"],
+    ["extra folder", (d) => mkdirSync(join(d, "licences/skills/empty"), { mode: 0o700 }), "more folders"],
+    [
+      "file a link",
+      (d) => {
+        rmSync(join(d, "licences/LICENSE"));
+        symlinkSync("/etc/hostname", join(d, "licences/LICENSE"));
+      },
+      "is a link",
+    ],
+    [
+      "parent a link",
+      (d) => {
+        rmSync(join(d, "licences/skills"), { recursive: true });
+        symlinkSync(d, join(d, "licences/skills"));
+      },
+      "is a link",
+    ],
+    [
+      "licences a link",
+      (d) => {
+        renameSync(join(d, "licences"), join(d, "..", "moved"));
+        symlinkSync(join(d, "..", "moved"), join(d, "licences"));
+      },
+      "is a link",
+    ],
+    ["wrong mode", (d) => chmodSync(join(d, "licences/LICENSE"), 0o644), "wrong mode"],
+    [
+      "licences.json a link",
+      (d) => {
+        renameSync(join(d, "licences.json"), join(d, "..", "l.json"));
+        symlinkSync(join(d, "..", "l.json"), join(d, "licences.json"));
+      },
+      "is a link",
+    ],
+    ["licences.json removed", (d) => rmSync(join(d, "licences.json")), "licences is not part of the import"],
+    ["licences.json edited", (d) => writeFileSync(join(d, "licences.json"), readFileSync(join(d, "licences.json"), "utf8").replace(/ {2}/g, "   ")), "written form"],
+    ["licences.json for another commit", (d) => writeFileSync(join(d, "licences.json"), readFileSync(join(d, "licences.json"), "utf8").replace(COMMIT, "b".repeat(40))), "another repository or commit"],
+    ["licences.json too large", (d) => writeFileSync(join(d, "licences.json"), " ".repeat(LICENCE_RECORD_BYTES + 1)), "too large"],
+  ];
+  it.each(cases)("is invalid with %s", (_n, change, text) => {
+    stageLic();
+    change(dirOf());
+    expect(invalid()).toContain(text);
+  });
+
+  it("changes nothing when it reads", () => {
+    stageLic();
+    const before = readdirSync(dirOf(), { recursive: true }).sort();
+    ok();
+    expect(readdirSync(dirOf(), { recursive: true }).sort()).toEqual(before);
+  });
+});
+
+describe("parseLicenceRecord", () => {
+  const h = "a".repeat(64);
+  const rec = (files: unknown[], over: Record<string, unknown> = {}) => JSON.stringify({ schema: 1, repositoryKey: "github.com/x/y", commit: COMMIT, files, ...over }, null, 2) + "\n";
+  const lic = (path: string, over: Record<string, unknown> = {}) => ({ path, kind: "licence", bytes: 1, sha256: h, ...over });
+  it("round-trips what prepareLicences writes", () => {
+    const e = {
+      repositoryKey: "github.com/x/y",
+      commit: COMMIT,
+      files: [
+        { path: "LICENSE", dir: ".", kind: "licence" as const, content: Buffer.from("x") },
+        { path: "NOTICE", dir: ".", kind: "notice" as const, problem: "a symbolic link" },
+      ],
+    };
+    expect("record" in parseLicenceRecord(prepareLicences(e).text)).toBe(true);
+  });
+  it.each<[string, string]>([
+    ["wrong schema", rec([], { schema: 2 })],
+    ["unsorted", rec([lic("b/LICENSE"), lic("a/LICENSE")])],
+    ["duplicate", rec([lic("LICENSE"), lic("LICENSE")])],
+    ["kind mismatch", rec([lic("LICENSE", { kind: "notice" })])],
+    ["hash and problem", rec([lic("LICENSE", { problem: "x" })])],
+    ["too big a file", rec([lic("LICENSE", { bytes: LICENCE_LIMITS.fileBytes + 1 })])],
+    ["too many files", rec(Array.from({ length: LICENCE_LIMITS.files + 1 }, (_v, i) => lic(`d${String(i).padStart(4, "0")}/LICENSE`)))],
+    ["too many bytes", rec(Array.from({ length: 17 }, (_v, i) => lic(`d${String(i).padStart(2, "0")}/LICENSE`, { bytes: LICENCE_LIMITS.fileBytes })))],
+    ["dotdot", rec([lic("../LICENSE")])],
+  ])("refuses %s without repeating a value", (_n, text) => {
+    const r = parseLicenceRecord(text);
+    expect("problem" in r).toBe(true);
+    if ("problem" in r) expect(r.problem).not.toMatch(/\.\.|LICENSE|d00/);
   });
 });

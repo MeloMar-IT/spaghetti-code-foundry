@@ -3374,12 +3374,13 @@ OK 2 skills staged from github.com/example/skills@0123456789ab sha256:… (stage
 Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef0123456789abcdef01234567
 ```
 
-- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`.
-- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`.
+- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json`, `files/<upstream path>`, `licences.json` and `licences/<upstream path>`. The last two hold the licence and notice files that apply to the staged skills, copied as they are. They are written in the same step as the skills.
+- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`. The licence evidence is not part of `import.json`, so the digest is the same as before.
+- **Licence evidence.** `licences.json` (`schema: 1`) lists each licence or notice file with its size and hash, or the reason it could not be kept. No licence text is printed. The limits are 256 KiB per file, 200 files and 4 MiB in total. An import staged before licence evidence was kept has no `licences.json`; it still reads and scans as before, with no evidence.
 - **How it fetches.** One commit, into a bare temporary repository. There is no checkout. Only https is used, with no redirects. Your git configuration, credential helper and `~/.netrc` are not used. The temporary folder is removed at the end.
 - **Limits.** 120 s for the fetch, 256 MiB during the fetch, 8 MiB for the file list, and the per-skill limits from the staging step (#457).
 - **Rejections.** A skill is rejected, and not staged, for example when it is a symbolic link, a submodule or too large (`is larger than 262144 bytes`), or has an unsafe path. Each prints a `REJECTED` line with the reasons. The other skills are still staged.
-- **`(staged)` and `(unchanged)`.** A second import of the same commit prints the same digest and `(unchanged)`. If the folder holds a different import of this commit, the result is `conflict`: remove the folder and import again.
+- **`(staged)` and `(unchanged)`.** A second import of the same commit prints the same digest and `(unchanged)`. If the folder holds a different import of this commit, the result is `conflict`: remove the folder and import again. An import staged before licence evidence was kept is also a `conflict`, and its message says so: remove the folder and import again to add the evidence.
 - **Ctrl-C.** The import stops and nothing is staged. Once writing into the quarantine has started, the import is finished.
 - **Exit codes.** 0 when all skills are staged. 1 when a skill is rejected or a `PROBLEM` is printed. Usage errors exit 1 with the usage text.
 - **Known limits.** The memory git uses while indexing the pack is not capped. A renamed upstream repository fails until the manifest is updated. Private sources are not supported.
@@ -3398,7 +3399,7 @@ BLOCKED <skill>: 1 high finding
 SCANNED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 blocked
 ```
 
-- **What it checks first.** The staged files must match `import.json` exactly: a changed file, a link or an extra file is refused with a `PROBLEM` line and nothing is scanned. Then every skill is scanned with the static scanner (#472), and the exceptions are applied.
+- **What it checks first.** The staged files must match `import.json` exactly, and the licence evidence must match `licences.json` (when there is one): a changed file, a link or an extra file is refused with a `PROBLEM` line and nothing is scanned. Then every skill is scanned with the static scanner (#472), and the exceptions are applied.
 - **Lines.** One `FINDING` line per finding: its stable id, severity, disposition (`open`, `accepted`, `expired` or `review-required`), the skill, the path and a short bounded evidence text. A credential is never printed; it shows as `(hidden)`. Then one line per skill: `OK <skill>: <n> findings, none blocks`, or `BLOCKED <skill>: <n> high findings`. Each `REJECTED` line of the import is repeated, with credential-like text shown as `(hidden)`.
 - **Not normalized.** A skill that the normalization step rejects (for example a credential or bad metadata) has no package id. Its findings are still printed, with the folder as its name, and it prints `BLOCKED <folder>: not normalized (<reasons>)`.
 - **What blocks.** A high finding that is not accepted blocks its skill. Medium and low findings never block. An accepted finding does not block; a secret finding can never be accepted.

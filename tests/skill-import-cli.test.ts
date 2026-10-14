@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { GitTreeError, type GitTree, type GitTreeErrorCode } from "../src/skill-import/git-tree.js";
 import { IMPORT_USAGE, skillImportCommand } from "../src/skill-import/cli.js";
-import type { TreeEntry } from "../src/skills/import-plan.js";
+import { prepareImport, type TreeEntry } from "../src/skills/import-plan.js";
+import { publishImport } from "../src/skills/import-stage.js";
+import type { SkillLibrarySource } from "../src/skills/sources.js";
 
 const COMMIT = "a".repeat(40);
 const md = (name: string) => `---\nname: ${name}\ndescription: A skill called ${name}.\n---\n\nBody.\n`;
@@ -207,6 +209,84 @@ describe("interrupt", () => {
     const r = await run(fakeTree({ "skills/c/SKILL.md": "bad" }, { onRead: () => void process.emit("SIGINT") }));
     expect(r.lines).toEqual([INTERRUPTED]);
     expect(quarantine()).toBe(false);
+  });
+});
+
+describe("licence evidence", () => {
+  const LIC: Record<string, string> = { ...GOOD, LICENSE: "MIT License\nSECRET-LICENCE-SENTENCE\n", "skills/a/NOTICE": "notice" };
+  const dest = () => join(home, "skill-quarantine", "lib", COMMIT);
+
+  it("stores licences.json and the files, prints the same four lines and no licence text", async () => {
+    const r = await run(fakeTree(LIC));
+    expect(r.rc).toBe(0);
+    expect(r.lines).toHaveLength(4);
+    expect(r.text).not.toContain("SECRET-LICENCE-SENTENCE");
+    expect(existsSync(join(dest(), "licences.json"))).toBe(true);
+    expect(existsSync(join(dest(), "licences", "LICENSE"))).toBe(true);
+    expect(existsSync(join(dest(), "licences", "skills/a/NOTICE"))).toBe(true);
+  });
+
+  it("collects the evidence while the tree is open", async () => {
+    const order: string[] = [];
+    const t = fakeTree(LIC, { onList: () => order.push("list"), onRead: () => order.push("read") });
+    const close = t.close.bind(t);
+    t.close = () => {
+      order.push("close");
+      close();
+    };
+    await run(t);
+    expect(order.at(-1)).toBe("close");
+    expect(order.filter((x) => x === "close")).toHaveLength(1);
+    expect(order.filter((x) => x === "list").length).toBeGreaterThan(1);
+  });
+
+  it("prints (unchanged) the second time", async () => {
+    await run(fakeTree(LIC));
+    const b = await run(fakeTree(LIC));
+    expect(b.rc).toBe(0);
+    expect(b.lines[2]).toContain("(unchanged)");
+  });
+
+  it("refuses too many licence files and stages nothing", async () => {
+    const many = Object.fromEntries(Array.from({ length: 201 }, (_v, i) => [`skills/LICENSE-${i}`, "x"]));
+    const r = await run(fakeTree({ ...GOOD, ...many }));
+    expect(r.rc).toBe(1);
+    expect(r.lines.at(-1)).toBe("PROBLEM the source holds more than 200 licence or notice files");
+    expect(quarantine()).toBe(false);
+  });
+
+  it("reports a failed read of a licence file and stages nothing", async () => {
+    const t = fakeTree(LIC);
+    const read = t.read.bind(t);
+    t.read = (entries) => {
+      if (entries.some((e) => /LICENSE|NOTICE/.test(e.path))) throw new GitTreeError("read-failed");
+      return read(entries);
+    };
+    const r = await run(t);
+    expect(r.rc).toBe(1);
+    expect(r.lines.at(-1)).toMatch(/^PROBLEM /);
+    expect(quarantine()).toBe(false);
+    expect(t.closed).toBe(1);
+  });
+
+  it("stages nothing when SIGINT arrives while the licence files are read", async () => {
+    const t = fakeTree(LIC);
+    const read = t.read.bind(t);
+    t.read = (entries) => {
+      if (entries.some((e) => /LICENSE|NOTICE/.test(e.path))) void process.emit("SIGINT");
+      return read(entries);
+    };
+    const r = await run(t);
+    expect(r.lines).toEqual([INTERRUPTED]);
+    expect(quarantine()).toBe(false);
+  });
+
+  it("tells how to complete an import staged before evidence was kept", async () => {
+    const src = { ...source(), repositoryKey: "github.com/example/skills", ref: { approved: COMMIT } } as unknown as SkillLibrarySource;
+    publishImport(prepareImport(src, fakeTree(LIC)), { home });
+    const r = await run(fakeTree(LIC));
+    expect(r.rc).toBe(1);
+    expect(r.lines.at(-1)).toMatch(/^PROBLEM .*Remove that folder, then import again/);
   });
 });
 
