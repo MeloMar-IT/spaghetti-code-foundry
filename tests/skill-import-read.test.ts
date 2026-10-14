@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { collectImportEvidence } from "../src/skills/import-evidence.js";
 import { IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
 import { publishImport, readStagedImport } from "../src/skills/import-stage.js";
 import type { SkillLibrarySource } from "../src/skills/sources.js";
@@ -256,5 +257,43 @@ describe("parseImportRecord", () => {
     expect(made(101, 200, 0)).toEqual({ problem: expect.stringContaining("more files") });
     expect("record" in made(32, 1, 2097152)).toBe(true);
     expect(made(33, 1, 2097152)).toEqual({ problem: expect.stringContaining("more bytes") });
+  });
+});
+
+describe("collectImportEvidence", () => {
+  const readFailed = Object.assign(new Error("x"), { code: "read-failed" });
+  const flaky = (files: Record<string, string>, fail: (e: TreeEntry[]) => unknown): SourceTree => {
+    const t = tree(files);
+    return {
+      list: t.list,
+      read: (entries) => {
+        const err = fail([...entries]);
+        if (err) throw err;
+        return t.read(entries);
+      },
+    };
+  };
+  const origin = { repositoryKey: "github.com/example/skills", commit: COMMIT };
+  const files = { LICENSE: "MIT text", "skills/NOTICE": "notice", ...FILES };
+  const isRead = (e: unknown) => (e as { code?: string }).code === "read-failed";
+  const holdsRoot = (e: TreeEntry[]) => (e.some((x) => x.path === "LICENSE") ? readFailed : undefined);
+
+  it("keeps an unreadable licence file as a problem and the others with their bytes", () => {
+    const got = collectImportEvidence(origin, ["skills/a"], flaky(files, holdsRoot), { recoverable: isRead });
+    const root = got.files.find((f) => f.path === "LICENSE")!;
+    expect(root.problem).toBe("cannot be read");
+    expect(root.content).toBeUndefined();
+    expect(Buffer.from(got.files.find((f) => f.path === "skills/NOTICE")!.content!).toString()).toBe("notice");
+  });
+  it("throws without a recoverable test, for other errors and for listing errors", () => {
+    expect(() => collectImportEvidence(origin, ["skills/a"], flaky(files, holdsRoot))).toThrow("x");
+    expect(() => collectImportEvidence(origin, ["skills/a"], flaky(files, (e) => (e.length === 1 ? new Error("other") : readFailed)), { recoverable: isRead })).toThrow("other");
+    const bad: SourceTree = {
+      list: () => {
+        throw readFailed;
+      },
+      read: () => [],
+    };
+    expect(() => collectImportEvidence(origin, ["skills/a"], bad, { recoverable: () => true })).toThrow("x");
   });
 });

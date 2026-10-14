@@ -1,9 +1,8 @@
 import { resolve } from "node:path";
-import { addLicenceEvidence } from "../skills/import-evidence.js";
+import { addLicenceEvidence, collectImportEvidence } from "../skills/import-evidence.js";
 import { prepareLicenceEvidence } from "../skills/import-licence.js";
 import { prepareImport, SkillImportError, type PreparedImport, type RejectedSkill } from "../skills/import-plan.js";
 import { publishImport } from "../skills/import-stage.js";
-import { collectLicenceEvidence } from "../skills/licence.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
 import { readSources, shownValue, SOURCES_FILE } from "../skills/sources.js";
 import { GitTreeError, openGitTree, type GitTreeErrorCode } from "./git-tree.js";
@@ -98,8 +97,10 @@ export async function skillImportCommand(
       const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: aborter.signal });
       try {
         prep = prepareImport(source, tree);
+        // A licence file that cannot be read is kept as a problem; every other git failure ends the import.
+        const readFailed = (e: unknown) => e instanceof GitTreeError && e.code === "read-failed";
         const licence = prepareLicenceEvidence(
-          collectLicenceEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree),
+          collectImportEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree, { recoverable: readFailed }),
         );
         prep = addLicenceEvidence(prep, licence, (opts.now ?? new Date()).toISOString().slice(0, 19) + "Z");
       } finally {

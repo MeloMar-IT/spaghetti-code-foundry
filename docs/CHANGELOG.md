@@ -90,6 +90,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
   - **Example.** `evals/skill-gate/suite.yaml` with the fixtures `evals/skill-gate/fixtures/kafka-consumer` and `rest-service` scores one built-in skill end to end.
   - **Tests.** New `tests/skill-evaluation-suite.test.ts` and `tests/skill-evaluation-score.test.ts`. No agent, no server, no model.
   - **Not done.** Nothing calls the suite or the scorers yet: no command or run reads `suite.yaml`, stores a record or sets `CanonicalCandidate.evaluation`. So no user-visible behaviour changed, and `docs/USER_GUIDE.md` is not changed.
+- Skill source connector 1: an unreadable licence file no longer stops an import (#522). Part 1 of 4 of #222.
+  - **What it does.** Licence evidence is kept by #511 (`licence.json`, `licence/`). When git cannot read one licence or notice file (`read-failed`), `scf skills import` now lists that file with the problem `cannot be read` and goes on. Other git errors, timeouts, listing errors and interrupts still stop the import.
+  - **Code.** `collectImportEvidence` in `src/skills/import-evidence.ts`, used by `scf skills import` and by `stageImport` (option `recoverable`).
+  - **Tests.** `tests/skill-import-read.test.ts`.
+  - **Not done.** Nothing reads the evidence yet: no licence check runs on a staged import, and `promoteImport` is not called. `docs/USER_GUIDE.md` has a short note under "Import a source into quarantine".
 - Epics 2: which stories belong to an epic, and the counts (#484). Part 2 of 7 of #408.
   - **What it does.** New pure module `src/epics/model.ts`: `buildEpics` takes the saved issue records (`IssueRecord` from `src/queue/issue-list.ts`), the watchers' trigger labels and the run states the Foundry holds, and returns the epics. No server, no GitHub, no files, no clock (`now` is a parameter).
   - **Membership.** A story belongs to an epic through `**Epic:**`, `Parent: #N`, an `epic: …` label, or the story list of the epic issue. Parts of a split story belong to the epic of the story they replace, also for a part of a part. A story that matches no epic is listed under "No epic".

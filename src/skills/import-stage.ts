@@ -4,10 +4,10 @@ import { dirname, join, resolve, sep } from "node:path";
 import { dataHome } from "../auth/store.js";
 import { claimHomeWrite } from "../home.js";
 import { acquireLock, releaseLock, removeTree } from "../home-migrate.js";
-import { addLicenceEvidence, importLicenceFiles } from "./import-evidence.js";
+import { addLicenceEvidence, collectImportEvidence, importLicenceFiles } from "./import-evidence.js";
 import { evidenceFromRecord, LICENCE_DIR, LICENCE_RECORD_BYTES, LICENCE_RECORD_FILE, parseLicenceRecord, prepareLicenceEvidence, type LicenceRecord } from "./import-licence.js";
 import { byteCmp, IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, SkillImportError, type ImportRecord, type PreparedImport, type SourceTree } from "./import-plan.js";
-import { collectLicenceEvidence, type LicenceEvidence } from "./licence.js";
+import type { LicenceEvidence } from "./licence.js";
 import { LICENCE_LIMITS } from "./licence-rules.js";
 import { skillDigest } from "./package.js";
 import { SKILL_ID_RE, SKILL_LIMITS } from "./schema.js";
@@ -248,11 +248,11 @@ function replaceFolder(sourceDir: string, tmp: string, dest: string, commit: str
 export function stageImport(
   source: SkillLibrarySource,
   tree: SourceTree,
-  opts: { home?: string; limits?: { recordBytes?: number }; retrievedAt?: string } = {},
+  opts: { home?: string; limits?: { recordBytes?: number }; retrievedAt?: string; recoverable?: (e: unknown) => boolean } = {},
 ): { record: ImportRecord; dir: string; state: "staged" | "unchanged" } {
   const prep = prepareImport(source, tree, { limits: opts.limits });
   const licence = prepareLicenceEvidence(
-    collectLicenceEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree),
+    collectImportEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree, { recoverable: opts.recoverable }),
   );
   const full: PreparedImport = opts.retrievedAt !== undefined ? addLicenceEvidence(prep, licence, opts.retrievedAt, { limits: opts.limits }) : { ...prep, licence };
   return publishImport(full, { home: opts.home });
