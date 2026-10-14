@@ -5,7 +5,7 @@ import { emptyState, errorState, explainError, loadingState } from "./states.js"
 
 /** Every action a line can have; the same names as AUDIT_ACTIONS on the server, by alphabet. */
 export const ACTIONS = ["app-repos-change", "block", "create", "credential-add", "credential-remove", "delete", "edit", "flow-publish", "help-ask", "help-delete", "help-export", "limits-change", "link",
-  "password", "refinement-publish", "repo-add", "repo-change", "repo-remove", "repo-transfer", "role", "run-answer", "run-approve", "run-archive", "run-cancel", "run-reject",
+  "password", "refinement-publish", "repo-add", "repo-change", "repo-remove", "repo-transfer", "restart-cancel", "restart-request", "role", "run-answer", "run-approve", "run-archive", "run-cancel", "run-reject",
   "run-resume", "run-start", "run-unarchive", "settings-change", "sign-in", "turn-answer", "turn-approve", "turn-reject", "turn-retry", "unblock", "view-as"];
 
 /** A day from a date field ("2026-10-02") as an ISO time in the browser's time zone: its first moment, or its last with `end`. "" when it is not a real date. */

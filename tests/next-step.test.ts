@@ -318,6 +318,8 @@ describe("next-step records, one per kind", () => {
     expect(a.text).toBe("A new version is waiting — it restarts after 2 runs.");
     expect(a.where.url).toBe("#/runs");
     expect(nextStep("restart", {}, { restartWhy: "data_folder", runsLeft: 1 }).text).toBe("The data folder moved — it restarts after 1 run.");
+    expect(nextStep("restart", {}, { restartWhy: "settings", runsLeft: 1 }).text).toBe("A changed setting needs a restart — it restarts after 1 run.");
+    expect(nextStep("restart", {}, { restartWhy: "settings" }).text).toContain("for a changed setting");
     expect(nextStep("restart", {}, { runsLeft: 0 }).text).toMatch(/it restarts in a moment\.$/);
     expect(nextStep("restart", {}, { restartWhy: "new_version" }).text).toBe("The server waits to restart on a new version — nothing to do, it restarts when the active runs are done.");
   });

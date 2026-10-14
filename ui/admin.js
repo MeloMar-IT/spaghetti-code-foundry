@@ -1,6 +1,7 @@
 import { api, configVersion } from "./api.js";
 import { fieldFor, h, markInvalid, mount, toast } from "./dom.js";
 import { check, input, lockReadOnly } from "./fields.js";
+import { poller } from "./live.js";
 import { loadingState } from "./states.js";
 import { settingsPage } from "./templates.js";
 
@@ -36,9 +37,39 @@ export function serverFrom(v) {
 
 // ── settings ──
 
+const WAIT_WHY = {
+  settings: "The server waits to restart for a changed setting.",
+  new_version: "The server waits to restart on a new version.",
+  data_folder: "The server waits to restart onto a moved data folder.",
+};
+
+/**
+ * The box about a restart: what needs one, and the button or the wait. Null when `view` is not a restart view
+ * (an old server) or there is nothing to say.
+ */
+export function restartBox(view, { onRequest, onCancel, readOnly = false } = {}) {
+  if (!view || !Array.isArray(view.needed)) return null;
+  const w = view.waiting;
+  if (w) {
+    const left = w.activeRuns > 0
+      ? `${w.activeRuns} active run${w.activeRuns === 1 ? "" : "s"} left — no new runs start and the watchers are stopped until then.`
+      : "It restarts in a moment.";
+    return h("div", { class: "card mb-14" },
+      h("p", { class: "status flush", role: "status" }, `${WAIT_WHY[w.why] ?? WAIT_WHY.new_version} ${left}`),
+      w.cancellable && !readOnly ? h("button", { onClick: () => onCancel?.() }, "Cancel the restart") : null);
+  }
+  if (view.needed.length === 0) return null;
+  const list = view.needed.map((n) => `${n.label} ${n.running} → ${n.saved}`).join("; ");
+  return h("div", { class: "card mb-14" },
+    h("p", { class: "status bad flush", role: "status" }, `A restart is needed: ${list}.`),
+    view.canRestart
+      ? (readOnly ? null : h("button", { class: "primary", onClick: () => onRequest?.() }, "Restart when no story is running"))
+      : h("p", { class: "muted flush" }, view.manual ?? "Stop the server and start it again to use the new values."));
+}
+
 export async function renderSettings(main, { readOnly = false } = {}) {
   mount(main, settingsPage({ title: "Settings", sections: loadingState("Loading settings…", { rows: 6, shape: "detail" }) }));
-  const [c, info] = await Promise.all([api.config(), api.info()]);
+  const [c, info, restart] = await Promise.all([api.config(), api.info(), api.restartState().catch(() => undefined)]);
   let version = configVersion(c);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
   const limits = check(c.cost_limits !== false, "Enforce cost limits (run, step and daily budgets)");
@@ -79,6 +110,22 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const auditDays = input(String(c.audit?.retention_days ?? 180), { type: "number", min: 1, max: 3650, step: 1 });
   const redesign = check(c.ui?.redesign === true, "Show the redesigned pages (still being built)");
   const err = h("div");
+  const restartSlot = h("div");
+  let poll;
+  const drawRestart = (view) => mount(restartSlot, restartBox(view, { onRequest: () => restartAction(api.requestRestart), onCancel: () => restartAction(api.cancelRestart), readOnly }));
+  const restartAction = async (call) => {
+    try {
+      const view = await call();
+      mount(err);
+      if (poll) poll.show(view);
+      else drawRestart(view);
+    } catch (e) {
+      mount(err, h("div", { class: "errors", role: "alert" }, e.message));
+    }
+  };
+  drawRestart(restart);
+  // Only a server that has the restart route gets the poller: the box follows the runs, another admin and the restart itself.
+  if (restart && Array.isArray(restart.needed)) poll = poller({ load: () => api.restartState().catch(() => null), draw: drawRestart, every: 5000 });
   const saveNote = h("span", { class: "status", role: "status" });
   const saveBtn = h("button", { class: "primary", onClick: () => save() }, "Save");
   // the controls a server sentence can name, by the key of the setting
@@ -124,6 +171,8 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       slackRemove.el.checked = false;
       slackRemove.el.disabled = !hookSet;
       mount(err);
+      if (poll) poll.refresh();
+      else api.restartState().then(drawRestart).catch(() => {});
       markInvalid(Object.values(fields));
       saveNote.setAttribute("class", "status ok");
       mount(saveNote, `Saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
@@ -142,7 +191,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   mount(main, settingsPage({
     title: "Settings",
     actions: [h("span", { class: "muted mono" }, info.configPath), ...(readOnly ? [] : [h("span", { class: "spacer" }), saveNote, saveBtn])],
-    notices: err,
+    notices: [err, restartSlot],
     sections: [
     section("Budget & capacity",
       limits.row,
@@ -155,7 +204,6 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       h("p", { class: "muted" }, "Off by default. Applies after you reload the page.")),
     section("Network",
       h("p", { class: "muted flush" }, "Who can reach this page. For other computers, use HTTPS through a proxy on this Mac (see the user guide)."),
-      info.listening && info.listening !== net.listen ? h("p", { class: "status bad flush" }, `Now listening on ${info.listening} — restart the server to use ${net.listen}`) : null,
       h("div", { class: "grid" },
         f("Listen on", listenSel, "127.0.0.1: this Mac only. 0.0.0.0 and :: reach all networks (needs an admin account). Needs a restart."),
         f("Allowed host names", hostsIn, "Names people type, comma-separated, e.g. mymac.local.")),
@@ -202,4 +250,5 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     ],
   }));
   if (readOnly) lockReadOnly(main);
+  return () => poll?.stop();
 }

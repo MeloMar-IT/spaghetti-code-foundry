@@ -112,7 +112,7 @@ export interface NextData {
   now?: Date;
   timeZone?: string;
   /** Text for `restart`. */
-  restartWhy?: "new_version" | "data_folder";
+  restartWhy?: "new_version" | "data_folder" | "settings";
   /** The run was replaced by a newer run on the same work. */
   superseded?: boolean;
   /** The issue is known closed on GitHub (the store of the watcher). */
@@ -461,12 +461,12 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     case "restart": {
       who = "Foundry";
       if (d.runsLeft !== undefined) {
-        why = d.restartWhy === "data_folder" ? "The data folder moved" : "A new version is waiting";
+        why = d.restartWhy === "data_folder" ? "The data folder moved" : d.restartWhy === "settings" ? "A changed setting needs a restart" : "A new version is waiting";
         say = d.runsLeft > 0 ? `it restarts after ${plural(d.runsLeft, "run")}` : "it restarts in a moment";
         w = RUNS;
         break;
       }
-      why = d.restartWhy === "data_folder" ? "The server waits to restart onto a moved data folder" : "The server waits to restart on a new version";
+      why = d.restartWhy === "data_folder" ? "The server waits to restart onto a moved data folder" : d.restartWhy === "settings" ? "The server waits to restart for a changed setting" : "The server waits to restart on a new version";
       say = "nothing to do, it restarts when the active runs are done";
       w = WATCHERS;
       break;
