@@ -37,6 +37,7 @@ const source = (id: string, repository: string, status = "enabled") => ({
   licence: { allow: ["MIT"] },
   update: { cadence: "manual" },
   owner: "@example",
+  ...(status === "enabled" ? { review: { by: "@example", on: "2026-01-01", commit: "a".repeat(40), licence: "MIT" } } : {}),
 });
 const writeSources = (sources: Record<string, unknown>[]) => writeFileSync(join(dir, "skill-sources.yaml"), stringify({ schema: 1, sources }));
 const writeExport = (body: unknown) => writeFileSync(join(dir, "export.json"), typeof body === "string" ? body : JSON.stringify(body));

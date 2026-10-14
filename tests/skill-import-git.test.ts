@@ -251,7 +251,7 @@ describe("openGitTree fetches", { timeout: 15_000, retry: 0 }, () => {
 });
 
 const manifest = (cwd: string, paths: string[]) =>
-  writeFileSync(join(cwd, "skill-sources.yaml"), stringify({ schema: 1, sources: [{ id: "lib", repository: REPOSITORY, status: "enabled", ref: { track: "main", approved: c1 }, paths, adapter: "agent-skills", trust: "community", licence: { allow: ["MIT"] }, update: { cadence: "manual" }, owner: "@example" }] }));
+  writeFileSync(join(cwd, "skill-sources.yaml"), stringify({ schema: 1, sources: [{ id: "lib", repository: REPOSITORY, status: "enabled", ref: { track: "main", approved: c1 }, paths, adapter: "agent-skills", trust: "community", licence: { allow: ["MIT"] }, update: { cadence: "manual" }, owner: "@example", review: { by: "@example", on: "2026-01-01", commit: c1, licence: "MIT" } }] }));
 
 describe("skillImportCommand through the real tree", { timeout: 15_000, retry: 0 }, () => {
   it("stages two skills end to end", async () => {

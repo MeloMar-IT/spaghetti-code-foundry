@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
 import { skillsCommand } from "../src/skills/cli.js";
+import { COMMUNITY_REPOSITORIES } from "../src/skills/community-rules.js";
 import { credentialProblem } from "../src/skills/credential-scan.js";
 import { parseSources, readSources, shownValue, usableSources } from "../src/skills/sources.js";
 
@@ -22,7 +23,7 @@ const valid = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
   ref: { track: "main", approved: COMMIT },
   paths: ["skills"],
   adapter: "agent-skills",
-  trust: "community",
+  trust: "verified",
   licence: { allow: ["MIT", "Apache-2.0"] },
   update: { cadence: "weekly" },
   owner: "@octocat",
@@ -292,5 +293,158 @@ describe("scf skills sources check", () => {
         expect(l).not.toMatch(UNSAFE);
       }
     }
+  });
+});
+
+describe("community review", () => {
+  const TODAY = "2026-10-13";
+  const review = (o: Record<string, unknown> = {}) => ({ by: "@octocat", on: "2026-10-01", commit: COMMIT, licence: "MIT", ...o });
+  const community = (o: Record<string, unknown> = {}) => valid({ trust: "community", review: review(), ...o });
+  const probs = (s: Record<string, unknown>, today = TODAY) => text(parseSources(file(s), today).problems);
+
+  it("accepts an enabled community source with a full review and keeps it", () => {
+    const r = parseSources(file(community()), TODAY);
+    expect(r.problems).toEqual([]);
+    expect(r.manifest!.sources[0]!.review).toEqual(review());
+  });
+
+  it("needs a review for an enabled community source", () => {
+    expect(probs(community({ review: undefined }))).toContain("review: an enabled community source needs a review");
+  });
+
+  it("needs a new review for a new commit", () => {
+    expect(probs(community({ review: review({ commit: "b".repeat(40) }) }))).toContain("review.commit: is not the commit in ref.approved; a new commit needs a new review");
+  });
+
+  it("gives one message when a commit is malformed", () => {
+    const p = probs(community({ review: review({ commit: "main" }) }));
+    expect(p).toContain("review.commit: must be a full commit id");
+    expect(p).not.toContain("new review");
+  });
+
+  it.each([
+    ["by without at", { by: "octocat" }, "review.by: must be a GitHub user"],
+    ["by number", { by: 5 }, "review.by: must be text"],
+    ["on bad month", { on: "2026-13-01" }, "review.on: must be a date"],
+    ["on bad day", { on: "2026-02-30" }, "review.on: must be a date"],
+    ["on bad order", { on: "13-10-2026" }, "review.on: must be a date"],
+    ["on tomorrow", { on: "2026-10-14" }, "review.on: must not be in the future"],
+    ["commit branch", { commit: "main" }, "review.commit: must be a full commit id"],
+    ["commit short", { commit: "0123456" }, "review.commit: must be a full commit id"],
+    ["commit upper", { commit: COMMIT.toUpperCase() }, "review.commit: must be a full commit id"],
+    ["licence not accepted", { licence: "GPL-3.0" }, 'review.licence: "GPL-3.0" is not in licence.allow'],
+    ["licence not allowed here", { licence: "ISC" }, 'review.licence: "ISC" is not in licence.allow'],
+    ["missing by", { by: undefined }, "review.by: is required"],
+    ["missing licence", { licence: undefined }, "review.licence: is required"],
+    ["unknown key", { extra: "x" }, 'review: unknown key "extra"'],
+  ])("refuses a review with %s", (_n, over, msg) => {
+    expect(probs(community({ review: review(over) }))).toContain(msg);
+    expect(parseSources(file(community({ review: review(over) })), TODAY).manifest).toBeUndefined();
+  });
+
+  it("accepts a review dated today", () => {
+    expect(probs(community({ review: review({ on: TODAY }) }))).toBe("");
+  });
+
+  it.each([null, "x", []])("refuses a review that is not a map (%j)", (bad) => {
+    expect(probs(community({ review: bad }))).toContain("review: must be a map");
+  });
+
+  it("does not print a credential-like review.by", () => {
+    const p = probs(community({ review: review({ by: TOKEN }) }));
+    expect(p).toContain("review.by");
+    expect(p).not.toContain(TOKEN);
+  });
+
+  it("does not need a review for a disabled community source, and ignores a stale one", () => {
+    const off = { status: "disabled", reason: "waiting", ref: {}, update: { cadence: "manual" } };
+    expect(probs(community({ ...off, review: undefined }))).toBe("");
+    expect(probs(community({ ...off, ref: { approved: COMMIT }, review: review({ commit: "b".repeat(40) }) }))).toBe("");
+  });
+
+  it("does not need a review for a verified or first-party source, and keeps one that is given", () => {
+    for (const trust of ["verified", "first-party"]) {
+      expect(probs(valid({ trust }))).toBe("");
+      expect(parseSources(file(valid({ trust, review: review() })), TODAY).manifest!.sources[0]!.review).toEqual(review());
+    }
+  });
+
+  describe("known community repositories", () => {
+    const urls = ["https://github.com/jiangxianze/spring-agent-skills", "https://github.com/Jiangxianze/Spring-Agent-Skills.git", "https://GitHub.com/JiangXianze/spring-agent-skills/"];
+    const off = { status: "disabled", reason: "waiting", ref: {}, update: { cadence: "manual" } };
+    it.each(urls)("refuses another trust for %s", (repository) => {
+      for (const trust of ["verified", "first-party"]) {
+        for (const status of [{}, off]) {
+          const ps = parseSources(file(valid({ repository, trust, ...status })), TODAY).problems;
+          expect(ps.some((p) => p.where.endsWith(" trust") && p.message.includes("must be community"))).toBe(true);
+        }
+      }
+      expect(probs(community({ repository, ...off }))).toBe("");
+    });
+
+    it("lists the key in lower case", () => {
+      expect(COMMUNITY_REPOSITORIES).toContain("github.com/jiangxianze/spring-agent-skills");
+      for (const k of COMMUNITY_REPOSITORIES) expect(k).toBe(k.toLowerCase());
+    });
+  });
+
+  it("refuses a bad today without throwing", () => {
+    const r = parseSources(file(valid()), "nope");
+    expect(r.manifest).toBeUndefined();
+    expect(text(r.problems)).toBe("today: must be a date like 2026-10-13");
+    expect(parseSources(file(valid())).problems).toEqual([]);
+  });
+
+  it("reads an unquoted date from YAML as text", () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-review-"));
+    const yaml = [
+      "schema: 1",
+      "sources:",
+      "  - id: lib",
+      "    repository: https://github.com/example/skills",
+      "    status: enabled",
+      `    ref: {approved: '${COMMIT}'}`,
+      "    paths: [skills]",
+      "    adapter: agent-skills",
+      "    trust: community",
+      "    licence: {allow: [MIT]}",
+      "    update: {cadence: manual}",
+      "    owner: '@octocat'",
+      `    review: {by: '@octocat', on: 2026-10-01, commit: '${COMMIT}', licence: MIT}`,
+      "",
+    ].join("\n");
+    writeFileSync(join(d, "list.yaml"), yaml);
+    expect(readSources(join(d, "list.yaml"), undefined, TODAY).state).toBe("ok");
+  });
+
+  describe("scf skills sources check", () => {
+    const run = async (sources: Record<string, unknown>[]) => {
+      const d = mkdtempSync(join(tmpdir(), "scf-review-cli-"));
+      writeFileSync(join(d, "list.yaml"), stringify(file(...sources)));
+      const lines: string[] = [];
+      const code = await skillsCommand({ positionals: ["sources", "check", "list.yaml"], values: {} }, (l) => lines.push(l), { cwd: d, today: TODAY });
+      return { code, lines };
+    };
+
+    it("prints trust and the review", async () => {
+      const r = await run([community()]);
+      expect(r.code).toBe(0);
+      expect(r.lines[0]).toMatch(/ enabled community agent-skills github\.com\/example\/skills@0123456789ab @octocat reviewed by @octocat on 2026-10-01$/);
+    });
+
+    it("prints no review for a source without one", async () => {
+      expect((await run([valid()])).lines[0]).not.toContain("reviewed by");
+    });
+
+    it("prints the review before the reason of a disabled source", async () => {
+      const r = await run([community({ status: "disabled", reason: "paused", ref: {}, update: { cadence: "manual" } })]);
+      expect(r.lines[0]).toMatch(/ reviewed by @octocat on 2026-10-01 \(paused\)$/);
+    });
+
+    it("prints only PROBLEM lines for an unreviewed enabled community source", async () => {
+      const r = await run([community({ review: undefined })]);
+      expect(r.code).toBe(1);
+      expect(r.lines.every((l) => l.startsWith("PROBLEM "))).toBe(true);
+    });
   });
 });

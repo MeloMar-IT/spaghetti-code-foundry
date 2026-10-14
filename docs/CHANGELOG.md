@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries: a community source stays off until the owner records a review (#518). Part 1 of 4 of #224.
+  - **Review.** A source may have a `review` map in `skill-sources.yaml`: `by` (a GitHub user or team), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id) and `licence` (one of `licence.allow`). Unknown keys are refused. `parseSources` and `readSources` in `src/skills/sources.ts` check it; they take an optional `today` for the future-date rule.
+  - **Rules.** An enabled `trust: community` source is invalid without `review`, and when `review.commit` is not `ref.approved`. The shipped list `src/skills/community-rules.ts` holds `github.com/jiangxianze/spring-agent-skills`; a source with that repository and another trust is invalid, and the message names `trust`.
+  - **CLI.** `scf skills sources check` prints `reviewed by <by> on <on>` for a reviewed source. `scf skills import` and `scf skills scan` refuse a source whose review is missing or stale through the existing invalid-source path (`PROBLEM`); nothing is fetched or read.
+  - **Not changed.** `schema` stays 1. Files without `review` and without community-enabled sources load as before. `collisionCandidate` still gives `approved: false` for a disabled source.
+  - **Docs.** `docs/USER_GUIDE.md` "Skill library sources" has the `review` field and a disabled example for the candidate source; `docs/THREAT_MODEL.md` "Skill integrity" lists what is checked and what is not.
+  - **Not done.** No enabled entry for the candidate repository is shipped; the review itself is for the owner.
 - Epics 2: which stories belong to an epic, and the counts (#484). Part 2 of 7 of #408.
   - **What it does.** New pure module `src/epics/model.ts`: `buildEpics` takes the saved issue records (`IssueRecord` from `src/queue/issue-list.ts`), the watchers' trigger labels and the run states the Foundry holds, and returns the epics. No server, no GitHub, no files, no clock (`now` is a parameter).
   - **Membership.** A story belongs to an epic through `**Epic:**`, `Parent: #N`, an `epic: …` label, or the story list of the epic issue. Parts of a split story belong to the epic of the story they replace, also for a part of a part. A story that matches no epic is listed under "No epic".

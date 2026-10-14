@@ -260,6 +260,7 @@ describe("data folder", () => {
         "    licence: {allow: [MIT]}",
         "    update: {cadence: weekly}",
         "    owner: '@octocat'",
+        "    review: {by: '@octocat', on: '2026-01-01', commit: '0123456789abcdef0123456789abcdef01234567', licence: MIT}",
         "",
       ].join("\n"),
     );
@@ -293,6 +294,7 @@ describe("data folder", () => {
         "    licence: {allow: [MIT]}",
         "    update: {cadence: weekly}",
         "    owner: '@octocat'",
+        `    review: {by: '@octocat', on: '2026-01-01', commit: '${commit}', licence: MIT}`,
         "",
       ].join("\n"),
     );

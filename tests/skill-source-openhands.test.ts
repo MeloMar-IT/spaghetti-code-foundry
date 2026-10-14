@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { ConfigSchema } from "../src/config.js";
-import { canonicalFromRegistered } from "../src/skills/canonical-facts.js";
+import { canonicalFromCollision, canonicalFromRegistered } from "../src/skills/canonical-facts.js";
 import { collisionCandidate } from "../src/skills/collisions.js";
 import { evaluateImport } from "../src/skills/import-evaluation.js";
 import { prepareImport, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
@@ -42,10 +42,10 @@ function shipped(): SkillLibrarySource {
   return r.manifest.sources[0]!;
 }
 const rawEntry = () => (parse(readFileSync(SHIPPED, "utf8")) as { sources: Record<string, unknown>[] }).sources[0]!;
-const parsedWith = (over: Record<string, unknown>, drop: string[] = []) => {
+const parsedWith = (over: Record<string, unknown>, drop: string[] = [], today?: string) => {
   const entry = { ...rawEntry(), ...over };
   for (const k of drop) delete entry[k];
-  return parseSources({ schema: 1, sources: [entry] });
+  return today ? parseSources({ schema: 1, sources: [entry] }, today) : parseSources({ schema: 1, sources: [entry] });
 };
 
 describe("the shipped openhands-extensions source", () => {
@@ -68,7 +68,9 @@ describe("the shipped openhands-extensions source", () => {
     expect(parsedWith(enable, ["reason"]).manifest).toBeUndefined();
     expect(parsedWith({ ...enable, ref: { approved: "main" } }, ["reason"]).manifest).toBeUndefined();
     expect(parsedWith({ ...enable, ref: { approved: "abcdef123456" } }, ["reason"]).manifest).toBeUndefined();
-    expect(parsedWith({ ...enable, ref: { approved: COMMIT } }, ["reason"]).manifest?.sources[0]?.status).toBe("enabled");
+    const review = { by: "@octocat", on: "2026-01-01", commit: COMMIT, licence: "MIT" };
+    expect(parsedWith({ ...enable, ref: { approved: COMMIT } }, ["reason"]).manifest).toBeUndefined();
+    expect(parsedWith({ ...enable, ref: { approved: COMMIT }, review }, ["reason"], "2026-10-13").manifest?.sources[0]?.status).toBe("enabled");
   });
 
   it("is refused by prepareImport while disabled", () => {
@@ -99,6 +101,9 @@ describe("import, scan, evaluation and promotion of an OpenHands-style fixture",
     delete src.reason;
     const t = tree(FILES);
     const prep = prepareImport(src, t);
+    const disabled = collisionCandidate(normalizeImport(prep).skills[0]!, shipped());
+    expect(disabled.approved).toBe(false);
+    expect(canonicalFromCollision(disabled, { licence: "allowed" }).tier).toBe("discovery-only");
     expect(prep.record.skills.some((s) => s.root.startsWith("plugins/"))).toBe(false);
     expect([...prep.files.keys()].some((p) => p.startsWith("plugins/"))).toBe(false);
 
