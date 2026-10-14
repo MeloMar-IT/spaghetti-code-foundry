@@ -112,7 +112,7 @@ export function skillsSection(descriptions, skills, { disabled = false } = {}) {
       showIssues: (issues) => (Array.isArray(issues) ? issues : []),
     };
   }
-  const holders = {};
+  const slots = {};
   const descriptionOf = {};
   let messages = {};
   let locked = false;
@@ -126,18 +126,18 @@ export function skillsSection(descriptions, skills, { disabled = false } = {}) {
       onChange: (v) => { draft = withValue(draft, rel, v); },
     });
   };
-  const draw = (key) => mount(holders[key], build(descriptionOf[key]));
+  const draw = (key) => mount(slots[key], build(descriptionOf[key]));
   const groups = SKILL_GROUPS.map((g) => {
     const mine = shown.filter((d) => groupOf(d.key) === g.title);
     if (!mine.length) return null;
     const controls = mine.map((d) => {
       descriptionOf[d.key] = d;
-      holders[d.key] = h("div", {}, build(d));
-      return holders[d.key];
+      slots[d.key] = h("div", {}, build(d));
+      return slots[d.key];
     });
     return h("div", { class: "stack mt-10" }, h("h4", {}, g.title), h("div", { class: "grid" }, controls));
   });
-  const shownKeys = Object.keys(holders);
+  const shownKeys = Object.keys(slots);
   return {
     el: h("div", { class: "card mb-14" }, h("h3", {}, "Skills"), ...groups),
     value: () => draft,
