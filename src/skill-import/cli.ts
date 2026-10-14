@@ -122,10 +122,6 @@ export async function skillImportCommand(
       const rec = done.record;
       for (const s of rec.skills) out(`${shownValue(s.root).padEnd(40)} ${s.name} ${s.digest} ${s.files} files ${s.bytes} bytes`);
       rejectedLines(out, rec.rejected);
-      if (rec.licenceFiles) {
-        const staged = rec.licenceFiles.filter((f) => f.sha256 !== undefined).length;
-        out(`LICENCE FILES ${staged} staged, ${rec.licenceFiles.length - staged} not readable`);
-      }
       out(`OK ${rec.skills.length} skills staged from ${rec.repositoryKey}@${rec.commit.slice(0, 12)} ${rec.digest} (${done.state})`);
       out(`Quarantine: ${done.dir}`);
       return rec.rejected.length > 0 ? 1 : 0;

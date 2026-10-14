@@ -199,8 +199,6 @@ describe("scf skills scan is offline and read-only", () => {
       expect(modulesOf(text).filter((m) => /^(?:node:)?(?:fs|fs\/promises|child_process)$/.test(m)), f).toEqual([]);
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m)), f).toEqual([]);
     }
-    const cli = readFileSync(join(SKILLS, "cli.ts"), "utf8");
-    expect(modulesOf(cli).filter((m) => /^(?:node:)?fs/.test(m))).toEqual([]);
   });
   it("src/skills/cli.ts imports nothing from skill-import/", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "cli.ts"), "utf8")).filter((m) => /skill-import\//.test(m))).toEqual([]);

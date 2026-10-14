@@ -168,7 +168,10 @@ describe("stageImport with licence evidence", () => {
   });
   it("throws too-many-entries for too many licence files and stages nothing", () => {
     const many: Record<string, string> = { ...FILES };
-    for (let i = 0; i <= LICENCE_LIMITS.files; i++) many[`skills/d${i}/LICENSE`] = "x";
+    for (let i = 0; i <= LICENCE_LIMITS.files; i++) {
+      many[`skills/d${i}/LICENSE`] = "x";
+      many[`skills/d${i}/SKILL.md`] = md(`d${i}`);
+    }
     expect(() => stage(many)).toThrowError(expect.objectContaining({ code: "too-many-entries" }));
     expect(existsSync(join(home, "skill-quarantine"))).toBe(false);
   });

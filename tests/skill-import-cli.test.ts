@@ -81,12 +81,11 @@ describe("output and exit codes", () => {
     const t = fakeTree();
     const r = await run(t);
     expect(r.rc).toBe(0);
-    expect(r.lines).toHaveLength(5);
+    expect(r.lines).toHaveLength(4);
     expect(r.lines[0]).toMatch(/^skills\/a\s+a sha256:[0-9a-f]{64} 1 files \d+ bytes$/);
     expect(r.lines[1]).toMatch(/^skills\/b\s+b sha256:/);
-    expect(r.lines[2]).toBe("LICENCE FILES 0 staged, 0 not readable");
-    expect(r.lines[3]).toMatch(/^OK 2 skills staged from github\.com\/example\/skills@aaaaaaaaaaaa sha256:[0-9a-f]{64} \(staged\)$/);
-    expect(r.lines[4]).toBe(`Quarantine: ${join(home, "skill-quarantine", "lib", COMMIT)}`);
+    expect(r.lines[2]).toMatch(/^OK 2 skills staged from github\.com\/example\/skills@aaaaaaaaaaaa sha256:[0-9a-f]{64} \(staged\)$/);
+    expect(r.lines[3]).toBe(`Quarantine: ${join(home, "skill-quarantine", "lib", COMMIT)}`);
     expect(t.closed).toBe(1);
   });
 
@@ -94,7 +93,7 @@ describe("output and exit codes", () => {
     const a = await run(fakeTree());
     const b = await run(fakeTree());
     expect(b.rc).toBe(0);
-    expect(b.lines[3]).toBe(a.lines[3]!.replace("(staged)", "(unchanged)"));
+    expect(b.lines[2]).toBe(a.lines[2]!.replace("(staged)", "(unchanged)"));
   });
 
   it("stages the licence files, records retrievedAt and keeps it when unchanged", async () => {
@@ -103,7 +102,6 @@ describe("output and exit codes", () => {
     const opts = (now: string) => ({ cwd: dir, home, now: new Date(now), open: async () => fakeTree(files) });
     const lines: string[] = [];
     expect(await skillImportCommand({ positionals: ["lib"], values: {} }, (l) => lines.push(l), opts("2026-01-02T03:04:05Z"))).toBe(0);
-    expect(lines).toContain("LICENCE FILES 1 staged, 0 not readable");
     expect(lines.join("\n")).not.toContain("SECRET-MARKER");
     const rec = JSON.parse(readFileSync(join(home, "skill-quarantine", "lib", COMMIT, "import.json"), "utf8"));
     expect(rec.retrievedAt).toBe("2026-01-02T03:04:05Z");
