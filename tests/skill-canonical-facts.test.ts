@@ -3,6 +3,7 @@ import { canonicalFromCollision, canonicalFromRegistered, rangeSatisfied, techno
 import type { CollisionCandidate } from "../src/skills/collisions.js";
 import type { LicenceStatus } from "../src/skills/licence.js";
 import type { RegisteredSkill } from "../src/skills/registry.js";
+import { rangeAdmitsLine } from "../src/skills/version-range.js";
 
 const RANGES: [string, string, boolean | undefined][] = [
   [">=18", "20.0.0", true], [">=18", "16.0.0", false], ["17", "17.0.2", true], [">=18 <21", "19.0.0", true], [">=18 <21", "21.0.0", false],
@@ -92,5 +93,46 @@ describe("canonicalFromRegistered", () => {
   it("fails the licence gate only when a verdict is given and not allowed", () => {
     expect(canonicalFromRegistered(reg("admin", "approved")).failed).toEqual([]);
     expect(canonicalFromRegistered(reg("admin", "approved"), { licence: "review" }).failed).toEqual(["licence"]);
+  });
+  it("works out stale declarations itself", () => {
+    expect(canonicalFromRegistered(reg("admin", "approved"), { technologies: [{ name: "java", version: "8" }] }).compatibility).toBe("incompatible");
+    expect(canonicalFromRegistered(reg("admin", "approved"), { technologies: [{ name: "java", version: "latest" }] }).compatibility).toBe("generic");
+  });
+});
+
+const LINES: [string, string, boolean | undefined][] = [
+  [">=21", "21", true], ["^2", "4", false], ["~3.5.2", "3.5", true], [">3.5.2 <3.5.4", "3.5", true], ["<=3.4", "3.5", false],
+  ["^3 || ^4", "4", true], ["=4.0.0-RC1", "4.0", true], ["4.0.0-RC1", "4.1", false], [">4.0.0-RC1 <4.0.0-RC3", "4.0", undefined],
+  ["latest", "4", undefined], ["^4", "x", undefined], ["^4", "4.0.0", undefined], ["~3.5.2", "3.6", false], [">3.5.2 <3.5.3", "3.5", false],
+];
+
+describe("rangeAdmitsLine", () => {
+  it.each(LINES)("%s on line %s", (range, line, want) => {
+    expect(rangeAdmitsLine(range, line)).toBe(want);
+  });
+});
+
+describe("technologies by alias and with several evidence entries", () => {
+  it("reads an alias like the name it stands for", () => {
+    expect(technologyCompatibility([{ name: "jdk", version: ">=17" }], [{ name: "java", version: "17" }])).toBe("version");
+    expect(technologyCompatibility([{ name: "java", version: ">=17" }], [{ name: "openjdk", version: "11" }])).toBe("incompatible");
+  });
+  it("needs the range to fit every entry of the same name", () => {
+    const ev = [{ name: "java", version: "17" }, { name: "java", version: "21" }];
+    expect(technologyCompatibility([{ name: "java", version: ">=21" }], ev)).toBe("incompatible");
+    expect(technologyCompatibility([{ name: "java", version: ">=17" }], ev)).toBe("version");
+  });
+});
+
+describe("stale declarations", () => {
+  it("are incompatible with and without evidence", () => {
+    const c = collision({ techs: [{ name: "spring-boot", version: "^2" }] });
+    expect(canonicalFromCollision(c, { licence: "allowed" }).compatibility).toBe("incompatible");
+    expect(canonicalFromCollision(c, { licence: "allowed", evidence: [{ name: "spring-boot", version: "2.7.0" }] }).compatibility).toBe("incompatible");
+  });
+  it("leave unchecked and generic declarations as they were", () => {
+    expect(canonicalFromCollision(collision({ techs: [{ name: "java", version: "latest" }] }), { licence: "allowed" }).compatibility).toBe("generic");
+    expect(canonicalFromCollision(collision({ techs: [{ name: "react", version: "^1" }] }), { licence: "allowed" }).compatibility).toBe("generic");
+    expect(canonicalFromCollision(collision({ techs: [{ name: "java", version: ">=17" }] }), { licence: "allowed", evidence: [{ name: "java", version: "17" }] }).compatibility).toBe("version");
   });
 });

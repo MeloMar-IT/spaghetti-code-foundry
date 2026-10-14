@@ -3579,6 +3579,23 @@ Each normalized skill has five identity terms. Nothing reads them yet, so they d
 - `other-version`: same repository and name, other version and content.
 - `distinct`: anything else. A skill with the same name in another repository is not linked unless the fingerprints match.
 
+#### Supported Java and Spring versions
+
+A skill that declares a Java, Spring or build tool version is checked against the versions the Foundry supports. The project's own versions come from its build files.
+
+| Technology | Supported lines |
+|---|---|
+| Java | 17, 21, 25 |
+| Spring Boot | 4.0, 4.1 |
+| Spring Framework | 7.0 |
+| Maven | 3.9, 4.0 |
+| Gradle | 8.14, 9 |
+
+- **Where the version is read from.** Java: `java.version`, `maven.compiler.release` or `maven.compiler.source` in `pom.xml`, and `JavaLanguageVersion` or `sourceCompatibility` in `build.gradle` / `build.gradle.kts`. Spring Boot: the Maven parent or plugin, the Gradle plugin `org.springframework.boot`, or a Boot BOM. Spring Framework: its `org.springframework:` dependencies. Maven and Gradle: `distributionUrl` in the wrapper files. A value such as `latest`, `3.+` or `^3.2` gives no version.
+- **Stale.** A skill is stale when its declared range fits none of the supported lines (for example `spring-boot: ^2`, or `java: 8`). A stale skill is never chosen: it is `incompatible` and an import of it is marked `stale`. A range that cannot be read is `unchecked` and is not chosen either.
+- **Aliases.** Other names are read as the same technology: `jdk` and `openjdk` are Java, `springboot` is Spring Boot, `spring` and `spring-core` are Spring Framework, `mvn` and `apache-maven` are Maven, and `gradlew` and `gradle-wrapper` are Gradle.
+- **Changing the table.** The table is data in `src/skills/technology-rules.ts`. The owner changes it by pull request.
+
 #### Skill collisions
 
 When two or more skills overlap, a collision is reported with one class, one reason and a stable id (`col-` and 16 hex characters). The result is the same for any input order. Nothing reads collisions in a run yet: runs do not build them, so skills are offered as before.
