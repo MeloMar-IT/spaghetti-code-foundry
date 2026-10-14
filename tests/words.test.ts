@@ -8,8 +8,8 @@ const BANNED = ["hold", "precheck", "area lock", "jump_only"];
 const EXPLAIN = "how risky it is to create the smaller issues without you looking, 0–100";
 
 describe("glossary", () => {
-  it("has 30 distinct kinds", () => {
-    expect(new Set(KINDS).size).toBe(30);
+  it("has 31 distinct kinds", () => {
+    expect(new Set(KINDS).size).toBe(31);
   });
 
   const rows: [NextKind, WordFacts, string][] = [
@@ -39,6 +39,8 @@ describe("glossary", () => {
     ["running", {}, "working"],
     ["interrupted", {}, "interrupted"],
     ["cancelled", {}, "cancelled"],
+    ["cancelled", { ended: true }, "cancelled — nothing to do"],
+    ["parked", {}, "parked — not tracked by a watcher"],
     ["failed", {}, "failed"],
     ["watcher_error", {}, "watcher error"],
     ["monitor_stopped", {}, "bug stories stopped"],
@@ -86,7 +88,7 @@ describe("user guide", () => {
     expect(guide).toContain("Words the Foundry uses");
     expect(guide).toContain(EXPLAIN);
     for (const k of KINDS) {
-      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }, { budget: true }] : [{ blockers: [88] }];
+      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }, { budget: true }] : k === "cancelled" ? [{}, { ended: true }] : [{ blockers: [88] }];
       for (const f of all) {
         expect(guide, statusName(k, f)).toContain(`| ${statusName(k, f)} |`);
         expect(guide, statusHelp(k, f)).toContain(statusHelp(k, f));

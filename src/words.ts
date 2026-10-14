@@ -20,6 +20,8 @@ export interface WordFacts {
   perDay?: boolean;
   /** `user_limit`: the daily budget. */
   budget?: boolean;
+  /** `cancelled`: cancelled while stopped, so nothing continues the run. */
+  ended?: boolean;
 }
 
 interface Words {
@@ -87,7 +89,13 @@ const GLOSSARY: Record<NextKind, Words> = {
   queued: { status: "queued", help: "It waits in the queue until a run finishes. Nothing to do — it starts by itself." },
   running: { status: "working", help: "The Foundry is working on it right now. Nothing to do — you can follow it on the run page." },
   interrupted: { status: "interrupted", help: "The run was cut off, for example by a restart of the server. A watched issue resumes by itself at the next check, any other run you resume on its page." },
-  cancelled: { status: "cancelled", help: "Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it." },
+  cancelled: {
+    status: (f) => (f.ended ? "cancelled — nothing to do" : "cancelled"),
+    help: (f) => (f.ended
+      ? "Someone cancelled the run while it was stopped, so nothing continues it. Nothing to do — resume it on its page if you still want the work."
+      : "Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it."),
+  },
+  parked: { status: "parked — not tracked by a watcher", help: "The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run." },
   failed: {
     status: (f) => (f.user && f.limit ? "stopped — the administrator's limit was reached" : "failed"),
     help: (f) => {

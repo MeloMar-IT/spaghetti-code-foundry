@@ -1,12 +1,12 @@
 import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
-import { isUserBudgetStop, loadRun, spentToday, spentTodayBy, type RunSummary } from "../engine/state.js";
+import { isStoppedCancel, isUserBudgetStop, loadRun, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { loadFlow } from "../flow/load.js";
 import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
-import { countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
+import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
 import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
 import { dependencies, openDependencies } from "./deps.js";
@@ -196,7 +196,13 @@ function retryLimitAfter(s: RunSummary): boolean {
   return Date.now() - new Date(s.finishedAt ?? s.startedAt).getTime() >= LIMIT_RETRY_MS;
 }
 
-function labelFor(s: RunSummary, L: LabelNames): string {
+/** Direct confirmations (gh issue view) per check that an issue lost its trigger label, and how long a "no" is remembered. */
+const PARK_CHECKS_PER_TICK = 10;
+const PARK_RECHECK_MS = 10 * 60_000;
+
+/** The status label a run's issue should carry; none for a run cancelled while it was stopped (nothing continues it). */
+function labelFor(s: RunSummary, L: LabelNames): string | undefined {
+  if (s.status === "cancelled" && isStoppedCancel(s.reason)) return undefined;
   switch (s.status) {
     case "succeeded": return L.done;
     case "waiting": return L.waiting;
@@ -217,7 +223,7 @@ export function labelLies(status: string | undefined, busy: boolean, run: RunSum
   if (!key) return undefined;
   if (busy) return status === L.working ? undefined : { label: key, run: "working" };
   if (!run) return undefined;
-  if (status === labelFor(run, L) || (run.status === "cancelled" && status === L.working)) return undefined;
+  if (status === labelFor(run, L) || (run.status === "cancelled" && status === L.working && !isStoppedCancel(run.reason))) return undefined;
   return { label: key, run: run.status };
 }
 
@@ -248,6 +254,10 @@ export class Watcher {
   private stopped = false;
   /** Stopped for good (changed or removed): a check that is still running starts nothing more. */
   private retired = false;
+  /** Per stopped or cancelled run (folder@file time): may it be parked? Saves loading the same run.json every check. */
+  private parkEligible = new Map<string, boolean>();
+  /** Issues confirmed as not parked, with the time: not asked again for a while. */
+  private parkNegative = new Map<number, number>();
   /** Runs whose end will set the label (so a run is waited for once). */
   private waitingFor = new Set<string>();
 
@@ -776,6 +786,24 @@ export class Watcher {
         if (claim) { firstWaits.add(claim); track.claims = claim; }
         continue;
       }
+      // A run parked while the label was gone, or cancelled while it was stopped: nothing continues it, and a new run replaces it.
+      if (run && run.status !== "running" && ((run.parkedAt && (asksQuestions(run) || isStoppedCancel(run.reason))) || (run.status === "cancelled" && isStoppedCancel(run.reason)))) {
+        const clear = !!status && status !== this.L.done;
+        if (clear) await setLabels(this.repo, n, undefined, this.allStatus);
+        if (run.parkedAt) {
+          // The trigger label is back. With a status label left, it goes first; without one, a new run starts below.
+          if (clear) {
+            this.act(`#${n} has its ${this.cfg.label} label again → status label removed, a new run replaces ${run.runId}`);
+            offNow.delete(n); delete track.labelOff;
+            holds.push(this.held("starting", issue));
+            continue;
+          }
+        } else {
+          if (clear) this.act(`#${n} run ${run.runId} was cancelled while stopped → label removed, nothing starts`);
+          offNow.delete(n); delete track.labelOff;
+          continue;
+        }
+      }
       // Reopened: closed at the last check, and its newest run failed or still waits. No second run: the label comes back.
       if (!status && knownIssueState(this.repo, n) === "closed") {
         const kept = run;
@@ -960,6 +988,8 @@ export class Watcher {
     await this.tidyClosed(runs, holds, closed).then((w) => { closedWhole = w; }, (e: Error) => { tidyError = e; });
     let statesError: Error | undefined;
     await this.checkIssueStates(issues, alive).catch((e: Error) => { statesError = e; });
+    // After the states: an issue known to be closed is not asked about again.
+    await this.parkUntracked(issues, everyIssue, alive);
     if (paused && !holds.some((x) => x.next.kind === "release")) holds.unshift(this.held("release", undefined, { pr: paused }));
     alive();
     const before = new Map((this.status.holds ?? []).map((h) => [holdKey(h), h.seen]));
@@ -1099,6 +1129,64 @@ export class Watcher {
     }, { lockKey, source: `watcher ${this.cfg.id} precheck ${nums.map((x) => `#${x}`).join(" ")}`, ...firstMeta(first) });
     this.act(`checking ${nums.map((x) => `#${x}`).join(", ")} for open questions → run ${runId}`);
     hold("checking");
+  }
+
+  /**
+   * Marks the newest run of an open issue that lost its trigger label, when the run waits for answers or was cancelled
+   * while stopped: nothing continues it, so nobody is asked about it. Candidates come from the uncapped run index; an
+   * issue missing from the (possibly cut) issue list is confirmed directly. At most PARK_CHECKS_PER_TICK confirmations
+   * per check; a "not parked" answer is remembered for a while, so the next checks reach the other runs.
+   */
+  private async parkUntracked(triggered: Issue[], everyIssue: Issue[] | undefined, alive: () => void) {
+    if (!everyIssue) return; // no list this check: nothing is known about the labels
+    const withLabel = new Set(triggered.map((i) => i.number));
+    const listed = new Map(everyIssue.map((i) => [i.number, i]));
+    const now = Date.now();
+    for (const [k, t] of this.parkNegative) if (now - t > PARK_RECHECK_MS) this.parkNegative.delete(k);
+    const pending = this.d.scheduler.queue().pending;
+    const newest = new Map<string, RunBrief>(); // the newest run of each issue of this repository, in any flow
+    for (const b of this.d.scheduler.briefs()) {
+      if (b.githubRepo !== this.repo || !b.issue || newest.has(b.issue)) continue;
+      newest.set(b.issue, b);
+    }
+    let confirmations = 0;
+    for (const [issueNo, b] of newest) {
+      const n = Number(issueNo);
+      if (b.flow !== this.flowName() || (b.status !== "stopped" && b.status !== "cancelled")) continue;
+      if (!Number.isSafeInteger(n) || withLabel.has(n) || this.parkNegative.has(n)) continue;
+      if (this.d.scheduler.isActive(b.dirName) || pending.some((p) => p.githubRepo === this.repo && p.issue === issueNo)) continue;
+      const key = `${b.dirName}@${b.updatedAt}`;
+      let eligible = this.parkEligible.get(key);
+      if (eligible === undefined) {
+        const run = this.d.scheduler.get(b.dirName);
+        eligible = !!run && run.runId === b.dirName && !run.parkedAt && (run.vars?.trigger_label ?? this.cfg.label) === this.cfg.label
+          && (asksQuestions(run) || (run.status === "cancelled" && isStoppedCancel(run.reason)));
+        this.parkEligible.set(key, eligible);
+        if (this.parkEligible.size > 5000) this.parkEligible.delete(this.parkEligible.keys().next().value!);
+      }
+      if (!eligible) continue;
+      const known = listed.get(n);
+      if (known && (known.state?.toUpperCase() !== "OPEN" || known.labels.some((l) => l.name === this.cfg.label))) continue;
+      if (!known && knownIssueState(this.repo, n) === "closed") continue;
+      if (confirmations >= PARK_CHECKS_PER_TICK) break;
+      confirmations++;
+      alive();
+      if (!(await this.reallyParked(n))) { this.parkNegative.set(n, now); continue; }
+      if (this.d.scheduler.setParked(b.dirName)) {
+        this.parkEligible.set(key, false);
+        this.act(`#${n} has no ${this.cfg.label} label → run ${b.dirName} is parked, nothing waits for it`);
+      }
+    }
+  }
+
+  /** The issue as GitHub has it right now: open, and without the trigger label. False when it cannot be told. */
+  private async reallyParked(n: number): Promise<boolean> {
+    try {
+      const fresh = await ghJson<{ state: string; labels: { name: string }[] }>(["issue", "view", String(n), "--repo", this.repo, "--json", "state,labels"]);
+      return fresh.state.toUpperCase() === "OPEN" && !fresh.labels.some((l) => l.name === this.cfg.label);
+    } catch {
+      return false;
+    }
   }
 
   /** The issue as GitHub has it right now (not the search list): open, and without a status label. */

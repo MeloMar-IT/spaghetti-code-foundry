@@ -88,6 +88,16 @@ describe("note of an unchecked issue", () => {
     expect(runs.actions({ ...base, status: "failed", next: { kind: "failed" } })).toHaveLength(2);
     expect(runs.actions({ ...base, status: "waiting", next: { kind: "issue_closed" } })).toHaveLength(1);
   });
+  it("the administrator run page can cancel a stopped run, also for a closed issue or a retired flow", async () => {
+    const runs = (await import("../ui/runs.js" as string)) as any;
+    const base = { runId: "r1", state: { next: "a", steps: {}, visits: {} }, flowDef: { steps: [{ id: "a" }] } };
+    const cancel = (s: any) => runs.actions(s).filter((b: FakeElement) => b.attrs?.["data-focus"] === "act-cancel");
+    expect(cancel({ ...base, status: "stopped" })).toHaveLength(1);
+    expect(cancel({ ...base, status: "stopped", next: { kind: "issue_closed" } })).toHaveLength(1);
+    expect(cancel({ ...base, status: "stopped", next: { kind: "failed", retired: true } })).toHaveLength(1);
+    expect(cancel({ ...base, status: "stopped", refinement: "s1" })).toHaveLength(0);
+    expect(cancel({ ...base, status: "cancelled" })).toHaveLength(0);
+  });
   it("the run page actions hide Approve, Resume and Retry for a retired flow, and the line shows only then", async () => {
     const runs = (await import("../ui/runs.js" as string)) as any;
     const base = { runId: "r1", state: { next: "a", steps: {}, visits: {} }, flowDef: { steps: [{ id: "a" }] } };

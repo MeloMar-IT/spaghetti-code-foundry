@@ -24,7 +24,8 @@ export function runActions(s, queued = false) {
   if (s.status === "waiting" && own) out.push("approve", "reject");
   // Retry needs a step to continue at.
   if (["failed", "stopped", "cancelled"].includes(s.status) && own && s.state?.next) out.push("retry");
-  if (s.status === "running" || s.status === "waiting") out.push("cancel");
+  // A stopped run can be cancelled: nothing continues it then (a refinement run is not cancelled this way).
+  if (s.status === "running" || s.status === "waiting" || (s.status === "stopped" && !s.refinement)) out.push("cancel");
   return out;
 }
 

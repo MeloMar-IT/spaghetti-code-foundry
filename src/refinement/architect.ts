@@ -4,7 +4,7 @@ import { KEY_MISSING, KEY_UNREADABLE, NEEDS_TOKEN, NO_RUN_OWNER, TOKEN_MISSING, 
 import { REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import { StoreError } from "../auth/store.js";
 import { SIGN_IN_SENTENCES, TOKEN_REFUSED_REASON } from "../engine/guards.js";
-import { isUserBudgetStop, saveRun, type RunSummary } from "../engine/state.js";
+import { isStoppedCancel, isUserBudgetStop, saveRun, type RunSummary } from "../engine/state.js";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { z } from "zod";
 import { REFINE_BRIEF_FLOW, REFINE_ROUND_FLOW } from "../flow/usage.js";
@@ -128,7 +128,9 @@ const live = (deps: ArchitectDeps, runId: string) => deps.scheduler.isQueued(run
 
 /** The run, undefined when there is none; throws when it cannot be read. */
 const runOf = (deps: ArchitectDeps, runId: string): RunSummary | undefined => deps.scheduler.get(runId);
-const statusOf = (deps: ArchitectDeps, runId: string): string | undefined => {
+/** A run that waits for a resume: stopped, or just cancelled by the scheduler while stopped. */
+const paused = (run: RunSummary): boolean => run.status === "stopped" || (run.status === "cancelled" && isStoppedCancel(run.reason));
+const statusOf =(deps: ArchitectDeps, runId: string): string | undefined => {
   try {
     return runOf(deps, runId)?.status;
   } catch {
@@ -557,7 +559,7 @@ export function stopArchitect(deps: ArchitectDeps, id: string): boolean {
   if (!a) return false;
   const runId = a.runId;
   if (a.failed !== undefined && !live(deps, runId)) return false;
-  deps.scheduler.cancel(runId);
+  deps.scheduler.cancel(runId); // also drops a queued resume; a paused run is saved again below, with this module's own reason
   if (deps.scheduler.isActive(runId)) return true;
   let run: RunSummary | undefined;
   try {
@@ -565,7 +567,7 @@ export function stopArchitect(deps: ArchitectDeps, id: string): boolean {
   } catch {
     run = undefined;
   }
-  if (run && run.status !== "stopped") {
+  if (run && !paused(run)) {
     // It had ended already: the session takes that end.
     settleSession(deps, id);
     return false;
@@ -593,7 +595,7 @@ export function cancelReads(deps: ArchitectDeps, runIds: string[]): void {
       deps.scheduler.cancel(runId);
       if (deps.scheduler.isActive(runId)) continue;
       const run = runOf(deps, runId);
-      if (run?.status === "stopped") saveRun({ ...run, status: "cancelled", reason: "cancelled by user", waiting: undefined, finishedAt: new Date().toISOString() });
+      if (run && paused(run)) saveRun({ ...run, status: "cancelled", reason: "cancelled by user", waiting: undefined, finishedAt: new Date().toISOString() });
     } catch {
       deps.log?.("refinement: a read could not be cancelled");
     }
