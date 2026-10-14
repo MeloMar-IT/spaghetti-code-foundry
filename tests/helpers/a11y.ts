@@ -74,7 +74,9 @@ export function audit(root: FakeElement): Violation[] {
     if (["input", "select", "textarea"].includes(el.tag)) {
       let inLabel = false;
       for (let p = el.parent; p; p = p.parent) if (p.tag === "label") inLabel = true;
-      if (!inLabel && !named(el, ids)) add("field-label", el);
+      // a `<label for="id">` names the control as well as a label around it
+      const labelFor = !!attr(el, "id") && all.some((l) => l.tag === "label" && attr(l, "for") === attr(el, "id") && text(l).trim() !== "");
+      if (!inLabel && !labelFor && !named(el, ids)) add("field-label", el);
     }
     if (el.listeners.click?.length && !isNative(el) && attr(el, "data-a11y-skip") !== "stop") {
       if (!role || attr(el, "tabindex") !== "0" || !el.listeners.keydown?.length) add("click-needs-key", el);

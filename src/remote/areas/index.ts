@@ -15,5 +15,5 @@ export const API_ONLY: Record<string, string> = {
   "GET restart": "the state the Settings page shows next to its restart box; the restart itself is asked for in the interface",
   "POST restart": "restarts the server when no story is running; asked for in the interface after a settings change",
   "DELETE restart": "cancels that wait; done in the interface",
-  "GET settings": "the description a settings page builds its controls from; no command line use yet (parts 4 to 6 of #407 add the pages)",
+  "GET settings": "the description the Settings page builds its controls from; no command line use",
 };

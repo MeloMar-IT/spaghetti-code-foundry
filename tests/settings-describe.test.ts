@@ -112,9 +112,22 @@ describe("what is described", () => {
     for (const l of schemaLeaves()) if (isCovered(l.key)) expect(SETTING_TEXTS[l.key], l.key).toBeDefined();
     for (const k of unsupportedSettings()) expect(isCovered(k) && !k.startsWith("monitor.") && !k.startsWith("skills.")).toBe(false);
     expect(isCovered("sandbox.user_read")).toBe(true);
-    expect(isCovered("sandbox.user_runs")).toBe(false);
+    expect(isCovered("sandbox.user_runs")).toBe(true);
     expect(isCovered("monitoring")).toBe(false);
-    expect(described).toHaveLength(60);
+    for (const k of ["ui.redesign", "help.enabled", "default_model"]) expect(isCovered(k), k).toBe(false);
+    expect(described).toHaveLength(91);
+  });
+
+  it("describes the settings of the Settings page with their effects and controls", () => {
+    const by = (k: string) => described.find((d) => d.key === k)!;
+    expect(by("failure_summary.model")).toMatchObject({ default: "haiku", effect: "new-runs" });
+    expect(by("server.listen").effect).toBe("restart");
+    // the command and its outcomes are read from the run's own copy of the settings
+    for (const k of ["notify.command", "notify.on"]) expect(by(k).effect, k).toBe("new-runs");
+    for (const k of ["notify.macos", "notify.slack_webhook"]) expect(by(k).effect, k).toBe("now");
+    expect(by("notify.slack_webhook").default).toBeUndefined();
+    const own = described.filter((d) => d.control === "admin-sections.js").map((d) => d.key).sort();
+    expect(own).toEqual(["failure_summary.enabled", "failure_summary.model", "isolate_agents", "sandbox.user_read", "step_env.agent_pass", "step_env.pass"]);
   });
 });
 
@@ -208,6 +221,7 @@ describe("defaults and texts", () => {
       expect(d.help.slice(0, -1), d.key).not.toMatch(/\.\s/);
       expect(d.effectText).toBe(EFFECT_TEXT[d.effect]);
       expect(d.control === "generated" || existsSync(join("ui", d.control)), d.key).toBe(true);
+      expect(d.help, d.key).not.toMatch(/\.\s/);
       if (d.key.startsWith("monitor.")) expect(d.effect, d.key).toBe("now");
     }
     expect(described.find((d) => d.key === "isolate_agents")!.effect).toBe("new-runs");

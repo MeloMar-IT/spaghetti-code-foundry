@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { describeSettings, startupSettings } from "../src/settings/describe.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -42,7 +43,9 @@ async function render(server: Record<string, unknown>, listening = "127.0.0.1", 
       puts.push(JSON.parse(init.body!));
       return { ok: putStatus === 200, status: putStatus, statusText: "x", json: async () => (putStatus === 200 ? config : { error: "invalid config: nope" }) };
     }
-    const body = url.endsWith("/api/info") ? { configPath: "/x/config.yaml", spentToday: 0, listening } : config;
+    const body = url.endsWith("/api/info") ? { configPath: "/x/config.yaml", spentToday: 0, listening }
+      : url.endsWith("/api/settings") ? { settings: describeSettings(), startup: startupSettings({ home: "/data", port: 4000, repo: "/repo", claudeBin: "claude", codexBin: "codex", ghBin: "gh" }) }
+      : config;
     return { ok: true, status: 200, statusText: "OK", json: async () => body };
   };
   const main = new FakeElement("main");
@@ -312,6 +315,135 @@ describe("read-only Settings", () => {
     for (const s of ro.all("select") as any[]) expect(s.disabled).toBe(true);
     expect((ro.all("label").find((l) => l.textContent.includes("Keep the audit log"))!.all("input")[0] as any).value).toBe("180");
     expect(puts).toHaveLength(0);
+  });
+});
+
+describe("Settings → Agents and User runs", () => {
+  const cardOf = (main: FakeElement, title: string) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === title)!;
+  const area = (main: FakeElement, label: string) => main.all("div").find((d) => d.attrs.class?.startsWith("scf-field") && d.all("label")[0]?.textContent === label)!.all("textarea")[0] as any;
+  const change = (el: any, value: string) => {
+    el.value = value;
+    el.fire("change", { target: el });
+  };
+  const save = async (main: FakeElement) => {
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+  };
+  const alertsOf = (el: FakeElement) => el.all("div").filter((d) => d.attrs.role === "alert");
+
+  it("shows the switches as configured, the model, and the hints from the description", async () => {
+    const { main } = await render({}, "127.0.0.1", 200, { isolate_agents: false });
+    const agents = cardOf(main, "Agents");
+    const boxes = agents.all("input").filter((i) => i.attrs.type === "checkbox") as any[];
+    expect(boxes).toHaveLength(2);
+    expect(!!boxes[0].checked).toBe(false);
+    expect(boxes[1].checked).toBe(true);
+    expect((agents.all("input").find((i) => i.attrs.type === "text") as any).value).toBe("haiku");
+    expect(agents.textContent).toContain("Default: yes.");
+    expect(agents.textContent).toContain("Takes effect when a run starts or resumes.");
+    const runs = cardOf(main, "User runs");
+    expect(runs.all("textarea")).toHaveLength(3);
+    expect(runs.textContent).toContain("At most 50 items.");
+    expect(runs.textContent).toContain("At most 100 items.");
+  });
+
+  it("saves the new settings and keeps the others of the sandbox", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { sandbox: { docker_image: "node:22", user_runs: "off", user_read: [] } });
+    const agents = cardOf(main, "Agents");
+    const model = agents.all("input").find((i) => i.attrs.type === "text") as any;
+    change(model, " ollama:qwen ");
+    const sw = agents.all("input").find((i) => i.attrs.type === "checkbox") as any;
+    sw.checked = false;
+    sw.fire("change", { target: sw });
+    change(area(main, "Variables for all steps"), "HTTPS_PROXY\nAWS_*");
+    change(area(main, "Variables for agent steps"), "OPENAI_API_KEY");
+    change(area(main, "Extra readable paths"), "/opt/node");
+    await save(main);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].isolate_agents).toBe(false);
+    expect(puts[0].failure_summary).toEqual({ enabled: true, model: "ollama:qwen" });
+    expect(puts[0].step_env).toEqual({ pass: ["HTTPS_PROXY", "AWS_*"], agent_pass: ["OPENAI_API_KEY"] });
+    expect(puts[0].sandbox).toEqual({ docker_image: "node:22", user_runs: "off", user_read: ["/opt/node"] });
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  it("saves the default model for an empty one", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { failure_summary: { enabled: true, model: "sonnet" } });
+    change(cardOf(main, "Agents").all("input").find((i) => i.attrs.type === "text"), "  ");
+    await save(main);
+    expect(puts[0].failure_summary.model).toBe("haiku");
+  });
+
+  it.each([
+    ["Variables for all steps", "GH_TOKEN", "GH_TOKEN"],
+    ["Variables for agent steps", "1BAD", "1BAD"],
+    ["Extra readable paths", "rel/path", "rel/path"],
+  ])("refuses %s with %s at the field and sends nothing", async (label, value, named) => {
+    const { main, puts } = await render({});
+    change(area(main, label), value);
+    await save(main);
+    expect(puts).toHaveLength(0);
+    expect(main.all("span").find((s) => s.getAttribute("role") === "status")!.textContent).toBe("Not saved.");
+    const shown = area(main, label);
+    expect(alertsOf(shown.parent).map((a) => a.textContent).join("")).toContain(named);
+    expect(shown.attrs["aria-invalid"]).toBe("true");
+    expect((globalThis as any).document.activeElement).toBe(shown);
+  });
+
+  it("refuses more than 100 names", async () => {
+    const { main, puts } = await render({});
+    change(area(main, "Variables for agent steps"), Array.from({ length: 101 }, (_, i) => `V_${i}`).join("\n"));
+    await save(main);
+    expect(puts).toHaveLength(0);
+    expect(alertsOf(area(main, "Variables for agent steps").parent).map((a) => a.textContent).join("")).toContain("At most 100 items; this list has 101.");
+  });
+
+  it("marks the list that a server sentence names", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 400);
+    await save(main);
+    expect(puts).toHaveLength(1);
+    const body = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: 'invalid config: step_env "pass" is refused' }) }
+      : body(url, init));
+    await save(main);
+    expect(area(main, "Variables for all steps").attrs["aria-invalid"]).toBe("true");
+  });
+
+  it("shows every existing control with its default and when it takes effect", async () => {
+    const { main } = await render({});
+    const cards = (t: string) => cardOf(main, t).textContent;
+    expect(cards("Budget & capacity")).toContain("Default: 2.");
+    expect(cards("Budget & capacity")).toContain("Takes effect at once.");
+    expect(cards("Network")).toContain("Takes effect after a restart.");
+    const secrets = main.all("label").find((l) => l.textContent.includes("Block pushes that add secrets"))!.parent!;
+    expect(secrets.textContent).toContain("Default: yes.");
+    expect(cards("Safety")).toContain("Takes effect when a run starts or resumes.");
+  });
+
+  it("lists the start-up settings read-only", async () => {
+    const { main } = await render({});
+    const card = cardOf(main, "Set at start-up");
+    expect(card.textContent).toContain("Data folder: /data");
+    expect(card.textContent).toContain("Port: 4000");
+    expect(card.textContent).toContain("Takes effect after a restart.");
+    expect(card.all("input")).toHaveLength(0);
+    expect(card.all("textarea")).toHaveLength(0);
+    expect(card.all("button")).toHaveLength(0);
+  });
+
+  it("is read-only for a view-as session, including the new controls", async () => {
+    await render({});
+    const ro = new FakeElement("main");
+    await ui.renderSettings(ro, { readOnly: true });
+    expect(ro.all("button")).toHaveLength(0);
+    for (const t of ro.all("textarea") as any[]) expect(t.readOnly).toBe(true);
+    for (const i of ro.all("input") as any[]) expect(i.attrs.type === "checkbox" ? i.disabled : i.readOnly).toBe(true);
+    // a refused value shown later keeps the lock
+    const t = ro.all("textarea")[0] as any;
+    t.value = "GH_TOKEN";
+    t.fire("change", { target: t });
+    expect((ro.all("textarea")[0] as any).readOnly).toBe(true);
   });
 });
 
