@@ -29,6 +29,21 @@ const finding = (n: number, over: Record<string, unknown> = {}) => ({
   id: String(n).padStart(16, "0"), detector: "restart-loop", summary: `sentence ${n}`, severity: "critical", firstSeen: iso(9), lastSeen: iso(10), count: 3, gone: false, state: "seen", ...over,
 });
 const story = (issue = 12, over: Record<string, unknown> = {}) => ({ issue, url: `https://github.com/o/a/issues/${issue}`, state: "open", ...over });
+const S = (key: string, label: string, over: Record<string, unknown> = {}) => ({
+  key, label, help: `Help for ${label}.`, kind: "number", integer: true, min: 1, max: 100, default: 5, optional: false, effect: "now", effectText: "at once", control: "problems.js", value: 5, stored: false, ...over,
+});
+const settings = () => [
+  S("monitor.restart_loop.resumes", "Resumes before a restart loop", { max: 49 }),
+  S("monitor.restart_loop.within_minutes", "Restart loop window (minutes)", { max: 1440, default: 10, value: 10 }),
+  S("monitor.report_to", "Repository for bug stories", { kind: "text", integer: undefined, min: undefined, max: undefined, default: undefined, optional: true, value: "o/a", stored: true }),
+  S("monitor.report_limits.per_day", "Bug stories per day", { max: 50, default: 3, value: 3 }),
+  S("monitor.report_limits.per_check", "Bug stories per check", { max: 3, default: 1, value: 1 }),
+  S("monitor.cooldown_minutes", "Quiet time after start (minutes)", { min: 0, max: 1440, default: 10, value: 10 }),
+  S("monitor.fix_wait_days", "Days to wait for a fix", { max: 365, default: 7, value: 7 }),
+  S("monitor.breaker.new_findings", "Breaker: new findings", { default: 5, value: 5 }),
+  S("monitor.breaker.within_minutes", "Breaker: within minutes", { default: 60, value: 60 }),
+  S("monitor.breaker.failed_fixes", "Breaker: failed fixes", { default: 3, value: 3 }),
+];
 const base = () => ({
   state: "on", reportTo: true, running: true, lastCheck: iso(11), perDay: 3, madeToday: 1, breaker: { open: false },
   findings: [], mutes: [],
@@ -36,6 +51,7 @@ const base = () => ({
     { name: "restart-loop", key: "restart_loop", description: "Runs restart again and again.", thresholds: { resumes: 5, within_minutes: 10 }, lastFound: iso(8) },
     { name: "self-update", key: "self_update", description: "A self-update failed." },
   ],
+  settings: settings(),
 });
 
 beforeEach(() => {
@@ -51,7 +67,7 @@ beforeEach(() => {
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string; headers?: Record<string, string> }) => {
     sent.push({ method: init.method, url });
     bodies.push(init.body ? JSON.parse(init.body) : undefined);
-    if (init.method === "PUT") putVersions.push(init.headers?.["x-config-version"]);
+    if (init.method === "PUT" || init.method === "POST") putVersions.push(init.headers?.["x-config-version"]);
     const reply = (body: unknown, status = 200) => ({ ok: status < 400, status, statusText: "x", headers: { get: (n: string) => (n === "x-config-version" ? (versionOf[`${init.method} ${url}`] ?? null) : null) }, json: async () => body });
     const failed = Object.keys(fails).find((k) => `${init.method} ${url}` === k);
     if (failed) return reply({ error: fails[failed] }, failStatus[failed] ?? 409);
@@ -141,10 +157,20 @@ describe("words", () => {
     expect(ui.storyButton({ ...base(), state: "unreadable" }).label).toBe("Make a story now (the monitor is off)");
     expect(ui.storyButton({ ...base(), reportTo: false })).toEqual({ label: "Make a story now (no repository is set)", enabled: false });
   });
-  it("thresholdLabel has words for known keys and a fallback", () => {
-    expect(ui.thresholdLabel("within_minutes")).toBe("within minutes");
-    expect(ui.thresholdLabel("checks")).toBe("checks in a row");
-    expect(ui.thresholdLabel("some_new_key")).toBe("some new key");
+  it("settingProblem names the field and the range", () => {
+    const d = S("k", "Resumes", { max: 49 });
+    const p = (over: Record<string, unknown>, v: unknown) => ui.settingProblem({ ...d, ...over }, v);
+    expect(p({}, 7)).toBe("");
+    expect(p({}, 0)).toBe('"Resumes" must be from 1 to 49.');
+    expect(p({}, 50)).toBe('"Resumes" must be from 1 to 49.');
+    expect(p({}, 2.5)).toBe('"Resumes" must be a whole number from 1 to 49.');
+    expect(p({}, undefined)).toBe('"Resumes" needs a number from 1 to 49.');
+    expect(p({ optional: true }, undefined)).toBe("");
+    expect(p({}, NaN)).toContain("needs a number");
+    expect(p({ max: undefined }, 0)).toBe('"Resumes" must be at least 1.');
+    expect(p({ min: undefined }, 99)).toBe('"Resumes" must be at most 49.');
+    expect(p({ min: undefined, max: undefined, exclusiveMin: 0, integer: false }, 0)).toBe('"Resumes" must be more than 0.');
+    expect(p({ kind: "text" }, "x")).toBe("");
   });
 });
 
@@ -308,7 +334,9 @@ describe("the page", () => {
     const r = rowOf(d, "restart-loop");
     expect(r.textContent).toContain("Runs restart again and again.");
     expect(r.all("input").map((i) => i.value)).toEqual(["5", "10"]);
-    expect(r.textContent).toContain("within minutes");
+    const first = r.all("input")[0]!;
+    expect([first.attrs.min, first.attrs.max, first.attrs.step]).toEqual(["1", "49", "1"]);
+    expect(r.textContent).toContain("Help for Resumes before a restart loop. Default: 5. Allowed: 1 to 49. Takes effect at once.");
     expect(r.textContent).toContain(new Date(iso(8)).toLocaleString());
     expect(rowOf(d, "self-update").textContent).toContain("none");
     expect(rowOf(d, "self-update").textContent).toContain("nothing in the last 30 days");
@@ -329,8 +357,123 @@ describe("the page", () => {
     sent = [];
     button(again, "Save")!.click();
     await wait();
-    expect(again.textContent).toContain("Give a number.");
+    expect(again.textContent).toContain('"Restart loop window (minutes)" needs a number from 1 to 1440.');
+    expect(again.all("input")[1]!.attrs["aria-invalid"]).toBe("true");
     expect(sent).toEqual([]);
+  });
+
+  it("a value out of range or a fraction is refused with the field and the range", async () => {
+    const r = rowOf((await draw()).all("table").at(-1)!, "restart-loop");
+    r.all("input")[0]!.value = "50";
+    sent = [];
+    button(r, "Save")!.click();
+    await wait();
+    expect(r.textContent).toContain('"Resumes before a restart loop" must be from 1 to 49.');
+    expect(r.all("input")[0]!.attrs["aria-invalid"]).toBe("true");
+    r.all("input")[0]!.value = "2.5";
+    button(r, "Save")!.click();
+    await wait();
+    expect(r.textContent).toContain("must be a whole number from 1 to 49");
+    expect(sent).toEqual([]);
+  });
+
+  it("Back to default posts the reset with the drawn version, then reloads; it is disabled when the key is not in the file", async () => {
+    state.settings[0].value = 7;
+    state.settings[0].stored = true;
+    versionOf = { "GET /api/monitor": "v1" };
+    const r = rowOf((await draw()).all("table").at(-1)!, "restart-loop");
+    const back = button(r, "Back to default (5)")!;
+    expect(disabled(back)).toBe(false);
+    expect(disabled(button(r, "Back to default (10)"))).toBe(true);
+    sent = [];
+    bodies = [];
+    putVersions = [];
+    back.click();
+    await wait();
+    expect(sent.map((s) => `${s.method} ${s.url}`)).toEqual(["POST /api/settings/reset", "GET /api/monitor"]);
+    expect(bodies[0]).toEqual({ key: "monitor.restart_loop.resumes" });
+    expect(putVersions).toEqual(["v1"]);
+  });
+
+  it("a refused reset shows its message and does not reload", async () => {
+    state.settings[0].stored = true;
+    fails["POST /api/settings/reset"] = "the settings changed since you loaded them";
+    const r = rowOf((await draw()).all("table").at(-1)!, "restart-loop");
+    sent = [];
+    button(r, "Back to default (5)")!.click();
+    await wait();
+    expect(r.textContent).toContain("the settings changed since you loaded them");
+    expect(sent.map((s) => s.method)).toEqual(["POST"]);
+  });
+
+  describe("the Monitor settings section", () => {
+    const section = async () => {
+      const main = await draw();
+      return { main, sec: main.all("section").find((s) => s.all("h2")[0]?.textContent === "Monitor settings")! };
+    };
+    const field = (sec: FakeElement, label: string) => sec.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("scf-field") && d.all("label")[0]?.textContent === label)!.all("input")[0]!;
+    const forms = (sec: FakeElement) => sec.all("button").filter((b) => b.textContent === "Save");
+
+    it("has Bug stories with the warning, and the Circuit breaker", async () => {
+      const { sec } = await section();
+      expect(sec.all("h3").map((x) => x.textContent)).toEqual(["Bug stories", "Circuit breaker"]);
+      expect(sec.textContent).toContain("written as issues to this repository");
+      expect(sec.all("input")).toHaveLength(8);
+    });
+
+    it("saves a limit, refuses a value out of range, and checks report_to", async () => {
+      const { sec } = await section();
+      sent = [];
+      bodies = [];
+      field(sec, "Bug stories per day").value = "4";
+      forms(sec)[0]!.click();
+      await wait();
+      expect(bodies[1].monitor.report_limits.per_day).toBe(4);
+      expect(sent[1]).toEqual({ method: "PUT", url: "/api/config" });
+      const again = (await section()).sec;
+      sent = [];
+      field(again, "Bug stories per check").value = "4";
+      forms(again)[0]!.click();
+      await wait();
+      expect(again.textContent).toContain('"Bug stories per check" must be from 1 to 3.');
+      field(again, "Bug stories per check").value = "1";
+      field(again, "Repository for bug stories").value = "nope";
+      forms(again)[0]!.click();
+      await wait();
+      expect(again.textContent).toContain('"Repository for bug stories" must be owner/repo.');
+      expect(sent).toEqual([]);
+    });
+
+    it("an emptied report_to is sent without the key; Back to default (not set) posts the reset", async () => {
+      const { sec } = await section();
+      field(sec, "Repository for bug stories").value = "";
+      sent = [];
+      bodies = [];
+      forms(sec)[0]!.click();
+      await wait();
+      expect(bodies[1].monitor).not.toHaveProperty("report_to");
+      sent = [];
+      bodies = [];
+      button(sec, "Back to default (not set)")!.click();
+      await wait();
+      expect(bodies[0]).toEqual({ key: "monitor.report_to" });
+    });
+
+    it("saves the breaker", async () => {
+      const { sec } = await section();
+      field(sec, "Breaker: failed fixes").value = "4";
+      bodies = [];
+      forms(sec)[1]!.click();
+      await wait();
+      expect(bodies[1].monitor.breaker).toEqual({ new_findings: 5, within_minutes: 60, failed_fixes: 4 });
+    });
+
+    it("an answer without settings draws no section and the detectors say none", async () => {
+      delete state.settings;
+      const { main, sec } = await section();
+      expect(sec).toBeUndefined();
+      expect(rowOf(main.all("table").at(-1)!, "restart-loop").textContent).toContain("none");
+    });
   });
 
   it("a stale Save sends the version the page was drawn with, and shows the refusal", async () => {
@@ -344,11 +487,11 @@ describe("the page", () => {
   });
 
   it("a server error on Save is shown in the row", async () => {
-    fails["PUT /api/config"] = "resumes must be at most 49";
+    fails["PUT /api/config"] = 'invalid config: "resumes" must be at most 49';
     const r = rowOf((await draw()).all("table").at(-1)!, "restart-loop");
     button(r, "Save")!.click();
     await wait();
-    expect(r.textContent).toContain("resumes must be at most 49");
+    expect(r.textContent).toContain('"resumes" must be at most 49');
   });
 
   it("draws 100 of 150 findings and Show 50 more draws the rest", async () => {

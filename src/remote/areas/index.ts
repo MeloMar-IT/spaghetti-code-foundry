@@ -16,4 +16,5 @@ export const API_ONLY: Record<string, string> = {
   "POST restart": "restarts the server when no story is running; asked for in the interface after a settings change",
   "DELETE restart": "cancels that wait; done in the interface",
   "GET settings": "the description a settings page builds its controls from; no command line use yet (parts 4 to 6 of #407 add the pages)",
+  "POST settings/reset": "the \"Back to default\" button of the settings pages; no command line use yet",
 };

@@ -65,6 +65,64 @@ beforeEach(() => {
   seed([]);
 });
 
+describe("the settings of the monitor and their reset", () => {
+  const cfgPath = () => join(home(), "config.yaml");
+  const settingOf = (m: Record<string, any>, key: string) => m.settings.find((s: { key: string }) => s.key === key);
+  const reset = (key: unknown, version?: string) => call("POST", "/api/settings/reset", { key }, { ...session.headers("POST"), ...(version ? { "x-config-version": version } : {}) });
+  const version = async () => (await call("GET", "/api/monitor")).headers.get("x-config-version")!;
+
+  it("lists the 28 monitor settings with value and stored", async () => {
+    const m = await get();
+    expect(m.settings).toHaveLength(28);
+    expect(m.settings.every((s: { key: string }) => s.key.startsWith("monitor."))).toBe(true);
+    expect(settingOf(m, "monitor.restart_loop.resumes")).toMatchObject({ kind: "number", integer: true, min: 1, max: 49, default: 5, value: 5, stored: false, effectText: "at once", control: "problems.js" });
+    const to = settingOf(m, "monitor.report_to");
+    expect(to).toMatchObject({ optional: true, stored: false });
+    expect(to).not.toHaveProperty("value");
+  });
+
+  it("follows a saved value", async () => {
+    expect((await setMonitor({ restart_loop: { resumes: 7, within_minutes: 10 } })).status).toBe(200);
+    try {
+      expect(settingOf(await get(), "monitor.restart_loop.resumes")).toMatchObject({ value: 7, stored: true });
+    } finally {
+      expect((await reset("monitor.restart_loop.resumes")).status).toBe(200);
+    }
+    expect(settingOf(await get(), "monitor.restart_loop.resumes")).toMatchObject({ value: 5, stored: false });
+  });
+
+  it("removes a stored default with a comment, keeps the rest, and logs the removal", async () => {
+    const original = readFileSync(cfgPath(), "utf8");
+    writeFileSync(cfgPath(), `${original}monitor:\n  restart_loop:\n    resumes: 5 # same as default\n`);
+    try {
+      expect(settingOf(await get(), "monitor.restart_loop.resumes")).toMatchObject({ stored: true, value: 5 });
+      const res = await reset("monitor.restart_loop.resumes", await version());
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ key: "monitor.restart_loop.resumes", removed: true });
+      expect(res.headers.get("x-config-version")).toBe(await version());
+      expect(readFileSync(cfgPath(), "utf8")).toBe(original);
+      expect(settingOf(await get(), "monitor.restart_loop.resumes")).toMatchObject({ stored: false, value: 5 });
+      const audit = await (await call("GET", "/api/audit")).text();
+      expect(audit).toContain("monitor.restart_loop.resumes: removed from config.yaml");
+      // the monitor watcher of beforeAll is still there
+      const mon = ((await (await call("GET", "/api/watchers")).json()) as { id: string; status?: unknown }[]).find((w) => w.id === "mon");
+      expect(mon?.status).toBeDefined();
+    } finally {
+      writeFileSync(cfgPath(), original);
+    }
+  });
+
+  it("refuses a stale version, an unknown key and a missing key without writing", async () => {
+    const before = readFileSync(cfgPath(), "utf8");
+    expect((await reset("monitor.report_to", "stale")).status).toBe(409);
+    for (const key of ["concurrency", undefined, 5]) expect((await reset(key)).status).toBe(400);
+    const res = await reset("monitor.report_to");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ key: "monitor.report_to", removed: false });
+    expect(readFileSync(cfgPath(), "utf8")).toBe(before);
+  });
+});
+
 describe("GET /api/monitor for the Problems page", () => {
   it("says what the monitor does", async () => {
     const m = await get();

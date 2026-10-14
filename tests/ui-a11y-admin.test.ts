@@ -101,7 +101,11 @@ const finding = { id: "f1", severity: "major", detector: "stuck-run", summary: "
 const mute = { id: "m1", kind: "detector", detector: "stuck-run", reason: "known", since: NOW, until: null };
 const monitorState = {
   state: "on", running: true, findings: [finding], mutes: [mute], lastCheck: NOW, madeToday: 0,
-  detectors: [{ name: "stuck-run", key: "stuck_run", description: "A run that does not move", thresholds: { resumes: 3 }, lastFound: NOW }],
+  detectors: [{ name: "stuck-run", key: "stuck_run", description: "A run that does not move", lastFound: NOW }],
+  settings: [
+    ["monitor.stuck_run.extra_minutes", "Stuck run: extra minutes", 30],
+    ["monitor.stuck_run.no_timeout_minutes", "Stuck run: minutes without a timeout", 120],
+  ].map(([key, label, value]) => ({ key, label, help: "Help.", kind: "number", integer: true, min: 1, max: 1440, default: value, optional: false, effect: "now", effectText: "at once", control: "problems.js", value, stored: false })),
 };
 const config = ConfigSchema.parse({
   providers: { local: { kind: "ollama" } },
@@ -727,17 +731,17 @@ describe("Problems", () => {
   it("an empty threshold marks its input; a server error names the threshold", async () => {
     routes = { "GET /api/monitor": monitorState, "GET /api/config": config };
     await m.problems.renderProblems(main());
-    const input = controls(main()).find((c) => c.attrs["aria-label"] === "stuck-run resumes")!;
+    const input = main().all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("scf-field") && d.all("label")[0]?.textContent === "Stuck run: extra minutes")!.all("input")[0]!;
     input.value = "";
     const save = main().all("button").find((b) => b.textContent === "Save")!;
     press(save);
     await settle();
-    const line = alerts(main()).find((a) => a.textContent === "Give a number.")!;
+    const line = alerts(main()).find((a) => a.textContent === '"Stuck run: extra minutes" needs a number from 1 to 1440.')!;
     expect(line.attrs.role).toBe("alert");
     expect(invalid(main())).toEqual([input]);
     expect(doc().activeElement).toBe(input);
-    input.value = "5";
-    fail("PUT", "/api/config", 400, 'invalid config: {"path": ["monitor", "stuck_run", "resumes"]}');
+    input.value = "35";
+    fail("PUT", "/api/config", 400, 'invalid config: {"path": ["monitor", "stuck_run", "extra_minutes"]}');
     press(save);
     await vi.waitFor(() => expect(line.textContent).toContain("invalid config"));
     expect(invalid(main())).toEqual([input]);

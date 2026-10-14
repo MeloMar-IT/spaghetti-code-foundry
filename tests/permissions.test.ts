@@ -121,6 +121,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET config": no("config", 200),
   "PUT config": no("config", 400, { concurrency: 0 }),
   "GET settings": no("settings", 200),
+  "POST settings/reset": no("settings/reset", 400, {}),
   "GET restart": no("restart", 200),
   "POST restart": no("restart", 409, {}),
   "DELETE restart": no("restart", 409),

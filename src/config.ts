@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "yaml";
 import { z } from "zod";
-import { editYamlText } from "./config-edit.js";
+import { editYamlText, removeYamlKey } from "./config-edit.js";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
@@ -587,6 +587,23 @@ export function editConfigText(text: string, body: unknown, path = CONFIG_PATH()
     throw new Error("this change cannot be written to config.yaml without touching other settings; edit the file by hand");
   }
   return { text: out, config: next };
+}
+
+/** `text` without the setting `key` (dotted), so it takes its default. Throws for unreadable or invalid text, or when other settings would change. */
+export function resetConfigText(text: string, key: string, path = CONFIG_PATH()): { text: string; config: Config } {
+  const before = parseConfigText(text, path);
+  const want = round(before) as Record<string, unknown>;
+  const parts = key.split(".");
+  let at: unknown = want;
+  for (const p of parts.slice(0, -1)) at = typeof at === "object" && at !== null ? (at as Record<string, unknown>)[p] : undefined;
+  if (typeof at === "object" && at !== null) delete (at as Record<string, unknown>)[parts[parts.length - 1]!];
+  const expected = ConfigSchema.parse(want);
+  const out = removeYamlKey(text, parts);
+  const again = ConfigSchema.safeParse(parse(out) ?? {});
+  if (!again.success || !isDeepStrictEqual(round(again.data), round(expected))) {
+    throw new Error("this setting cannot be removed from config.yaml without touching other settings; edit the file by hand");
+  }
+  return { text: out, config: again.data };
 }
 
 export function saveConfig(config: unknown, path = CONFIG_PATH()): Config {

@@ -184,6 +184,7 @@ export const api = {
   requestRestart: () => req("POST", "/api/restart"),
   cancelRestart: () => req("DELETE", "/api/restart"),
   saveConfig: (config, version = configVersions.get(config)) => req("PUT", "/api/config", config, false, false, version ? { "x-config-version": version } : undefined),
+  resetSetting: (key, version) => req("POST", "/api/settings/reset", { key }, false, false, version ? { "x-config-version": version } : undefined),
   watchers: () => req("GET", "/api/watchers"),
   monitor: () => req("GET", "/api/monitor"),
   monitorOff: () => req("POST", "/api/monitor/off", {}),
