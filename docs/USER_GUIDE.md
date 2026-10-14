@@ -1566,6 +1566,18 @@ happens to each problem.
 - **Detectors.** Each detector is listed with what it looks for, its threshold numbers, when it
   last found something and whether it is muted. Change a number and press **Save**; this changes
   the setting `monitor.<detector>` like the Settings page.
+- **Thresholds and settings.** The Detectors table has one number field per threshold of each
+  detector. Below the Mutes, the **Monitor settings** section holds two groups. **Bug stories**: the
+  repository (`report_to`), the limits per day and per check, the quiet time after a start and the
+  days to wait for a fix. **Circuit breaker**: the new-findings count, the time window and the
+  failed fixes. Each field shows what it means, its default, its allowed range and "Takes effect at
+  once". A value outside the range, a fraction where a whole number is needed, an empty number or a
+  repository that is not `owner/repo` is not saved; the error line of that form names the field and
+  the range. **Bug stories with their evidence are written as issues to the repository in
+  `report_to`, and everyone who can read that repository sees them.** Check it before you set it.
+  **Back to default** removes the setting from `config.yaml`, so the default applies. It is enabled
+  only when the setting is in the file. A comment on the same line goes with it; comment lines above
+  it stay. A section left empty goes too.
 
 ### How issue watchers use labels
 
@@ -3035,12 +3047,13 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set |
 | `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number |
 | `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
+| `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
 | `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
 | `POST /api/restart` | yes | no | restart when no story is running: no new runs start and the watchers stop until the active runs are done; only when the server runs under the supervisor; writes an audit line |
 | `DELETE /api/restart` | yes | no | cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
-| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |
+| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes, and the monitor's settings with their ranges, defaults, values and whether config.yaml states them |
 | `GET /api/monitor/findings/:id` | yes | no | the evidence, bug stories and runs of one finding of the monitor |
 | `POST /api/monitor/story` | yes | no | make the bug story of one finding of the monitor now (the waiting rules do not apply; the off switch, mutes and the two tries do) |
 | `POST /api/monitor/off` | yes | no | stop the monitor from making bug stories |

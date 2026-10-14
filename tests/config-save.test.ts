@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
 import { SEQ_WORK_LIMIT } from "../src/config-edit.js";
-import { configVersion, editConfigText, parseConfigText, saveConfig, type Config } from "../src/config.js";
+import { configVersion, editConfigText, parseConfigText, resetConfigText, saveConfig, type Config } from "../src/config.js";
 
 /** Apply `change` to the parsed text and write the result in place. */
 const edit = (text: string, change: (c: Record<string, any>) => void) => {
@@ -211,5 +211,50 @@ describe("saveConfig", () => {
     writeFileSync(p, "# mine\nconcurrency: 3\n");
     expect(() => saveConfig({ concurrency: -1 }, p)).toThrow();
     expect(readFileSync(p, "utf8")).toBe("# mine\nconcurrency: 3\n");
+  });
+});
+
+describe("resetConfigText", () => {
+  const reset = (text: string, key: string) => resetConfigText(text, key);
+
+  it("removes a changed value, a stored default and a commented override", () => {
+    expect(reset("monitor:\n  restart_loop:\n    resumes: 7\n", "monitor.restart_loop.resumes").text).toBe("");
+    expect(reset("monitor:\n  restart_loop:\n    resumes: 5\n    within_minutes: 20\n", "monitor.restart_loop.resumes").text).toBe("monitor:\n  restart_loop:\n    within_minutes: 20\n");
+    const out = reset("monitor:\n  restart_loop:\n    resumes: 7 # tuned\n    within_minutes: 20\n", "monitor.restart_loop.resumes").text;
+    expect(out).toBe("monitor:\n  restart_loop:\n    within_minutes: 20\n");
+    expect(out).not.toContain("tuned");
+  });
+
+  it("removes an empty parent and keeps an unrelated comment", () => {
+    expect(reset("concurrency: 3 # mine\nmonitor:\n  breaker:\n    failed_fixes: 4\n", "monitor.breaker.failed_fixes").text).toBe("concurrency: 3 # mine\n");
+  });
+
+  it("keeps comment lines above the removed key", () => {
+    const out = reset("monitor:\n  # set by ops\n  report_to: o/a\n  fix_wait_days: 9\n", "monitor.report_to");
+    expect(out.text).toContain("# set by ops");
+    expect(out.text).toContain("fix_wait_days: 9");
+    expect(out.text).not.toContain("report_to");
+    expect(out.config.monitor.report_to).toBeUndefined();
+    const last = reset("monitor:\n  fix_wait_days: 9\n  # about the target\n  report_to: o/a\n", "monitor.report_to").text;
+    expect(last).toContain("# about the target");
+    expect(parseConfigText(last).monitor.fix_wait_days).toBe(9);
+  });
+
+  it("keeps the comment above a flow-style top map", () => {
+    const out = reset("# keep this explanation\n{monitor: {report_to: o/a}}\n", "monitor.report_to").text;
+    expect(out).toContain("# keep this explanation");
+    expect(out).not.toContain("report_to");
+  });
+
+  it("gives the same text for an absent key, and the default in the config", () => {
+    const t = "concurrency: 3\n";
+    expect(reset(t, "monitor.report_to").text).toBe(t);
+    expect(reset("", "monitor.report_to").text).toBe("");
+    expect(reset("monitor:\n  restart_loop:\n    resumes: 7\n", "monitor.restart_loop.resumes").config.monitor.restart_loop.resumes).toBe(5);
+  });
+
+  it("refuses broken or invalid text", () => {
+    expect(() => reset("a: [1\n", "monitor.report_to")).toThrow();
+    expect(() => reset("concurrency: -1\n", "monitor.report_to")).toThrow();
   });
 });

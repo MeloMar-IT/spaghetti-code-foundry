@@ -1,30 +1,128 @@
 import { api, configVersion } from "./api.js";
 import { h, mount, showError, tableBox, toast } from "./dom.js";
+import { settingControl } from "./kit/forms.js";
 import { confirmUnreadable, mutesTable, muteForm, PAGE, storyCell, untilText } from "./monitor.js";
 import { emptyState, errorState, explainError, loadingState, staleNote } from "./states.js";
 
 const when = (iso) => new Date(iso).toLocaleString();
 const SEVERITY = { critical: "critical", major: "major", minor: "minor" };
 
-/** The words for the keys of a detector's thresholds. */
-const THRESHOLD_WORDS = {
-  resumes: "resumes",
-  within_minutes: "within minutes",
-  within_hours: "within hours",
-  checks: "checks in a row",
-  percent: "percent",
-  intervals: "intervals",
-  runs: "runs",
-  extra_minutes: "extra minutes",
-  no_timeout_minutes: "minutes without a timeout",
-  issues: "different issues",
-  minutes: "minutes",
-  hours: "hours",
-  failures: "failures in a row",
-  factor: "times the usual time",
-  times: "times",
-};
-export const thresholdLabel = (key) => THRESHOLD_WORDS[key] ?? String(key).replaceAll("_", " ");
+/** The range of a number setting in words: "from 1 to 49", "at least 1", "at most 9", "more than 0"; "" for none. */
+function rangeWords(d) {
+  const parts = [];
+  if (d.min !== undefined && d.max !== undefined) parts.push(`from ${d.min} to ${d.max}`);
+  else if (d.min !== undefined) parts.push(`at least ${d.min}`);
+  else if (d.max !== undefined) parts.push(`at most ${d.max}`);
+  if (d.exclusiveMin !== undefined) parts.push(`more than ${d.exclusiveMin}`);
+  return parts.join(" and ");
+}
+
+/** What is wrong with `value` for a number setting, as one sentence naming the field and the range; "" when it is fine (and for other kinds). */
+export function settingProblem(d, value) {
+  if (d.kind !== "number") return "";
+  if (value === undefined && d.optional) return "";
+  const range = rangeWords(d);
+  const sp = range ? ` ${range}` : "";
+  if (typeof value !== "number" || Number.isNaN(value)) return `"${d.label}" needs a number${sp}.`;
+  if (d.integer && !Number.isInteger(value)) return `"${d.label}" must be a whole number${sp}.`;
+  if (!Number.isFinite(value) || (d.min !== undefined && value < d.min) || (d.max !== undefined && value > d.max) || (d.exclusiveMin !== undefined && value <= d.exclusiveMin)) {
+    return `"${d.label}" must be ${range || "a finite number"}.`;
+  }
+  return "";
+}
+
+const under = (m, prefix) => (m.settings ?? []).filter((s) => s.key.startsWith(prefix));
+const pick = (m, key) => (m.settings ?? []).filter((s) => s.key === key);
+const shownDefault = (s) => (s.default === undefined ? "not set" : String(s.default));
+const REPO = /^[\w.-]+\/[\w.-]+$/;
+
+/** Sets the dotted `key` in `obj`, creating the maps on the way; `undefined` removes it. */
+function setAt(obj, key, value) {
+  const parts = key.split(".");
+  let cur = obj;
+  for (const p of parts.slice(0, -1)) {
+    if (cur[p] === null || typeof cur[p] !== "object") cur[p] = {};
+    cur = cur[p];
+  }
+  const last = parts[parts.length - 1];
+  if (value === undefined) delete cur[last];
+  else cur[last] = value;
+}
+
+function readField(s, input) {
+  const text = String(input.value ?? "").trim();
+  if (!text) return undefined;
+  return s.kind === "number" ? Number(text) : text;
+}
+
+function fieldProblem(s, v) {
+  const p = settingProblem(s, v);
+  if (p) return p;
+  if (s.key === "monitor.report_to" && v !== undefined && !REPO.test(v)) return `"${s.label}" must be owner/repo.`;
+  return "";
+}
+
+/** The fields of some settings with one Save and, for each, "Back to default". */
+function settingsForm(list, m, reload, { saved = "Saved" } = {}) {
+  if (!list.length) return null;
+  const err = h("span", { class: "status bad", role: "alert" });
+  const fields = list.map((s) => {
+    const block = h("div", {}, settingControl(s, { value: s.value }));
+    block.querySelector("input")?.setAttribute("aria-label", s.label);
+    return { s, block, input: () => block.querySelector("input") };
+  });
+  const inputs = () => fields.map((f) => f.input());
+  const show = (message, f) => showError(err, message, { fields: inputs(), field: f?.input() });
+  const fail = (e) => show(e.message, fields.find((f) => e.message.includes(`"${f.s.key.split(".").pop()}"`)));
+  const save = async () => {
+    show("");
+    const values = [];
+    for (const f of fields) {
+      const v = readField(f.s, f.input());
+      const problem = fieldProblem(f.s, v);
+      if (problem) return show(problem, f);
+      values.push([f.s.key, v]);
+    }
+    try {
+      const config = await api.config();
+      for (const [k, v] of values) setAt(config, k, v);
+      await api.saveConfig(config, configVersion(m));
+      toast(saved);
+      await reload();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  for (const f of fields) {
+    const back = async () => {
+      show("");
+      try {
+        await api.resetSetting(f.s.key, configVersion(m));
+        toast(`${f.s.label} is back to its default`);
+        await reload();
+      } catch (e) {
+        show(e.message, f);
+      }
+    };
+    f.block.append(h("button", { class: "small", disabled: !f.s.stored, title: f.s.stored ? undefined : "Not set in config.yaml; the default is used", onClick: back }, `Back to default (${shownDefault(f.s)})`));
+  }
+  return h("div", {}, fields.map((f) => f.block), h("button", { class: "small", onClick: save }, "Save"), err);
+}
+
+/** Bug story limits, the repository and the circuit breaker. Nothing for an answer without `settings`. */
+function monitorSettingsSection(m, reload) {
+  if (!m.settings) return null;
+  const stories = [...pick(m, "monitor.report_to"), ...under(m, "monitor.report_limits."), ...pick(m, "monitor.cooldown_minutes"), ...pick(m, "monitor.fix_wait_days")];
+  const breaker = under(m, "monitor.breaker.");
+  if (!stories.length && !breaker.length) return null;
+  return h("section", {},
+    h("h2", {}, "Monitor settings"),
+    stories.length ? h("h3", {}, "Bug stories") : null,
+    stories.length ? h("p", { class: "muted" }, "Bug stories with their evidence are written as issues to this repository; everyone who can read it sees them.") : null,
+    settingsForm(stories, m, reload),
+    breaker.length ? h("h3", {}, "Circuit breaker") : null,
+    settingsForm(breaker, m, reload));
+}
 
 /** The one sentence at the top: whether the monitor runs, its bug stories, its last check, the stories of today and the circuit breaker. */
 export function monitorSentence(m) {
@@ -158,35 +256,11 @@ function findingsTable(m, redraw) {
 function detectorsTable(m, reload) {
   const rows = (m.detectors ?? []).map((d) => {
     const mute = (m.mutes ?? []).find((x) => x.kind === "detector" && x.detector === d.name);
-    const err = h("span", { class: "status bad", role: "alert" });
-    const inputs = Object.entries(d.thresholds ?? {}).map(([k, v]) => ({ key: k, el: h("input", { type: "number", step: "any", value: String(v), class: "w-80", "aria-label": `${d.name} ${thresholdLabel(k)}` }), label: thresholdLabel(k) }));
-    const show = (message, input) => showError(err, message, { fields: inputs.map((i) => i.el), field: input?.el });
-    const save = async () => {
-      show("");
-      const values = {};
-      for (const i of inputs) {
-        const text = String(i.el.value ?? "").trim();
-        const n = Number(text);
-        if (!text || !Number.isFinite(n)) {
-          show("Give a number.", i);
-          return;
-        }
-        values[i.key] = n;
-      }
-      try {
-        const config = await api.config();
-        config.monitor = { ...config.monitor, [d.key]: { ...config.monitor?.[d.key], ...values } };
-        await api.saveConfig(config, configVersion(m));
-        toast("Threshold saved");
-        await reload();
-      } catch (e) {
-        show(e.message, inputs.find((i) => e.message.includes(`"${i.key}"`)));
-      }
-    };
+    const list = under(m, `monitor.${d.key}.`);
     return h("tr", {},
       h("td", {}, d.name),
       h("td", {}, d.description),
-      h("td", {}, inputs.length ? h("div", {}, inputs.map((i) => h("label", { class: "field" }, h("span", {}, i.label), i.el)), h("button", { class: "small", onClick: save }, "Save"), err) : h("span", { class: "muted" }, "none")),
+      h("td", {}, list.length ? settingsForm(list, m, reload, { saved: "Threshold saved" }) : h("span", { class: "muted" }, "none")),
       h("td", {}, d.lastFound ? when(d.lastFound) : "nothing in the last 30 days"),
       h("td", {}, mute ? `muted ${untilText(mute.until)}: ${mute.reason}` : ""),
       h("td", {}, mute
@@ -238,6 +312,7 @@ export async function renderProblems(main, { data } = {}) {
     switchRow(m, reload),
     list,
     h("details", {}, h("summary", {}, `Mutes (${(m.mutes ?? []).length})`), (m.mutes ?? []).length ? mutesTable(m, reload) : h("p", { class: "muted" }, "No mutes.")),
+    monitorSettingsSection(m, reload),
     h("h2", {}, "Detectors"),
     detectorsTable(m, reload));
 }

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ConfigSchema } from "../src/config.js";
-import { EFFECT_TEXT, SETTING_TEXTS, describeSettings, isCovered, schemaLeaves, startupSettings, unsupportedSettings, type SettingLeaf } from "../src/settings/describe.js";
+import { EFFECT_TEXT, SETTING_TEXTS, describeSettings, isCovered, schemaLeaves, settingValue, startupSettings, unsupportedSettings, type SettingLeaf } from "../src/settings/describe.js";
 
 type Entry = [key: string, value: unknown];
 
@@ -239,6 +239,16 @@ describe("startupSettings", () => {
       expect(x.change).not.toBe("");
       expect(x.effectText).toBe("after a restart");
     }
+  });
+
+  it("marks the monitor keys as edited on the Problems page, and no other key", () => {
+    for (const d of describeSettings()) expect(d.control, d.key).toBe(d.key.startsWith("monitor.") ? "problems.js" : "generated");
+  });
+
+  it("settingValue walks a dotted key", () => {
+    expect(settingValue({ a: { b: 1 } }, "a.b")).toBe(1);
+    expect(settingValue({}, "a.b")).toBeUndefined();
+    expect(settingValue(undefined, "a")).toBeUndefined();
   });
 
   it("does not hold the value of a variable of the server", () => {

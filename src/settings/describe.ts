@@ -121,7 +121,7 @@ export function isCovered(key: string): boolean {
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
 
-const M = (label: string, help: string): Text => ({ label, help, effect: "now" });
+const M = (label: string, help: string): Text => ({ label, help, effect: "now", control: "problems.js" });
 const N = (label: string, help: string): Text => ({ label, help, effect: "new-runs" });
 /** A setting edited by a hand-built control of ui/admin.js (or another file under ui/). */
 const A = (label: string, help: string, effect: SettingEffect, control = "admin.js"): Text => ({ label, help, effect, control });
@@ -221,7 +221,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
 };
 
 /** Walks `value` down the dotted key. */
-function valueAt(obj: unknown, key: string): unknown {
+export function settingValue(obj: unknown, key: string): unknown {
   let cur: any = obj;
   for (const part of key.split(".")) cur = cur?.[part];
   return cur;
@@ -235,7 +235,7 @@ export function describeSettings(): SettingDescription[] {
     .map((l) => {
       const t = SETTING_TEXTS[l.key];
       if (!t) throw new Error(`no text for the setting ${l.key}`);
-      const def = valueAt(defaults, l.key);
+      const def = settingValue(defaults, l.key);
       return { ...l, label: t.label, help: t.help, default: def, optional: def === undefined, effect: t.effect, effectText: EFFECT_TEXT[t.effect], control: t.control ?? "generated" };
     });
 }

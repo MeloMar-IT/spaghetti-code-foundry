@@ -1,3 +1,5 @@
+import { parse } from "yaml";
+import { describeSettings, settingValue } from "../settings/describe.js";
 import { configVersion, parseConfigText, readConfigText, type MonitorConfig } from "../config.js";
 import { storyKey } from "../monitor/breaker.js";
 import { evidenceLines, readFindings, saveFindings, type Finding, type StoryRef } from "../monitor/findings.js";
@@ -92,6 +94,13 @@ function lists(ctx: ApiContext, thresholdsFrom = ctx.config().monitor) {
   };
 }
 
+/** The monitor's settings as the Problems page edits them: each description with its value (from the file, defaults filled in) and whether config.yaml states it. */
+function monitorSettings(monitor: MonitorConfig, raw: unknown) {
+  return describeSettings()
+    .filter((d) => d.key.startsWith("monitor."))
+    .map((d) => ({ ...d, value: settingValue({ monitor }, d.key), stored: settingValue(raw, d.key) !== undefined }));
+}
+
 const STORY_NOW: Record<string, [number, string]> = {
   off: [409, "the monitor is off: bug stories are switched off"],
   unreadable: [409, "the monitor is off: the state file monitor-guard.json cannot be read"],
@@ -128,7 +137,13 @@ export const monitorRoutes: Route = async (ctx, req, res, seg, method, user) => 
     } catch {
       fromFile = undefined;
     }
-    return send(res, 200, { ...view(ctx), ...lists(ctx, fromFile) }), true;
+    let raw: unknown = {};
+    try {
+      raw = parse(text) ?? {};
+    } catch {
+      raw = {};
+    }
+    return send(res, 200, { ...view(ctx), ...lists(ctx, fromFile), settings: monitorSettings(fromFile ?? ctx.config().monitor, fromFile ? raw : {}) }), true;
   }
   if (seg[1] === "mutes") {
     if (seg.length === 2 && method === "POST") {
