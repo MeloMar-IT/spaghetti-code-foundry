@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -80,11 +80,12 @@ describe("output and exit codes", () => {
     const t = fakeTree();
     const r = await run(t);
     expect(r.rc).toBe(0);
-    expect(r.lines).toHaveLength(4);
+    expect(r.lines).toHaveLength(5);
     expect(r.lines[0]).toMatch(/^skills\/a\s+a sha256:[0-9a-f]{64} 1 files \d+ bytes$/);
     expect(r.lines[1]).toMatch(/^skills\/b\s+b sha256:/);
-    expect(r.lines[2]).toMatch(/^OK 2 skills staged from github\.com\/example\/skills@aaaaaaaaaaaa sha256:[0-9a-f]{64} \(staged\)$/);
-    expect(r.lines[3]).toBe(`Quarantine: ${join(home, "skill-quarantine", "lib", COMMIT)}`);
+    expect(r.lines[2]).toBe("LICENCE FILES 0 staged, 0 not readable");
+    expect(r.lines[3]).toMatch(/^OK 2 skills staged from github\.com\/example\/skills@aaaaaaaaaaaa sha256:[0-9a-f]{64} \(staged\)$/);
+    expect(r.lines[4]).toBe(`Quarantine: ${join(home, "skill-quarantine", "lib", COMMIT)}`);
     expect(t.closed).toBe(1);
   });
 
@@ -92,7 +93,39 @@ describe("output and exit codes", () => {
     const a = await run(fakeTree());
     const b = await run(fakeTree());
     expect(b.rc).toBe(0);
-    expect(b.lines[2]).toBe(a.lines[2]!.replace("(staged)", "(unchanged)"));
+    expect(b.lines[3]).toBe(a.lines[3]!.replace("(staged)", "(unchanged)"));
+  });
+
+  it("stages the licence files, records retrievedAt and keeps it when unchanged", async () => {
+    const MIT_TEXT = "SECRET-MARKER-LICENCE-TEXT\n";
+    const files = { ...GOOD, LICENSE: MIT_TEXT };
+    const opts = (now: string) => ({ cwd: dir, home, now: new Date(now), open: async () => fakeTree(files) });
+    const lines: string[] = [];
+    expect(await skillImportCommand({ positionals: ["lib"], values: {} }, (l) => lines.push(l), opts("2026-01-02T03:04:05Z"))).toBe(0);
+    expect(lines).toContain("LICENCE FILES 1 staged, 0 not readable");
+    expect(lines.join("\n")).not.toContain("SECRET-MARKER");
+    const rec = JSON.parse(readFileSync(join(home, "skill-quarantine", "lib", COMMIT, "import.json"), "utf8"));
+    expect(rec.retrievedAt).toBe("2026-01-02T03:04:05Z");
+    expect(rec.licenceFiles).toHaveLength(1);
+    expect(readFileSync(join(home, "skill-quarantine", "lib", COMMIT, "licences", "LICENSE"), "utf8")).toBe(MIT_TEXT);
+
+    const again: string[] = [];
+    expect(await skillImportCommand({ positionals: ["lib"], values: {} }, (l) => again.push(l), opts("2027-05-06T07:08:09Z"))).toBe(0);
+    expect(again.find((l) => l.startsWith("OK "))).toMatch(/\(unchanged\)$/);
+    expect(JSON.parse(readFileSync(join(home, "skill-quarantine", "lib", COMMIT, "import.json"), "utf8")).retrievedAt).toBe("2026-01-02T03:04:05Z");
+  });
+
+  it("gives the fixed PROBLEM when the licence files cannot be read", async () => {
+    const t = fakeTree({ ...GOOD, LICENSE: "x" });
+    const read = t.read.bind(t);
+    t.read = (entries) => {
+      if (entries.some((e) => e.path === "LICENSE")) throw new GitTreeError("read-failed");
+      return read(entries);
+    };
+    const r = await run(t);
+    expect(r.rc).toBe(1);
+    expect(r.lines.at(-1)).toBe("PROBLEM a file of the commit could not be read");
+    expect(quarantine()).toBe(false);
   });
 
   it("returns 1 and prints REJECTED for a bad skill", async () => {

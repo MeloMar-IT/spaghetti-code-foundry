@@ -1,15 +1,17 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { dataHome } from "../auth/store.js";
 import { claimHomeWrite } from "../home.js";
 import { acquireLock, releaseLock, removeTree } from "../home-migrate.js";
-import { byteCmp, IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, SkillImportError, type ImportRecord, type SourceTree } from "./import-plan.js";
+import { addLicenceEvidence } from "./import-evidence.js";
+import { byteCmp, IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, SkillImportError, type ImportRecord, type PreparedImport, type SourceTree } from "./import-plan.js";
+import { LICENCE_LIMITS } from "./licence-rules.js";
 import { skillDigest } from "./package.js";
 import { SKILL_ID_RE, SKILL_LIMITS } from "./schema.js";
 import { approvedRefProblem, shownValue, type SkillLibrarySource } from "./sources.js";
 
-// Stages checked skill folders into <data folder>/skill-quarantine/<source id>/<commit>/ (import.json and files/).
+// Stages checked skill folders into <data folder>/skill-quarantine/<source id>/<commit>/ (import.json, files/ and, when the record lists licence files, licences/ with the upstream paths).
 // Nothing in the quarantine is run or loaded; the registry never scans it. `scf skills scan` reads it (readStagedImport). One lock: <data folder>/skill-quarantine.lock.
 
 export const QUARANTINE_DIR = "skill-quarantine";
@@ -73,7 +75,7 @@ interface Node {
   children: Map<string, Node>;
   bytes?: Uint8Array;
 }
-function expectedTree(recordText: string, files: Map<string, Uint8Array>): Node {
+function expectedTree(recordText: string, files: Map<string, Uint8Array>, licences: Map<string, Uint8Array>): Node {
   const root: Node = { children: new Map() };
   const add = (path: string, bytes: Uint8Array) => {
     let n = root;
@@ -86,13 +88,14 @@ function expectedTree(recordText: string, files: Map<string, Uint8Array>): Node 
   };
   add(IMPORT_RECORD_FILE, Buffer.from(recordText, "utf8"));
   for (const [p, b] of files) add("files/" + p, b);
+  for (const [p, b] of licences) add("licences/" + p, b);
   return root;
 }
 
 const enoent = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";
 
 /** The first difference between a folder and the import it should hold, or undefined. Read errors are thrown. */
-function folderProblem(dir: string, recordText: string, files: Map<string, Uint8Array>): string | undefined {
+function folderProblem(dir: string, recordText: string, files: Map<string, Uint8Array>, licences: Map<string, Uint8Array> = new Map()): string | undefined {
   const shown = (rel: string, text: string) => `${rel === "" ? "the folder" : shownValue(rel)} ${text}`;
   const check = (path: string, rel: string, node: Node): string | undefined => {
     let st;
@@ -122,7 +125,7 @@ function folderProblem(dir: string, recordText: string, files: Map<string, Uint8
     if ((st.mode & 0o777) !== 0o600) return shown(rel, "has the wrong mode");
     return undefined;
   };
-  return check(dir, "", expectedTree(recordText, files));
+  return check(dir, "", expectedTree(recordText, files, licences));
 }
 
 /** An existing folder must be a plain 0700 folder; a missing one is made. Nothing is ever changed. */
@@ -150,9 +153,46 @@ function boundary(e: unknown): SkillImportError {
 export function stageImport(
   source: SkillLibrarySource,
   tree: SourceTree,
-  opts: { home?: string; limits?: { recordBytes?: number } } = {},
+  opts: { home?: string; limits?: { recordBytes?: number }; retrievedAt?: string } = {},
 ): { record: ImportRecord; dir: string; state: "staged" | "unchanged" } {
-  return publishImport(prepareImport(source, tree, { limits: opts.limits }), { home: opts.home });
+  let prep = prepareImport(source, tree, { limits: opts.limits });
+  if (opts.retrievedAt !== undefined) prep = addLicenceEvidence(prep, tree, opts.retrievedAt, { limits: opts.limits });
+  return publishImport(prep, { home: opts.home });
+}
+
+/** Writes the files of a map below `base`, which exists. Folders 0700, files 0600, never over an existing file. */
+function writeTree(base: string, map: Map<string, Uint8Array>): void {
+  const made = new Set<string>([base]);
+  for (const [path, bytes] of map) {
+    const file = join(base, path);
+    const missing: string[] = [];
+    for (let p = dirname(file); !made.has(p); p = dirname(p)) missing.push(p);
+    for (const p of missing.reverse()) {
+      mkdirSync(p, { mode: 0o700 });
+      made.add(p);
+    }
+    writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+  }
+}
+
+/** The existing import of the same commit, when it differs from the new one only by `retrievedAt`. */
+function sameButTime(dest: string, record: ImportRecord, files: Map<string, Uint8Array>, licences: Map<string, Uint8Array>): ImportRecord | undefined {
+  if (record.retrievedAt === undefined) return undefined;
+  try {
+    const rp = join(dest, IMPORT_RECORD_FILE);
+    const st = lstatSync(rp);
+    if (!st.isFile() || st.size > IMPORT_LIMITS.recordBytes) return undefined;
+    const raw = readPlain(rp, st.size);
+    if (typeof raw === "string") return undefined;
+    const oldText = raw.toString("utf8");
+    const parsed = parseImportRecord(oldText);
+    if ("problem" in parsed || parsed.record.retrievedAt === undefined) return undefined;
+    const old = parsed.record;
+    if (JSON.stringify({ ...record, retrievedAt: old.retrievedAt }, null, 2) + "\n" !== oldText) return undefined;
+    return folderProblem(dest, oldText, files, licences) === undefined ? old : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -160,10 +200,11 @@ export function stageImport(
  * The same import again is "unchanged". A record whose source id or commit would make an unsafe path is refused.
  */
 export function publishImport(
-  prep: { record: ImportRecord; recordText: string; files: Map<string, Uint8Array> },
+  prep: PreparedImport,
   opts: { home?: string } = {},
 ): { record: ImportRecord; dir: string; state: "staged" | "unchanged" } {
   const { record, recordText, files } = prep;
+  const licences = prep.licences ?? new Map<string, Uint8Array>();
   if (typeof record.source !== "string" || !SKILL_ID_RE.test(record.source) || approvedRefProblem(record.commit)) {
     throw new SkillImportError("not-usable", "the import record is not usable: bad source id or commit");
   }
@@ -209,8 +250,10 @@ export function publishImport(
     }
     if (st) {
       if (st.isSymbolicLink() || !st.isDirectory()) throw new SkillImportError("cannot-write", "the import folder is not a plain folder");
-      const diff = folderProblem(dest, recordText, files);
+      const diff = folderProblem(dest, recordText, files, licences);
       if (diff === undefined) return { record, dir: dest, state: "unchanged" };
+      const old = sameButTime(dest, record, files, licences);
+      if (old) return { record: old, dir: dest, state: "unchanged" };
       throw new SkillImportError("conflict", `${dest} already holds a different import of this commit (${diff}). Remove that folder, then import again.`);
     }
     const tmp = join(sourceDir, ".tmp-" + randomBytes(8).toString("hex"));
@@ -218,18 +261,12 @@ export function publishImport(
       mkdirSync(tmp, { mode: 0o700 });
       writeFileSync(join(tmp, IMPORT_RECORD_FILE), recordText, { flag: "wx", mode: 0o600 });
       mkdirSync(join(tmp, "files"), { mode: 0o700 });
-      const made = new Set<string>([join(tmp, "files")]);
-      for (const [path, bytes] of files) {
-        const file = join(tmp, "files", path);
-        const missing: string[] = [];
-        for (let p = dirname(file); !made.has(p); p = dirname(p)) missing.push(p);
-        for (const p of missing.reverse()) {
-          mkdirSync(p, { mode: 0o700 });
-          made.add(p);
-        }
-        writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+      writeTree(join(tmp, "files"), files);
+      if (licences.size > 0) {
+        mkdirSync(join(tmp, "licences"), { mode: 0o700 });
+        writeTree(join(tmp, "licences"), licences);
       }
-      if (folderProblem(tmp, recordText, files) !== undefined) throw new SkillImportError("cannot-write", "the file system changed what was written");
+      if (folderProblem(tmp, recordText, files, licences) !== undefined) throw new SkillImportError("cannot-write", "the file system changed what was written");
       if (importStoreSettings.realpath(tmp) !== tmp) throw new SkillImportError("cannot-write", "the import folder is no longer inside the quarantine");
       importStoreSettings.rename(tmp, dest);
     } catch (e) {
@@ -264,7 +301,7 @@ export function publishImport(
 export type StagedImportRead =
   | { state: "none" }
   | { state: "invalid"; problem: string }
-  | { state: "ok"; dir: string; record: ImportRecord; recordText: string; files: Map<string, Uint8Array> };
+  | { state: "ok"; dir: string; record: ImportRecord; recordText: string; files: Map<string, Uint8Array>; licences: Map<string, Uint8Array> };
 
 class Invalid extends Error {}
 const refuse = (what: string): never => {
@@ -327,6 +364,7 @@ export function readStagedImport(source: string, commit: string, opts: { home?: 
     // parent of a staged file, so it is a skill root, above one, or inside one on the way to a file.
     const maxFiles = record.skills.reduce((n, s) => n + s.files, 0);
     const maxFolders = record.skills.reduce((n, s) => n + segments(s.root) + (SKILL_LIMITS.pathSegments - 1) * s.files, 0);
+    const walkFolder = (base: string, limits: { files: number; folders: number; fileBytes: number; totalBytes: number; what: string }): [string, Uint8Array][] => {
     let fileCount = 0;
     let folderCount = 0;
     let total = 0;
@@ -338,14 +376,14 @@ export function readStagedImport(source: string, commit: string, opts: { home?: 
         const st = lstatSync(p);
         if (st.isSymbolicLink()) refuse(`${shownValue(r)} is a link`);
         if (st.isDirectory()) {
-          if (++folderCount > maxFolders) refuse("the folder holds more folders than the import can have");
+          if (++folderCount > limits.folders) refuse("the folder holds more folders than the import can have");
           walk(p, r);
         } else if (st.isFile()) {
-          if (++fileCount > maxFiles) refuse("the folder holds more files than import.json lists");
+          if (++fileCount > limits.files) refuse("the folder holds more files than import.json lists");
           if (Buffer.byteLength(r) > SKILL_LIMITS.pathChars) refuse(`${shownValue(r)} has a path that is too long`);
-          if (st.size > SKILL_LIMITS.fileBytes) refuse(`${shownValue(r)} is too large`);
+          if (st.size > limits.fileBytes) refuse(`${shownValue(r)} is too large`);
           total += st.size;
-          if (total > IMPORT_LIMITS.totalBytes) refuse("the folder holds more bytes than an import can have");
+          if (total > limits.totalBytes) refuse("the folder holds more bytes than an import can have");
           const got = readPlain(p, st.size);
           if (got === "link") refuse(`${shownValue(r)} is a link`);
           if (got === "other") refuse(`${shownValue(r)} changed while it was read`);
@@ -353,10 +391,13 @@ export function readStagedImport(source: string, commit: string, opts: { home?: 
         } else refuse(`${shownValue(r)} is not a regular file`);
       }
     };
-    const fst = lstatSync(join(dir, "files"));
-    if (fst.isSymbolicLink()) refuse("files is a link");
-    if (!fst.isDirectory()) refuse("files is not a folder");
-    walk(join(dir, "files"), "");
+    const fst = lstatSync(base);
+    if (fst.isSymbolicLink()) refuse(`${limits.what} is a link`);
+    if (!fst.isDirectory()) refuse(`${limits.what} is not a folder`);
+    walk(base, "");
+    return found;
+    };
+    const found = walkFolder(join(dir, "files"), { files: maxFiles, folders: maxFolders, fileBytes: SKILL_LIMITS.fileBytes, totalBytes: IMPORT_LIMITS.totalBytes, what: "files" });
 
     // every file lies in exactly one skill, and each skill matches its line of the record
     const perSkill = new Map<string, { path: string; content: Uint8Array }[]>(record.skills.map((s) => [s.root, []]));
@@ -373,9 +414,40 @@ export function readStagedImport(source: string, commit: string, opts: { home?: 
     if (importDigest(record.skills) !== record.digest) refuse("the digest of import.json does not match its skills");
 
     const files = new Map(found.sort((a, b) => byteCmp(a[0], b[0])));
-    const problem = folderProblem(dir, recordText, files);
+
+    // licence and notice files: each must be listed in import.json with the same size and sha256, and every listed one must be there
+    const wanted = (record.licenceFiles ?? []).filter((f) => f.sha256 !== undefined);
+    let licences = new Map<string, Uint8Array>();
+    if (wanted.length > 0) {
+      let lst;
+      try {
+        lst = lstatSync(join(dir, "licences"));
+      } catch (e) {
+        if (enoent(e)) return { state: "invalid", problem: "licences is missing" };
+        throw e;
+      }
+      if (lst.isSymbolicLink()) refuse("licences is a link");
+      const got = walkFolder(join(dir, "licences"), {
+        files: wanted.length,
+        folders: wanted.length * SKILL_LIMITS.pathChars,
+        fileBytes: LICENCE_LIMITS.fileBytes,
+        totalBytes: LICENCE_LIMITS.totalBytes,
+        what: "licences",
+      });
+      const byPath = new Map(wanted.map((f) => [f.path, f]));
+      for (const [path, content] of got) {
+        const w = byPath.get(path);
+        if (!w) return refuse(`${shownValue(path)} is not part of the import`);
+        if (w.bytes !== content.byteLength || w.sha256 !== createHash("sha256").update(content).digest("hex")) refuse(`${shownValue(path)} changed`);
+      }
+      const have = new Set(got.map((g) => g[0]));
+      const missing = wanted.find((w) => !have.has(w.path));
+      if (missing) refuse(`${shownValue(missing.path)} is missing`);
+      licences = new Map(got.sort((a, b) => byteCmp(a[0], b[0])));
+    }
+    const problem = folderProblem(dir, recordText, files, licences);
     if (problem !== undefined) return { state: "invalid", problem };
-    return { state: "ok", dir, record, recordText, files };
+    return { state: "ok", dir, record, recordText, files, licences };
   } catch (e) {
     if (e instanceof Invalid) return { state: "invalid", problem: e.message };
     const c = (e as NodeJS.ErrnoException | undefined)?.code;
