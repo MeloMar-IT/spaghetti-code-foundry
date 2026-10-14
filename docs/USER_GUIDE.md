@@ -3369,6 +3369,18 @@ sources:
 - **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
 - **Review of a community source.** `review` records who checked the maintainer and the licence, and when. It has four fields: `by` (a GitHub user or team, as `owner`), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id, equal to `ref.approved`) and `licence` (one of `licence.allow`). An enabled `trust: community` source is refused without `review`, and when `review.commit` is not `ref.approved`. A new commit needs a new review, so changing one word cannot raise the trust.
 - **Known community repositories.** The Foundry ships a list of community repositories (`src/skills/community-rules.ts`). `github.com/jiangxianze/spring-agent-skills` is on it, so a source with that repository must say `trust: community`; any other trust is refused and the message names `trust`.
+- **Source profile.** An optional `profile` says which upstream capabilities are portable and which belong to a vendor. It is for the maintainer of the catalogue:
+
+  ```yaml
+      profile:
+        provider: confluent                 # a slug; required when profile is set
+        portable:                           # upstream capability -> catalogue capability (at most 64)
+          streams: kafka-streams
+        products:                           # default provider products with version ranges (1 to 16)
+          kafka: ">=3.7"
+  ```
+
+  Every other upstream capability becomes `confluent-<capability>`, so a vendor skill cannot take over a portable capability by accident. A skill with a vendor capability gets the provider block. A source without `profile` is unchanged. `scf skills sources check` prints `provider confluent (1 portable)` for the source. It refuses a mapping to an invalid slug, a duplicate key and a `profile` without `provider`. A slug longer than 64 characters, or two upstream names that land on the same slug, is a problem that names the skill and the capability; nothing is dropped silently. The profile is not applied during import or scan yet.
 - **Owner and policy.** Every source has an owner and an update cadence.
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
 - **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
