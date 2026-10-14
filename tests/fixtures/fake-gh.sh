@@ -173,6 +173,7 @@ case "$1 $2" in
          [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *"--json state"*) echo "${FAKE_GH_ISSUE_STATE:-OPEN}" ;;
       # FAKE_GH_ISSUE_BODIES: JSON {"<number>": "<body>"}; the body replaces "Please add feature.txt" for that issue (the pull_ticket text).
+      *"--json body --jq .body"*) node -e 'const v=JSON.parse(process.env.FAKE_GH_ISSUE_BODIES||"{}")[process.argv[1]];process.stdout.write((typeof v==="string"?v:"Please add feature.txt")+"\n")' "$3" ;;
       *) b=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_ISSUE_BODIES||"{}")[process.argv[1]];process.stdout.write(typeof v==="string"?v:"Please add feature.txt")' "$3")
          printf '# #%s: Add a feature\nhttps://github.com/owner/repo/issues/%s\n\n%s\n' "$3" "$3" "$b"
          if [ -n "$FAKE_GH_ISSUE_EXTRA" ]; then printf '%s\n' "$FAKE_GH_ISSUE_EXTRA"; fi ;;

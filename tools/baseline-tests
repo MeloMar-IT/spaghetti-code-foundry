@@ -1,0 +1,242 @@
+#!/usr/bin/env node
+// Decides, from JUnit XML reports, whether a run may go on although the tests fail before any change,
+// because every failing test is one the issue names under a "Failing tests to fix" heading.
+// Usage:
+//   baseline-tests red    <marker-file> <run-dir>   tests failed before the change: exit 0 = go on, 1 = stop
+//   baseline-tests green  <run-dir>                 tests passed before the change: notes the named tests
+//   baseline-tests verify <marker-file> <run-dir>   after the change: exit 0 = named tests pass, nothing else broke
+//   baseline-tests purge  <run-dir>                 before that test run: remove old reports (a runner that skips work must write new ones)
+// Files in <run-dir>: issue-body.md (read), baseline-red.json, baseline-note.md, baseline-verdict.txt (written).
+// The report walk is the same as tools/test-summary (names are Class.method); keep the two the same, except that
+// here a report must be newer than the marker (no grace second), so a report of an earlier attempt never counts.
+import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+const MAX_LIST = 20;
+
+export function namedTests(body) {
+  const lines = String(body ?? "").replace(/\r\n?/g, "\n").split("\n");
+  const start = lines.findIndex((l) => /^#{1,6}\s*failing tests to fix\s*:?\s*$/i.test(l.trim()));
+  if (start < 0) return [];
+  const names = [];
+  for (const raw of lines.slice(start + 1)) {
+    if (/^#{1,6}\s/.test(raw)) break;
+    let l = raw.trim();
+    if (!l || l.startsWith("```") || l.startsWith("<!--")) continue;
+    l = l.replace(/^(?:[-*+]|\d+[.)])\s+/, "").trim();
+    l = l.replace(/^`+|`+$/g, "").trim();
+    if (!l || l.length > 300 || names.includes(l)) continue;
+    names.push(l);
+    if (names.length >= 100) break;
+  }
+  return names;
+}
+
+export const covers = (entry, test) => test === entry || test.startsWith(`${entry}.`);
+
+const unxml = (s) =>
+  s.replace(/&(lt|gt|quot|apos|amp);/g, (_, e) => ({ lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" })[e]);
+
+// Only for what is printed: the identities kept for comparison are never changed.
+export const clean = (name) => {
+  const c = String(name).replace(/[\u0000-\u001f\u007f`]/g, "");
+  return c.length > 200 ? `${c.slice(0, 200)}…` : c;
+};
+
+function reportFiles(root, since) {
+  const files = [];
+  (function walk(dir, depth) {
+    if (depth > 8) return;
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (e.name === "node_modules" || e.name === ".git" || e.name === ".gradle") continue;
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p, depth + 1);
+      else if (/^TEST-.*\.xml$|^junit.*\.xml$/.test(e.name) && statSync(p).mtimeMs >= since) files.push(p);
+    }
+  })(root, 0);
+  return files;
+}
+
+export function readReports(marker, root = ".") {
+  const since = marker ? statSync(marker).mtimeMs : 0;
+  const files = reportFiles(root, since);
+  const failing = [];
+  const passed = [];
+  // Failing cases that cannot be named (no name, or more failures counted by a suite than cases found): the
+  // reports cannot be trusted, so nothing is accepted on them.
+  let unidentified = 0;
+  for (const f of files) {
+    const xml = readFileSync(f, "utf8");
+    let failedHere = 0;
+    for (const m of xml.matchAll(/<testcase\b((?:[^>"']|"[^"]*"|'[^']*')*?)(?:\/>|>([\s\S]*?)<\/testcase>)/g)) {
+      const name = attr(m[1], "name");
+      const cls = attr(m[1], "classname");
+      const inner = m[2] ?? "";
+      const isFail = /<(failure|error)\b/.test(inner);
+      if (name === undefined) {
+        if (isFail) unidentified++;
+        continue;
+      }
+      const id = `${cls ? `${cls}.` : ""}${name}`;
+      if (isFail) {
+        failing.push(id);
+        failedHere++;
+      } else if (!/<skipped\b/.test(inner)) passed.push(id);
+    }
+    let counted = 0;
+    for (const m of xml.matchAll(/<testsuite\b((?:[^>"']|"[^"]*"|'[^']*')*)>/g)) {
+      counted += Number(attr(m[1], "failures") ?? 0) + Number(attr(m[1], "errors") ?? 0);
+    }
+    if (counted > failedHere) unidentified += counted - failedHere;
+  }
+  return { files: files.length, failing, passed, unidentified };
+}
+
+// An attribute value in double or single quotes, with the five XML entities decoded.
+function attr(text, key) {
+  const m = new RegExp(`(?:^|\\s)${key}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(text);
+  return m ? unxml(m[1] ?? m[2]) : undefined;
+}
+
+// Remove the JUnit reports, so a test runner that skips unchanged work (Gradle's UP-TO-DATE) must write new ones.
+export function purgeReports(root = ".") {
+  for (const f of reportFiles(root, 0)) {
+    try {
+      unlinkSync(f);
+    } catch {
+      // a report that cannot be removed is judged by its time as before
+    }
+  }
+}
+
+const list = (items) => {
+  const out = items.slice(0, MAX_LIST).map((n) => `  - ${clean(n)}`);
+  if (items.length > MAX_LIST) out.push(`  … and ${items.length - MAX_LIST} more`);
+  return out;
+};
+
+const readBody = (dir) => {
+  try {
+    return { text: readFileSync(join(dir, "issue-body.md"), "utf8"), read: true };
+  } catch {
+    return { text: "", read: false };
+  }
+};
+
+const fence = (items) => ["```", ...items.slice(0, MAX_LIST).map(clean), ...(items.length > MAX_LIST ? [`… and ${items.length - MAX_LIST} more`] : []), "```"];
+
+function main(argv) {
+  const [mode, ...rest] = argv;
+  const lines = [];
+  let code = 0;
+  const say = (...l) => lines.push(...l);
+  if (mode === "purge") {
+    // Before a test run that is compared with the baseline: only for a run that went on with a red baseline.
+    if (rest[0] && existsSync(join(rest[0], "baseline-red.json"))) purgeReports(".");
+    return 0;
+  }
+  const runDir = mode === "green" ? rest[0] : rest[1];
+  if (!runDir) {
+    console.error("usage: baseline-tests red|verify <marker-file> <run-dir> | green <run-dir>");
+    return 2;
+  }
+  const verdictFile = join(runDir, "baseline-verdict.txt");
+
+  if (mode === "red") {
+    const r = readReports(rest[0]);
+    const body = readBody(runDir);
+    const names = namedTests(body.text);
+    code = 1;
+    if (!r.files) {
+      say("BASELINE: stopped — the failing tests could not be named: the test command wrote no JUnit XML reports (TEST-*.xml or junit*.xml). Turn on a JUnit XML reporter so a story can fix failing tests.");
+    } else if (r.unidentified) {
+      say("BASELINE: stopped — the failing tests could not be named: a JUnit XML report has failures that no test case names");
+    } else if (!r.failing.length) {
+      say("BASELINE: stopped — the tests failed, but the reports name no failing test (a build or setup error?)");
+    } else {
+      if (!body.read) say("the issue text could not be read");
+      const unexpected = r.failing.filter((t) => !names.some((n) => covers(n, t)));
+      if (!names.length) {
+        say("BASELINE: stopped — the issue names no failing tests to fix", "failing before the change:", ...list(r.failing));
+        say("To have a story fix them, list them under a `## Failing tests to fix` heading in the issue, one per line.");
+      } else if (unexpected.length) {
+        say("BASELINE: stopped — some failing tests are not named in the issue", "failing before the change:", ...list(r.failing));
+        say("not named in the issue:", ...list(unexpected));
+      } else {
+        code = 0;
+        writeFileSync(join(runDir, "baseline-red.json"), JSON.stringify({ version: 1, named: names, failing: r.failing, passed: r.passed }));
+        writeFileSync(
+          join(runDir, "baseline-note.md"),
+          ["### Tests before the change", "", "The tests failed before any change. The run went on because every failing test is one this issue names to fix:", "", ...fence(r.failing), ""].join("\n"),
+        );
+        say("BASELINE: going on — every failing test is named in the issue as one to fix", "failing before the change:", ...list(r.failing));
+      }
+    }
+  } else if (mode === "green") {
+    const names = namedTests(readBody(runDir).text);
+    if (names.length) {
+      say("BASELINE: green — the tests this issue names as failing already pass before any change:", ...list(names));
+      writeFileSync(
+        join(runDir, "baseline-note.md"),
+        ["### Tests before the change", "", "The tests this issue names as failing already pass before any change:", "", ...fence(names), ""].join("\n"),
+      );
+    }
+  } else if (mode === "verify") {
+    let state;
+    try {
+      state = JSON.parse(readFileSync(join(runDir, "baseline-red.json"), "utf8"));
+    } catch {
+      console.log("FIXED TESTS: nothing to check");
+      return 0;
+    }
+    const r = readReports(rest[0]);
+    if (!r.files) {
+      say("FIXED TESTS: not yet — no JUnit XML reports were written, so the named tests cannot be checked");
+      code = 1;
+    } else if (r.unidentified) {
+      say("FIXED TESTS: not yet — a JUnit XML report has failures that no test case names, so the tests cannot be checked");
+      code = 1;
+    } else {
+      const pass = new Set(r.passed);
+      const fail = new Set(r.failing);
+      const seen = (t) => pass.has(t) || fail.has(t);
+      // Every test that failed before must now be there and pass (a class name must not let a test be deleted).
+      const stillFailing = state.failing.filter((t) => fail.has(t) || (seen(t) && !pass.has(t)));
+      const missingFailing = state.failing.filter((t) => !seen(t));
+      const namedNotPassing = state.named.filter((n) => [...fail].some((t) => covers(n, t)));
+      const namedNotRun = state.named.filter((n) => ![...pass, ...fail].some((t) => covers(n, t)));
+      const broken = state.passed.filter((t) => fail.has(t));
+      const gone = state.passed.filter((t) => !seen(t));
+      const problems = [
+        ["named tests that do not pass yet:", [...new Set([...namedNotPassing, ...stillFailing])]],
+        ["named tests that did not run:", [...new Set([...namedNotRun, ...missingFailing])]],
+        ["tests that passed before the change and fail now:", broken],
+        ["tests that passed before the change and did not run now:", gone],
+      ].filter(([, items]) => items.length);
+      if (problems.length) {
+        code = 1;
+        say("FIXED TESTS: not yet");
+        for (const [title, items] of problems) say(title, ...list(items));
+      } else {
+        say(`FIXED TESTS: ok — the named tests pass, and the ${state.passed.length} tests that passed before the change still pass`);
+        appendFileSync(join(runDir, "baseline-note.md"), "\nAfter the change the named tests pass, and every test that passed before the change still passes.\n");
+      }
+    }
+  } else {
+    console.error(`unknown mode: ${mode}`);
+    return 2;
+  }
+  console.log(lines.join("\n"));
+  if (mode === "red") writeFileSync(verdictFile, `${lines.join("\n")}\n`);
+  return code;
+}
+
+if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("baseline-tests")) {
+  process.exitCode = main(process.argv.slice(2));
+}
