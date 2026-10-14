@@ -3511,6 +3511,33 @@ UNRESOLVED github.com/example/gone: the repository could not be reached
 - **Ctrl-C.** The run stops and the list is not changed. A broken list is never overwritten.
 - **Exit codes.** 0 on success. 1 for a `PROBLEM` or a usage error. Limits: export 4 MiB, 20,000 entries, 100 repositories per run, 500 candidates in the list.
 
+#### Skill selections
+
+`skill-selections.yaml` next to `skill-sources.yaml` records which skills of a source the maintainers have selected, with the product and SDK they target and what each one needs. It is changed by pull request and checked with the CLI. It grants nothing: no run reads it, and a selected skill is not used because it is listed here.
+
+```yaml
+schema: 1
+selections:
+  - source: microsoft-skills
+    skill: azure-cosmos-py            # the name in SKILL.md
+    digest: sha256:…                  # the skill's digest in import.json
+    scope: provider                   # portable | provider
+    provider: azure                   # required for scope provider, refused for portable
+    product: { name: azure-cosmos-db, version: "2024-11" }
+    sdk: { name: azure-cosmos, language: python, version: ">=4.7" }
+    category: database
+    capabilities: [cosmos-db]
+    requires: { clis: [az], mcp: [azure], credentials: [azure-identity], services: [azure-cosmos-db] }
+    owner: "@octocat"
+    reviewed: 2026-10-13
+```
+
+- **Fields.** `source` and `skill` name one skill of a source; `source`+`skill` is listed once. `digest` is the skill's digest in `import.json`. `scope` is `portable` (guidance for any provider) or `provider` (specific to one provider). `provider` is a lower-case slug, required for `provider` and refused for `portable`. `product` (`name`, `version`) and `sdk` (`name`, `language`, `version`) are required for `provider`; `sdk.name` is a package name such as `@azure/cosmos`. `category` and `capabilities` (1 to 32 slugs) describe the skill. `owner` is a GitHub user or team; `reviewed` is a date that is not in the future.
+- **No wildcards.** Names refuse `* ? [ ] { }`, and versions refuse `*` and `?`: one entry names one skill and one version or range. Versions are text of at most 64 characters.
+- **Requirements.** `requires` lists what the agent itself must call or reach during a run: `clis`, `mcp` servers, `credentials` and `services`. Each name is a lower-case slug. The total is at most 16 names, and a name may be listed only once across all four lists. Each name becomes a connector slug: `cli-<name>`, `mcp-<name>`, `credential-<name>` or `service-<name>` (at most 64 characters). `scf skills selections check` prints them sorted.
+- **Check.** `scf skills selections check [<file>]` reads `skill-selections.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It prints one line per entry (source and skill, scope, provider, product, SDK, connectors, owner, reviewed date and the start of the digest), then `OK <n> selections`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. A missing file is a `PROBLEM` for this command (for readers, it means "no selections"). Credential-like values and control characters are never printed.
+- **Limits.** At most 500 selections. Every problem names its entry and field, for example `selections[0] (microsoft-skills/azure-cosmos-py) requires.mcp[0]`.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.

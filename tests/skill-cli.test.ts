@@ -364,3 +364,60 @@ ${extra}`;
     });
   }
 });
+
+describe("skillsCommand selections check", () => {
+  const DIGEST = "sha256:" + "a".repeat(64);
+  const entry = (skill: string, sdkVersion = '">=4.7"') =>
+    [
+      "  - source: microsoft-skills",
+      `    skill: ${skill}`,
+      `    digest: ${DIGEST}`,
+      "    scope: provider",
+      "    provider: azure",
+      '    product: { name: azure-cosmos-db, version: "2024-11" }',
+      `    sdk: { name: azure-cosmos, language: python, version: ${sdkVersion} }`,
+      "    category: database",
+      "    capabilities: [cosmos-db]",
+      "    requires: { clis: [az], mcp: [azure], credentials: [azure-identity], services: [azure-cosmos-db] }",
+      '    owner: "@octocat"',
+      "    reviewed: 2026-10-13",
+      "",
+    ].join("\n");
+  const doc = (...entries: string[]) => `schema: 1\nselections:\n${entries.join("")}`;
+  async function run(positionals: string[], values: Record<string, unknown> = {}) {
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["selections", ...positionals], values }, (l) => lines.push(l), { cwd: base, today: "2026-10-13" });
+    return { code, lines };
+  }
+  it("lists a valid file, one line per entry, then OK", async () => {
+    writeFileSync(join(base, "sel.yaml"), doc(entry("azure-cosmos-py"), entry("azure-blob-py")));
+    const r = await run(["check", "sel.yaml"]);
+    expect(r.code).toBe(0);
+    expect(r.lines).toHaveLength(3);
+    expect(r.lines[0]).toContain("microsoft-skills/azure-cosmos-py");
+    expect(r.lines[0]).toContain("provider azure");
+    expect(r.lines[0]).toContain("cli-az,credential-azure-identity,mcp-azure,service-azure-cosmos-db");
+    expect(r.lines[2]).toBe("OK 2 selections");
+  });
+  it("uses skill-selections.yaml in the folder by default", async () => {
+    writeFileSync(join(base, "skill-selections.yaml"), doc(entry("azure-cosmos-py")));
+    expect((await run(["check"])).lines.at(-1)).toBe("OK 1 selections");
+  });
+  it("fails on a missing file", async () => {
+    const r = await run(["check", "nope.yaml"]);
+    expect(r.code).toBe(1);
+    expect(r.lines).toEqual(["PROBLEM the skill selection file does not exist"]);
+  });
+  it("fails on an invalid file with PROBLEM lines and no OK", async () => {
+    writeFileSync(join(base, "bad.yaml"), doc(entry("azure-cosmos-py", "4.7")));
+    const r = await run(["check", "bad.yaml"]);
+    expect(r.code).toBe(1);
+    expect(r.lines.every((l) => /^PROBLEM selections\[0\] \(.+\) sdk\.version: /.test(l))).toBe(true);
+    expect(r.lines.join("\n")).not.toContain("OK");
+  });
+  it("rejects a bad command line", async () => {
+    await expect(run([])).rejects.toThrow('expects "check"');
+    await expect(run(["check", "a", "b"])).rejects.toThrow('expects "check"');
+    await expect(run(["check"], { repo: "x" })).rejects.toThrow("unexpected option");
+  });
+});

@@ -50,6 +50,7 @@ Usage:
   scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills scan <source-id> [<exceptions-file>]  Print the security report of a staged import
+  scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -227,7 +228,7 @@ async function main(argv: string[]): Promise<number> {
   }
 
   // `scf skills sources …` and `scf skills scan …` only read: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "sources" || arg === "scan"))) {
+  if (!(cmd === "skills" && (arg === "sources" || arg === "selections" || arg === "scan"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }

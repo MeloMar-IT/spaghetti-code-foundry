@@ -13,6 +13,7 @@ import { normalizeImport } from "./normalize.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE } from "./scan-exceptions.js";
+import { readSkillSelections, SELECTIONS_FILE, selectionConnectors } from "./selections.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
 
 export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                              List skills, their trust and pin state, and problems
@@ -20,13 +21,14 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
+       scf skills selections check [<file>]                      Check the skill selections (default: ${SELECTIONS_FILE})
        scf skills overrides check [<file>]                       Check the owner overrides (default: ${OVERRIDES_FILE})
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], overrides: [], "project-pins": [], scan: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], overrides: [], "project-pins": [], scan: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -80,6 +82,27 @@ function sourcesCheck(file: string, out: (line: string) => void): number {
     out(s.reason ? `${head} (${s.reason})` : head);
   }
   out(`OK ${r.manifest.sources.length} sources, ${enabled} enabled`);
+  return 0;
+}
+
+/** `scf skills selections check`: offline, prints checked fields only. */
+function selectionsCheck(file: string, out: (line: string) => void, today: string): number {
+  const r = readSkillSelections(file, today);
+  if (r.state === "none") {
+    out("PROBLEM the skill selection file does not exist");
+    return 1;
+  }
+  if (r.state === "invalid") {
+    for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return 1;
+  }
+  for (const s of r.manifest.selections) {
+    const product = s.product ? `${s.product.name}@${s.product.version}` : "-";
+    const sdk = s.sdk ? `${s.sdk.name}@${s.sdk.version}(${s.sdk.language})` : "-";
+    const connectors = selectionConnectors(s).join(",") || "-";
+    out(`${(s.source + "/" + s.skill).padEnd(40)} ${s.scope} ${s.provider ?? "-"} ${product} ${sdk} ${connectors} ${s.owner} ${s.reviewed} ${s.digest.slice(0, 19)}`);
+  }
+  out(`OK ${r.manifest.selections.length} selections`);
   return 0;
 }
 
@@ -190,6 +213,11 @@ export async function skillsCommand(
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
     return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out);
+  }
+
+  if (sub === "selections") {
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file');
+    return selectionsCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SELECTIONS_FILE), out, opts.today ?? new Date().toISOString().slice(0, 10));
   }
 
   if (sub === "overrides" || sub === "project-pins") {
