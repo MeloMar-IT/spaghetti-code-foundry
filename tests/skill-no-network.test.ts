@@ -243,6 +243,17 @@ describe("the connector modules run nothing", () => {
       for (const re of DYNAMIC_CODE) expect(codeLines(text).filter((l) => re.test(l)), String(re)).toEqual([]);
     });
   }
+  it("import-review.ts is pure: no file, process or clock", () => {
+    const text = readFileSync(join(SKILLS, "import-review.ts"), "utf8");
+    expect(modulesOf(text).filter((m) => /(?:^|:)(?:fs|os|child_process|path)$/.test(m))).toEqual([]);
+    expect(codeLines(text).filter((l) => /Date\.now|new Date|process\./.test(l))).toEqual([]);
+  });
+  for (const f of ["review-cli.ts", "staged-import.ts"]) {
+    it(`${f} calls no write API`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(codeLines(text).filter((l) => /writeFile|appendFile|mkdir|rename|rmSync|unlink|openSync|copyFile|symlink/.test(l))).toEqual([]);
+    });
+  }
   it("connector-rules.ts has no imports", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "connector-rules.ts"), "utf8"))).toEqual([]);
   });

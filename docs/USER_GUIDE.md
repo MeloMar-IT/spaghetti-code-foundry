@@ -3693,6 +3693,23 @@ The document skills of that repository are source-available, not open source. Th
   - `anthropic-api`: the Anthropic API, its key variable or its SDK package.
 - **Assumptions grant nothing.** They are a declaration. They never block a skill and never change its tool profile: an imported `allowed-tools` field grants no tools. Reference files are not read.
 
+#### Review an import
+
+`scf skills review <source-id> [--markdown]` prints one report for a staged import, to decide what could be added to the catalogue. It is offline and read-only, like [Check a promotion](#check-a-promotion). Nothing is promoted, pinned, locked or written; every skill stays `community`.
+
+```
+scf skills review example-skills
+scf skills review example-skills --markdown > review.md
+```
+
+- **Per skill.** The id, upstream path, name, digest and fingerprint; the category and where it came from (`declared`, `name` or `default`); the licence verdict (`allowed`, `review`, `rejected`, `missing` or `ambiguous`) with its reasons; the attribution files with their SHA-256; the author notice lines; and the scan result, blocked or not.
+- **Collisions.** Compared with the built-in and administrator skills, not with the repository. Each line has the collision id (`col-…`), its class, reason, whether it blocks, its members and the shared capabilities. A skill whose upstream name is the id of an existing skill is shown as `same name`, even when the content differs (for example an upstream `java` against the built-in `java`).
+- **Categories.** Skills are grouped by SCF category, with the existing skills of that category listed above them, so language, interface (API), testing and review candidates can be compared. An upstream skill without a category gets one from its name when a part of the name matches.
+- **Output.** A `REVIEW` line, then per category `CATEGORY`, `SKILL`, `LICENCE`, `ATTRIBUTION`, `NOTICE`, `SCAN`, `NAME` and `COLLISION` lines, `PROBLEM` lines and a closing `REVIEWED` line that says `nothing was promoted`. The same input gives the same bytes. Credential-like text shows as `(hidden)`.
+- **Markdown.** `--markdown` prints the same facts as a table per category with notes below it, for a pull-request body. The output is bounded to 60,000 bytes; when it is cut, the last line says how many lines were left out.
+- **Limits.** More than 1,000 skills to compare prints a `PROBLEM` and checks no collisions.
+- **Exit codes.** 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed (for example a missing import or an unknown source); 0 otherwise.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
@@ -4362,6 +4379,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `PROBLEM` and `OVERLAP` lines; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
+| `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
