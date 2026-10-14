@@ -200,10 +200,26 @@ describe("scf skills scan is offline and read-only", () => {
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m)), f).toEqual([]);
     }
   });
-  it("only src/skills/cli.ts imports selections.js, so no run reads the file", () => {
+  it("only the CLI and the pure evaluation import selections.js, so no run reads the file", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)selections\.js$/.test(m)));
-    expect(users).toEqual([join("src", "skills", "cli.ts")]);
+    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "source-skill-evaluation.ts")]);
+  });
+  it("only source-evaluation.ts imports source-skill-evaluation.js", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)source-skill-evaluation\.js$/.test(m)));
+    expect(users).toEqual([join("src", "skills", "source-evaluation.ts")]);
+  });
+  it("provider-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "provider-rules.ts"), "utf8"))).toEqual([]);
+  });
+  it("the source skill evaluation imports no process, file or network module and reads no clock", () => {
+    const forbidden = /^(?:node:)?(?:child_process|vm|worker_threads|fs|fs\/promises|http|https|http2|net|tls|dns|dgram|process)$/;
+    for (const f of ["source-skill-evaluation.ts", "provider-rules.ts"]) {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => forbidden.test(m)), f).toEqual([]);
+      expect(codeLines(text).filter((l) => /\bprocess\.|Date\.now|new Date/.test(l)), f).toEqual([]);
+    }
   });
   it("src/skills/cli.ts imports nothing from skill-import/", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "cli.ts"), "utf8")).filter((m) => /skill-import\//.test(m))).toEqual([]);
