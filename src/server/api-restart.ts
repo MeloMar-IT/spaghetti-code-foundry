@@ -119,7 +119,7 @@ export function restartNeeded(ctx: ApiContext): RestartNeed[] {
   if (saved.server.listen !== ctx.listen) out.push({ key: "server.listen", label: "Listen on", running: ctx.listen, saved: saved.server.listen });
   if (ctx.started) {
     for (const s of describeSettings()) {
-      if (s.effect !== "restart") continue;
+      if (s.effect !== "restart" || s.key === "server.listen") continue; // listen is compared with the running address above
       const running = valueAt(ctx.started, s.key);
       const now = valueAt(saved, s.key);
       if (JSON.stringify(running) !== JSON.stringify(now)) out.push({ key: s.key, label: s.label, running: show(running), saved: show(now) });
