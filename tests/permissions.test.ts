@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -119,6 +120,11 @@ const EXAMPLES: Record<string, Example> = {
   "GET info": no("info", 200),
   "GET config": no("config", 200),
   "PUT config": no("config", 400, { concurrency: 0 }),
+  "GET settings": no("settings", 200),
+  "POST settings/reset": no("settings/reset", 400, {}),
+  "GET restart": no("restart", 200),
+  "POST restart": no("restart", 409, {}),
+  "DELETE restart": no("restart", 409),
   "GET watchers": no("watchers", 200),
   "POST watchers/:id/tick": no("watchers/x/tick", 400, {}),
   "GET monitor": no("monitor", 200),
@@ -390,6 +396,32 @@ describe("the walk", () => {
     const r = await fetch(base + "/api/config", { method: "PUT", headers: { cookie: ann.cookie, "content-type": "application/json" }, body: "{}" });
     expect(r.status).toBe(403);
     expect(await r.json()).toEqual({ error: "bad CSRF token" });
+  });
+
+  it("describes the settings and the start-up settings to an admin", async () => {
+    const r = await call(admin, "GET", "/api/settings");
+    expect(r.status).toBe(200);
+    const body = r.json() as { settings: { key: string }[]; startup: { key: string; value: string | number }[] };
+    expect(body.settings.some((s) => s.key === "isolate_agents")).toBe(true);
+    const startup = Object.fromEntries(body.startup.map((s) => [s.key, s.value]));
+    expect(startup.repo).toBe(repo);
+    expect(startup.FACTORY_CLAUDE_BIN).toBe(resolve("tests/fixtures/fake-claude.mjs"));
+    expect(startup.port).toBe(Number(new URL(base).port));
+  });
+
+  it("does not send the value of a variable named in step_env", async () => {
+    const hidden = randomBytes(12).toString("hex");
+    process.env.SETTINGS_492_PROBE = hidden;
+    const first = (await call(admin, "GET", "/api/config")).json() as { step_env: { pass: string[] } };
+    try {
+      const put = await call(admin, "PUT", "/api/config", { ...first, step_env: { ...first.step_env, pass: ["SETTINGS_492_PROBE"] } });
+      expect(put.status).toBe(200);
+      expect(((await call(admin, "GET", "/api/config")).json() as { step_env: { pass: string[] } }).step_env.pass).toContain("SETTINGS_492_PROBE");
+      expect((await call(admin, "GET", "/api/settings")).text).not.toContain(hidden);
+    } finally {
+      await call(admin, "PUT", "/api/config", first);
+      delete process.env.SETTINGS_492_PROBE;
+    }
   });
 
   it("gives a user an empty list of credentials", async () => {

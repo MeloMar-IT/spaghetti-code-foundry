@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
 import { skillsCommand } from "../src/skills/cli.js";
+import { COMMUNITY_REPOSITORIES } from "../src/skills/community-rules.js";
 import { credentialProblem } from "../src/skills/credential-scan.js";
 import { parseSources, readSources, shownValue, usableSources } from "../src/skills/sources.js";
 
@@ -22,7 +23,7 @@ const valid = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
   ref: { track: "main", approved: COMMIT },
   paths: ["skills"],
   adapter: "agent-skills",
-  trust: "community",
+  trust: "verified",
   licence: { allow: ["MIT", "Apache-2.0"] },
   update: { cadence: "weekly" },
   owner: "@octocat",
@@ -292,5 +293,337 @@ describe("scf skills sources check", () => {
         expect(l).not.toMatch(UNSAFE);
       }
     }
+  });
+});
+
+describe("connector rules", () => {
+  const ac = (o: Record<string, unknown> = {}) =>
+    valid({ id: "my-copy", repository: "https://github.com/github/awesome-copilot", trust: "community", licence: { allow: ["MIT"] }, review: { by: "@octocat", on: "2026-10-01", commit: COMMIT, licence: "MIT" }, ...o });
+
+  it("accepts a source that follows the connector", () => {
+    expect(check(ac())).toEqual([]);
+    expect(check(ac({ paths: ["skills/demo"] }))).toEqual([]);
+  });
+
+  it.each([
+    ["root", { paths: ["."] }],
+    ["agents", { paths: ["agents"] }],
+    ["hooks", { paths: ["hooks"] }],
+    ["workflows", { paths: ["workflows"] }],
+    ["plugins", { paths: ["plugins"] }],
+    ["instructions", { paths: ["instructions"] }],
+    ["trust", { trust: "verified" }],
+    ["licence", { licence: { allow: ["MIT", "Apache-2.0"] } }],
+  ])("refuses a bad %s", (_n, o) => {
+    const ps = check(ac(o));
+    expect(ps).toHaveLength(1);
+    expect(ps[0]!.message).toContain("connector awesome-copilot");
+    expect(ps[0]!.where).toBe("sources[0] (my-copy)");
+  });
+
+  it("refuses an unknown adapter", () => {
+    expect(check(ac({ adapter: "custom" })).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["a .git spelling", { repository: "https://github.com/GitHub/Awesome-Copilot.git" }],
+    ["a trailing slash", { repository: "https://github.com/github/awesome-copilot/" }],
+    ["another id", { id: "anything-else" }],
+  ])("matches %s", (_n, o) => {
+    expect(check(ac({ paths: ["agents"], ...o }))).toHaveLength(1);
+  });
+
+  it("applies to a disabled entry", () => {
+    const off = ac({ status: "disabled", reason: "under review", ref: {}, update: { cadence: "manual" }, paths: ["."] });
+    expect(check(off)).toHaveLength(1);
+  });
+
+  it("still needs ref.approved as a commit id", () => {
+    expect(text(check(ac({ ref: { track: "main" } })))).toContain("needs ref.approved");
+    expect(text(check(ac({ ref: { track: "main", approved: "main" } })))).toContain("full commit id");
+  });
+
+  it("leaves other repositories alone", () => {
+    expect(check(valid({ paths: ["."], trust: "verified" }))).toEqual([]);
+  });
+
+  it("is reported by sources check", async () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-sources-conn-"));
+    writeFileSync(join(d, "list.yaml"), stringify(file(ac({ paths: ["agents"] }))));
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["sources", "check", "list.yaml"], values: {} }, (l) => lines.push(l), { cwd: d });
+    expect(code).toBe(1);
+    expect(lines[0]).toMatch(/^PROBLEM sources\[0\] \(my-copy\): connector awesome-copilot: /);
+  });
+});
+
+describe("community review", () => {
+  const TODAY = "2026-10-13";
+  const review = (o: Record<string, unknown> = {}) => ({ by: "@octocat", on: "2026-10-01", commit: COMMIT, licence: "MIT", ...o });
+  const community = (o: Record<string, unknown> = {}) => valid({ trust: "community", review: review(), ...o });
+  const probs = (s: Record<string, unknown>, today = TODAY) => text(parseSources(file(s), today).problems);
+
+  it("accepts an enabled community source with a full review and keeps it", () => {
+    const r = parseSources(file(community()), TODAY);
+    expect(r.problems).toEqual([]);
+    expect(r.manifest!.sources[0]!.review).toEqual(review());
+  });
+
+  it("needs a review for an enabled community source", () => {
+    expect(probs(community({ review: undefined }))).toContain("review: an enabled community source needs a review");
+  });
+
+  it("needs a new review for a new commit", () => {
+    expect(probs(community({ review: review({ commit: "b".repeat(40) }) }))).toContain("review.commit: is not the commit in ref.approved; a new commit needs a new review");
+  });
+
+  it("gives one message when a commit is malformed", () => {
+    const p = probs(community({ review: review({ commit: "main" }) }));
+    expect(p).toContain("review.commit: must be a full commit id");
+    expect(p).not.toContain("new review");
+  });
+
+  it.each([
+    ["by without at", { by: "octocat" }, "review.by: must be a GitHub user"],
+    ["by number", { by: 5 }, "review.by: must be text"],
+    ["on bad month", { on: "2026-13-01" }, "review.on: must be a date"],
+    ["on bad day", { on: "2026-02-30" }, "review.on: must be a date"],
+    ["on bad order", { on: "13-10-2026" }, "review.on: must be a date"],
+    ["on tomorrow", { on: "2026-10-14" }, "review.on: must not be in the future"],
+    ["commit branch", { commit: "main" }, "review.commit: must be a full commit id"],
+    ["commit short", { commit: "0123456" }, "review.commit: must be a full commit id"],
+    ["commit upper", { commit: COMMIT.toUpperCase() }, "review.commit: must be a full commit id"],
+    ["licence not accepted", { licence: "GPL-3.0" }, 'review.licence: "GPL-3.0" is not in licence.allow'],
+    ["licence not allowed here", { licence: "ISC" }, 'review.licence: "ISC" is not in licence.allow'],
+    ["missing by", { by: undefined }, "review.by: is required"],
+    ["missing licence", { licence: undefined }, "review.licence: is required"],
+    ["unknown key", { extra: "x" }, 'review: unknown key "extra"'],
+  ])("refuses a review with %s", (_n, over, msg) => {
+    expect(probs(community({ review: review(over) }))).toContain(msg);
+    expect(parseSources(file(community({ review: review(over) })), TODAY).manifest).toBeUndefined();
+  });
+
+  it("accepts a review dated today", () => {
+    expect(probs(community({ review: review({ on: TODAY }) }))).toBe("");
+  });
+
+  it.each([null, "x", []])("refuses a review that is not a map (%j)", (bad) => {
+    expect(probs(community({ review: bad }))).toContain("review: must be a map");
+  });
+
+  it("does not print a credential-like review.by", () => {
+    const p = probs(community({ review: review({ by: TOKEN }) }));
+    expect(p).toContain("review.by");
+    expect(p).not.toContain(TOKEN);
+  });
+
+  it("does not need a review for a disabled community source, and ignores a stale one", () => {
+    const off = { status: "disabled", reason: "waiting", ref: {}, update: { cadence: "manual" } };
+    expect(probs(community({ ...off, review: undefined }))).toBe("");
+    expect(probs(community({ ...off, ref: { approved: COMMIT }, review: review({ commit: "b".repeat(40) }) }))).toBe("");
+  });
+
+  it("does not need a review for a verified or first-party source, and keeps one that is given", () => {
+    for (const trust of ["verified", "first-party"]) {
+      expect(probs(valid({ trust }))).toBe("");
+      expect(parseSources(file(valid({ trust, review: review() })), TODAY).manifest!.sources[0]!.review).toEqual(review());
+    }
+  });
+
+  describe("known community repositories", () => {
+    const urls = ["https://github.com/jiangxianze/spring-agent-skills", "https://github.com/Jiangxianze/Spring-Agent-Skills.git", "https://GitHub.com/JiangXianze/spring-agent-skills/"];
+    const off = { status: "disabled", reason: "waiting", ref: {}, update: { cadence: "manual" } };
+    it.each(urls)("refuses another trust for %s", (repository) => {
+      for (const trust of ["verified", "first-party"]) {
+        for (const status of [{}, off]) {
+          const ps = parseSources(file(valid({ repository, trust, ...status })), TODAY).problems;
+          expect(ps.some((p) => p.where.endsWith(" trust") && p.message.includes("must be community"))).toBe(true);
+        }
+      }
+      expect(probs(community({ repository, ...off }))).toBe("");
+    });
+
+    it("lists the key in lower case", () => {
+      expect(COMMUNITY_REPOSITORIES).toContain("github.com/jiangxianze/spring-agent-skills");
+      for (const k of COMMUNITY_REPOSITORIES) expect(k).toBe(k.toLowerCase());
+    });
+  });
+
+  it("refuses a bad today without throwing", () => {
+    const r = parseSources(file(valid()), "nope");
+    expect(r.manifest).toBeUndefined();
+    expect(text(r.problems)).toBe("today: must be a date like 2026-10-13");
+    expect(parseSources(file(valid())).problems).toEqual([]);
+  });
+
+  it("reads an unquoted date from YAML as text", () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-review-"));
+    const yaml = [
+      "schema: 1",
+      "sources:",
+      "  - id: lib",
+      "    repository: https://github.com/example/skills",
+      "    status: enabled",
+      `    ref: {approved: '${COMMIT}'}`,
+      "    paths: [skills]",
+      "    adapter: agent-skills",
+      "    trust: community",
+      "    licence: {allow: [MIT]}",
+      "    update: {cadence: manual}",
+      "    owner: '@octocat'",
+      `    review: {by: '@octocat', on: 2026-10-01, commit: '${COMMIT}', licence: MIT}`,
+      "",
+    ].join("\n");
+    writeFileSync(join(d, "list.yaml"), yaml);
+    expect(readSources(join(d, "list.yaml"), undefined, TODAY).state).toBe("ok");
+  });
+
+  describe("scf skills sources check", () => {
+    const run = async (sources: Record<string, unknown>[]) => {
+      const d = mkdtempSync(join(tmpdir(), "scf-review-cli-"));
+      writeFileSync(join(d, "list.yaml"), stringify(file(...sources)));
+      const lines: string[] = [];
+      const code = await skillsCommand({ positionals: ["sources", "check", "list.yaml"], values: {} }, (l) => lines.push(l), { cwd: d, today: TODAY });
+      return { code, lines };
+    };
+
+    it("prints trust and the review", async () => {
+      const r = await run([community()]);
+      expect(r.code).toBe(0);
+      expect(r.lines[0]).toMatch(/ enabled community agent-skills github\.com\/example\/skills@0123456789ab @octocat reviewed by @octocat on 2026-10-01$/);
+    });
+
+    it("prints no review for a source without one", async () => {
+      expect((await run([valid()])).lines[0]).not.toContain("reviewed by");
+    });
+
+    it("prints the review before the reason of a disabled source", async () => {
+      const r = await run([community({ status: "disabled", reason: "paused", ref: {}, update: { cadence: "manual" } })]);
+      expect(r.lines[0]).toMatch(/ reviewed by @octocat on 2026-10-01 \(paused\)$/);
+    });
+
+    it("prints only PROBLEM lines for an unreviewed enabled community source", async () => {
+      const r = await run([community({ review: undefined })]);
+      expect(r.code).toBe(1);
+      expect(r.lines.every((l) => l.startsWith("PROBLEM "))).toBe(true);
+    });
+  });
+});
+
+describe("licence.reviewed", () => {
+  const D = "sha256:" + "ab".repeat(32);
+  it("is accepted and returned, and a file without it is unchanged", () => {
+    const r = parseSources(file(valid({ licence: { allow: ["MIT"], reviewed: D } })));
+    expect(r.problems).toEqual([]);
+    expect(r.manifest!.sources[0]!.licence).toEqual({ allow: ["MIT"], reviewed: D });
+    expect(parseSources(file(valid())).manifest!.sources[0]!.licence).not.toHaveProperty("reviewed");
+  });
+  it.each([["a bad form", "abc"], ["upper case hex", "sha256:" + "AB".repeat(32)], ["a number", 5], ["null", null]])("refuses %s with the field name", (_n, v) => {
+    expect(text(check(valid({ licence: { allow: ["MIT"], reviewed: v } })))).toContain("licence.reviewed");
+  });
+});
+
+describe("source profile", () => {
+  const PROFILE = { provider: "confluent", portable: { streams: "kafka-streams", "kafka-producer": "kafka-producer" }, products: { "confluent-platform": ">=7.0" } };
+  const profileOf = (p: unknown) => parseSources(file(valid({ profile: p }))).manifest?.sources[0]?.profile;
+  const problemsOf = (p: unknown) => text(check(valid({ profile: p })));
+  const runCheck = async (d: string) => {
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["sources", "check", "list.yaml"], values: {} }, (l) => lines.push(l), { cwd: d });
+    return { code, lines };
+  };
+
+  it("accepts a profile and sorts its lists", () => {
+    expect(profileOf(PROFILE)).toEqual({
+      provider: "confluent",
+      portable: [{ upstream: "kafka-producer", capability: "kafka-producer" }, { upstream: "streams", capability: "kafka-streams" }],
+      products: [{ name: "confluent-platform", version: ">=7.0" }],
+    });
+  });
+
+  it("accepts a provider alone and treats an empty portable map like an omitted one", () => {
+    expect(profileOf({ provider: "confluent" })).toEqual({ provider: "confluent", portable: [], products: [] });
+    expect(profileOf({ provider: "confluent", portable: {} })).toEqual(profileOf({ provider: "confluent" }));
+  });
+
+  it("accepts 64 portable entries and two upstream names for one target", () => {
+    const many = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`cap-${i}`, `target-${i}`]));
+    expect(check(valid({ profile: { provider: "c", portable: many } }))).toEqual([]);
+    expect(check(valid({ profile: { provider: "c", portable: { producer: "kafka-producer", publishing: "kafka-producer" } } }))).toEqual([]);
+  });
+
+  it("leaves a source without profile as it was", () => {
+    expect(parseSources(file(valid())).manifest!.sources[0]).not.toHaveProperty("profile");
+  });
+
+  it.each([
+    ["no provider", { portable: { a: "b" } }, "profile.provider: is required"],
+    ["provider not a slug", { provider: "Confluent" }, "profile.provider: must be a lower-case slug"],
+    ["not a map", "x", "profile: must be a map"],
+    ["unknown key", { provider: "c", extra: 1 }, 'profile: unknown key "extra"'],
+    ["bad portable key", { provider: "c", portable: { "Bad Key": "x" } }, "the upstream capability must be a lower-case slug"],
+    ["bad portable value", { provider: "c", portable: { a: "Not_Slug" } }, "profile.portable.a: must be a lower-case slug"],
+    ["blank portable value", { provider: "c", portable: { a: null } }, "must not be blank"],
+    ["portable not a map", { provider: "c", portable: ["a"] }, "profile.portable: must be a map of at most 64"],
+    ["65 portable", { provider: "c", portable: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`cap-${i}`, "x"])) }, "at most 64"],
+    ["bad range", { provider: "c", products: { kafka: "latest" } }, 'is not a version range like ">=3.7"'],
+    ["17 products", { provider: "c", products: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`p-${i}`, ">=1"])) }, "1 to 16 products"],
+    ["bad product name", { provider: "c", products: { "Not Slug": ">=1" } }, "the product name must be a lower-case slug"],
+  ])("refuses %s", (_n, profile, fragment) => {
+    const t = problemsOf(profile);
+    expect(t).toContain("sources[0] (example-skills)");
+    expect(t).toContain(fragment);
+    expect(parseSources(file(valid({ profile }))).manifest).toBeUndefined();
+  });
+
+  it("refuses a duplicate portable key in the YAML text", () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-sources-profile-"));
+    const yaml = [
+      "schema: 1",
+      "sources:",
+      "  - id: example-skills",
+      "    repository: https://github.com/example/skills",
+      "    status: disabled",
+      "    reason: test",
+      "    paths: [skills]",
+      "    adapter: agent-skills",
+      "    trust: verified",
+      "    licence: { allow: [MIT] }",
+      "    update: { cadence: manual }",
+      "    owner: \"@octocat\"",
+      "    profile:",
+      "      provider: c",
+      "      portable:",
+      "        a: a",
+      "        a: b",
+      "",
+    ].join("\n");
+    writeFileSync(join(d, "a.yaml"), yaml);
+    const r = readSources(join(d, "a.yaml"));
+    expect(r.state).toBe("invalid");
+    expect(JSON.stringify(r)).toContain("DUPLICATE_KEY");
+  });
+
+  it("does not print a credential-like provider or key", () => {
+    expect(problemsOf({ provider: TOKEN, portable: { [TOKEN]: "x" } })).not.toContain(TOKEN);
+    expect(UNSAFE.test(problemsOf({ provider: "c", portable: { [ESC]: "x" } }))).toBe(false);
+  });
+
+  it("is shown by sources check", async () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-sources-profile-cli-"));
+    const plain = valid({ id: "plain-skills", repository: "https://github.com/example/plain" });
+    writeFileSync(join(d, "list.yaml"), stringify(file(valid({ profile: PROFILE }), plain)));
+    const r = await runCheck(d);
+    expect(r.code).toBe(0);
+    expect(r.lines[0]).toContain(" provider confluent (2 portable)");
+    expect(r.lines[1]).not.toContain("provider");
+  });
+
+  it("fails sources check for a profile without provider", async () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-sources-profile-cli-"));
+    writeFileSync(join(d, "list.yaml"), stringify(file(valid({ profile: { portable: { a: "b" } } }))));
+    const r = await runCheck(d);
+    expect(r.code).toBe(1);
+    expect(r.lines[0]).toMatch(/^PROBLEM sources\[0\] \(example-skills\) profile\.provider: /);
   });
 });

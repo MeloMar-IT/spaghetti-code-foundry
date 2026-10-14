@@ -37,6 +37,8 @@ export const EVENT_ACTIONS = [
   "credential-remove",
   "flow-publish",
   "settings-change",
+  "restart-request",
+  "restart-cancel",
   "limits-change",
   "turn-answer",
   "turn-approve",

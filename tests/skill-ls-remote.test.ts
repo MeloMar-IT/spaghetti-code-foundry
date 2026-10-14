@@ -114,7 +114,7 @@ describe("resolveHead with a stub git", { timeout: 15_000, retry: 0 }, () => {
   });
 
   it("times out on a stalled helper and kills git and the helper", async () => {
-    expect(await code(resolveHead(REPO, { env: env({ STUB_MODE: "hang" }), timeoutMs: 300 }))).toBe("timeout");
+    expect(await code(resolveHead(REPO, { env: env({ STUB_MODE: "hang" }), timeoutMs: 1500 }))).toBe("timeout");
     const p = pidFile();
     await gone(p.pid);
     await gone(p.child);

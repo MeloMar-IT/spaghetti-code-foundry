@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { accessSync, constants, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -15,21 +15,35 @@ function cmpVersion(a: string, b: string): number {
   return 0;
 }
 
-let pathVersion: string | null | undefined;
+/** `claude --version` on PATH: the text it prints. Rejects when it is not there. */
+function claudeVersion(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile("claude", ["--version"], { encoding: "utf8", timeout: 15_000 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
+}
 
-/**
- * FACTORY_CLAUDE_BIN, else the newest Claude Code on this Mac: `claude` on PATH or the one
- * bundled with the Claude desktop app (which updates itself). Newer models need a recent CLI.
- */
-export function resolveClaudeBin(): string {
-  if (process.env.FACTORY_CLAUDE_BIN) return process.env.FACTORY_CLAUDE_BIN;
-  if (pathVersion === undefined) {
-    try {
-      pathVersion = VERSION_RE.exec(execFileSync("claude", ["--version"], { encoding: "utf8", timeout: 15_000 }))?.[0] ?? null;
-    } catch {
-      pathVersion = null;
-    }
-  }
+/** The one `claude --version` of this process, shared by every caller. The first caller's probe wins. */
+let pathProbe: Promise<string | null> | undefined;
+
+/** What `claude --version` on PATH printed, or null when it is not there. Runs once; later calls share it. */
+export function claudePathVersionText(probe: () => Promise<string> = claudeVersion): Promise<string | null> {
+  pathProbe ??= probe().then(
+    (out) => out,
+    () => null,
+  );
+  pathProbe.then(() => (pathSettled = true));
+  return pathProbe;
+}
+
+let pathSettled = false;
+
+/** The probe while it is still running (so a caller can share it), else undefined: a finished answer is not reused. */
+export function pendingClaudePathProbe(): Promise<string | null> | undefined {
+  return pathProbe && !pathSettled ? pathProbe : undefined;
+}
+
+/** The newest Claude Code bundled with the Claude desktop app. Looked up on every call. */
+function bundledClaude(): { version: string; bin: string } | undefined {
   let bundled: { version: string; bin: string } | undefined;
   try {
     for (const v of readdirSync(desktopClaudeCodeDir()).filter((d) => VERSION_RE.test(d)).sort(cmpVersion).reverse()) {
@@ -55,6 +69,18 @@ export function resolveClaudeBin(): string {
   } catch {
     // no desktop app
   }
+  return bundled;
+}
+
+/**
+ * FACTORY_CLAUDE_BIN, else the newest Claude Code on this Mac: `claude` on PATH or the one
+ * bundled with the Claude desktop app (which updates itself). Newer models need a recent CLI.
+ * Never blocks: the version on PATH is read once, without a shell, and shared.
+ */
+export async function resolveClaudeBinAsync(probe?: () => Promise<string>): Promise<string> {
+  if (process.env.FACTORY_CLAUDE_BIN) return process.env.FACTORY_CLAUDE_BIN;
+  const pathVersion = VERSION_RE.exec((await claudePathVersionText(probe)) ?? "")?.[0] ?? null;
+  const bundled = bundledClaude();
   if (bundled && (!pathVersion || cmpVersion(bundled.version, pathVersion) > 0)) return bundled.bin;
   return "claude";
 }
@@ -166,7 +192,7 @@ function isPush(tool: string, input: Record<string, unknown> = {}): boolean {
 
 /** Run the local Claude Code CLI headlessly. The prompt goes via stdin. */
 export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
-  const bin = o.claudeBin ?? resolveClaudeBin();
+  const bin = o.claudeBin ?? (await resolveClaudeBinAsync());
   let final: StreamEvent | undefined;
 
   const spawned = await runProcess(bin, buildClaudeArgs(o), {

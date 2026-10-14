@@ -136,3 +136,28 @@ describe("evaluateImport", () => {
     for (const r of results) expect(r).toEqual(results[0]);
   });
 });
+
+describe("stale imports", () => {
+  const boot = (range: string, caps = "capabilities: [shared]\n") => [doc("notes"), yaml(`${caps}technologies:\n  spring-boot: '${range}'\n`)];
+  const outcomes = (files: F[], ex: CanonicalCandidate[] = []) => evaluateImport({ imported: [imp(files)], existing: ex }).skills.map((s) => s.outcome);
+
+  it("reports a skill that fits no supported line as stale, with no overlap", () => {
+    expect(outcomes(boot("^2"))).toEqual(["stale"]);
+  });
+  it("reports it as stale without capabilities too", () => {
+    expect(outcomes(boot("^2", ""))).toEqual(["stale"]);
+  });
+  it("does not report a skill that fits a supported line", () => {
+    expect(outcomes(boot("^4"))).toEqual(["new"]);
+  });
+  it("rejects a stale skill that overlaps an existing one as incompatible", () => {
+    const e = evaluateImport({ imported: [imp(boot("^2"))], existing: [existing("builtin-one", ["shared"], "official-vendor")] });
+    expect(e.skills.map((s) => s.outcome)).toEqual(["stale"]);
+    expect(e.canonical.resolutions.flatMap((r) => r.rejected.map((j) => j.code))).toContain("incompatible");
+  });
+  it("keeps blocked ahead of stale", () => {
+    const twin = (body: string) => imp([doc("notes", "version: 1.0.0\n", body), yaml("capabilities: [shared]\ntechnologies:\n  spring-boot: '^2'\n")]);
+    const e = evaluateImport({ imported: [twin("One."), twin("Two.")], existing: [] });
+    expect(e.skills.map((s) => s.outcome)).toEqual(["blocked", "blocked"]);
+  });
+});

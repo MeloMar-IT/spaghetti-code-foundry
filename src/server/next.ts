@@ -16,7 +16,7 @@ import { answerBlock, userRecord, userTask } from "./user-view.js";
 import type { ApiContext, Route } from "./server.js";
 
 /** Why the server waits to restart, and since when. */
-export interface RestartState { why: "new_version" | "data_folder"; since: string }
+export interface RestartState { why: "new_version" | "data_folder" | "settings"; since: string }
 
 /** The run waits for a code area: the last line of the claim_areas log says which run holds it. */
 export function areaWait(run: RunSummary): { runId: string; areas: string } | undefined {

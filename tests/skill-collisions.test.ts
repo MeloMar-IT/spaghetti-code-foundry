@@ -103,6 +103,8 @@ describe("collisions: control and classes", () => {
       ["tool profile", "tool_profile: { shell: true, network: false, filesystem: read }\n", "tool_profile: { shell: false, network: false, filesystem: read }\n"],
       ["technologies", "technologies: [node]\n", "technologies: [bun]\n"],
       ["tools that give the same profile", "tools: [Read]\n", "tools: [Glob]\n"],
+      ["provider", "provider: { name: acme }\n", "provider: { name: other }\n"],
+      ["provider products", "provider: { name: acme, products: [{ name: p, version: '1' }] }\n", "provider: { name: acme, products: [{ name: p, version: '2' }] }\n"],
     ];
     for (const [label, one, two] of cases) {
       it(`holds back mirrors that differ in ${label}`, () => {
@@ -141,6 +143,16 @@ describe("collisions: control and classes", () => {
       const m = only(classifySkillCollisions(SCENARIOS["mirror.settings-differ"]())).members;
       expect(m.map((x) => x.capabilities).sort()).toEqual([["one"], ["two"]]);
       expect(m.every((x) => x.settings.toolProfile.filesystem === "read")).toBe(true);
+    });
+    it("compares equal provider blocks as the same and records the block", () => {
+      const block = "provider: { name: acme, products: [{ name: p, version: '1' }], tools: [t] }\n";
+      const r = classifySkillCollisions([cand(withYaml(original(), block)), cand(withYaml(original(), block), { origin: B })]);
+      expect(must(r.entries[0]).settings).toBe("same");
+      expect(only(r).members[0]!.settings.provider).toEqual({ name: "acme", products: [{ name: "p", version: "1" }], tools: ["t"] });
+    });
+    it("has no provider key for a portable copy", () => {
+      const m = only(classifySkillCollisions(SCENARIOS["mirror.settings-differ"]())).members;
+      expect(m.every((x) => !("provider" in x.settings))).toBe(true);
     });
     it("does not count undeclared versions as differing settings", () => {
       const files = doc("plain");

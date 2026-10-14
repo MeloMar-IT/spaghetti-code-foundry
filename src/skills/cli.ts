@@ -7,27 +7,44 @@ import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
+import { applyConnector, connectorFor } from "./connector.js";
 import { credentialProblem } from "./credential-scan.js";
 import { exclusionReasons, importExclusions } from "./import-exclusions.js";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { flowDir, parseFlow } from "../flow/load.js";
+import { SkillImportError, type ImportRecord } from "./import-plan.js";
 import { readStagedImport } from "./import-stage.js";
+import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
+import { licenceReviewProblem, reviewImport } from "./licence-review.js";
+import { licenceReviewRequired, promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
-import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE } from "./scan-exceptions.js";
-import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
+import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE, type ScanException } from "./scan-exceptions.js";
+import { SOURCE_CONNECTORS } from "./connectors.js";
+import { readSkillSelections, SELECTIONS_FILE, selectionConnectors } from "./selections.js";
+import { readSources, shownValue, SOURCES_FILE, type SkillLibrarySource } from "./sources.js";
+import { flowSkillSteps } from "./tool-policy.js";
+import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow.js";
 
 export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                              List skills, their trust and pin state, and problems
        scf skills pin <id@version> <sha256:digest> [--replace]   Approve the listed package (copy the digest from the list)
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
+       scf skills connectors                                     List the reviewed source connectors; reads nothing
+       scf skills selections check [<file>]                      Check the skill selections (default: ${SELECTIONS_FILE})
        scf skills overrides check [<file>]                       Check the owner overrides (default: ${OVERRIDES_FILE})
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
-       scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import; reads only
+       scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import, plus the connector report of a known source
+       scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
+       scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
+       scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence and findings allow promotion; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], overrides: [], "project-pins": [], scan: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], promote: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -64,8 +81,8 @@ function choicesCheck(file: string, kind: "overrides" | "project-pins", out: (li
 }
 
 /** `scf skills sources check`: offline, prints checked fields only. */
-function sourcesCheck(file: string, out: (line: string) => void): number {
-  const r = readSources(file);
+function sourcesCheck(file: string, out: (line: string) => void, today?: string): number {
+  const r = readSources(file, undefined, today);
   if (r.state === "none") {
     out("PROBLEM the skill source file does not exist");
     return 1;
@@ -78,9 +95,32 @@ function sourcesCheck(file: string, out: (line: string) => void): number {
   for (const s of r.manifest.sources) {
     if (s.status === "enabled") enabled++;
     const head = `${s.id.padEnd(24)} ${s.status} ${s.trust} ${s.adapter} ${s.repositoryKey}@${(s.ref.approved ?? "-").slice(0, 12)} ${s.owner}`;
-    out(s.reason ? `${head} (${s.reason})` : head);
+    const reviewed = s.review ? ` reviewed by ${s.review.by} on ${s.review.on}` : "";
+    const profile = s.profile ? ` provider ${s.profile.provider} (${s.profile.portable.length} portable)` : "";
+    out(`${head}${reviewed}${profile}${s.reason ? ` (${s.reason})` : ""}`);
   }
   out(`OK ${r.manifest.sources.length} sources, ${enabled} enabled`);
+  return 0;
+}
+
+/** `scf skills selections check`: offline, prints checked fields only. */
+function selectionsCheck(file: string, out: (line: string) => void, today: string): number {
+  const r = readSkillSelections(file, today);
+  if (r.state === "none") {
+    out("PROBLEM the skill selection file does not exist");
+    return 1;
+  }
+  if (r.state === "invalid") {
+    for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return 1;
+  }
+  for (const s of r.manifest.selections) {
+    const product = s.product ? `${s.product.name}@${s.product.version}` : "-";
+    const sdk = s.sdk ? `${s.sdk.name}@${s.sdk.version}(${s.sdk.language})` : "-";
+    const connectors = selectionConnectors(s).join(",") || "-";
+    out(`${(s.source + "/" + s.skill).padEnd(40)} ${s.scope} ${s.provider ?? "-"} ${product} ${sdk} ${connectors} ${s.owner} ${s.reviewed} ${s.digest.slice(0, 19)}`);
+  }
+  out(`OK ${r.manifest.selections.length} selections`);
   return 0;
 }
 
@@ -88,48 +128,80 @@ function sourcesCheck(file: string, out: (line: string) => void): number {
 const hidden = (s: string): string => (credentialProblem(s) ? "(hidden)" : s);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+type StagedOk = Extract<ReturnType<typeof readStagedImport>, { state: "ok" }>;
+interface StagedImport { source: SkillLibrarySource; commit: string; record: ImportRecord; files: Map<string, Uint8Array>; licence: StagedOk["licence"] }
+
 /**
- * `scf skills scan`: offline and read-only. Reads the staged import of a source, proves it matches import.json, then
- * scans every skill and prints the report. Returns 1 when a skill is blocked or a PROBLEM was printed.
+ * Finds the source, checks its approved commit, reads the staged import and proves it matches import.json. Prints a PROBLEM and
+ * returns undefined when it cannot. `between` runs after the source is found and before the staged import is read; false stops
+ * (it has printed its own PROBLEM).
  */
-function scanImport(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
-  const problem = (text: string) => {
+function stagedImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string; today?: string }, between?: () => boolean, done = "scanned"): StagedImport | undefined {
+  const problem = (text: string): undefined => {
     out(`PROBLEM ${text}`);
-    return 1;
+    return undefined;
   };
-  const sources = readSources(resolve(opts.cwd, SOURCES_FILE));
+  const sources = readSources(resolve(opts.cwd, SOURCES_FILE), undefined, opts.today);
   if (sources.state === "none") return problem("the skill source file does not exist");
   if (sources.state === "invalid") {
     for (const p of sources.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return 1;
+    return undefined;
   }
   const source = sources.manifest.sources.find((s) => s.id === id);
   if (!source) return problem(`unknown source ${shownValue(id)}`);
   const commit = source.ref.approved;
   if (!commit) return problem(`source ${source.id} has no approved commit (ref.approved)`);
-
-  const read = readScanExceptions(resolve(opts.cwd, exceptionsFile ?? SCAN_EXCEPTIONS_FILE), opts.today);
-  if (read.state === "invalid") {
-    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return 1;
-  }
-  if (read.state === "none" && exceptionsFile !== undefined) return problem("the exception file does not exist");
-  const exceptions = read.state === "ok" ? read.manifest.exceptions : [];
+  if (between && !between()) return undefined;
 
   const staged = readStagedImport(source.id, commit, { home: opts.home });
   if (staged.state === "none") return problem(`no staged import of ${source.id} at ${commit.slice(0, 12)}; run "scf skills import ${source.id}" first`);
-  if (staged.state === "invalid") return problem(`the staged import does not match import.json: ${staged.problem}; nothing was scanned`);
-  const { record, files } = staged;
-  if (record.repositoryKey !== source.repositoryKey) return problem("the staged import is from another repository; nothing was scanned");
+  if (staged.state === "invalid") return problem(`the staged import does not match import.json: ${staged.problem}; nothing was ${done}`);
+  if (staged.record.repositoryKey !== source.repositoryKey) return problem(`the staged import is from another repository; nothing was ${done}`);
+  return { source, commit, record: staged.record, files: staged.files, licence: staged.licence };
+}
+
+/** The exception file for `scan` and `promote check`; prints a PROBLEM and returns undefined when it cannot be used. */
+function loadExceptions(file: string | undefined, out: (line: string) => void, opts: { cwd: string; today: string }): ScanException[] | undefined {
+  const read = readScanExceptions(resolve(opts.cwd, file ?? SCAN_EXCEPTIONS_FILE), opts.today);
+  if (read.state === "invalid") {
+    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return undefined;
+  }
+  if (read.state === "none" && file !== undefined) {
+    out("PROBLEM the exception file does not exist");
+    return undefined;
+  }
+  return read.state === "ok" ? read.manifest.exceptions : [];
+}
+
+/** The files of one skill, with paths relative to its root. */
+function filesOf(root: string, files: ReadonlyMap<string, Uint8Array>): { path: string; content: Uint8Array }[] {
+  const mine: { path: string; content: Uint8Array }[] = [];
+  for (const [path, content] of files) {
+    if (root === "." || path === root || path.startsWith(root + "/")) mine.push({ path: root === "." ? path : path.slice(root.length + 1), content });
+  }
+  return mine;
+}
+
+/**
+ * `scf skills scan`: offline and read-only. Reads the staged import of a source, proves it matches import.json, then
+ * scans every skill and prints the report. Returns 1 when a skill is blocked or a PROBLEM was printed.
+ */
+function scanImport(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
+  let exceptions: ScanException[] = [];
+  const staged = stagedImport(id, out, opts, () => {
+    const read = loadExceptions(exceptionsFile, out, opts);
+    if (read) exceptions = read;
+    return read !== undefined;
+  });
+  if (!staged) return 1;
+  const { source, commit, record, files } = staged;
 
   // The recorded `rejected` text is left out, so the report holds only what normalization decided itself.
   const { skills: normalized, report: norm } = normalizeImport({ record: { ...record, rejected: [] }, files });
   let blocked = 0;
   for (const entry of record.skills) {
-    const mine: { path: string; content: Uint8Array }[] = [];
-    for (const [path, content] of files) {
-      if (entry.root === "." || path === entry.root || path.startsWith(entry.root + "/")) mine.push({ path: entry.root === "." ? path : path.slice(entry.root.length + 1), content });
-    }
+    const mine = filesOf(entry.root, files);
     const scan = scanSkill({ root: entry.root, files: mine });
     const pkg = normalized.find((s) => s.provenance.root === entry.root);
     if (pkg) {
@@ -151,9 +223,204 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
       out(`BLOCKED ${label}: not normalized (${reasons.join("; ")})`);
     }
   }
+  const connector = connectorFor(source);
+  if (connector) {
+    const c = applyConnector(connector, normalized);
+    const list = (xs: readonly string[], none = "none") => (xs.length ? xs.join(",") : none);
+    for (const m of c.mapped) {
+      const r = m.record;
+      out(
+        `CONNECTOR ${connector.id} ${r.id}: specific=${list(r.specific)} general=${list(r.general)} orm=${r.orm ?? "any"} engines=${list(r.engines, "any")} runtime=${r.runtime ?? "any"} needs=${list(r.requirements)} risk=${m.skill.package.risk} evaluations=${list(r.evaluations)} reviewed=${r.reviewed ? "yes" : "no"}`,
+      );
+    }
+    for (const u of c.unmapped) {
+      out(`CONNECTOR ${connector.id} unmapped ${u.root}: not offered, ${u.reason === "companion-missing" ? "a skill it points to is missing" : `the profile does not name ${u.name}`}`);
+    }
+    for (const a of c.absent) out(`CONNECTOR ${connector.id} absent ${a}`);
+  }
   for (const r of record.rejected) out(`REJECTED ${hidden(r.root)}: ${r.reasons.map(hidden).join("; ")}`);
   out(`SCANNED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${blocked} blocked`);
   return blocked > 0 ? 1 : 0;
+}
+
+const toolsText = (t: { shell: boolean; network: boolean; filesystem: "none" | "read" | "write" }) => {
+  const list = [t.shell ? "shell" : "", t.network ? "network" : "", t.filesystem === "write" ? "write" : ""].filter(Boolean);
+  return list.length ? list.join(",") : "none";
+};
+
+/** The built-in flows as the workflow gate sees them. A flow that cannot be read is reported and left out. */
+function builtinWorkflowFlows(out: (line: string) => void): { flows: WorkflowFlow[]; problems: number } {
+  const dir = flowDir("builtin", "");
+  const flows: WorkflowFlow[] = [];
+  let problems = 0;
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort()) {
+    const name = file.slice(0, -".yaml".length);
+    try {
+      const flow = parseFlow(readFileSync(join(dir, file), "utf8"), file);
+      flows.push({ name, skills: flow.skills?.mode ?? "planned", steps: flowSkillSteps(flow) });
+    } catch {
+      problems++;
+      out(`PROBLEM flow ${shownValue(name)} cannot be read`);
+    }
+  }
+  return { flows, problems };
+}
+
+/**
+ * `scf skills assess`: offline and read-only. Reads the staged import of a source, assesses every skill against the connector
+ * profile of its repository and prints the report. Exclusions are the expected result and exit 0; only a PROBLEM exits 1.
+ */
+function assessImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string }): number {
+  const staged = stagedImport(id, out, opts);
+  if (!staged) return 1;
+  const { source, commit, record, files } = staged;
+  const profile = connectorProfile(source.repositoryKey);
+  if (!profile) {
+    out(`PROBLEM no workflow profile for ${shownValue(source.repositoryKey)}`);
+    return 1;
+  }
+  const { skills: normalized, report: norm } = normalizeImport({ record: { ...record, rejected: [] }, files });
+  const { flows, problems } = builtinWorkflowFlows(out);
+  const report = assessWorkflows({
+    profile, skills: normalized, flows,
+    skillMd: (s) => files.get(s.provenance.root === "." ? "SKILL.md" : `${s.provenance.root}/SKILL.md`),
+  });
+
+  let candidates = 0;
+  let excluded = 0;
+  for (const a of report.skills) {
+    for (const f of a.findings) out(`CONFLICT ${f.code} ${f.effect} ${a.id} ${f.path}${f.line !== undefined ? `:${f.line}` : ""}: ${f.evidence}`);
+    if (a.omitted > 0) out(`CONFLICT omitted report ${a.id}: and ${a.omitted} more`);
+    if (a.status === "candidate" && a.declaration) {
+      const d = a.declaration;
+      candidates++;
+      out(`CANDIDATE ${a.id} (${shownValue(a.name)}): tools ${toolsText(d.tools)}; roles ${d.roles.join(",")}; flows ${d.flows.join(",")}; context ${d.context.instructions}/${d.context.max}`);
+    } else {
+      excluded++;
+      out(`EXCLUDED ${a.id} (${shownValue(a.name)}): ${a.blockers.join(", ")}`);
+    }
+  }
+  for (const entry of record.skills) {
+    if (normalized.some((s) => s.provenance.root === entry.root)) continue;
+    const label = shownValue(entry.root);
+    const reasons = norm.quarantined.filter((q) => q.root === label).flatMap((q) => q.reasons.map(hidden));
+    excluded++;
+    out(`EXCLUDED ${label}: not normalized (${reasons.join("; ")})`);
+  }
+  out(`ASSESSED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest} with profile ${profile.id}: ${plural(candidates, "candidate")}, ${excluded} excluded`);
+  return problems > 0 ? 1 : 0;
+}
+
+/** Passed for an import without licence evidence: every skill is `missing`, so the value reaches no package and is never printed. */
+const NO_EVIDENCE_TIME = "1970-01-01T00:00:00Z";
+
+/**
+ * `scf skills promote check`: offline and read-only. Prints per staged skill whether licence, provenance and findings
+ * allow promotion. Every decision is keyed by the full upstream root; the shown path is used only for printing.
+ * Returns 1 when a path is refused or a PROBLEM was printed.
+ */
+function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
+  let exceptions: ScanException[] = [];
+  const staged = stagedImport(
+    id,
+    out,
+    opts,
+    () => {
+      const read = loadExceptions(exceptionsFile, out, opts);
+      if (read) exceptions = read;
+      return read !== undefined;
+    },
+    "checked",
+  );
+  if (!staged) return 1;
+  const { source, commit, record, files } = staged;
+  if (source.status !== "enabled") {
+    out(`PROBLEM the source ${source.id} is ${source.status}; only an enabled source can be promoted`);
+    return 1;
+  }
+  // An import staged without licence files has no evidence: every path is `missing`.
+  const review = reviewImport({
+    allow: source.licence.allow,
+    prep: { record: { ...record, rejected: [] }, files },
+    evidence: staged.licence ?? { repositoryKey: record.repositoryKey, commit: record.commit, files: [] },
+  });
+  const evidence = review.evidence;
+  const retrievedAt = record.retrievedAt ?? NO_EVIDENCE_TIME;
+  const normalized = review.normalized.skills;
+  const byRoot = new Map(normalized.map((s) => [s.provenance.root, s]));
+
+  let promotable = 0;
+  let refused = 0;
+  const lines: string[] = [];
+  for (const entry of record.skills) {
+    const path = shownValue(entry.root);
+    const skill = byRoot.get(entry.root);
+    let status: string;
+    let licenceReasons: string[] = [];
+    let normReasons: string[] = [];
+    let n = 0;
+    let ok: { id: string; licences: string[] } | undefined;
+    if (skill) {
+      let result;
+      try {
+        result = promoteImport({ source, record, skills: [skill], evidence, retrievedAt, review });
+      } catch (e) {
+        if (!(e instanceof SkillImportError)) throw e;
+        // path-specific (for example the approved paths were narrowed): refuse this path, check the others
+        lines.push(`REFUSED ${path}: not-promotable (${hidden(e.message)})`);
+        refused++;
+        continue;
+      }
+      const p = result.promoted[0];
+      if (p) {
+        status = "allowed";
+        ok = { id: skill.package.id, licences: p.provenance.licences };
+      } else {
+        const r = result.manifest.refused[0]!;
+        status = r.status;
+        licenceReasons = r.reasons;
+      }
+      n = promotionBlockers(applyExceptions(skill.package.id, scanSkill({ root: entry.root, files: filesOf(entry.root, files) }), exceptions, opts.today)).length;
+    } else {
+      const verdict = evaluateLicence({ root: entry.root, allow: source.licence.allow, evidence });
+      status = verdict.status;
+      licenceReasons = verdict.reasons;
+      // Normalized alone, so the reasons belong to this full root and not to a shortened display string.
+      const alone = normalizeImport({ record: { ...record, skills: [entry], rejected: [] }, files });
+      normReasons = alone.report.quarantined[0]?.reasons ?? ["another skill of this source has the same name or id"];
+    }
+    const text = (xs: string[]) => xs.map(hidden).join("; ");
+    if (status !== "allowed") {
+      const more: string[] = [];
+      if (!skill) more.push(`not normalized: ${text(normReasons)}`);
+      if (n > 0) more.push(`${plural(n, "high finding")}`);
+      lines.push(`REFUSED ${path}: ${status} (${[text(licenceReasons), ...more].filter((x) => x !== "").join("; ")})`);
+      refused++;
+    } else if (!skill) {
+      lines.push(`REFUSED ${path}: not-normalized (${text(normReasons)})`);
+      refused++;
+    } else if (n > 0) {
+      lines.push(`REFUSED ${path}: blocked (${plural(n, "high finding")})`);
+      refused++;
+    } else {
+      lines.push(`PROMOTABLE ${ok!.id} ${path} ${ok!.licences.join(",")}`);
+      promotable++;
+    }
+  }
+  for (const l of lines) out(l);
+  for (const s of normalized) if (s.provenance.assumes) out(`ASSUMES ${hidden(s.package.id)}: ${s.provenance.assumes.join(", ")}`);
+  const c = review.classification;
+  const problem = licenceReviewProblem(source.licence.reviewed, c);
+  const state = !licenceReviewRequired(source)
+    ? "licence.reviewed is not set"
+    : problem === undefined
+      ? "matches licence.reviewed"
+      : problem === "missing"
+        ? "not reviewed; check the lines above, then set licence.reviewed to this digest"
+        : "changed since the review; check the lines above, then set licence.reviewed to this digest";
+  out(`LICENCES ${c.digest} ${plural(c.files.length, "licence and notice file")}: ${state}`);
+  out(`CHECKED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${promotable} promotable, ${refused} refused`);
+  return refused > 0 ? 1 : 0;
 }
 
 const syntax = (why: string) => new Error(`${why}\n${SKILLS_USAGE}`);
@@ -191,7 +458,19 @@ export async function skillsCommand(
   }
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
-    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out);
+    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out, opts.today);
+  }
+
+  if (sub === "connectors") {
+    if (operands.length) throw syntax("scf skills connectors: takes no operands");
+    for (const c of SOURCE_CONNECTORS) out(`${c.id.padEnd(24)} ${c.repositoryKey} ${c.roots.join(",")} ${c.adapter} ${c.trust} ${c.licences.join(",")} track ${c.track}`);
+    out(`OK ${plural(SOURCE_CONNECTORS.length, "connector")}`);
+    return 0;
+  }
+
+  if (sub === "selections") {
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file');
+    return selectionsCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SELECTIONS_FILE), out, opts.today ?? new Date().toISOString().slice(0, 10));
   }
 
   if (sub === "overrides" || sub === "project-pins") {
@@ -205,6 +484,19 @@ export async function skillsCommand(
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills scan: the first operand must be a source id");
     const today = opts.today ?? new Date().toISOString().slice(0, 10);
     return scanImport(operands[0]!, operands[1], out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today });
+  }
+
+  if (sub === "assess") {
+    if (operands.length !== 1) throw syntax("scf skills assess: expects one source id");
+    if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills assess: the operand must be a source id");
+    return assessImport(operands[0]!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home });
+  }
+
+  if (sub === "promote") {
+    if (operands[0] !== "check" || operands.length < 2 || operands.length > 3) throw syntax('scf skills promote: expects "check", a source id and at most one exception file');
+    if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills promote check: the first operand must be a source id");
+    const today = opts.today ?? new Date().toISOString().slice(0, 10);
+    return promoteCheck(operands[1]!, operands[2], out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today });
   }
 
   const { skills, cwd: _cwd, now: _now, today: _today, ...discover } = opts;
@@ -236,7 +528,7 @@ export async function skillsCommand(
   }
 
   for (const s of reg.skills) {
-    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.trust} ${s.pin} ${s.digest}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
+    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.trust} ${s.pin} ${s.digest}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
   }
   for (const r of reg.sources) {
     const rel = r.release;

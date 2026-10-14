@@ -6,6 +6,7 @@ import { ownerText, sortRepos } from "./admin-repos.js";
 import { repoHref } from "./repos.js";
 import { watcherSemanticOf } from "./icons.js";
 import { nextList, statusMark, watcherNext } from "./next.js";
+import { optionNotes } from "./watcher-options.js";
 import { monitorDialog, repoWatcherDialog } from "./watcher-form.js";
 
 /** The notes of a watcher's status (what waits or is wrong with the monitor's bug stories) as a list, or null when there are none. */
@@ -305,6 +306,7 @@ export async function renderWatcherDetail(main, id, { data, readOnly = false } =
     kind === "file" ? h("div", { class: "muted text-sm" }, FILE_NOTE) : null,
     kind === "gone" ? h("div", { class: "muted text-sm" }, "Its repository is not connected any more.") : null,
     h("div", { class: "muted text-sm" }, watcherSettings(w)),
+    optionNotes(w).length ? h("div", { class: "muted text-sm" }, "Options: ", optionNotes(w).join(" · ")) : null,
     w.enabled && !w.problem && watcherNext(w).length ? h("div", {}, h("div", { class: "muted text-sm mt-6" }, "What happens next:"), nextList(watcherNext(w))) : null,
     w.source !== "monitor" ? null : monError
       ? errorState(explainError(monError, { what: "Could not load the monitor's state.", safe: "The watcher is shown and keeps checking." }), { onRetry: reload })

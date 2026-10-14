@@ -1,9 +1,13 @@
 import { lstatSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { parseRepoUrl, RepoError } from "../auth/repo-url.js";
+import { rangeSatisfied } from "./canonical-facts.js";
+import { COMMUNITY_REPOSITORIES } from "./community-rules.js";
+import { connectorProblems } from "./connectors.js";
 import { credentialProblem } from "./credential-scan.js";
+import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
-import { relativePathProblem, SKILL_ID_RE } from "./schema.js";
+import { relativePathProblem, SKILL_DIGEST_RE, SKILL_ID_RE, SKILL_PROVIDER_LIMITS } from "./schema.js";
 
 export const SOURCES_FILE = "skill-sources.yaml";
 export const MAX_SOURCES_BYTES = 262144;
@@ -13,10 +17,29 @@ export const SOURCE_STATUSES = ["enabled", "disabled", "quarantined", "retired"]
 export const SOURCE_ADAPTERS = ["agent-skills"] as const;
 export const SOURCE_TRUST_TIERS = ["first-party", "verified", "community"] as const;
 export const SOURCE_CADENCES = ["manual", "daily", "weekly", "monthly"] as const;
+export const SOURCE_SCOPE_LIMITS = { capabilities: 8, technologies: 8 } as const;
+export const SOURCE_PROFILE_LIMITS = { portable: 64, products: SKILL_PROVIDER_LIMITS.products } as const;
 export const SOURCE_LICENCES = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "CC0-1.0", "CC-BY-4.0", "Unlicense"] as const;
 
 export type SourceStatus = (typeof SOURCE_STATUSES)[number];
 export type SourceTrustTier = (typeof SOURCE_TRUST_TIERS)[number];
+
+/** Who checked the maintainer and licence of a source, when, and for which commit. */
+export interface SourceReview {
+  by: string;
+  /** YYYY-MM-DD. */
+  on: string;
+  commit: string;
+  licence: string;
+}
+
+export interface SourceProfile {
+  provider: string;
+  /** Upstream capability → catalogue capability, sorted by upstream. */
+  portable: { upstream: string; capability: string }[];
+  /** Default provider products with version ranges, sorted by name. */
+  products: { name: string; version: string }[];
+}
 
 export interface SkillLibrarySource {
   id: string;
@@ -30,9 +53,15 @@ export interface SkillLibrarySource {
   paths: string[];
   adapter: (typeof SOURCE_ADAPTERS)[number];
   trust: SourceTrustTier;
-  licence: { allow: string[] };
+  /** `reviewed` is the digest of the licence evidence the owner reviewed (scf skills promote check prints it). */
+  licence: { allow: string[]; reviewed?: string };
+  /** What the maintainer states about the library that upstream does not: capabilities to add and technology version ranges. */
+  scope?: { capabilities: string[]; technologies: { name: string; version: string }[] };
+  /** Which upstream capabilities are portable; every other one belongs to the vendor. Absent: capabilities stay as upstream wrote them. */
+  profile?: SourceProfile;
   update: { cadence: (typeof SOURCE_CADENCES)[number] };
   owner: string;
+  review?: SourceReview;
 }
 export interface SourcesManifest {
   schema: 1;
@@ -96,12 +125,26 @@ export function sourcePathProblem(path: string): string | undefined {
   return undefined;
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Days since 1970-01-01 for a real YYYY-MM-DD date, else undefined. Same as dayNumber in scan-exceptions.ts (which imports this file). */
+function dayNumber(s: unknown): number | undefined {
+  if (typeof s !== "string" || !DATE_RE.test(s)) return undefined;
+  const ms = Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
+  if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== s) return undefined;
+  return ms / 86400000;
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Checks parsed YAML. Never throws. No problem holds a credential-like value or a control character. */
-export function parseSources(raw: unknown): { manifest?: SourcesManifest; problems: SourceProblem[] } {
+export function parseSources(raw: unknown, today: string = new Date().toISOString().slice(0, 10)): { manifest?: SourcesManifest; problems: SourceProblem[] } {
   const problems: SourceProblem[] = [];
   const add = (where: string, message: string) => void problems.push(problem(where, message));
+  const todayDay = dayNumber(today);
+  if (todayDay === undefined) {
+    add("today", "must be a date like 2026-10-13");
+    return { problems };
+  }
   if (!isObject(raw)) {
     add("file", "must be a map with schema and sources");
     return { problems };
@@ -177,7 +220,7 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
       return v;
     };
 
-    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "update", "owner"], "");
+    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "scope", "profile", "update", "owner", "review"], "");
 
     // id
     const id = text(idRaw, "id");
@@ -284,9 +327,15 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
 
     // licence
     const allow: string[] = [];
+    let reviewed: string | undefined;
     const lic = sub(e.licence, "licence");
     if (lic) {
-      keys(lic, ["allow"], "licence");
+      keys(lic, ["allow", "reviewed"], "licence");
+      if (lic.reviewed !== undefined) {
+        const r = text(lic.reviewed, "licence.reviewed");
+        if (r !== undefined && !SKILL_DIGEST_RE.test(r)) err("licence.reviewed", "must be sha256: and 64 hex digits; copy it from scf skills promote check");
+        else reviewed = r;
+      }
       if (!Array.isArray(lic.allow) || lic.allow.length < 1 || lic.allow.length > 20) {
         err("licence.allow", lic.allow === undefined ? "is required" : "must be a list of 1 to 20 licences");
       } else {
@@ -301,9 +350,168 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
       }
     }
 
+    // scope
+    let scope: SkillLibrarySource["scope"];
+    if (e.scope !== undefined) {
+      const sc = sub(e.scope, "scope");
+      if (sc) {
+        keys(sc, ["capabilities", "technologies"], "scope");
+        if (sc.capabilities === undefined && sc.technologies === undefined) err("scope", "must name capabilities or technologies");
+        const caps: string[] = [];
+        if (sc.capabilities !== undefined) {
+          const max = SOURCE_SCOPE_LIMITS.capabilities;
+          if (!Array.isArray(sc.capabilities) || sc.capabilities.length < 1 || sc.capabilities.length > max) {
+            err("scope.capabilities", `must be a list of 1 to ${max} capabilities`);
+          } else {
+            sc.capabilities.forEach((cv, j) => {
+              const c = text(cv, `scope.capabilities[${j}]`);
+              if (c === undefined) return;
+              if (!SKILL_ID_RE.test(c)) err(`scope.capabilities[${j}]`, "must be a lower-case slug");
+              else if (caps.includes(c)) err(`scope.capabilities[${j}]`, `"${c}" is listed twice`);
+              else caps.push(c);
+            });
+          }
+        }
+        const techs: { name: string; version: string }[] = [];
+        if (sc.technologies !== undefined) {
+          const max = SOURCE_SCOPE_LIMITS.technologies;
+          if (!isObject(sc.technologies) || Object.keys(sc.technologies).length < 1 || Object.keys(sc.technologies).length > max) {
+            err("scope.technologies", `must be a map of 1 to ${max} technologies`);
+          } else {
+            for (const [name, raw] of Object.entries(sc.technologies)) {
+              const field = `scope.technologies.${shownValue(name)}`;
+              if (!SKILL_ID_RE.test(name)) {
+                err(field, "the technology name must be a lower-case slug");
+                continue;
+              }
+              const v = text(raw, field)?.trim();
+              if (v === undefined) continue;
+              if (v.length < 1 || v.length > NORMALIZE_LIMITS.rangeChars || rangeSatisfied(v, "0.0.0") === undefined) {
+                err(field, 'is not a version range like ">=19" or "^21.0"');
+              } else techs.push({ name, version: v });
+            }
+          }
+        }
+        if (caps.length || techs.length) {
+          scope = {
+            capabilities: caps.sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))),
+            technologies: techs.sort((a, b) => Buffer.compare(Buffer.from(a.name), Buffer.from(b.name))),
+          };
+        }
+      }
+    }
+
+    // profile
+    let profile: SourceProfile | undefined;
+    if (e.profile !== undefined) {
+      const before = problems.length;
+      const pr = sub(e.profile, "profile");
+      if (pr) {
+        keys(pr, ["provider", "portable", "products"], "profile");
+        const provider = text(pr.provider, "profile.provider");
+        if (provider !== undefined && !SKILL_ID_RE.test(provider)) err("profile.provider", "must be a lower-case slug");
+        const portable: SourceProfile["portable"] = [];
+        if (pr.portable !== undefined) {
+          const max = SOURCE_PROFILE_LIMITS.portable;
+          if (!isObject(pr.portable) || Object.keys(pr.portable).length > max) {
+            err("profile.portable", `must be a map of at most ${max} upstream capabilities`);
+          } else {
+            for (const [k, v] of Object.entries(pr.portable)) {
+              const field = `profile.portable.${shownValue(k)}`;
+              if (!SKILL_ID_RE.test(k)) {
+                err(field, "the upstream capability must be a lower-case slug");
+                continue;
+              }
+              const target = text(v, field);
+              if (target === undefined) continue;
+              if (!SKILL_ID_RE.test(target)) err(field, "must be a lower-case slug");
+              else portable.push({ upstream: k, capability: target });
+            }
+          }
+        }
+        const products: SourceProfile["products"] = [];
+        if (pr.products !== undefined) {
+          const max = SOURCE_PROFILE_LIMITS.products;
+          if (!isObject(pr.products) || Object.keys(pr.products).length < 1 || Object.keys(pr.products).length > max) {
+            err("profile.products", `must be a map of 1 to ${max} products`);
+          } else {
+            for (const [name, raw] of Object.entries(pr.products)) {
+              const field = `profile.products.${shownValue(name)}`;
+              if (!SKILL_ID_RE.test(name)) {
+                err(field, "the product name must be a lower-case slug");
+                continue;
+              }
+              const v = text(raw, field)?.trim();
+              if (v === undefined) continue;
+              if (v.length < 1 || v.length > NORMALIZE_LIMITS.rangeChars || rangeSatisfied(v, "0.0.0") === undefined) {
+                err(field, 'is not a version range like ">=3.7" or "^7.0"');
+              } else products.push({ name, version: v });
+            }
+          }
+        }
+        if (provider !== undefined && problems.length === before) {
+          const cmp = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+          profile = {
+            provider,
+            portable: portable.sort((a, b) => cmp(a.upstream, b.upstream)),
+            products: products.sort((a, b) => cmp(a.name, b.name)),
+          };
+        }
+      }
+    }
+
+    // connector: a reviewed repository limits what an entry may select
+    if (repositoryKey) for (const m of connectorProblems({ repositoryKey, paths, adapter, trust, licence: { allow } })) err("", m);
+
     // owner
     const owner = text(e.owner, "owner");
     if (owner !== undefined && !OWNER_RE.test(owner)) err("owner", "must be a GitHub user or team like @octocat or @acme/skills");
+
+    // review
+    let review: SourceReview | undefined;
+    if (e.review !== undefined) {
+      if (!isObject(e.review)) err("review", "must be a map");
+      else {
+        const rv = e.review;
+        keys(rv, ["by", "on", "commit", "licence"], "review");
+        const by = text(rv.by, "review.by");
+        let byOk = false;
+        if (by !== undefined) {
+          if (OWNER_RE.test(by)) byOk = true;
+          else err("review.by", "must be a GitHub user or team like @octocat or @acme/skills");
+        }
+        const on = text(rv.on, "review.on");
+        let onOk = false;
+        if (on !== undefined) {
+          const day = dayNumber(on);
+          if (day === undefined) err("review.on", "must be a date like 2026-10-13");
+          else if (day > todayDay) err("review.on", "must not be in the future");
+          else onOk = true;
+        }
+        const commit = text(rv.commit, "review.commit");
+        let commitOk = false;
+        if (commit !== undefined) {
+          if (approvedRefProblem(commit)) err("review.commit", "must be a full commit id (40 or 64 hex digits)");
+          else commitOk = true;
+        }
+        const licence = text(rv.licence, "review.licence");
+        let licenceOk = false;
+        if (licence !== undefined && lic && allow.length > 0) {
+          if (allow.includes(licence)) licenceOk = true;
+          else err("review.licence", `"${shownValue(licence)}" is not in licence.allow`);
+        }
+        if (byOk && onOk && commitOk && licenceOk) review = { by: by!, on: on!, commit: commit!, licence: licence! };
+      }
+    }
+    if (status === "enabled" && trust === "community") {
+      if (e.review === undefined) err("review", "an enabled community source needs a review (by, on, commit, licence)");
+      else if (review && ref.approved !== undefined && review.commit !== ref.approved) {
+        err("review.commit", "is not the commit in ref.approved; a new commit needs a new review");
+      }
+    }
+    if (repositoryKey && trust && trust !== "community" && COMMUNITY_REPOSITORIES.includes(repositoryKey)) {
+      err("trust", "must be community: this repository is on the list of known community repositories");
+    }
 
     if (id !== undefined && repository && repositoryKey && status && cadence && adapter && trust && owner !== undefined && OWNER_RE.test(owner)) {
       out.push({
@@ -316,9 +524,12 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
         paths,
         adapter,
         trust,
-        licence: { allow },
+        licence: { allow, ...(reviewed !== undefined ? { reviewed } : {}) },
+        ...(scope ? { scope } : {}),
+        ...(profile ? { profile } : {}),
         update: { cadence },
         owner,
+        ...(review ? { review } : {}),
       });
     }
   });
@@ -334,7 +545,7 @@ export function usableSources(m: SourcesManifest): SkillLibrarySource[] {
 const fail = (message: string): SourcesRead => ({ state: "invalid", problems: [problem("file", message)] });
 
 /** Reads the file safely (no links, no special files, size limit), then parseSources. No message repeats a path or file content. */
-export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES): SourcesRead {
+export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES, today?: string): SourcesRead {
   let st;
   try {
     st = lstatSync(path);
@@ -365,6 +576,6 @@ export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES): Sources
     }
     return fail("is not valid YAML");
   }
-  const r = parseSources(doc);
+  const r = parseSources(doc, today);
   return r.manifest ? { state: "ok", manifest: r.manifest } : { state: "invalid", problems: r.problems };
 }

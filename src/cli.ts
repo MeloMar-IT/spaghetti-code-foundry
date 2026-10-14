@@ -14,6 +14,7 @@ import { listBlocks } from "./flow/blocks.js";
 import { pinBuiltinSkillsAtStart } from "./skills/registry.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
 import { startServer } from "./server/server.js";
+import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
 import { runEval } from "./evals.js";
@@ -48,8 +49,13 @@ Usage:
   scf skills pin --builtin                       Pin the built-in skills that have no pin
   scf skills unpin <id@version>                  Remove a pin
   scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
+  scf skills connectors                          List the reviewed skill source connectors
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills scan <source-id> [<exceptions-file>]  Print the security report of a staged import
+  scf skills assess <source-id>                    Print the workflow report of a staged import
+  scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
+  scf skills promote check <source-id> [<exceptions-file>]  Print whether licence and findings allow promotion
+  scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -226,8 +232,8 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …` and `scf skills scan …` only read: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "sources" || arg === "scan"))) {
+  // `scf skills sources …`, `selections …`, `scan …`, `assess …`, `evaluate …`, `promote check …` and `connectors` only read: they run without choosing or moving the data folder.
+  if (!(cmd === "skills" && (arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "evaluate" || arg === "promote" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
@@ -302,6 +308,7 @@ async function main(argv: string[]): Promise<number> {
       const { skillsCommand } = await import("./skills/cli.js");
       const { help: _h, ...given } = values;
       if (arg === "import") return (await import("./skill-import/cli.js")).skillImportCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
+      if (arg === "evaluate") return (await import("./skill-import/evaluate-cli.js")).skillEvaluateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "discover") return (await import("./skill-import/discover-cli.js")).skillDiscoverCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo });
     }
@@ -431,11 +438,14 @@ async function main(argv: string[]): Promise<number> {
         log,
       });
       watchDataHome({ idle, beforeExit, log, busy: () => {
-        ctx.restart ??= { why: "data_folder", since: new Date().toISOString() };
+        // takes over a wait for a changed setting: it can no longer be cancelled, and this restart applies the settings too
+        if (!ctx.restart || ctx.restart.why === "settings") ctx.restart = { why: "data_folder", since: new Date().toISOString() };
         ctx.scheduler.drain();
         ctx.watchers.stopAll(); // drain, as for a new version: start nothing new while the restart waits
       } });
       ctx.selfUpdate = updater;
+      const settingsRestart: SettingsRestart = settingsRestartFor(ctx, { idle, beforeExit: () => { settingsRestart.stop(); beforeExit(); }, log });
+      ctx.settingsRestart = settingsRestart;
       void confirmStart(url, { stamp, log });
       updater.start();
       return new Promise<number>(() => {}); // run until killed

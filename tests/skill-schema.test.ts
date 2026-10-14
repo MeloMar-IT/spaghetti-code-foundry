@@ -154,3 +154,31 @@ describe("ToolPolicySchema", () => {
     expect(ConfigSchema.safeParse({ skills: { tools: { filesystem: "none" } } }).success).toBe(false);
   });
 });
+
+describe("SkillManifestSchema provider", () => {
+  const withProvider = (provider: unknown) => ({ ...base, provider });
+  const many = (n: number, f: (i: number) => unknown) => Array.from({ length: n }, (_, i) => f(i));
+
+  it("a skill without a provider is portable", () => {
+    expect("provider" in SkillManifestSchema.parse(base)).toBe(false);
+  });
+  it("fills the lists of a name-only block", () => {
+    expect(SkillManifestSchema.parse(withProvider({ name: "confluent" })).provider).toEqual({ name: "confluent", products: [], tools: [] });
+  });
+  it("accepts products with versions and tools", () => {
+    const provider = { name: "confluent", products: [{ name: "confluent-platform", version: "7.6" }, { name: "schema-registry" }], tools: ["confluent-cli"] };
+    expect(SkillManifestSchema.parse(withProvider(provider)).provider).toEqual(provider);
+  });
+  it("rejects what is not valid, with the path", () => {
+    expect(paths(withProvider({ name: "Confluent" }))).toContain("provider.name");
+    expect(paths(withProvider({ name: "a", extra: 1 }))).toContain("provider");
+    expect(paths(withProvider({ name: "a", products: [{ name: "p", extra: 1 }] }))).toContain("provider.products.0");
+    expect(paths(withProvider({ name: "a", products: many(17, (i) => ({ name: `p${i}` })) }))).toContain("provider.products");
+    expect(paths(withProvider({ name: "a", tools: many(17, (i) => `t${i}`) }))).toContain("provider.tools");
+    expect(paths(withProvider({ name: "a", products: [{ name: "p" }, { name: "p" }] }))).toContain("provider.products.1");
+    expect(paths(withProvider({ name: "a", tools: ["t", "t"] }))).toContain("provider.tools.1");
+    expect(paths(withProvider({ name: "a", products: [{ name: "p", version: 7.6 }] }))).toContain("provider.products.0.version");
+    expect(paths(withProvider({ name: "a", products: [{ name: "p", version: "v".repeat(65) }] }))).toContain("provider.products.0.version");
+    expect(paths(withProvider({ name: "a", products: [{ name: "p", version: "1\n2" }] }))).toContain("provider.products.0.version");
+  });
+});

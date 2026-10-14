@@ -292,6 +292,7 @@ describe("the command with a failing listing", { timeout: 15_000, retry: 0 }, ()
             licence: { allow: ["MIT"] },
             update: { cadence: "manual" },
             owner: "@example",
+            review: { by: "@example", on: "2026-01-01", commit: C40, licence: "MIT" },
           },
         ],
       }),

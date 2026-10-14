@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { stringify } from "yaml";
 import { GitTreeError, type GitTree, type GitTreeErrorCode } from "../src/skill-import/git-tree.js";
 import { IMPORT_USAGE, skillImportCommand } from "../src/skill-import/cli.js";
 import type { TreeEntry } from "../src/skills/import-plan.js";
+import { readStagedLicence } from "../src/skills/import-stage.js";
 
 const COMMIT = "a".repeat(40);
 const md = (name: string) => `---\nname: ${name}\ndescription: A skill called ${name}.\n---\n\nBody.\n`;
@@ -44,6 +45,7 @@ const source = (over: Record<string, unknown> = {}) => ({
   licence: { allow: ["MIT"] },
   update: { cadence: "manual" },
   owner: "@example",
+  review: { by: "@example", on: "2026-01-01", commit: COMMIT, licence: "MIT" },
   ...over,
 });
 
@@ -93,6 +95,69 @@ describe("output and exit codes", () => {
     const b = await run(fakeTree());
     expect(b.rc).toBe(0);
     expect(b.lines[2]).toBe(a.lines[2]!.replace("(staged)", "(unchanged)"));
+  });
+
+  it("stages the licence files, records retrievedAt and keeps it when unchanged", async () => {
+    const MIT_TEXT = "SECRET-MARKER-LICENCE-TEXT\n";
+    const files = { ...GOOD, LICENSE: MIT_TEXT };
+    const opts = (now: string) => ({ cwd: dir, home, now: new Date(now), open: async () => fakeTree(files) });
+    const lines: string[] = [];
+    expect(await skillImportCommand({ positionals: ["lib"], values: {} }, (l) => lines.push(l), opts("2026-01-02T03:04:05Z"))).toBe(0);
+    expect(lines.join("\n")).not.toContain("SECRET-MARKER");
+    const rec = JSON.parse(readFileSync(join(home, "skill-quarantine", "lib", COMMIT, "import.json"), "utf8"));
+    expect(rec.retrievedAt).toBe("2026-01-02T03:04:05Z");
+    expect(rec.licenceFiles).toHaveLength(1);
+    expect(readFileSync(join(home, "skill-quarantine", "lib", COMMIT, "licence", "LICENSE"), "utf8")).toBe(MIT_TEXT);
+
+    const again: string[] = [];
+    expect(await skillImportCommand({ positionals: ["lib"], values: {} }, (l) => again.push(l), opts("2027-05-06T07:08:09Z"))).toBe(0);
+    expect(again.find((l) => l.startsWith("OK "))).toMatch(/\(unchanged\)$/);
+    expect(JSON.parse(readFileSync(join(home, "skill-quarantine", "lib", COMMIT, "import.json"), "utf8")).retrievedAt).toBe("2026-01-02T03:04:05Z");
+  });
+
+  it("gives the fixed PROBLEM when the licence files cannot be read", async () => {
+    const t = fakeTree({ ...GOOD, LICENSE: "x" });
+    const read = t.read.bind(t);
+    t.read = (entries) => {
+      if (entries.some((e) => e.path === "LICENSE")) throw new GitTreeError("read-failed");
+      return read(entries);
+    };
+    const r = await run(t);
+    expect(r.rc).toBe(1);
+    expect(r.lines.at(-1)).toBe("PROBLEM a file of the commit could not be read");
+    expect(quarantine()).toBe(false);
+  });
+
+  it("stages the licence and notice files with the skills", async () => {
+    const t = fakeTree({ ...GOOD, LICENSE: "root licence", "skills/a/LICENSE": "a licence", NOTICE: "notice" });
+    const r = await run(t);
+    expect(r.rc).toBe(0);
+    expect(r.lines).toHaveLength(4);
+    expect(t.closed).toBe(1);
+    const l = readStagedLicence("lib", COMMIT, { home });
+    expect(l.state === "ok" && l.evidence.files.map((f) => f.path)).toEqual(["LICENSE", "NOTICE", "skills/a/LICENSE"]);
+    const again = await run(fakeTree({ ...GOOD, LICENSE: "root licence", "skills/a/LICENSE": "a licence", NOTICE: "notice" }));
+    expect(again.lines[2]).toContain("(unchanged)");
+  });
+
+  it("stages nothing when there are more than 200 licence files", async () => {
+    const many = Object.fromEntries(Array.from({ length: 201 }, (_, i) => [[`skills/d${i}/LICENSE`, "x"], [`skills/d${i}/SKILL.md`, md(`d${i}`)]]).flat());
+    const r = await run(fakeTree({ ...GOOD, ...many }));
+    expect(r.rc).toBe(1);
+    expect(r.text).toMatch(/^PROBLEM /);
+    expect(quarantine()).toBe(false);
+  });
+
+  it("stages nothing when the whole file list cannot be read", async () => {
+    const t = fakeTree();
+    const list = t.list;
+    t.list = (p) => {
+      if (p === ".") throw new GitTreeError("bad-listing");
+      return list(p);
+    };
+    const r = await run(t);
+    expect(r.lines).toEqual(["PROBLEM the file list of the commit could not be read"]);
+    expect(quarantine()).toBe(false);
   });
 
   it("returns 1 and prints REJECTED for a bad skill", async () => {
@@ -218,5 +283,25 @@ describe("signal handlers", () => {
     await run("timeout");
     expect(process.listenerCount("SIGINT")).toBe(before.int);
     expect(process.listenerCount("SIGTERM")).toBe(before.term);
+  });
+});
+
+describe("a community source needs a current review", () => {
+  const refused = async (src: Record<string, unknown>, line: RegExp) => {
+    write([src]);
+    const r = await run(fakeTree());
+    expect(r.rc).toBe(1);
+    expect(r.lines.some((l) => line.test(l))).toBe(true);
+    expect(opens).toBe(0);
+    expect(quarantine()).toBe(false);
+  };
+
+  it("refuses a source without a review", async () => {
+    await refused(source({ review: undefined }), /^PROBLEM sources\[0\] \(lib\) review: an enabled community source needs a review/);
+  });
+
+  it("refuses a review of another commit", async () => {
+    const stale = { by: "@example", on: "2026-01-01", commit: "b".repeat(40), licence: "MIT" };
+    await refused(source({ review: stale }), /^PROBLEM sources\[0\] \(lib\) review\.commit: .*a new commit needs a new review/);
   });
 });

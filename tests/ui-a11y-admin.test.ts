@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { describeSettings, startupSettings } from "../src/settings/describe.js";
 import { audit } from "./helpers/a11y.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
@@ -101,12 +102,17 @@ const finding = { id: "f1", severity: "major", detector: "stuck-run", summary: "
 const mute = { id: "m1", kind: "detector", detector: "stuck-run", reason: "known", since: NOW, until: null };
 const monitorState = {
   state: "on", running: true, findings: [finding], mutes: [mute], lastCheck: NOW, madeToday: 0,
-  detectors: [{ name: "stuck-run", key: "stuck_run", description: "A run that does not move", thresholds: { resumes: 3 }, lastFound: NOW }],
+  detectors: [{ name: "stuck-run", key: "stuck_run", description: "A run that does not move", lastFound: NOW }],
+  settings: [
+    ["monitor.stuck_run.extra_minutes", "Stuck run: extra minutes", 30],
+    ["monitor.stuck_run.no_timeout_minutes", "Stuck run: minutes without a timeout", 120],
+  ].map(([key, label, value]) => ({ key, label, help: "Help.", kind: "number", integer: true, min: 1, max: 1440, default: value, optional: false, effect: "now", effectText: "at once", control: "problems.js", value, stored: false })),
 };
 const config = ConfigSchema.parse({
   providers: { local: { kind: "ollama" } },
   router: { rules: [{ step: "^review$", model: "codex" }] },
 });
+const settingsAnswer = { settings: describeSettings(), startup: startupSettings({ home: "/data", port: 4000, repo: "/repo", claudeBin: "claude", codexBin: "codex", ghBin: "gh" }) };
 const providers = {
   agents: [{ agent: "claude", installed: true, loggedIn: true, version: "1.0", detail: "" }],
   providers: [{ name: "local", kind: "ollama", base_url: "http://localhost:11434", ok: true, detail: "", models: ["qwen3-coder"], agents: ["claude"] }],
@@ -122,7 +128,7 @@ const press = (el: FakeElement) => el.click();
 
 describe("pages", () => {
   it("Settings", async () => {
-    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" } };
+    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" }, "GET /api/settings": settingsAnswer };
     await m.admin.renderSettings(main());
     noViolations(main());
     const boxes = controls(main()).filter((c) => c.attrs.type === "checkbox");
@@ -727,17 +733,17 @@ describe("Problems", () => {
   it("an empty threshold marks its input; a server error names the threshold", async () => {
     routes = { "GET /api/monitor": monitorState, "GET /api/config": config };
     await m.problems.renderProblems(main());
-    const input = controls(main()).find((c) => c.attrs["aria-label"] === "stuck-run resumes")!;
+    const input = main().all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("scf-field") && d.all("label")[0]?.textContent === "Stuck run: extra minutes")!.all("input")[0]!;
     input.value = "";
     const save = main().all("button").find((b) => b.textContent === "Save")!;
     press(save);
     await settle();
-    const line = alerts(main()).find((a) => a.textContent === "Give a number.")!;
+    const line = alerts(main()).find((a) => a.textContent === '"Stuck run: extra minutes" needs a number from 1 to 1440.')!;
     expect(line.attrs.role).toBe("alert");
     expect(invalid(main())).toEqual([input]);
     expect(doc().activeElement).toBe(input);
-    input.value = "5";
-    fail("PUT", "/api/config", 400, 'invalid config: {"path": ["monitor", "stuck_run", "resumes"]}');
+    input.value = "35";
+    fail("PUT", "/api/config", 400, 'invalid config: {"path": ["monitor", "stuck_run", "extra_minutes"]}');
     press(save);
     await vi.waitFor(() => expect(line.textContent).toContain("invalid config"));
     expect(invalid(main())).toEqual([input]);
@@ -848,9 +854,25 @@ describe("Models", () => {
 
 describe("Settings", () => {
   const show = async () => {
-    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" } };
+    routes = { "GET /api/config": config, "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" }, "GET /api/settings": settingsAnswer };
     await m.admin.renderSettings(main());
   };
+  it("a refused list is one alert at its field, and nothing is sent", async () => {
+    await show();
+    const userRuns = () => main().all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "User runs")!;
+    const area = userRuns().all("textarea")[0]!;
+    area.value = "GH_TOKEN";
+    area.fire("change", { target: area });
+    press(button(main(), "Save"));
+    await settle();
+    expect(alerts(main()).map((a) => a.textContent)).toHaveLength(1);
+    expect(alerts(main())[0]!.textContent).toContain("GH_TOKEN");
+    // the field is drawn again with its message, so the element is a new one
+    const shown = userRuns().all("textarea")[0]!;
+    expect(invalid(main())).toEqual([shown]);
+    expect(doc().activeElement).toBe(shown);
+    expect(sent.some((s) => s.key === "PUT /api/config")).toBe(false);
+  });
   it("a refused save is an alert", async () => {
     await show();
     fail("PUT", "/api/config", 400, "invalid config: nope");

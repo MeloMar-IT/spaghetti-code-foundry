@@ -158,11 +158,13 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 - Each skill package has a SHA-256 digest over all its files. Administrator and built-in skills can only be selected when the digest matches the pin in `skills.lock.json` (exact `id@version`, no fallback to another version).
 - Repository skills are `unapproved` and cannot be pinned.
 - The lock is written with the guarded store code (mode 0600, no symlinks); an unreadable lock makes every skill `unverified` instead of trusted. Health shows changes and lock problems without paths.
+- A library source with `trust: community` is used only when it is enabled, has a `review` of its maintainer and licence, and the review names the approved commit. A repository on the shipped community list cannot be given another trust tier. Both are checked when `skill-sources.yaml` is read, before `scf skills import` fetches or `scf skills scan` reads anything.
 
 **Limits.**
 - The lock detects a change after the pin, not a bad first copy. A person must check the package before `scf skills pin`.
 - Built-in skills are pinned at server start without a person, because they ship with the release.
 - Whoever can write the data folder can rewrite the lock.
+- The `review` is a person's record in `skill-sources.yaml`. The check is offline: it cannot verify the maintainer, the licence or the content of the commit.
 
 ## Skill tools and connectors
 

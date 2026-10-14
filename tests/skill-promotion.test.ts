@@ -4,7 +4,8 @@ import { prepareImport, type SourceTree, type TreeEntry } from "../src/skills/im
 import { collectLicenceEvidence, type LicenceEvidence } from "../src/skills/licence.js";
 import { LICENCE_TEMPLATES } from "../src/skills/licence-rules.js";
 import { normalizeImport, type NormalizedSkill } from "../src/skills/normalize.js";
-import { attributionProblem, promoteImport } from "../src/skills/promotion.js";
+import { reviewImport, type ImportLicenceReview } from "../src/skills/licence-review.js";
+import { attributionProblem, licenceReviewRequired, promoteImport } from "../src/skills/promotion.js";
 import type { SkillLibrarySource } from "../src/skills/sources.js";
 
 const COMMIT = "a".repeat(40);
@@ -175,5 +176,64 @@ describe("promoteImport: excluded skills", () => {
     expect(r.promoted.map((p) => p.skill.provenance.name)).toEqual(["ok"]);
     expect(r.manifest.refused.map((x) => [x.root, x.status])).toEqual([["skills/conn", "excluded"], ["skills/push", "excluded"], ["skills/web", "excluded"]]);
     expect(r.manifest.refused[0]!.reasons.join(" ")).toContain("github");
+  });
+});
+
+describe("promoteImport with a licence review", () => {
+  const FILES = { "skills/a/SKILL.md": md("a"), "skills/a/LICENSE": MIT, "skills/b/SKILL.md": md("b", "license: Proprietary\n"), "skills/b/LICENSE": MIT };
+  type Setup = ReturnType<typeof setup>;
+  const reviewed = (s: Setup, over: Partial<SkillLibrarySource["licence"]> = {}) => {
+    const review = reviewImport({ allow: s.src.licence.allow, prep: s.prep, evidence: s.evidence });
+    const src = { ...s.src, licence: { ...s.src.licence, reviewed: review.classification.digest, ...over } };
+    return { review, src };
+  };
+  const go = (s: Setup, o: { review?: ImportLicenceReview; src: SkillLibrarySource; skills?: readonly NormalizedSkill[]; evidence?: LicenceEvidence; record?: Setup["prep"]["record"] }) =>
+    promoteImport({ source: o.src, record: o.record ?? s.prep.record, skills: o.skills ?? s.skills, evidence: o.evidence ?? o.review?.evidence ?? s.evidence, retrievedAt: NOW, ...(o.review ? { review: o.review } : {}) });
+  const notUsable = (f: () => unknown) => expect(f).toThrowError(expect.objectContaining({ code: "not-usable" }));
+
+  it("behaves as before for a source without a review", () => {
+    const s = setup(FILES);
+    expect(licenceReviewRequired(s.src)).toBe(false);
+    expect(go(s, { src: s.src }).promoted.map((p) => p.skill.provenance.name)).toEqual(["a"]);
+  });
+
+  it("promotes with a matching digest and refuses with review for a stale one; others keep their status", () => {
+    const s = setup(FILES);
+    expect(go(s, reviewed(s)).promoted.map((p) => p.skill.provenance.name)).toEqual(["a"]);
+    const r = go(s, reviewed(s, { reviewed: "sha256:" + "0".repeat(64) }));
+    expect(r.promoted).toEqual([]);
+    expect(r.manifest.refused.map((x) => [x.root, x.status])).toEqual([["skills/a", "review"], ["skills/b", "rejected"]]);
+  });
+
+  it("throws not-usable for a review that is absent, copied, or of other input", () => {
+    const s = setup(FILES);
+    const ok = reviewed(s);
+    notUsable(() => go(s, { src: ok.src }));
+    notUsable(() => go(s, { src: ok.src, review: { ...ok.review } }));
+    notUsable(() => go(s, { ...ok, record: { ...s.prep.record, digest: "sha256:" + "1".repeat(64) } }));
+    notUsable(() => go(s, { ...ok, evidence: { ...s.evidence } }));
+    notUsable(() => go(s, { review: ok.review, src: { ...ok.src, licence: { ...ok.src.licence, allow: ["MIT", "BSD-3-Clause"] } } }));
+    const other = setup({ ...FILES, "skills/a/SKILL.md": md("a", "license: MIT\n") });
+    notUsable(() => go(s, { ...ok, skills: other.skills.filter((x) => x.provenance.name === "a") }));
+  });
+
+  it("throws not-usable when the evidence of the review is changed after reviewImport", () => {
+    const base = setup(FILES);
+    const added = reviewed(base);
+    added.review.evidence.files.push({ path: "LICENSE", dir: ".", kind: "licence", content: Buffer.from(MIT) });
+    notUsable(() => go(base, added));
+    const changed = reviewed(setup(FILES));
+    const file = changed.review.evidence.files.find((f) => f.path === "skills/a/LICENSE")!;
+    (file.content as Uint8Array)[0] = 0x58;
+    notUsable(() => go(base, changed));
+  });
+
+  it("binds the declarations of the skills that are not promoted", () => {
+    const s = setup(FILES);
+    const withB = reviewed(s);
+    const r = go(s, { ...withB, skills: s.skills.filter((x) => x.provenance.name === "a") });
+    expect(r.promoted.map((p) => p.skill.provenance.name)).toEqual(["a"]);
+    const plain = setup({ ...FILES, "skills/b/SKILL.md": md("b") });
+    expect(reviewed(plain).review.classification.digest).not.toBe(withB.review.classification.digest);
   });
 });

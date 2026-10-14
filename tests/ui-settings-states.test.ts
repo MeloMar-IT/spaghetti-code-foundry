@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { describeSettings } from "../src/settings/describe.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -31,7 +32,7 @@ beforeEach(() => {
   (globalThis as any).fetch = async (url: string, init: { method: string; body?: string }) => {
     if (init.method === "GET") {
       if (configGate) await configGate;
-      return url === "/api/config" ? reply(config) : reply(info);
+      return url === "/api/config" ? reply(config) : url === "/api/settings" ? reply({ settings: describeSettings(), startup: [] }) : reply(info);
     }
     sent.push({ method: init.method, url, body: init.body ? JSON.parse(init.body) : undefined });
     if (url === "/api/clean") return reply({ workspaces: [], runs: [], kept: [], freedMb: 0 });
@@ -53,6 +54,7 @@ const toastText = () => document.getElementById("toast")!.textContent as string;
 const root = () => document.getElementById("modal-root") as unknown as FakeElement;
 const button = (el: FakeElement, text: string) => el.all("button").find((b) => b.textContent === text)!;
 const status = (main: FakeElement) => main.all("span").find((s) => (s.attrs.class ?? "").startsWith("status") && s.attrs.role === "status")!;
+const userRuns = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "User runs")!;
 const draw = async () => {
   const main = new FakeElement("div");
   await admin.renderSettings(main);
@@ -104,5 +106,32 @@ describe("save", () => {
     expect(main.all("div").find((d) => d.attrs.class === "errors")!.textContent).toContain("concurrency must be at least 1");
     expect(main.all("input").filter((i) => i.attrs["aria-invalid"] === "true").length).toBeGreaterThan(0);
     expect(button(main, "Save").disabled).toBe(false);
+  });
+  it("never reaches Saving… when a list at a new field is refused", async () => {
+    const main = await draw();
+    const pass = userRuns(main).all("textarea")[0]!;
+    pass.value = "GH_TOKEN";
+    pass.fire("change", { target: pass });
+    button(main, "Save").click();
+    await flush();
+    expect(status(main).textContent).toBe("Not saved.");
+    expect(sent.filter((s) => s.method === "PUT")).toHaveLength(0);
+  });
+  it("keeps the alert and the mark of a list edited while a save runs", async () => {
+    const main = await draw();
+    const g = gate();
+    saveGate = g.promise;
+    button(main, "Save").click();
+    await flush();
+    expect(status(main).textContent).toBe("Saving…");
+    const pass = userRuns(main).all("textarea")[0]!;
+    pass.value = "GH_TOKEN";
+    pass.fire("change", { target: pass });
+    g.release();
+    await flush();
+    expect(status(main).textContent).toMatch(/^Saved at /);
+    const now = userRuns(main).all("textarea")[0]!;
+    expect(now.attrs["aria-invalid"]).toBe("true");
+    expect(main.all("div").filter((d) => d.attrs.role === "alert").map((d) => d.textContent).join("")).toContain("GH_TOKEN");
   });
 });

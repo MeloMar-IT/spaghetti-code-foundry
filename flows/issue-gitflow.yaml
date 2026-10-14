@@ -198,6 +198,7 @@ steps:
     description: Read the GitHub issue as plain text
     run: |
       case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the 'issue' variable to an issue number (got '$FACTORY_VAR_ISSUE')"; exit 1;; esac
+      gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json body --jq .body > "{{run.dir}}/issue-body.md" 2>/dev/null || rm -f "{{run.dir}}/issue-body.md"
       gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json number,title,body,url,labels,comments --jq '
         "# #\(.number): \(.title)\n\(.url)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body)\n"
         + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))'
@@ -268,6 +269,7 @@ steps:
     type: shell
     timeout_sec: 7200
     run: |-
+      rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt"
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
@@ -287,9 +289,11 @@ steps:
         # Remember a pass of a clean tree (it must still be clean: the tests may not have changed tracked files).
         if [ "$code" -eq 0 ] && [ -n "$key" ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then mkdir -p "$passed_dir" && echo "run $FACTORY_RUN_ID, $(date -u +%Y-%m-%dT%H:%MZ)" > "$passed_dir/$key"; fi
       fi
+      if [ "$code" -ne 0 ]; then node "$FACTORY_TOOLS/baseline-tests" red "$marker" "{{run.dir}}" && code=0
+      else node "$FACTORY_TOOLS/baseline-tests" green "{{run.dir}}" || true; fi
       exit "$code"
     on_failure: baseline_failed
-    description: Tests must pass before we change anything (a failing run is tried once more)
+    description: Tests must pass before we change anything, unless every failing test is one the issue names to fix (a failing run is tried once more)
   - id: fetch_main
     type: shell
     repo_access: true
@@ -302,6 +306,7 @@ steps:
     timeout_sec: 7200
     run: |-
       git checkout -q -B "$FACTORY_VAR_MAIN_BRANCH" "origin/$FACTORY_VAR_MAIN_BRANCH" || { echo "cannot switch to $FACTORY_VAR_MAIN_BRANCH"; exit 1; }
+      rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt"
       rm -f "{{run.dir}}/baseline-sha"; git rev-parse HEAD > "{{run.dir}}/baseline-sha.new"
       git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers
       cmd="$FACTORY_VAR_TEST_CMD"
@@ -314,6 +319,8 @@ steps:
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      if [ "$code" -ne 0 ]; then node "$FACTORY_TOOLS/baseline-tests" red "$marker" "{{run.dir}}" && code=0
+      else node "$FACTORY_TOOLS/baseline-tests" green "{{run.dir}}" || true; fi
       if [ "$code" -eq 0 ]; then mv "{{run.dir}}/baseline-sha.new" "{{run.dir}}/baseline-sha"; fi
       exit "$code"
     on_failure: baseline_failed
@@ -1021,8 +1028,48 @@ steps:
         printf '%s\n' "$changed" | grep -qx "$f" || { echo "documentation not updated: $f"; bad=1; }
       done
       [ "$bad" = 0 ] && echo "guard ok: $(printf '%s\n' "$changed" | wc -l | tr -d " ") files changed"
+      [ "$bad" = 0 ] && [ -f "{{run.dir}}/baseline-red.json" ] && echo "BASELINE: red — next: check the tests this issue fixes"
       exit "$bad"
     on_failure: docs
+    routes:
+      - if: "^BASELINE: red\\b"
+        goto: fixed_tests
+  - id: fixed_tests
+    type: shell
+    jump_only: true
+    timeout_sec: 7200
+    description: "A story that fixes failing tests: the named tests pass now and every test that passed before still passes"
+    run: |-
+      [ -f "{{run.dir}}/baseline-red.json" ] || { echo "nothing to check: the tests passed before the change"; exit 0; }
+      git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers
+      cmd="$FACTORY_VAR_TEST_CMD"
+      if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
+      if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
+      marker="{{run.dir}}/tests.marker"; touch "$marker"
+      node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"
+      echo "\$ $cmd"
+      "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
+      if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
+      tail -150 "{{run.dir}}/tests.log"
+      echo; echo "=== summary ==="
+      { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" verify "$marker" "{{run.dir}}" || code=1; fi
+      if [ "$code" -ne 0 ]; then exit 1; fi
+    on_success: commit
+    on_failure: fix_fixed_tests
+  - id: fix_fixed_tests
+    type: claude
+    resume: implement
+    jump_only: true
+    max_visits: 2
+    prompt: |-
+      This issue is meant to fix tests that failed before the change. Some of them do not pass yet, or a test that
+      passed before the change does not pass (or did not run) now (below). Fix the code so they pass. Never delete,
+      disable, rename or weaken tests to make them pass; change a test only if the test itself is wrong, and say so.
+      You may run the build and the tests yourself (e.g. `./gradlew test --tests <Class>`, `npm test`); after you, the flow runs: {{vars.test_cmd}}
+
+      {{steps.fixed_tests.output}}
+    on_success: final_guard
   - id: commit
     type: shell
     repo_access: true
@@ -1174,10 +1221,12 @@ steps:
     description: The merged develop must pass the tests before it is pushed
     run: |-
       export FACTORY_VAR_TEST_SLOTS=0
+      [ -f "{{run.dir}}/baseline-red.json" ] && export FACTORY_VAR_REUSE_TEST_RESULTS=no
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"
+      node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"
       passed_dir="{{run.dir}}/../../tested"; key=""
       if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then key=$(printf '%s\n%s\n' "$(git rev-parse "HEAD^{tree}" 2>/dev/null)" "$cmd" | shasum | cut -c1-40); fi
       echo "\$ $cmd"
@@ -1193,6 +1242,7 @@ steps:
         # Remember a pass of a clean tree (it must still be clean: the tests may not have changed tracked files).
         if [ "$code" -eq 0 ] && [ -n "$key" ] && [ -z "$(git status --porcelain 2>/dev/null)" ]; then mkdir -p "$passed_dir" && echo "run $FACTORY_RUN_ID, $(date -u +%Y-%m-%dT%H:%MZ)" > "$passed_dir/$key"; fi
       fi
+      if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" verify "$marker" "{{run.dir}}" || code=1; fi
       exit "$code"
     on_success: push_develop
     on_failure: fix_develop
@@ -1288,12 +1338,14 @@ steps:
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"
+      node "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"
       echo "\$ $cmd"
       "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       if [ "$code" -ne 0 ]; then echo "the tests failed — running them once more (a test can fail by chance on a busy machine)"; touch "$marker"; mv -f "{{run.dir}}/tests.log" "{{run.dir}}/tests.first.log"; "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?; if [ "$code" -eq 0 ]; then echo "passed the second time: a flaky test, not a real failure"; else rm -f "{{run.dir}}/tests.first.log"; fi; fi
       tail -150 "{{run.dir}}/tests.log"
       echo; echo "=== summary ==="
       { "$FACTORY_TOOLS/test-summary" "$marker"; [ "$code" -eq 0 ] && echo "result: PASSED" || echo "result: FAILED (exit $code)"; } | tee "{{run.dir}}/last-tests.txt"
+      if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" verify "$marker" "{{run.dir}}" || code=1; fi
       if [ "$code" -eq 0 ]; then printf '%s\n' "$tested" > "{{run.dir}}/main-tested"; fi
       exit "$code"
     on_success: push_main
@@ -1544,6 +1596,7 @@ steps:
         echo "- round 1: $(verdict "$FACTORY_OUT_REVIEW_1")"
         [ -n "$FACTORY_OUT_REVIEW_2" ] && echo "- round 2: $(verdict "$FACTORY_OUT_REVIEW_2")"
         echo; echo "### Tests"; echo '```'; cat "{{run.dir}}/last-tests.txt"; echo '```'
+        [ -s "{{run.dir}}/baseline-note.md" ] && { echo; cat "{{run.dir}}/baseline-note.md"; }
         echo; echo "### Files changed"; echo '```'; git diff --stat "$from" "$sha" | tail -40; echo '```'
         [ -n "$note" ] && { echo; echo "$note"; }
         echo; echo "_${last}_"
@@ -1564,4 +1617,6 @@ steps:
   - id: baseline_failed
     type: shell
     jump_only: true
-    run: echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log"; exit 1
+    description: "Stop: the tests fail before any change, and not only the tests the issue names to fix"
+    resume_from: pull_ticket
+    run: echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log"; echo; cat "{{run.dir}}/baseline-verdict.txt" 2>/dev/null; exit 1

@@ -41,7 +41,7 @@ export interface DetectorInput {
   /** When a job last started (or the scheduler was created). */
   lastStart?: string;
   /** Set while the server waits to restart. */
-  restart?: { why: "new_version" | "data_folder"; since: string };
+  restart?: { why: "new_version" | "data_folder" | "settings"; since: string };
   /** Usual step times from older succeeded runs. */
   history?: DurationHistory;
   /** The record of the self-update (`broken`: it could not be read). */

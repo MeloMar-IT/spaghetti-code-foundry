@@ -241,6 +241,22 @@ describe("data folder", () => {
     expect(scf(["--help"], home).status).toBe(0);
   });
 
+  it("scf skills selections check is in the help and does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const file = join(home, "skill-selections.yaml");
+    const entry = `{source: s, skill: k, digest: "sha256:${"a".repeat(64)}", scope: portable, category: c, capabilities: [x], owner: "@octocat", reviewed: "2026-01-01"}`;
+    writeFileSync(file, `schema: 1\nselections:\n  - ${entry}\n`);
+    expect(scf(["--help"], home).stdout).toContain("scf skills selections check [<file>]");
+    const r = scf(["skills", "selections", "check", file], home);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("OK 1 selections");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
+    expect(scf(["skills", "selections", "check", file], home).status).toBe(0);
+  });
+
   it("scf skills sources check does not choose or move the data folder", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);
@@ -260,6 +276,7 @@ describe("data folder", () => {
         "    licence: {allow: [MIT]}",
         "    update: {cadence: weekly}",
         "    owner: '@octocat'",
+        "    review: {by: '@octocat', on: '2026-01-01', commit: '0123456789abcdef0123456789abcdef01234567', licence: MIT}",
         "",
       ].join("\n"),
     );
@@ -272,6 +289,19 @@ describe("data folder", () => {
     writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
     expect(scf(["flows"], home).status).toBe(1);
     expect(scf(["skills", "sources", "check", file], home).status).toBe(0);
+  });
+
+  it("scf skills connectors does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const r = scf(["skills", "connectors"], home);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("awesome-copilot");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
+    expect(scf(["skills", "connectors"], home).status).toBe(0);
+    expect(scf(["--help"], home).stdout).toContain("scf skills connectors");
   });
 
   it("scf skills scan reads the old data folder and does not move, copy or lock it", () => {
@@ -293,6 +323,7 @@ describe("data folder", () => {
         "    licence: {allow: [MIT]}",
         "    update: {cadence: weekly}",
         "    owner: '@octocat'",
+        `    review: {by: '@octocat', on: '2026-01-01', commit: '${commit}', licence: MIT}`,
         "",
       ].join("\n"),
     );
@@ -331,6 +362,106 @@ describe("data folder", () => {
     const r = scf(["skills", "scan"], home);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("scf skills scan <source-id> [<exceptions-file>]");
+  });
+
+  it("scf skills assess is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills assess <source-id>");
+    const r = scf(["skills", "assess"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("scf skills assess <source-id>");
+  });
+
+  it("scf skills assess reads the old data folder and does not move, copy or lock it", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const commit = "a".repeat(40);
+    writeFileSync(
+      join(home, "skill-sources.yaml"),
+      [
+        "schema: 1",
+        "sources:",
+        "  - id: example-skills",
+        "    repository: https://github.com/obra/superpowers",
+        "    status: enabled",
+        `    ref: {track: main, approved: '${commit}'}`,
+        "    paths: [skills]",
+        "    adapter: agent-skills",
+        "    trust: community",
+        "    licence: {allow: [MIT]}",
+        "    update: {cadence: weekly}",
+        "    owner: '@octocat'",
+        `    review: {by: '@octocat', on: '2026-01-01', commit: '${commit}', licence: MIT}`,
+        "",
+      ].join("\n"),
+    );
+    const parsed = readSources(join(home, "skill-sources.yaml"));
+    if (parsed.state !== "ok") throw new Error("bad sources");
+    const body = "---\nname: demo\ndescription: A demo skill.\n---\n\nBody.\n";
+    const entry: TreeEntry = { path: "skills/demo/SKILL.md", kind: "file", size: Buffer.byteLength(body), id: "id:1" };
+    const staged = publishImport(prepareImport(parsed.manifest.sources[0]!, { list: () => [entry], read: () => [Buffer.from(body)] }), { home: oldDir });
+    expect(staged.state).toBe("staged");
+    const snap = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        const p = join(d, e.name);
+        const st = statSync(p);
+        return e.isDirectory() ? [`${p} ${st.mode} ${st.mtimeMs}`, ...snap(p)] : [`${p} ${st.mode} ${st.mtimeMs} ${readFileSync(p).toString("hex")}`];
+      });
+    const before = snap(home);
+    const r = spawnSync(process.execPath, [cli, "skills", "assess", "example-skills"], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("not-selected");
+    expect(r.stdout).toContain("ASSESSED 1 skill from github.com/obra/superpowers@aaaaaaaaaaaa");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    expect(snap(home)).toEqual(before);
+  });
+
+  it("scf skills evaluate checks its input before any fetch and leaves the old data folder alone", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    writeFileSync(
+      join(home, "skill-sources.yaml"),
+      [
+        "schema: 1",
+        "sources:",
+        "  - id: example-skills",
+        "    repository: https://github.com/example/skills",
+        "    status: disabled",
+        "    reason: domain not selected",
+        "    ref: {track: main}",
+        "    paths: [skills]",
+        "    adapter: agent-skills",
+        "    trust: community",
+        "    licence: {allow: [MIT]}",
+        "    update: {cadence: weekly}",
+        "    owner: '@octocat'",
+        "",
+      ].join("\n"),
+    );
+    const snap = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        const p = join(d, e.name);
+        return e.isDirectory() ? [p, ...snap(p)] : [`${p} ${readFileSync(p).toString("hex")}`];
+      });
+    const before = snap(home);
+    expect(scf(["--help"], home).stdout).toContain("scf skills evaluate <source-id>");
+    for (const args of [[], ["Bad_Id"], ["example-skills"]]) {
+      const r = spawnSync(process.execPath, [cli, "skills", "evaluate", ...args], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+      expect(r.status).not.toBe(0);
+      expect(r.stdout + r.stderr).toMatch(args.length === 1 && args[0] === "example-skills" ? /PROBLEM/ : /scf skills evaluate <source-id>/);
+      expect(r.stderr).not.toContain("note:");
+      expect(existsSync(newDir)).toBe(false);
+      expect(snap(home)).toEqual(before);
+    }
+  });
+
+  it("scf skills promote check is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills promote check <source-id>");
+    const r = scf(["skills", "promote"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("scf skills promote check <source-id> [<exceptions-file>]");
   });
 
   it("--help shows the old folder while only that exists, and does not move it", () => {

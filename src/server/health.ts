@@ -74,7 +74,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
   const problems: NextStep[] = [];
 
   if (ctx.restart) {
-    problems.push(nextStep("restart", {}, { restartWhy: ctx.restart.why, runsLeft: q.active.length + q.pending.length }));
+    problems.push(nextStep("restart", {}, { restartWhy: ctx.restart.why, runsLeft: ctx.scheduler.draining ? q.active.length : q.active.length + q.pending.length }));
   }
 
   const limits = new Map<string, RunSummary>();

@@ -27,3 +27,21 @@ export const EVALUATION_LIMITS = {
   scenarios: 200, inputs: 20, inputChars: 2000, samples: 1000, findings: 500, evidence: 500, detailChars: 200, reasons: 50,
   repositoryKeyChars: 500, walkDepth: 8, walkNodes: 20000,
 } as const;
+
+// The suite file (evaluation-suite.ts) and the offline scorers (evaluation-score.ts).
+export const EVALUATION_SUITE_DIGEST_HEADER = "scf-skill-evaluation-suite-v1\n";
+export const EVALUATION_SUITE_FILE = "suite.yaml";
+/** `compared: 30` keeps the joined `with` input at most 30 × 64 + 29 = 1949 characters, below `EVALUATION_LIMITS.inputChars`. */
+export const EVALUATION_SUITE_LIMITS = {
+  fileBytes: 262144, perDimension: 50, scenarios: 100, taskChars: 2000, modules: 20, pathChars: 200, compared: 30,
+  maxTokens: 20000, maxChars: 1024,
+  fixtureFiles: 200, fixtureEntries: 400, fixtureFileBytes: 65536, fixtureTotalBytes: 1048576, fixtureDepth: 8,
+} as const;
+/** The dimensions the offline scorers fill. */
+export const EVALUATION_OFFLINE: readonly EvaluationDimension[] = ["selection", "conflicts", "context", "tools"];
+export const EVALUATION_FINDING_CODES = [
+  "not-offered", "offered-unexpectedly",
+  "version-reuse", "id-conflict", "fork", "capability-overlap", "upgrade-of", "baseline-not-replaceable", "compared-skill-missing",
+  "instructions-over-limit", "instructions-over-budget", "description-over-limit", "description-over-budget", "description-cut", "budget-invalid",
+  "tool-not-approved", "connector-unavailable", "scan-high-open", "safety-mismatch", "findings-truncated",
+] as const;

@@ -192,6 +192,15 @@ describe("parseNote and noteFrom", () => {
   });
 });
 
+describe("explainFailure at baseline_failed", () => {
+  it("makes no model call: the facts are known", async () => {
+    const run = failed({ reason: 'step "baseline_failed" failed: exit code 1' });
+    run.history = [{ ...run.history[0]!, id: "baseline_failed" }];
+    expect(await ask(run)).toBeUndefined();
+    expect(existsSync(logFile(run))).toBe(false);
+  });
+});
+
 describe("config", () => {
   it("has a default and rejects unknown keys", () => {
     expect(ConfigSchema.parse({}).failure_summary).toEqual({ enabled: true, model: "haiku" });

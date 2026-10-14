@@ -763,6 +763,19 @@ write("issue-plan", {
     'fi',
     'exit "$code"',
   ].join("\n");
+  // A story that fixes failing tests: when the tests fail before any change and every failing test is one the issue
+  // names ("## Failing tests to fix"), the run goes on (tools/baseline-tests decides, from the JUnit reports).
+  const BASELINE_CLEAN = 'rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt"';
+  const baselineCheck = [
+    'if [ "$code" -ne 0 ]; then node "$FACTORY_TOOLS/baseline-tests" red "$marker" "{{run.dir}}" && code=0',
+    'else node "$FACTORY_TOOLS/baseline-tests" green "{{run.dir}}" || true; fi',
+  ].join("\n");
+  const withBaselineCheck = (run) => BASELINE_CLEAN + "\n" + swap(run, '\nexit "$code"', "\n" + baselineCheck + '\nexit "$code"');
+  // After a change, with a red baseline: the named tests pass and no test that passed before was lost or broke.
+  // Used on every full run that gates a push or merge (the report files of this very run are read, never a cache).
+  // The old reports go first, so a runner that skips unchanged work (Gradle's UP-TO-DATE) has to write new ones.
+  const withPurge = (run) => swap(run, 'touch "$marker"', 'touch "$marker"\nnode "$FACTORY_TOOLS/baseline-tests" purge "{{run.dir}}"');
+  const verifyCheck ='if [ -f "{{run.dir}}/baseline-red.json" ]; then node "$FACTORY_TOOLS/baseline-tests" verify "$marker" "{{run.dir}}" || code=1; fi';
   const tests = (id, fixId, next) => [
     { id, type: "shell", timeout_sec: 7200, run: testsRun, on_failure: fixId, ...(next ? { on_success: next } : {}) },
     {
@@ -840,6 +853,7 @@ write("issue-plan", {
           "done",
         ] : []),
         '[ "$bad" = 0 ] && echo "guard ok: $(printf \'%s\\n\' "$changed" | wc -l | tr -d " ") files changed"',
+        ...(checkDocs ? ['[ "$bad" = 0 ] && [ -f "{{run.dir}}/baseline-red.json" ] && echo "BASELINE: red — next: check the tests this issue fixes"'] : []),
         'exit "$bad"',
       ].join("\n");
 
@@ -861,7 +875,7 @@ write("issue-plan", {
       description: "Read the plan comments again, to check the skills of the plan against the Foundry's own record",
       run: 'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json comments,labels | node "$FACTORY_TOOLS/plan-comment"',
     },
-    { ...tests("baseline_tests", "baseline_failed")[0], run: testsRunReuse, description: "Tests must pass before we change anything (a failing run is tried once more)", on_failure: "baseline_failed" },
+    { ...tests("baseline_tests", "baseline_failed")[0], run: withBaselineCheck(testsRunReuse), description: "Tests must pass before we change anything, unless every failing test is one the issue names to fix (a failing run is tried once more)", on_failure: "baseline_failed" },
     {
       id: "implement",
       type: "claude",
@@ -930,6 +944,37 @@ write("issue-plan", {
       description: "Same checks as guard, plus: required docs were updated",
       run: guardRun(true),
       on_failure: "docs",
+      // A story that fixes failing tests (red baseline that went on) is checked once more with the full tests.
+      routes: [{ if: "^BASELINE: red\\b", goto: "fixed_tests" }],
+    },
+    {
+      id: "fixed_tests",
+      type: "shell",
+      jump_only: true,
+      timeout_sec: 7200,
+      description: "A story that fixes failing tests: the named tests pass now and every test that passed before still passes",
+      run: [
+        '[ -f "{{run.dir}}/baseline-red.json" ] || { echo "nothing to check: the tests passed before the change"; exit 0; }',
+        swap(withPurge(testsRunRetry), 'exit "$code"', verifyCheck + '\nif [ "$code" -ne 0 ]; then exit 1; fi'),
+      ].join("\n"),
+      on_success: "commit",
+      on_failure: "fix_fixed_tests",
+    },
+    {
+      id: "fix_fixed_tests",
+      type: "claude",
+      resume: "implement",
+      jump_only: true,
+      max_visits: 2,
+      prompt: [
+        "This issue is meant to fix tests that failed before the change. Some of them do not pass yet, or a test that",
+        "passed before the change does not pass (or did not run) now (below). Fix the code so they pass. Never delete,",
+        "disable, rename or weaken tests to make them pass; change a test only if the test itself is wrong, and say so.",
+        RUN_HINT,
+        "",
+        "{{steps.fixed_tests.output}}",
+      ].join("\n"),
+      on_success: "final_guard",
     },
     {
       id: "commit",
@@ -966,6 +1011,7 @@ write("issue-plan", {
         '  echo "- round 1: $(verdict "$FACTORY_OUT_REVIEW_1")"',
         '  [ -n "$FACTORY_OUT_REVIEW_2" ] && echo "- round 2: $(verdict "$FACTORY_OUT_REVIEW_2")"',
         '  echo; echo "### Tests"; echo \'```\'; cat "{{run.dir}}/last-tests.txt"; echo \'```\'',
+        '  [ -s "{{run.dir}}/baseline-note.md" ] && { echo; cat "{{run.dir}}/baseline-note.md"; }',
         '  echo; echo "### Files changed"; echo \'```\'; git show --stat --format= HEAD | tail -40; echo \'```\'',
         `  echo; echo "${SHIPS_DAILY}"`,
         '  echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \\',
@@ -977,7 +1023,11 @@ write("issue-plan", {
       id: "baseline_failed",
       type: "shell",
       jump_only: true,
-      run: 'echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log"; exit 1',
+      description: "Stop: the tests fail before any change, and not only the tests the issue names to fix",
+      // The owner can add the failing tests to the issue: a resume reads the issue again.
+      resume_from: "pull_ticket",
+      // The log tail first: the verdict (the failing tests) comes last, so a cut of the long log keeps it.
+      run: 'echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log"; echo; cat "{{run.dir}}/baseline-verdict.txt" 2>/dev/null; exit 1',
     },
     {
       id: "wait_for_merge",
@@ -989,6 +1039,15 @@ write("issue-plan", {
       on_success: "stop",
     },
   ];
+  // The issue text goes to a file (never into a shell command): tools/baseline-tests reads the names of the tests to fix from it.
+  patch(s, "pull_ticket", {
+    run: swap(
+      s.find((x) => x.id === "pull_ticket").run,
+      'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json number,',
+      'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json body --jq .body > "{{run.dir}}/issue-body.md" 2>/dev/null || rm -f "{{run.dir}}/issue-body.md"\n' +
+        'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json number,',
+    ),
+  });
   s.find((x) => x.id === "docs").max_visits = 2;
   s.find((x) => x.id === "docs").prompt += "\n\n{{steps.final_guard.output}}";
   write("issue-code-daily", {
@@ -1305,8 +1364,9 @@ write("issue-plan", {
     description: "Hotfix: the tests must pass on the newest main before we change anything",
     // The commit that is tested here is the one the hotfix branch starts from (see hotfix_branch).
     run: 'git checkout -q -B "$FACTORY_VAR_MAIN_BRANCH" "origin/$FACTORY_VAR_MAIN_BRANCH" || { echo "cannot switch to $FACTORY_VAR_MAIN_BRANCH"; exit 1; }\n' +
+      BASELINE_CLEAN + '\n' +
       'rm -f "{{run.dir}}/baseline-sha"; git rev-parse HEAD > "{{run.dir}}/baseline-sha.new"\n' +
-      testsRunRetry.replace('exit "$code"', 'if [ "$code" -eq 0 ]; then mv "{{run.dir}}/baseline-sha.new" "{{run.dir}}/baseline-sha"; fi\nexit "$code"'),
+      swap(testsRunRetry, 'exit "$code"', baselineCheck + '\nif [ "$code" -eq 0 ]; then mv "{{run.dir}}/baseline-sha.new" "{{run.dir}}/baseline-sha"; fi\nexit "$code"'),
     on_success: "hotfix_branch",
     on_failure: "baseline_failed",
   };
@@ -1372,7 +1432,7 @@ write("issue-plan", {
       HOT_ONLY,
       '[ "$(git branch --show-current)" = "$FACTORY_VAR_MAIN_BRANCH" ] || { echo "not on $FACTORY_VAR_MAIN_BRANCH"; exit 1; }',
       'rm -f "{{run.dir}}/main-tested"; tested=$(git rev-parse HEAD)',
-      testsRunRetry.replace('exit "$code"', 'if [ "$code" -eq 0 ]; then printf \'%s\\n\' "$tested" > "{{run.dir}}/main-tested"; fi\nexit "$code"'),
+      swap(withPurge(testsRunRetry), 'exit "$code"', verifyCheck + '\nif [ "$code" -eq 0 ]; then printf \'%s\\n\' "$tested" > "{{run.dir}}/main-tested"; fi\nexit "$code"'),
     ].join("\n"),
     on_success: "push_main",
     on_failure: "red_main",
@@ -1696,7 +1756,9 @@ write("issue-plan", {
     description: "The merged develop must pass the tests before it is pushed",
     // This run holds the merge turn of the repository: its tests start at once, without waiting for a test
     // slot behind other stories (everything that wants to merge waits for this run).
-    run: 'export FACTORY_VAR_TEST_SLOTS=0\n' + testsRunReuse,
+    // With a red baseline that went on, the result of this very run is compared (a cached pass has no reports).
+    run: 'export FACTORY_VAR_TEST_SLOTS=0\n[ -f "{{run.dir}}/baseline-red.json" ] && export FACTORY_VAR_REUSE_TEST_RESULTS=no\n' +
+      swap(withPurge(testsRunReuse), '\nexit "$code"', "\n" + verifyCheck + '\nexit "$code"'),
     on_success: "push_develop",
     on_failure: "fix_develop",
   };
@@ -1817,6 +1879,7 @@ write("issue-plan", {
       '  echo "- round 1: $(verdict "$FACTORY_OUT_REVIEW_1")"',
       '  [ -n "$FACTORY_OUT_REVIEW_2" ] && echo "- round 2: $(verdict "$FACTORY_OUT_REVIEW_2")"',
       '  echo; echo "### Tests"; echo \'```\'; cat "{{run.dir}}/last-tests.txt"; echo \'```\'',
+      '  [ -s "{{run.dir}}/baseline-note.md" ] && { echo; cat "{{run.dir}}/baseline-note.md"; }',
       '  echo; echo "### Files changed"; echo \'```\'; git diff --stat "$from" "$sha" | tail -40; echo \'```\'',
       '  [ -n "$note" ] && { echo; echo "$note"; }',
       '  echo; echo "_${last}_"',

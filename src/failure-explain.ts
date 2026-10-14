@@ -7,7 +7,7 @@ import { redactText } from "./credentials/redact.js";
 import type { FailureNote, RunSummary } from "./engine/state.js";
 import { spentToday, spentTodayBy } from "./engine/state.js";
 import { tokenVarNames } from "./engine/isolation.js";
-import { classifyFailure, failedIndex, hideFolders, safeSentence } from "./failure.js";
+import { classifyFailure, failedIndex, hideFolders, isBaselineStop, safeSentence } from "./failure.js";
 import { runClaude } from "./steps/claude.js";
 
 /** The most a failure summary may cost, and the least that is worth a call. */
@@ -91,6 +91,8 @@ export async function explainFailure(i: ExplainInput): Promise<Explained | undef
   if (process.env.FACTORY_NO_FAILURE_MODEL || process.env.SCF_NO_FAILURE_MODEL) return undefined;
   if (!config.failure_summary.enabled || run.status !== "failed" || i.signal?.aborted) return undefined;
   if (classifyFailure({ ...run, failureNote: undefined }).cause !== "code") return undefined;
+  // The tests failed before any change: the facts are known and the summary is fixed text (see failureSummary).
+  if (isBaselineStop(run.history)) return undefined;
   let target: Target;
   try {
     target = toTarget(specOf(config.failure_summary.model, config), config);

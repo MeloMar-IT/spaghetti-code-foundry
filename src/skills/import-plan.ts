@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 import { skillDigest, splitFrontmatter } from "./package.js";
 import { relativePathProblem, SKILL_DIGEST_RE, SKILL_ID_RE, SKILL_LIMITS } from "./schema.js";
 import { approvedRefProblem, hasUnsafeChar, shownValue, type SkillLibrarySource } from "./sources.js";
+import { LICENCE_FILE_RE, LICENCE_LIMITS, NOTICE_FILE_RE } from "./licence-rules.js";
+import { isUtcTime } from "./release.js";
+import type { PreparedLicence } from "./import-licence.js";
 
 // Plans and prepares the import of portable SKILL.md folders from an approved source revision. Pure: no file system,
 // no process. `planImport` decides from the listing alone; `prepareImport` reads content of planned skills only.
@@ -43,6 +46,13 @@ export class SkillImportError extends Error {
     this.rejected = rejected;
   }
 }
+/** One licence or notice file of the approved commit: `{path, sha256, bytes}` when staged, `{path, problem}` when not. */
+export interface ImportLicenceFile {
+  path: string;
+  sha256?: string;
+  bytes?: number;
+  problem?: string;
+}
 export interface ImportRecord {
   schema: 1;
   source: string;
@@ -54,6 +64,16 @@ export interface ImportRecord {
   digest: string;
   skills: { root: string; name: string; digest: string; files: number; bytes: number }[];
   rejected: RejectedSkill[];
+  /** When the commit was fetched. Absent, together with licenceFiles, in an import staged before #511. */
+  retrievedAt?: string;
+  /** Licence and notice files, sorted by path. as in licence.json. Those with sha256 are staged under licence/. */
+  licenceFiles?: ImportLicenceFile[];
+}
+export interface PreparedImport {
+  record: ImportRecord;
+  recordText: string;
+  files: Map<string, Uint8Array>;
+  licence?: PreparedLicence;
 }
 
 /** UTF-8 byte order, the order `skillDigest` uses. Never `a < b`: that is UTF-16 order. */
@@ -78,9 +98,9 @@ function parentOf(p: string): string {
 const inside = (root: string, p: string) => root === "." || p === root || p.startsWith(root + "/");
 const relOf = (root: string, p: string) => (root === "." ? p : p.slice(root.length + 1));
 
-type Names = Map<string, { spelled: string; file: boolean }>;
+export type Names = Map<string, { spelled: string; file: boolean }>;
 /** Why the file path cannot live next to the names already taken. Changes nothing. */
-function nameClash(taken: Names, path: string): "twice" | "clash" | undefined {
+export function nameClash(taken: Names, path: string): "twice" | "clash" | undefined {
   const segs = path.split("/");
   for (let i = 1; i < segs.length; i++) {
     const dir = segs.slice(0, i).join("/");
@@ -92,7 +112,7 @@ function nameClash(taken: Names, path: string): "twice" | "clash" | undefined {
   return e.file && e.spelled === path ? "twice" : "clash";
 }
 /** Records the file path and every folder above it. */
-function takeName(taken: Names, path: string): void {
+export function takeName(taken: Names, path: string): void {
   const segs = path.split("/");
   for (let i = 1; i < segs.length; i++) {
     const dir = segs.slice(0, i).join("/");
@@ -297,6 +317,31 @@ export function parseImportRecord(text: string): { record: ImportRecord } | { pr
     }
     rejected.push({ root: e.root, reasons: [...(r as string[])] });
   }
+  let extra: Pick<ImportRecord, "retrievedAt" | "licenceFiles"> = {};
+  if ((raw.retrievedAt === undefined) !== (raw.licenceFiles === undefined)) return bad("retrievedAt and licenceFiles must come together");
+  if (raw.retrievedAt !== undefined) {
+    if (!isStr(raw.retrievedAt) || !isUtcTime(raw.retrievedAt)) return bad("retrievedAt is not a UTC time");
+    if (!Array.isArray(raw.licenceFiles) || raw.licenceFiles.length > LICENCE_LIMITS.files) return bad("licenceFiles is not usable");
+    const lf: ImportLicenceFile[] = [];
+    let sum = 0;
+    for (const [i, e] of raw.licenceFiles.entries()) {
+      const notUsable = () => bad(`licenceFiles[${i}] is not usable`);
+      if (!isRec(e) || !plainPath(e.path) || e.path === ".") return notUsable();
+      const name = e.path.slice(e.path.lastIndexOf("/") + 1);
+      if (!LICENCE_FILE_RE.test(name) && !NOTICE_FILE_RE.test(name)) return notUsable();
+      if (lf.length > 0 && byteCmp(lf[lf.length - 1]!.path, e.path) >= 0) return notUsable();
+      if (e.problem !== undefined) {
+        if (e.sha256 !== undefined || e.bytes !== undefined || !plainText(e.problem, 200)) return notUsable();
+        lf.push({ path: e.path, problem: e.problem });
+      } else {
+        if (!isStr(e.sha256) || !/^[0-9a-f]{64}$/.test(e.sha256) || !isInt(e.bytes, 0, LICENCE_LIMITS.fileBytes)) return notUsable();
+        sum += e.bytes;
+        lf.push({ path: e.path, sha256: e.sha256, bytes: e.bytes });
+      }
+    }
+    if (sum > LICENCE_LIMITS.totalBytes) return bad("licenceFiles hold more bytes than an import can have");
+    extra = { retrievedAt: raw.retrievedAt, licenceFiles: lf };
+  }
   const record: ImportRecord = {
     schema: 1,
     source: raw.source,
@@ -308,6 +353,7 @@ export function parseImportRecord(text: string): { record: ImportRecord } | { pr
     digest: raw.digest,
     skills,
     rejected,
+    ...extra,
   };
   if (JSON.stringify(record, null, 2) + "\n" !== text) return bad("is not in the form scf writes");
   if (importDigest(skills) !== record.digest) return bad("digest does not match the skills");
@@ -339,7 +385,7 @@ export function prepareImport(
   source: SkillLibrarySource,
   tree: SourceTree,
   opts: { limits?: { recordBytes?: number } } = {},
-): { record: ImportRecord; recordText: string; files: Map<string, Uint8Array> } {
+): PreparedImport {
   const refusal = (what: string) => new SkillImportError("not-usable", `the source cannot be imported: ${what}`);
   if (source.status !== "enabled") throw refusal("status is not enabled");
   const commit = source.ref?.approved;

@@ -5,7 +5,7 @@ import { configView, storedConfigProblem, withStoredWebhook } from "./config-vie
 import { hasAdmin } from "../auth/users.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { CONFIG_PATH, ConfigSchema, STALE_CONFIG, configVersion, editConfigText, parseConfigText, readConfigText, type Config } from "../config.js";
+import { CONFIG_PATH, ConfigSchema, STALE_CONFIG, configVersion, editConfigText, parseConfigText, readConfigText, resetConfigText, type Config } from "../config.js";
 import { spentToday } from "../engine/state.js";
 import { cleanRuns } from "../clean.js";
 import { listEvalReports } from "../evals.js";
@@ -18,6 +18,10 @@ import { HttpError, readJson, send } from "./http.js";
 import { hostAllowed, listenCovers, listenProblem } from "./net.js";
 import { configIdProblem, fileWatcherProblem } from "../repos/watchers.js";
 import { watcherRows } from "./api-repos.js";
+import { FACTORY_HOME } from "../flow/load.js";
+import { describeSettings, startupSettings } from "../settings/describe.js";
+import { resolveClaudeBinAsync } from "../steps/claude.js";
+import { resolveCodexBin } from "../steps/codex.js";
 import type { Route } from "./server.js";
 
 /** The settings in this text of the file; undefined when it cannot be read (the running ones are used then). */
@@ -45,6 +49,54 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       listening: ctx.listen,
       clickThrough: process.platform === "darwin" ? clickThrough() : undefined,
     }), true;
+  }
+
+  if (seg[0] === "settings" && !seg[1] && method === "GET") {
+    return send(res, 200, {
+      settings: describeSettings(),
+      startup: startupSettings({
+        home: process.env.FACTORY_HOME ?? FACTORY_HOME,
+        port: opts.port,
+        repo: opts.repo,
+        claudeBin: opts.claudeBin ?? (await resolveClaudeBinAsync()),
+        codexBin: resolveCodexBin(),
+        ghBin: process.env.FACTORY_GH_BIN ?? "gh",
+      }),
+    }), true;
+  }
+
+  if (seg[0] === "settings" && seg[1] === "reset" && seg.length === 2 && method === "POST") {
+    const body = await readJson(req);
+    const key = typeof body.key === "string" ? body.key : "";
+    if (!describeSettings().some((d) => d.key === key)) throw new HttpError(400, '"key" must name a setting');
+    // From here to the write there is no await, so two saves cannot interleave.
+    const text = readConfigText();
+    const sent = req.headers["x-config-version"];
+    if (typeof sent === "string" && sent !== configVersion(text)) throw new HttpError(409, STALE_CONFIG);
+    let before: Config;
+    try {
+      before = parseConfigText(text);
+    } catch (e) {
+      throw new HttpError(400, `invalid config: ${storedConfigProblem(e)}`);
+    }
+    let out: { text: string; config: Config };
+    try {
+      out = resetConfigText(text, key);
+    } catch (e) {
+      throw new HttpError(400, `invalid config: ${(e as Error).message}`);
+    }
+    const removed = out.text !== text;
+    if (removed) {
+      mkdirSync(dirname(CONFIG_PATH()), { recursive: true });
+      writeFileSync(CONFIG_PATH(), out.text);
+      // An effective value that stays the same (a stored default) is not a change, so the removal itself is logged.
+      const details = configChanges(before, out.config).map((c) => changeDetail(c));
+      auditActions(ctx.diagLog, user.id, "settings-change", "config.yaml", details.length ? details : [`${key}: removed from config.yaml`]);
+      ctx.reloadConfig();
+      watchers.sync();
+    }
+    res.setHeader("x-config-version", configVersion(out.text));
+    return send(res, 200, { key, removed }), true;
   }
 
   if (seg[0] === "config") {

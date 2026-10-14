@@ -489,6 +489,72 @@ describe("the dialog", () => {
     expect(sent[0]!.body.owner).toBeUndefined();
   });
 
+  describe("the options", () => {
+    const keys = ["auto_defaults", "wait_for_dependencies", "comment_on_failure", "status_comment", "one_at_a_time", "precheck_flow", "priority_labels", "status_labels", "dependency_done_labels", "remove_on_done", "pause_while_pr_open"];
+
+    it("a new watcher sends the defaults and leaves empty text out", async () => {
+      const done = open();
+      inputOf(root(), "Id").value = "w1";
+      press(button(root(), "Save watcher"));
+      await done;
+      expect(sent[0]!.body).toMatchObject({ auto_defaults: false, wait_for_dependencies: true, priority_labels: ["bug"], status_labels: {}, remove_on_done: [] });
+      expect("pause_while_pr_open" in sent[0]!.body || "precheck_flow" in sent[0]!.body).toBe(false);
+    });
+
+    it("an untouched edit sends the stored values back; cleared ones are null or gone", async () => {
+      const all = {
+        auto_defaults: true, precheck_flow: "issue-gitflow", priority_labels: ["customer, urgent"], status_labels: { working: "W", failed: "F" },
+        wait_for_dependencies: false, dependency_done_labels: ["released"], remove_on_done: ["go"], comment_on_failure: false, status_comment: false,
+        one_at_a_time: true, pause_while_pr_open: "factory/daily-",
+      };
+      let done = open({ existing: stored(all) });
+      press(button(root(), "Save watcher"));
+      await done;
+      for (const k of keys) expect(sent[0]!.body[k], k).toEqual((all as any)[k]);
+
+      (document as any).getElementById("modal-root").replaceChildren();
+      done = open({ existing: stored(all) });
+      field(root(), "pause_while_pr_open")!.value = "";
+      field(root(), "status_labels.failed")!.value = "";
+      field(root(), "precheck_flow")!.value = "";
+      press(button(root(), "Save watcher"));
+      await done;
+      expect(sent[1]!.body).toMatchObject({ pause_while_pr_open: null, precheck_flow: null, status_labels: { working: "W" } });
+    });
+
+    it("another source hides the groups and sends none of the options", async () => {
+      const done = open();
+      inputOf(root(), "Id").value = "w1";
+      const source = field(root(), "source")!;
+      source.value = "schedule";
+      source.fire("change");
+      const groups = walk(root()).filter((e) => e.tag === "details");
+      expect(groups).toHaveLength(3);
+      expect(groups[0]!.parent!.hidden).toBe(true);
+      press(button(root(), "Save watcher"));
+      await done;
+      for (const k of keys) expect(k in sent[0]!.body, k).toBe(false);
+    });
+
+    it("a refused value marks its field and opens its group", async () => {
+      answers = [{ status: 400, error: "status_labels.working: Invalid input" }];
+      void open({ existing: stored() });
+      press(button(root(), "Save watcher"));
+      await flush();
+      const input = field(root(), "status_labels.working")!;
+      expect(input.attrs["aria-invalid"]).toBe("true");
+      expect(root().textContent).toContain("status_labels.working: Invalid input");
+      expect(walk(root()).filter((e) => e.tag === "details").map((d) => !!(d as any).open)).toEqual([true, false, false]);
+    });
+
+    it("the watcher page lists options that are not at their default, for a file and a repository watcher", async () => {
+      watchers = [stored({ id: "a", auto_defaults: true }), stored({ id: "b", repoId: undefined, auto_defaults: true }), stored({ id: "c" })];
+      expect((await drawDetail("a")).textContent).toContain("Options: answers its own questions");
+      expect((await drawDetail("b")).textContent).toContain("Options: answers its own questions");
+      expect((await drawDetail("c")).textContent).not.toContain("Options:");
+    });
+  });
+
   it("without an available repository Save is off and sends nothing", async () => {
     repos = [repo({ watcherProblem: "nope" })];
     void open();

@@ -1,21 +1,30 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { dataHome } from "../auth/store.js";
 import { claimHomeWrite } from "../home.js";
 import { acquireLock, releaseLock, removeTree } from "../home-migrate.js";
-import { byteCmp, IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, SkillImportError, type ImportRecord, type SourceTree } from "./import-plan.js";
+import { addLicenceEvidence, collectImportEvidence, importLicenceFiles } from "./import-evidence.js";
+import { evidenceFromRecord, LICENCE_DIR, LICENCE_RECORD_BYTES, LICENCE_RECORD_FILE, parseLicenceRecord, prepareLicenceEvidence, type LicenceRecord } from "./import-licence.js";
+import { byteCmp, IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, SkillImportError, type ImportRecord, type PreparedImport, type SourceTree } from "./import-plan.js";
+import type { LicenceEvidence } from "./licence.js";
+import { LICENCE_LIMITS } from "./licence-rules.js";
 import { skillDigest } from "./package.js";
 import { SKILL_ID_RE, SKILL_LIMITS } from "./schema.js";
 import { approvedRefProblem, shownValue, type SkillLibrarySource } from "./sources.js";
 
-// Stages checked skill folders into <data folder>/skill-quarantine/<source id>/<commit>/ (import.json and files/).
+// Stages checked skill folders into <data folder>/skill-quarantine/<source id>/<commit>/ (import.json and files/, and
+// licence.json with licence/<upstream path> for the licence and notice files of the same commit; import.json lists
+// them too when it records retrievedAt).
+// An import made before licence.json (or retrievedAt) existed is replaced on the next import of the same commit; the old
+// folder waits as <source id>/.old-<commit> until the new one is verified, and the next import restores or removes it.
 // Nothing in the quarantine is run or loaded; the registry never scans it. `scf skills scan` reads it (readStagedImport). One lock: <data folder>/skill-quarantine.lock.
 
 export const QUARANTINE_DIR = "skill-quarantine";
 export const IMPORT_RECORD_FILE = "import.json";
 const LOCK_NAME = "skill-quarantine.lock";
 const TMP_RE = /^\.tmp-[0-9a-f]{16}$/;
+const BACKUP_PREFIX = ".old-";
 
 /** Test hooks: lock wait, the rename used to publish, and the resolver of the containment check. */
 export const importStoreSettings: { waitMs: number; rename: (from: string, to: string) => void; realpath: (p: string) => string } = {
@@ -73,7 +82,11 @@ interface Node {
   children: Map<string, Node>;
   bytes?: Uint8Array;
 }
-function expectedTree(recordText: string, files: Map<string, Uint8Array>): Node {
+interface LicenceTree {
+  recordText: string;
+  files: Map<string, Uint8Array>;
+}
+function expectedTree(recordText: string, files: Map<string, Uint8Array>, licence?: LicenceTree): Node {
   const root: Node = { children: new Map() };
   const add = (path: string, bytes: Uint8Array) => {
     let n = root;
@@ -86,13 +99,18 @@ function expectedTree(recordText: string, files: Map<string, Uint8Array>): Node 
   };
   add(IMPORT_RECORD_FILE, Buffer.from(recordText, "utf8"));
   for (const [p, b] of files) add("files/" + p, b);
+  if (licence) {
+    add(LICENCE_RECORD_FILE, Buffer.from(licence.recordText, "utf8"));
+    root.children.set(LICENCE_DIR, { children: new Map() });
+    for (const [p, b] of licence.files) add(`${LICENCE_DIR}/${p}`, b);
+  }
   return root;
 }
 
 const enoent = (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT";
 
 /** The first difference between a folder and the import it should hold, or undefined. Read errors are thrown. */
-function folderProblem(dir: string, recordText: string, files: Map<string, Uint8Array>): string | undefined {
+function folderProblem(dir: string, recordText: string, files: Map<string, Uint8Array>, licence?: LicenceTree): string | undefined {
   const shown = (rel: string, text: string) => `${rel === "" ? "the folder" : shownValue(rel)} ${text}`;
   const check = (path: string, rel: string, node: Node): string | undefined => {
     let st;
@@ -122,7 +140,7 @@ function folderProblem(dir: string, recordText: string, files: Map<string, Uint8
     if ((st.mode & 0o777) !== 0o600) return shown(rel, "has the wrong mode");
     return undefined;
   };
-  return check(dir, "", expectedTree(recordText, files));
+  return check(dir, "", expectedTree(recordText, files, licence));
 }
 
 /** An existing folder must be a plain 0700 folder; a missing one is made. Nothing is ever changed. */
@@ -146,13 +164,141 @@ function boundary(e: unknown): SkillImportError {
   return new SkillImportError("cannot-write", `the skill quarantine cannot be written (${code})`);
 }
 
+/** Writes `files` below `base` (0600 files, 0700 folders). `base` itself exists. */
+function writeTree(base: string, files: Map<string, Uint8Array>): void {
+  const made = new Set<string>([base]);
+  for (const [path, bytes] of files) {
+    const file = join(base, path);
+    const missing: string[] = [];
+    for (let p = dirname(file); !made.has(p); p = dirname(p)) missing.push(p);
+    for (const p of missing.reverse()) {
+      mkdirSync(p, { mode: 0o700 });
+      made.add(p);
+    }
+    writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+  }
+}
+
+/**
+ * Puts back or removes the `.old-<commit>` backups of an interrupted replacement. Best effort: never throws, never
+ * deletes anything it is not sure about. Runs under the lock, before the .tmp- cleanup.
+ */
+function recoverReplaced(sourceDir: string, source: string, home: string): void {
+  let names: string[];
+  try {
+    names = readdirSync(sourceDir);
+  } catch {
+    return;
+  }
+  for (const n of names) {
+    if (!n.startsWith(BACKUP_PREFIX)) continue;
+    const commit = n.slice(BACKUP_PREFIX.length);
+    if (approvedRefProblem(commit)) continue;
+    try {
+      const backup = join(sourceDir, n);
+      const bst = lstatSync(backup);
+      if (bst.isSymbolicLink() || !bst.isDirectory()) continue;
+      const dest = join(sourceDir, commit);
+      try {
+        lstatSync(dest);
+      } catch (e) {
+        if (!enoent(e)) continue;
+        renameSync(backup, dest);
+        continue;
+      }
+      const read = readStagedImport(source, commit, { home });
+      if (read.state === "ok" && read.licence !== undefined) removeTree(backup);
+    } catch {
+      // tried again by the next import
+    }
+  }
+}
+
+/** Swaps an old-form folder for the new one; the old one is kept as .old-<commit> until the new one is verified. */
+function replaceFolder(sourceDir: string, tmp: string, dest: string, commit: string, verified: () => boolean): void {
+  const backup = join(sourceDir, BACKUP_PREFIX + commit);
+  let inTheWay = true;
+  try {
+    lstatSync(backup);
+  } catch (e) {
+    if (!enoent(e)) throw e;
+    inTheWay = false;
+  }
+  if (inTheWay) throw new SkillImportError("cannot-write", `${backup} is in the way; remove it, then import again`);
+  renameSync(dest, backup);
+  try {
+    importStoreSettings.rename(tmp, dest);
+  } catch (first) {
+    try {
+      importStoreSettings.rename(backup, dest);
+    } catch {
+      throw new SkillImportError("cannot-write", `the earlier import is kept in ${BACKUP_PREFIX}${commit}; the next import of this source restores it`);
+    }
+    throw first;
+  }
+  if (!verified()) throw new SkillImportError("cannot-write", `the new import folder did not verify; the earlier import is kept in ${BACKUP_PREFIX}${commit}`);
+  try {
+    removeTree(backup);
+  } catch {
+    // the next import removes it
+  }
+}
+
 /** Checks and stages the skills of an approved revision: `prepareImport` (reads, no lock), then `publishImport`. */
 export function stageImport(
   source: SkillLibrarySource,
   tree: SourceTree,
-  opts: { home?: string; limits?: { recordBytes?: number } } = {},
+  opts: { home?: string; limits?: { recordBytes?: number }; retrievedAt?: string; recoverable?: (e: unknown) => boolean } = {},
 ): { record: ImportRecord; dir: string; state: "staged" | "unchanged" } {
-  return publishImport(prepareImport(source, tree, { limits: opts.limits }), { home: opts.home });
+  const prep = prepareImport(source, tree, { limits: opts.limits });
+  const licence = prepareLicenceEvidence(
+    collectImportEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree, { recoverable: opts.recoverable }),
+  );
+  const full: PreparedImport = opts.retrievedAt !== undefined ? addLicenceEvidence(prep, licence, opts.retrievedAt, { limits: opts.limits }) : { ...prep, licence };
+  return publishImport(full, { home: opts.home });
+}
+
+/** The import.json of an existing folder, or undefined when it cannot be read as one. */
+function existingRecord(dest: string): { text: string; record: ImportRecord } | undefined {
+  try {
+    const rp = join(dest, IMPORT_RECORD_FILE);
+    const st = lstatSync(rp);
+    if (!st.isFile() || st.size > IMPORT_LIMITS.recordBytes) return undefined;
+    const raw = readPlain(rp, st.size);
+    if (typeof raw === "string") return undefined;
+    const text = raw.toString("utf8");
+    const parsed = parseImportRecord(text);
+    return "problem" in parsed ? undefined : { text, record: parsed.record };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The existing import of the same commit, when it differs from the new one only by `retrievedAt`. */
+function sameButTime(dest: string, record: ImportRecord, files: Map<string, Uint8Array>, licence?: LicenceTree): ImportRecord | undefined {
+  if (record.retrievedAt === undefined) return undefined;
+  const old = existingRecord(dest);
+  if (!old || old.record.retrievedAt === undefined) return undefined;
+  if (JSON.stringify({ ...record, retrievedAt: old.record.retrievedAt }, null, 2) + "\n" !== old.text) return undefined;
+  try {
+    return folderProblem(dest, old.text, files, licence) === undefined ? old.record : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when the existing import is the same one staged before import.json recorded retrievedAt and licenceFiles. */
+function recordedLater(dest: string, record: ImportRecord, files: Map<string, Uint8Array>, licence: LicenceTree): boolean {
+  if (record.retrievedAt === undefined) return false;
+  const old = existingRecord(dest);
+  if (!old || old.record.retrievedAt !== undefined) return false;
+  const { retrievedAt: _t, licenceFiles: _l, ...rest } = record;
+  if (JSON.stringify(rest, null, 2) + "\n" !== old.text) return false;
+  try {
+    return folderProblem(dest, old.text, files, licence) === undefined || folderProblem(dest, old.text, files) === undefined;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -160,12 +306,18 @@ export function stageImport(
  * The same import again is "unchanged". A record whose source id or commit would make an unsafe path is refused.
  */
 export function publishImport(
-  prep: { record: ImportRecord; recordText: string; files: Map<string, Uint8Array> },
+  prep: PreparedImport,
   opts: { home?: string } = {},
 ): { record: ImportRecord; dir: string; state: "staged" | "unchanged" } {
-  const { record, recordText, files } = prep;
+  const { record, recordText, files, licence } = prep;
+  if (record.licenceFiles !== undefined && licence === undefined) {
+    throw new SkillImportError("not-usable", "the import record lists licence files that are not given");
+  }
   if (typeof record.source !== "string" || !SKILL_ID_RE.test(record.source) || approvedRefProblem(record.commit)) {
     throw new SkillImportError("not-usable", "the import record is not usable: bad source id or commit");
+  }
+  if (licence && (licence.record.repositoryKey !== record.repositoryKey || licence.record.commit !== record.commit)) {
+    throw new SkillImportError("not-usable", "the licence evidence is for another repository or commit");
   }
   const home = opts.home ?? dataHome();
   const lock = join(home, LOCK_NAME);
@@ -191,6 +343,7 @@ export function publishImport(
     const sourceDir = join(q, record.source);
     privateDir(q, QUARANTINE_DIR);
     privateDir(sourceDir, `${QUARANTINE_DIR}/${record.source}`);
+    recoverReplaced(sourceDir, record.source, home);
     for (const n of readdirSync(sourceDir)) {
       if (TMP_RE.test(n)) {
         try {
@@ -202,6 +355,7 @@ export function publishImport(
     }
     const dest = join(sourceDir, record.commit);
     let st;
+    let replace = false;
     try {
       st = lstatSync(dest);
     } catch (e) {
@@ -209,29 +363,28 @@ export function publishImport(
     }
     if (st) {
       if (st.isSymbolicLink() || !st.isDirectory()) throw new SkillImportError("cannot-write", "the import folder is not a plain folder");
-      const diff = folderProblem(dest, recordText, files);
+      const diff = folderProblem(dest, recordText, files, licence);
       if (diff === undefined) return { record, dir: dest, state: "unchanged" };
-      throw new SkillImportError("conflict", `${dest} already holds a different import of this commit (${diff}). Remove that folder, then import again.`);
+      const old = sameButTime(dest, record, files, licence);
+      if (old) return { record: old, dir: dest, state: "unchanged" };
+      if (licence && (folderProblem(dest, recordText, files) === undefined || recordedLater(dest, record, files, licence))) replace = true;
+      else throw new SkillImportError("conflict", `${dest} already holds a different import of this commit (${diff}). Remove that folder, then import again.`);
     }
     const tmp = join(sourceDir, ".tmp-" + randomBytes(8).toString("hex"));
     try {
       mkdirSync(tmp, { mode: 0o700 });
       writeFileSync(join(tmp, IMPORT_RECORD_FILE), recordText, { flag: "wx", mode: 0o600 });
       mkdirSync(join(tmp, "files"), { mode: 0o700 });
-      const made = new Set<string>([join(tmp, "files")]);
-      for (const [path, bytes] of files) {
-        const file = join(tmp, "files", path);
-        const missing: string[] = [];
-        for (let p = dirname(file); !made.has(p); p = dirname(p)) missing.push(p);
-        for (const p of missing.reverse()) {
-          mkdirSync(p, { mode: 0o700 });
-          made.add(p);
-        }
-        writeFileSync(file, bytes, { flag: "wx", mode: 0o600 });
+      writeTree(join(tmp, "files"), files);
+      if (licence) {
+        writeFileSync(join(tmp, LICENCE_RECORD_FILE), licence.recordText, { flag: "wx", mode: 0o600 });
+        mkdirSync(join(tmp, LICENCE_DIR), { mode: 0o700 });
+        writeTree(join(tmp, LICENCE_DIR), licence.files);
       }
-      if (folderProblem(tmp, recordText, files) !== undefined) throw new SkillImportError("cannot-write", "the file system changed what was written");
+      if (folderProblem(tmp, recordText, files, licence) !== undefined) throw new SkillImportError("cannot-write", "the file system changed what was written");
       if (importStoreSettings.realpath(tmp) !== tmp) throw new SkillImportError("cannot-write", "the import folder is no longer inside the quarantine");
-      importStoreSettings.rename(tmp, dest);
+      if (!replace) importStoreSettings.rename(tmp, dest);
+      else replaceFolder(sourceDir, tmp, dest, record.commit, () => folderProblem(dest, recordText, files, licence) === undefined);
     } catch (e) {
       try {
         removeTree(tmp);
@@ -264,12 +417,92 @@ export function publishImport(
 export type StagedImportRead =
   | { state: "none" }
   | { state: "invalid"; problem: string }
-  | { state: "ok"; dir: string; record: ImportRecord; recordText: string; files: Map<string, Uint8Array> };
+  | { state: "ok"; dir: string; record: ImportRecord; recordText: string; files: Map<string, Uint8Array>; licence?: LicenceEvidence };
+
+export type StagedLicenceRead = { state: "none"; message: string } | { state: "invalid"; problem: string } | { state: "ok"; evidence: LicenceEvidence };
 
 class Invalid extends Error {}
 const refuse = (what: string): never => {
   throw new Invalid(what);
 };
+
+interface WalkLimits {
+  maxFiles: number;
+  maxFolders: number;
+  fileBytes: number;
+  totalBytes: number;
+}
+/** Every file below `start`, as [path relative to start, bytes]. `prefix` is only shown in messages. Follows no link. */
+function walkTree(start: string, prefix: string, lim: WalkLimits): [string, Uint8Array][] {
+  let fileCount = 0;
+  let folderCount = 0;
+  let total = 0;
+  const found: [string, Uint8Array][] = [];
+  const walk = (path: string, rel: string): void => {
+    for (const name of readdirSync(path).sort(byteCmp)) {
+      const p = join(path, name);
+      const r = rel === "" ? name : `${rel}/${name}`;
+      const shown = shownValue(prefix + r);
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) refuse(`${shown} is a link`);
+      if (st.isDirectory()) {
+        if (++folderCount > lim.maxFolders) refuse("the folder holds more folders than the import can have");
+        walk(p, r);
+      } else if (st.isFile()) {
+        if (++fileCount > lim.maxFiles) refuse(prefix === "" ? "the folder holds more files than import.json lists" : "the folder holds more files than licence.json lists");
+        if (Buffer.byteLength(r) > SKILL_LIMITS.pathChars) refuse(`${shown} has a path that is too long`);
+        if (st.size > lim.fileBytes) refuse(`${shown} is too large`);
+        total += st.size;
+        if (total > lim.totalBytes) refuse("the folder holds more bytes than an import can have");
+        const got = readPlain(p, st.size);
+        if (got === "link") refuse(`${shown} is a link`);
+        if (got === "other") refuse(`${shown} changed while it was read`);
+        found.push([r, got as Buffer]);
+      } else refuse(`${shown} is not a regular file`);
+    }
+  };
+  walk(start, "");
+  return found;
+}
+
+/** The evidence of an import, proven against licence.json; undefined for an import staged without it. Refuses through `refuse`. */
+function readLicence(dir: string, record: ImportRecord): { recordText: string; files: Map<string, Uint8Array>; evidence: LicenceEvidence; record: LicenceRecord } | undefined {
+  const recordPath = join(dir, LICENCE_RECORD_FILE);
+  let st;
+  try {
+    st = lstatSync(recordPath);
+  } catch (e) {
+    if (enoent(e)) return undefined;
+    throw e;
+  }
+  if (st.isSymbolicLink()) refuse(`${LICENCE_RECORD_FILE} is a link`);
+  if (!st.isFile()) refuse(`${LICENCE_RECORD_FILE} is not a regular file`);
+  if (st.size > LICENCE_RECORD_BYTES) refuse(`${LICENCE_RECORD_FILE} is too large`);
+  const raw = readPlain(recordPath, st.size);
+  if (raw === "link") refuse(`${LICENCE_RECORD_FILE} is a link`);
+  if (raw === "other") refuse(`${LICENCE_RECORD_FILE} changed while it was read`);
+  const recordText = (raw as Buffer).toString("utf8");
+  const parsed = parseLicenceRecord(recordText);
+  if ("problem" in parsed) return refuse(parsed.problem);
+  const lrec = parsed.record;
+  if (lrec.repositoryKey !== record.repositoryKey || lrec.commit !== record.commit) refuse("licence.json is for another repository or commit");
+  const lpath = join(dir, LICENCE_DIR);
+  const lst = lstatSync(lpath);
+  if (lst.isSymbolicLink()) refuse("licence is a link");
+  if (!lst.isDirectory()) refuse("licence is not a folder");
+  const stored = new Map(lrec.files.filter((f) => f.problem === undefined).map((f) => [f.path, f]));
+  const maxFolders = [...stored.keys()].reduce((n, p) => n + p.split("/").length - 1, 0);
+  const found = walkTree(lpath, LICENCE_DIR + "/", { maxFiles: stored.size, maxFolders, fileBytes: LICENCE_LIMITS.fileBytes, totalBytes: LICENCE_LIMITS.totalBytes });
+  const files = new Map<string, Uint8Array>();
+  for (const [path, bytes] of found) {
+    const want = stored.get(path);
+    if (!want) refuse(`${shownValue(LICENCE_DIR + "/" + path)} is not part of the import`);
+    if (want!.bytes !== bytes.byteLength || want!.sha256 !== createHash("sha256").update(bytes).digest("hex")) refuse(`${shownValue(LICENCE_DIR + "/" + path)} changed`);
+    files.set(path, bytes);
+  }
+  for (const path of stored.keys()) if (!files.has(path)) refuse(`${shownValue(LICENCE_DIR + "/" + path)} is missing`);
+  return { recordText, files, evidence: evidenceFromRecord(lrec, files), record: lrec };
+}
 const within = (root: string, p: string) => root === "." || p === root || p.startsWith(root + "/");
 const segments = (root: string) => (root === "." ? 0 : root.split("/").length);
 
@@ -327,36 +560,10 @@ export function readStagedImport(source: string, commit: string, opts: { home?: 
     // parent of a staged file, so it is a skill root, above one, or inside one on the way to a file.
     const maxFiles = record.skills.reduce((n, s) => n + s.files, 0);
     const maxFolders = record.skills.reduce((n, s) => n + segments(s.root) + (SKILL_LIMITS.pathSegments - 1) * s.files, 0);
-    let fileCount = 0;
-    let folderCount = 0;
-    let total = 0;
-    const found: [string, Uint8Array][] = [];
-    const walk = (path: string, rel: string): void => {
-      for (const name of readdirSync(path).sort(byteCmp)) {
-        const p = join(path, name);
-        const r = rel === "" ? name : `${rel}/${name}`;
-        const st = lstatSync(p);
-        if (st.isSymbolicLink()) refuse(`${shownValue(r)} is a link`);
-        if (st.isDirectory()) {
-          if (++folderCount > maxFolders) refuse("the folder holds more folders than the import can have");
-          walk(p, r);
-        } else if (st.isFile()) {
-          if (++fileCount > maxFiles) refuse("the folder holds more files than import.json lists");
-          if (Buffer.byteLength(r) > SKILL_LIMITS.pathChars) refuse(`${shownValue(r)} has a path that is too long`);
-          if (st.size > SKILL_LIMITS.fileBytes) refuse(`${shownValue(r)} is too large`);
-          total += st.size;
-          if (total > IMPORT_LIMITS.totalBytes) refuse("the folder holds more bytes than an import can have");
-          const got = readPlain(p, st.size);
-          if (got === "link") refuse(`${shownValue(r)} is a link`);
-          if (got === "other") refuse(`${shownValue(r)} changed while it was read`);
-          found.push([r, got as Buffer]);
-        } else refuse(`${shownValue(r)} is not a regular file`);
-      }
-    };
     const fst = lstatSync(join(dir, "files"));
     if (fst.isSymbolicLink()) refuse("files is a link");
     if (!fst.isDirectory()) refuse("files is not a folder");
-    walk(join(dir, "files"), "");
+    const found = walkTree(join(dir, "files"), "", { maxFiles, maxFolders, fileBytes: SKILL_LIMITS.fileBytes, totalBytes: IMPORT_LIMITS.totalBytes });
 
     // every file lies in exactly one skill, and each skill matches its line of the record
     const perSkill = new Map<string, { path: string; content: Uint8Array }[]>(record.skills.map((s) => [s.root, []]));
@@ -373,13 +580,28 @@ export function readStagedImport(source: string, commit: string, opts: { home?: 
     if (importDigest(record.skills) !== record.digest) refuse("the digest of import.json does not match its skills");
 
     const files = new Map(found.sort((a, b) => byteCmp(a[0], b[0])));
-    const problem = folderProblem(dir, recordText, files);
+    const lic = readLicence(dir, record);
+    // import.json lists the licence files of licence.json (both ways); an import without the list reads as before
+    if (record.licenceFiles !== undefined) {
+      if (!lic) refuse(`${LICENCE_RECORD_FILE} is missing`);
+      if (JSON.stringify(record.licenceFiles) !== JSON.stringify(importLicenceFiles(lic!.record))) refuse(`${IMPORT_RECORD_FILE} lists other licence files than ${LICENCE_RECORD_FILE}`);
+    }
+    const problem = folderProblem(dir, recordText, files, lic);
     if (problem !== undefined) return { state: "invalid", problem };
-    return { state: "ok", dir, record, recordText, files };
+    return lic ? { state: "ok", dir, record, recordText, files, licence: lic.evidence } : { state: "ok", dir, record, recordText, files };
   } catch (e) {
     if (e instanceof Invalid) return { state: "invalid", problem: e.message };
     const c = (e as NodeJS.ErrnoException | undefined)?.code;
     const code = typeof c === "string" && /^[A-Z][A-Z0-9_]{0,39}$/.test(c) ? c : "error";
     return { state: "invalid", problem: `the staged import cannot be read (${code})` };
   }
+}
+
+/** The licence and notice files of a staged import, proven against licence.json. Same checks and same refusals as `readStagedImport`. */
+export function readStagedLicence(source: string, commit: string, opts: { home?: string } = {}): StagedLicenceRead {
+  const read = readStagedImport(source, commit, opts);
+  if (read.state === "invalid") return read;
+  if (read.state === "none") return { state: "none", message: `no staged import of ${source} at ${commit.slice(0, 12)}; run "scf skills import ${source}" first` };
+  if (read.licence === undefined) return { state: "none", message: `this import was staged without its licence and notice files; run "scf skills import ${source}" again` };
+  return { state: "ok", evidence: read.licence };
 }

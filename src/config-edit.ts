@@ -198,3 +198,52 @@ export function editYamlText(text: string, before: Plain, next: Plain, defaults:
   }
   return doc.toString({ lineWidth: 0 });
 }
+
+const joinText = (...parts: (string | null | undefined)[]) => parts.filter((p): p is string => !!p).join("\n") || null;
+const keyComment = (p: Pair) => (isNode(p.key) ? (p.key as Node).commentBefore : undefined);
+
+/**
+ * The text without the pair at `path` (keys from the top). A parent map it leaves empty goes too, up to the top.
+ * The comment on the removed line goes with it; comment lines above a removed key are kept: they move to the
+ * next key of the same map, or after the map when it was the last key. Same text when the key is not there.
+ * Throws when the text is not YAML.
+ */
+export function removeYamlKey(text: string, path: string[]): string {
+  const doc = parseDocument(text);
+  if (doc.errors.length) throw new Error(`config.yaml cannot be read: ${doc.errors[0]!.message}`);
+  const maps: YAMLMap[] = [];
+  const pairs: Pair[] = [];
+  let node: unknown = doc.contents;
+  for (const key of path) {
+    if (!isMap(node)) return text;
+    const pair = findPair(node, key);
+    if (!pair) return text;
+    maps.push(node);
+    pairs.push(pair);
+    node = pair.value;
+  }
+  if (!pairs.length) return text;
+  const last = pairs.length - 1;
+  let carry: string | null = null;
+  for (let i = last; i >= 0; i--) {
+    const map = maps[i]!;
+    const child = i < last ? maps[i + 1] : undefined;
+    carry = joinText(keyComment(pairs[i]!), child?.commentBefore, carry, child?.comment);
+    const at = map.items.indexOf(pairs[i]! as never);
+    dropPair(map, pairs[i]!);
+    if (map.items.length) {
+      const next = map.items[at] as Pair | undefined;
+      if (next && isNode(next.key)) (next.key as Node).commentBefore = joinText(carry, (next.key as Node).commentBefore);
+      else if (next) next.key = Object.assign(doc.createNode(next.key), { commentBefore: carry });
+      else map.comment = joinText(map.comment, carry);
+      return doc.toString({ lineWidth: 0 });
+    }
+    if (i === 0) {
+      carry = joinText(map.commentBefore, carry, map.comment);
+      doc.contents = null;
+      doc.comment = joinText(doc.comment, carry);
+    }
+  }
+  if (!doc.comment && !doc.commentBefore) return "";
+  return doc.toString({ lineWidth: 0 });
+}

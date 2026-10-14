@@ -169,7 +169,13 @@ async function route() {
     else if (section === "dashboard") await renderInBox(renderDashboard);
     else if (section === "watchers") await renderInBox(arg ? (box) => renderWatcherDetail(box, arg, { readOnly }) : (box) => renderWatchers(box, { readOnly }));
     else if (section === "problems") await renderInBox(arg ? (box) => renderProblemDetail(box, arg) : renderProblems);
-    else if (section === "settings") await renderInBox((box) => renderSettings(box, { readOnly }));
+    else if (section === "settings") {
+      const box = h("div", {});
+      mount(main, box);
+      const off = await renderSettings(box, { readOnly });
+      if (mine === routeGen) S.cleanup = off;
+      else off?.(); // the person went on to another page meanwhile
+    }
     else if (section === "maintenance") await renderMaintenance(main);
     else if (section === "models") await (arg ? renderModelDetail(main, arg) : renderModels(main));
     else if (section === "all-repos") {

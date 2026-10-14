@@ -318,6 +318,13 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
     digest: skillDigest(kept.map((e) => ({ path: e.path, content: e.content! }))),
     files,
   };
+  if (manifest.provider) {
+    pkg.provider = {
+      ...manifest.provider,
+      products: [...manifest.provider.products].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+      tools: [...manifest.provider.tools].sort(),
+    };
+  }
   if (review !== undefined) pkg.review = review;
   if (fm.license !== undefined) pkg.license = fm.license.trim();
   if (fm.compatibility !== undefined) pkg.compatibility = fm.compatibility;

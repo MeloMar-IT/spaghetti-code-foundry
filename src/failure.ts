@@ -134,6 +134,53 @@ function hint(h: StepRecord[]): Failure | undefined {
   return denied ? { cause: "code", what: `a command was blocked: ${shortDenied(denied)}`, fix: "allow it in the flow if it was needed" } : undefined;
 }
 
+/** The step of the issue flows that stops a run whose tests fail before any change. */
+export const BASELINE_STEP = "baseline_failed";
+
+/** The run stopped because the tests failed before any change (the facts are known: no model guess, never the environment). */
+export function isBaselineStop(history: StepRecord[] | undefined): boolean {
+  if (!Array.isArray(history)) return false;
+  const idx = failedIndex(history);
+  return idx >= 0 && history[idx]!.id.split("/").at(-1) === BASELINE_STEP;
+}
+
+export interface BaselineFacts { failing: string[]; unexpected: string[]; moreFailing: number; moreUnexpected: number }
+
+/** The test lists in the output of `baseline_failed` (printed by tools/baseline-tests). */
+export function baselineFacts(output: string): BaselineFacts {
+  const facts: BaselineFacts = { failing: [], unexpected: [], moreFailing: 0, moreUnexpected: 0 };
+  let section: "failing" | "unexpected" | undefined;
+  for (const raw of output.split("\n")) {
+    const line = raw.trimEnd();
+    if (line === "failing before the change:") { section = "failing"; continue; }
+    if (line === "not named in the issue:") { section = "unexpected"; continue; }
+    if (!section) continue;
+    const item = /^\s+- (.+)$/.exec(line);
+    const more = /^\s+… and (\d+) more$/.exec(line);
+    if (item) facts[section].push(item[1]!);
+    else if (more) facts[section === "failing" ? "moreFailing" : "moreUnexpected"] += Number(more[1]);
+    else section = undefined;
+  }
+  return facts;
+}
+
+const SHOWN_TESTS = 5;
+const names = (list: string[], more: number): string => {
+  const shown = list.slice(0, SHOWN_TESTS);
+  const rest = list.length - shown.length + more;
+  const head = shown.join(", ");
+  return rest > 0 ? (shown.length ? `${head} and ${rest} more` : `${rest} tests`) : head;
+};
+
+function baselineWhy(output: string): string {
+  const f = baselineFacts(output);
+  if (f.unexpected.length || f.moreUnexpected) {
+    return `The tests failed before any change, and these failing tests are not named in the issue as ones to fix: ${names(f.unexpected, f.moreUnexpected)}`;
+  }
+  if (f.failing.length || f.moreFailing) return `The tests failed before any change. Failing tests: ${names(f.failing, f.moreFailing)}`;
+  return "The tests failed before any change; no JUnit XML report named the failing tests, the last lines of the log are under Details";
+}
+
 const factory = (what: string, fix: string): Failure => ({ cause: "factory", what, fix });
 const oneLine = (s: string) => s.split("\n")[0]!.replace(/\s+/g, " ").trim().slice(0, 160);
 
@@ -145,7 +192,7 @@ export function classifyFailure(run: Pick<RunSummary, "status" | "reason" | "his
   const f = rulesFailure(run);
   const note = run.failureNote;
   // A model's reading may turn a code failure into an environment one; it never changes the other causes.
-  if (run.status === "failed" && f.cause === "code" && note?.kind === "environment") {
+  if (run.status === "failed" && f.cause === "code" && note?.kind === "environment" && !isBaselineStop(run.history)) {
     return { cause: "factory", what: note.why, fix: f.fix ?? "fix what the reason says, then retry" };
   }
   return f;
@@ -185,6 +232,7 @@ function rulesFailure(run: Pick<RunSummary, "status" | "reason" | "history">): F
     return factory(oneLine(reason), fix);
   }
   if (!reason && history?.length === 0) return factory("the run failed before any step ran", "check the Foundry's settings and log");
+  if (history && isBaselineStop(history)) return { cause: "code" };
   if (history) return evidence(history) ?? hint(history) ?? { cause: "code" };
   return { cause: "code" };
 }
@@ -359,7 +407,8 @@ export function failureSummary(run: SummaryRun, o: SummaryOptions = {}): Failure
       break;
     }
     default:
-      if (note?.kind === "code") { why = sentence(note.why); byModel = true; }
+      if (isBaselineStop(h)) why = sentence(baselineWhy(h[failedIndex(h)]!.output ?? ""));
+      else if (note?.kind === "code") { why = sentence(note.why); byModel = true; }
       else {
         why = sentence(e.why);
         const hint = user ? "" : [f.what, f.fix].filter(Boolean).join(", ");

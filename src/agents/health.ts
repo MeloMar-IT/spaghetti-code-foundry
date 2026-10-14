@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Config } from "../config.js";
-import { resolveClaudeBin, runClaude } from "../steps/claude.js";
+import { pendingClaudePathProbe, resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex } from "../steps/codex.js";
 import { claudeProviderEnv, LOCAL_KINDS, providers, specOf, toTarget } from "./targets.js";
 
@@ -39,10 +39,22 @@ async function getJson(url: string, headers: Record<string, string> = {}): Promi
   return r.json();
 }
 
+/**
+ * `claude --version` of the chosen program. A probe that is still running is shared, so no second process starts
+ * beside it; a finished answer is never reused, so installing, repairing or removing Claude Code shows on the next check.
+ */
+async function claudeVersion(bin: string, running: Promise<string | null> | undefined): Promise<{ ok: boolean; out: string }> {
+  if (bin !== "claude" || !running) return run(bin, ["--version"]);
+  const out = await running;
+  return out === null ? { ok: false, out: "" } : { ok: true, out: out.trim() };
+}
+
 export async function agentStatuses(): Promise<AgentStatus[]> {
-  const claudeBin = resolveClaudeBin();
+  const resolving = resolveClaudeBinAsync(); // starts the probe when it is the first call
+  const running = pendingClaudePathProbe();
+  const claudeBin = await resolving;
   const codexBin = resolveCodexBin();
-  const [cv, xv, xl] = await Promise.all([run(claudeBin, ["--version"]), run(codexBin, ["--version"]), run(codexBin, ["login", "status"])]);
+  const [cv, xv, xl] = await Promise.all([claudeVersion(claudeBin, running), run(codexBin, ["--version"]), run(codexBin, ["login", "status"])]);
   return [
     { agent: "claude", installed: cv.ok, version: cv.ok ? cv.out.split("\n")[0] : undefined, detail: !cv.ok ? "not found — install Claude Code" : claudeBin.includes("Application Support/Claude") ? "Claude Code from the Claude desktop app (newer than the one on PATH)" : "Claude Code CLI" },
     {

@@ -100,6 +100,8 @@ export class WatcherManager {
 
   sync() {
     this.o.beforeSync?.();
+    // While the server waits to restart no watcher starts; the monitor follows the saved config. A cancelled wait calls sync() again.
+    if (this.o.restart?.()) return this.syncMonitor(this.o.config().watchers.find((w) => w.source === "monitor" && w.enabled));
     this.drained = [];
     const wanted = new Map(this.o.config().watchers.filter((w) => w.enabled && w.source !== "monitor").map((w) => [w.id, w]));
     for (const [id, r] of this.running) {

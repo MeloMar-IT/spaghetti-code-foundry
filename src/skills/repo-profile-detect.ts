@@ -4,6 +4,7 @@
  */
 import { builtinModules } from "node:module";
 import { parse as parseYaml } from "yaml";
+import { gradleTechnologies, pomTechnologies, strictJvmValue, wrapperTechnology } from "./repo-profile-jvm.js";
 import type { FindingKind } from "./repo-profile-rules.js";
 
 export interface RawFinding {
@@ -194,16 +195,21 @@ export function dependenciesIn(relPath: string, text: string): RawFinding[] {
         const f = requirement(b, l, "requirements");
         if (f) out.push(f);
       }
-    } else if (b === "pom.xml") out = pomDeps(b, lines(text));
-    else if (b === "build.gradle" || b === "build.gradle.kts") {
-      for (const l of lines(text)) {
+    } else if (b === "pom.xml") {
+      const ls = lines(text);
+      out = [...pomDeps(b, ls).map(strictJvmValue), ...pomTechnologies(b, ls)];
+    } else if (b === "build.gradle" || b === "build.gradle.kts") {
+      const ls = lines(text);
+      for (const l of ls) {
         const m = ex(GRADLE, l);
         if (!m) continue;
         const [g, a, v] = m[1].split(":");
         const f = a ? dep(b, `${g}:${a}`, v, "dependencies") : undefined;
-        if (f) out.push(f);
+        if (f) out.push(strictJvmValue(f));
       }
-    } else if (b === "Gemfile") {
+      out.push(...gradleTechnologies(b, ls));
+    } else if (b === "maven-wrapper.properties" || b === "gradle-wrapper.properties") out = wrapperTechnology(b, lines(text));
+    else if (b === "Gemfile") {
       for (const l of lines(text)) {
         const m = ex(/^\s*gem\s+["']([^"']{1,100})["'](?:\s*,\s*["']([^"']{1,40})["'])?/, l);
         const f = m && dep(b, m[1], m[2], "gems");

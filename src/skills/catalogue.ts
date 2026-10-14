@@ -17,7 +17,7 @@ import { detectSkillCandidates } from "./candidates.js";
 import { detectIntegrationCandidates } from "./integration-candidates.js";
 import { RepoProfileSchema, type RepoProfile } from "./repo-profile.js";
 import type { RegisteredSkill, SkillRegistry } from "./registry.js";
-import { relativePathProblem, SKILL_ID_RE, SkillIdSchema, SkillVersionSchema } from "./schema.js";
+import { relativePathProblem, SKILL_ID_RE, SkillIdSchema, SkillVersionSchema, type SkillProvider } from "./schema.js";
 
 const int = z.number().int().min(0);
 const ids = (max: number) => z.array(SkillIdSchema).max(max);
@@ -130,7 +130,16 @@ function detect(profile: RepoProfile | undefined, modules: string[] | undefined)
 /** Whole words of the task, lower-case, with hyphens as spaces: "Spring Boot" and "spring-boot" both match. */
 const words = (s: string) => ` ${s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()} `;
 
-interface Item { skill: RegisteredSkill; score: number; pinned: boolean; evidence: string[] }
+interface Item { skill: RegisteredSkill; score: number; pinned: boolean; evidence: string[]; provider?: string }
+
+/** `needs provider: <name> (<products>; tools: <tools>)`, cut to CATALOGUE_TEXT.evidenceChars. */
+export function providerEvidence(p: SkillProvider): string {
+  const more = (n: number) => (n > T.textTerms ? [`+${n - T.textTerms} more`] : []);
+  const products = [...p.products.slice(0, T.textTerms).map((x) => (x.version === undefined ? x.name : `${x.name} ${cleanText(x.version)}`)), ...more(p.products.length)];
+  const tools = [...p.tools.slice(0, T.textTerms), ...more(p.tools.length)];
+  const parts = [products.join(", "), tools.length ? `tools: ${tools.join(", ")}` : ""].filter((s) => s !== "");
+  return cutChars(`needs provider: ${p.name}${parts.length ? ` (${parts.join("; ")})` : ""}`, T.evidenceChars);
+}
 
 function scoreEntry(skill: RegisteredSkill, detected: readonly Detected[], task: string): Item {
   const taskWords = words(task);
@@ -143,7 +152,9 @@ function scoreEntry(skill: RegisteredSkill, detected: readonly Detected[], task:
   if (named.length > 0) lines.push(cutChars(`named in the task: ${named.slice(0, T.textTerms).join(", ")}`, T.evidenceChars));
   const text = Math.min(S.textCap, S.textWeight * named.length);
   const score = Math.min(100, Math.max(0, ...hits.map((d) => d.score)) + text);
-  return { skill, score, pinned: false, evidence: lines };
+  if (!skill.pkg.provider) return { skill, score, pinned: false, evidence: lines };
+  const provider = providerEvidence(skill.pkg.provider);
+  return { skill, score, pinned: false, evidence: [provider, ...lines], provider };
 }
 
 function entryAt(item: Item, detail: CatalogueDetail): CatalogueEntry {
@@ -153,7 +164,8 @@ function entryAt(item: Item, detail: CatalogueDetail): CatalogueEntry {
     version: item.skill.version,
     description: cutChars(cleanText(item.skill.pkg.description), d.descriptionChars),
     capabilities: item.skill.pkg.capabilities.slice(0, d.capabilities),
-    evidence: item.evidence.slice(0, d.evidence),
+    // A shortened entry keeps the provider line: a vendor-specific skill is never shown as portable.
+    evidence: item.evidence.slice(0, d.evidence > 0 || !item.provider ? d.evidence : 1),
   };
 }
 

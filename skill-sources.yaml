@@ -1,5 +1,6 @@
 # Skill library sources. To enable a source: add `ref.approved` with a full commit id (40 or 64 hex digits),
-# set `status: enabled` and remove `reason`, by pull request after review.
+# set `status: enabled` and remove `reason`, by pull request after review. A `trust: community` source also needs
+# `review` (`by`, `on`, `commit`, `licence`), and `review.commit` must equal `ref.approved`.
 schema: 1
 sources:
   - id: openhands-extensions

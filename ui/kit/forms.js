@@ -1,7 +1,7 @@
-// Form controls: field, textInput, textArea, select and checkbox. Unbound: they take `value` and `onInput`/`onChange`.
+// Form controls: field, textInput, textArea, select, checkbox and settingControl. Unbound: they take `value` and `onInput`/`onChange`.
 // Styles are in forms.css.
 import { h } from "../dom.js";
-import { cx, nextId, rest } from "./core.js";
+import { cx, nextId, oneOf, rest, settingHint } from "./core.js";
 
 const blank = (s) => typeof s !== "string" || s.trim() === "";
 
@@ -48,4 +48,50 @@ export function field({ label, hint, error, required = false, class: cls, ...mor
     control,
     hint ? h("small", { class: "scf-field__hint", id: `${id}-hint` }, hint) : null,
     error ? h("div", { class: "scf-field__error", role: "alert", id: `${id}-error` }, error) : null);
+}
+
+const SETTING_KINDS = ["number", "yes-no", "text", "list", "choice"];
+
+const lines = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+
+/** One line of a list of records: parts in `fields` order; extra parts are joined onto the last field. */
+function recordOf(line, fields) {
+  const parts = line.split(/\s+/);
+  const out = {};
+  fields.forEach((f, i) => {
+    const part = i === fields.length - 1 ? parts.slice(i).join(" ") : parts[i];
+    if (part) out[f.key] = part;
+  });
+  return out;
+}
+
+/** A control made from one setting description of GET /api/settings. `onChange(value)` gets the typed value. */
+export function settingControl(description, { value, onChange, error, disabled = false, class: cls, ...more } = {}) {
+  rest(more);
+  const d = description ?? {};
+  oneOf("setting kind", d.kind, SETTING_KINDS);
+  if (blank(d.label)) throw new Error("a setting control needs a label");
+  const emit = (v) => onChange?.(v);
+  const hint = settingHint(d);
+  if (d.kind === "yes-no") {
+    const id = nextId("scf-field");
+    const describedBy = [`${id}-hint`, error ? `${id}-error` : ""].filter(Boolean).join(" ");
+    return h("div", { class: cx("scf-field", error && "scf-field--error", cls) },
+      checkbox({ label: d.label, checked: value === true, disabled, role: "switch", id, "aria-describedby": describedBy, "aria-invalid": error ? "true" : undefined, onChange: (e) => emit(e.target.checked === true) }),
+      h("small", { class: "scf-field__hint", id: `${id}-hint` }, hint),
+      error ? h("div", { class: "scf-field__error", role: "alert", id: `${id}-error` }, error) : null);
+  }
+  let control;
+  if (d.kind === "number") {
+    control = textInput({ type: "number", value: value === undefined ? "" : String(value), min: d.min, max: d.max, step: d.integer ? "1" : "any", disabled, onChange: (e) => emit(e.target.value === "" ? undefined : Number(e.target.value)) });
+  } else if (d.kind === "text") {
+    control = textInput({ value, disabled, onChange: (e) => emit(e.target.value === "" && d.optional ? undefined : e.target.value) });
+  } else if (d.kind === "list") {
+    const items = Array.isArray(value) ? value : [];
+    const text = d.fields ? items.map((r) => d.fields.map((f) => r?.[f.key]).filter((p) => p !== undefined && p !== "").join(" ")).join("\n") : items.join("\n");
+    control = textArea({ value: text, mono: !!d.fields, disabled, onChange: (e) => emit(d.fields ? lines(e.target.value).map((l) => recordOf(l, d.fields)) : lines(e.target.value)) });
+  } else {
+    control = select({ options: d.choices ?? [], value, emptyLabel: d.optional ? "Not set" : undefined, disabled, onChange: (e) => emit(e.target.value === "" ? undefined : e.target.value) });
+  }
+  return field({ label: d.label, hint, error, class: cls }, control);
 }

@@ -1225,6 +1225,14 @@ running (see [Keep it running](#keep-it-running)). GitHub access uses the `gh` C
 For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h`, `7d`; or set
 **Once a day at** `17:00` with a time zone.
 
+**Options of an issues watcher.** The form has three groups, collapsed by default; each control shows its default and one sentence on what it does. Only issues watchers show them.
+
+- **Labels:** labels that go first (default `bug`), a text for each status label (working, done, needs info, waiting, failed; default is the Foundry's own name), and labels to remove when a run succeeds.
+- **Dependencies:** wait for dependencies (default on), labels that count as done, a pause while a pull request whose branch starts with a text is open (cleared by an empty field), and one run at a time (default off).
+- **Comments:** a status comment (default on), a comment when a run fails (default on), a questions check (a flow run once over all new issues before any starts; default none), and answer questions automatically (default off). It means the Foundry answers its own questions with its recommendations, at most twice per issue; after that a person answers.
+
+A field that is cleared is removed from the watcher, so the default applies. A value the server refuses is shown at its field with the server's message. The same options work for a watcher of a repository and for one still in `config.yaml`.
+
 ### The Watchers page (admins)
 
 Only admins see the Watchers page. No watcher name or status shows anywhere else. A user sees the runs a watcher started on their repository in **My runs**, without the watcher's name.
@@ -1558,6 +1566,18 @@ happens to each problem.
 - **Detectors.** Each detector is listed with what it looks for, its threshold numbers, when it
   last found something and whether it is muted. Change a number and press **Save**; this changes
   the setting `monitor.<detector>` like the Settings page.
+- **Thresholds and settings.** The Detectors table has one number field per threshold of each
+  detector. Below the Mutes, the **Monitor settings** section holds two groups. **Bug stories**: the
+  repository (`report_to`), the limits per day and per check, the quiet time after a start and the
+  days to wait for a fix. **Circuit breaker**: the new-findings count, the time window and the
+  failed fixes. Each field shows what it means, its default, its allowed range and "Takes effect at
+  once". A value outside the range, a fraction where a whole number is needed, an empty number or a
+  repository that is not `owner/repo` is not saved; the error line of that form names the field and
+  the range. **Bug stories with their evidence are written as issues to the repository in
+  `report_to`, and everyone who can read that repository sees them.** Check it before you set it.
+  **Back to default** removes the setting from `config.yaml`, so the default applies. It is enabled
+  only when the setting is in the file. A comment on the same line goes with it; comment lines above
+  it stay. A section left empty goes too.
 
 ### How issue watchers use labels
 
@@ -1762,6 +1782,55 @@ reinterpreting scope, or anything that needs your decision, is high).
 - **You already agreed** to a split in a comment ("split it"): it creates the issues without asking.
 
 The threshold is the `auto_split_max_risk` variable (default 50).
+
+#### Stories that fix failing tests
+
+A story can be written to repair tests that already fail on the branch. Without this, the run
+stops at `baseline_failed` before it changes anything, because the tests must pass first.
+
+**Name the tests.** Under a heading `## Failing tests to fix` in the issue body, list one test per
+line, as the JUnit XML reports print it: `Class.method`.
+
+```
+## Failing tests to fix
+
+- `com.example.BarTest.parsesEmptyInput`
+- `com.example.BazTest`
+```
+
+- A line with only a class name covers every test of that class. Otherwise a name must match
+  exactly, so a part of a name never matches.
+- A list item marker and backticks are fine. Code fences and blank lines are skipped. The list ends
+  at the next heading.
+- The names come from JUnit XML reports. If the test command writes none (`TEST-*.xml` or
+  `junit*.xml` in the repository), the run stops at `baseline_failed` and says so: turn on a JUnit
+  XML reporter in the test command.
+
+**What happens when the tests fail before any change** (the tests are run once more first, as before):
+
+- **Every failing test is named:** the run goes on. The run log says `BASELINE: going on`, and the
+  report on the issue has a **Tests before the change** section with the failing tests.
+- **A failing test is not named:** the run stops at `baseline_failed`. The failure summary says that
+  the tests failed before any change, lists the failing tests that are not named, and the log shows
+  the rest. Add them to the heading and resume the run; a resume reads the issue again.
+- **No test is named:** the run stops and lists the failing tests.
+- **The tests pass before the change:** the run goes on as always. If the issue names tests, the
+  report says that they already pass.
+
+**The merge rule.** A run that went on past a red baseline is checked again after its change, on
+`test_develop` and `test_main` (and on the hotfix path of `issue-gitflow`, which also starts from a
+baseline commit that passed or was named). The check passes only when:
+
+- every named test passes, and
+- every test that passed before the change still passes, and
+- every test that failed before the change is still reported and passes. A test that is deleted,
+  renamed or skipped counts as a failure.
+
+If it does not pass, the run stops at the test step, and the log lists what is not yet right.
+
+**Not covered.** A test that fails by chance is still run only once more, not fixed by this rule. The
+baseline on `main` for a release is not changed. You cannot switch the baseline check off for a
+repository with this.
 
 #### Labels the Foundry sets
 
@@ -2313,6 +2382,10 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 
 **Saving keeps your file.** A save changes only the settings you changed in `config.yaml`: your comments and the order of the keys stay, and a setting you put back to its default is removed from the file. If someone else saved, or the file was edited by hand, since you opened the page, the save is refused with "the settings changed since you loaded them — reload first". Reload the page and make the change again. A hand edit shows on the page at once, but the server uses it only after the next save or a restart.
 
+**Restart when no story is running.** Some settings, such as **Listen on**, take effect only after a restart. After a save that changed one, the page says "A restart is needed" with the running and the saved value. When the server runs under the supervisor (also when you started it with `scf ui` in a terminal), the page offers **Restart when no story is running**. Otherwise it says to stop the server and start it again. The restart works like a new version: no new runs start and the watchers stop until the active runs are done, then the server starts again by itself. While it waits, the box says why, how many runs are still active, and offers **Cancel the restart**; cancelling starts the runs and watchers again. A restart for a new version or a moved data folder takes over a waiting restart, and then it cannot be cancelled. The box is refreshed every 5 seconds. Asking for the restart and cancelling it are written to the audit log (`restart-request`, `restart-cancel`).
+
+**Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
+
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
 
@@ -2350,6 +2423,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
   in the Docker image you set, with only the workspace mounted.
 - **Approval steps** in flows let you decide before anything irreversible happens (the risk gate
   and the split approval are approval steps).
+
+**Skills** — the Skills card (after **Safety**) changes the skill folders, the sources and the limits without editing `config.yaml`. It has one control for each `skills.*` setting of the sources, the catalogue, the selection, the review checks and the skills that cannot be used (`skills.releases.approved` and `skills.tools` come later). Each control's hint gives the default; changes take effect when a run starts or resumes. Before a save, a change that lowers safety asks first in a dialog that names each risk, and **Cancel** saves nothing. The risky changes are: turning on **repository** skills or **unreleased** releases, adding a folder to **roots**, setting an unresolved case to `warn` (a skill that is unknown, not installed, not from an approved release, in conflict or too large no longer stops a run), and removing a term from the high-risk list. Turning a risky value back off, or removing a folder, asks nothing. The dialog exists because those settings let skills the approved catalogue does not vouch for reach the agents, or let a run continue past a skill it should stop for. If the server cannot describe the skills settings, the card says so and a save keeps them unchanged. Stored as `skills` in `config.yaml`.
 
 **Notifications** — macOS notifications and a Slack webhook tell you only when something new
 lands under **Needs you** on Home (a question, a risky plan or split, a release pull request, a failure, a
@@ -2560,6 +2635,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
+| `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no story is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
 | `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
 | `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
 | `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
@@ -2697,13 +2773,13 @@ show as "n runs ahead of you", without ids.
 - **Commit name.** Commits in these runs use the bot name and e-mail from Settings when they are set (each on its own), else the name and e-mail of the account that owns the run. If the account was deleted and the bot name and e-mail are not both set, the step ends with "the account that owns this run could not be found, so its commits have no name": set the bot name and e-mail in Settings, then resume the run.
 - **After the upgrade.** An unflagged step or an agent in these runs can no longer call `gh` or the remote. The machine's git settings (signing, aliases, proxy) are not used; if you need a proxy or a certificate file, list `HTTPS_PROXY` or `SSL_CERT_FILE` in `step_env.pass` (see "Environment of the steps").
 - **Environment of the steps.** A step of a run owned by a user does not get the server's environment. A shell step gets `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `LANG`, `LANGUAGE`, `LC_ALL`, `TZ` and `TERM`, the Foundry's own `FACTORY_…` variables, and the names an admin lists. An agent step gets the same plus what its own agent and provider need (for example `ANTHROPIC_API_KEY` for Claude on an Anthropic provider, `OPENAI_API_KEY` for Codex on OpenAI); keys of other providers are not passed. Admin runs are unchanged.
-  - **Admins add a variable** in `config.yaml`: `step_env.pass` lists names for all steps, `step_env.agent_pass` names for agent steps only. A name may end in `_*` (for example `AWS_*`). Names starting with `FACTORY_`, `SCF_`, `GH_`, `GITHUB_`, `GIT_` or `SSH_` are refused, and provider keys are never passed by a list. `SCF_STEP_ENV_PASS` in the server's environment (comma separated) adds names too. A name on `pass` can be read by every user's shell steps, so use `agent_pass` for a secret that only agents need (such as `CLAUDE_CODE_USE_BEDROCK` with the `AWS_…` keys).
+  - **Admins add a variable** in Settings → User runs (**Variables for all steps**, **Variables for agent steps**; a refused name is marked at its field) or in `config.yaml`: `step_env.pass` lists names for all steps, `step_env.agent_pass` names for agent steps only. A name may end in `_*` (for example `AWS_*`). Names starting with `FACTORY_`, `SCF_`, `GH_`, `GITHUB_`, `GIT_` or `SSH_` are refused, and provider keys are never passed by a list. `SCF_STEP_ENV_PASS` in the server's environment (comma separated) adds names too. A name on `pass` can be read by every user's shell steps, so use `agent_pass` for a secret that only agents need (such as `CLAUDE_CODE_USE_BEDROCK` with the `AWS_…` keys).
   - **After the upgrade,** a flow that relied on an inherited variable such as `JAVA_HOME` or `NVM_DIR` in a user's run needs that name added.
   - **Hidden in output.** The values of the provider key variables named in the config (`api_key_env`) are hidden in logs, live output and API answers. A value shorter than 8 characters is not hidden; the server logs a line when it finds one.
   - **The limit.** The agent's own key is still visible to the agent's shell tool unless the agent program hides it.
 - **OS sandbox for steps of a user's run.** On macOS, every shell step of a user's run starts inside a `sandbox-exec` profile. The step cannot read the Mac account's home, the data folder or other runs, cannot write outside its run folder (and not `run.json`, `live.log`, `logs/` or the evidence files), and cannot use the Keychain, unix sockets or open apps. The network stays open. Its `HOME` is `<run folder>/home` and `TMPDIR`, `TMP` and `TEMP` are `<run folder>/tmp`, so caches in `~` start empty. A shell step marked **Run in Docker** is held by the container instead. Claude and Codex steps are held by the same profile. Their own sandbox is off, each run has its own empty agent folders, and they sign in by a token variable set for the server only (see "Trust"); without one the step is refused. Admin runs are unchanged.
   - **Settings.** Tick **Allow user runs without the OS sandbox** (`sandbox.user_runs: off`) to run user runs without it. If no sandbox works (not macOS, or `sandbox-exec` fails) and the box is not ticked, a user's run does not start: "This computer cannot hold a user's run in a sandbox, so the run was not started. An admin can allow user runs without it in Settings." The server variable `SCF_USER_SANDBOX=off` (or `FACTORY_USER_SANDBOX=off`) does the same.
-  - **Extra read paths.** `sandbox.user_read` in `config.yaml` lists up to 50 paths a user's shell step may also read (for example a tool installed in the home). Saving Settings keeps it.
+  - **Extra read paths.** `sandbox.user_read` (Settings → User runs, **Extra readable paths**, or `config.yaml`) lists up to 50 absolute paths a user's shell step may also read (for example a tool installed in the home). Saving Settings keeps it.
 - **The limit.** Agent steps are **not in an operating-system sandbox** yet, and neither are runs with the sandbox switched off. For them, this is done through the environment of the steps. It is **not an operating-system sandbox**. A step runs as the server's macOS account, so it can still read that account's files and Keychain (`~/.ssh`, `~/.netrc`, a `gh` login kept in the Keychain), call `ssh` itself, or set the variables again. With `isolate_agents` on, Codex agents skip the account's `~/.codex/config.toml` too (see "Codex and your personal setup"); with it off, or in a step the OS sandbox holds, keep GitHub tokens and GitHub MCP servers out of that file. Claude Code agents skip the personal setup in these runs. A step marked **Run in Docker** gets nothing of the machine but the commit name; as before, the push hook does not run inside the container. A separate account or container per run is not included.
 - **A token** ("GitHub token" or "HTTPS token"): `gh` and git use it. Give it Contents, Issues and Pull requests, read and write, then press **Test connection**; a token made for reading only fails at the first push or comment.
 - **A deploy key:** git uses it over ssh, and nothing else (no ssh agent, no key or ssh settings of the server's account; host keys are kept in `known_hosts` in the data folder). The key is a file in the folder `sign-in` of the run folder, outside the workspace. It exists only while the marked step runs and is deleted when the step ends. **A deploy key gives git access only:** a step that calls `gh` fails with "a deploy key gives git access only; choose a token or the GitHub App under My repositories". Call `gh` by name; the check does not see `gh` called by its full path.
@@ -2970,9 +3046,14 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/info` | yes | no | server settings and today's cost |
 | `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set |
 | `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number |
+| `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
+| `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
+| `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
+| `POST /api/restart` | yes | no | restart when no story is running: no new runs start and the watchers stop until the active runs are done; only when the server runs under the supervisor; writes an audit line |
+| `DELETE /api/restart` | yes | no | cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
-| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes |
+| `GET /api/monitor` | yes | no | whether the monitor makes bug stories (on, off, quiet after a restart, or stopped by the circuit breaker), when it last checked, how many stories it made today, its findings with their states, its detectors and its mutes, and the monitor's settings with their ranges, defaults, values and whether config.yaml states them |
 | `GET /api/monitor/findings/:id` | yes | no | the evidence, bug stories and runs of one finding of the monitor |
 | `POST /api/monitor/story` | yes | no | make the bug story of one finding of the monitor now (the waiting rules do not apply; the off switch, mutes and the two tries do) |
 | `POST /api/monitor/off` | yes | no | stop the monitor from making bug stories |
@@ -3177,7 +3258,7 @@ skills:
    risk: low
    ```
 
-   More fields: `detectors`, `connectors`, `tool_profile`. The eleven built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `nodejs`, `rest-openapi`, `kafka`, `ibm-mq`, `cassandra`, `oracle`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
+   More fields: `detectors`, `connectors`, `tool_profile`, `provider`. A `provider` block says that the skill needs a vendor: `provider: {name: acme, products: [{name: kafka, version: "3.7"}], tools: [kafka-admin]}`. `name` is a slug; at most 16 products and 16 tools. A skill without it is portable. The block is text only: it grants no connector, shell or network access. The catalogue and `scf skills` show it (see [Skill catalogue](#skill-catalogue)). The eleven built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `nodejs`, `rest-openapi`, `kafka`, `ibm-mq`, `cassandra`, `oracle`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
 4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
 5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
 6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
@@ -3282,6 +3363,7 @@ skills:
 - **Problems are never silent:** a missing, unreadable or refused folder, an invalid package and a symlinked package are each named in health and in `scf skills`.
 - **Personal folders are never scanned:** the config refuses a root with a `.claude` or `.codex` path segment. The registry also refuses `~/.claude`, `~/.codex`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and symlinks into them.
 - **Limits:** 500 folders per root; 1000 packages or 64 MiB of files in all. The result is cached for 60 seconds.
+- **Settings card:** an admin can change these keys on the Skills card of Settings (see [Settings and safety](#7-settings-and-safety)); a change that lowers safety asks first.
 
 #### Credentials, endpoints and connectors
 
@@ -3340,14 +3422,50 @@ sources:
     licence: { allow: [MIT, Apache-2.0] }
     update: { cadence: weekly }
     owner: "@octocat"
+    review:
+      by: "@octocat"
+      on: 2026-10-13
+      commit: 0123456789abcdef0123456789abcdef01234567   # same as ref.approved
+      licence: MIT
 ```
 
-- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`) and `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`).
+- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `licence.reviewed` (optional; the licence review digest, see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
 - **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
 - **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
+- **Review of a community source.** `review` records who checked the maintainer and the licence, and when. It has four fields: `by` (a GitHub user or team, as `owner`), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id, equal to `ref.approved`) and `licence` (one of `licence.allow`). An enabled `trust: community` source is refused without `review`, and when `review.commit` is not `ref.approved`. A new commit needs a new review, so changing one word cannot raise the trust.
+- **Known community repositories.** The Foundry ships a list of community repositories (`src/skills/community-rules.ts`). `github.com/jiangxianze/spring-agent-skills` is on it, so a source with that repository must say `trust: community`; any other trust is refused and the message names `trust`.
+- **Source profile.** An optional `profile` says which upstream capabilities are portable and which belong to a vendor. It is for the maintainer of the catalogue:
+
+  ```yaml
+      profile:
+        provider: confluent                 # a slug; required when profile is set
+        portable:                           # upstream capability -> catalogue capability (at most 64)
+          streams: kafka-streams
+        products:                           # default provider products with version ranges (1 to 16)
+          kafka: ">=3.7"
+  ```
+
+  Every other upstream capability becomes `confluent-<capability>`, so a vendor skill cannot take over a portable capability by accident. A skill with a vendor capability gets the provider block. A source without `profile` is unchanged. `scf skills sources check` prints `provider confluent (1 portable)` for the source. It refuses a mapping to an invalid slug, a duplicate key and a `profile` without `provider`. A slug longer than 64 characters, or two upstream names that land on the same slug, is a problem that names the skill and the capability; nothing is dropped silently. The profile is not applied during import or scan yet.
 - **Owner and policy.** Every source has an owner and an update cadence.
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
-- **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
+- **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
+- **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. A reviewed source is listed with `reviewed by <by> on <on>`. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
+- **Import and scan.** `scf skills import` and `scf skills scan` read the same file. A community source without a current `review` is refused as an invalid source list: a `PROBLEM` line names the missing or stale review, and nothing is fetched or read.
+
+A community source that is not yet reviewed is kept disabled. This entry goes under `sources:`. It is an example for `github.com/jiangxianze/spring-agent-skills`; the folder and licence are to be confirmed at review:
+
+```yaml
+  - id: spring-agent-skills
+    repository: https://github.com/jiangxianze/spring-agent-skills
+    status: disabled
+    reason: not reviewed yet
+    paths: [.]
+    adapter: agent-skills
+    trust: community
+    licence: { allow: [MIT, Apache-2.0] }
+    update: { cadence: manual }
+    owner: "@octocat"
+```
 
 Imported library content is kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
 
@@ -3370,12 +3488,16 @@ scf skills import example-skills
 
 ```
 REJECTED skills/link: a symbolic link
+LICENCE FILES 2 staged, 0 not readable
 OK 2 skills staged from github.com/example/skills@0123456789ab sha256:… (staged)
 Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef0123456789abcdef01234567
 ```
 
-- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`.
-- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`.
+- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`. The licence and notice files of the same commit are kept with them: `licence.json` and `licence/<upstream path>`.
+- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`. An import also has `retrievedAt` (the UTC time of the fetch) and `licenceFiles[]`: each file's `path` with `sha256` and `bytes`, or with a `problem` when it cannot be read or staged. The list is the same as in `licence.json`, and the two are checked against each other when the import is read. An import written before these fields existed has neither; it still reads, and its licence evidence is empty.
+- **Licence and notice files.** Every `LICENSE`, `NOTICE` and similar file of the staged skill roots is copied byte for byte into `licence/`, with its path, size and SHA-256 in `licence.json`. The copy is checked against that record when it is read. Limits: 200 files, 256 KiB per file and 4 MiB in total; more than that stages nothing and prints a `PROBLEM`.
+- **An import from before licence files were kept.** The first import of that commit after the upgrade replaces its folder. The old folder is kept as `.old-<commit>` until the new one is verified, and the next import removes it. Until then a reader of the old folder reports that there are no licence files and asks you to import again. `scf skills scan` works on it as before.
+- **Licence files.** They are untrusted bytes. The import never prints their content and never follows a link in them.
 - **How it fetches.** One commit, into a bare temporary repository. There is no checkout. Only https is used, with no redirects. Your git configuration, credential helper and `~/.netrc` are not used. The temporary folder is removed at the end.
 - **Limits.** 120 s for the fetch, 256 MiB during the fetch, 8 MiB for the file list, and the per-skill limits from the staging step (#457).
 - **Rejections.** A skill is rejected, and not staged, for example when it is a symbolic link, a submodule or too large (`is larger than 262144 bytes`), or has an unsafe path. Each prints a `REJECTED` line with the reasons. The other skills are still staged.
@@ -3406,6 +3528,7 @@ SCANNED 2 skills from github.com/example/skills@0123456789ab sha256:…: 2 block
 - **Excluded skills.** A skill that needs a live integration (a connector or MCP tool), needs network access, uses a network command or call, ships plugin or MCP configuration (`.mcp.json`, `plugin.json`, a `.plugin/` folder) or declares `mcp_tools` prints `EXCLUDED <skill>: <reasons>` instead of `OK`. It counts as blocked. Exclusions are not lifted by the exception file.
 - **Exit codes.** 0 when no skill is blocked. 1 when a skill is blocked or excluded, or a `PROBLEM` is printed. A `PROBLEM` names the file or field and never shows a credential-like value.
 - **Problems.** A missing import (`no staged import … run "scf skills import"`), an unknown source, a source without `ref.approved`, an invalid source list, an invalid exception file, or a named exception file that does not exist. A missing default exception file means "no exceptions".
+- **Connector report.** A source with a reviewed connector profile (today: `github.com/prisma/skills`) also gets one line per mapped skill: `CONNECTOR <connector> <skill>: specific=… general=… orm=… engines=… runtime=… needs=… risk=… evaluations=… reviewed=yes|no`. `CONNECTOR … unmapped` names a skill the profile does not know or whose companion skill is missing; `CONNECTOR … absent` names a profile skill that is not in the import. The report reads nothing else and runs nothing. `reviewed=no` means the skill's commit is not one the profile was checked against, so the skill fails the safety gate and is not offered.
 
 ##### The exception file
 
@@ -3425,6 +3548,125 @@ exceptions:
 
 - **Expiry.** Use `expires` (a date), or `review: required` when the finding must be looked at again. An entry whose date has passed is `expired`, and `review: required` is `review-required`; neither accepts the finding, so the skill stays blocked.
 - **Limits.** At most 200 entries. No wildcards. Unknown keys are refused. Every problem names its entry and field.
+
+#### Assess an import
+
+`scf skills assess <source-id>` prints the workflow report of the staged import of a source: which of its skills fit the Foundry's flows, and which do not and why. It is offline and read-only, like `scan`: nothing is written, loaded or run, and it needs no data folder. It reads the approved commit of the source (`ref.approved` in `skill-sources.yaml`) and the staged import in quarantine. It takes no exception file.
+
+```
+scf skills assess example-skills
+```
+
+```
+CONFLICT <code> <effect> <skill> <path>[:<line>]: <evidence>
+CANDIDATE <skill> (<name>): tools <list>; roles <list>; flows <list>; context <tokens>/<max>
+EXCLUDED <skill> (<name>): <code>, <code>
+ASSESSED <n> skills from <repository>@<commit> sha256:…: <n> candidates, <n> excluded with profile <id>
+```
+
+- **Profile.** Only the sources with a workflow profile can be assessed; today that is `github.com/obra/superpowers`. Another source prints `PROBLEM no workflow profile for …` and exits 1. The profile is in `src/skills/workflow-rules.ts` and lists the individual skills that may become candidates, each with its tools, roles, capability, built-in flows and token budget. A skill that is not in the profile is excluded with `not-selected`.
+- **The declaration is the ceiling.** The profile says what a skill may need. Text or metadata in the upstream skill that asks for more (tools, connectors, `allowed-tools`, scripts without a shell, a dependency on another skill, a delivery step, a worktree or subagent assumption) excludes the skill. It never raises the declaration, and nothing is adapted or merged: the upstream text is not changed.
+- **Flows.** A declared flow counts only when one of its Claude steps really receives the skill (role coder, skills selected) and gives every declared tool. A flow with `skills: off` or without such a step is `flow-incompatible`; a skill with no compatible flow is `no-compatible-flow`.
+- **Lines.** `CONFLICT <code> <effect> <skill> <path>[:<line>]: <evidence>` for each finding. The effect is `exclude` (the skill is left out) or `report` (it is shown and does not change the status). Evidence is short and bounded, and a credential-like value is shown as `(hidden)`. At most 50 findings are shown per skill; `CONFLICT omitted report <skill>: and <n> more` says how many were left out. The exclusion codes are counted before the cut, so a hidden finding still excludes.
+- **Candidate or excluded.** `CANDIDATE <id> (<name>): tools …; roles …; flows …; context <tokens>/<max>` for a skill that passes. `EXCLUDED <id> (<name>): <codes>` lists every exclusion code, sorted. A skill that normalization rejects is `EXCLUDED <folder>: not normalized (<reasons>)`.
+- **Codes.** Exclusions: `not-selected`, `assumes-subagents`, `assumes-worktrees`, `assumes-commands`, `own-delivery-flow`, `skips-approval`, `orchestration`, `grants-tools`, `undeclared-tool`, `requires-skill`, `context-over-budget`, `no-compatible-flow`. Reports only: `mentions-skill`, `flow-unknown`, `flow-incompatible`, `extra-files`.
+- **Exit codes.** 0 when the report is printed, even when every skill is excluded: an exclusion is the expected result. 1 for a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, or no workflow profile).
+- **Not done.** Nothing promotes a candidate yet. `workflowBlockers`, `declaredPackage` and `workflowProvenance` in `src/skills/workflow.ts` are for a later promotion step to call. A promoted skill would record its declaration in `SkillProvenance.workflow`.
+
+#### Evaluate a source
+
+`scf skills evaluate <source-id> [<technology>@<version> ...]` reports what an enabled source offers, before you import it. It fetches the approved commit (`ref.approved`) into a temporary folder, like `scf skills import`, and then writes nothing: no quarantine, no catalogue and no file.
+
+```
+scf skills evaluate oracle-skills oracle-database@19 oracle-apex@24
+```
+
+```
+SKILL sql-tuning 1.2.0 skills/sql-tuning capabilities=database-sql risk=low
+COMPATIBILITY sql-tuning: oracle-database >=19 (source); project: compatible
+TOOLS sql-tuning: sqlplus
+ACCESS sql-tuning: asks for nothing; importing grants none
+LICENCE sql-tuning: allowed Apache-2.0
+NOTICE sql-tuning: kept 1 files: NOTICE.txt
+RECOMMEND database-sql: sql-tuning@1.2.0 (verified, by trust); not chosen: none
+EVALUATED 1 skills from github.com/example/oracle-skills@0123456789ab sha256:…: 0 refused, 0 conflicts
+```
+
+- **Technologies.** Up to 8, each `<name>@<version>` with a lower-case name such as `oracle-database@19`. A skill is compatible when its version range admits the version you give. Without any technology, no `COMPATIBILITY` verdict is shown.
+- **Source scope.** A source entry in `skill-sources.yaml` can state what upstream does not: `scope` with up to 8 `capabilities` and up to 8 `technologies` (a name and a version range such as `">=19"`). A range the skill declares itself wins. The scope adds to the skill; it never removes one.
+
+```yaml
+- id: oracle-skills
+  scope:
+    capabilities: [database-sql]
+    technologies:
+      oracle-database: ">=19"
+```
+
+- **Access.** `ACCESS` lists what a skill asks for (network, credentials, tools). Importing grants none of it: no cloud credential or live database access is given by an import.
+- **Licence and notices.** `LICENCE` is per skill, from the source's `licence.allow`. A skill whose licence is not allowed is `REFUSED`. The attribution files of an allowed skill are listed as `NOTICE`, so the notices can be kept with it.
+- **Overlap.** For each capability that an imported skill and an installed skill both provide, the report uses the canonical selection. `RECOMMEND` names the winner and why it won; `CONFLICT` means no winner can be chosen; `NONE` means no skill is eligible. A recommendation is not applied: nothing is pinned or changed.
+- **Exit codes.** 0 when every skill passes. 1 when a skill is refused or blocked by a high finding, its licence is not allowed, its compatibility is `incompatible` or `unchecked`, an installed skill fails the integrity check, or a conflict is found. A `PROBLEM` line also exits 1 and names the file or field.
+- **Limits.** The same fetch limits as `scf skills import`. An evaluation that is interrupted (Ctrl-C) prints `PROBLEM` and writes nothing.
+
+#### Check a promotion
+
+`scf skills promote check <source-id> [<exceptions-file>]` shows, for each skill of the staged import, whether its licence, its provenance and its findings allow promotion. It is offline and read-only, like [Scan an import](#scan-an-import): nothing is written, loaded, pinned or run, and no network or process is used. Promotion itself is not done by this command.
+
+```
+scf skills promote check example-skills
+```
+
+```
+PROMOTABLE example/skill-a skills/skill-a MIT
+REFUSED skills/skill-b: missing (skills/skill-b: no licence file for this skill or a folder above it)
+CHECKED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 promotable, 1 refused
+```
+
+- **What it checks.** The staged import is read and checked as in [Scan an import](#scan-an-import). Then, per skill path: the licence and notice evidence of the commit is checked against the source's licence allow list, the skill is normalized, the scanner runs with the exceptions, and the provenance is recorded.
+- **Lines.** `PROMOTABLE <id> <path> <licences>` for a path that may be promoted, with its licence names. `REFUSED <path>: <status> (<reasons>)` for every other path. The status is the licence status (for example `missing`, `ambiguous`, `review` or `rejected`), `blocked` when a high finding is not accepted, or `not-normalized` when the normalization step rejects the skill. Then one `CHECKED` line with the counts.
+- **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, or with an open high finding. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
+- **Reasons.** Reasons never show credential-like text; it shows as `(hidden)`. Licence texts are never printed.
+- **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, or an invalid exception file).
+
+#### Licence review and provider assumptions
+
+A source that needs a licence review (the `anthropic-skills` connector, or any source with `licence.reviewed`) is promoted only when its `licence.reviewed` is the digest of the licence evidence a person has reviewed. `promote check` prints the digest and the state of the review:
+
+```
+LICENCES sha256:… 3 licence and notice files: not reviewed; check the lines above, then set licence.reviewed to this digest
+```
+
+- **What the digest covers.** Every licence and notice file that can apply to a skill folder of the import, with its path, its kind and its SHA-256 (or its problem, when it cannot be read), and the decision for each skill folder: its status, licences, declared licence and the file that governs it. It does not cover the commit id or the attribution text.
+- **When it changes.** Any licence or notice file in or above a skill folder changes, appears or disappears, including the repository's root `LICENSE`. A licence-like file in a parent folder counts even when it governs no skill. Also when a skill folder is added or removed, or the licence decision of a folder changes (for example its `license:` line in `SKILL.md`).
+- **How to review.** Read the lines `promote check` printed above the `LICENCES` line, then set `licence.reviewed` to the printed digest in `skill-sources.yaml`, by pull request. The state `not reviewed` means the field is missing; `changed since the review` means it is an older digest.
+- **Refusals.** Until the digest matches, every path of the source is refused with status `review`, and `promote check` exits 1.
+- **Example entry.** Placeholders are shown in angle brackets; use the commit you reviewed and the digest that `promote check` printed for it:
+
+```yaml
+- id: anthropic-skills
+  repository: https://github.com/anthropics/skills
+  status: enabled
+  ref:
+    approved: <full commit id>
+  paths: [skills]
+  adapter: agent-skills
+  trust: verified
+  licence:
+    allow: [Apache-2.0]
+    reviewed: sha256:<64 hex digits>
+  update: { cadence: manual }
+  owner: "@acme/skills"
+```
+
+The document skills of that repository are source-available, not open source. Their licence is not in `allow`, so they are refused as `rejected` or `ambiguous`; the Apache-2.0 skills can be promoted. Whether the upstream layout and licence text match what the check expects is not verified by the tests: a skill whose licence cannot be identified is refused, never promoted.
+
+- **Provider assumptions.** `ASSUMES <id>: <codes>` is printed for each skill that has any. They are found in the tools the skill declares, its `compatibility` and its instructions:
+  - `claude-tools`: a Claude tool name, such as `WebFetch`, or `Read` next to the word "tool".
+  - `mcp-servers`: an MCP tool (`mcp__…`), declared or named in the instructions.
+  - `claude-surface`: the Claude apps (claude.ai, Claude Code, Claude Desktop, or the skills folders of the apps).
+  - `anthropic-api`: the Anthropic API, its key variable or its SDK package.
+- **Assumptions grant nothing.** They are a declaration. They never block a skill and never change its tool profile: an imported `allowed-tools` field grants no tools. Reference files are not read.
 
 #### Skill identity and content fingerprint
 
@@ -3469,6 +3711,23 @@ Each normalized skill has five identity terms. Nothing reads them yet, so they d
 - `other-version`: same repository and name, other version and content.
 - `distinct`: anything else. A skill with the same name in another repository is not linked unless the fingerprints match.
 
+#### Supported Java and Spring versions
+
+A skill that declares a Java, Spring or build tool version is checked against the versions the Foundry supports. The project's own versions come from its build files.
+
+| Technology | Supported lines |
+|---|---|
+| Java | 17, 21, 25 |
+| Spring Boot | 4.0, 4.1 |
+| Spring Framework | 7.0 |
+| Maven | 3.9, 4.0 |
+| Gradle | 8.14, 9 |
+
+- **Where the version is read from.** Java: `java.version`, `maven.compiler.release` or `maven.compiler.source` in `pom.xml`, and `JavaLanguageVersion` or `sourceCompatibility` in `build.gradle` / `build.gradle.kts`. Spring Boot: the Maven parent or plugin, the Gradle plugin `org.springframework.boot`, or a Boot BOM. Spring Framework: its `org.springframework:` dependencies. Maven and Gradle: `distributionUrl` in the wrapper files. A value such as `latest`, `3.+` or `^3.2` gives no version.
+- **Stale.** A skill is stale when its declared range fits none of the supported lines (for example `spring-boot: ^2`, or `java: 8`). A stale skill is never chosen: it is `incompatible` and an import of it is marked `stale`. A range that cannot be read is `unchecked` and is not chosen either.
+- **Aliases.** Other names are read as the same technology: `jdk` and `openjdk` are Java, `springboot` is Spring Boot, `spring` and `spring-core` are Spring Framework, `mvn` and `apache-maven` are Maven, and `gradlew` and `gradle-wrapper` are Gradle.
+- **Changing the table.** The table is data in `src/skills/technology-rules.ts`. The owner changes it by pull request.
+
 #### Skill collisions
 
 When two or more skills overlap, a collision is reported with one class, one reason and a stable id (`col-` and 16 hex characters). The result is the same for any input order. Nothing reads collisions in a run yet: runs do not build them, so skills are offered as before.
@@ -3477,7 +3736,7 @@ When two or more skills overlap, a collision is reported with one class, one rea
 |---|---|---|
 | `exact-mirror` | `mirror.same-artifact` | One repository, the same version and content, through more than one source record. |
 | `exact-mirror` | `mirror.same-content` | The same content from another repository, or under another version. |
-| `exact-mirror` | `mirror.settings-differ` | The same content, but the approved copies differ in `skill.yaml` settings (technologies, required tools, dependencies, risk and so on). |
+| `exact-mirror` | `mirror.settings-differ` | The same content, but the approved copies differ in `skill.yaml` settings (technologies, required tools, dependencies, provider, risk and so on). |
 | `version-reuse` | `version.reused` | The same skill and version with other content. |
 | `id-conflict` | `id.other-version` | The same skill at another version, with other content. |
 | `id-conflict` | `id.other-upstream` | The same id from another repository, with other content. |
@@ -3513,9 +3772,36 @@ UNRESOLVED github.com/example/gone: the repository could not be reached
 - **Ctrl-C.** The run stops and the list is not changed. A broken list is never overwritten.
 - **Exit codes.** 0 on success. 1 for a `PROBLEM` or a usage error. Limits: export 4 MiB, 20,000 entries, 100 repositories per run, 500 candidates in the list.
 
+#### Skill selections
+
+`skill-selections.yaml` next to `skill-sources.yaml` records which skills of a source the maintainers have selected, with the product and SDK they target and what each one needs. It is changed by pull request and checked with the CLI. It grants nothing: no run reads it, and a selected skill is not used because it is listed here.
+
+```yaml
+schema: 1
+selections:
+  - source: microsoft-skills
+    skill: azure-cosmos-py            # the name in SKILL.md
+    digest: sha256:…                  # the skill's digest in import.json
+    scope: provider                   # portable | provider
+    provider: azure                   # required for scope provider, refused for portable
+    product: { name: azure-cosmos-db, version: "2024-11" }
+    sdk: { name: azure-cosmos, language: python, version: ">=4.7" }
+    category: database
+    capabilities: [cosmos-db]
+    requires: { clis: [az], mcp: [azure], credentials: [azure-identity], services: [azure-cosmos-db] }
+    owner: "@octocat"
+    reviewed: 2026-10-13
+```
+
+- **Fields.** `source` and `skill` name one skill of a source; `source`+`skill` is listed once. `digest` is the skill's digest in `import.json`. `scope` is `portable` (guidance for any provider) or `provider` (specific to one provider). `provider` is a lower-case slug, required for `provider` and refused for `portable`. `product` (`name`, `version`) and `sdk` (`name`, `language`, `version`) are required for `provider`; `sdk.name` is a package name such as `@azure/cosmos`. `category` and `capabilities` (1 to 32 slugs) describe the skill. `owner` is a GitHub user or team; `reviewed` is a date that is not in the future.
+- **No wildcards.** Names refuse `* ? [ ] { }`, and versions refuse `*` and `?`: one entry names one skill and one version or range. Versions are text of at most 64 characters.
+- **Requirements.** `requires` lists what the agent itself must call or reach during a run: `clis`, `mcp` servers, `credentials` and `services`. Each name is a lower-case slug. The total is at most 16 names, and a name may be listed only once across all four lists. Each name becomes a connector slug: `cli-<name>`, `mcp-<name>`, `credential-<name>` or `service-<name>` (at most 64 characters). `scf skills selections check` prints them sorted.
+- **Check.** `scf skills selections check [<file>]` reads `skill-selections.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It prints one line per entry (source and skill, scope, provider, product, SDK, connectors, owner, reviewed date and the start of the digest), then `OK <n> selections`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. A missing file is a `PROBLEM` for this command (for readers, it means "no selections"). Credential-like values and control characters are never printed.
+- **Limits.** At most 500 selections. Every problem names its entry and field, for example `selections[0] (microsoft-skills/azure-cosmos-py) requires.mcp[0]`.
+
 ### Skill catalogue
 
-The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.
+The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). A skill with a `provider` block has its `needs provider: …` line first (see below). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.
 
 **Upgrade note.** Skills are now on for existing installs. A Claude session whose lock holds skills runs without your personal Claude setup (MCP servers, plugins, hooks and settings). To turn this off, set `skills.builtin: false` with no roots, or use `skills: {mode: off}` in a custom flow. The planner of the two flows now has only Read, Glob and Grep; the scoped `git log`, `git show`, `git grep` and `ls` Bash tools are gone, so the step is read-only by its tool list.
 
@@ -3534,6 +3820,7 @@ skills:
 - **Node.js is not guessed from TypeScript or JavaScript.** The built-in `nodejs` skill needs evidence of the Node.js runtime in the module the work touches: `engines.node`, `@types/node` or a server package (such as `express` or `fastify`) in `package.json`, or an import of a Node.js built-in module. A browser-only package does not get it.
 - **Kafka is not guessed from the word "events".** The built-in `kafka` skill needs a Kafka client or schema registry dependency, a Kafka import, or a `kafka*.properties` or `kafka*.yaml` file in the modules the work touches, or an issue that names Kafka. Documentation or code that only mentions events, messages or queues does not get it. The skill is guidance only: it names no connector and gives no access to a cluster. It counts as high risk, so a run that needs it and cannot load it stops; see [Missing and conflicting skills](#missing-and-conflicting-skills).
 - **Oracle is not guessed from SQL.** The built-in `oracle` skill needs a sign of Oracle in the repository: an Oracle driver in a build file, an `oracle.jdbc` import, PL/SQL package files (`.pks`, `.pkb`) or `tnsnames.ora`. Plain `.sql` files, another database or SQL words in the issue do not bring it in; an issue that names Oracle or PL/SQL does. The skill is text only: it gives an agent no database access and holds no credentials.
+- **Provider skills are not portable.** A skill with a `provider` block (see [Write a skill](#write-a-skill)) has the evidence line `needs provider: <name> (<products>; tools: <tools>)`, for example `needs provider: acme (kafka 3.7; tools: kafka-admin)`. The line is cut to 100 characters, names at most three products and three tools, then says "+N more". It stays in the entry when the entry is shortened, so a vendor-specific skill is never shown as if it were portable.
 - **Too big:** the lowest-ranked skills are dropped first, then descriptions are shortened. Skills in `include` are always included and never dropped. The catalogue says how many skills were left out.
 - **`include` is not a pin.** It does not approve content and does not make a skill selectable; see [Pinned versions and integrity](#pinned-versions-and-integrity).
 - **Settings apply to the whole installation,** not to one repository. The config is refused if the always included skills do not fit the limits.
@@ -3847,7 +4134,7 @@ Budgets use these amounts either way, so they also protect your subscription lim
 makes one short call to a small model (default `haiku`) that reads the end of the failing output
 and writes the *why* sentence. It costs a few tenths of a cent to a few cents, is counted in the
 run and in the daily budget, and never gets more than what is left of them. The model has no
-tools and sees no GitHub token. Change the model or switch the call off in `config.yaml`:
+tools and sees no GitHub token. Change the model or switch the call off in Settings → Agents, or in `config.yaml`:
 
 ```yaml
 failure_summary: {enabled: true, model: haiku}   # model: ollama:<model> for a local one
@@ -4018,8 +4305,12 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
 | `scf skills overrides check [<file>]` | Check the owner overrides (`skill-overrides.yaml`); prints each entry with its digest; exits 1 on a problem or an expired entry |
+| `scf skills connectors` | List the reviewed skill source connectors (id, repository, roots, trust, licences); offline; reads no files |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
-| `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
+| `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
+| `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
+| `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
+| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
@@ -4192,7 +4483,9 @@ it fails. If the key is gone (for example the data folder was copied from anothe
 removal failed after a delete or rotation; `scf credential rotate-key` clears it.
 
 **Tests fail for reasons unrelated to the change.** Set the right command with the `test_cmd`
-variable, per repository in `<repo>/.claude-factory/config.yaml`.
+variable, per repository in `<repo>/.claude-factory/config.yaml`. If the tests already fail before
+any change and the issue is meant to fix them, name them under `## Failing tests to fix`; see
+[Stories that fix failing tests](#stories-that-fix-failing-tests).
 
 ---
 
@@ -4328,7 +4621,7 @@ A session keeps story drafts, so that what you write is saved. A draft has a **t
 
 You can ask the architect for a proposal for one field of a draft. It is only a proposal: it waits beside the draft (`suggestions`) and is in no field and not in `preview` until you accept it.
 
-- `POST /api/refinement/:id/drafts/:did/suggest` with `{ "field": "title" }` (`title`, `who`, `what`, `why`, `criteria`, `outOfScope`, `dependsOn` or `notes`) starts an architect run and answers 202. The rules of a round apply: only the owner, a brief is needed, one architect run per session and per account, and a paused run is resumed by the same call (the same draft and field). `criteria` answers 409 when the map has no rule and no example.
+- `POST /api/refinement/:id/drafts/:did/suggest` with `{ "field": "title" }` (`title`, `who`, `what`, `why`, `criteria`, `outOfScope`, `dependsOn` or `notes`) starts an architect run and answers 202. The rules of a round apply: only the owner, a brief is needed, one architect run per session (the runs of your other sessions wait in line), and a paused run is resumed by the same call (the same draft and field). `criteria` answers 409 when the map has no rule and no example.
 - `POST …/drafts/:did/suggestions/:sid/accept` with `{}` puts it in as `accepted`: a text field is replaced, a list gets one more item. With `{ "text": "…" }` (Edit and accept) your text goes in as `accepted-edited`; this is not possible for depends on (400). The suggestion is gone after that.
 - `POST …/drafts/:did/suggestions/:sid/reject` with an optional `{ "reason": "…" }` (at most 300 characters) removes it and keeps its text and reason with the draft (the newest 30). The next suggestion run of the session gets them; they are used in this session only.
 
@@ -4356,7 +4649,7 @@ A suggested criterion shows the rule or example it comes from. Criteria are deci
 
 Remarks are advice. They never block a save or anything else.
 
-**Review by the architect.** `POST /api/refinement/:id/drafts/:did/review` (no body) starts an architect run and answers 202 with the session. The rules of a round apply: only the owner, a brief is needed, one architect run per session and per account, a paused run is resumed by the same call, and a failed run changes nothing. The architect gets the idea, the brief, the map and the draft. It only points out weak spots; it changes no field and proposes no new text. Only this call starts an AI call; saving a draft never does.
+**Review by the architect.** `POST /api/refinement/:id/drafts/:did/review` (no body) starts an architect run and answers 202 with the session. The rules of a round apply: only the owner, a brief is needed, one architect run per session (the runs of your other sessions wait in line), a paused run is resumed by the same call, and a failed run changes nothing. The architect gets the idea, the brief, the map and the draft. It only points out weak spots; it changes no field and proposes no new text. Only this call starts an AI call; saving a draft never does.
 
 The result is stored with the draft as `review`: `{ at, remarks }`, at most 20 remarks. Each remark has `field` (and `item` for a criterion), `kind` and `text` (one or two sentences). The kinds are `uncheckable` (a criterion that cannot be checked), `vague`, `contradiction` (with another criterion or a rule of the map), `how` (it says how to build, not what is wanted) and `plan`. A new review replaces the old one. A remark about a text that has changed or moved since the review has `stale: true`.
 

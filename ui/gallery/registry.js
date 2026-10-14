@@ -10,7 +10,7 @@
 import { h } from "../dom.js";
 import { button, iconButton, link } from "../kit/actions.js";
 import { badge, banner, card, emptyState, list, skeleton, table } from "../kit/display.js";
-import { checkbox, field, select, textArea, textInput } from "../kit/forms.js";
+import { checkbox, field, select, settingControl, textArea, textInput } from "../kit/forms.js";
 import { dialog, drawer, menu, tabs, toast, tooltip } from "../kit/overlays.js";
 import { diffView, evidence, logView, timeline, timelineEntry } from "../kit/records.js";
 import { confirmDestructive, entityLink, filters, nextAction, pageHeader, statusSummary } from "../kit/product.js";
@@ -21,6 +21,14 @@ const TONES = ["neutral", "ok", "fail", "run", "warn", "accent"];
 const COLS = [{ key: "name", label: "Name" }, { key: "role", label: "Role" }, { key: "count", label: "Count", align: "end" }];
 const people = (n) => Array.from({ length: n }, (_, i) => ({ n: i + 1, name: `Person ${i + 1}`, role: ["Maker", "Tester", "Reviewer"][i % 3], count: i * 7 }));
 const WIDE_COLS = Array.from({ length: 12 }, (_, i) => ({ key: `c${i}`, label: `Column ${i + 1}`, cell: (r) => `Value ${r.n}.${i + 1}` }));
+// Made-up setting descriptions, in the shape the settings route sends.
+const SETTING_BASE = { effect: "now", effectText: "at once", optional: false, control: "generated" };
+const SETTING_NUMBER = { ...SETTING_BASE, key: "demo.count", kind: "number", integer: true, min: 1, max: 49, default: 5, label: "Resumes before a restart loop", help: "The same run resumed more often than this is reported." };
+const SETTING_SWITCH = { ...SETTING_BASE, key: "demo.on", kind: "yes-no", default: false, label: "Isolate agents", help: "Run agent steps without your personal setup." };
+const SETTING_TEXT = { ...SETTING_BASE, key: "demo.repo", kind: "text", optional: true, default: undefined, label: "Repository for bug stories", help: "Where the monitor writes bug stories." };
+const SETTING_LIST = { ...SETTING_BASE, key: "demo.paths", kind: "list", maxItems: 50, default: [], label: "Extra readable paths", help: "Absolute paths a sandboxed step may read." };
+const SETTING_RECORDS = { ...SETTING_BASE, key: "demo.releases", kind: "list", maxItems: 50, fields: [{ key: "catalogue", kind: "text" }, { key: "version", kind: "text" }, { key: "digest", kind: "text" }], default: [], label: "Approved releases", help: "The catalogue releases this installation accepts." };
+const SETTING_CHOICE = { ...SETTING_BASE, key: "demo.access", kind: "choice", choices: ["read", "write"], default: "write", label: "Skills file access", help: "The most file access a skill may ask for." };
 const row = (...nodes) => h("div", { class: "gallery-row" }, nodes);
 const VARIANTS = ["default", "primary", "danger", "ghost"];
 const ICONS = [["ghost", "x"], ["default", "check"], ["primary", "info"], ["danger", "ban"]];
@@ -136,6 +144,20 @@ export const sections = [
       { name: "Checked", build: () => checkbox({ label: "Send me a summary", checked: true }) },
       { name: "Long content", build: () => checkbox({ label: LONG }) },
       { name: "Disabled", build: () => row(checkbox({ label: "Off, unchecked", disabled: true }), checkbox({ label: "Off, checked", checked: true, disabled: true })) },
+    ],
+  },
+  {
+    id: "settingControl", title: "Setting control", component: "settingControl",
+    examples: [
+      { name: "Number", build: () => settingControl(SETTING_NUMBER, { value: 5, onChange: () => {} }) },
+      { name: "Switch", build: () => settingControl(SETTING_SWITCH, { value: true, onChange: () => {} }) },
+      { name: "Text", build: () => settingControl(SETTING_TEXT, { value: "owner/repo", onChange: () => {} }) },
+      { name: "List", build: () => settingControl(SETTING_LIST, { value: ["/Users/me/tools", "/opt/node"], onChange: () => {} }) },
+      { name: "List of records", build: () => settingControl(SETTING_RECORDS, { value: [{ catalogue: "core", version: "1.0.0", digest: "sha256:ab" }], onChange: () => {} }) },
+      { name: "Choice", build: () => settingControl(SETTING_CHOICE, { value: "write", onChange: () => {} }) },
+      { name: "Long content", build: () => settingControl({ ...SETTING_NUMBER, label: LONG, help: LONG }, { value: 5, onChange: () => {} }) },
+      { name: "Disabled", build: () => row(settingControl(SETTING_NUMBER, { value: 5, disabled: true }), settingControl(SETTING_SWITCH, { value: false, disabled: true })) },
+      { name: "Error", build: () => row(settingControl(SETTING_NUMBER, { value: 500, error: "Must be 49 or less." }), settingControl(SETTING_SWITCH, { value: true, error: "Cannot be changed now." })) },
     ],
   },
   {

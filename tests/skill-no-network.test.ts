@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const SKILLS = "src/skills";
 const BUILTIN = new Set(["crypto", "fs", "path", "os", "url", "module"]);
 const PACKAGES = new Set(["zod", "yaml"]);
-const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js"]);
+const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js", "../flow/load.js"]);
 
 const codeLines = (text: string) => text.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
 
@@ -75,6 +75,11 @@ describe("skill code does not reach the network", () => {
       const code = codeLines(text);
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
       expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+    });
+    it("evaluate-cli.ts uses no process and no network", () => {
+      const text = readFileSync("src/skill-import/evaluate-cli.ts", "utf8");
+      expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
     });
     it("ls-remote.ts starts one detached `git ls-remote` and nothing else", () => {
       const text = readFileSync("src/skill-import/ls-remote.ts", "utf8");
@@ -159,10 +164,27 @@ describe("the static scanner runs nothing", () => {
   }
 });
 
+describe("the workflow gate runs nothing", () => {
+  const FORBIDDEN_MODULES = /^(?:node:)?(?:child_process|vm|worker_threads|fs|fs\/promises|http|https|http2|net|tls|dns|dgram)$/;
+  const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
+  it("workflow-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "workflow-rules.ts"), "utf8"))).toEqual([]);
+  });
+  for (const f of ["workflow.ts", "workflow-rules.ts"]) {
+    it(`${f} imports no process, VM, file or network module and uses no dynamic code`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => FORBIDDEN_MODULES.test(m))).toEqual([]);
+      const code = codeLines(text);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      for (const re of DYNAMIC_CODE) expect(code.filter((l) => re.test(l)), String(re)).toEqual([]);
+    });
+  }
+});
+
 describe("scf skills scan is offline and read-only", () => {
   const PROCESS_OR_NET = /^(?:node:)?(?:child_process|vm|worker_threads|http|https|http2|net|tls|dns|dgram)$/;
   const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
-  for (const f of ["cli.ts", "import-stage.ts", "scan-exceptions.ts", "import-plan.ts", "normalize.ts"]) {
+  for (const f of ["cli.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "selections.ts", "import-plan.ts", "normalize.ts"]) {
     it(`${f} imports no process or network module and uses no dynamic code`, () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m))).toEqual([]);
@@ -171,6 +193,34 @@ describe("scf skills scan is offline and read-only", () => {
       for (const re of DYNAMIC_CODE) expect(code.filter((l) => re.test(l)), String(re)).toEqual([]);
     });
   }
+  it("scf skills promote check reads no file in the pure modules and calls no process", () => {
+    for (const f of ["import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts"]) {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => /^(?:node:)?(?:fs|fs\/promises|child_process)$/.test(m)), f).toEqual([]);
+      expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m)), f).toEqual([]);
+    }
+  });
+  it("only the CLI and the pure evaluation import selections.js, so no run reads the file", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)selections\.js$/.test(m)));
+    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "source-skill-evaluation.ts")]);
+  });
+  it("only source-evaluation.ts imports source-skill-evaluation.js", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)source-skill-evaluation\.js$/.test(m)));
+    expect(users).toEqual([join("src", "skills", "source-evaluation.ts")]);
+  });
+  it("provider-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "provider-rules.ts"), "utf8"))).toEqual([]);
+  });
+  it("the source skill evaluation imports no process, file or network module and reads no clock", () => {
+    const forbidden = /^(?:node:)?(?:child_process|vm|worker_threads|fs|fs\/promises|http|https|http2|net|tls|dns|dgram|process)$/;
+    for (const f of ["source-skill-evaluation.ts", "provider-rules.ts"]) {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => forbidden.test(m)), f).toEqual([]);
+      expect(codeLines(text).filter((l) => /\bprocess\.|Date\.now|new Date/.test(l)), f).toEqual([]);
+    }
+  });
   it("src/skills/cli.ts imports nothing from skill-import/", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "cli.ts"), "utf8")).filter((m) => /skill-import\//.test(m))).toEqual([]);
   });
@@ -180,5 +230,20 @@ describe("scf skills scan is offline and read-only", () => {
     expect(text.split(marker)).toHaveLength(2);
     const below = codeLines(text.split(marker)[1]!).join("\n");
     expect(below).not.toMatch(/writeFileSync|mkdirSync|renameSync|removeTree|acquireLock|claimHomeWrite|importStoreSettings\.rename|chmodSync|unlinkSync|rmSync/);
+  });
+});
+
+describe("the connector modules run nothing", () => {
+  const FORBIDDEN_MODULES = /^(?:node:)?(?:child_process|vm|worker_threads|fs|fs\/promises|http|https|http2|net|tls|dns|dgram|process)$/;
+  const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/, /\bprocess\./];
+  for (const f of ["connector.ts", "connector-rules.ts"]) {
+    it(`${f} imports no process, VM, file or network module and uses no dynamic code`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => FORBIDDEN_MODULES.test(m))).toEqual([]);
+      for (const re of DYNAMIC_CODE) expect(codeLines(text).filter((l) => re.test(l)), String(re)).toEqual([]);
+    });
+  }
+  it("connector-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "connector-rules.ts"), "utf8"))).toEqual([]);
   });
 });
