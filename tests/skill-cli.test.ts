@@ -442,3 +442,13 @@ describe("skillsCommand selections check", () => {
     await expect(run(["check"], { repo: "x" })).rejects.toThrow("unexpected option");
   });
 });
+
+describe("skillsCommand overlap syntax", () => {
+  it("checks the operands and options before it reads anything", async () => {
+    const run = (positionals: string[], values: Record<string, unknown> = {}) => skillsCommand({ positionals, values }, () => undefined, { home, builtinRoot: builtin, skills: dev() });
+    await expect(run(["overlap"])).rejects.toThrow("expects one source id");
+    await expect(run(["overlap", "a", "b"])).rejects.toThrow("expects one source id");
+    await expect(run(["overlap", "Bad_Id"])).rejects.toThrow("must be a source id");
+    await expect(run(["overlap", "lib"], { repo: "x" })).rejects.toThrow("unexpected option");
+  });
+});
