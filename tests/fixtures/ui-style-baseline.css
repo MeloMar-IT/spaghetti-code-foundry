@@ -25,7 +25,7 @@ body > * { flex: none; }
 .health-repos { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-left: auto; }
 .health-version { flex: 1 1 100%; }
 .user { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-small); white-space: nowrap; }
-.signed-out .repo, .signed-out aside, .signed-out .since, .signed-out .health, .signed-out .subnav, .signed-out .crumbs { display: none; }
+.signed-out .repo, .signed-out .layout > aside, .signed-out .since, .signed-out .health, .signed-out .subnav, .signed-out .crumbs { display: none; }
 .top a[data-nav="start"] { border: 1px solid var(--border); color: var(--text); text-decoration: none; padding: 6px 12px; border-radius: var(--radius-md); white-space: nowrap; }
 .top a[data-nav="start"].active { background: var(--panel-2); }
 .subnav { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 20px; border-bottom: 1px solid var(--border); background: var(--panel); font-size: var(--text-small); }
@@ -36,11 +36,11 @@ body > * { flex: none; }
 .crumbs { padding: 6px 24px 0; font-size: var(--text-small); color: var(--muted); }
 .crumbs a { color: var(--muted); }
 .subnav[hidden], .crumbs[hidden] { display: none; }
-.no-side aside { display: none; }
+.no-side .layout > aside { display: none; }
 .no-side .layout { grid-template-columns: 1fr; }
 .signed-out .layout { grid-template-columns: 1fr; }
 .auth-card { max-width: 380px; margin: 60px auto; }
-aside { border-right: 1px solid var(--border); padding: 16px 12px; background: var(--panel); }
+.layout > aside { border-right: 1px solid var(--border); padding: 16px 12px; background: var(--panel); }
 main { padding: var(--page-pad-y) var(--page-pad-x) 80px; min-width: 0; }
 
 /* ── sidebar ── */
@@ -343,7 +343,7 @@ pre.diff .file { font-weight: 700; display: block; }
   .brand-full { display: none; }
   .brand-short { display: inline; }
   .layout { grid-template-columns: 1fr; }
-  aside { border-right: none; border-bottom: 1px solid var(--border); }
+  .layout > aside { border-right: none; border-bottom: 1px solid var(--border); }
   main { padding: min(var(--page-pad-y), var(--space-xl)) min(var(--page-pad-x), var(--space-xl)); }
   .repo { display: none; }
   .top { gap: 10px; }
@@ -642,7 +642,7 @@ body.side-closed .side { display: none; }
   .top a[data-nav="start"] { padding: 6px 8px; }
   .health-chip { max-width: 9ch; }
   .account-name { max-width: 9ch; }
-  aside { max-height: 35vh; overflow: auto; }
+  .layout > aside { max-height: 35vh; overflow: auto; }
 }
 
 @media (prefers-reduced-motion: no-preference) {
