@@ -80,8 +80,8 @@ function choicesCheck(file: string, kind: "overrides" | "project-pins", out: (li
 }
 
 /** `scf skills sources check`: offline, prints checked fields only. */
-function sourcesCheck(file: string, out: (line: string) => void): number {
-  const r = readSources(file);
+function sourcesCheck(file: string, out: (line: string) => void, today?: string): number {
+  const r = readSources(file, undefined, today);
   if (r.state === "none") {
     out("PROBLEM the skill source file does not exist");
     return 1;
@@ -94,7 +94,8 @@ function sourcesCheck(file: string, out: (line: string) => void): number {
   for (const s of r.manifest.sources) {
     if (s.status === "enabled") enabled++;
     const head = `${s.id.padEnd(24)} ${s.status} ${s.trust} ${s.adapter} ${s.repositoryKey}@${(s.ref.approved ?? "-").slice(0, 12)} ${s.owner}`;
-    out(s.reason ? `${head} (${s.reason})` : head);
+    const reviewed = s.review ? ` reviewed by ${s.review.by} on ${s.review.on}` : "";
+    out(`${head}${reviewed}${s.reason ? ` (${s.reason})` : ""}`);
   }
   out(`OK ${r.manifest.sources.length} sources, ${enabled} enabled`);
   return 0;
@@ -133,12 +134,12 @@ interface StagedImport { source: SkillLibrarySource; commit: string; record: Imp
  * returns undefined when it cannot. `between` runs after the source is found and before the staged import is read; false stops
  * (it has printed its own PROBLEM).
  */
-function stagedImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string }, between?: () => boolean, done = "scanned"): StagedImport | undefined {
+function stagedImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string; today?: string }, between?: () => boolean, done = "scanned"): StagedImport | undefined {
   const problem = (text: string): undefined => {
     out(`PROBLEM ${text}`);
     return undefined;
   };
-  const sources = readSources(resolve(opts.cwd, SOURCES_FILE));
+  const sources = readSources(resolve(opts.cwd, SOURCES_FILE), undefined, opts.today);
   if (sources.state === "none") return problem("the skill source file does not exist");
   if (sources.state === "invalid") {
     for (const p of sources.problems) out(`PROBLEM ${p.where}: ${p.message}`);
@@ -439,7 +440,7 @@ export async function skillsCommand(
   }
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
-    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out);
+    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out, opts.today);
   }
 
   if (sub === "connectors") {

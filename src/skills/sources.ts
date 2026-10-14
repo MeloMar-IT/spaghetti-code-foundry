@@ -2,6 +2,7 @@ import { lstatSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { parseRepoUrl, RepoError } from "../auth/repo-url.js";
 import { rangeSatisfied } from "./canonical-facts.js";
+import { COMMUNITY_REPOSITORIES } from "./community-rules.js";
 import { connectorProblems } from "./connectors.js";
 import { credentialProblem } from "./credential-scan.js";
 import { NORMALIZE_LIMITS } from "./normalize-rules.js";
@@ -22,6 +23,15 @@ export const SOURCE_LICENCES = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clau
 export type SourceStatus = (typeof SOURCE_STATUSES)[number];
 export type SourceTrustTier = (typeof SOURCE_TRUST_TIERS)[number];
 
+/** Who checked the maintainer and licence of a source, when, and for which commit. */
+export interface SourceReview {
+  by: string;
+  /** YYYY-MM-DD. */
+  on: string;
+  commit: string;
+  licence: string;
+}
+
 export interface SkillLibrarySource {
   id: string;
   /** Normalised https URL. */
@@ -39,6 +49,7 @@ export interface SkillLibrarySource {
   scope?: { capabilities: string[]; technologies: { name: string; version: string }[] };
   update: { cadence: (typeof SOURCE_CADENCES)[number] };
   owner: string;
+  review?: SourceReview;
 }
 export interface SourcesManifest {
   schema: 1;
@@ -102,12 +113,26 @@ export function sourcePathProblem(path: string): string | undefined {
   return undefined;
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Days since 1970-01-01 for a real YYYY-MM-DD date, else undefined. Same as dayNumber in scan-exceptions.ts (which imports this file). */
+function dayNumber(s: unknown): number | undefined {
+  if (typeof s !== "string" || !DATE_RE.test(s)) return undefined;
+  const ms = Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
+  if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== s) return undefined;
+  return ms / 86400000;
+}
+
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Checks parsed YAML. Never throws. No problem holds a credential-like value or a control character. */
-export function parseSources(raw: unknown): { manifest?: SourcesManifest; problems: SourceProblem[] } {
+export function parseSources(raw: unknown, today: string = new Date().toISOString().slice(0, 10)): { manifest?: SourcesManifest; problems: SourceProblem[] } {
   const problems: SourceProblem[] = [];
   const add = (where: string, message: string) => void problems.push(problem(where, message));
+  const todayDay = dayNumber(today);
+  if (todayDay === undefined) {
+    add("today", "must be a date like 2026-10-13");
+    return { problems };
+  }
   if (!isObject(raw)) {
     add("file", "must be a map with schema and sources");
     return { problems };
@@ -183,7 +208,7 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
       return v;
     };
 
-    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "scope", "update", "owner"], "");
+    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "scope", "update", "owner", "review"], "");
 
     // id
     const id = text(idRaw, "id");
@@ -365,6 +390,52 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
     const owner = text(e.owner, "owner");
     if (owner !== undefined && !OWNER_RE.test(owner)) err("owner", "must be a GitHub user or team like @octocat or @acme/skills");
 
+    // review
+    let review: SourceReview | undefined;
+    if (e.review !== undefined) {
+      if (!isObject(e.review)) err("review", "must be a map");
+      else {
+        const rv = e.review;
+        keys(rv, ["by", "on", "commit", "licence"], "review");
+        const by = text(rv.by, "review.by");
+        let byOk = false;
+        if (by !== undefined) {
+          if (OWNER_RE.test(by)) byOk = true;
+          else err("review.by", "must be a GitHub user or team like @octocat or @acme/skills");
+        }
+        const on = text(rv.on, "review.on");
+        let onOk = false;
+        if (on !== undefined) {
+          const day = dayNumber(on);
+          if (day === undefined) err("review.on", "must be a date like 2026-10-13");
+          else if (day > todayDay) err("review.on", "must not be in the future");
+          else onOk = true;
+        }
+        const commit = text(rv.commit, "review.commit");
+        let commitOk = false;
+        if (commit !== undefined) {
+          if (approvedRefProblem(commit)) err("review.commit", "must be a full commit id (40 or 64 hex digits)");
+          else commitOk = true;
+        }
+        const licence = text(rv.licence, "review.licence");
+        let licenceOk = false;
+        if (licence !== undefined && lic && allow.length > 0) {
+          if (allow.includes(licence)) licenceOk = true;
+          else err("review.licence", `"${shownValue(licence)}" is not in licence.allow`);
+        }
+        if (byOk && onOk && commitOk && licenceOk) review = { by: by!, on: on!, commit: commit!, licence: licence! };
+      }
+    }
+    if (status === "enabled" && trust === "community") {
+      if (e.review === undefined) err("review", "an enabled community source needs a review (by, on, commit, licence)");
+      else if (review && ref.approved !== undefined && review.commit !== ref.approved) {
+        err("review.commit", "is not the commit in ref.approved; a new commit needs a new review");
+      }
+    }
+    if (repositoryKey && trust && trust !== "community" && COMMUNITY_REPOSITORIES.includes(repositoryKey)) {
+      err("trust", "must be community: this repository is on the list of known community repositories");
+    }
+
     if (id !== undefined && repository && repositoryKey && status && cadence && adapter && trust && owner !== undefined && OWNER_RE.test(owner)) {
       out.push({
         id,
@@ -380,6 +451,7 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
         ...(scope ? { scope } : {}),
         update: { cadence },
         owner,
+        ...(review ? { review } : {}),
       });
     }
   });
@@ -395,7 +467,7 @@ export function usableSources(m: SourcesManifest): SkillLibrarySource[] {
 const fail = (message: string): SourcesRead => ({ state: "invalid", problems: [problem("file", message)] });
 
 /** Reads the file safely (no links, no special files, size limit), then parseSources. No message repeats a path or file content. */
-export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES): SourcesRead {
+export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES, today?: string): SourcesRead {
   let st;
   try {
     st = lstatSync(path);
@@ -426,6 +498,6 @@ export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES): Sources
     }
     return fail("is not valid YAML");
   }
-  const r = parseSources(doc);
+  const r = parseSources(doc, today);
   return r.manifest ? { state: "ok", manifest: r.manifest } : { state: "invalid", problems: r.problems };
 }

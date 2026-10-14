@@ -45,6 +45,7 @@ const source = (over: Record<string, unknown> = {}) => ({
   licence: { allow: ["MIT"] },
   update: { cadence: "manual" },
   owner: "@example",
+  review: { by: "@example", on: "2026-01-01", commit: COMMIT, licence: "MIT" },
   ...over,
 });
 
@@ -282,5 +283,25 @@ describe("signal handlers", () => {
     await run("timeout");
     expect(process.listenerCount("SIGINT")).toBe(before.int);
     expect(process.listenerCount("SIGTERM")).toBe(before.term);
+  });
+});
+
+describe("a community source needs a current review", () => {
+  const refused = async (src: Record<string, unknown>, line: RegExp) => {
+    write([src]);
+    const r = await run(fakeTree());
+    expect(r.rc).toBe(1);
+    expect(r.lines.some((l) => line.test(l))).toBe(true);
+    expect(opens).toBe(0);
+    expect(quarantine()).toBe(false);
+  };
+
+  it("refuses a source without a review", async () => {
+    await refused(source({ review: undefined }), /^PROBLEM sources\[0\] \(lib\) review: an enabled community source needs a review/);
+  });
+
+  it("refuses a review of another commit", async () => {
+    const stale = { by: "@example", on: "2026-01-01", commit: "b".repeat(40), licence: "MIT" };
+    await refused(source({ review: stale }), /^PROBLEM sources\[0\] \(lib\) review\.commit: .*a new commit needs a new review/);
   });
 });

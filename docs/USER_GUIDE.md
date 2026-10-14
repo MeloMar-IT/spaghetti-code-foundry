@@ -3340,15 +3340,38 @@ sources:
     licence: { allow: [MIT, Apache-2.0] }
     update: { cadence: weekly }
     owner: "@octocat"
+    review:
+      by: "@octocat"
+      on: 2026-10-13
+      commit: 0123456789abcdef0123456789abcdef01234567   # same as ref.approved
+      licence: MIT
 ```
 
-- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`) and `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`).
+- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
 - **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
 - **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
+- **Review of a community source.** `review` records who checked the maintainer and the licence, and when. It has four fields: `by` (a GitHub user or team, as `owner`), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id, equal to `ref.approved`) and `licence` (one of `licence.allow`). An enabled `trust: community` source is refused without `review`, and when `review.commit` is not `ref.approved`. A new commit needs a new review, so changing one word cannot raise the trust.
+- **Known community repositories.** The Foundry ships a list of community repositories (`src/skills/community-rules.ts`). `github.com/jiangxianze/spring-agent-skills` is on it, so a source with that repository must say `trust: community`; any other trust is refused and the message names `trust`.
 - **Owner and policy.** Every source has an owner and an update cadence.
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
-- **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
 - **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The first connector is `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`. Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
+- **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. A reviewed source is listed with `reviewed by <by> on <on>`. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
+- **Import and scan.** `scf skills import` and `scf skills scan` read the same file. A community source without a current `review` is refused as an invalid source list: a `PROBLEM` line names the missing or stale review, and nothing is fetched or read.
+
+A community source that is not yet reviewed is kept disabled. This entry goes under `sources:`. It is an example for `github.com/jiangxianze/spring-agent-skills`; the folder and licence are to be confirmed at review:
+
+```yaml
+  - id: spring-agent-skills
+    repository: https://github.com/jiangxianze/spring-agent-skills
+    status: disabled
+    reason: not reviewed yet
+    paths: [.]
+    adapter: agent-skills
+    trust: community
+    licence: { allow: [MIT, Apache-2.0] }
+    update: { cadence: manual }
+    owner: "@octocat"
+```
 
 Imported library content is kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
 
