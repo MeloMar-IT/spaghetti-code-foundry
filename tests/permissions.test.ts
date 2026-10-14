@@ -203,6 +203,8 @@ const EXAMPLES: Record<string, Example> = {
   "PUT repos/:id/auth": { path: `repos/${UNKNOWN}/auth`, body: {}, user: 400, admin: 400 },
   "POST repos/:id/test": { path: `repos/${UNKNOWN}/test`, body: {}, user: 404, admin: 404 },
   "GET repos/:id/ready": { path: `repos/${UNKNOWN}/ready`, user: 404, admin: 404 },
+  "GET repos/:id/epics": { path: `repos/${UNKNOWN}/epics`, user: 404, admin: 404 },
+  "GET repos/:id/epics/:issue": { path: `repos/${UNKNOWN}/epics/1`, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET help/conversations": { path: "help/conversations", user: 200, admin: 200 },
   // Ask SCF is off by default: a question is refused before it is looked at
@@ -309,6 +311,8 @@ describe("the table", () => {
     expect(findRule("PUT", ["repos", "a", "auth"])?.path).toBe("repos/:id/auth");
     expect(findRule("POST", ["repos", "a", "test"])?.path).toBe("repos/:id/test");
     expect(findRule("GET", ["repos", "a", "ready"])?.path).toBe("repos/:id/ready");
+    expect(findRule("GET", ["repos", "a", "epics"])?.path).toBe("repos/:id/epics");
+    expect(findRule("GET", ["repos", "a", "epics", "1"])?.path).toBe("repos/:id/epics/:issue");
     expect(findRule("PUT", ["admin", "repos", "a", "ready"])?.path).toBe("admin/repos/:id/ready");
     expect(findRule("GET", ["admin", "repos"])?.path).toBe("admin/repos");
     expect(findRule("PUT", ["admin", "repos", "a", "settings"])?.path).toBe("admin/repos/:id/settings");
