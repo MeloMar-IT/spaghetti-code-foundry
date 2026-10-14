@@ -6,7 +6,7 @@ import { connectorProblems } from "./connectors.js";
 import { credentialProblem } from "./credential-scan.js";
 import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
-import { relativePathProblem, SKILL_ID_RE } from "./schema.js";
+import { relativePathProblem, SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 
 export const SOURCES_FILE = "skill-sources.yaml";
 export const MAX_SOURCES_BYTES = 262144;
@@ -34,7 +34,8 @@ export interface SkillLibrarySource {
   paths: string[];
   adapter: (typeof SOURCE_ADAPTERS)[number];
   trust: SourceTrustTier;
-  licence: { allow: string[] };
+  /** `reviewed` is the digest of the licence evidence the owner reviewed (scf skills promote check prints it). */
+  licence: { allow: string[]; reviewed?: string };
   /** What the maintainer states about the library that upstream does not: capabilities to add and technology version ranges. */
   scope?: { capabilities: string[]; technologies: { name: string; version: string }[] };
   update: { cadence: (typeof SOURCE_CADENCES)[number] };
@@ -290,9 +291,15 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
 
     // licence
     const allow: string[] = [];
+    let reviewed: string | undefined;
     const lic = sub(e.licence, "licence");
     if (lic) {
-      keys(lic, ["allow"], "licence");
+      keys(lic, ["allow", "reviewed"], "licence");
+      if (lic.reviewed !== undefined) {
+        const r = text(lic.reviewed, "licence.reviewed");
+        if (r !== undefined && !SKILL_DIGEST_RE.test(r)) err("licence.reviewed", "must be sha256: and 64 hex digits; copy it from scf skills promote check");
+        else reviewed = r;
+      }
       if (!Array.isArray(lic.allow) || lic.allow.length < 1 || lic.allow.length > 20) {
         err("licence.allow", lic.allow === undefined ? "is required" : "must be a list of 1 to 20 licences");
       } else {
@@ -376,7 +383,7 @@ export function parseSources(raw: unknown): { manifest?: SourcesManifest; proble
         paths,
         adapter,
         trust,
-        licence: { allow },
+        licence: { allow, ...(reviewed !== undefined ? { reviewed } : {}) },
         ...(scope ? { scope } : {}),
         update: { cadence },
         owner,

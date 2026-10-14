@@ -87,6 +87,12 @@ export function prepareLicenceEvidence(evidence: LicenceEvidence): PreparedLicen
   return { record, recordText, files: stored };
 }
 
+/** The evidence as an import stores and reads it back. Doing it twice changes nothing. */
+export function canonicalLicenceEvidence(evidence: LicenceEvidence): LicenceEvidence {
+  const p = prepareLicenceEvidence(evidence);
+  return evidenceFromRecord(p.record, p.files);
+}
+
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { prepareImport, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
+import { canonicalLicenceEvidence } from "../src/skills/import-licence.js";
 import { collectLicenceEvidence } from "../src/skills/licence.js";
+import { reviewImport } from "../src/skills/licence-review.js";
 import { LICENCE_TEMPLATES } from "../src/skills/licence-rules.js";
 import { normalizeImport } from "../src/skills/normalize.js";
 import type { RegisteredSkill } from "../src/skills/registry.js";
@@ -236,5 +238,22 @@ describe("evaluateSource", () => {
     const a = installed({ id: "oracle" });
     const b = installed({ id: "other", caps: ["oracle"], source: "admin", label: "admin", pin: "mismatch" });
     expect(lines(run(GOOD, {}, { installed: [a, b] }))).toEqual(lines(run(GOOD, {}, { installed: [b, a] })));
+  });
+});
+
+describe("evaluateSource: licence review", () => {
+  it("shows review for a stale licence.reviewed", () => {
+    const e = run(GOOD, { licence: { allow: ["MIT"], reviewed: "sha256:" + "0".repeat(64) } });
+    expect(e.skills[0]!.licence.status).toBe("review");
+  });
+  it("accepts the digest of the staged form of the same tree, also with a LICENSE/license collision", () => {
+    const files = { ...GOOD, license: MIT, "db/sql/LICENSE": MIT };
+    const src = source();
+    const t = tree(files);
+    const prep = prepareImport(src, t);
+    const live = collectLicenceEvidence({ repositoryKey: src.repositoryKey, commit: COMMIT }, prep.record.skills.map((s) => s.root), t);
+    const staged = reviewImport({ allow: ["MIT"], prep, evidence: canonicalLicenceEvidence(live) }).classification.digest;
+    const e = run(files, { licence: { allow: ["MIT"], reviewed: staged } });
+    expect(e.skills[0]!.licence.status).toBe("allowed");
   });
 });

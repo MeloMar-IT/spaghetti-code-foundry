@@ -23,6 +23,17 @@ describe("SOURCE_CONNECTORS", () => {
         licences: ["MIT"],
         track: "main",
       },
+      {
+        id: "anthropic-skills",
+        repository: "https://github.com/anthropics/skills",
+        repositoryKey: "github.com/anthropics/skills",
+        roots: ["skills"],
+        adapter: "agent-skills",
+        trust: "verified",
+        licences: ["Apache-2.0"],
+        track: "main",
+        licenceReview: "required",
+      },
     ]);
     for (const c of SOURCE_CONNECTORS) for (const k of ["commit", "approved", "ref"]) expect(c).not.toHaveProperty(k);
   });

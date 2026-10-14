@@ -17,7 +17,8 @@ import { SkillImportError, type ImportRecord } from "./import-plan.js";
 import { readStagedImport } from "./import-stage.js";
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
-import { promoteImport } from "./promotion.js";
+import { licenceReviewProblem, reviewImport } from "./licence-review.js";
+import { licenceReviewRequired, promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE, type ScanException } from "./scan-exceptions.js";
@@ -313,9 +314,14 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     return 1;
   }
   // An import staged without licence files has no evidence: every path is `missing`.
-  const evidence = staged.licence ?? { repositoryKey: record.repositoryKey, commit: record.commit, files: [] };
+  const review = reviewImport({
+    allow: source.licence.allow,
+    prep: { record: { ...record, rejected: [] }, files },
+    evidence: staged.licence ?? { repositoryKey: record.repositoryKey, commit: record.commit, files: [] },
+  });
+  const evidence = review.evidence;
   const retrievedAt = record.retrievedAt ?? NO_EVIDENCE_TIME;
-  const { skills: normalized } = normalizeImport({ record: { ...record, rejected: [] }, files });
+  const normalized = review.normalized.skills;
   const byRoot = new Map(normalized.map((s) => [s.provenance.root, s]));
 
   let promotable = 0;
@@ -332,7 +338,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     if (skill) {
       let result;
       try {
-        result = promoteImport({ source, record, skills: [skill], evidence, retrievedAt });
+        result = promoteImport({ source, record, skills: [skill], evidence, retrievedAt, review });
       } catch (e) {
         if (!(e instanceof SkillImportError)) throw e;
         // path-specific (for example the approved paths were narrowed): refuse this path, check the others
@@ -377,6 +383,17 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     }
   }
   for (const l of lines) out(l);
+  for (const s of normalized) if (s.provenance.assumes) out(`ASSUMES ${hidden(s.package.id)}: ${s.provenance.assumes.join(", ")}`);
+  const c = review.classification;
+  const problem = licenceReviewProblem(source.licence.reviewed, c);
+  const state = !licenceReviewRequired(source)
+    ? "licence.reviewed is not set"
+    : problem === undefined
+      ? "matches licence.reviewed"
+      : problem === "missing"
+        ? "not reviewed; check the lines above, then set licence.reviewed to this digest"
+        : "changed since the review; check the lines above, then set licence.reviewed to this digest";
+  out(`LICENCES ${c.digest} ${plural(c.files.length, "licence and notice file")}: ${state}`);
   out(`CHECKED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${promotable} promotable, ${refused} refused`);
   return refused > 0 ? 1 : 0;
 }

@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { byteCmp, SkillImportError, type ImportRecord } from "./import-plan.js";
+import { connectorFor } from "./connectors.js";
 import { exclusionReasons, importExclusions } from "./import-exclusions.js";
 import { evaluateLicence, type LicenceEvidence, type LicenceFileRecord, type LicenceStatus } from "./licence.js";
+import { isImportLicenceReview, licenceReviewProblem, reviewEvidenceIntact, type ImportLicenceReview } from "./licence-review.js";
 import type { NormalizedSkill } from "./normalize.js";
 import { isUtcTime } from "./release.js";
 import type { SkillFile } from "./schema.js";
@@ -9,7 +11,7 @@ import { shownValue, type SkillLibrarySource } from "./sources.js";
 
 // Decides, per skill of a normalized import, whether it may be promoted: its licence must be accepted by the policy of
 // licence.ts, and it must not need a live integration, use the network or ship plugin configuration (import-exclusions.ts;
-// such a skill is refused with status "excluded"). Builds the manifest of licence and provenance for the promoted packages. Pure: no file system, no process,
+// such a skill is refused with status "excluded"). For a source that needs a licence review (licenceReviewRequired) an otherwise allowed skill is refused with status "review" until `licence.reviewed` equals the digest of the review (licence-review.ts). Builds the manifest of licence and provenance for the promoted packages. Pure: no file system, no process,
 // no clock. evaluateSource (source-evaluation.ts) calls it to report; the story that writes approved artifacts must call it and keep `attribution`.
 
 export interface PackageProvenance {
@@ -59,10 +61,21 @@ export interface PromotionResult {
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const inside = (root: string, p: string) => root === "." || p === root || p.startsWith(root + "/");
 
+/** A source needs a matching licence.reviewed when its repository has a connector that says so, or when it sets one. */
+export function licenceReviewRequired(source: SkillLibrarySource): boolean {
+  return source.licence.reviewed !== undefined || connectorFor(source.repositoryKey)?.licenceReview === "required";
+}
+
+const GATE_TEXT = {
+  missing: "licence review: the licence evidence of the source is not reviewed; run scf skills promote check and set licence.reviewed",
+  changed: "licence review: the licence evidence changed since it was reviewed; run scf skills promote check and update licence.reviewed",
+};
+
 /**
  * Throws `not-usable` when the input does not belong together: a disabled source, a record or evidence of another
  * source or commit, a skill that is not in the record (root, name and digest) or not below an approved path, or a
- * `retrievedAt` that is not a UTC time. A skill with bad licence evidence is refused, not thrown.
+ * `retrievedAt` that is not a UTC time, or (when a review is required) a missing review or one that was not made by
+ * reviewImport for this import, evidence, allow list and skills. A skill with bad licence evidence is refused, not thrown.
  */
 export function promoteImport(input: {
   source: SkillLibrarySource;
@@ -70,8 +83,9 @@ export function promoteImport(input: {
   skills: readonly NormalizedSkill[];
   evidence: LicenceEvidence;
   retrievedAt: string;
+  review?: ImportLicenceReview;
 }): PromotionResult {
-  const { source, record, skills, evidence, retrievedAt } = input;
+  const { source, record, skills, evidence, retrievedAt, review } = input;
   const refusal = (what: string) => new SkillImportError("not-usable", `the import cannot be promoted: ${what}`);
   if (source.status !== "enabled") throw refusal("the source is not enabled");
   if (record.source !== source.id || record.repositoryKey !== source.repositoryKey) throw refusal("the import record is of another source");
@@ -90,6 +104,22 @@ export function promoteImport(input: {
     seen.add(p.root);
   }
 
+  let gate: "missing" | "changed" | undefined;
+  if (licenceReviewRequired(source)) {
+    if (!isImportLicenceReview(review)) throw refusal("the licence review was not given");
+    const rr = review.record;
+    if (rr.source !== record.source || rr.repositoryKey !== record.repositoryKey || rr.commit !== record.commit || rr.digest !== record.digest) throw refusal("the licence review is of another import");
+    if (review.evidence !== evidence) throw refusal("the licence review is of other licence evidence");
+    if (!reviewEvidenceIntact(review)) throw refusal("the licence evidence changed after the review was made");
+    const allow = source.licence.allow;
+    if (review.allow.length !== allow.length || review.allow.some((x, i) => x !== allow[i])) throw refusal("the licence review used another licence.allow");
+    for (const s of skills) {
+      const r = review.normalized.skills.find((x) => x.provenance.root === s.provenance.root);
+      if (!r || r.package.digest !== s.package.digest || r.package.license !== s.package.license) throw refusal("the licence review does not match a skill");
+    }
+    gate = licenceReviewProblem(source.licence.reviewed, review.classification);
+  }
+
   const promoted: PromotedPackage[] = [];
   const refused: PromotionManifest["refused"] = [];
   for (const skill of skills) {
@@ -102,6 +132,10 @@ export function promoteImport(input: {
     const verdict = evaluateLicence({ root: p.root, ...(skill.package.license === undefined ? {} : { declared: skill.package.license }), allow: source.licence.allow, evidence });
     if (verdict.status !== "allowed") {
       refused.push({ root: shownValue(p.root), status: verdict.status, reasons: verdict.reasons });
+      continue;
+    }
+    if (gate !== undefined) {
+      refused.push({ root: shownValue(p.root), status: "review", reasons: [GATE_TEXT[gate]] });
       continue;
     }
     const attribution: SkillFile[] = verdict.attribution.map((a) => ({ path: a.path, size: a.content.byteLength, content: a.content }));

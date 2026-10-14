@@ -5,7 +5,8 @@ import { COLLISION_LIMITS } from "./collision-rules.js";
 import { collisionCandidate } from "./collisions.js";
 import { byteCmp, SkillImportError, type ImportRecord, type RejectedSkill } from "./import-plan.js";
 import type { LicenceEvidence, LicenceStatus } from "./licence.js";
-import { normalizeImport, type NormalizedSkill } from "./normalize.js";
+import { reviewImport } from "./licence-review.js";
+import type { NormalizedSkill } from "./normalize.js";
 import { promoteImport, type PromotionManifest } from "./promotion.js";
 import type { RegisteredSkill } from "./registry.js";
 import type { SkillRisk, ToolPolicy } from "./schema.js";
@@ -114,7 +115,8 @@ export function evaluateSource(input: {
   project?: readonly Tech[];
 }): SourceEvaluation {
   const { source, prep, evidence, installed, exceptions, today, tools, highRisk, project } = input;
-  const { skills: normalized, report } = normalizeImport(prep);
+  const review = reviewImport({ allow: source.licence.allow, prep, evidence });
+  const { skills: normalized, report } = review.normalized;
   const refused: RejectedSkill[] = report.quarantined.map((q) => ({ root: q.root, reasons: [...q.reasons] }));
 
   const scoped: { skill: NormalizedSkill; origins: Record<string, TechnologyOrigin> }[] = [];
@@ -124,7 +126,7 @@ export function evaluateSource(input: {
     else refused.push({ root: shownValue(n.provenance.root), reasons: r.reasons });
   }
 
-  const promotion = promoteImport({ source, record: prep.record, skills: scoped.map((s) => s.skill), evidence, retrievedAt: input.retrievedAt });
+  const promotion = promoteImport({ source, record: prep.record, skills: scoped.map((s) => s.skill), evidence: review.evidence, retrievedAt: input.retrievedAt, review });
   const manifest = promotion.manifest;
 
   const evaluated: { e: EvaluatedSkill; skill: NormalizedSkill }[] = [];

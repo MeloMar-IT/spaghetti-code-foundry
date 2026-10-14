@@ -136,7 +136,8 @@ describe("skillsCommand", () => {
     const lines = r.out.split("\n");
     expect(r.code).toBe(0);
     expect(lines[0]).toMatch(/^awesome-copilot\s+github\.com\/github\/awesome-copilot skills agent-skills community MIT track main$/);
-    expect(lines.at(-1)).toBe("OK 1 connector");
+    expect(lines[1]).toMatch(/^anthropic-skills\s+github\.com\/anthropics\/skills skills agent-skills verified Apache-2\.0 track main$/);
+    expect(lines.at(-1)).toBe("OK 2 connectors");
     expect(existsSync(lockFile())).toBe(false);
   });
 
