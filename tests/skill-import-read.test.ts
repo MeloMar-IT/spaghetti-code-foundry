@@ -1,7 +1,11 @@
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { attachLicenceEvidence, collectImportEvidence } from "../src/skills/import-evidence.js";
+import { collectLicenceEvidence, evaluateLicence } from "../src/skills/licence.js";
+import { LICENCE_LIMITS } from "../src/skills/licence-rules.js";
 import { IMPORT_LIMITS, importDigest, parseImportRecord, prepareImport, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
 import { publishImport, readStagedImport } from "../src/skills/import-stage.js";
 import type { SkillLibrarySource } from "../src/skills/sources.js";
@@ -256,5 +260,185 @@ describe("parseImportRecord", () => {
     expect(made(101, 200, 0)).toEqual({ problem: expect.stringContaining("more files") });
     expect("record" in made(32, 1, 2097152)).toBe(true);
     expect(made(33, 1, 2097152)).toEqual({ problem: expect.stringContaining("more bytes") });
+  });
+});
+
+describe("licence evidence", () => {
+  const ORIGIN = { repositoryKey: "github.com/example/skills", commit: COMMIT };
+  const LIC = "MIT License\n\nPermission is hereby granted.\n";
+  const LFILES: Record<string, string> = { LICENSE: LIC, "skills/NOTICE": "notice", "skills/a/LICENSE": LIC, ...FILES };
+  const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+  const attached = (files = LFILES) => {
+    const t = tree(files);
+    return attachLicenceEvidence(prepareImport(source(), t), collectImportEvidence(ORIGIN, ["skills/a", "skills/b"], t));
+  };
+  const withEvidence = (evidence: unknown) => {
+    const rec = { ...prepareImport(source(), tree()).record, evidence };
+    return parseImportRecord(JSON.stringify(rec, null, 2) + "\n");
+  };
+  const entry = (path: string, over: Record<string, unknown> = {}) => ({ path, kind: "licence", sha256: sha("x"), bytes: 1, ...over });
+  const stageNew = (files = LFILES) => publishImport(attached(files), { home });
+
+  it("round-trips a record with evidence and with an empty list, and a record without the key has none", () => {
+    const p = attached();
+    expect(parseImportRecord(p.recordText)).toEqual({ record: p.record });
+    const empty = withEvidence([]);
+    expect("record" in empty && empty.record.evidence).toEqual([]);
+    const old = parseImportRecord(prepareImport(source(), tree()).recordText);
+    expect("record" in old && "evidence" in old.record).toBe(false);
+  });
+
+  it.each([
+    ["not an array", {}],
+    ["too many entries", Array.from({ length: 201 }, (_v, i) => entry(`d/${String(i).padStart(4, "0")}`))],
+    ["unsorted paths", [entry("b"), entry("a")]],
+    ["a path used twice", [entry("a"), entry("a")]],
+    ["a dot path", [entry(".")]],
+    ["a path that leaves", [entry("../secret-x")]],
+    ["a control character", [entry("a\u0001b")]],
+    ["a bad kind", [entry("a", { kind: "other" })]],
+    ["a bad sha256", [entry("a", { sha256: "XYZ" })]],
+    ["too many bytes", [entry("a", { bytes: LICENCE_LIMITS.fileBytes + 1 })]],
+    ["sha256 and problem", [entry("a", { problem: "p" })]],
+    ["neither", [{ path: "a", kind: "licence" }]],
+    ["a long problem", [{ path: "a", kind: "licence", problem: "p".repeat(201) }]],
+    ["one sha256 with two sizes", [entry("a"), entry("b", { bytes: 2 })]],
+    ["too many bytes in total", Array.from({ length: 17 }, (_v, i) => entry(`f${String(i).padStart(2, "0")}`, { sha256: sha(String(i)), bytes: LICENCE_LIMITS.fileBytes }))],
+  ])("refuses evidence with %s and never repeats a value", (_n, evidence) => {
+    const r = withEvidence(evidence);
+    expect(r).toEqual({ problem: expect.stringMatching(/^import\.json: evidence/) });
+    expect(JSON.stringify(r)).not.toContain("secret-x");
+  });
+
+  it("refuses evidence that is not the last key", () => {
+    const p = attached();
+    const { evidence, rejected, ...rest } = p.record;
+    const text = JSON.stringify({ ...rest, evidence, rejected }, null, 2) + "\n";
+    expect(parseImportRecord(text)).toEqual({ problem: "import.json: is not in the form scf writes" });
+  });
+
+  it("attachLicenceEvidence keeps every digest, stores identical content once and gives a problem no blob", () => {
+    const base = prepareImport(source(), tree(LFILES));
+    const t = tree({ ...LFILES, "skills/b/LICENSE": "other" });
+    const ev = collectImportEvidence(ORIGIN, ["skills/a", "skills/b"], t);
+    ev.files.find((f) => f.path === "skills/NOTICE")!.problem = "gone";
+    delete ev.files.find((f) => f.path === "skills/NOTICE")!.content;
+    const out = attachLicenceEvidence(base, ev);
+    expect(out.record.digest).toBe(base.record.digest);
+    expect(out.record.skills).toEqual(base.record.skills);
+    expect(out.files).toBe(base.files);
+    expect(out.evidence!.size).toBe(2);
+    expect(out.record.evidence!.find((e) => e.path === "skills/NOTICE")).toEqual({ path: "skills/NOTICE", kind: "notice", problem: "gone" });
+  });
+
+  it("attachLicenceEvidence refuses another commit, a repeated path and a record that is too large", () => {
+    const base = prepareImport(source(), tree(LFILES));
+    const ev = collectImportEvidence(ORIGIN, ["skills/a"], tree(LFILES));
+    expect(() => attachLicenceEvidence(base, { ...ev, commit: "b".repeat(40) })).toThrowError(expect.objectContaining({ code: "not-usable" }));
+    expect(() => attachLicenceEvidence(base, { ...ev, repositoryKey: "x/y" })).toThrowError(expect.objectContaining({ code: "not-usable" }));
+    expect(() => attachLicenceEvidence(base, { ...ev, files: [ev.files[0]!, ev.files[0]!] })).toThrowError(expect.objectContaining({ code: "not-usable" }));
+    expect(() => attachLicenceEvidence(base, ev, { limits: { recordBytes: 100 } })).toThrowError(expect.objectContaining({ code: "too-large" }));
+  });
+
+  describe("collectImportEvidence", () => {
+    const code = (c: string) => Object.assign(new Error("x"), { code: c });
+    const recoverable = (e: unknown) => (e as { code?: string }).code === "read-failed";
+    const flaky = (c = "read-failed", counts = { reads: 0 }): SourceTree => {
+      const t = tree(LFILES);
+      return {
+        list: t.list,
+        read: (entries) => {
+          counts.reads++;
+          if (entries.length > 1 && entries.some((e) => e.path === "LICENSE")) throw code(c);
+          if (entries.some((e) => e.path === "LICENSE")) throw code(c);
+          return t.read(entries);
+        },
+      };
+    };
+
+    it("keeps an unreadable file as a problem and the other files with bytes", () => {
+      const ev = collectImportEvidence(ORIGIN, ["skills/a"], flaky(), { recoverable });
+      const root = ev.files.find((f) => f.path === "LICENSE")!;
+      expect(root.problem).toBe("cannot be read");
+      expect(root.content).toBeUndefined();
+      expect(ev.files.find((f) => f.path === "skills/NOTICE")!.content).toBeDefined();
+    });
+
+    it("reads once and equals collectLicenceEvidence when every read works", () => {
+      const counts = { reads: 0 };
+      const t = tree(LFILES);
+      const counted: SourceTree = { list: t.list, read: (e) => (counts.reads++, t.read(e)) };
+      expect(collectImportEvidence(ORIGIN, ["skills/a"], counted, { recoverable })).toEqual(collectLicenceEvidence(ORIGIN, ["skills/a"], t));
+      expect(counts.reads).toBe(1);
+    });
+
+    it("throws without recoverable, for another error and for a listing error", () => {
+      expect(() => collectImportEvidence(ORIGIN, ["skills/a"], flaky())).toThrow();
+      expect(() => collectImportEvidence(ORIGIN, ["skills/a"], flaky("timeout"), { recoverable })).toThrow();
+      const t = tree(LFILES);
+      expect(() => collectImportEvidence(ORIGIN, ["skills/a"], { list: () => { throw code("read-failed"); }, read: t.read }, { recoverable: () => true })).toThrow();
+    });
+
+    it("throws for more than 200 licence files before any read", () => {
+      const many: Record<string, string> = { ...FILES };
+      for (let i = 0; i < 201; i++) many[`skills/LICENSE-${i}`] = "x";
+      let reads = 0;
+      const t = tree(many);
+      expect(() => collectImportEvidence(ORIGIN, ["skills/a"], { list: t.list, read: (e) => (reads++, t.read(e)) }, { recoverable })).toThrowError(expect.objectContaining({ code: "too-many-entries" }));
+      expect(reads).toBe(0);
+    });
+  });
+
+  describe("readStagedImport", () => {
+    it("returns the evidence of the record's repository and commit, and the skill files are unchanged", () => {
+      stageNew();
+      const r = readStagedImport("lib", COMMIT, { home });
+      if (r.state !== "ok") throw new Error("not ok");
+      expect(r.evidence!.repositoryKey).toBe(ORIGIN.repositoryKey);
+      expect(r.evidence!.commit).toBe(COMMIT);
+      expect(r.evidence!.files.map((f) => [f.path, f.dir, f.kind, Buffer.from(f.content!).toString()])).toEqual([
+        ["LICENSE", ".", "licence", LIC],
+        ["skills/NOTICE", "skills", "notice", "notice"],
+        ["skills/a/LICENSE", "skills/a", "licence", LIC],
+      ]);
+      expect([...r.files.keys()].some((k) => k.endsWith("NOTICE") || k === "LICENSE")).toBe(false);
+      expect(evaluateLicence({ root: "skills/b", allow: ["MIT"], evidence: r.evidence! })).toEqual(
+        evaluateLicence({ root: "skills/b", allow: ["MIT"], evidence: collectLicenceEvidence(ORIGIN, ["skills/a", "skills/b"], tree(LFILES)) }),
+      );
+    });
+
+    it("reads an import staged before evidence was kept, with no evidence and no folder", () => {
+      publishImport(prepareImport(source(), tree(LFILES)), { home });
+      const r = readStagedImport("lib", COMMIT, { home });
+      if (r.state !== "ok") throw new Error("not ok");
+      expect(r.evidence).toBeUndefined();
+      expect(readdirSync(r.dir).sort()).toEqual(["files", "import.json"]);
+    });
+
+    const blob = () => join(home, "skill-quarantine", "lib", COMMIT, "evidence", sha(LIC));
+    const folder = () => join(home, "skill-quarantine", "lib", COMMIT, "evidence");
+    it.skipIf(isRoot).each([
+      ["changed bytes", () => writeFileSync(blob(), "X".repeat(Buffer.byteLength(LIC)), { mode: 0o600 })],
+      ["a truncated blob", () => writeFileSync(blob(), "MIT", { mode: 0o600 })],
+      ["a removed blob", () => rmSync(blob())],
+      ["an extra file", () => writeFileSync(join(folder(), "x"), "x", { mode: 0o600 })],
+      ["an extra hash-named file", () => writeFileSync(join(folder(), "a".repeat(64)), "x", { mode: 0o600 })],
+      ["a blob that is a link", () => (rmSync(blob()), symlinkSync(join(folder(), "..", "import.json"), blob()))],
+      ["a folder that is a link", () => (renameSync(folder(), folder() + "-x"), symlinkSync(folder() + "-x", folder()))],
+      ["a folder that is a file", () => (rmSync(folder(), { recursive: true }), writeFileSync(folder(), "x", { mode: 0o600 }))],
+      ["a blob with mode 0644", () => chmodSync(blob(), 0o644)],
+      ["a folder with mode 0755", () => chmodSync(folder(), 0o755)],
+      ["a sub-folder", () => mkdirSync(join(folder(), "sub"), { mode: 0o700 })],
+    ])("is invalid with %s", (_n, tamper) => {
+      stageNew();
+      tamper();
+      expect(readStagedImport("lib", COMMIT, { home }).state).toBe("invalid");
+    });
+
+    it("is invalid with an evidence folder next to a record without the key", () => {
+      publishImport(prepareImport(source(), tree(LFILES)), { home });
+      mkdirSync(join(home, "skill-quarantine", "lib", COMMIT, "evidence"), { mode: 0o700 });
+      expect(readStagedImport("lib", COMMIT, { home }).state).toBe("invalid");
+    });
   });
 });

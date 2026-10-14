@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { skillDigest, splitFrontmatter } from "./package.js";
+import { LICENCE_LIMITS } from "./licence-rules.js";
 import { relativePathProblem, SKILL_DIGEST_RE, SKILL_ID_RE, SKILL_LIMITS } from "./schema.js";
 import { approvedRefProblem, hasUnsafeChar, shownValue, type SkillLibrarySource } from "./sources.js";
 
@@ -54,7 +55,25 @@ export interface ImportRecord {
   digest: string;
   skills: { root: string; name: string; digest: string; files: number; bytes: number }[];
   rejected: RejectedSkill[];
+  /** Absent: staged before licence evidence was kept. `[]`: collected, none found. */
+  evidence?: ImportEvidenceEntry[];
 }
+/** One licence or notice file of the source: its bytes (stored by sha256 apart from the skill files) or its problem. */
+export interface ImportEvidenceEntry {
+  path: string;
+  kind: "licence" | "notice";
+  sha256?: string;
+  bytes?: number;
+  problem?: string;
+}
+export interface PreparedImport {
+  record: ImportRecord;
+  recordText: string;
+  files: Map<string, Uint8Array>;
+  /** sha256 hex → bytes. Set exactly when record.evidence is. */
+  evidence?: Map<string, Uint8Array>;
+}
+export const importRecordText = (record: ImportRecord): string => JSON.stringify(record, null, 2) + "\n";
 
 /** UTF-8 byte order, the order `skillDigest` uses. Never `a < b`: that is UTF-16 order. */
 export const byteCmp = (a: string, b: string): number => Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
@@ -247,6 +266,37 @@ const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object
 const plainText = (v: unknown, max: number): v is string => isStr(v) && v.length >= 1 && v.length <= max && !hasUnsafeChar(v);
 const plainPath = (v: unknown): v is string => isStr(v) && (v === "." || (relativePathProblem(v) === undefined && !hasUnsafeChar(v)));
 
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/;
+/** The checked entries, or a fixed sentence. Never repeats a value. */
+function parseEvidence(v: unknown): ImportEvidenceEntry[] | string {
+  if (!Array.isArray(v) || v.length > LICENCE_LIMITS.files) return `evidence is not a list of at most ${LICENCE_LIMITS.files} files`;
+  const out: ImportEvidenceEntry[] = [];
+  const sizes = new Map<string, number>();
+  let total = 0;
+  let prev: string | undefined;
+  for (const [i, e] of v.entries()) {
+    if (!isRec(e)) return `evidence[${i}] is not an object`;
+    if (!plainPath(e.path) || e.path === ".") return `evidence[${i}].path is not usable`;
+    if (prev !== undefined && byteCmp(prev, e.path) >= 0) return `evidence[${i}].path is not in order or is used twice`;
+    prev = e.path;
+    if (e.kind !== "licence" && e.kind !== "notice") return `evidence[${i}].kind is not usable`;
+    if (e.sha256 !== undefined) {
+      if (e.problem !== undefined || !isStr(e.sha256) || !SHA256_HEX_RE.test(e.sha256)) return `evidence[${i}].sha256 is not usable`;
+      if (!isInt(e.bytes, 0, LICENCE_LIMITS.fileBytes)) return `evidence[${i}].bytes is not a size`;
+      const seen = sizes.get(e.sha256);
+      if (seen !== undefined && seen !== e.bytes) return `evidence[${i}] has the same sha256 as another file with another size`;
+      sizes.set(e.sha256, e.bytes);
+      total += e.bytes;
+      out.push({ path: e.path, kind: e.kind, sha256: e.sha256, bytes: e.bytes });
+    } else {
+      if (e.bytes !== undefined || !plainText(e.problem, IMPORT_LIMITS.reasonChars)) return `evidence[${i}].problem is not usable`;
+      out.push({ path: e.path, kind: e.kind, problem: e.problem });
+    }
+  }
+  if (total > LICENCE_LIMITS.totalBytes) return "evidence holds more bytes than an import can have";
+  return out;
+}
+
 /**
  * Checks the form of the text of import.json. Pure. It does not prove who wrote the record: a fresh record is built
  * from checked fields and the text must equal its written form. Problems are fixed sentences and never repeat a value.
@@ -297,6 +347,12 @@ export function parseImportRecord(text: string): { record: ImportRecord } | { pr
     }
     rejected.push({ root: e.root, reasons: [...(r as string[])] });
   }
+  let evidence: ImportEvidenceEntry[] | undefined;
+  if (raw.evidence !== undefined) {
+    const got = parseEvidence(raw.evidence);
+    if (typeof got === "string") return bad(got);
+    evidence = got;
+  }
   const record: ImportRecord = {
     schema: 1,
     source: raw.source,
@@ -308,8 +364,9 @@ export function parseImportRecord(text: string): { record: ImportRecord } | { pr
     digest: raw.digest,
     skills,
     rejected,
+    ...(evidence === undefined ? {} : { evidence }),
   };
-  if (JSON.stringify(record, null, 2) + "\n" !== text) return bad("is not in the form scf writes");
+  if (importRecordText(record) !== text) return bad("is not in the form scf writes");
   if (importDigest(skills) !== record.digest) return bad("digest does not match the skills");
   return { record };
 }
@@ -339,7 +396,7 @@ export function prepareImport(
   source: SkillLibrarySource,
   tree: SourceTree,
   opts: { limits?: { recordBytes?: number } } = {},
-): { record: ImportRecord; recordText: string; files: Map<string, Uint8Array> } {
+): PreparedImport {
   const refusal = (what: string) => new SkillImportError("not-usable", `the source cannot be imported: ${what}`);
   if (source.status !== "enabled") throw refusal("status is not enabled");
   const commit = source.ref?.approved;
@@ -399,7 +456,7 @@ export function prepareImport(
     skills: staged,
     rejected: sortedRejected,
   };
-  const recordText = JSON.stringify(record, null, 2) + "\n";
+  const recordText = importRecordText(record);
   if (Buffer.byteLength(recordText) > (opts.limits?.recordBytes ?? IMPORT_LIMITS.recordBytes)) throw new SkillImportError("too-large", "the import record is too large");
   out.sort((a, b) => byteCmp(a[0], b[0]));
   return { record, recordText, files: new Map(out) };

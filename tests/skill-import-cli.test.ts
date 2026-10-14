@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { GitTreeError, type GitTree, type GitTreeErrorCode } from "../src/skill-import/git-tree.js";
 import { IMPORT_USAGE, skillImportCommand } from "../src/skill-import/cli.js";
-import type { TreeEntry } from "../src/skills/import-plan.js";
+import { prepareImport, type TreeEntry } from "../src/skills/import-plan.js";
+import { publishImport, readStagedImport } from "../src/skills/import-stage.js";
+import { LICENCE_LIMITS } from "../src/skills/licence-rules.js";
+import type { SkillLibrarySource } from "../src/skills/sources.js";
 
 const COMMIT = "a".repeat(40);
 const md = (name: string) => `---\nname: ${name}\ndescription: A skill called ${name}.\n---\n\nBody.\n`;
@@ -14,8 +17,11 @@ const GOOD: Record<string, string> = { "skills/a/SKILL.md": md("a"), "skills/b/S
 interface Fake extends GitTree {
   closed: number;
 }
-function fakeTree(files: Record<string, string> = GOOD, hooks: { onList?: () => void; onRead?: () => void } = {}): Fake {
-  const all: TreeEntry[] = Object.entries(files).map(([path, v]) => ({ path, kind: "file", size: Buffer.byteLength(v), id: "id:" + path }));
+function fakeTree(
+  files: Record<string, string> = GOOD,
+  hooks: { onList?: () => void; onRead?: () => void; over?: Record<string, Partial<TreeEntry>>; failRead?: (entries: readonly TreeEntry[]) => Error | undefined } = {},
+): Fake {
+  const all: TreeEntry[] = Object.entries(files).map(([path, v]) => ({ path, kind: "file", size: Buffer.byteLength(v), id: "id:" + path, ...hooks.over?.[path] }));
   const t: Fake = {
     closed: 0,
     close() {
@@ -27,6 +33,8 @@ function fakeTree(files: Record<string, string> = GOOD, hooks: { onList?: () => 
     },
     read(entries) {
       hooks.onRead?.();
+      const err = hooks.failRead?.(entries);
+      if (err) throw err;
       return entries.map((e) => Buffer.from(files[e.path]!));
     },
   };
@@ -46,6 +54,8 @@ const source = (over: Record<string, unknown> = {}) => ({
   owner: "@example",
   ...over,
 });
+
+const sourceOf = (): SkillLibrarySource => ({ ...(source() as object), repositoryKey: "github.com/example/skills" }) as SkillLibrarySource;
 
 let dir: string;
 let home: string;
@@ -80,7 +90,8 @@ describe("output and exit codes", () => {
     const t = fakeTree();
     const r = await run(t);
     expect(r.rc).toBe(0);
-    expect(r.lines).toHaveLength(4);
+    expect(r.lines).toHaveLength(5);
+    expect(r.lines[4]).toBe("Licence evidence: 0 files kept");
     expect(r.lines[0]).toMatch(/^skills\/a\s+a sha256:[0-9a-f]{64} 1 files \d+ bytes$/);
     expect(r.lines[1]).toMatch(/^skills\/b\s+b sha256:/);
     expect(r.lines[2]).toMatch(/^OK 2 skills staged from github\.com\/example\/skills@aaaaaaaaaaaa sha256:[0-9a-f]{64} \(staged\)$/);
@@ -205,6 +216,98 @@ describe("interrupt", () => {
 
   it("wins over a rejection found after reading", async () => {
     const r = await run(fakeTree({ "skills/c/SKILL.md": "bad" }, { onRead: () => void process.emit("SIGINT") }));
+    expect(r.lines).toEqual([INTERRUPTED]);
+    expect(quarantine()).toBe(false);
+  });
+});
+
+describe("licence evidence", () => {
+  const LICENCE = "MIT License\n\nPermission is hereby granted.\n";
+  const hasRoot = (entries: readonly TreeEntry[]) => entries.some((e) => e.path === "LICENSE");
+
+  it("keeps a licence above the selected paths and reads it back", async () => {
+    const r = await run(fakeTree({ LICENSE: LICENCE, ...GOOD }));
+    expect(r.rc).toBe(0);
+    expect(r.lines.at(-1)).toBe("Licence evidence: 1 files kept");
+    const got = readStagedImport("lib", COMMIT, { home });
+    if (got.state !== "ok") throw new Error("not ok");
+    expect(got.record.evidence).toHaveLength(1);
+    expect(got.evidence!.files.map((f) => [f.path, f.dir, Buffer.from(f.content!).toString()])).toEqual([["LICENSE", ".", LICENCE]]);
+    expect(existsSync(join(got.dir, "evidence", got.record.evidence![0]!.sha256!))).toBe(true);
+  });
+
+  it("records a too-large file and a link as problems without reading them", async () => {
+    const read: string[] = [];
+    const t = fakeTree({ LICENSE: LICENCE, NOTICE: "x", ...GOOD }, {
+      over: { LICENSE: { size: LICENCE_LIMITS.fileBytes + 1 }, NOTICE: { kind: "symlink" } },
+      onRead: () => void 0,
+    });
+    const inner = t.read.bind(t);
+    t.read = (entries) => {
+      read.push(...entries.map((e) => e.path));
+      return inner(entries);
+    };
+    const r = await run(t);
+    expect(r.rc).toBe(0);
+    expect(r.lines).toContain(`EVIDENCE LICENSE: is larger than ${LICENCE_LIMITS.fileBytes} bytes`);
+    expect(r.lines).toContain("EVIDENCE NOTICE: a symbolic link");
+    expect(r.lines.at(-1)).toBe("Licence evidence: 2 files kept, 2 with a problem");
+    expect(read).not.toContain("LICENSE");
+    expect(read).not.toContain("NOTICE");
+  });
+
+  it("keeps a licence that cannot be read as a problem and still stages", async () => {
+    const t = fakeTree({ LICENSE: LICENCE, "skills/NOTICE": "n", ...GOOD }, { failRead: (e) => (hasRoot(e) ? new GitTreeError("read-failed") : undefined) });
+    const r = await run(t);
+    expect(r.rc).toBe(0);
+    expect(r.lines).toContain("EVIDENCE LICENSE: cannot be read");
+    expect(r.lines.at(-1)).toBe("Licence evidence: 2 files kept, 1 with a problem");
+    expect(quarantine()).toBe(true);
+    expect(t.closed).toBe(1);
+    const got = readStagedImport("lib", COMMIT, { home });
+    if (got.state !== "ok") throw new Error("not ok");
+    expect(got.evidence!.files.map((f) => [f.path, f.problem, f.content === undefined])).toEqual([["LICENSE", "cannot be read", true], ["skills/NOTICE", undefined, false]]);
+  });
+
+  it("stages nothing when git times out reading a licence", async () => {
+    const r = await run(fakeTree({ LICENSE: LICENCE, ...GOOD }, { failRead: (e) => (hasRoot(e) ? new GitTreeError("timeout") : undefined) }));
+    expect(r.rc).toBe(1);
+    expect(r.lines).toEqual(["PROBLEM git did not finish in 120 seconds; nothing was staged"]);
+    expect(quarantine()).toBe(false);
+  });
+
+  it("stages nothing when the licence listing cannot be read", async () => {
+    const t = fakeTree();
+    const list = t.list.bind(t);
+    t.list = (p) => {
+      if (p === ".") throw new GitTreeError("bad-listing");
+      return list(p);
+    };
+    const r = await run(t);
+    expect(r.lines).toEqual(["PROBLEM the file list of the commit could not be read"]);
+    expect(t.closed).toBe(1);
+    expect(quarantine()).toBe(false);
+  });
+
+  it("stages nothing for more than 200 licence files", async () => {
+    const many: Record<string, string> = { ...GOOD };
+    for (let i = 0; i < 201; i++) many[`skills/LICENSE-${i}`] = "x";
+    const r = await run(fakeTree(many));
+    expect(r.rc).toBe(1);
+    expect(r.lines).toEqual(["PROBLEM the source holds more than 200 licence or notice files"]);
+    expect(quarantine()).toBe(false);
+  });
+
+  it("asks to remove a folder staged by an older scf", async () => {
+    publishImport(prepareImport(sourceOf(), fakeTree({ LICENSE: LICENCE, ...GOOD })), { home });
+    const r = await run(fakeTree({ LICENSE: LICENCE, ...GOOD }));
+    expect(r.rc).toBe(1);
+    expect(r.lines).toHaveLength(1);
+    expect(r.lines[0]).toMatch(/^PROBLEM .*older scf.*Remove that folder, then import again\.$/);
+  });
+
+  it("is interrupted even when the killed read fails", async () => {
+    const r = await run(fakeTree({ LICENSE: LICENCE, ...GOOD }, { failRead: (e) => (hasRoot(e) ? (process.emit("SIGINT"), new GitTreeError("read-failed")) : undefined) }));
     expect(r.lines).toEqual([INTERRUPTED]);
     expect(quarantine()).toBe(false);
   });

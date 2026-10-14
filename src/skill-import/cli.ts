@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
-import { prepareImport, SkillImportError, type RejectedSkill } from "../skills/import-plan.js";
+import { attachLicenceEvidence, collectImportEvidence } from "../skills/import-evidence.js";
+import { prepareImport, SkillImportError, type PreparedImport, type RejectedSkill } from "../skills/import-plan.js";
 import { publishImport } from "../skills/import-stage.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
 import { readSources, shownValue, SOURCES_FILE } from "../skills/sources.js";
@@ -87,12 +88,17 @@ export async function skillImportCommand(
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
-    let prep: ReturnType<typeof prepareImport> | undefined;
+    let prep: PreparedImport | undefined;
     let failed: unknown;
     try {
       const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: aborter.signal });
       try {
-        prep = prepareImport(source, tree);
+        const base = prepareImport(source, tree);
+        const roots = base.record.skills.map((s) => s.root);
+        // A licence file that cannot be read is kept as a problem; every other git failure ends the import.
+        const readFailed = (e: unknown) => e instanceof GitTreeError && e.code === "read-failed";
+        const origin = { repositoryKey: base.record.repositoryKey, commit: base.record.commit };
+        prep = attachLicenceEvidence(base, collectImportEvidence(origin, roots, tree, { recoverable: readFailed }));
       } finally {
         tree.close();
       }
@@ -115,6 +121,10 @@ export async function skillImportCommand(
       rejectedLines(out, rec.rejected);
       out(`OK ${rec.skills.length} skills staged from ${rec.repositoryKey}@${rec.commit.slice(0, 12)} ${rec.digest} (${done.state})`);
       out(`Quarantine: ${done.dir}`);
+      const kept = rec.evidence ?? [];
+      const withProblem = kept.filter((e) => e.problem !== undefined);
+      for (const e of withProblem) out(`EVIDENCE ${shownValue(e.path)}: ${shownValue(e.problem!)}`);
+      out(`Licence evidence: ${kept.length} files kept${withProblem.length > 0 ? `, ${withProblem.length} with a problem` : ""}`);
       return rec.rejected.length > 0 ? 1 : 0;
     } catch (e) {
       if (e instanceof GitTreeError) {

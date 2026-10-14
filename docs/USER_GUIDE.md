@@ -3374,8 +3374,9 @@ OK 2 skills staged from github.com/example/skills@0123456789ab sha256:… (stage
 Quarantine: <data folder>/skill-quarantine/example-skills/0123456789abcdef0123456789abcdef01234567
 ```
 
-- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json` and `files/<upstream path>`.
-- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]` and `rejected[]`.
+- **Layout.** `skill-quarantine/<source-id>/<commit>/import.json`, `files/<upstream path>` and `evidence/<sha256>`.
+- **`import.json`.** `schema`, `source`, `repository`, `repositoryKey`, `commit`, `paths`, `adapter`, `digest`, `skills[]`, `rejected[]` and, from this version, `evidence[]`.
+- **Licence evidence.** The licence and notice files of the skill folders are kept with the import, including a root `LICENSE` above the selected `paths`. Each one is listed in `evidence[]` with its path, kind and either its `sha256` and `bytes` or a `problem` (for example `cannot be read`). The bytes live in `evidence/`; they do not change any skill digest. An import staged before this change has no `evidence[]` and reads as "no licence evidence". If you import a commit again into such a folder, the result is `conflict`: remove the folder and import again.
 - **How it fetches.** One commit, into a bare temporary repository. There is no checkout. Only https is used, with no redirects. Your git configuration, credential helper and `~/.netrc` are not used. The temporary folder is removed at the end.
 - **Limits.** 120 s for the fetch, 256 MiB during the fetch, 8 MiB for the file list, and the per-skill limits from the staging step (#457).
 - **Rejections.** A skill is rejected, and not staged, for example when it is a symbolic link, a submodule or too large (`is larger than 262144 bytes`), or has an unsafe path. Each prints a `REJECTED` line with the reasons. The other skills are still staged.

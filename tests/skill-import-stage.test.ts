@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -5,8 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FACTORY_HOME } from "../src/flow/load.js";
 import { homePaths, migrateDataHome, setFactoryHome } from "../src/home.js";
 import { acquireLock, jsonFiles, lockPath, releaseLock, VERBATIM_DIRS } from "../src/home-migrate.js";
+import { attachLicenceEvidence, collectImportEvidence } from "../src/skills/import-evidence.js";
 import { prepareImport, SkillImportError, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
-import { IMPORT_RECORD_FILE, QUARANTINE_DIR, importStoreSettings, publishImport, quarantineDir, quarantinePath, stageImport } from "../src/skills/import-stage.js";
+import { IMPORT_RECORD_FILE, QUARANTINE_DIR, importStoreSettings, publishImport, quarantineDir, quarantinePath, readStagedImport, stageImport } from "../src/skills/import-stage.js";
 import type { SkillLibrarySource } from "../src/skills/sources.js";
 
 const isRoot = process.getuid?.() === 0;
@@ -369,7 +371,8 @@ describe("publishImport", () => {
   it("gives the same folder and digest as stageImport", () => {
     const other = fresh();
     const a = stageImport(source(), tree(), { home: other });
-    const b = publishImport(prepareImport(source(), tree()), { home });
+    const t = tree();
+    const b = publishImport(attachLicenceEvidence(prepareImport(source(), t), collectImportEvidence({ repositoryKey: "github.com/example/skills", commit: COMMIT }, ["skills/a", "skills/b"], t)), { home });
     expect(b.state).toBe("staged");
     expect(b.record.digest).toBe(a.record.digest);
     expect(b.dir).toBe(dest());
@@ -402,5 +405,105 @@ describe("quarantine name and path", () => {
     expect(quarantinePath(join(home, "Skill-Quarantine"), home)).toBe(true);
     expect(quarantinePath(other, home)).toBe(false);
     expect(quarantinePath(join(home, "skills"), home)).toBe(false);
+  });
+});
+
+describe("licence evidence", () => {
+  const LICENCE = "MIT License\n\nPermission is hereby granted.\n";
+  const withLicence = { LICENSE: LICENCE, ...DEFAULT_FILES };
+  const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+  const readFailed = (e: unknown) => (e as { code?: string }).code === "read-failed";
+  const failing = (files: Record<string, string>, bad: string, code = "read-failed"): SourceTree => {
+    const t = tree(files);
+    return {
+      list: t.list,
+      read: (entries) => {
+        if (entries.some((e) => e.path === bad)) throw Object.assign(new Error("x"), { code });
+        return t.read(entries);
+      },
+    };
+  };
+
+  it("stores the bytes by sha256, apart from the skill files, and keeps the digests", () => {
+    const r = stageImport(source(), tree(withLicence), { home });
+    expect(r.record.digest).toBe(prepareImport(source(), tree(withLicence)).record.digest);
+    expect(r.record.evidence).toEqual([{ path: "LICENSE", kind: "licence", sha256: sha(LICENCE), bytes: Buffer.byteLength(LICENCE) }]);
+    const blob = join(dest(), "evidence", sha(LICENCE));
+    expect(readFileSync(blob, "utf8")).toBe(LICENCE);
+    expect(statSync(blob).mode & 0o777).toBe(0o600);
+    expect(statSync(join(dest(), "evidence")).mode & 0o777).toBe(0o700);
+    expect(existsSync(join(dest(), "files", "LICENSE"))).toBe(false);
+  });
+
+  it("writes no evidence folder when there are no licence files, and is unchanged the second time", () => {
+    const r = stageImport(source(), tree(), { home });
+    expect(r.record.evidence).toEqual([]);
+    expect(existsSync(join(dest(), "evidence"))).toBe(false);
+    expect(stageImport(source(), tree(), { home }).state).toBe("unchanged");
+    expect(readStagedImport("lib", COMMIT, { home }).state).toBe("ok");
+  });
+
+  it("is unchanged the second time with evidence", () => {
+    stageImport(source(), tree(withLicence), { home });
+    const before = snapshot(dest());
+    expect(stageImport(source(), tree(withLicence), { home }).state).toBe("unchanged");
+    expect(snapshot(dest())).toEqual(before);
+  });
+
+  it("keeps an unreadable ancestor licence as a problem when the error is recoverable", () => {
+    stageImport(source(), failing(withLicence, "LICENSE"), { home, recoverable: readFailed });
+    const read = readStagedImport("lib", COMMIT, { home });
+    if (read.state !== "ok") throw new Error("not ok");
+    expect(read.record.evidence).toEqual([{ path: "LICENSE", kind: "licence", problem: "cannot be read" }]);
+    expect(read.evidence!.files).toEqual([{ path: "LICENSE", dir: ".", kind: "licence", problem: "cannot be read" }]);
+    expect(existsSync(join(dest(), "evidence"))).toBe(false);
+  });
+
+  it("stages nothing when the read error is not recoverable", () => {
+    expect(() => stageImport(source(), failing(withLicence, "LICENSE"), { home })).toThrow();
+    expect(() => stageImport(source(), failing(withLicence, "LICENSE", "timeout"), { home, recoverable: readFailed })).toThrow();
+    expect(existsSync(join(home, QUARANTINE_DIR))).toBe(false);
+  });
+
+  it.each([
+    ["changed", (b: string) => writeFileSync(b, "X".repeat(Buffer.byteLength(LICENCE)), { mode: 0o600 })],
+    ["missing", (b: string) => rmSync(b)],
+    ["extra", (b: string) => writeFileSync(join(b, "..", "x"), "x", { mode: 0o600 })],
+    ["a link", (b: string) => (rmSync(b), symlinkSync(join(b, "..", ".."), b))],
+  ])("refuses to reuse a folder whose evidence is %s", (_n, tamper) => {
+    stageImport(source(), tree(withLicence), { home });
+    tamper(join(dest(), "evidence", sha(LICENCE)));
+    const before = snapshot(dest());
+    expect(() => stageImport(source(), tree(withLicence), { home })).toThrowError(expect.objectContaining({ code: "conflict", message: expect.stringContaining("Remove that folder") }));
+    expect(snapshot(dest())).toEqual(before);
+  });
+
+  it("says an old folder was staged by an older scf, and changes nothing", () => {
+    publishImport(prepareImport(source(), tree(withLicence)), { home });
+    const before = snapshot(dest());
+    let err: unknown;
+    try {
+      stageImport(source(), tree(withLicence), { home });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toMatchObject({ code: "conflict" });
+    for (const w of ["older scf", "no licence evidence", "Remove that folder"]) expect((err as Error).message).toContain(w);
+    expect(snapshot(dest())).toEqual(before);
+  });
+
+  it("gives the general conflict when an old folder also differs in a skill file", () => {
+    publishImport(prepareImport(source(), tree(withLicence)), { home });
+    expect(() => stageImport(source(), tree({ ...withLicence, "skills/a/references/x/y.md": "zz" }), { home })).toThrowError(
+      expect.objectContaining({ code: "conflict", message: expect.not.stringContaining("older scf") }),
+    );
+  });
+
+  it("publishImport refuses evidence that does not match its record", () => {
+    const base = prepareImport(source(), tree(withLicence));
+    const full = attachLicenceEvidence(base, collectImportEvidence({ repositoryKey: "github.com/example/skills", commit: COMMIT }, ["skills/a", "skills/b"], tree(withLicence)));
+    expect(() => publishImport({ ...full, evidence: undefined }, { home })).toThrowError(expect.objectContaining({ code: "not-usable" }));
+    expect(() => publishImport({ ...full, evidence: new Map([["0".repeat(64), Buffer.from(LICENCE)]]) }, { home })).toThrowError(expect.objectContaining({ code: "not-usable" }));
+    expect(existsSync(join(home, QUARANTINE_DIR))).toBe(false);
   });
 });
