@@ -1,4 +1,4 @@
-// The Skills card of the Settings page: one generated control for each described skills key of this part.
+// The Skills card of the Settings page: one generated control for each described skills key.
 import { h, mount } from "./dom.js";
 import { settingControl } from "./kit/forms.js";
 
@@ -25,11 +25,12 @@ export function issueText(path, key, message, description) {
 
 /** Groups of the card. A pattern ending in "." is a prefix; any other pattern is an exact key. */
 export const SKILL_GROUPS = [
-  { title: "Where skills come from", keys: ["skills.builtin", "skills.roots", "skills.repository", "skills.releases.allow_unreleased"] },
+  { title: "Where skills come from", keys: ["skills.builtin", "skills.roots", "skills.repository", "skills.releases.allow_unreleased", "skills.releases.approved"] },
   { title: "Catalogue for the planner", keys: ["skills.catalogue."] },
   { title: "Selection", keys: ["skills.selection."] },
   { title: "Review checks", keys: ["skills.review."] },
   { title: "Skills that cannot be used", keys: ["skills.unresolved."] },
+  { title: "Tools a skill may ask for", keys: ["skills.tools."] },
 ];
 
 const matches = (key, p) => (p.endsWith(".") ? key.startsWith(p) : key === p);
@@ -87,6 +88,12 @@ export const RISKS = [
       const now = new Set(list(valueAt(after, "unresolved.high_risk")));
       return list(valueAt(before, "unresolved.high_risk")).filter((t) => !now.has(t)).map((t) => `A skill marked high-risk by ${t} no longer always stops the run.`);
     },
+  },
+  turnedOn("tools.network", "Skills that ask for network access may pass the plan gate."),
+  {
+    key: "tools.missing",
+    sentences: (before, after) => (valueAt(after, "tools.missing") === "degrade" && valueAt(before, "tools.missing") !== "degrade"
+      ? ["A skill whose tool is not available no longer stops the run; it runs without that tool."] : []),
   },
 ];
 

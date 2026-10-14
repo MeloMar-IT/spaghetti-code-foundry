@@ -29,8 +29,7 @@ export function shownDefault(d) {
 
 /** The hint of a setting description: help, list format (unless format is false), default, range and when it takes effect. */
 export function settingHint(d, { format = true } = {}) {
-  const keys = d.fields?.map((f) => f.key).join(" ");
-  const lineFormat = format && d.kind === "list" ? (d.fields ? ` One per line: ${keys}.` : " One per line.") : "";
+  const lineFormat = format && d.kind === "list" && !d.fields ? " One per line." : "";
   const bounds = d.min !== undefined && d.max !== undefined ? ` Allowed: ${d.min} to ${d.max}.` : d.min !== undefined ? ` At least ${d.min}.` : d.max !== undefined ? ` At most ${d.max}.` : "";
   const range = `${bounds}${d.exclusiveMin !== undefined ? ` More than ${d.exclusiveMin}.` : ""}${d.maxItems !== undefined ? ` At most ${d.maxItems} items.` : ""}`;
   return `${d.help}${lineFormat} Default: ${shownDefault(d.default)}.${range} Takes effect ${d.effectText}.`;

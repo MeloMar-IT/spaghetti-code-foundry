@@ -1,5 +1,5 @@
 /* ui/kit/forms.css — fields, text controls, selects and checkboxes of the component kit.
-   Belongs here: .scf-field, .scf-input and .scf-checkbox rules, with token variables only.
+   Belongs here: .scf-field, .scf-input, .scf-checkbox and .scf-rows rules, with token variables only.
    Does not belong here: colour literals, id or tag selectors, inline-style needs, page rules. */
 
 .scf-field { display: grid; gap: var(--space-xs); min-width: 0; }
@@ -29,3 +29,6 @@
 .scf-checkbox__label { min-width: 0; overflow-wrap: anywhere; }
 .scf-checkbox__input { width: auto; padding: 0; margin: 0; accent-color: var(--color-accent); }
 .scf-checkbox__input:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.scf-rows > .scf-btn { justify-self: start; }
+.scf-rows__row { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; }
+.scf-rows__row > .scf-input { flex: 1 1 0; min-width: 0; }

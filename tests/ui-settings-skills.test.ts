@@ -17,7 +17,8 @@ const skills = () => ConfigSchema.parse({}).skills as any;
 const descriptions = () => describeSettings();
 const covered = () => descriptions().filter((d) => m.groupOf(d.key) !== undefined);
 const control = (el: FakeElement, label: string) => {
-  const l = el.all("label").find((x) => x.textContent === label || x.textContent.startsWith(label))!;
+  const l = el.all("label").find((x) => x.textContent === label || x.textContent.startsWith(label));
+  if (!l) return el.all("div").find((g) => g.attrs.role === "group" && g.all("span").some((s) => s.attrs.id === g.attrs["aria-labelledby"] && s.textContent === label))!; // a row editor
   const id = l.attrs.for;
   if (!id) return l.all("input")[0]!; // a switch: the input is inside its label
   return el.all("input").concat(el.all("select"), el.all("textarea")).find((c) => c.attrs.id === id)!;
@@ -45,10 +46,11 @@ describe("valueAt and withValue", () => {
 });
 
 describe("groups", () => {
-  it("gives every covered key a group, and approved releases and tools none", () => {
-    expect(covered().length).toBeGreaterThan(10);
-    expect(m.groupOf("skills.releases.approved")).toBeUndefined();
-    expect(m.groupOf("skills.tools.shell")).toBeUndefined();
+  it("gives every skills key a group, including approved releases and tools", () => {
+    expect(covered().length).toBe(descriptions().filter((d) => d.key.startsWith("skills.")).length);
+    expect(m.groupOf("skills.releases.approved")).toBe("Where skills come from");
+    expect(m.groupOf("skills.tools.shell")).toBe("Tools a skill may ask for");
+    expect(m.groupOf("skills.tools.missing")).toBe("Tools a skill may ask for");
     expect(m.groupOf("skills.unresolved.high_risk")).toBe("Skills that cannot be used");
   });
 });
@@ -90,11 +92,32 @@ describe("riskyChanges", () => {
     expect(texts(skills(), withKey("unresolved.high_risk", []))).toHaveLength(terms.length);
     expect(texts(skills(), withKey("unresolved.high_risk", [...terms, "new"]))).toEqual([]);
   });
+  it("network turned on only", () => {
+    const sentence = "Skills that ask for network access may pass the plan gate.";
+    const off = withKey("tools.network", false);
+    const on = withKey("tools.network", true);
+    expect(texts(off, on)).toEqual([sentence]);
+    expect(texts(on, on)).toEqual([]);
+    expect(texts(on, off)).toEqual([]);
+  });
+  it("missing tools set to degrade only", () => {
+    const sentence = "A skill whose tool is not available no longer stops the run; it runs without that tool.";
+    const stop = withKey("tools.missing", "stop");
+    const degrade = withKey("tools.missing", "degrade");
+    expect(texts(stop, degrade)).toEqual([sentence]);
+    expect(texts(degrade, degrade)).toEqual([]);
+    expect(texts(degrade, stop)).toEqual([]);
+  });
+  it("shell off and filesystem read are stricter and ask nothing", () => {
+    expect(texts(skills(), withKey("tools.shell", false))).toEqual([]);
+    expect(texts(skills(), withKey("tools.filesystem", "read"))).toEqual([]);
+  });
   it("several risks come in RISKS order with a key", () => {
     let d = withKey("repository", true);
     d = m.withValue(d, "releases.allow_unreleased", true);
-    const r = m.riskyChanges(skills(), d);
-    expect(r.map((x: any) => x.key)).toEqual(["skills.repository", "skills.releases.allow_unreleased"]);
+    d = m.withValue(d, "tools.network", true);
+    const r = m.riskyChanges(m.withValue(skills(), "tools.network", false), d);
+    expect(r.map((x: any) => x.key)).toEqual(["skills.repository", "skills.releases.allow_unreleased", "skills.tools.network"]);
   });
 });
 
@@ -104,7 +127,8 @@ describe("issueKey and issueText", () => {
     expect(m.issueKey("skills.catalogue.include.0", keys())).toBe("skills.catalogue.include");
     expect(m.issueKey("skills.catalogue.include", keys())).toBe("skills.catalogue.include");
     expect(m.issueKey("skills.catalogue.include_x", keys())).toBeUndefined();
-    for (const p of ["skills.tools.shell", "notify.slack_webhook", "skills"]) expect(m.issueKey(p, keys())).toBeUndefined();
+    for (const p of ["notify.slack_webhook", "skills"]) expect(m.issueKey(p, keys())).toBeUndefined();
+    expect(m.issueKey("skills.tools.shell", keys())).toBe("skills.tools.shell");
     expect(m.issueKey("skills.a.b.0", ["skills.a", "skills.a.b"])).toBe("skills.a.b");
     expect(m.issueKey(5, keys())).toBeUndefined();
   });
@@ -134,7 +158,7 @@ describe("showIssues", () => {
   ];
   it("shows each issue at its control and returns the others", () => {
     const s = m.skillsSection(descriptions(), skills());
-    const other = [{ path: "skills.releases.approved.0", message: "a" }, { path: "concurrency", message: "b" }];
+    const other = [{ path: "concurrency", message: "b" }];
     const before = structuredClone(s.value());
     expect(s.showIssues([...issues, ...other])).toEqual(other);
     const selected = errorsIn(s.el, label("skills.selection.include")).map((e: FakeElement) => e.textContent).join("|");
@@ -163,6 +187,34 @@ describe("showIssues", () => {
     const n = Number(/Line (\d+)/.exec(errorsIn(s.el, label("skills.roots"))[0].textContent)![1]);
     expect(area.value.split("\n")[n - 1]).toBe("/b/.claude");
     expect(area.value).not.toContain("\n\n");
+  });
+  const rec = (n: string) => ({ catalogue: n, version: "1.0.0", digest: `sha256:${n.repeat(64).slice(0, 64)}` });
+  const approvedGroup = (s: any) => control(s.el, label("skills.releases.approved"));
+  const rowInput = (s: any, name: string) => approvedGroup(s).all("input").find((i: FakeElement) => i.attrs["aria-label"] === name)!;
+  it("shows a server issue in an approved release as Row N, field", () => {
+    const s = m.skillsSection(descriptions(), m.withValue(skills(), "releases.approved", [rec("a")]));
+    const path = "skills.releases.approved.0.digest";
+    expect(s.showIssues([{ path, message: "must be sha256: and 64 hex digits" }])).toEqual([]);
+    const g = approvedGroup(s);
+    const alerts = g.all("div").filter((d: FakeElement) => d.attrs.role === "alert");
+    expect(alerts.map((a: FakeElement) => a.textContent)).toEqual(["Row 1, digest: must be sha256: and 64 hex digits"]);
+    expect(g.attrs["aria-describedby"]).toContain(alerts[0].attrs.id);
+  });
+  it("numbers rows by the saved value after empty rows are dropped", () => {
+    const [a, b] = [rec("a"), rec("b")];
+    const s = m.skillsSection(descriptions(), m.withValue(skills(), "releases.approved", [a]));
+    const add = () => approvedGroup(s).all("button").find((x: FakeElement) => x.textContent === "Add a row")!;
+    add().click();
+    add().click();
+    for (const k of ["catalogue", "version", "digest"]) {
+      const i = rowInput(s, `Row 3, ${k}`);
+      i.fire("change", { target: { value: (b as any)[k] } });
+    }
+    expect(s.value().releases.approved).toEqual([a, b]);
+    s.showIssues([{ path: "skills.releases.approved.1.catalogue", message: "bad" }]);
+    expect(rowInput(s, "Row 2, catalogue").value).toBe("b");
+    expect(rowInput(s, "Row 3, catalogue")).toBeUndefined();
+    expect(approvedGroup(s).all("div").filter((d: FakeElement) => d.attrs.role === "alert")[0].textContent).toBe("Row 2, catalogue: bad");
   });
   it("keeps a disabled card disabled and locks it while busy", () => {
     const s = m.skillsSection(descriptions(), skills(), { disabled: true });
@@ -204,6 +256,10 @@ describe("skillsSection", () => {
     expect([sw.attrs.type, sw.attrs.role]).toEqual(["checkbox", "switch"]);
     for (const k of ["skills.roots", "skills.catalogue.include", "skills.unresolved.high_risk"]) expect(byKey(s, k).tag).toBe("textarea");
     expect(byKey(s, "skills.unresolved.missing").all("option").map((o: FakeElement) => o.value)).toEqual(["stop", "warn"]);
+    for (const k of ["skills.tools.shell", "skills.tools.network"]) expect(byKey(s, k).attrs.role).toBe("switch");
+    expect(byKey(s, "skills.tools.filesystem").all("option").map((o: FakeElement) => o.value)).toEqual(["read", "write"]);
+    expect(byKey(s, "skills.tools.missing").all("option").map((o: FakeElement) => o.value)).toEqual(["stop", "degrade"]);
+    expect(byKey(s, "skills.releases.approved").attrs.role).toBe("group");
   });
   it("changes the value, keeps other keys and the input", () => {
     const input = skills();
@@ -241,7 +297,7 @@ describe("skillsSection", () => {
   });
   it("disables every control", () => {
     const s = m.skillsSection(descriptions(), skills(), { disabled: true });
-    const all = ["input", "select", "textarea"].flatMap((t) => s.el.all(t));
+    const all = ["input", "select", "textarea", "button"].flatMap((t) => s.el.all(t));
     expect(all.length).toBeGreaterThan(10);
     expect(all.every((c: FakeElement) => c.disabled || "disabled" in c.attrs)).toBe(true);
   });

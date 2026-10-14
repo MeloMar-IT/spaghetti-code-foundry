@@ -213,6 +213,14 @@ describe("defaults and texts", () => {
     expect(described.find((d) => d.key === "monitor.report_to")!.optional).toBe(true);
     expect(described.find((d) => d.key === "isolate_agents")!.default).toBe(true);
   });
+  it("approved releases: help names the catalogue id, version and digest, and every skills setting has a generated control", () => {
+    const d = described.find((x) => x.key === "skills.releases.approved")!;
+    expect(d.help).toBe("The catalogue releases this installation accepts, each with its catalogue id, version and digest.");
+    expect(d.help).not.toMatch(/one per line/i);
+    const skills = described.filter((x) => x.key.startsWith("skills."));
+    expect(skills.length).toBeGreaterThan(10);
+    for (const s of skills) expect(s.control, s.key).toBe("generated");
+  });
 
   it("every entry has a label, one sentence of help, and a known effect and control", () => {
     for (const d of described) {
