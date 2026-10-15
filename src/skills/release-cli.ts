@@ -1,10 +1,22 @@
 import { matchRelease, type ApprovedRelease } from "./release.js";
 import { readReleaseRequests } from "./release-requests.js";
 import { verifyRelease } from "./release-verify.js";
+import { SKILL_ID_RE, SKILL_VERSION_RE } from "./schema.js";
 
-/** Undefined for `verify <folder>`, else the syntax error. */
+/** `<catalogue>@<version>` with exactly one `@`; undefined for anything else. */
+export function parseReleaseTarget(s: string): { catalogue: string; version: string } | undefined {
+  const parts = s.split("@");
+  if (parts.length !== 2) return undefined;
+  const [catalogue, version] = parts as [string, string];
+  return SKILL_ID_RE.test(catalogue) && SKILL_VERSION_RE.test(version) ? { catalogue, version } : undefined;
+}
+
+/** Undefined for `verify <folder>` or `publish <catalogue>@<version>`, else the syntax error. */
 export function releaseOperandsProblem(operands: string[]): string | undefined {
-  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder';
+  if (operands[0] === "publish" && operands.length === 2) {
+    return parseReleaseTarget(operands[1]!) ? undefined : "scf skills release publish: the operand must be <catalogue>@<version>";
+  }
+  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, or "publish" and <catalogue>@<version>';
 }
 
 /** `scf skills release verify <dir>`: offline; prints checked fields only. Exit 0 when the release is intact, whether or not it is approved. */

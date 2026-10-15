@@ -4483,6 +4483,44 @@ OK 1 releases for github.com/acme/scf-skills
 
 Reviewed entries print `reviewed by @octocat on 2026-10-13` in place of `NOT REVIEWED`. The last line says `OK <n> releases for <repository>` and the command exits 0. A problem prints one `PROBLEM <where>: <message>` line per error and exits 1. The message never repeats file content. A missing file prints `PROBLEM the release request file does not exist` and exits 1.
 
+`scf skills release publish <catalogue>@<version>` publishes one of these entries. Run it in the catalogue repository, in the folder that holds `skill-releases.yaml` and `skill-sources.yaml`. It writes the release to `skill-releases/<catalogue>/<version>` in that folder, and changes nothing else: not the config, the pins or `skills.lock.json`.
+
+```
+scf skills release publish scf-skills@0.1.0
+```
+
+Publishing refuses, prints `PROBLEM <c>@<v>: nothing was published` and exits 1, and writes nothing when any of these holds:
+
+- the file is missing or invalid, or the entry has no `review`;
+- the folder has no git commit, or `skill-releases.yaml` or `skill-sources.yaml` is not committed or differs from HEAD;
+- a listed source is unknown or not enabled, or has no staged import at its `ref.approved`;
+- a listed skill is not staged or not normalized, or it is not promotable under the same checks as `scf skills promote check`;
+- the newest evaluation record of a listed skill does not pass the same gate as `scf skills gate`;
+- a revoked skill names another version than the built skill;
+- the manifest or its credentials fail the release checks.
+
+Every listed skill is checked, and each failure prints its own `PROBLEM <source>/<id>: <reason>` line. The two files must be committed and equal to HEAD, because the release records HEAD as its commit. Commit your edits first, then publish.
+
+A revoked skill (an entry in `revoked`) skips the promotion and evaluation gates. It must still have a package that loads, an identified licence and a readable newest evaluation record, if there is one. Its verdict is what the record says (`passed`, `failed`), or `not-run` when there is no record. This lets you revoke a skill that is broken or that failed evaluation.
+
+A successful run prints one `SKILL` line for each skill, then:
+
+```
+SKILL example-skill@0.1.0 sha256:… from openhands-extensions evaluation passed
+PUBLISHED scf-skills@0.1.0 sha256:… 1 skills to skill-releases/scf-skills/0.1.0
+APPROVE scf-skills 0.1.0 sha256:…
+```
+
+The same inputs always give the same digest, so publishing again with the same content prints `UNCHANGED … already published` and the `APPROVE` line again. A version can never be published with other content. A new evaluation record or a changed skill gives a different digest, and the command prints `REFUSED <c>@<v>: already published with another digest` (exit 1). Nothing changes. A folder that exists at that version but is not a valid release prints `REFUSED … and the folder does not verify`. A write that fails prints `PROBLEM …; nothing was published` and leaves no release folder.
+
+To use the release, copy the `APPROVE` line into `skills.releases.approved` (catalogue, version and digest), and add `skill-releases/<catalogue>/<version>` to `skills.roots`. Until you do, the skills of that folder do not load, unless `skills.releases.allow_unreleased` is on.
+
+Known limits:
+
+- The release digest is the digest of the Foundry-format package of each skill, not the import digest that records the name.
+- With `core.autocrlf` set, git can show a committed file as changed, and publishing then refuses it. Turn the setting off for the catalogue repository, or commit the files with the line endings they have on disk.
+- A crash during the write can leave a `skill-releases/.tmp-*` folder. It is not a release and is never loaded. Delete it, then publish again.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). A skill with a `provider` block has its `needs provider: …` line first (see below). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.

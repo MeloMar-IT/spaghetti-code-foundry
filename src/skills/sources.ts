@@ -569,6 +569,11 @@ export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES, today?: 
   if (data === "link") return fail("is a symbolic link");
   if (data === "other") return fail("is not a readable regular file");
   if (data === "large") return fail(`is larger than ${maxBytes} bytes`);
+  return sourcesFromBytes(data, today);
+}
+
+/** The YAML and schema part of `readSources`, for a caller that has read the bytes itself (one read, one snapshot). */
+export function sourcesFromBytes(data: Uint8Array, today?: string): SourcesRead {
   let doc: unknown;
   try {
     // logLevel "silent": the library must not print warnings, they repeat the source line (which may hold a credential).
