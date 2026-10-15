@@ -114,6 +114,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     durationMs: Date.now() - startedAt.getTime(),
     logFile,
     ...res,
+    ...(engine.accessFailed && !res.ok ? { accessFailed: true } : {}),
     ...(scope.prefix ? { parent: scope.prefix.slice(0, -1) } : {}),
   };
   engine.summary.history.push(rec);

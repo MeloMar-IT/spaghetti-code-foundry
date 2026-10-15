@@ -17,7 +17,7 @@ import { SkillImportError } from "./import-plan.js";
 import { hidden, plural, filesOf, loadExceptions, stagedImport } from "./staged-import.js";
 import { reviewCommand } from "./review-cli.js";
 import { EVALUATION_SUITE_DEFAULT } from "./evaluation-rules.js";
-import { evaluateOperandsProblem, gateImport, scoreImport } from "./evaluate-cli.js";
+import { evaluateOperandsProblem, gateImport, scoreImport, type EvaluateCliOptions } from "./evaluate-cli.js";
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
 import { licenceReviewProblem, reviewImport } from "./licence-review.js";
@@ -54,11 +54,11 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence, findings and evaluations allow promotion; reads only
        scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; uses skill-selections.yaml; reads only
        scf skills review <source-id> [--markdown]                Print the licence, attribution and collision report of a staged import; reads only
-       scf skills score <source-id> [<suite-file>]               Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT})
+       scf skills score <source-id> [<suite-file>] [--agent]     Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT}); --agent also runs the instructions scenarios in the OS sandbox
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: [], gate: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], gate: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -68,6 +68,8 @@ export interface SkillsCommandOptions extends DiscoverOptions {
   now?: Date;
   /** The date used by `scan` for exceptions, as YYYY-MM-DD (tests). Default: today in UTC. */
   today?: string;
+  /** `score --agent`: runs the instructions scenarios in the sandbox. Given by the program's entry point, so this file starts no process. */
+  agentScore?: (id: string, suiteFile: string | undefined, out: (line: string) => void, opts: EvaluateCliOptions) => Promise<number>;
 }
 
 /** `scf skills overrides check` and `scf skills project-pins check`: offline; prints checked fields and the entry digest only. */
@@ -567,7 +569,7 @@ export async function skillsCommand(
     return reviewCommand(operands[0]!, out, { cwd: cwd ?? process.cwd(), home: opts.home, markdown: args.values.markdown === true, skills, discover: rest });
   }
 
-  const { skills, cwd: _cwd, now: _now, today: _today, ...discover } = opts;
+  const { skills, cwd: _cwd, now: _now, today: _today, agentScore, ...discover } = opts;
   if (sub === "overlap") {
     if (operands.length !== 1) throw syntax("scf skills overlap: expects one source id");
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills overlap: the operand must be a source id");
@@ -579,7 +581,12 @@ export async function skillsCommand(
     if (why) throw syntax(why);
     const run = sub === "score" ? scoreImport : gateImport;
     const today = opts.today ?? new Date().toISOString().slice(0, 10);
-    return run(operands[0]!, operands[1], out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
+    const evalOpts = { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover };
+    if (sub === "score" && args.values.agent === true) {
+      if (!agentScore) throw syntax("scf skills score --agent: not available here");
+      return agentScore(operands[0]!, operands[1], out, evalOpts);
+    }
+    return run(operands[0]!, operands[1], out, evalOpts);
   }
   if (sub === "unpin") {
     const key = operands[0]!;

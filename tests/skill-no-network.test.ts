@@ -255,7 +255,8 @@ describe("scf skills scan is offline and read-only", () => {
   it("only source-evaluation.ts imports source-skill-evaluation.js", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)source-skill-evaluation\.js$/.test(m)));
-    expect(users.sort()).toEqual([join("src", "skills", "overlap.ts"), join("src", "skills", "source-evaluation.ts")]);
+    // skill-eval/score.ts reads the registered skills as baselines for `scf skills score --agent`
+    expect(users.sort()).toEqual([join("src", "skill-eval", "score.ts"), join("src", "skills", "overlap.ts"), join("src", "skills", "source-evaluation.ts")]);
   });
   it("suite-rules.ts has no imports", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "suite-rules.ts"), "utf8"))).toEqual([]);

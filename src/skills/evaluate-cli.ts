@@ -6,11 +6,11 @@ import { selectCanonicalSkills } from "./canonical.js";
 import { canonicalFromRegistered } from "./canonical-facts.js";
 import { filesOf, hidden, loadExceptions, plural, stagedImport, type StagedImport } from "./staged-import.js";
 import { collisionCandidate, type CollisionCandidate } from "./collisions.js";
-import { evaluationGate, parseEvaluationRecord, type EvaluationGateInput, type EvaluationReason, type EvaluationSubject } from "./evaluation.js";
-import { EVALUATION_REASON_CODES, EVALUATION_SUITE_DEFAULT, type EvaluationMode } from "./evaluation-rules.js";
-import { scoreEvaluation, type ComparedSkill } from "./evaluation-score.js";
+import { evaluationGate, parseEvaluationRecord, type EvaluationGateInput, type EvaluationReason, type EvaluationRecord, type EvaluationSubject } from "./evaluation.js";
+import { EVALUATION_LIMITS, EVALUATION_REASON_CODES, EVALUATION_SUITE_DEFAULT, type EvaluationDimension, type EvaluationMode } from "./evaluation-rules.js";
+import { scoreEvaluation, type ComparedSkill, type EvaluationScore } from "./evaluation-score.js";
 import { EvaluationStoreError, findNewestRecordOf, readNewestRecord, writeEvaluationRecord, type StoredRecordRead } from "./evaluation-store.js";
-import { instructionsPolicy } from "./evaluation-instructions.js";
+import { instructionsPolicy, type EvaluationAgent } from "./evaluation-instructions.js";
 import { readEvaluationSuite, type EvaluationSuiteRead } from "./evaluation-suite.js";
 import { byteCmp } from "./import-plan.js";
 import { evaluateLicence, type LicenceStatus } from "./licence.js";
@@ -34,7 +34,7 @@ export interface EvaluateCliOptions {
   skills?: Config["skills"];
   discover: DiscoverOptions;
 }
-type Out = (line: string) => void;
+export type Out = (line: string) => void;
 
 export function evaluateOperandsProblem(sub: "score" | "gate", operands: string[]): string | undefined {
   if (operands.length < 1 || operands.length > 2) return `scf skills ${sub}: expects a source id and at most one suite file`;
@@ -107,7 +107,7 @@ const foundryVersion = (): string => {
   }
 };
 
-interface Item {
+export interface Item {
   skill: NormalizedSkill;
   id: string;
   version: string;
@@ -116,7 +116,7 @@ interface Item {
   licence: LicenceStatus;
   checks: GateChecks;
 }
-interface Prepared {
+export interface Prepared {
   staged: StagedImport;
   suite: Extract<EvaluationSuiteRead, { state: "ok" }>;
   approved: RegisteredSkill[];
@@ -192,44 +192,93 @@ function prepare(id: string, suiteFile: string | undefined, out: Out, opts: Eval
 const stamp = (d: Date) => d.toISOString().replace(/\.\d+Z$/, "Z");
 const short = (p: Prepared) => `${p.staged.source.repositoryKey}@${p.staged.commit.slice(0, 12)} ${p.staged.record.digest} with suite ${p.suite.digest}`;
 
-/** `scf skills score`: scores every staged skill and stores one record each. Returns 1 when a PROBLEM was printed. */
-export function scoreImport(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions): number {
+export interface ScoredItem {
+  item: Item;
+  score?: EvaluationScore;
+  /** Why the item cannot be scored; `writeScores` prints it where it always was printed. */
+  problem?: string;
+}
+export interface ScoringPlan {
+  prepared: Prepared;
+  scored: ScoredItem[];
+}
+
+/** What an agent run adds to the record of one skill (skill-eval/score.ts). */
+export interface RecordExtras {
+  dimensions?: Partial<Record<EvaluationDimension, number[]>>;
+  runtime?: { agent: string; model: string };
+  agent?: EvaluationAgent;
+  findings?: EvaluationRecord["findings"];
+  evidence?: { name: string; digest: string }[];
+}
+
+/** The ComparedSkill list and the baseline of one item, for the offline scorer. */
+function comparedFor(p: Prepared, it: Item): { approved: ComparedSkill[]; baseline?: ComparedSkill } {
+  const { staged, items } = p;
+  const same = it.checks.baselines.find((b) => b.id === it.id);
+  const baseline = same ? ({ kind: "registered", skill: same } as ComparedSkill) : undefined;
+  const approved: ComparedSkill[] = [
+    ...p.approved.map((s): ComparedSkill => ({ kind: "registered", skill: s })),
+    ...it.checks.rivals.map((r): ComparedSkill => {
+      const rid = r.package.id;
+      const other = items.find((x) => x.id === rid);
+      return { kind: "imported", candidate: collisionCandidate(r, staged.source), licence: other?.licence ?? "missing", safety: other ? promotionBlockers(other.safety).length === 0 : false };
+    }),
+  ];
+  return { approved, ...(baseline ? { baseline } : {}) };
+}
+
+/** The offline part of `scf skills score`: prepares the import and scores every staged skill. Writes nothing. */
+export function prepareScoring(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions): ScoringPlan | undefined {
   const p = prepare(id, suiteFile, out, opts, "no record");
-  if (!p) return 1;
-  const { staged, suite, items } = p;
-  let problems = p.problems;
-  let written = 0;
-  for (const it of items) {
-    const { skill, checks } = it;
-    const same = checks.baselines.find((b) => b.id === it.id);
-    const baseline = same ? ({ kind: "registered", skill: same } as ComparedSkill) : undefined;
-    const approved: ComparedSkill[] = [
-      ...p.approved.map((s): ComparedSkill => ({ kind: "registered", skill: s })),
-      ...checks.rivals.map((r): ComparedSkill => {
-        const rid = r.package.id;
-        const other = items.find((x) => x.id === rid);
-        return { kind: "imported", candidate: collisionCandidate(r, staged.source), licence: other?.licence ?? "missing", safety: other ? promotionBlockers(other.safety).length === 0 : false };
-      }),
-    ];
-    let score;
+  if (!p) return undefined;
+  const { suite } = p;
+  const scored: ScoredItem[] = [];
+  for (const it of p.items) {
+    const { approved, baseline } = comparedFor(p, it);
     try {
-      score = scoreEvaluation({ suite: suite.suite, profiles: suite.profiles, instructionFixtures: suite.instructionFixtures, candidate: it.cand, approved, ...(baseline ? { baseline } : {}), safety: it.safety });
+      scored.push({ item: it, score: scoreEvaluation({ suite: suite.suite, profiles: suite.profiles, instructionFixtures: suite.instructionFixtures, candidate: it.cand, approved, ...(baseline ? { baseline } : {}), safety: it.safety }) });
     } catch (e) {
       if (!(e instanceof RangeError || e instanceof TypeError)) throw e;
-      out(`PROBLEM ${it.id}: cannot be scored (${hidden(e.message)})`);
+      scored.push({ item: it, problem: `${it.id}: cannot be scored (${hidden(e.message)})` });
+    }
+  }
+  return { prepared: p, scored };
+}
+
+const meanOf = (s: readonly number[] | undefined): string => (s && s.length ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(2) : "-");
+
+/** Validates and stores one record per scored skill and prints the lines. Returns 1 when a PROBLEM was printed. */
+export function writeScores(plan: ScoringPlan, out: Out, opts: EvaluateCliOptions, extras?: ReadonlyMap<string, RecordExtras>): number {
+  const p = plan.prepared;
+  const { staged } = p;
+  let problems = p.problems;
+  let written = 0;
+  for (const { item: it, score, problem } of plan.scored) {
+    if (problem !== undefined || !score) {
+      out(`PROBLEM ${problem ?? it.id}`);
       problems++;
       continue;
     }
+    const { skill } = it;
+    const extra = extras?.get(it.id);
     const pkg = skill.package;
+    let findings = score.findings;
+    if (extra?.findings?.length) {
+      const all = [...findings.filter((f) => f.code !== "findings-truncated"), ...extra.findings];
+      const cap = EVALUATION_LIMITS.findings;
+      findings = all.length > cap ? [...all.slice(0, cap - 1), { code: "findings-truncated" }] : all;
+    }
     const raw = {
       schema: 1,
       candidate: { id: it.id, version: it.version, digest: pkg.digest, fingerprint: skill.identity.fingerprint, source: staged.source.id, repositoryKey: staged.record.repositoryKey, commit: staged.commit },
       suite: score.suite,
-      runtime: { foundry: foundryVersion() },
+      runtime: { foundry: foundryVersion(), ...(extra?.runtime ?? {}) },
       evaluatedAt: stamp(opts.now),
-      dimensions: score.dimensions,
-      findings: score.findings,
-      evidence: [{ name: "import", digest: staged.record.digest }, { name: "scan", digest: it.safety.report }],
+      dimensions: { ...score.dimensions, ...(extra?.dimensions ?? {}) },
+      findings,
+      evidence: [{ name: "import", digest: staged.record.digest }, { name: "scan", digest: it.safety.report }, ...(extra?.evidence ?? [])],
+      ...(extra?.agent ? { agent: extra.agent } : {}),
     };
     const parsed = parseEvaluationRecord(raw);
     if (!("record" in parsed)) {
@@ -245,14 +294,18 @@ export function scoreImport(id: string, suiteFile: string | undefined, out: Out,
     }
     written++;
     for (const f of parsed.record.findings) out(`FINDING ${it.id} ${f.code} ${f.scenario ?? "-"}${f.detail !== undefined ? `: ${hidden(f.detail)}` : ""}`);
-    const mean = (d: "selection" | "conflicts" | "context" | "tools") => {
-      const s = parsed.record.dimensions[d] ?? [];
-      return s.length ? (s.reduce((a, b) => a + b, 0) / s.length).toFixed(2) : "-";
-    };
-    out(`SCORED ${it.id}@${it.version} ${score.mode}: selection=${mean("selection")} conflicts=${mean("conflicts")} context=${mean("context")} tools=${mean("tools")}`);
+    const mean = (d: EvaluationDimension) => meanOf(parsed.record.dimensions[d]);
+    const ins = parsed.record.dimensions.instructions;
+    out(`SCORED ${it.id}@${it.version} ${score.mode}: selection=${mean("selection")} conflicts=${mean("conflicts")} context=${mean("context")} tools=${mean("tools")}${ins ? ` instructions=${meanOf(ins)}` : ""}`);
   }
   out(`EVALUATED ${plural(staged.record.skills.length, "skill")} from ${short(p)}: ${plural(written, "record")} written to skill-evaluations/${staged.source.id}/${staged.commit.slice(0, 12)}`);
   return problems > 0 ? 1 : 0;
+}
+
+/** `scf skills score`: scores every staged skill and stores one record each. Returns 1 when a PROBLEM was printed. */
+export function scoreImport(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions): number {
+  const plan = prepareScoring(id, suiteFile, out, opts);
+  return plan ? writeScores(plan, out, opts) : 1;
 }
 
 type Subject = { record: unknown; problem?: string };

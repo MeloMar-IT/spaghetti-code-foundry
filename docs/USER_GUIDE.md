@@ -3854,7 +3854,7 @@ GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…:
 
 ##### The suite file and its instructions section
 
-The suite file has one section per dimension (`selection`, `conflicts`, `context`, `tools`) and an optional `instructions` section for sandboxed agent scenarios. Nothing in this release runs them: `score` does not write `instructions` scores, so the section only changes the suite digest and the gate's rules.
+The suite file has one section per dimension (`selection`, `conflicts`, `context`, `tools`) and an optional `instructions` section for sandboxed agent scenarios. Plain `score` does not run them and writes no `instructions` scores, so without `--agent` the section only changes the suite digest and the gate's rules. `score --agent` runs them; see the next section.
 
 ```yaml
 schema: 1
@@ -3876,6 +3876,36 @@ instructions:
 - **Gate.** With `mandatory: true`, a record without an `instructions` score is `FAILED` (`dimension-missing:instructions`). The minimum number of samples is `repeat` × the number of scenarios. With `mandatory: false` the dimension is ignored when it is missing.
 - **Paired baselines.** A record may hold an `agent` block with the scores of its agent runs and of up to four baselines (the same skill at another digest). The gate uses a baseline paired in the record for every dimension, so no stored baseline record is needed. A stored baseline record of an older suite does not affect it. Without a pair, the gate behaves as before: no stored baseline record is `baseline-missing`.
 - **Refused records.** A record whose `agent` block does not match its `dimensions.instructions`, names an unknown scenario, or repeats a run id is `record-invalid`.
+
+##### Run the scenarios in the sandbox
+
+`scf skills score <source-id> [<suite-file>] --agent` also runs the `instructions` scenarios of the suite with a Claude agent, and writes their scores into the record. It needs the macOS sandbox (`sandbox-exec`), a Claude model key and a suite with `instructions`. The offline scores are made as well.
+
+```
+scf skills score example-skills --agent
+```
+
+Illustrative output (the ids and scores are made up):
+
+```
+NOTE network: not host-limited; outbound is limited to port 443, not to the model's host
+RUN kafka-consumer candidate kafka-consumer retry-consumer 1/3 run 6f1c…: 1
+RUN kafka-consumer candidate kafka-consumer retry-consumer 2/3 run 9a0e…: 1
+RUN kafka-consumer candidate kafka-consumer retry-consumer 3/3 run 2bd7…: 0 (skill-not-loaded)
+SCORED kafka-consumer@1.2.0 new: selection=1.00 conflicts=1.00 context=1.00 tools=1.00 instructions=0.67
+PASSED kafka-consumer@1.2.0 new
+```
+
+- **Cost.** A run is one agent session, plus a fixture copy and a check. The runs are scenarios × `repeat` × (1 + baselines). Each baseline is a skill of `gateChecks` (at most 4). A candidate with two scenarios, `repeat: 3` and two baselines has 2 × 3 × 3 = 18 agent sessions. Runs are slow and cost model tokens.
+- **Baselines.** A baseline is run the same number of times as the candidate, with the same suite, and it is also scored offline. Its record is written into the candidate's `agent` block, so the gate can compare the two without a stored baseline record (see above).
+- **Candidate that may not run.** A candidate with promotion blockers, or with a licence that is not `allowed`, prints `SKIPPED <id>: …; no agent run`. It gets the offline record only, and the gate then decides as it does without `--agent`.
+- **Refusals.** These print `PROBLEM …`, exit 1 and write nothing. The sandbox is not available. `SCF_USER_SANDBOX` or `FACTORY_USER_SANDBOX` is `off`. The suite has no `instructions`. The agent is not Claude. The model key is missing. A fixture changed after the suite was digested.
+- **Each run.** A run scores 1 when its fixture step, its work step and its check succeed, and the skill was loaded into the session. Otherwise it scores 0 and prints the cause in brackets: `agent-failed`, `check-failed` or `skill-not-loaded`. A fixture step that fails, or a fixture that cannot be read, is a `PROBLEM <id>: …; no instructions`, and that skill gets no `instructions` score.
+- **What the sandbox guarantees.** Each arm (the candidate, then each baseline) runs one after another in its own temporary data folder. That folder holds only the arm's skill, pinned in its own lock file. A baseline is copied unchanged, and its digest is checked. Your real data folder gets only the evaluation record; its `skills/` and `skills.lock.json` do not change. Every run has no GitHub token, an empty `gh` folder, no personal Claude or MCP settings, a short environment, and a private `CLAUDE_CONFIG_DIR` and `HOME`. The only credential it has is the model key. A check that needs a GitHub token or another stored secret fails. The agent may use only the tools of the scenario policy: `Read`, `Glob`, `Grep` and `LS` always; `Edit`, `Write` and `MultiEdit` for `filesystem: write`; `Bash` for `shell: true`; `WebFetch` and `WebSearch` for `network: true`.
+- **What it does not guarantee.** Outbound network is limited to one port (the model's), not to the model's host, because the macOS sandbox cannot filter by host. The agent therefore sees the model key and can reach any host on that port. Only macOS is supported. The output says so with the `NOTE` line, and the record says so in `agent.network` (`not-host-limited`) and `agent.outbound`.
+- **Deadlines.** The fixture step has 120 seconds, the work step has the scenario's `timeout_sec`, and the check has 300 seconds. A deadline that passes ends that run.
+- **Interruption.** On Ctrl-C or SIGTERM, or on an error, every running job is cancelled and waited for, the temporary folders are removed and your environment is restored. It prints `PROBLEM the evaluation was interrupted` and writes no record. Run it again to get a record.
+- **`evaluate` and `score`.** `scf skills evaluate … --agent` is refused with a message that points to `score --agent`. Plain `scf skills score` and `scf skills gate` are unchanged.
 
 #### Skill identity and content fingerprint
 
@@ -4690,7 +4720,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `VERSIONS`, `PROBLEM` and `OVERLAP` lines; reads `skill-selections.yaml`; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
 | `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
 | `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
-| `scf skills score <source-id> [<suite-file>]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline; exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
+| `scf skills score <source-id> [<suite-file>] [--agent]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline, except `--agent`, which also runs the instructions scenarios in the macOS sandbox ([Run the scenarios in the sandbox](#run-the-scenarios-in-the-sandbox)); exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes) or `PROBLEM` per staged skill from its newest record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |

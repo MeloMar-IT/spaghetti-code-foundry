@@ -35,7 +35,10 @@ export async function skillEvaluateCommand(
   out: (line: string) => void,
   opts: SkillEvaluateOptions = {},
 ): Promise<number> {
-  for (const [k, v] of Object.entries(args.values)) if (v !== undefined) throw syntax(`scf skills evaluate: unexpected option --${k}`);
+  for (const [k, v] of Object.entries(args.values)) {
+    if (k === "agent" && v !== undefined) throw syntax('scf skills evaluate: --agent belongs to "scf skills score <source-id> [<suite-file>] --agent"');
+    if (v !== undefined) throw syntax(`scf skills evaluate: unexpected option --${k}`);
+  }
   const [id, ...operands] = args.positionals;
   if (id === undefined) throw syntax("scf skills evaluate: expects a source id");
   if (!SKILL_ID_RE.test(id)) throw syntax("scf skills evaluate: the source id must be a lower-case slug");
