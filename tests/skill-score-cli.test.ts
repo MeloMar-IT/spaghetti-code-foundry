@@ -13,7 +13,9 @@ import { prepareImport, type SourceTree, type TreeEntry } from "../src/skills/im
 import { publishImport, readStagedImport } from "../src/skills/import-stage.js";
 import { collectLicenceEvidence } from "../src/skills/licence.js";
 import { LICENCE_TEMPLATES } from "../src/skills/licence-rules.js";
-import { sourceQualifiedId, type NormalizedSkill } from "../src/skills/normalize.js";
+import { normalizeImport, sourceQualifiedId, type NormalizedSkill } from "../src/skills/normalize.js";
+import { stringify } from "yaml";
+import { breakEffect, writeEffect, type EffectKind } from "./helpers/effect-records.js";
 import { clearSkillRegistryCache, discoverSkills, type RegisteredSkill, type SkillRegistry } from "../src/skills/registry.js";
 import { readSources, type SkillLibrarySource } from "../src/skills/sources.js";
 
@@ -109,7 +111,20 @@ async function run(sub: "score" | "gate", operands: string[] = ["lib"], over: { 
   return { code, lines, text: lines.join("\n") };
 }
 const score = (over = {}) => run("score", ["lib"], over);
-const gate = (over = {}) => run("gate", ["lib"], over);
+const DECIDED = { owner: "@octocat", reviewed: "2026-10-01", note: "not measured yet" };
+/** Writes skill-evaluations.yaml with one decision of the given kind for every skill of the staged import (effect records are not needed). */
+function decide(accept: "not-measured" | "no-effect" = "not-measured", only?: string[]): void {
+  const staged = readStagedImport("lib", COMMIT, { home });
+  if (staged.state !== "ok") return;
+  const skills = normalizeImport({ record: { ...staged.record, rejected: [] }, files: staged.files }).skills;
+  const decisions = skills.filter((s) => !only || only.includes(s.package.id)).map((s) => ({ skill: s.package.id, digest: s.package.digest, accept, ...DECIDED }));
+  writeFileSync(join(cwd, "skill-evaluations.yaml"), stringify({ schema: 1, evaluations: [], effect_decisions: decisions }));
+}
+// Every skill needs an effect verdict or an owner decision, so these gates start with "not measured" decisions.
+const gate = (over = {}) => {
+  decide();
+  return run("gate", ["lib"], over);
+};
 const snapshot = (dir: string, skip = ""): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
     const p = join(dir, e.name);
@@ -586,5 +601,119 @@ describe("gateChecks", () => {
     const c = skill("c", ["kafka"]);
     const peers = [skill("z", ["kafka"]), c, skill("m", ["x"]), skill("b", ["kafka", "x"])];
     expect(gateChecks(c, peers, []).rivals.map((s) => s.package.id)).toEqual(["b", "z"]);
+  });
+});
+
+describe("scf skills gate, effect", () => {
+  const kid = () => idOf("kafka");
+  /** The staged kafka skill as the effect store knows it. */
+  function kafkaSkill() {
+    const staged = readStagedImport("lib", COMMIT, { home });
+    if (staged.state !== "ok") throw new Error("not staged");
+    const s = normalizeImport({ record: { ...staged.record, rejected: [] }, files: staged.files }).skills.find((x) => x.package.id === kid())!;
+    return { id: s.package.id, version: s.package.version, digest: s.package.digest };
+  }
+  const setup = async () => {
+    stage(kafka("kafka"));
+    await score();
+    return kafkaSkill();
+  };
+  const gateNow = () => run("gate", ["lib"]);
+  const decision = (skill: { id: string; digest: string }, accept: string) => ({ skill: skill.id, digest: skill.digest, accept, ...DECIDED });
+  const writeDecisions = (list: object[]) => writeFileSync(join(cwd, "skill-evaluations.yaml"), stringify({ schema: 1, evaluations: [], effect_decisions: list }));
+
+  it("harms is blocked, even with both decisions", async () => {
+    const s = await setup();
+    writeEffect(home, s, "harms" satisfies EffectKind);
+    writeDecisions([decision(s, "no-effect"), decision(s, "not-measured")]);
+    const r = await gateNow();
+    expect(r.code).toBe(1);
+    expect(r.lines[0]).toBe(`FAILED ${kid()}@2.0.0 new: effect-harms`);
+    expect(r.text).not.toContain("DECISION");
+    expect(r.lines.at(-1)).toMatch(/: 0 passed, 1 failed$/);
+  });
+
+  it("no measurable effect is blocked without a decision and passes with one", async () => {
+    const s = await setup();
+    writeEffect(home, s, "no-effect");
+    const blocked = await gateNow();
+    expect(blocked.code).toBe(1);
+    expect(blocked.lines[0]).toBe(`FAILED ${kid()}@2.0.0 new: effect-no-effect`);
+    writeDecisions([decision(s, "not-measured")]);
+    expect((await gateNow()).lines[0]).toContain("effect-no-effect");
+    writeDecisions([decision(s, "no-effect")]);
+    const r = await gateNow();
+    expect(r.code).toBe(0);
+    expect(r.lines.slice(0, 2)).toEqual([`PASSED ${kid()}@2.0.0 new`, `DECISION ${kid()}@2.0.0 effect no-effect accepted by @octocat on 2026-10-01`]);
+  });
+
+  it("a decision of another digest does not count", async () => {
+    const s = await setup();
+    writeEffect(home, s, "no-effect");
+    writeDecisions([{ ...decision(s, "no-effect"), digest: "sha256:" + "0".repeat(64) }]);
+    expect((await gateNow()).lines[0]).toContain("effect-no-effect");
+  });
+
+  it("not measured is blocked without a decision, with a note, and passes with one", async () => {
+    const s = await setup();
+    const blocked = await gateNow();
+    expect(blocked.code).toBe(1);
+    expect(blocked.lines[0]).toBe(`FAILED ${kid()}@2.0.0 new: effect-not-measured (no effect record; run "scf skills effect lib ${kid()}")`);
+    writeDecisions([decision(s, "no-effect")]);
+    expect((await gateNow()).lines[0]).toContain("effect-not-measured");
+    writeDecisions([decision(s, "not-measured")]);
+    const r = await gateNow();
+    expect(r.code).toBe(0);
+    expect(r.lines.slice(0, 2)).toEqual([`PASSED ${kid()}@2.0.0 new`, `DECISION ${kid()}@2.0.0 effect not-measured accepted by @octocat on 2026-10-01`]);
+  });
+
+  it("helps passes and prints no decision", async () => {
+    const s = await setup();
+    writeEffect(home, s, "helps");
+    const r = await gateNow();
+    expect(r.code).toBe(0);
+    expect(r.lines[0]).toBe(`PASSED ${kid()}@2.0.0 new`);
+    expect(r.text).not.toContain("DECISION");
+  });
+
+  it("a newer record replaces an older one", async () => {
+    const s = await setup();
+    writeEffect(home, s, "helps");
+    expect((await gateNow()).code).toBe(0);
+    writeEffect(home, s, "harms");
+    expect((await gateNow()).lines[0]).toContain("effect-harms");
+  });
+
+  it("an unreadable record fails with effect-invalid, even with decisions", async () => {
+    const s = await setup();
+    writeEffect(home, s, "helps");
+    breakEffect(home, s.id, s.digest);
+    writeDecisions([decision(s, "no-effect"), decision(s, "not-measured")]);
+    const r = await gateNow();
+    expect(r.code).toBe(1);
+    expect(r.lines[0]).toMatch(new RegExp(`^FAILED ${kid()}@2\\.0\\.0 new: effect-invalid \\(effect: `));
+  });
+
+  it("lists the effect code after the evaluation codes", async () => {
+    stage(kafka("kafka"));
+    const r = await gateNow();
+    expect(r.lines[0]).toMatch(/^FAILED \S+ new: record-invalid, effect-not-measured/);
+  });
+
+  it("an invalid skill-evaluations.yaml is a PROBLEM and nothing is judged", async () => {
+    await setup();
+    writeFileSync(join(cwd, "skill-evaluations.yaml"), stringify({ schema: 1, evaluations: [], effect_decisions: [{ skill: "x", accept: "maybe" }] }));
+    const r = await gateNow();
+    expect(r.code).toBe(1);
+    expect(r.lines.every((l) => l.startsWith("PROBLEM skill-evaluations.yaml "))).toBe(true);
+    expect(r.text).not.toMatch(/PASSED|FAILED/);
+  });
+
+  it("writes nothing", async () => {
+    const s = await setup();
+    writeDecisions([decision(s, "not-measured")]);
+    const before = snapshot(home);
+    await gateNow();
+    expect(snapshot(home)).toEqual(before);
   });
 });

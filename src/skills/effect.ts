@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { credentialProblem } from "./credential-scan.js";
 import {
-  EFFECT_LIMITS, EFFECT_REASONS, EFFECT_RULE, EFFECT_VERDICTS, EVALUATION_EPSILON, EVALUATION_INSTRUCTIONS_LIMITS, EVALUATION_SUITE_LIMITS,
+  EFFECT_GATE_CODES, EFFECT_LIMITS, EFFECT_REASONS, EFFECT_RULE, EFFECT_VERDICTS, EVALUATION_EPSILON, EVALUATION_INSTRUCTIONS_LIMITS, EVALUATION_SUITE_LIMITS,
 } from "./evaluation-rules.js";
+import type { EffectRead } from "./evaluation-store.js";
 import { parseSkillKey } from "./lock.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE, SkillIdSchema, SkillVersionSchema } from "./schema.js";
+import type { EffectDecision } from "./suite-records.js";
 
 // The effect of a skill: the sample tasks of a suite run with and without the skill, and a fixed rule says whether the skill helps.
 // Pure: the statistics, the record and its checks, the printed lines and the command operands. Nothing is run or stored here
@@ -255,4 +257,43 @@ export function parseEffectOperands(operands: string[]): EffectOperands | { prob
   }
   if (a.includes("@") || !SKILL_ID_RE.test(a) || b === undefined || !SKILL_ID_RE.test(b)) return bad;
   return { kind: "staged", source: a, skill: b, ...(c !== undefined ? { suiteFile: c } : {}) };
+}
+
+// ---- promotion ----
+
+export type EffectState = "helps" | "no-effect" | "harms" | "not-measured" | "invalid";
+export type EffectGateCode = (typeof EFFECT_GATE_CODES)[number];
+export interface EffectPromotion { verdict: EffectState; code?: EffectGateCode; decision?: EffectDecision }
+
+/** none is "not-measured", an unreadable record is "invalid". */
+export function effectState(read: EffectRead): EffectState {
+  if (read.state === "none") return "not-measured";
+  if (read.state === "invalid") return "invalid";
+  const v = read.record.verdict.verdict;
+  return v === "helps" ? "helps" : v === "harms" ? "harms" : "no-effect";
+}
+
+/**
+ * The one promotion rule of gate and promote check. Harms and an invalid record are never overridden;
+ * no-effect and not-measured pass only with a decision of the same skill, digest and kind.
+ */
+export function effectPromotion(read: EffectRead, decisions: readonly EffectDecision[], id: string, digest: string): EffectPromotion {
+  const verdict = effectState(read);
+  if (verdict === "helps") return { verdict };
+  if (verdict === "harms") return { verdict, code: "effect-harms" };
+  if (verdict === "invalid") return { verdict, code: "effect-invalid" };
+  const decision = decisions.find((d) => d.skill === id && d.digest === digest && d.accept === verdict);
+  if (decision) return { verdict, decision };
+  return { verdict, code: verdict === "no-effect" ? "effect-no-effect" : "effect-not-measured" };
+}
+
+/** "<accept> accepted by <owner> on <reviewed>" */
+export const decisionText = (d: EffectDecision): string => `${d.accept} accepted by ${d.owner} on ${d.reviewed}`;
+
+/** The EFFECT line of promote check. `problem` is the (already hidden) reason of an invalid record. */
+export function effectCheckLine(id: string, digest: string, e: EffectPromotion, problem?: string): string {
+  const head = `EFFECT ${id} ${digest}: ${e.verdict}`;
+  if (e.decision) return `${head} (accepted by ${e.decision.owner} on ${e.decision.reviewed})`;
+  if (e.code === "effect-invalid") return `${head} (${e.code}${problem ? `: ${problem}` : ""})`;
+  return e.code ? `${head} (${e.code})` : head;
 }

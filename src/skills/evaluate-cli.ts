@@ -4,12 +4,14 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../config.js";
 import { selectCanonicalSkills } from "./canonical.js";
 import { canonicalFromRegistered } from "./canonical-facts.js";
+import { decisionText, effectPromotion } from "./effect.js";
+import { EVALUATIONS_FILE, readSuiteRecords } from "./suite-records.js";
 import { filesOf, hidden, loadExceptions, plural, stagedImport, type StagedImport } from "./staged-import.js";
 import { collisionCandidate, type CollisionCandidate } from "./collisions.js";
 import { evaluationGate, parseEvaluationRecord, type EvaluationGateInput, type EvaluationReason, type EvaluationRecord, type EvaluationSubject } from "./evaluation.js";
 import { EVALUATION_LIMITS, EVALUATION_REASON_CODES, EVALUATION_SUITE_DEFAULT, type EvaluationDimension, type EvaluationMode } from "./evaluation-rules.js";
 import { scoreEvaluation, type ComparedSkill, type EvaluationScore } from "./evaluation-score.js";
-import { EvaluationStoreError, findNewestRecordOf, readNewestRecord, writeEvaluationRecord, type StoredRecordRead } from "./evaluation-store.js";
+import { EvaluationStoreError, findNewestRecordOf, readNewestEffect, readNewestRecord, writeEvaluationRecord, type StoredRecordRead } from "./evaluation-store.js";
 import { instructionsPolicy, type EvaluationAgent } from "./evaluation-instructions.js";
 import { readEvaluationSuite, type EvaluationSuiteRead } from "./evaluation-suite.js";
 import { byteCmp } from "./import-plan.js";
@@ -399,19 +401,34 @@ export function gateImport(id: string, suiteFile: string | undefined, out: Out, 
     out(`PROBLEM the source ${staged.source.id} is ${staged.source.status}; only an enabled source can be promoted`);
     return 1;
   }
+  // The effect rule lives here and not in judgeItems: release publish shares judgeItems and the evaluation records stay as they are.
+  const decided = readSuiteRecords(resolve(opts.cwd, EVALUATIONS_FILE), opts.today);
+  if (decided.state === "invalid") {
+    for (const d of decided.problems) out(`PROBLEM ${EVALUATIONS_FILE} ${d.where}: ${d.message}`);
+    return 1;
+  }
+  const decisions = decided.state === "ok" ? decided.manifest.effect_decisions : [];
   const problems = p.problems;
   let passed = 0;
   let failed = 0;
   for (const j of judgeItems(p, opts)) {
-    const { item: it, modes, codes, notes } = j;
+    const { item: it, modes } = j;
+    const digest = it.skill.package.digest;
+    const read = readNewestEffect(it.id, digest, { home: opts.home });
+    const e = effectPromotion(read, decisions, it.id, digest);
+    const codes: string[] = [...(j.passed ? [] : j.codes.length ? j.codes : ["record-invalid"]), ...(e.code ? [e.code] : [])];
+    const notes = [...j.notes];
+    if (read.state === "invalid") notes.push(`effect: ${read.problem}`);
+    else if (e.code === "effect-not-measured") notes.push(`no effect record; run "scf skills effect ${p.staged.source.id} ${it.id}"`);
     const head = `${it.id}@${it.version} ${modes.join(",")}`;
-    if (j.passed) {
+    if (codes.length === 0) {
       passed++;
       out(`PASSED ${head}`);
     } else {
       failed++;
-      out(`FAILED ${head}: ${codes.join(", ") || "record-invalid"}${notes.length ? ` (${notes.map(hidden).join("; ")})` : ""}`);
+      out(`FAILED ${head}: ${codes.join(", ")}${notes.length ? ` (${notes.map(hidden).join("; ")})` : ""}`);
     }
+    if (e.decision) out(`DECISION ${it.id}@${it.version} effect ${decisionText(e.decision)}`);
   }
   out(`GATED ${plural(staged.record.skills.length, "skill")} from ${short(p)}: ${passed} passed, ${failed} failed`);
   return failed > 0 || problems > 0 ? 1 : 0;
