@@ -3739,6 +3739,7 @@ CHECKED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 promo
 - **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, with an open high finding, or with a suite that is not passed for its digest. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
 - **Reasons.** Reasons never show credential-like text; it shows as `(hidden)`. Licence texts are never printed.
 - **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, an invalid exception file, or an invalid `skill-evaluations.yaml`).
+- **Manifest fields.** The promotion manifest (schema 1) lists the provenance of each promoted package. Two optional fields record who vouches for it: `trust` is the trust tier of the source (for example `community`) and is always set; `review` holds `by`, `on` and `commit` of the source's review and is set only when the source has one. The review never holds the licence. Manifests written before these fields stay valid, and `attributionProblem` works on them as before.
 
 #### Licence review and provider assumptions
 
