@@ -3783,6 +3783,31 @@ GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…:
 - **Limits.** A record is at most 2 MiB and a folder holds at most 5,000 files. A source that is not enabled is a `PROBLEM` for `gate`.
 - **Not done.** The gate prints the verdict only. No run or promotion reads it yet.
 
+##### The suite file and its instructions section
+
+The suite file has one section per dimension (`selection`, `conflicts`, `context`, `tools`) and an optional `instructions` section for sandboxed agent scenarios. Nothing in this release runs them: `score` does not write `instructions` scores, so the section only changes the suite digest and the gate's rules.
+
+```yaml
+schema: 1
+instructions:
+  mandatory: true            # default false: the gate then needs the instructions dimension
+  repeat: 3                  # 3–20, default 3
+  scenarios:                 # 1–20 scenarios; scenarios × repeat is at most 200
+    - id: retry-consumer
+      repo: fixtures/kafka-consumer   # a fixture folder next to the suite
+      task: Add a retry to the consumer.
+      check: The consumer retries once.   # what the check looks for, at most 2000 characters
+      policy: { shell: true, network: false, filesystem: write }
+      timeout_sec: 900                # 60–3600, default 900
+```
+
+- **Ids.** Scenario ids are unique across the whole suite, including the ids of the other sections.
+- **Fixtures.** A fixture folder may not hold `.claude/` or `.mcp.json` (any letter case, any depth), and may not hold a symbolic link. Such a fixture is a `PROBLEM` at `instructions.scenarios (<id>) repo`. The same limits as the other fixtures apply.
+- **Digest.** A suite without `instructions` keeps its digest. With it, the digest covers each scenario, `mandatory` and `repeat`, and a hash of each fixture: the sorted relative paths, the bytes and the executable bit of every file. Changing one assertion in a fixture changes the digest, so every record must be made again.
+- **Gate.** With `mandatory: true`, a record without an `instructions` score is `FAILED` (`dimension-missing:instructions`). The minimum number of samples is `repeat` × the number of scenarios. With `mandatory: false` the dimension is ignored when it is missing.
+- **Paired baselines.** A record may hold an `agent` block with the scores of its agent runs and of up to four baselines (the same skill at another digest). The gate uses a baseline paired in the record for every dimension, so no stored baseline record is needed. A stored baseline record of an older suite does not affect it. Without a pair, the gate behaves as before: no stored baseline record is `baseline-missing`.
+- **Refused records.** A record whose `agent` block does not match its `dimensions.instructions`, names an unknown scenario, or repeats a run id is `record-invalid`.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.

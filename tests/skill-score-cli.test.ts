@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -367,6 +367,44 @@ describe("scf skills gate, mode upgrade", () => {
     const p = await gate();
     expect(p.code).toBe(0);
     expect(p.lines[0]).toBe(`PASSED ${id}@2.0.0 upgrade`);
+  });
+
+  it("a suite with mandatory instructions: FAILED without results, PASSED with a paired baseline and no stored record", async () => {
+    const id = idOf("kafka");
+    adminSkill(id, "1.0.0");
+    const admin = await pin(id, "1.0.0");
+    appendFileSync(
+      join(cwd, "skill-evaluation.yaml"),
+      [
+        "instructions:", "  mandatory: true", "  scenarios:",
+        "    - { id: ag-1, repo: fixtures/rest-service, task: Fix it, check: npm test, policy: { shell: true, network: false, filesystem: write } }", "",
+      ].join("\n"),
+    );
+    stage(kafka("kafka"));
+    expect((await score()).code).toBe(0);
+    const failed = await gate();
+    expect(failed.code).toBe(1);
+    expect(failed.lines[0]).toContain("dimension-missing:instructions");
+    const raw = structuredClone(newest(id).raw) as EvaluationRecord;
+    const instructions = [1, 1, 1];
+    const offline = { ...raw.dimensions };
+    raw.runtime = { ...raw.runtime, agent: "claude", model: "m-1" };
+    raw.dimensions = { ...offline, instructions };
+    const run = (arm: "candidate" | "baseline", digest: string, p: string) => (score: number, i: number) => ({ scenario: "ag-1", arm, skill: id, digest, attempt: i + 1, runId: `${p}-${i}`, score });
+    raw.agent = {
+      sandbox: "container",
+      network: "host-limited",
+      outbound: [],
+      repeat: 3,
+      runs: [...instructions.map(run("candidate", raw.candidate.digest, "c")), ...instructions.map(run("baseline", admin.digest, "b"))],
+      baselines: [{ id, version: "1.0.0", digest: admin.digest, dimensions: { ...offline, instructions } }],
+    };
+    const parsed = parseEvaluationRecord(raw);
+    if (!("record" in parsed)) throw new Error(parsed.problem);
+    writeEvaluationRecord(parsed.record, { home });
+    const passed = await gate();
+    expect(passed.lines[0]).toBe(`PASSED ${id}@2.0.0 upgrade`);
+    expect(passed.code).toBe(0);
   });
 
   it("capability only: compared with the record of the approved skill of another id", async () => {

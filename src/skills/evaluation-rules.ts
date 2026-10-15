@@ -44,7 +44,25 @@ export const EVALUATION_FINDING_CODES = [
   "version-reuse", "id-conflict", "fork", "capability-overlap", "upgrade-of", "baseline-not-replaceable", "compared-skill-missing",
   "instructions-over-limit", "instructions-over-budget", "description-over-limit", "description-over-budget", "description-cut", "budget-invalid",
   "tool-not-approved", "connector-unavailable", "scan-high-open", "safety-mismatch", "findings-truncated",
+  "check-failed", "agent-failed", "skill-not-loaded", "network-not-host-limited",
 ] as const;
+
+// The `instructions` section of the suite (evaluation-instructions.ts): sandboxed agent scenarios, run with repeats.
+export const EVALUATION_INSTRUCTIONS_LIMITS = {
+  repeatMin: 3, repeatMax: 20, repeatDefault: 3, scenarios: 20, total: 200,
+  timeoutMin: 60, timeoutMax: 3600, timeoutDefault: 900, checkChars: 2000, runs: 1000, baselines: 4, outbound: 10, runIdChars: 128,
+  /** The credential walk of a record with an `agent` block: the candidate and four baselines hold up to 1000 scores in each of 5 dimensions. */
+  walkNodes: 60000,
+} as const;
+/** What holds the agent run: a container image, or the operating-system sandbox. */
+export const EVALUATION_SANDBOXES = ["container", "os"] as const;
+export type EvaluationSandbox = (typeof EVALUATION_SANDBOXES)[number];
+export const EVALUATION_NETWORK = ["not-host-limited", "host-limited"] as const;
+export type EvaluationNetwork = (typeof EVALUATION_NETWORK)[number];
+export const EVALUATION_ARMS = ["candidate", "baseline"] as const;
+export type EvaluationArm = (typeof EVALUATION_ARMS)[number];
+/** An instruction fixture must not hold agent configuration: the agent would load it. Compared in lower case. */
+export const EVALUATION_AGENT_CONFIG: readonly string[] = [".claude", ".mcp.json"];
 
 // The evaluation store (evaluation-store.ts) and `scf skills score` / `scf skills gate`.
 export const EVALUATION_SUITE_DEFAULT = "skill-evaluation.yaml";
