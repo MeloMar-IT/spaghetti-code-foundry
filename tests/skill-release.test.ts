@@ -14,7 +14,10 @@ import {
   releaseDigest,
   ReleaseManifestSchema,
   releaseProblemText,
+  releaseText,
+  RELEASE_DIGEST_HEADER_V2,
   type ReleaseManifest,
+  type ReleaseManifestV2,
 } from "../src/skills/release.js";
 import { SKILL_DIGEST_RE } from "../src/skills/schema.js";
 
@@ -173,6 +176,185 @@ describe("matchRelease and content", () => {
     expect(releaseContentProblem(m, [...found, { id: "zeta", version: "1.0.0", digest: d("a") }])).toContain("(zeta)");
     expect(releaseContentProblem(m, [{ ...found[0]!, digest: d("c") }, found[1]!])).toContain("(beta)");
     expect(releaseContentProblem(m, [found[0]!, { ...found[1]!, version: "2.0.1" }])).toContain("(alpha)");
+  });
+});
+
+const file = (path: string, c = "a") => ({ path, sha256: c.repeat(64), bytes: 10 });
+const v2 = (): ReleaseManifestV2 => ({
+  schema: 2,
+  catalogue: "acme-skills",
+  version: "1.2.3",
+  createdAt: "2026-01-02T03:04:05Z",
+  source: { repository: "github.com/acme/scf-skills", commit: "a".repeat(40), ref: "v1.2.3" },
+  skills: [
+    {
+      id: "beta",
+      version: "1.0.0",
+      digest: d("b"),
+      files: [file("SKILL.md"), file("references/x.md", "b")],
+      provenance: { source: "acme", repositoryKey: "github.com/acme/skills", commit: "c".repeat(40), path: "skills/beta", trust: "verified", review: { by: "@marcel", on: "2026-01-01", commit: "c".repeat(40), licence: "MIT" } },
+      licences: ["MIT", "Apache-2.0"],
+      attribution: [file("LICENSE", "c"), file("NOTICE", "d")],
+      evaluation: { suite: "default", record: d("e"), verdict: "passed" },
+      revoked: { on: "2026-02-01", reason: "gives wrong advice" },
+    },
+    {
+      id: "alpha",
+      version: "2.0.0",
+      digest: d("a"),
+      files: [file("SKILL.md")],
+      provenance: { source: "acme", repositoryKey: "github.com/acme/skills", commit: "c".repeat(40), path: ".", trust: "community" },
+      licences: ["MIT"],
+      attribution: [],
+      evaluation: { suite: "default", record: d("f"), verdict: "not-run" },
+    },
+  ],
+});
+const clone = <T>(x: T): T => JSON.parse(JSON.stringify(x));
+const mutate = (f: (m: any) => void) => {
+  const m = clone(v2());
+  f(m);
+  return m;
+};
+
+describe("release manifest schema 2", () => {
+  it("accepts a full manifest, and v1 stays as it is", () => {
+    expect(ok(v2())).toBe(true);
+    expect(ok(manifest())).toBe(true);
+    expect(releaseText(manifest()).startsWith("scf-skill-catalogue-release-v1\n")).toBe(true);
+  });
+  it("starts the canonical text with the v2 header", () => {
+    expect(releaseText(v2()).startsWith(RELEASE_DIGEST_HEADER_V2)).toBe(true);
+    expect(RELEASE_DIGEST_HEADER_V2).toBe("scf-skill-catalogue-release-v2\n");
+  });
+  it.each<[string, (m: any) => void]>([
+    ["extra key at the top", (m) => (m.extra = 1)],
+    ["extra key in a skill", (m) => (m.skills[0].extra = 1)],
+    ["extra key in a file", (m) => (m.skills[0].files[0].extra = 1)],
+    ["extra key in provenance", (m) => (m.skills[0].provenance.extra = 1)],
+    ["sha256 with a prefix", (m) => (m.skills[0].files[0].sha256 = "sha256:" + "a".repeat(64))],
+    ["upper-case sha256", (m) => (m.skills[0].files[0].sha256 = "A".repeat(64))],
+    ["negative bytes", (m) => (m.skills[0].files[0].bytes = -1)],
+    ["fractional bytes", (m) => (m.skills[0].files[0].bytes = 1.5)],
+    ["a file over the file limit", (m) => (m.skills[0].files[0].bytes = 262145)],
+    ["a total over the package limit", (m) => (m.skills[0].files = Array.from({ length: 9 }, (_, i) => ({ ...file(`f${i}`), bytes: 262144 })))],
+    ["a duplicate path, case-insensitive", (m) => m.skills[0].files.push(file("skill.md"))],
+    ["a path that leaves the package", (m) => (m.skills[0].files[0].path = "../x")],
+    ["an absolute path", (m) => (m.skills[0].files[0].path = "/x")],
+    ["a path with a newline", (m) => (m.skills[0].files[0].path = "a\nb")],
+    ["a .DS_Store path", (m) => (m.skills[0].files[0].path = "references/.DS_Store")],
+    ["a path with a lone surrogate", (m) => (m.skills[0].files[0].path = "a\ud801")],
+    ["a glob in the provenance path", (m) => (m.skills[0].provenance.path = "skills/*")],
+    [".git in the provenance path", (m) => (m.skills[0].provenance.path = "a/.git")],
+    ["no files", (m) => (m.skills[0].files = [])],
+    ["no licences", (m) => (m.skills[0].licences = [])],
+    ["a duplicate licence", (m) => (m.skills[0].licences = ["MIT", "MIT"])],
+    ["a bad licence id", (m) => (m.skills[0].licences = ["M IT"])],
+    ["more than 20 attribution files", (m) => (m.skills[0].attribution = Array.from({ length: 21 }, (_, i) => file(`n${i}`)))],
+    ["an unknown trust", (m) => (m.skills[0].provenance.trust = "trusted")],
+    ["an unknown verdict", (m) => (m.skills[0].evaluation.verdict = "ok")],
+    ["a revocation on 30 February", (m) => (m.skills[0].revoked.on = "2026-02-30")],
+    ["an empty revocation reason", (m) => (m.skills[0].revoked.reason = "")],
+    ["a revocation reason with a newline", (m) => (m.skills[0].revoked.reason = "a\nb")],
+    ["a long revocation reason", (m) => (m.skills[0].revoked.reason = "x".repeat(201))],
+    ["a padded revocation reason", (m) => (m.skills[0].revoked.reason = " x")],
+    ["a revocation reason with a lone surrogate", (m) => (m.skills[0].revoked.reason = "\ud800")],
+    ["a skill listed twice", (m) => m.skills.push(clone(m.skills[0]))],
+  ])("refuses %s", (_n, f) => expect(ok(mutate(f))).toBe(false));
+
+  it("two lone surrogates would hash the same, so the parse refuses both", () => {
+    const a = mutate((m) => (m.skills[0].revoked.reason = "\ud800"));
+    const b = mutate((m) => (m.skills[0].revoked.reason = "\ud801"));
+    expect(releaseDigest(a)).toBe(releaseDigest(b));
+    expect(ok(a) || ok(b)).toBe(false);
+  });
+
+  it("does not change with key order, white space or the order of items", () => {
+    const m = v2();
+    const base = releaseDigest(m);
+    const shuffled = clone(m) as any;
+    shuffled.skills.reverse();
+    shuffled.skills[1].files.reverse();
+    shuffled.skills[1].licences.reverse();
+    shuffled.skills[1].attribution.reverse();
+    const reorder = (o: any): any => (Array.isArray(o) ? o.map(reorder) : o && typeof o === "object" ? Object.fromEntries(Object.entries(o).reverse().map(([k, v]) => [k, reorder(v)])) : o);
+    const parsed = ReleaseManifestSchema.parse(JSON.parse(JSON.stringify(reorder(shuffled), null, 4)));
+    expect(releaseDigest(parsed)).toBe(base);
+  });
+
+  it("changes with every single field", () => {
+    const base = releaseDigest(v2());
+    const mutators: ((m: any) => void)[] = [
+      (m) => (m.catalogue = "other"),
+      (m) => (m.version = "1.2.4"),
+      (m) => (m.createdAt = "2026-01-02T03:04:06Z"),
+      (m) => (m.source.repository = "github.com/acme/other"),
+      (m) => (m.source.commit = "b".repeat(40)),
+      (m) => delete m.source.ref,
+      (m) => (m.skills[0].id = "gamma"),
+      (m) => (m.skills[0].version = "1.0.1"),
+      (m) => (m.skills[0].digest = d("0")),
+      (m) => (m.skills[0].files[0].path = "SKILL2.md"),
+      (m) => (m.skills[0].files[0].sha256 = "0".repeat(64)),
+      (m) => (m.skills[0].files[0].bytes = 11),
+      (m) => (m.skills[0].provenance.source = "other"),
+      (m) => (m.skills[0].provenance.repositoryKey = "github.com/acme/other"),
+      (m) => (m.skills[0].provenance.commit = "d".repeat(40)),
+      (m) => (m.skills[0].provenance.path = "skills/other"),
+      (m) => (m.skills[0].provenance.trust = "community"),
+      (m) => delete m.skills[0].provenance.review,
+      (m) => (m.skills[0].provenance.review.by = "@other"),
+      (m) => (m.skills[0].provenance.review.on = "2026-01-02"),
+      (m) => (m.skills[0].provenance.review.commit = "d".repeat(40)),
+      (m) => (m.skills[0].provenance.review.licence = "ISC"),
+      (m) => (m.skills[0].licences = ["MIT"]),
+      (m) => (m.skills[0].attribution[0].path = "LICENSE2"),
+      (m) => (m.skills[0].attribution[0].sha256 = "0".repeat(64)),
+      (m) => (m.skills[0].attribution[0].bytes = 11),
+      (m) => m.skills[0].attribution.pop(),
+      (m) => (m.skills[0].evaluation.suite = "other"),
+      (m) => (m.skills[0].evaluation.record = d("0")),
+      (m) => (m.skills[0].evaluation.verdict = "failed"),
+      (m) => delete m.skills[0].revoked,
+      (m) => (m.skills[0].revoked.on = "2026-02-02"),
+      (m) => (m.skills[0].revoked.reason = "other"),
+      (m) => (m.skills[1].revoked = { on: "2026-02-02", reason: "x" }),
+    ];
+    const seen = new Set<string>([base]);
+    for (const [i, f] of mutators.entries()) {
+      const digest = releaseDigest(mutate(f));
+      expect(seen.has(digest), `mutator ${i}`).toBe(false);
+      seen.add(digest);
+    }
+  });
+
+  describe("reading", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+      for (const x of dirs.splice(0)) rmSync(x, { recursive: true, force: true });
+    });
+    const write = (text: string) => {
+      const dir = mkdtempSync(join(tmpdir(), "skillrel2-"));
+      dirs.push(dir);
+      writeFileSync(join(dir, RELEASE_FILE), text);
+      return dir;
+    };
+    it("reads a v2 file, and a v2 file larger than the v1 limit", () => {
+      expect(readRelease(write(JSON.stringify(v2())))).toMatchObject({ state: "ok" });
+      const text = JSON.stringify(v2()) + " ".repeat(262144);
+      expect(readRelease(write(text))).toMatchObject({ state: "ok" });
+    });
+    it("keeps the v1 limit and reason, and refuses a v2 file over 2 MiB", () => {
+      const v1 = JSON.stringify(manifest()) + " ".repeat(262144);
+      expect(readRelease(write(v1))).toEqual({ state: "invalid", reason: "is larger than 262144 bytes" });
+      expect(readRelease(write(JSON.stringify(v2()) + " ".repeat(2097152))).state).toBe("invalid");
+    });
+    it("refuses a credential in a revocation reason", () => {
+      const m = mutate((x) => (x.skills[0].revoked.reason = "sk-ant-" + "a".repeat(30)));
+      const r = readRelease(write(JSON.stringify(m)));
+      expect(r).toMatchObject({ state: "invalid" });
+      expect((r as { reason: string }).reason).toContain("holds what looks like a credential");
+    });
   });
 });
 

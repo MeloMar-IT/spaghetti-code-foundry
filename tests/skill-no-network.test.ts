@@ -344,4 +344,13 @@ describe("the connector modules run nothing", () => {
   it("connector-rules.ts has no imports", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "connector-rules.ts"), "utf8"))).toEqual([]);
   });
+  for (const f of ["release-verify.ts", "release-cli.ts"]) {
+    it(`${f} starts no process, opens no connection and does not read the process`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
+      const code = codeLines(text);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      expect(code.filter((l) => /\bprocess\.|spawn|exec\w*\s*\(|\bfork\s*\(/.test(l))).toEqual([]);
+    });
+  }
 });

@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries publishing 1a: release manifest 2 with file digests, provenance, licences, attribution, evaluation summary and revocation; offline `scf skills release verify` (#539). Part 1 of 3 of #204.
+  - **Manifest.** `catalogue-release.json` accepts `schema: 2`. Each skill adds `files`, `provenance`, `licences`, `attribution` (kept in `.attribution/<id>/`), `evaluation` (`suite`, `record`, `verdict`) and an optional `revoked`. The v2 digest uses the header `scf-skill-catalogue-release-v2`. Schema 1 is unchanged.
+  - **Verify.** New `verifyRelease(root)` in `src/skills/release-verify.ts` checks every listed file (presence, regular file, size, SHA-256), each package digest, and that no unlisted file is in a package or in `.attribution/`. It follows no link, opens no network connection and starts no process.
+  - **Discovery.** `discoverSkills` runs `verifyRelease` on every schema-2 release; a failure refuses the root (`root-refused`). A skill with `revoked` in an approved schema-2 release is never registered and gets a `revoked` note.
+  - **CLI.** `scf skills release verify <dir>` prints `VERIFIED …` or `PROBLEM …` and `APPROVED` or `NOT-APPROVED`. New `src/skills/release-cli.ts`; the dispatch is in `src/skills/cli.ts`, the help line in `src/cli.ts`.
+  - **Not changed.** No config field and no API route. The evaluation verdict does not block loading; the publish gate (#540) decides what may be published.
+  - Tests: new `tests/skill-release-verify.test.ts` and `tests/helpers/skill-release-v2.ts`; cases in `tests/skill-release.test.ts` and `tests/skill-registry-release.test.ts`; `tests/skill-no-network.test.ts` covers the new modules.
+  - Docs: `docs/USER_GUIDE.md` ("Trust", "Release manifest 2").
 - Skill evaluation 1d-3: `scf skills score <source-id> [suite] --agent` runs the `instructions` scenarios in the OS sandbox, with repeats and paired baselines (#536). Part 3 of 3 of #504.
   - **What it does.** For each staged skill that may be scored, every scenario runs `repeat` times with the candidate, and again with each baseline from `gateChecks` (at most 4; more is a `PROBLEM`). Each baseline is also scored offline with the same suite. The arms run one after another. The record gets `dimensions.instructions`, an `agent` block (`sandbox: os`, `network: not-host-limited`, `outbound`, `repeat`, `runs`, `baselines`), `runtime.agent` and `runtime.model`, and the evidence `agent-package` (the digest of the candidate as a Foundry package). One `RUN` line per run and a `NOTE` line about the network.
   - **Scoring.** A run scores 1 when the fixture, the work and the check succeed and the skill was active; otherwise 0, with a finding (`agent-failed`, `check-failed` or `skill-not-loaded`). A broken fixture step or an unreadable fixture gives `PROBLEM <id>: …; no instructions`.
