@@ -50,7 +50,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import, plus the connector report of a known source
        scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
        scf skills compare <source-id>                            Compare a staged import with the built-in java and spring-boot skills; reads only
-       scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
+       scf skills evaluate <source-id> [<technology>@<version> ... | --repo <dir>]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
        scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence, findings and evaluations allow promotion; reads only
        scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; uses skill-selections.yaml; reads only
        scf skills review <source-id> [--markdown]                Print the licence, attribution and collision report of a staged import; reads only

@@ -145,6 +145,8 @@ export function buildRepoProfile(root: string, opts: RepoProfileOptions = {}): R
     const have = groups.get(key);
     if (have) {
       have.count = (have.count ?? 1) + 1;
+      // The same dependency declared twice in one file with different values (dependencies and peerDependencies): no value is true.
+      if (kind === "dependency" && have.value !== value) have.value = "unknown";
       return;
     }
     const f: Finding = { kind, name, detector, reason, path };
@@ -205,7 +207,10 @@ export function buildRepoProfile(root: string, opts: RepoProfileOptions = {}): R
         files++;
         const why = skipFile(e.rel);
         if (why) skipped[why]++;
-        else if (st.size > L.fileBytes && !manifestOf(e.rel)?.lockfile) skipped.large++; // lockfiles are never read, only named
+        else if (st.size > L.fileBytes && !manifestOf(e.rel)?.lockfile) {
+          skipped.large++; // lockfiles are never read, only named
+          if (READ_DEPS.test(e.name)) skipped.other++; // a dependency file that cannot be read leaves the findings incomplete
+        }
         else walked.push({ rel: e.rel, size: st.size });
       } else skipped.other++;
     }
