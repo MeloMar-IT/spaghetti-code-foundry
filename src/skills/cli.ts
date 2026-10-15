@@ -8,22 +8,22 @@ import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
 import { applyConnector, connectorFor } from "./connector.js";
-import { credentialProblem } from "./credential-scan.js";
 import { exclusionReasons, importExclusions } from "./import-exclusions.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { flowDir, parseFlow } from "../flow/load.js";
-import { SkillImportError, type ImportRecord } from "./import-plan.js";
-import { readStagedImport } from "./import-stage.js";
+import { SkillImportError } from "./import-plan.js";
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
 import { promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
-import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE, type ScanException } from "./scan-exceptions.js";
+import { applyExceptions, promotionBlockers, type ScanException } from "./scan-exceptions.js";
 import { SOURCE_CONNECTORS } from "./connectors.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors } from "./selections.js";
-import { readSources, shownValue, SOURCES_FILE, type SkillLibrarySource } from "./sources.js";
+import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
+import { selectionsEvaluate } from "./evaluate-cli.js";
+import { filesOf, hidden, loadExceptions, plural, stagedImport } from "./staged-cli.js";
 import { flowSkillSteps } from "./tool-policy.js";
 import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow.js";
 
@@ -34,7 +34,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
        scf skills connectors                                     List the reviewed source connectors; reads nothing
        scf skills selections check [<file>]                      Check the skill selections (default: ${SELECTIONS_FILE})
-       scf skills overrides check [<file>]                       Check the owner overrides (default: ${OVERRIDES_FILE})
+       scf skills selections evaluate <source-id> [<file>]       Report which selected skills of a staged import are eligible, held back or overlapping; reads only
+       scf skills overrides check [<file>]                      Check the owner overrides (default: ${OVERRIDES_FILE})
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import, plus the connector report of a known source
@@ -120,65 +121,6 @@ function selectionsCheck(file: string, out: (line: string) => void, today: strin
   }
   out(`OK ${r.manifest.selections.length} selections`);
   return 0;
-}
-
-/** Free text from a record is printed only when it holds no credential. */
-const hidden = (s: string): string => (credentialProblem(s) ? "(hidden)" : s);
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-
-type StagedOk = Extract<ReturnType<typeof readStagedImport>, { state: "ok" }>;
-interface StagedImport { source: SkillLibrarySource; commit: string; record: ImportRecord; files: Map<string, Uint8Array>; licence: StagedOk["licence"] }
-
-/**
- * Finds the source, checks its approved commit, reads the staged import and proves it matches import.json. Prints a PROBLEM and
- * returns undefined when it cannot. `between` runs after the source is found and before the staged import is read; false stops
- * (it has printed its own PROBLEM).
- */
-function stagedImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string; today?: string }, between?: () => boolean, done = "scanned"): StagedImport | undefined {
-  const problem = (text: string): undefined => {
-    out(`PROBLEM ${text}`);
-    return undefined;
-  };
-  const sources = readSources(resolve(opts.cwd, SOURCES_FILE), undefined, opts.today);
-  if (sources.state === "none") return problem("the skill source file does not exist");
-  if (sources.state === "invalid") {
-    for (const p of sources.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return undefined;
-  }
-  const source = sources.manifest.sources.find((s) => s.id === id);
-  if (!source) return problem(`unknown source ${shownValue(id)}`);
-  const commit = source.ref.approved;
-  if (!commit) return problem(`source ${source.id} has no approved commit (ref.approved)`);
-  if (between && !between()) return undefined;
-
-  const staged = readStagedImport(source.id, commit, { home: opts.home });
-  if (staged.state === "none") return problem(`no staged import of ${source.id} at ${commit.slice(0, 12)}; run "scf skills import ${source.id}" first`);
-  if (staged.state === "invalid") return problem(`the staged import does not match import.json: ${staged.problem}; nothing was ${done}`);
-  if (staged.record.repositoryKey !== source.repositoryKey) return problem(`the staged import is from another repository; nothing was ${done}`);
-  return { source, commit, record: staged.record, files: staged.files, licence: staged.licence };
-}
-
-/** The exception file for `scan` and `promote check`; prints a PROBLEM and returns undefined when it cannot be used. */
-function loadExceptions(file: string | undefined, out: (line: string) => void, opts: { cwd: string; today: string }): ScanException[] | undefined {
-  const read = readScanExceptions(resolve(opts.cwd, file ?? SCAN_EXCEPTIONS_FILE), opts.today);
-  if (read.state === "invalid") {
-    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return undefined;
-  }
-  if (read.state === "none" && file !== undefined) {
-    out("PROBLEM the exception file does not exist");
-    return undefined;
-  }
-  return read.state === "ok" ? read.manifest.exceptions : [];
-}
-
-/** The files of one skill, with paths relative to its root. */
-function filesOf(root: string, files: ReadonlyMap<string, Uint8Array>): { path: string; content: Uint8Array }[] {
-  const mine: { path: string; content: Uint8Array }[] = [];
-  for (const [path, content] of files) {
-    if (root === "." || path === root || path.startsWith(root + "/")) mine.push({ path: root === "." ? path : path.slice(root.length + 1), content });
-  }
-  return mine;
 }
 
 /**
@@ -451,7 +393,13 @@ export async function skillsCommand(
   }
 
   if (sub === "selections") {
-    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file');
+    if (operands[0] === "evaluate") {
+      if (operands.length < 2 || operands.length > 3) throw syntax("scf skills selections evaluate: expects a source id and at most one selections file");
+      if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills selections evaluate: the first operand must be a source id");
+      const { skills, cwd, now, today, repo: _repo, ...discover } = opts;
+      return selectionsEvaluate(operands[1]!, operands[2], out, { cwd: cwd ?? process.cwd(), today: today ?? new Date().toISOString().slice(0, 10), now: now ?? new Date(), skills, discover });
+    }
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file, or "evaluate" and a source id');
     return selectionsCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SELECTIONS_FILE), out, opts.today ?? new Date().toISOString().slice(0, 10));
   }
 

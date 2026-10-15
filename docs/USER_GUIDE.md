@@ -3649,6 +3649,95 @@ selections:
 - **Check.** `scf skills selections check [<file>]` reads `skill-selections.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It prints one line per entry (source and skill, scope, provider, product, SDK, connectors, owner, reviewed date and the start of the digest), then `OK <n> selections`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. A missing file is a `PROBLEM` for this command (for readers, it means "no selections"). Credential-like values and control characters are never printed.
 - **Limits.** At most 500 selections. Every problem names its entry and field, for example `selections[0] (microsoft-skills/azure-cosmos-py) requires.mcp[0]`.
 
+#### Evaluate an import
+
+`scf skills selections evaluate <source-id> [<selections-file>]` says, for each selected skill of a staged import, whether it is eligible or held back, and how the skills overlap. It is offline and read-only: nothing is written, loaded, promoted or run, and no process is started. "Eligible" is a reported verdict, not an approval. Nothing reads the result during a run.
+
+It reads `skill-sources.yaml` in the current folder, the staged import of the source and its stored licence evidence, `skill-selections.yaml` (or the file you name), `skill-scan-exceptions.yaml`, `skill-overrides.yaml` when present, and the skill registry. Run `scf skills import <source-id>` first; that is the only step that fetches.
+
+**Worked example: `microsoft/skills`.** The entry below is a placeholder. The owner must check the upstream licence and choose the commit, and then replace `ref.approved`. The Foundry ships no approved Microsoft commit, and `paths` must list the folders that hold the skills (check the repository layout; if the skills are only reached through symbolic links, list the real folders).
+
+```yaml
+schema: 1
+sources:
+  - id: microsoft-skills
+    repository: https://github.com/microsoft/skills
+    status: enabled
+    ref:
+      approved: <full commit id, reviewed by the owner>   # placeholder: replace it
+      track: main
+    paths: [skills]                                       # the folders with the skills
+    adapter: agent-skills
+    trust: verified
+    licence: { allow: [MIT] }
+    update: { cadence: manual }
+    owner: "@your-team"
+```
+
+The selections name an Azure SDK skill and a Cosmos DB skill, and one portable guidance skill. The skill names are examples, not a list of what the repository holds.
+
+```yaml
+schema: 1
+selections:
+  - source: microsoft-skills
+    skill: azure-storage-blob-py
+    digest: sha256:…                  # from import.json, after the import
+    scope: provider
+    provider: azure
+    product: { name: azure-storage-blob, version: "12" }
+    sdk: { name: azure-storage-blob, language: python, version: ">=12.0" }
+    category: storage
+    capabilities: [blob-storage]
+    owner: "@your-team"
+    reviewed: 2026-10-13
+  - source: microsoft-skills
+    skill: azure-cosmos-py
+    digest: sha256:…
+    scope: provider
+    provider: azure
+    product: { name: azure-cosmos-db, version: "2024-11" }
+    sdk: { name: azure-cosmos, language: python, version: ">=4.7" }
+    category: database
+    capabilities: [cosmos-db]
+    requires: { clis: [az], mcp: [azure], credentials: [azure-identity], services: [azure-cosmos-db] }
+    owner: "@your-team"
+    reviewed: 2026-10-13
+  - source: microsoft-skills
+    skill: cloud-design-guidance
+    digest: sha256:…
+    scope: portable
+    category: architecture
+    capabilities: [cloud-design]
+    owner: "@your-team"
+    reviewed: 2026-10-13
+```
+
+Then, in order: `scf skills sources check`, `scf skills import microsoft-skills` (fetches the commit into quarantine), `scf skills selections check`, and `scf skills selections evaluate microsoft-skills`. The output looks like this; ids are shortened, and the real ids end in a hash:
+
+```
+ELIGIBLE microsoft-skills-azure-storage-blob-py-… provider azure-storage-blob@12 sdk azure-storage-blob@>=12.0
+HELD microsoft-skills-azure-cosmos-py-…: needs-unavailable-tools
+ELIGIBLE microsoft-skills-cloud-design-guidance-… portable - sdk -
+EVALUATED 3 skills from github.com/microsoft/skills@0123456789ab: 2 eligible
+```
+
+- **Eligible.** A skill is `ELIGIBLE` only when its licence verdict from the stored evidence is `allowed`, it is selected with the current digest, and no reason below applies. The line shows the scope, the product and the SDK (`-` when the entry has none).
+- **Held.** `HELD <id>: <reason codes>` lists every reason, sorted, and never stops the command:
+  - `not-selected`: no selection names the skill.
+  - `selection-stale`: the digest in the selection is not the skill's digest in the import.
+  - `licence`: the licence is not allowed by the stored evidence, or is unknown.
+  - `needs-unavailable-tools`: the skill requires a CLI, MCP server, credential or service that is not available here, or the import excluded it (MCP or plugin configuration, network use). The Cosmos DB skill is held this way.
+  - `provider-content-in-portable`: a `portable` skill contains provider-specific text.
+  - `undeclared-requirement`: provider-specific text needs a tool that `requires` does not declare.
+  - `provider-without-policy`: a `provider` skill would replace a `portable` one with the same capability, and no owner override names it. This command does not read project pins.
+  - `blocking-collision`, `safety`: an overlap blocks it, or the security scan blocks it.
+  - `source-not-approved`, `incompatible`, `compatibility-unchecked`: the source or the product version does not check out, or the compatibility is not known.
+  - `not-normalized` (in the output as a skill folder): the import did not normalize the skill; its folder is shown instead of an id.
+- **Overlaps.** Each collision prints `OVERLAP <collision id> <class> <reason> <ids> [<shared capabilities>]`, after the skill lines. The same overlap rules as the rest of the catalogue apply.
+- **Exit codes.** 0 when the evaluation ran, including when skills are held. 1 when a `PROBLEM` is printed or the usage is wrong. A `PROBLEM` names the file or field, and missing licence evidence asks you to import again. A missing selections file is a `PROBLEM`.
+- **Credentials.** Credential-like text is shown as `(hidden)`.
+- **Limits.** The registry must be complete. A missing or unreadable skill root, a refused root, an invalid package or too many registered skills stops the command with a `PROBLEM` and exit 1, so the result is never partial.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). A skill with a `provider` block has its `needs provider: …` line first (see below). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.
@@ -4159,6 +4248,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
+| `scf skills selections evaluate <source-id> [<selections-file>]` | Print per skill of a staged import whether it is `ELIGIBLE` or `HELD`, and the `OVERLAP` lines; offline and read-only; writes nothing; exits 1 for a `PROBLEM` or a usage error ([Evaluate an import](#evaluate-an-import)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
 | `scf validate <flow or file>` | Check a flow |

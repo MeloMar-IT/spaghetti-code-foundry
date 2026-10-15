@@ -55,6 +55,7 @@ Usage:
   scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
   scf skills promote check <source-id> [<exceptions-file>]  Print whether licence and findings allow promotion
   scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
+  scf skills selections evaluate <source-id> [<file>]  Report which selected skills of a staged import are eligible or held, and their overlaps
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -231,7 +232,7 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `selections …`, `scan …`, `assess …`, `evaluate …`, `promote check …` and `connectors` only read: they run without choosing or moving the data folder.
+  // `scf skills sources …`, `selections …` (check, evaluate), `scan …`, `assess …`, `evaluate …`, `promote check …` and `connectors` only read: they run without choosing or moving the data folder.
   if (!(cmd === "skills" && (arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "evaluate" || arg === "promote" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
