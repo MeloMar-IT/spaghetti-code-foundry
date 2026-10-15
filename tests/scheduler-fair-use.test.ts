@@ -73,6 +73,37 @@ describe("scheduler fair use", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
+  it("an architect run takes no slot: it starts past the configured number and a helper's cap, one per account at a time", async () => {
+    setCap("load", { runs: 1, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+    try {
+      concurrency = 1;
+      mk();
+      s.submit(job(), { source: "story-1", owner: A });
+      const story2 = s.submit(job(), { source: "story-2", owner: A });
+      expect(active()).toEqual(["story-1"]);
+      // every place is taken and the cap is reached: an architect run starts anyway
+      s.submit(job(), { source: `${REFINE}1`, owner: A, lockKey: `architect ${A}` });
+      expect(active()).toEqual(["story-1", `${REFINE}1`]);
+      // a second one of the same account waits for the account's lock, and is not marked as held back by the cap
+      const second = s.submit(job(), { source: `${REFINE}2`, owner: A, lockKey: `architect ${A}` });
+      expect(pending().find((p) => p.runId === second)).toMatchObject({ waitingFor: expect.any(String) });
+      expect(pending().find((p) => p.runId === second)).not.toHaveProperty("capped");
+      // another account's architect run has its own lock and starts at once
+      s.submit(job(), { source: `${REFINE}3`, owner: B, lockKey: `architect ${B}` });
+      expect(active()).toContain(`${REFINE}3`);
+      // the architect runs do not take the story's place: when story-1 ends, story-2 starts although they still run
+      await finish("story-1");
+      setCap("load", undefined);
+      await waitFor(() => active().includes("story-2"));
+      expect(s.isQueued(story2)).toBe(false);
+      // when the first architect run ends, the account's next one starts
+      await finish(`${REFINE}1`);
+      await waitFor(() => active().includes(`${REFINE}2`));
+    } finally {
+      setCap("load", undefined);
+    }
+  });
+
   it("a helper's cap holds back new runs only: a run that already started is resumed past it", async () => {
     // a stopped run on disk, as after a restart; it may hold the turn to merge that the others wait for
     const runDir = join(tmp, "runs", "stopped-1");

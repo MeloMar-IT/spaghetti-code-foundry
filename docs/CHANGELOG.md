@@ -4,6 +4,10 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Refinement: an architect run no longer waits for a free place behind story runs.
+  - **Now.** Architect runs of refinement sessions take no slot: the scheduler starts them past `concurrency` and past a helper's cap (load governor, usage limits), before the other queued jobs (`slotsInUse` in `src/queue/scheduler.ts`). The account's lock still lets one architect run per account work at a time; blocked accounts and account limits still hold them. They are never marked `capped` in the queue.
+  - **Why.** A person waits for an architect run, and it only reads. On a busy machine it waited behind story runs for a long time.
+  - Tests in `tests/scheduler-fair-use.test.ts`; `docs/USER_GUIDE.md` updated.
 - Settings 8: every setting has a control or a reviewed exception (#500). Part 11 of 11 of #407 (every setting can be changed in the interface).
   - **The rule.** Every key of `ConfigSchema` (down to the leaves, watcher options included) and every variable of every shipped flow must have a control in the interface or a reviewed exception. `tests/settings-inventory.test.ts` fails otherwise, and the message names the key and says what to add.
   - **Exceptions.** `src/settings/exceptions.ts` is the one list: each key has a reason, and an entry for a key that no longer exists, or that now has a control, fails the test. Four entries today: `help.disabled_accounts`, `help.sensitive_patterns` and the two `providers.*.price` fields.
