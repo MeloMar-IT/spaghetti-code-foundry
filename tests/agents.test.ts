@@ -298,6 +298,31 @@ steps:
     expect(buildClaudeArgs({ prompt: "x", cwd: ".", logFile: "l" })).not.toContain("--tools");
   });
 
+  it("buildClaudeArgs is unchanged without tools", () => {
+    const o = { prompt: "x", cwd: ".", logFile: "l" };
+    expect(buildClaudeArgs(o)).toEqual(["-p", "--output-format", "stream-json", "--verbose", "--disallowedTools", "Bash(git push*)"]);
+    const args = buildClaudeArgs({ ...o, isolated: true, sandbox: true });
+    expect(args[args.indexOf("--settings") + 1]).toBe('{"sandbox":{"enabled":true,"autoAllowBashIfSandboxed":true}}');
+    expect(args.filter((a) => a === "--settings")).toHaveLength(1);
+  });
+
+  it("buildClaudeArgs with tools: only those tools, no hooks, no personal setup", () => {
+    const o = { prompt: "x", cwd: ".", logFile: "l", tools: ["Read", "Grep"] };
+    const args = buildClaudeArgs(o);
+    expect(args[args.indexOf("--tools") + 1]).toBe("Read,Grep");
+    expect(args[args.indexOf("--settings") + 1]).toBe('{"disableAllHooks":true}');
+    expect(args).toContain("--strict-mcp-config");
+    expect(args[args.indexOf("--setting-sources") + 1]).toBe("project,local");
+    expect(args).not.toContain("--append-system-prompt");
+    const both = buildClaudeArgs({ ...o, sandbox: true });
+    expect(both.filter((a) => a === "--settings")).toHaveLength(1);
+    expect(JSON.parse(both[both.indexOf("--settings") + 1]!)).toEqual({ sandbox: { enabled: true, autoAllowBashIfSandboxed: true }, disableAllHooks: true });
+    expect(buildClaudeArgs({ ...o, tools: [] })[buildClaudeArgs({ ...o, tools: [] }).indexOf("--tools") + 1]).toBe("");
+    const no = buildClaudeArgs({ ...o, tools: ["Read"], noTools: true });
+    expect(no.filter((a) => a === "--tools")).toHaveLength(1);
+    expect(no[no.indexOf("--tools") + 1]).toBe("");
+  });
+
   it("pauses the run when the agent is signed out, and says how to sign in", async () => {
     const flow = `
 name: t
