@@ -225,6 +225,7 @@ async function main(argv: string[]): Promise<number> {
       admin: { type: "boolean" },
       replace: { type: "boolean" },
       markdown: { type: "boolean" },
+      agent: { type: "boolean" },
       builtin: { type: "boolean" },
       "stop-work": { type: "boolean" },
       name: { type: "string" },
@@ -324,7 +325,8 @@ async function main(argv: string[]): Promise<number> {
       if (arg === "update") return (await import("./skill-import/update-cli.js")).skillUpdateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "evaluate") return (await import("./skill-import/evaluate-cli.js")).skillEvaluateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "discover") return (await import("./skill-import/discover-cli.js")).skillDiscoverCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
-      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo });
+      const agentScore = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentScore"]>>) => (await import("./skill-eval/score.js")).scoreImportWithAgent(...a);
+      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo, agentScore });
     }
 
     case "flow-guide": {
