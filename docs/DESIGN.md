@@ -164,6 +164,7 @@ Skills reach an agent in a fixed order. Each stage has its own module:
 - **Licence review** (`licence-review.ts`): the digest covers the whole licence evidence that can apply to the staged folders (every licence and notice file above or inside them, with its hash or problem), not only the attribution of the promoted skills. A change to a root `LICENSE` therefore needs a new review even when every skill keeps its own licence. Promotion reads it through `licenceReviewProblem`.
 - **Provider assumptions** (`provider-assumptions.ts`): a pure, declarative scan of a skill's declared tools, `compatibility` and instructions for Claude, MCP and Anthropic API references. It is recorded in `SkillProvenance.provider` and never grants a tool or blocks a skill.
 - **Evaluation gate** (`evaluation.ts`, thresholds in `evaluation-rules.ts`): pure verdict of a candidate from its evaluation record; see "Evaluation gate" below. No run calls it yet.
+- **Import review** (`import-review.ts`, rules in `import-review-rules.ts`, command in `review-cli.ts`): pure report of a staged import against the registered skills (licence, attribution, scan, collisions, category); reads only, promotes nothing.
 - **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
 - **Check after the gate:** `planRunSkills`, `startRunSkills` and `recheckRunSkills` in `src/skills/run-plan.ts`, with `resolve.ts` and `assessSkills` in `unresolved.ts`.
 - **Plan record and carry:** `src/skills/plan-record.ts` and `carryRunSkills` in `src/engine/plan-carry.ts`.
@@ -945,13 +946,14 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 |---|---|---|
 | **Home** | — | What waits for you, what is running, what finished |
 | **Board** | — | Where every story is |
+| **Epics** | — | How far each epic is and its expected finish |
 | **Refinement** | — | From a rough idea to a story |
 | **Runs** | — | Every run, live log, steps and transcripts, changes |
 | **Repositories** | — | Repositories and how the Foundry signs in |
 | **Flows** | Flows, Library | Edit and create flows; reusable blocks |
 | **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, settings, workspace clean-up |
 
-**User display:** **Home**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
+**User display:** **Home**, **Epics**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
 
 ![A run that waits for a decision on a risky plan](images/run-waiting.png)
 
@@ -1047,6 +1049,15 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
 **Who scrolls.** The page scrolls. These scroll themselves: `.table-box` (sideways), `.log` (the run log), `.modal` (up to 90vh) and `.page-board .board` (sideways). Code blocks such as `.tl pre`, `pre.diff` and `.turn-text` have their own maximum height. On a narrow screen the sidebar is a drawer (`.side` with `body.drawer-open`) at `--layer-menu` plus one; it scrolls itself.
 
 **Tests.** `readUiCss()` in `tests/helpers/ui-css.ts` follows the imports and returns the whole stylesheet, for tests that read CSS. It fails on an import that does not resolve and on a `.css` file under `ui/css/` that is not imported. `tests/ui-css.test.ts` checks the import order, that the rule set equals the frozen `tests/fixtures/ui-style-baseline.css`, the tokens, the z-index rule, the module comments, and that no page file starts a rule with a shared component class.
+
+### Every setting has a control
+
+The rule: every setting of `ConfigSchema` has a control in the interface or a reviewed exception. A new setting cannot be added without one.
+
+- **What counts.** `settingKeys()` in `src/settings/describe.ts` lists every key down to the leaves, watcher options included. A record (`watchers`, `providers`, `router.rules`) or a list of records counts once, by its item shape, with the segment `*`. A setting counts as having a control when `describeSettings()` describes it and its control is either generated (`control: "generated"`, drawn from the description) or a named `ui/*.js` module whose text mentions the key. A field of a record counts when `ITEM_SETTINGS` lists it with its module.
+- **Flow variables.** Every variable of every shipped flow needs a `var_info` entry or `set_by_run: true`.
+- **Exceptions.** `src/settings/exceptions.ts` is the one list. Each entry has a reason. A key with a control and an entry fails the test, and so does an entry for a key that no longer exists.
+- **The test.** `tests/settings-inventory.test.ts` is a unit test: it reads the schema, the description, the shipped flows through the flow loader and the text of the Settings modules. It names the key and says whether to describe it or add an exception.
 
 ---
 

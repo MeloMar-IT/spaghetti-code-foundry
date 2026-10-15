@@ -70,6 +70,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/home` | admin | Home, "Needs you" (`home.html`) | yes | Your turn becomes Home; the old address `#/your-turn` is now an alias of `#/home` (`ui/ia.js`) |
 | `#/board` | admin | Board (`board.html`) | yes | |
 | `#/board/:id` | admin | Board with the repository picked | yes | |
+| `#/epics` | admin | Epics in the nav | yes | Not prototyped |
 | `#/refinement` | both | Refinement in the nav | yes | Not prototyped; list unchanged |
 | `#/refinement/:id` | both | Session page | yes | Not prototyped; unchanged |
 | `#/flows` | admin | Flows in the nav | yes | Not prototyped |
@@ -101,6 +102,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `/user/#/runs/:id` | user | Run | yes | |
 | `/user/#/repos` | user | Repositories | yes | |
 | `/user/#/repos/:id` | user | One repository, in sections | yes | Not prototyped |
+| `/user/#/epics` | user | Epics in the nav | yes | Not prototyped |
 | `/user/#/refinement` | user | Refinement in the nav | yes | Not prototyped |
 | `/user/#/refinement/:id` | user | Session page | yes | Not prototyped |
 | `/` (no hash) | admin | Home | yes | Nothing waiting: Home, empty state (was Flows) |

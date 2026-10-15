@@ -1,7 +1,7 @@
 import { agentStatuses, providerStatuses, testSpec } from "../agents/health.js";
 import { auditActions } from "../auth/audit.js";
 import { changeDetail, configChanges } from "../auth/audit-changes.js";
-import { configView, storedConfigProblem, withStoredWebhook } from "./config-view.js";
+import { configIssues, configView, storedConfigProblem, withStoredWebhook } from "./config-view.js";
 import { hasAdmin } from "../auth/users.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -145,7 +145,8 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
           writeFileSync(CONFIG_PATH(), edited.text);
         }
       } catch (e) {
-        throw new HttpError(400, `invalid config: ${(e as Error).message}`);
+        const issues = configIssues(e);
+        throw new HttpError(400, `invalid config: ${(e as Error).message}`, undefined, issues ? { issues } : undefined);
       }
       auditActions(ctx.diagLog, user.id, "settings-change", "config.yaml", configChanges(before, saved).map((c) => changeDetail(c)));
       ctx.reloadConfig();

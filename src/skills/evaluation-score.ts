@@ -21,7 +21,7 @@ import { checkSkillTools, type Capabilities } from "./tool-policy.js";
 
 // Scores a candidate skill against a suite without running it and without a model: selection, conflicts, context size and tool
 // boundaries. Pure over input that is already read. The files of the candidate (package.files, extraFiles) are never touched;
-// the scan result comes in as a decided report. Nothing calls this yet; a later story stores the record.
+// the scan result comes in as a decided report. `scf skills score` calls this and stores the record.
 
 export type ComparedSkill = { kind: "registered"; skill: RegisteredSkill } | ({ kind: "imported" } & ImportedCandidate);
 export type EvaluationFinding = EvaluationRecord["findings"][number];

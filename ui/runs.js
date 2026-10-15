@@ -427,7 +427,7 @@ export function actions(s, run = () => {}) {
       try { await run("rerun", from); } finally { sel.value = ""; }
     } }, h("option", { value: "" }, "Retry from step…"), s.flowDef.steps.map((st) => h("option", { value: st.id }, st.id))));
   }
-  if (["running", "waiting"].includes(s.status)) {
+  if (["running", "waiting"].includes(s.status) || (s.status === "stopped" && !s.refinement)) {
     b.push(h("button", { class: "danger", "data-focus": "act-cancel", onClick: () => run("cancel") }, "■ Cancel"));
   }
   return b;

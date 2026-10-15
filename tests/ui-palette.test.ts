@@ -229,7 +229,7 @@ describe("the options", () => {
     stops.pop()!();
     start({ role: "user" });
     press("/");
-    expect(labels()).toEqual(["Home", "Refinement", "My runs", "My repositories", "Start work", "New refinement session"]);
+    expect(labels()).toEqual(["Home", "Epics", "Refinement", "My runs", "My repositories", "Start work", "New refinement session"]);
     press("Escape");
     stops.pop()!();
     start({ role: "user", preview: true });

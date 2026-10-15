@@ -86,11 +86,39 @@ describe("skill code does not reach the network", () => {
       const code = codeLines(text);
       const starts = code.filter((l) => /\b(?:spawn|spawnSync)\s*\(/.test(l));
       expect(starts).toHaveLength(1);
-      expect(starts[0]).toContain('spawn("git", [...OPTIONS, "ls-remote", "--quiet", "--", url, "HEAD"], {');
+      expect(starts[0]).toContain('spawn("git", [...OPTIONS, "ls-remote", "--quiet", "--", url, ...patterns], {');
       expect(starts[0]).toContain("detached: true");
       expect(code.filter((l) => /\bspawnSync\b|(?<![.\w])exec\s*\(|execSync|execFile|\bfork\s*\(/.test(l))).toEqual([]);
       expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual(["node:child_process"]);
+    });
+    it("catalogue-git.ts names exactly the git commands of the update and starts only git and gh with argument arrays", () => {
+      const text = readFileSync("src/skill-import/catalogue-git.ts", "utf8");
+      const code = codeLines(text);
+      const m = text.match(/CATALOGUE_GIT_COMMANDS\s*=\s*\[([^\]]*)\]/);
+      expect([...m![1]!.matchAll(/"([^"]+)"/g)].map((x) => x[1])).toEqual(["config", "rev-parse", "symbolic-ref", "fetch", "ls-tree", "cat-file", "hash-object", "read-tree", "update-index", "write-tree", "commit-tree", "push", "ls-remote"]);
+      const starts = code.filter((l) => /\b(?:spawn|spawnSync)\s*\(/.test(l));
+      expect(starts).toHaveLength(2);
+      expect(starts[0]).toContain('spawnSync("git", [cmd, ...rest], {');
+      expect(starts[1]).toContain("spawnSync(ghBin(ctx.env), args, {");
+      expect(code.filter((l) => /(?<![.\w])exec\s*\(|execSync|execFile|\bfork\s*\(|\bshell\b|\bspawn\s*\(/.test(l))).toEqual([]);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      expect(modulesOf(text).filter((x) => NETWORK_MODULES.test(`"${x}"`))).toEqual(["node:child_process"]);
+    });
+    it("update-cli.ts uses no process and no network", () => {
+      const text = readFileSync("src/skill-import/update-cli.ts", "utf8");
+      expect(modulesOf(text).filter((x) => NETWORK_MODULES.test(`"${x}"`))).toEqual([]);
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+    });
+    it("source-update.ts reads no file, starts no process and reads no clock", () => {
+      const text = readFileSync(join(SKILLS, "source-update.ts"), "utf8");
+      expect(modulesOf(text).filter((x) => /^(?:node:)?(?:fs|fs\/promises|os|child_process|path|process)$/.test(x))).toEqual([]);
+      expect(codeLines(text).filter((l) => /Date\.now|new Date|process\./.test(l))).toEqual([]);
+    });
+    it("the update modules import nothing that pins, locks or releases", () => {
+      for (const f of ["src/skills/source-update.ts", "src/skill-import/update-cli.ts", "src/skill-import/catalogue-git.ts"]) {
+        expect(modulesOf(readFileSync(f, "utf8")).filter((x) => /(?:registry|lock|release|promotion|selections)\.js$/.test(x)), f).toEqual([]);
+      }
     });
     it("discover-cli.ts uses no process and no network", () => {
       const text = readFileSync("src/skill-import/discover-cli.ts", "utf8");
@@ -208,7 +236,7 @@ describe("scf skills scan is offline and read-only", () => {
   it("only source-evaluation.ts imports source-skill-evaluation.js", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)source-skill-evaluation\.js$/.test(m)));
-    expect(users).toEqual([join("src", "skills", "source-evaluation.ts")]);
+    expect(users.sort()).toEqual([join("src", "skills", "overlap.ts"), join("src", "skills", "source-evaluation.ts")]);
   });
   it("provider-rules.ts has no imports", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "provider-rules.ts"), "utf8"))).toEqual([]);
@@ -223,6 +251,26 @@ describe("scf skills scan is offline and read-only", () => {
   });
   it("src/skills/cli.ts imports nothing from skill-import/", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "cli.ts"), "utf8")).filter((m) => /skill-import\//.test(m))).toEqual([]);
+  });
+  it("scf skills score and gate start no process, call no network and no model, and reach no migration code", () => {
+    const files = ["evaluate-cli.ts", "evaluation-store.ts", "staged-import.ts"];
+    for (const f of files) {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      const mods = modulesOf(text);
+      expect(mods.filter((m) => PROCESS_OR_NET.test(m)), f).toEqual([]);
+      expect(mods.filter((m) => /\.\.\/(?:agents|steps|engine|server|queue)\/|home-migrate/.test(m)), f).toEqual([]);
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l)), f).toEqual([]);
+      for (const re of DYNAMIC_CODE) expect(codeLines(text).filter((l) => re.test(l)), `${f} ${re}`).toEqual([]);
+    }
+    // from ../home.js only claimHomeWrite
+    const store = readFileSync(join(SKILLS, "evaluation-store.ts"), "utf8");
+    expect(store.match(/import \{[^}]*\} from "\.\.\/home\.js"/g)).toEqual(['import { claimHomeWrite } from "../home.js"']);
+  });
+  it("the readers in evaluation-store.ts call no write function", () => {
+    const text = readFileSync(join(SKILLS, "evaluation-store.ts"), "utf8");
+    const marker = "// --- read only below this line ---";
+    expect(text.split(marker)).toHaveLength(2);
+    expect(codeLines(text.split(marker)[1]!).join("\n")).not.toMatch(/writeFileSync|writeSync|mkdirSync|renameSync|linkSync|claimHomeWrite|chmodSync|unlinkSync|rmSync|openSync/);
   });
   it("the reader in import-stage.ts calls no write function", () => {
     const text = readFileSync(join(SKILLS, "import-stage.ts"), "utf8");
@@ -241,6 +289,17 @@ describe("the connector modules run nothing", () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => FORBIDDEN_MODULES.test(m))).toEqual([]);
       for (const re of DYNAMIC_CODE) expect(codeLines(text).filter((l) => re.test(l)), String(re)).toEqual([]);
+    });
+  }
+  it("import-review.ts is pure: no file, process or clock", () => {
+    const text = readFileSync(join(SKILLS, "import-review.ts"), "utf8");
+    expect(modulesOf(text).filter((m) => /(?:^|:)(?:fs|os|child_process|path)$/.test(m))).toEqual([]);
+    expect(codeLines(text).filter((l) => /Date\.now|new Date|process\./.test(l))).toEqual([]);
+  });
+  for (const f of ["review-cli.ts", "staged-import.ts"]) {
+    it(`${f} calls no write API`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(codeLines(text).filter((l) => /writeFile|appendFile|mkdir|rename|rmSync|unlink|openSync|copyFile|symlink/.test(l))).toEqual([]);
     });
   }
   it("connector-rules.ts has no imports", () => {

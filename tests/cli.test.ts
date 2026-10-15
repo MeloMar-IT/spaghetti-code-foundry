@@ -197,6 +197,24 @@ describe("data folder", () => {
     expect(scf(["--help"], home).stdout).toContain("scf skills import <source-id> [<file>]");
   });
 
+  it("scf skills update is in the help and checks its syntax before any process starts", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]");
+    const usage = "usage: scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]";
+    const none = scf(["skills", "update"], home);
+    expect(none.status).not.toBe(0);
+    expect(none.stderr).toContain(usage);
+    const bad = scf(["skills", "update", "Bad_Id"], home);
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).toContain(usage);
+    const opt = scf(["skills", "update", "x", "--repo", "."], home);
+    expect(opt.status).not.toBe(0);
+    expect(opt.stderr).toContain("unexpected option --repo");
+    const owner = scf(["skills", "update", "x", "--owner", "nobody"], home);
+    expect(owner.status).not.toBe(0);
+    expect(owner.stderr).toContain("--owner must be a GitHub user or team");
+  });
+
   it("scf skills discover is in the help and checks its syntax first", () => {
     const { home } = withHome();
     expect(scf(["--help"], home).stdout).toContain("scf skills discover [<export-file> [<file>]]");
@@ -364,6 +382,48 @@ describe("data folder", () => {
     expect(r.stderr).toContain("scf skills scan <source-id> [<exceptions-file>]");
   });
 
+  it("scf skills review is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills review <source-id> [--markdown]");
+    const r = scf(["skills", "review"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("scf skills review <source-id> [--markdown]");
+  });
+
+  it("scf skills review --markdown reads the old data folder and does not move, copy or lock it", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const commit = "a".repeat(40);
+    writeFileSync(
+      join(home, "skill-sources.yaml"),
+      [
+        "schema: 1", "sources:", "  - id: example-skills", "    repository: https://github.com/example/skills", "    status: enabled",
+        `    ref: {track: main, approved: '${commit}'}`, "    paths: [skills]", "    adapter: agent-skills", "    trust: community",
+        "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'",
+        `    review: {by: '@octocat', on: '2026-01-01', commit: '${commit}', licence: MIT}`, "",
+      ].join("\n"),
+    );
+    const parsed = readSources(join(home, "skill-sources.yaml"));
+    if (parsed.state !== "ok") throw new Error("bad sources");
+    const body = "---\nname: demo\ndescription: A demo skill.\n---\n\nBody.\n";
+    const entry: TreeEntry = { path: "skills/demo/SKILL.md", kind: "file", size: Buffer.byteLength(body), id: "id:1" };
+    expect(publishImport(prepareImport(parsed.manifest.sources[0]!, { list: () => [entry], read: () => [Buffer.from(body)] }), { home: oldDir }).state).toBe("staged");
+    const snap = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        const p = join(d, e.name);
+        const st = statSync(p);
+        return e.isDirectory() ? [`${p} ${st.mode} ${st.mtimeMs}`, ...snap(p)] : [`${p} ${st.mode} ${st.mtimeMs} ${readFileSync(p).toString("hex")}`];
+      });
+    const before = snap(home);
+    const r = spawnSync(process.execPath, [cli, "skills", "review", "example-skills", "--markdown"], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+    expect(r.stdout).toContain("## Skill import review");
+    expect(r.stdout).toContain("not promoted");
+    expect(r.status).toBe(1); // no licence file: the licence is missing
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+    expect(snap(home)).toEqual(before);
+  });
+
   it("scf skills assess is in the help and checks its syntax first", () => {
     const { home } = withHome();
     expect(scf(["--help"], home).stdout).toContain("scf skills assess <source-id>");
@@ -462,6 +522,40 @@ describe("data folder", () => {
     const r = scf(["skills", "promote"], home);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("scf skills promote check <source-id> [<exceptions-file>]");
+  });
+
+  it("scf skills score and gate are in the help and check their syntax first", () => {
+    const { home } = withHome();
+    const help = scf(["--help"], home).stdout;
+    for (const sub of ["score", "gate"]) {
+      expect(help).toContain(`scf skills ${sub} <source-id> [<suite-file>]`);
+      const r = scf(["skills", sub], home);
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain(`scf skills ${sub} <source-id> [<suite-file>]`);
+    }
+  });
+
+  it("scf skills score and gate leave an old data folder alone: no move, no copy, no lock", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    writeFileSync(
+      join(home, "skill-sources.yaml"),
+      ["schema: 1", "sources:", "  - id: example-skills", "    repository: https://github.com/example/skills", "    status: disabled", "    reason: domain not selected", "    ref: {track: main}", "    paths: [skills]", "    adapter: agent-skills", "    trust: community", "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'", ""].join("\n"),
+    );
+    const snap = (d: string): string[] =>
+      readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+        const p = join(d, e.name);
+        return e.isDirectory() ? [p, ...snap(p)] : [`${p} ${readFileSync(p).toString("hex")}`];
+      });
+    const before = snap(home);
+    for (const sub of ["score", "gate"]) {
+      const r = spawnSync(process.execPath, [cli, "skills", sub, "example-skills"], { encoding: "utf8", cwd: home, env: { ...cleanEnv(), HOME: home } });
+      expect(r.status).toBe(1);
+      expect(r.stdout).toContain("PROBLEM source example-skills has no approved commit");
+      expect(r.stderr).not.toContain("note:");
+      expect(existsSync(newDir)).toBe(false);
+      expect(snap(home)).toEqual(before);
+    }
   });
 
   it("--help shows the old folder while only that exists, and does not move it", () => {

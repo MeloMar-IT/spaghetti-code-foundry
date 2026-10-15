@@ -266,6 +266,23 @@ describe("audit log: actions in the web interface", () => {
     expect(readFileSync(auditPath(), "utf8")).not.toContain("SECRET");
   });
 
+  it("a refused save lists its problems as issues, without the stored webhook", async () => {
+    const { s, admin } = await world();
+    expect((await call(s, admin, "PUT", "/api/config", { notify: { slack_webhook: "https://example.invalid/SECRET-HOOK" } })).status).toBe(200);
+    const get = (await call(s, admin, "GET", "/api/config")).json();
+    const body = { ...get, skills: { ...get.skills, selection: { ...get.skills.selection, include: ["x"], exclude: ["x"] } } };
+    let r;
+    expect(await added(async () => { r = await call(s, admin, "PUT", "/api/config", body); })).toEqual([]);
+    expect(r.status).toBe(400);
+    expect(r.json().error).toMatch(/^invalid config: /);
+    expect(r.json().issues).toContainEqual({ path: "skills.selection.include.0", message: '"x" is also in exclude' });
+    expect(r.json().issues.length).toBeLessThanOrEqual(50);
+    expect(r.text).not.toContain("SECRET-HOOK");
+    const host = await call(s, admin, "PUT", "/api/config", { ...get, server: { ...get.server, listen: "::1" } });
+    expect(host.status).toBe(400);
+    expect(host.json()).not.toHaveProperty("issues");
+  });
+
   it("a config.yaml that is not valid YAML is never quoted in an answer", async () => {
     const { s, admin } = await world();
     writeFileSync(join(s.tmp, "home", "config.yaml"), 'notify:\n  slack_webhook: "https://example.invalid/SECRET-HOOK\n');

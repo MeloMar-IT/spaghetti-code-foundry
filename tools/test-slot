@@ -13,6 +13,7 @@
 //      FACTORY_TEST_NICE (the nice value; default 10, 0 = normal priority).
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { getPriority } from "node:os";
 import { join } from "node:path";
 
 const [dir, cmd, ...args] = process.argv.slice(2);
@@ -103,7 +104,11 @@ const release = () => {
 };
 const nice = num(process.env.FACTORY_TEST_NICE, 10);
 const env = { ...process.env, FACTORY_IN_TEST_SLOT: "1" };
-const child = nice > 0 ? spawn("nice", ["-n", String(Math.min(nice, 19)), cmd, ...args], { stdio: "inherit", env }) : spawn(cmd, args, { stdio: "inherit", env });
+// `nice -n` adds to the priority this process already has; a run that already has a low priority is not lowered again.
+let have = 0;
+try { have = getPriority(); } catch { /* unknown: count it as normal */ }
+const more = Math.min(nice, 19) - have;
+const child = more > 0 ? spawn("nice", ["-n", String(more), cmd, ...args], { stdio: "inherit", env }) : spawn(cmd, args, { stdio: "inherit", env });
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { child.kill(sig); });
 child.on("error", (e) => {
   release();

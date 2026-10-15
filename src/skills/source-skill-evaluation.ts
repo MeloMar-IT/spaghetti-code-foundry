@@ -152,7 +152,7 @@ const covered = (m: ProviderMarker, declared: readonly string[]): boolean =>
 
 const REGISTRY_FIELDS = { schema: 1 as const, layout: "foundry" as const };
 
-function registeredCandidate(s: RegisteredSkill): CollisionCandidate {
+export function registeredCandidate(s: RegisteredSkill): CollisionCandidate {
   const repositoryKey = "registry/" + s.source;
   const skill: NormalizedSkill = {
     package: s.pkg,

@@ -45,3 +45,16 @@ export const AREA_TERMS: Record<EvaluationArea, readonly string[]> = {
   documentation: ["documentation", "docs", "readme", "changelog", "docstring"],
   "development-workflow": ["workflow", "git", "commit", "pull-request", "release", "ci", "branch", "merge", "rebase"],
 };
+
+/** Imported skills are never shown above this tier in a review. */
+export const REVIEW_TRUST = "community" as const;
+/** `markdownBytes`: the size bound of the Markdown report. `members`: collision members shown per collision in Markdown (the text report shows all). */
+export const REVIEW_LIMITS = { markdownBytes: 60000, members: 12 } as const;
+/** Hyphen-bounded parts of an upstream name that put a skill without a category into an SCF category. In order; the first match wins. */
+export const REVIEW_CATEGORY_TERMS: readonly { category: string; terms: readonly string[] }[] = [
+  { category: "language", terms: ["java", "typescript", "javascript", "python", "golang", "go", "rust", "kotlin", "csharp", "dotnet", "php", "ruby", "swift", "scala", "cpp"] },
+  { category: "interface", terms: ["api", "rest", "openapi", "graphql", "grpc", "kafka", "mq", "messaging", "webhook"] },
+  { category: "quality", terms: ["test", "tests", "testing", "tdd", "review", "reviewer", "lint", "qa"] },
+  { category: "database", terms: ["sql", "database", "postgres", "postgresql", "mysql", "oracle", "cassandra", "mongodb", "redis"] },
+  { category: "platform", terms: ["node", "nodejs", "spring", "docker", "kubernetes", "aws", "azure", "gcp", "react", "angular"] },
+];

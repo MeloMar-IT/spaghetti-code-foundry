@@ -20,6 +20,7 @@ import { allAttention, renderAllRepos } from "./admin-repos.js";
 import { adminSections, adminSource } from "./repo-admin-sections.js";
 import { renderCredentials } from "./admin-credentials.js";
 import { renderOperations } from "./operations.js";
+import { renderEpics } from "./epics.js";
 import { renderRefinement } from "./refinement.js";
 import { SECTIONS, renderRepo } from "./repo-view.js";
 import { renderRepos } from "./repos.js";
@@ -192,6 +193,13 @@ async function route() {
       const off = await renderOperations(main, { readOnly });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
+    }
+    else if (section === "epics") {
+      const box = h("div", {});
+      mount(main, box);
+      const off = await renderEpics(box, { admin: true, me: S.me, query: to.query, go });
+      if (mine === routeGen) S.cleanup = off;
+      else off();
     }
     else if (section === "refinement") S.cleanup = await renderRefinement(main, { admin: true, id: arg, query: to.query, go });
     else if (section === "repos" && arg) {

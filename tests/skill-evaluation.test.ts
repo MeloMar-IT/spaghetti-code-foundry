@@ -250,6 +250,22 @@ describe("gate: mode upgrade", () => {
     expect(codes(upgrade(rec(), baseRec(), pol(), DIGEST))).toEqual(["baseline-mismatch"]);
     expect(codes(upgrade(rec(), baseRec({}, { suite: { ...rec().suite, digest: OTHER } })))).toEqual(["baseline-mismatch"]);
   });
+  describe("a baseline of another id (upgrade by capability)", () => {
+    const by = (cand: unknown, base: unknown, id?: unknown) =>
+      track(evaluationGate({ mode: "upgrade", policy: pol(), candidate: subject({}, cand), baseline: { record: base, digest: OTHER, ...(id !== undefined ? { id: id as string } : {}) } }));
+    const zeta = (dims: Record<string, number[] | undefined> = {}, id = "zeta") => baseRec(dims, { candidate: { ...rec().candidate, id, digest: OTHER } });
+    it("passes when baseline.id names the record's skill and the scores are not worse", () => {
+      expect(by(rec(), zeta(), "zeta").verdicts[0]!.reasons).toEqual([]);
+    });
+    it("still finds a regression, the digest and the suite", () => {
+      expect(by(rec({}, { selection: [0.89] }), zeta({ selection: [1] }), "zeta").verdicts[0]!.reasons.map((r) => r.code)).toContain("regression");
+      expect(codes(by(rec(), baseRec({}, { candidate: { ...rec().candidate, id: "zeta", digest: DIGEST } }), "zeta"))).toEqual(["baseline-mismatch"]);
+      expect(codes(by(rec(), zeta({}), "zeta"), 0)).toEqual([]);
+    });
+    it("a record of a third id is a mismatch", () => expect(codes(by(rec(), zeta({}, "third"), "zeta"))).toEqual(["baseline-mismatch"]));
+    it("without baseline.id another id is still a mismatch", () => expect(codes(by(rec(), zeta()))).toEqual(["baseline-mismatch"]));
+    it("a baseline.id that is not a string is invalid", () => expect(codes(by(rec(), zeta(), 7))).toEqual(["baseline-invalid"]));
+  });
   it("fails an empty baseline although the candidate is good", () => {
     const r = upgrade(rec(), baseRec({ selection: undefined, conflicts: undefined, context: undefined, tools: undefined }));
     expect(r.verdicts[0]!.reasons.map((x) => x.code)).toEqual(["baseline-invalid", "baseline-invalid", "baseline-invalid", "baseline-invalid"]);

@@ -76,6 +76,7 @@ describe("user router", () => {
     "/ia.js": real.ia,
     "/runs-filter.js": real.runsFilter,
     "/refinement.js": never,
+    "/epics.js": never,
     "/repos.js": never,
     "/repo-view.js": never,
     "/user/runs.js": never,
@@ -239,6 +240,14 @@ describe("user router", () => {
     expect(g.history.replaceState).not.toHaveBeenCalled();
   });
 
+  it("draws #/epics with renderEpics and the repository of the address", async () => {
+    setup("#/epics?repo=a%2Fb");
+    const renderEpics = vi.fn(async () => () => {});
+    await loadRouter("user/app.js", deps({ "/epics.js": { renderEpics } }));
+    await vi.waitFor(() => expect(renderEpics).toHaveBeenCalled());
+    expect((renderEpics.mock.calls[0] as any)[1]).toMatchObject({ admin: false, query: { repo: "a/b" } });
+  });
+
   it("sends filter changes of the three pages through context.keep, writing the address only", async () => {
     const ctx = contextStub({ keep: (h: string) => (h.includes("repo=") ? h : h.replace("#/runs", "#/runs?repo=all").replace(/\?repo=all\?/, "?repo=all&")) });
     const renderMyRuns = vi.fn();
@@ -288,7 +297,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -510,7 +519,7 @@ describe("support levels", () => {
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
     ...Object.fromEntries(["./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js",
-      "./admin-credentials.js", "./operations.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
+      "./admin-credentials.js", "./operations.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn(), renderModelDetail: vi.fn() },
     "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => dialogs > 0 }) },
     ...over,
@@ -538,6 +547,14 @@ describe("support levels", () => {
     delete g.innerWidth;
     delete g.matchMedia;
     delete g.MutationObserver;
+  });
+
+  it("draws #/epics with renderEpics and the repository of the address", async () => {
+    const renderEpics = vi.fn(async (box: FakeElement) => { real.dom.mount(box, el("epics page")); return () => {}; });
+    await load("#/epics?repo=a%2Fb", undefined, { "./epics.js": { renderEpics } });
+    await vi.waitFor(() => expect(renderEpics).toHaveBeenCalledTimes(1));
+    expect((renderEpics.mock.calls[0] as any)[1]).toMatchObject({ admin: true, query: { repo: "a/b" } });
+    expect(main().textContent).toContain("epics page");
   });
 
   it("is full with no innerWidth and shows no notice", async () => {

@@ -4,6 +4,7 @@ import { h, mount } from "./dom.js";
 import { lockReadOnly } from "./fields.js";
 import { settingHint } from "./kit/core.js";
 import { settingControl } from "./kit/forms.js";
+import { valueAt, withValue } from "./settings-skills.js";
 
 // The same rules as STEP_ENV_NAME and STEP_ENV_REFUSED in src/config.ts (ui/ cannot import src/); tests/ui-admin-sections.test.ts pins them.
 export const STEP_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*(_\*)?$/;
@@ -117,6 +118,71 @@ export function describedSections(config, described, { section, readOnly = false
     inputs() {
       const out = {};
       for (const key of Object.keys(slots)) out[KEYS[key]] = element(key); // failure_summary ends as the model field
+      return out;
+    },
+  };
+}
+
+/**
+ * A card with a generated control for every described key under `prefix` (control "generated"), in description order.
+ * `values()` is the stored object at the prefix with only the drawn keys set, so a key with no control (such as
+ * help.sensitive_patterns) is saved back exactly as it was stored.
+ */
+export function generatedSection(title, prefix, config, described, { section, readOnly = false }) {
+  const root = prefix.replace(/\.$/, "");
+  const list = described.filter((d) => d.key.startsWith(prefix) && d.control === "generated");
+  const byKey = Object.fromEntries(list.map((d) => [d.key, d]));
+  const state = Object.fromEntries(list.map((d) => [d.key, valueAt(config, d.key)]));
+  const errors = {};
+  const slots = {};
+  const draw = (key) => {
+    mount(slots[key], settingControl(byKey[key], {
+      value: state[key],
+      error: errors[key],
+      onChange: (v) => {
+        state[key] = v;
+        update(key);
+      },
+    }));
+    if (readOnly) lockReadOnly(slots[key]);
+  };
+  const update = (key) => {
+    const problem = settingProblem(byKey[key], state[key]);
+    if (problem !== errors[key]) {
+      errors[key] = problem;
+      draw(key);
+    }
+    return problem;
+  };
+  for (const d of list) {
+    slots[d.key] = h("div");
+    draw(d.key);
+  }
+  const element = (key) => slots[key]?.querySelectorAll("input, textarea, select")[0];
+  const stored = valueAt(config, root);
+  return {
+    card: list.length ? section(title, ...Object.values(slots)) : null,
+    values() {
+      if (!list.length) return stored;
+      let out = stored !== null && typeof stored === "object" ? { ...stored } : {};
+      for (const d of list) {
+        const v = state[d.key];
+        const empty = v === undefined || (d.optional && Array.isArray(v) && v.length === 0);
+        out = withValue(out, d.key.slice(prefix.length), empty ? undefined : v);
+      }
+      return Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined));
+    },
+    check() {
+      let first;
+      for (const key of Object.keys(slots)) if (update(key) && !first) first = element(key);
+      return first;
+    },
+    restore() {
+      for (const key of Object.keys(slots)) if (errors[key]) element(key)?.setAttribute("aria-invalid", "true");
+    },
+    inputs() {
+      const out = {};
+      for (const key of Object.keys(slots)) out[key] = element(key);
       return out;
     },
   };

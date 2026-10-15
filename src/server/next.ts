@@ -331,6 +331,15 @@ export interface Entry {
   prTitle?: string;
 }
 
+/** Kinds whose watcher hold has the administrator's wording. */
+const USER_REPLACES = new Set<NextStep["kind"]>(["usage_limit", "daily_budget", "user_limit", "failed"]);
+
+/** A hold in the words of a user: the kind and the rest of the hold stay, the sentences are built again without admin facts. */
+export function userWords(n: NextStep): NextStep {
+  const w = nextStep(n.kind, { repo: n.repo, issue: n.issue, title: n.title, runId: n.runId }, { forUser: true, cause: n.cause });
+  return { ...n, status: w.status, help: w.help, why: w.why, action: w.action, text: w.text };
+}
+
 /** The time a run's record is about: since when it waits, or when it ended. */
 export const runSince = (run: RunSummary): string => run.waiting?.since ?? run.finishedAt ?? run.startedAt;
 
@@ -338,8 +347,8 @@ export const runSince = (run: RunSummary): string => run.waiting?.since ?? run.f
  * Every record the server knows: itself, the watchers, every issue a watcher tracks (one per
  * watcher) and a function for the runs. `list` is the loaded runs.
  */
-export function collectNext(ctx: ApiContext, list: RunSummary[]) {
-  const next = nextFor(ctx, list);
+export function collectNext(ctx: ApiContext, list: RunSummary[], forUser = false) {
+  const next = nextFor(ctx, list, forUser);
   const waitLeft = waitLeftFor(ctx);
   const q = ctx.scheduler.queue();
   const tracked = ctx.watchers.tracked();
@@ -379,7 +388,11 @@ export function collectNext(ctx: ApiContext, list: RunSummary[]) {
       const rec = issueRecord({ base, data, run, live: isLive, queuedJob, hold: hold?.next, done: i.done, restart: !!ctx.restart, restartWhy, nextOf: next });
       if (rec.source === "live" || rec.source === "run") e = { next: rec.next, since: runSince(run!) };
       else if (rec.source === "queued") e = { next: waitLeft(rec.next) };
-      else if (rec.source === "hold") e = holdEntry(t, hold!);
+      // A hold of a limit or a failure carries the administrator's wording: a user gets the same hold in the words of a user.
+      else if (rec.source === "hold") {
+        e = holdEntry(t, hold!);
+        if (forUser && USER_REPLACES.has(hold!.next.kind)) e = { ...e, next: userWords(e.next) };
+      }
       else e = { next: rec.next };
       if (run && !isLive && e.next.runId === run.runId) e = { ...e, next: unchecked(e.next, run) };
       // A hold chosen over the run's record knows nothing of a retired flow: the run's own record replaces it.

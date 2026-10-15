@@ -89,17 +89,18 @@ admin for a new one.
 |---|---|---|
 | **Home** | — | What needs you, what is running, what finished, and the best next step; the app opens here when something waits. The old address `#/your-turn` still works. See [Home](#home) |
 | **Board** | — | Where every story is, in columns per repository |
+| **Epics** | — | How far each epic is and when it will be finished |
 | **Refinement** | — | Where a rough idea grows into a story before it goes to the backlog |
 | **Runs** | — | Everything that ran or is running; the ones that need you on top |
 | **Repositories** | — | The repositories you work in, and how the Foundry signs in to them |
 | **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
 | **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
 
-**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Epics**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
 **Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
-An account with the role `user` works on its own display at `/user/`, with **Home**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
+An account with the role `user` works on its own display at `/user/`, with **Home**, **Epics**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
 ![Home of a user](images/user-home.png)
 
@@ -307,6 +308,19 @@ when the findings file cannot be read): counts only, never a name.
 - **Narrow screens (below 768 px):** the board shows one column at a time. A picker named **Column** above it lists every column with its card count; the first column with cards shows by default. Your choice stays when the board refreshes, and if that column goes away the first column with cards shows. The owner filter and the highlight work as before; while a chain is highlighted, the picker marks the columns that hold cards of the chain. From 768 px up the board is unchanged.
 - **Updates:** the page asks every 5 seconds, so what the Foundry knows shows within 5 seconds. Changes on GitHub show after the watcher's next check; when you come back from a GitHub link, the watcher checks at once.
 - **Which column running work is in:** the Foundry reads it from the step names. Steps like `plan`, `ask_for_info` and `risk_gate` are Planning; `implement` starts Coding; `review`, `review_1` and `review_2` start Reviewing; `commit`, `push…` and `open_pr` start Merging. Any other step name stays in the phase of the step before. A flow with other names shows its running work under Coding.
+
+### Epics
+
+**Epics** (`#/epics`, for admins and users) shows how far each epic of one repository is and when it will be finished. It follows the repository context: with one repository it shows that one; with several, choose one in the **Repository** select. The address is `#/epics?repo=<name>`, and you can save a view.
+
+- **A row** has the epic's name (an issue epic links to GitHub), a progress bar, how the epic grew, the expected finish and what holds it up. The last row, **No epic**, is for stories that belong to no epic.
+- **Progress.** The bar shows Done, Working, Waiting, Your turn and Failed. The same numbers are written next to it ("3 of 10 done; Working 2, Waiting 4"), so you never need the colours.
+- **Growth.** "Stories: 21 at the start, 95 now (16 were split)" tells you how the epic grew while it ran.
+- **Expected finish** is a range, such as "Mon 12 – Tue 13 Oct", with "most likely …" and the reason in words. "Leaves out: …" names what the forecast does not count. Dates use your browser's time zone. When there is not enough history, the row says **Too early to say** and why, instead of a date.
+- **Held up by.** Stories that wait for a person, failed stories and others are listed with their issue numbers and what to do. A finished epic shows when it finished and how long it took.
+- **Order.** Open epics come first, by expected finish, then those that are too early to say, then finished ones (newest first). **No epic** is last.
+- **Fresh data.** The page says how long ago the issues were read ("Issues read 12 min ago"). If not every issue was read, it says the counts can be too low. A repository without a watcher, or one the watcher has not read yet, shows "No data" and the reason. **Refresh** reads again; if that fails, the rows stay and a note says so, with **Retry**.
+- **Small screens.** Below 768 px every row is a card.
 
 ### Work page (redesign, off by default)
 
@@ -614,8 +628,9 @@ a **What happens next** block with **You** as who and the approval message as th
 
   The private folder is `<run folder>/home/.codex`, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. A Codex reviewer step (`skill_role: reviewer`) always switches off MCP servers and hooks; it gets `--ignore-user-config` in login mode and, as before, when `isolate_agents` is off. `OPENAI_API_KEY` alone does not select it. The Foundry never passes `--ignore-rules`, so in login mode your command rules still apply. If the private folder cannot be made, the step is refused; it never falls back to your personal folder. With `isolate_agents: false`, or in a user's run held by the OS sandbox, nothing changes: no flag, no note, no "Codex:" line.
 - **Retry from step…** re-runs from any earlier step.
-- **Cancel** stops a running run, or a run that waits for approval; you can resume it later.
+- **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
+  A stopped run (for example one that waits for your answers) cancelled this way is saved as "cancelled — nothing to do": nothing continues it and it leaves every list of things that wait. `scf runs cancel <id>` and `POST /api/runs/:id/cancel` do the same. A refinement session is not cancelled this way.
 - **Archive** takes a finished run (succeeded, failed, cancelled or stopped) out of the list of runs,
   so the list shows current work. Nothing is deleted: `GET /api/runs?archived=1` lists the archived
   runs, and the run, its log and its changes open as before. **Unarchive** puts it back. On the runs
@@ -805,6 +820,8 @@ Every status in the app has a **?** that shows the two sentences from this table
 | working | The Foundry is working on it right now. Nothing to do — you can follow it on the run page. |
 | interrupted | The run was cut off, for example by a restart of the server. A watched issue resumes by itself at the next check, any other run you resume on its page. |
 | cancelled | Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it. |
+| cancelled — nothing to do | Someone cancelled the run while it was stopped, so nothing continues it. Nothing to do — resume it on its page if you still want the work. |
+| parked — not tracked by a watcher | The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run. |
 | failed | A step failed and the run could not go on. Fix the cause if needed, then start over or resume the run at the failed step. When the Foundry itself failed: The Foundry itself failed, not the code: a blocked command, a marker it could not read or a broken setting. Follow the suggested fix, then start over or resume the run. |
 | watcher error | The watcher could not do its check, so its issues do not move. Look at the error on the Watchers page and fix the cause, it then tries again at the next check. |
 | bug stories stopped | The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page. |
@@ -1618,6 +1635,16 @@ answered and cannot continue yet shows `factory:working`. The label comes back o
 unanswered questions. A waiting label on an issue that has no run is left alone: remove the label
 to start the issue.
 
+**Parked stories.** To park a story, remove its Foundry labels (or only the trigger label). A run
+that stopped with questions, or was cancelled while it was stopped, is then parked at the next
+check: the watcher marks the run as parked, and the overview shows "parked — not tracked by a
+watcher" with nothing to do. Nothing continues the run, and answering on the issue does not start
+it. **Needs you** leaves the story out too. Add the trigger label again and the story starts over
+with a new run, which the overview then follows; the old stopped run does not block it. A story that still has the trigger label after its stopped run was cancelled is not
+started again by itself; the overview says "cancelled — nothing to do". To start it again, remove
+and add the trigger label, or resume the run on its page. Stopped runs that wait for a release or
+a code area are not parked.
+
 More options are set in `~/.spaghetti-code-foundry/config.yaml` (the form keeps them when you edit the
 watcher). This is the watcher for the [one-label pipeline](#the-label-pipeline-one-label--plan--code--one-pull-request):
 
@@ -1929,6 +1956,7 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   later; the label stays `Factory_working`.
 - **The Foundry isn't running.** Watchers only run while `scf ui` / `scf serve` runs.
 - **It has an excluded label** such as `geni`.
+- **The story is parked.** Its trigger label was removed while its run waited for your answers, or the run was cancelled while stopped. Nothing is asked of you and nothing runs: the overview says "parked — not tracked by a watcher". Add the trigger label again to start the story over (see [How issue watchers use labels](#how-issue-watchers-use-labels)).
 - **The issue was closed on GitHub, but its run is still working.** The
   line says so and links to the run page. Cancel the run there if the work is no longer wanted;
   if the issue was closed by the run itself (report, split, merge) you see nothing.
@@ -2395,6 +2423,10 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 
 **Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
+**Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the list of accounts that may not ask Ask SCF (`help.disabled_accounts`), the list of texts Ask SCF keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
+
+**Start-up settings.** The data folder, the port, the repository and the program paths are read only when the server starts, so they are not changed on this page. To change one, stop the server, change it where it is set, and start the server again; the **Set at start-up** card shows the values in use. Two things are set up once, not in settings: the first admin is made on the setup page when the server starts for the first time, and the login service is installed with `scf service install` (see [Upgrading](#11-upgrading-from-claude-factory)).
+
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
 
@@ -2433,7 +2465,7 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 - **Approval steps** in flows let you decide before anything irreversible happens (the risk gate
   and the split approval are approval steps).
 
-**Skills** — the Skills card (after **Safety**) changes the skill folders, the sources and the limits without editing `config.yaml`. It has one control for each `skills.*` setting of the sources, the catalogue, the selection, the review checks and the skills that cannot be used (`skills.releases.approved` and `skills.tools` come later). Each control's hint gives the default; changes take effect when a run starts or resumes. Before a save, a change that lowers safety asks first in a dialog that names each risk, and **Cancel** saves nothing. The risky changes are: turning on **repository** skills or **unreleased** releases, adding a folder to **roots**, setting an unresolved case to `warn` (a skill that is unknown, not installed, not from an approved release, in conflict or too large no longer stops a run), and removing a term from the high-risk list. Turning a risky value back off, or removing a folder, asks nothing. The dialog exists because those settings let skills the approved catalogue does not vouch for reach the agents, or let a run continue past a skill it should stop for. If the server cannot describe the skills settings, the card says so and a save keeps them unchanged. Stored as `skills` in `config.yaml`.
+**Skills** — the Skills card (after **Safety**) changes the skill folders, the sources and the limits without editing `config.yaml`. It has one control for each `skills.*` setting: the sources, the catalogue, the selection, the review checks, the skills that cannot be used, and the group **Tools a skill may ask for** (shell, network, file access, and what to do when a tool is not available). **Approved releases** (`skills.releases.approved`) is a row editor: each row has a catalogue, a version and a digest; **Remove** deletes a row and **Add a row** adds one (at most 50). Empty rows and fields are left out, and a row problem from the server is shown at its row, for example "Row 1, digest: …". Each control's hint gives the default; changes take effect when a run starts or resumes. Before a save, a change that lowers safety asks first in a dialog that names each risk, and **Cancel** saves nothing. The risky changes are: turning on **repository** skills or **unreleased** releases, adding a folder to **roots**, setting an unresolved case to `warn` (a skill that is unknown, not installed, not from an approved release, in conflict or too large no longer stops a run), removing a term from the high-risk list, turning on **network** access for skills, and setting a missing tool to `degrade` (a run continues without a tool a skill asked for). Turning a risky value back off, or removing a folder, asks nothing. The dialog exists because those settings let skills the approved catalogue does not vouch for reach the agents, or let a run continue past a skill it should stop for. If the server cannot describe the skills settings, the card says so and a save keeps them unchanged. When the server refuses a save, each skills problem is shown under the control it belongs to (for a list, at its line, for example "Line 2: …"); a problem outside the skills settings stays in the banner at the top. A successful save clears all of these messages. Stored as `skills` in `config.yaml`.
 
 **Notifications** — macOS notifications and a Slack webhook tell you only when something new
 lands under **Needs you** on Home (a question, a risky plan or split, a release pull request, a failure, a
@@ -3054,7 +3086,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 |---|---|---|---|
 | `GET /api/info` | yes | no | server settings and today's cost |
 | `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set |
-| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number |
+| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
 | `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
 | `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
 | `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
@@ -3090,7 +3122,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
-| `POST /api/runs/:id/cancel` | yes | own runs | cancel a run |
+| `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
 | `POST /api/runs/:id/archive` | yes | own runs | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
 | `POST /api/runs/:id/unarchive` | yes | own runs | take a run out of the archive again |
 | `POST /api/runs/:id/resume` | yes | own runs | resume a run (an architect run: ask again from its refinement session); 409 when its issue is closed on GitHub (see "A run of a closed issue" in chapter 3) |
@@ -3138,6 +3170,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
 | `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
+| `GET /api/repos/:id/epics` | yes | yes | the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository) |
+| `GET /api/repos/:id/epics/:issue` | yes | yes | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
@@ -3677,6 +3711,78 @@ The document skills of that repository are source-available, not open source. Th
   - `anthropic-api`: the Anthropic API, its key variable or its SDK package.
 - **Assumptions grant nothing.** They are a declaration. They never block a skill and never change its tool profile: an imported `allowed-tools` field grants no tools. Reference files are not read.
 
+#### Review an import
+
+`scf skills review <source-id> [--markdown]` prints one report for a staged import, to decide what could be added to the catalogue. It is offline and read-only, like [Check a promotion](#check-a-promotion). Nothing is promoted, pinned, locked or written; every skill stays `community`.
+
+```
+scf skills review example-skills
+scf skills review example-skills --markdown > review.md
+```
+
+- **Per skill.** The id, upstream path, name, digest and fingerprint; the category and where it came from (`declared`, `name` or `default`); the licence verdict (`allowed`, `review`, `rejected`, `missing` or `ambiguous`) with its reasons; the attribution files with their SHA-256; the author notice lines; and the scan result, blocked or not.
+- **Collisions.** Compared with the built-in and administrator skills, not with the repository. Each line has the collision id (`col-…`), its class, reason, whether it blocks, its members and the shared capabilities. A skill whose upstream name is the id of an existing skill is shown as `same name`, even when the content differs (for example an upstream `java` against the built-in `java`).
+- **Categories.** Skills are grouped by SCF category, with the existing skills of that category listed above them, so language, interface (API), testing and review candidates can be compared. An upstream skill without a category gets one from its name when a part of the name matches.
+- **Output.** A `REVIEW` line, then per category `CATEGORY`, `SKILL`, `LICENCE`, `ATTRIBUTION`, `NOTICE`, `SCAN`, `NAME` and `COLLISION` lines, `PROBLEM` lines and a closing `REVIEWED` line that says `nothing was promoted`. The same input gives the same bytes. Credential-like text shows as `(hidden)`.
+- **Markdown.** `--markdown` prints the same facts as a table per category with notes below it, for a pull-request body. The output is bounded to 60,000 bytes; when it is cut, the last line says how many lines were left out.
+- **Limits.** More than 1,000 skills to compare prints a `PROBLEM` and checks no collisions.
+- **Exit codes.** 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed (for example a missing import or an unknown source); 0 otherwise.
+
+#### Update a source
+
+`scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` finds the upstream commit of a source, stages it with the same checks as `scf skills import`, builds the [review report](#review-an-import) and opens a pull request that proposes the new commit. The pull request is the only result. Nothing is approved, promoted, pinned or released until it is merged.
+
+Run it in the clone of the catalogue repository, in the folder that holds `skill-sources.yaml`. Its `origin` must be a GitHub repository, and `gh` must be installed and signed in (`FACTORY_GH_BIN` names another `gh`).
+
+```
+scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer
+```
+
+- **Entry or connector.** A source with an entry must be `enabled`; `disabled`, `quarantined` and `retired` are refused. A connector with no entry yet (for example `awesome-copilot`) needs `--owner`: the first run adds its entry, with the commit, the paths and the licence from the connector. `--owner` is refused for an entry that already exists.
+- **Tracked ref.** The upstream commit is that of `ref.track`: a branch or a tag (an annotated tag gives the commit it points at). A name that is both a branch and a tag is refused. Without `ref.track`, the commit is HEAD.
+- **Reviewer.** An enabled community source needs `--reviewer <@user>` for a new commit: the entry gets a `review` (`by`, `on` today, `commit` and `licence`). `--licence <id>` names the licence when `licence.allow` has more than one and there is no earlier review. A run that prints `UNCHANGED` needs no reviewer.
+- **Where the change goes.** The branch is `skill-update/<source-id>-<commit>` (12 characters of the commit). Only `ref.approved` and `review` of that entry change, or one new entry at the end of `sources:`. Every other byte of the file stays. The edited file must pass the same rules as `scf skills sources check`, or nothing is pushed.
+- **Pull request.** The title is `Skill source <id>: update to <commit>` (or `first import at <commit>`). The body holds the old and the new commit, the tracked ref, the selected paths, the verdict and the review report: licence, attribution, collisions and scan. It holds no text of the upstream skills.
+- **Output.** One line per outcome:
+  - `UNCHANGED <id> is at <commit> (ref.approved); nothing to propose`: the upstream commit is already approved. Nothing is opened.
+  - `OPEN <url> for <id>@<commit>; no second pull request was opened`: a pull request for this source and commit is open already.
+  - `OK opened <url> for <id>@<commit>; nothing is approved until it is merged`: the new pull request.
+  - `PROBLEM <sentence>` and exit 1: an unreachable upstream, a failed push or `gh` call, a refused source or option. The sentence is fixed text; git's and gh's own messages are never printed. A failed run leaves no branch behind on `origin`. When the branch cannot be removed, the `PROBLEM` names it: delete it by hand.
+- **Ctrl-C.** The update stops and, as far as it has pushed, removes its own branch. Nothing is proposed.
+- **Merging.** Merging the pull request is the approval. Until then the working copy's `skill-sources.yaml` on the default branch does not change.
+
+Walk-through for the awesome-copilot connector:
+
+1. **Propose.** `scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer`. The first run prints the pull request address and the `REVIEWED` line of the report.
+2. **Review.** Read the pull request: the licence (`MIT` for this connector), the attribution, the collisions and the scan in the body. Check that the reviewer named is the one who checked them.
+3. **Merge.** The source is then pinned by the merged file. `scf skills import awesome-copilot` fetches that commit, and `scf skills review awesome-copilot` shows the report again.
+4. **Next update.** When upstream moves, run `scf skills update awesome-copilot --reviewer @reviewer` again. While upstream is unchanged it prints `UNCHANGED`.
+
+#### Score and gate an import
+
+Two commands decide which skills of a staged import may be promoted. `scf skills score <source-id> [<suite-file>]` scores every skill with the suite and keeps the result. `scf skills gate <source-id> [<suite-file>]` reads the newest result of each skill and prints the verdict. Neither calls a model or starts a process, and neither changes the import, the skill folders, `skill-sources.yaml` or the quarantine.
+
+```
+scf skills score example-skills
+scf skills gate example-skills
+```
+
+```
+SCORED kafka-consumer@1.2.0 new: selection=1.00 conflicts=1.00 context=1.00 tools=1.00
+EVALUATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…: 1 record written to skill-evaluations/example-skills/0123456789ab
+PASSED kafka-consumer@1.2.0 new
+GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…: 1 passed, 0 failed
+```
+
+- **The suite.** Both commands read the suite file you name, or `skill-evaluation.yaml` in the current folder. The gate checks each record against the suite it reads, so a record made with another suite is `FAILED` (`suite-mismatch`). A missing or invalid suite is a `PROBLEM`. Run `score` again after you change the suite.
+- **Records.** Each run adds one record per skill under `<data folder>/skill-evaluations/<source>/<commit>/`. Earlier records are kept. Files are written atomically with mode `0600` in `0700` folders. The newest record is the one written last.
+- **Mode.** The gate picks the mode by itself: `new` (no approved skill with the same id or a shared capability), `upgrade` (compared with the approved skill of the same id or the canonical winner of a shared capability), or `duplicate` (another staged skill shares a capability). A skill can have more than one mode; it passes only when every comparison passes.
+- **Lines.** `PASSED <id>@<version> <mode>` for a skill that may be promoted. `FAILED <id>@<version> <mode>: <reason codes>` for one that may not. Reason codes name the cause, for example `record-invalid`, `digest-mismatch`, `suite-mismatch`, `safety-blocked`, `licence-not-allowed`, `below-threshold`, `baseline-missing` or `regression`; a dimension name follows the code where it applies. `PROBLEM` names the file or field that stops the command. `GATED` gives the counts.
+- **Missing or unreadable records.** A skill with no record, or a record that cannot be read, has the wrong mode or digest, or belongs to another skill, source or commit, is `FAILED`. It is never passed. Run `scf skills score <source-id>` to make the record.
+- **Exit codes.** `score` exits 1 when a `PROBLEM` is printed. `gate` exits 0 only when every skill passes and no `PROBLEM` is printed.
+- **Limits.** A record is at most 2 MiB and a folder holds at most 5,000 files. A source that is not enabled is a `PROBLEM` for `gate`.
+- **Not done.** The gate prints the verdict only. No run or promotion reads it yet.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
@@ -3756,6 +3862,31 @@ When two or more skills overlap, a collision is reported with one class, one rea
 - **What is merged.** Skills with the same content fingerprint are one entry. The entry keeps the representative skill unchanged, the source of every approved copy, and a count of the copies that are not approved. Skills with different content are never merged.
 - **What is held back.** An entry is held back from the planner when its approved copies are in `version-reuse`, `id-conflict` or `mirror.settings-differ`. An unapproved copy is never offered, and it cannot hold back an approved one. Forks and capability overlaps stay offered, each under its own id.
 - **Limits.** A collision check covers at most 1,000 skills. A larger set is refused.
+
+#### Overlap with the catalogue
+
+`scf skills overlap <source-id>` compares the staged import of a source with the skills already in the catalogue (built-in and administrator). For each capability the two share, it says which skill is canonical, or that the conflict is unresolved. It is offline and read-only, like [Check a promotion](#check-a-promotion): nothing is written, loaded, pinned or run, and no run reads its report.
+
+```
+scf skills overlap example-skills
+```
+
+```
+CANONICAL code-review: review-guide@2.0.0 (trust-tier)
+REJECTED community-review@0.4.0: outranked
+CONFLICT kafka-producer: tie kafka-basics@1.0.0, kafka-producer-pro@1.0.0
+NEW kafka-admin: kafka-admin@0.1.0 provider confluent
+OVERLAP 6 skills from github.com/example/skills@0123456789ab sha256:…: 4 shared, 1 new, 2 vendor-only, 1 conflicts
+```
+
+- **What it reads.** The staged import, normalized, with the source profile applied (see [Source profile](#skill-library-sources)), and the registered skills. Registered skills from the repository are not compared.
+- **Lines.** `CANONICAL <capability>: <id@version> (<level>)` names the winner and the level that decided it (`trust-tier`, `specificity`, and so on; `only-candidate` when nothing else competed). Each loser has a `REJECTED <id@version>: <code>` line under it. `CONFLICT <capability>: <rule> <ids>` names the skills that cannot be decided: `tie` (two skills tie on a high-risk capability and only age or name separates them), `mandatory` (a skill in `skills.selection.include` is not the canonical one) or `winners-overlap` (the best skill for one capability is not the best for another capability it also provides). `NONE <capability>: no skill can be used` means every candidate is rejected. `NEW <capability>: <id@version>` is a capability only the source declares. A skill with provider requirements prints its `provider <name>` on each line.
+- **Rejection codes.** `safety` (an open high finding of the scan, or a failed promotion blocker), `licence` (the licence is not allowed, or `licence.reviewed` is missing or stale), `tools` and the codes of the selection rules (`revoked`, `quarantined`, `discovery-only`, `incompatible`, `compatibility-unchecked`). A skill with a failed gate can never be canonical.
+- **Vendor scope.** A vendor-scoped capability (the source profile's `<provider>-<capability>`) is shared only with a registered skill of the same provider, never with a portable skill. The `OVERLAP` line says how many capabilities were kept vendor-only. A capability that is portable for one staged skill and vendor-scoped for another is a `PROBLEM`.
+- **Problems.** `PROBLEM` lines name the skill and a fixed code: `profile` (the source profile cannot be applied), `scope-collision`, `blocking-collision` (a collision with another skill holds it back), a skill that could not be normalized, or a catalogue that could not be read in full. A damaged staged import prints a fixed text and no reason.
+- **Exit codes.** 0 when there is no conflict and no `PROBLEM`. 1 for a conflict or a `PROBLEM`. `NEW`, `NONE` and `REJECTED` lines alone do not change the exit code.
+- **Order and text.** The same input in any order prints the same lines. Only slugs, versions, codes and levels are printed: no description, name or path of an upstream skill.
+- **Limits.** The staged skills and the registered skills together are at most 1,000. A larger set prints `PROBLEM too many skills or capabilities to compare` and exits 1.
 
 #### Discover candidate sources from Skills.sh
 
@@ -4320,6 +4451,11 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
+| `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `PROBLEM` and `OVERLAP` lines; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
+| `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
+| `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
+| `scf skills score <source-id> [<suite-file>]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline; exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
+| `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes) or `PROBLEM` per staged skill from its newest record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
@@ -4868,7 +5004,7 @@ A session keeps the talk with the architect, so it is not lost. The session page
 
 **What is stored.** When the run succeeds, a round is stored as a new round (at most 5 questions), its proposals wait for you, and the `done` sentence is kept when the architect has nothing important left; the log says so (`round-started`, `question`, `round-done`, `architect-round`). An answer is stored with your question and logged (`architect-answered`). A failed or cancelled run changes nothing in the talk; the session says why in plain words.
 
-**One at a time.** A session has one architect run at a time, counted together with the brief read (409 with a plain sentence). You can ask the architect in several sessions: the runs of one account wait in line and the architect works on them one after another, in the order they were asked. A waiting session says how many of your other sessions are first. A paused run is resumed by the same call, in the same run; a call for another kind gets 409 and says which run is paused. Dropping the session or deleting the account cancels the run. The log keeps free the lines the end of the run needs, so other changes may be refused with "the log of this session is full" while it runs. At most 50 own questions are kept.
+**One at a time.** A session has one architect run at a time, counted together with the brief read (409 with a plain sentence). You can ask the architect in several sessions: the runs of one account wait in line and the architect works on them one after another, in the order they were asked. A waiting session says how many of your other sessions are first. An architect run takes none of the Foundry's run places (`concurrency`) and is not held back by a helper's cap such as the load governor: it starts at once, unless another architect run of your account works. A paused run is resumed by the same call, in the same run; a call for another kind gets 409 and says which run is paused. Dropping the session or deleting the account cancels the run. The log keeps free the lines the end of the run needs, so other changes may be refused with "the log of this session is full" while it runs. At most 50 own questions are kept.
 
 **What you see of the run.** It shows in your Runs list with the mark "refinement", and nowhere else. Its task is shown as one line (the first line of the talk) in the Runs list, on the run page and in the queue.
 
@@ -5512,7 +5648,7 @@ not stored.
 
 ### Ask SCF for administrators
 
-**It is off by default.** Switch it on in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
+**It is off by default.** Switch it on in **Settings → Ask SCF** (the card's switch is `help.enabled`; the limits are on the same card). The same settings are in `config.yaml` (an older build rejects the `help` key, so take it out before you go back to one):
 
 ```yaml
 help:
@@ -5557,8 +5693,8 @@ value.
 
 ### Who may ask, what is kept, and what is logged
 
-**Who may ask.** When Ask SCF is on, these settings of `help` in `config.yaml` decide, and the
-account is read again at every question:
+**Who may ask.** When Ask SCF is on, these settings of `help` decide (on the Ask SCF card, except
+`disabled_accounts`, which is only in `config.yaml`), and the account is read again at every question:
 
 | Setting | Default | Meaning |
 |---|---|---|

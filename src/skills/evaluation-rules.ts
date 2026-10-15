@@ -45,3 +45,8 @@ export const EVALUATION_FINDING_CODES = [
   "instructions-over-limit", "instructions-over-budget", "description-over-limit", "description-over-budget", "description-cut", "budget-invalid",
   "tool-not-approved", "connector-unavailable", "scan-high-open", "safety-mismatch", "findings-truncated",
 ] as const;
+
+// The evaluation store (evaluation-store.ts) and `scf skills score` / `scf skills gate`.
+export const EVALUATION_SUITE_DEFAULT = "skill-evaluation.yaml";
+export const EVALUATIONS_DIR = "skill-evaluations";
+export const EVALUATION_STORE_LIMITS = { recordBytes: 2_097_152, files: 5000, linkTries: 20 } as const;

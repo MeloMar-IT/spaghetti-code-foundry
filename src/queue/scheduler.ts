@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
-import { cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, setRunArchived, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { cancelStoppedRun, cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
+import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -277,11 +277,13 @@ export class Scheduler {
     if (i >= 0) {
       const [job] = this.pending.splice(i, 1);
       this.persist();
-      if (job?.job.kind === "resume") this.cancelWaiting(runId, by); // a queued approval: the run no longer waits
+      if (job?.job.kind === "resume") this.cancelWaiting(runId, by); // a queued approval: the run no longer waits. A queued answer of a stopped run is only dropped: its answer stays and the run still waits for one
       return true;
     }
     const a = this.active.get(runId);
-    if (!a) return this.cancelWaiting(runId, by);
+    if (!a) return this.cancelWaiting(runId, by) || this.cancelStopped(runId, by);
+    // A run that stopped but is still finishing (its notification runs): the stop is saved, so cancel it like a stopped run.
+    if (a.summary?.status === "stopped" && !a.controller.signal.aborted && this.cancelStopped(runId, by)) return true;
     a.cancelledBy ??= by;
     a.controller.abort();
     return true;
@@ -320,11 +322,33 @@ export class Scheduler {
   private cancelWaiting(runId: string, by?: Actor): boolean {
     const summary = cancelWaitingRun(this.o.runsDir, runId, this.o.config(), by);
     if (!summary) return false;
-    // A run that is still finishing (its "waiting" notify command runs) shows the new state too.
+    this.announce(summary);
+    return true;
+  }
+
+  /** Cancel a run that stopped (no process runs for it). */
+  private cancelStopped(runId: string, by?: Actor): boolean {
+    const summary = cancelStoppedRun(this.o.runsDir, runId, this.o.config(), by);
+    if (!summary) return false;
+    this.announce(summary);
+    return true;
+  }
+
+  /** Shows a run's new saved state to its viewers, also while the run is still finishing (its notify command runs). */
+  private announce(summary: RunSummary) {
+    const runId = summary.runId;
     const live = this.active.get(runId);
     if (live) live.summary = structuredClone(summary);
     // Viewers that watched the run while it was active are kept in `recent`; later ones are pending listeners.
     for (const fn of [...(live?.listeners ?? []), ...(this.recent.get(runId)?.listeners ?? []), ...(this.pendingListeners.get(runId) ?? [])]) fn({ type: "update", summary });
+  }
+
+  /** Sets the parked mark of a stopped or cancelled run. Refuses a run that is queued or active. */
+  setParked(runId: string): boolean {
+    if (this.isActive(runId) || this.isQueued(runId)) return false;
+    if (!setRunParked(join(this.o.runsDir, runId), new Date().toISOString())) return false;
+    const summary = this.get(runId);
+    if (summary) for (const fn of [...(this.recent.get(runId)?.listeners ?? []), ...(this.pendingListeners.get(runId) ?? [])]) fn({ type: "update", summary });
     return true;
   }
 
@@ -382,7 +406,8 @@ export class Scheduler {
     const concurrency = this.o.config().concurrency;
     // A helper's cap (machine load, usage limits) holds back new runs only; see pump().
     const cap = runLimit(concurrency);
-    const capFull = this.active.size >= cap && this.active.size < concurrency;
+    const busy = this.slotsInUse();
+    const capFull = busy >= cap && busy < concurrency;
     return {
       pending: this.pending.map(({ runId, lockKey, repoLock, source, enqueuedAt, job, priority }, i) => {
         const limit = this.limited.get(runId);
@@ -395,7 +420,7 @@ export class Scheduler {
           ...(priority ? { priority: true as const } : {}),
           ...(limit ? { limit } : {}),
           // nothing but a helper's cap keeps this new run waiting: on purpose, not a queue that stands still
-          ...(capFull && job.kind === "run" && !blocker && !limit ? { capped: true as const } : {}),
+          ...(capFull && job.kind === "run" && !isRefinementRun(source) && !blocker && !limit ? { capped: true as const } : {}),
           ...(!priority && !limit && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
           flow: job.kind === "run" ? job.flow.name : undefined,
@@ -407,6 +432,17 @@ export class Scheduler {
       concurrency,
       ...(cap < concurrency ? { cap } : {}),
     };
+  }
+
+  /**
+   * The slots the running jobs use. An architect run of a refinement session uses none: a person waits for it, it only
+   * reads, and the account's own lock lets one of its architect runs work at a time. It starts past the configured number
+   * and past a helper's cap, so a busy factory does not keep a person waiting.
+   */
+  private slotsInUse(): number {
+    let n = 0;
+    for (const a of this.active.values()) if (!isRefinementRun(a.queued.source)) n++;
+    return n;
   }
 
   /** Does a priority job in front of job `i` get the next free slot? One that waits for a busy lock does not hold anyone back. */
@@ -633,9 +669,19 @@ export class Scheduler {
       return [groupActive(g), this.lastStartOf.get(g) ?? 0];
     };
 
-    while (this.active.size < limit) {
-      const full = this.active.size >= capped;
-      const ready = this.pending.filter((q) => !locked(q) && !held(q) && !limitOf(q) && !(full && q.job.kind === "run"));
+    // Architect runs first: they take no slot (see slotsInUse), only their lock, the account's state and its limits hold them.
+    for (const q of this.pending.filter((p) => isRefinementRun(p.source))) {
+      if (locked(q) || held(q) || limitOf(q)) continue;
+      const account = accountOf(q);
+      const group = account ?? "";
+      this.pending.splice(this.pending.indexOf(q), 1);
+      this.lastStartOf.set(group, ++this.startSeq);
+      this.start(q, account, group);
+    }
+
+    while (this.slotsInUse() < limit) {
+      const full = this.slotsInUse() >= capped;
+      const ready = this.pending.filter((q) => !isRefinementRun(q.source) && !locked(q) && !held(q) && !limitOf(q) && !(full && q.job.kind === "run"));
       if (!ready.length) break;
       // priority block first, then the group with the fewest active runs, then the oldest last start, then queue order
       const pool = ready.some((q) => q.priority) ? ready.filter((q) => q.priority) : ready;

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -9,6 +9,13 @@ import { readSkillLock } from "../src/skills/lock.js";
 import { discoverSkills } from "../src/skills/registry.js";
 import { skillsCommand } from "../src/skills/cli.js";
 import { releaseDigest, type ReleaseManifest } from "../src/skills/release.js";
+import { addLicenceEvidence } from "../src/skills/import-evidence.js";
+import { prepareLicenceEvidence } from "../src/skills/import-licence.js";
+import { prepareImport, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
+import { publishImport } from "../src/skills/import-stage.js";
+import { collectLicenceEvidence } from "../src/skills/licence.js";
+import { LICENCE_TEMPLATES } from "../src/skills/licence-rules.js";
+import { readSources } from "../src/skills/sources.js";
 import { freePort } from "./helpers/port.js";
 
 const CLI = resolve("dist/cli.js");
@@ -440,5 +447,147 @@ describe("skillsCommand selections check", () => {
     await expect(run([])).rejects.toThrow('expects "check"');
     await expect(run(["check", "a", "b"])).rejects.toThrow('expects "check"');
     await expect(run(["check"], { repo: "x" })).rejects.toThrow("unexpected option");
+  });
+});
+
+describe("skillsCommand overlap syntax", () => {
+  it("checks the operands and options before it reads anything", async () => {
+    const run = (positionals: string[], values: Record<string, unknown> = {}) => skillsCommand({ positionals, values }, () => undefined, { home, builtinRoot: builtin, skills: dev() });
+    await expect(run(["overlap"])).rejects.toThrow("expects one source id");
+    await expect(run(["overlap", "a", "b"])).rejects.toThrow("expects one source id");
+    await expect(run(["overlap", "Bad_Id"])).rejects.toThrow("must be a source id");
+    await expect(run(["overlap", "lib"], { repo: "x" })).rejects.toThrow("unexpected option");
+  });
+});
+
+describe("scf skills review", () => {
+  const COMMIT = "a".repeat(40);
+  const MIT = LICENCE_TEMPLATES.find((t) => t.id === "MIT")!.text.replace("{name}", "the copyright holder");
+  const md = (name: string, desc = `A skill called ${name}.`) => `---\nname: ${name}\ndescription: ${desc}\n---\n\nBody.\n`;
+  let cwd: string;
+  const sourcesYaml = [
+    "schema: 1", "sources:", "  - id: lib", "    repository: https://github.com/example/skills", "    status: enabled",
+    `    ref: {track: main, approved: '${COMMIT}'}`, "    paths: [skills]", "    adapter: agent-skills", "    trust: community",
+    "    licence: {allow: [MIT]}", "    update: {cadence: weekly}", "    owner: '@octocat'",
+    `    review: {by: '@octocat', on: '2026-01-01', commit: '${COMMIT}', licence: MIT}`, "",
+  ].join("\n");
+  function tree(files: Record<string, string>): SourceTree {
+    const all: TreeEntry[] = Object.entries(files).map(([path, v]): TreeEntry => ({ path, kind: "file", size: Buffer.byteLength(v), id: "id:" + path }));
+    return { list: (p) => all.filter((e) => p === "." || e.path.startsWith(p + "/")), read: (entries) => entries.map((e) => Buffer.from(files[e.path]!)) };
+  }
+  function setup() {
+    cwd = join(base, "cwd");
+    mkdirSync(cwd, { recursive: true });
+    writeFileSync(join(cwd, "skill-sources.yaml"), sourcesYaml);
+  }
+  function stage(files: Record<string, string>) {
+    setup();
+    const r = readSources(join(cwd, "skill-sources.yaml"));
+    if (r.state !== "ok") throw new Error("bad sources");
+    const t = tree(files);
+    const prep = prepareImport(r.manifest.sources[0]!, t);
+    const licence = prepareLicenceEvidence(collectLicenceEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), t));
+    return publishImport(addLicenceEvidence(prep, licence, "2026-10-01T10:00:00Z"), { home });
+  }
+  async function review(operands: string[] = ["lib"], values: Record<string, unknown> = {}) {
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["review", ...operands], values }, (l) => lines.push(l), { home, cwd, builtinRoot: builtin, userHome: join(base, "u"), env: {}, skills: dev() });
+    return { code, lines, out: lines.join("\n") };
+  }
+  const snap = (d: string): string[] =>
+    readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      const p = join(d, e.name);
+      const st = statSync(p);
+      return e.isDirectory() ? [`${p} ${st.mode}`, ...snap(p)] : [`${p} ${st.mode} ${readFileSync(p).toString("hex")}`];
+    });
+
+  it("prints the report of a clean import and exits 0", async () => {
+    pkg(builtin, "small-changes");
+    stage({ "skills/demo/SKILL.md": md("demo"), LICENSE: MIT });
+    const r = await review();
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/^REVIEW lib github\.com\/example\/skills@aaaaaaaaaaaa sha256:[0-9a-f]{64} trust=community/);
+    expect(r.out).toMatch(/SKILL \S+ skills\/demo name=demo .* trust=community not-promoted/);
+    expect(r.out).toMatch(/LICENCE \S+: allowed MIT/);
+    expect(r.out).toContain("ATTRIBUTION");
+    expect(r.out).toContain("REVIEWED 1 skill from");
+    expect(r.out).toContain("nothing was promoted");
+  });
+
+  it("reports an upstream skill named like a built-in, even with other content", async () => {
+    pkg(builtin, "java");
+    stage({ "skills/java/SKILL.md": md("java", "Something else about java."), LICENSE: MIT });
+    const r = await review();
+    expect(r.out).toContain("NAME ");
+    expect(r.out).toContain("same name as existing java@1.0.0 (built-in)");
+    expect(r.out).toMatch(/COLLISION col-[0-9a-f]+ fork fork\.same-name blocking=no/);
+    expect(r.code).toBe(0);
+  });
+
+  it("exits 1 when the licence is missing", async () => {
+    stage({ "skills/demo/SKILL.md": md("demo") });
+    const r = await review();
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/LICENCE \S+: missing/);
+  });
+
+  it("prints Markdown with --markdown", async () => {
+    stage({ "skills/demo/SKILL.md": md("demo"), LICENSE: MIT });
+    const r = await review(["lib"], { markdown: true });
+    expect(r.lines[0]).toMatch(/^## Skill import review/);
+    expect(r.code).toBe(0);
+  });
+
+  it("prints a failed read as Markdown too", async () => {
+    stage({ "skills/demo/SKILL.md": md("demo"), LICENSE: MIT });
+    const r = await review(["other"], { markdown: true });
+    expect(r.code).toBe(1);
+    expect(r.lines[0]).toMatch(/^## Skill import review/);
+    expect(r.out).toContain("### Problems");
+  });
+
+  it("writes nothing and gives the same bytes twice", async () => {
+    pkg(builtin, "small-changes");
+    stage({ "skills/demo/SKILL.md": md("demo"), LICENSE: MIT });
+    const before = [...snap(home), ...snap(cwd), ...snap(builtin)];
+    const a = await review();
+    const b = await review();
+    expect(b.out).toBe(a.out);
+    expect([...snap(home), ...snap(cwd), ...snap(builtin)]).toEqual(before);
+    expect(existsSync(lockFile())).toBe(false);
+  });
+
+  it("prints one PROBLEM and exits 1 without a source file, an unknown source or a staged import", async () => {
+    mkdirSync(join(base, "cwd"), { recursive: true });
+    cwd = join(base, "cwd");
+    expect((await review()).out).toContain("PROBLEM the skill source file does not exist");
+    stage({ "skills/demo/SKILL.md": md("demo"), LICENSE: MIT });
+    const unknown = await review(["nope"]);
+    expect(unknown.code).toBe(1);
+    expect(unknown.out).toContain("PROBLEM unknown source");
+    rmSync(home, { recursive: true, force: true });
+    mkdirSync(home);
+    const none = await review();
+    expect(none.code).toBe(1);
+    expect(none.out).toContain('run "scf skills import lib" first');
+  });
+
+  it("refuses a tampered staged import", async () => {
+    stage({ "skills/demo/SKILL.md": md("demo"), LICENSE: MIT });
+    const found = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? found(join(d, e.name)) : e.name === "SKILL.md" ? [join(d, e.name)] : []));
+    const file = found(home).find((f) => f.includes("demo"))!;
+    writeFileSync(file, md("demo") + "x");
+    const r = await review();
+    expect(r.code).toBe(1);
+    expect(r.lines).toHaveLength(1);
+    expect(r.out).toContain("nothing was reviewed");
+  });
+
+  it("checks its syntax first", async () => {
+    setup();
+    await expect(review([])).rejects.toThrow("expects one source id");
+    await expect(review(["lib", "x"])).rejects.toThrow("expects one source id");
+    await expect(review(["lib"], { replace: true })).rejects.toThrow("unexpected option --replace");
+    await expect(review(["Not A Slug"])).rejects.toThrow("must be a source id");
   });
 });

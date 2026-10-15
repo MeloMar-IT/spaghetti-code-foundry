@@ -1,6 +1,6 @@
 import { api, configVersion } from "./api.js";
 import { confirmDialog, fieldFor, h, markInvalid, mount, toast } from "./dom.js";
-import { describedSections, hintFor, hinted, startupSection } from "./admin-sections.js";
+import { describedSections, generatedSection, hintFor, hinted, startupSection } from "./admin-sections.js";
 import { skillsSection } from "./settings-skills.js";
 import { check, field as f, input, lockReadOnly } from "./fields.js";
 import { poller } from "./live.js";
@@ -141,13 +141,14 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     app_id: appId, slug: appSlug, installation_id: instId, private_key_path: keyPath, docker_image: sbxImage, repo: selfRepo, name: botName, email: botEmail,
   };
   const extra = describedSections(c, described, { section, readOnly });
+  const askScf = generatedSection("Ask SCF", "help.", c, described, { section, readOnly });
   // the hand-built controls and the current controls of the described cards (those are drawn again when their message changes)
-  const fieldsNow = () => ({ ...fields, ...extra.inputs() });
+  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs() });
   const QUOTED = new Set(["name", "email", "repo", "command", "pass"]);
   const SETTINGS_PAIRS = Object.keys(fieldsNow()).map((k) => [new RegExp(QUOTED.has(k) ? `"${k}"` : `\\b${k}\\b`), k]);
 
   const save = async () => {
-    const bad = extra.check();
+    const bad = extra.check() ?? askScf.check();
     if (bad) {
       mount(err);
       saveNote.setAttribute("class", "status bad");
@@ -183,6 +184,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       github_app: appId.value.trim()
         ? { app_id: appId.value.trim(), private_key_path: keyPath.value.trim(), slug: appSlug.value.trim() || undefined, installation_id: instId.value.trim() || undefined }
         : undefined,
+      help: askScf.values(),
       isolate_agents: v.isolate_agents,
       failure_summary: v.failure_summary,
       step_env: v.step_env,
@@ -191,8 +193,11 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     saveBtn.disabled = true;
     saveNote.setAttribute("class", "status");
     mount(saveNote, "Saving…");
+    skills.busy(true);
     try {
       const saved = await api.saveConfig(next, version);
+      skills.busy(false);
+      skills.showIssues([]);
       version = configVersion(saved) ?? version;
       skills.saved(next.skills);
       hookSet = saved?.notify?.slack_webhook_set === true;
@@ -205,14 +210,25 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       else api.restartState().then(drawRestart).catch(() => {});
       markInvalid(Object.values(fieldsNow()));
       extra.restore(); // a list changed while the request ran can still be wrong
+      askScf.restore();
       saveNote.setAttribute("class", "status ok");
       mount(saveNote, `Saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       toast("Settings saved");
     } catch (e) {
-      mount(err, h("div", { class: "errors", role: "alert" }, e.message));
+      skills.busy(false);
+      const issues = Array.isArray(e.data?.issues) ? e.data.issues : [];
+      const unplaced = skills.showIssues(issues);
+      const placed = issues.length - unplaced.length;
+      const onlyCard = placed > 0 && unplaced.length === 0 && issues.length < 50;
+      mount(err, h("div", { class: "errors", role: "alert" }, onlyCard ? "Not saved: see the messages in the Skills card." : e.message));
       const now = fieldsNow();
-      markInvalid(Object.values(now), e.status === 409 ? undefined : now[fieldFor(e.message, SETTINGS_PAIRS)]);
+      // With structured issues, only the ones left in the banner name a hand-built control.
+      // A path names its control directly (its last part is the key); the sentence is the fallback.
+      const named = placed > 0 ? unplaced.map((i) => (typeof i?.path === "string" ? (Object.hasOwn(now, i.path) ? i.path : i.path.split(".").pop()) : undefined)).find((k) => k && Object.hasOwn(now, k)) : undefined;
+      const text = placed > 0 ? unplaced.map((i) => `${i?.path ?? ""} ${i?.message ?? ""}`).join(" ") : e.message;
+      markInvalid(Object.values(now), e.status === 409 || onlyCard ? undefined : now[named ?? fieldFor(text, SETTINGS_PAIRS)]);
       extra.restore();
+      askScf.restore();
       saveNote.setAttribute("class", "status bad");
       mount(saveNote, "Not saved.");
     } finally {
@@ -231,8 +247,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
         f("Daily budget ($)", budget, hint("daily_budget_usd", `Spent today: $${info.spentToday.toFixed(2)}.`)),
         f("Runs at the same time", conc, hint("concurrency")))),
     section("Redesign",
-      redesign.row,
-      h("p", { class: "muted" }, "Off by default. Applies after you reload the page.")),
+      hinted(redesign.row, redesign.el, hint("ui.redesign", "Off by default. Applies after you reload the page."))),
     section("Network",
       h("p", { class: "muted flush" }, "Who can reach this page. For other computers, use HTTPS through a proxy on this Mac (see the user guide)."),
       h("div", { class: "grid" },
@@ -252,6 +267,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       f("Keep the audit log for … days", auditDays, hint("audit.retention_days"))),
     skills.el,
     ...extra.cards,
+    ...(askScf.card ? [askScf.card] : []),
     section("Notifications",
       hinted(macos.row, macos.el, hint("notify.macos")),
       h("p", { class: "muted text-sm mt-4 mb-10" },

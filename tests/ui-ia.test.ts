@@ -38,10 +38,10 @@ describe("resolve with a query", () => {
     expect(ia.resolve("user", "#/all-repos?repo=all")).toMatchObject({ hash: "#/runs", redirected: true });
   });
 
-  it("marks exactly six pages with scope and exports ALL_REPOS", () => {
+  it("marks exactly seven pages with scope and exports ALL_REPOS", () => {
     expect(ia.ALL_REPOS).toBe("all");
-    expect(ia.PAGES.filter((p: any) => p.scope).map((p: any) => p.id).sort()).toEqual(["all-repos", "board", "board-repo", "refinement", "repos", "runs"]);
-    for (const p of ia.PAGES.filter((x: any) => !["all-repos", "board", "board-repo", "refinement", "repos", "runs"].includes(x.id))) expect(p.scope, p.id).toBeUndefined();
+    expect(ia.PAGES.filter((p: any) => p.scope).map((p: any) => p.id).sort()).toEqual(["all-repos", "board", "board-repo", "epics", "refinement", "repos", "runs"]);
+    for (const p of ia.PAGES.filter((x: any) => !["all-repos", "board", "board-repo", "epics", "refinement", "repos", "runs"].includes(x.id))) expect(p.scope, p.id).toBeUndefined();
   });
 
   it("gives an empty query to every address without one", () => {
@@ -57,9 +57,11 @@ describe("resolve with a query", () => {
 });
 
 describe("the navigation lists", () => {
-  it("has seven primary destinations for an admin, four for a user, and one action each", () => {
-    expect(ia.primaryFor("admin").map((p: any) => p.id)).toEqual(["home", "board", "refinement", "runs", "repos", "flows", "administration"]);
-    expect(ia.primaryFor("user").map((p: any) => p.label)).toEqual(["Home", "My runs", "My repositories", "Refinement"]);
+  it("has eight primary destinations for an admin, five for a user, and one action each", () => {
+    expect(ia.MAX_PRIMARY).toBe(8);
+    expect(ia.primaryFor("admin").map((p: any) => p.id)).toEqual(["home", "board", "epics", "refinement", "runs", "repos", "flows", "administration"]);
+    expect(ia.primaryFor("user").map((p: any) => p.label)).toEqual(["Home", "Epics", "My runs", "My repositories", "Refinement"]);
+    for (const role of ["admin", "user"]) expect(ia.resolve(role, "#/epics?repo=acme%2Fapp")).toMatchObject({ redirected: false, page: { id: "epics" }, query: { repo: "acme/app" } });
     for (const role of ["admin", "user"]) {
       expect(ia.primaryFor(role).length).toBeLessThanOrEqual(ia.MAX_PRIMARY);
       expect(ia.actionsFor(role).map((a: any) => a.href)).toEqual(["#/start"]);
@@ -310,7 +312,7 @@ describe("commandsFor", () => {
 
   it("gives a user four pages and two actions, without board, flows or users", () => {
     const { goTo, actions } = ia.commandsFor("user");
-    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Refinement", "My runs", "My repositories"]);
+    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Epics", "Refinement", "My runs", "My repositories"]);
     expect(actions.map((a: any) => a.label)).toEqual(["Start work", "New refinement session"]);
     expect(actions[1]).toMatchObject({ href: "#/refinement", intent: "refinement", key: null });
   });

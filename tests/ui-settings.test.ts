@@ -108,6 +108,41 @@ describe("Settings → Network", () => {
   });
 });
 
+describe("Settings → Ask SCF", () => {
+  const cardTitles = (main: FakeElement) => main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes("card")).map((c) => c.all("h3")[0]?.textContent);
+  const cardOf = (main: FakeElement, title: string) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === title)!;
+  const stored = { enabled: false, sensitive_patterns: [" spaced ", "a\nb"], disabled_accounts: ["8f14e45f-ceea-467f-a0e6-1d2f9b5b5c11"], timeout_seconds: 60, max_parallel: 1, max_queued: 10, turns_per_user_per_day: 30, max_cost_usd_per_turn: 0.1 };
+
+  it("sits between User runs and Notifications", async () => {
+    const t = cardTitles((await render({})).main);
+    expect(t.indexOf("Ask SCF")).toBe(t.indexOf("User runs") + 1);
+    expect(t.indexOf("Notifications")).toBe(t.indexOf("Ask SCF") + 1);
+  });
+
+  it("saves the switch and a number and keeps the private patterns and accounts", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { help: stored });
+    const card = cardOf(main, "Ask SCF");
+    const sw = card.all("input").find((i) => i.attrs.type === "checkbox") as any;
+    sw.checked = true;
+    sw.fire("change", { target: sw });
+    const days = card.all("input").filter((i) => i.attrs.type === "number")[0] as any;
+    days.value = "45";
+    days.fire("change", { target: days });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].help.sensitive_patterns).toEqual([" spaced ", "a\nb"]);
+    expect(puts[0].help.disabled_accounts).toEqual(stored.disabled_accounts);
+    expect(puts[0].help.enabled).toBe(true);
+    expect(Object.values(puts[0].help)).toContain(45);
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  it("shows the hint of the redesign switch", async () => {
+    const { main } = await render({});
+    expect(cardOf(main, "Redesign").textContent).toContain("Takes effect at once.");
+  });
+});
+
 describe("Settings → Redesign", () => {
   const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Show the redesigned pages (still being built)"))!.all("input")[0] as any;
 
@@ -567,7 +602,7 @@ describe("Settings → Skills", () => {
 
   it("saves a non-risky change without a dialog and keeps releases and tools", async () => {
     const skills = skillsOf();
-    skills.releases.approved = [{ id: "x", name: "x", version: "1" }];
+    skills.releases.approved = [{ catalogue: "core", version: "1.0.0", digest: `sha256:${"a".repeat(64)}` }];
     skills.tools.network = true;
     const { main, puts } = await render({}, "127.0.0.1", 200, { skills });
     const input = labelled(main, labelOf("skills.selection.max_skills")) as any;
@@ -580,6 +615,53 @@ describe("Settings → Skills", () => {
     expect(puts[0].skills.selection.max_skills).toBe(3);
     expect(puts[0].skills.releases.approved).toEqual(skills.releases.approved);
     expect(puts[0].skills.tools).toEqual(skills.tools);
+  });
+
+  const group = (main: FakeElement, key: string) => main.all("div").find((g) => g.attrs.role === "group" && g.all("span").some((s) => s.attrs.id === g.attrs["aria-labelledby"] && s.textContent === labelOf(key)))!;
+
+  it("asks before turning network on", async () => {
+    const { main, puts } = await render({});
+    const box = main.all("label").find((l) => l.textContent.startsWith(labelOf("skills.tools.network")))!.all("input")[0] as any;
+    box.checked = true;
+    change(box);
+    save(main);
+    await flush();
+    expect(modalRoot().textContent).toContain("Skills that ask for network access may pass the plan gate.");
+    modalRoot().all("button").find((b) => b.textContent === "Save anyway")!.click();
+    await flush();
+    expect(puts).toHaveLength(1);
+    expect(puts[0].skills.tools.network).toBe(true);
+  });
+
+  it("saves approved releases edited as rows, trimmed", async () => {
+    const { main, puts } = await render({});
+    const g = group(main, "skills.releases.approved");
+    g.all("button").find((b) => b.textContent === "Add a row")!.click();
+    const values: Record<string, string> = { catalogue: " core ", version: "1.0.0 ", digest: ` sha256:${"b".repeat(64)}` };
+    for (const [k, v] of Object.entries(values)) {
+      const i = group(main, "skills.releases.approved").all("input").find((x) => x.attrs["aria-label"] === `Row 1, ${k}`)! as any;
+      i.value = v;
+      change(i);
+    }
+    save(main);
+    await flush();
+    expect(puts).toHaveLength(1);
+    expect(puts[0].skills.releases.approved).toEqual([{ catalogue: "core", version: "1.0.0", digest: `sha256:${"b".repeat(64)}` }]);
+  });
+
+  it("shows a release issue as Row N, field in the card, not as unplaced", async () => {
+    const skills = skillsOf();
+    skills.releases.approved = [{ catalogue: "core", version: "1.0.0", digest: "bad" }];
+    const { main } = await render({}, "127.0.0.1", 200, { skills });
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: "invalid config: x", issues: [{ path: "skills.releases.approved.0.digest", message: "must be sha256: and 64 hex digits" }] }) }
+      : real(url, init));
+    save(main);
+    await flush();
+    expect(group(main, "skills.releases.approved").textContent).toContain("Row 1, digest: must be sha256: and 64 hex digits");
+    expect(main.textContent).toContain("Not saved: see the messages in the Skills card.");
+    (globalThis as any).fetch = real;
   });
 
   it("asks before a risky change: Cancel sends nothing, Save anyway sends once", async () => {
@@ -614,6 +696,64 @@ describe("Settings → Skills", () => {
     await flush();
     expect(modalRoot().children).toHaveLength(0);
     expect(puts).toHaveLength(1);
+  });
+
+  it("shows the server's issues at their fields, then clears them on a save", async () => {
+    const { main } = await render({});
+    const real = (globalThis as any).fetch;
+    const issues = [
+      { path: "skills.selection.include.0", message: '"x" is also in exclude' },
+      { path: "skills.catalogue.include", message: "more pinned skills than max_candidates" },
+      { path: "skills.roots.1", message: "personal agent folders are never scanned" },
+    ];
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: 'invalid config: [{"message":"name"}]', issues }) }
+      : real(url, init));
+    save(main);
+    await flush();
+    const inField = (key: string) => labelled(main, labelOf(key)).parent!.textContent;
+    expect(inField("skills.selection.include")).toContain('"x" is also in exclude');
+    expect(inField("skills.catalogue.include")).toContain("more pinned skills than max_candidates");
+    expect(inField("skills.roots")).toContain("Line 2: personal agent folders are never scanned");
+    expect(main.textContent).toContain("Not saved: see the messages in the Skills card.");
+    expect(main.all("input").concat(main.all("select")).filter((c) => c.attrs["aria-invalid"] === "true" && !String(c.attrs.id ?? "").startsWith("scf-field"))).toHaveLength(0);
+    (globalThis as any).fetch = real;
+    save(main);
+    await flush();
+    const card = main.all("h3").find((h3) => h3.textContent === "Skills")!.parent!;
+    expect(card.all("div").filter((d) => d.attrs.role === "alert")).toHaveLength(0);
+    expect(main.textContent).not.toContain("Not saved: see the messages");
+  });
+
+  it("keeps the whole error in the banner and marks the control when an issue is not at the card", async () => {
+    const { main } = await render({});
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: "invalid config: BANNER-TEXT", issues: [
+        { path: "skills.roots.0", message: "bad folder" },
+        { path: "concurrency", message: "concurrency is too low" },
+      ] }) }
+      : real(url, init));
+    save(main);
+    await flush();
+    expect(labelled(main, labelOf("skills.roots")).parent!.textContent).toContain("Line 1: bad folder");
+    expect(main.textContent).toContain("BANNER-TEXT");
+    expect(main.all("input").some((i) => i.attrs["aria-invalid"] === "true" && i.attrs.type === "number")).toBe(true);
+  });
+
+  it("marks the control a structured path names, also for a key the sentence does not quote", async () => {
+    const { main } = await render({});
+    const real = (globalThis as any).fetch;
+    (globalThis as any).fetch = async (url: string, init?: any) => (init?.method === "PUT"
+      ? { ok: false, status: 400, statusText: "x", json: async () => ({ error: "invalid config: BANNER-TEXT", issues: [
+        { path: "skills.roots.0", message: "bad folder" },
+        { path: "self_update.repo", message: "Invalid string" },
+      ] }) }
+      : real(url, init));
+    save(main);
+    await flush();
+    const repo = main.all("input").find((i) => i.attrs.placeholder === "owner/name")!;
+    expect(repo.attrs["aria-invalid"]).toBe("true");
   });
 
   it("shows a message and keeps skills when the server cannot describe them", async () => {

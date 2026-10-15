@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { ConfigSchema } from "../src/config.js";
-import { EFFECT_TEXT, SETTING_TEXTS, describeSettings, isCovered, schemaLeaves, settingValue, startupSettings, unsupportedSettings, type SettingLeaf } from "../src/settings/describe.js";
+import { EFFECT_TEXT, ITEM_SETTINGS, SETTING_TEXTS, describeSettings, isCovered, schemaLeaves, settingKeys, settingValue, startupSettings, unsupportedSettings, type SettingLeaf } from "../src/settings/describe.js";
 
 type Entry = [key: string, value: unknown];
 
@@ -114,8 +114,24 @@ describe("what is described", () => {
     expect(isCovered("sandbox.user_read")).toBe(true);
     expect(isCovered("sandbox.user_runs")).toBe(true);
     expect(isCovered("monitoring")).toBe(false);
-    for (const k of ["ui.redesign", "help.enabled", "default_model"]) expect(isCovered(k), k).toBe(false);
-    expect(described).toHaveLength(91);
+    for (const k of ["ui.redesign", "help.enabled", "default_model", "router.fallback"]) expect(isCovered(k), k).toBe(true);
+    for (const k of ["help.disabled_accounts", "help.sensitive_patterns", "providers", "router.rules"]) expect(isCovered(k), k).toBe(false);
+    expect(described).toHaveLength(105);
+  });
+
+  it("lists the keys down to the leaves, lists of records once by their item shape", () => {
+    const keys = settingKeys();
+    for (const k of ["watchers.*.source", "watchers.*.status_labels.working", "watchers.*.vars", "providers.*.kind", "providers.*.price.input_per_mtok", "router.rules.*.model", "skills.releases.approved", "help.disabled_accounts", "help.sensitive_patterns", "ui.redesign"]) {
+      expect(keys, k).toContain(k);
+    }
+    expect(keys.some((k) => k.startsWith("skills.releases.approved."))).toBe(false);
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const l of schemaLeaves()) expect(keys, l.key).toContain(l.key);
+    for (const k of unsupportedSettings()) expect(keys.includes(k) || keys.some((x) => x.startsWith(`${k}.*.`)), k).toBe(true);
+    for (const [k, item] of Object.entries(ITEM_SETTINGS)) {
+      expect(unsupportedSettings(), k).toContain(k);
+      for (const f of Object.keys(item.fields)) expect(keys, `${k}.*.${f}`).toContain(`${k}.*.${f}`);
+    }
   });
 
   it("describes the settings of the Settings page with their effects and controls", () => {
@@ -212,6 +228,14 @@ describe("defaults and texts", () => {
     }
     expect(described.find((d) => d.key === "monitor.report_to")!.optional).toBe(true);
     expect(described.find((d) => d.key === "isolate_agents")!.default).toBe(true);
+  });
+  it("approved releases: help names the catalogue id, version and digest, and every skills setting has a generated control", () => {
+    const d = described.find((x) => x.key === "skills.releases.approved")!;
+    expect(d.help).toBe("The catalogue releases this installation accepts, each with its catalogue id, version and digest.");
+    expect(d.help).not.toMatch(/one per line/i);
+    const skills = described.filter((x) => x.key.startsWith("skills."));
+    expect(skills.length).toBeGreaterThan(10);
+    for (const s of skills) expect(s.control, s.key).toBe("generated");
   });
 
   it("every entry has a label, one sentence of help, and a known effect and control", () => {

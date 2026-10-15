@@ -57,23 +57,24 @@ describe("helpers", () => {
     const k = (status: string, over: any = {}, queued = false) => ui.runActions({ status, state: { next: "a" }, ...over }, queued);
     // Retry needs a step to continue at.
     for (const s of ["failed", "stopped", "cancelled"]) {
-      expect(ui.runActions({ status: s }), s).toEqual([]);
-      expect(ui.runActions({ status: s, state: { next: null } }), s).toEqual([]);
+      expect(ui.runActions({ status: s }), s).toEqual(s === "stopped" ? ["cancel"] : []);
+      expect(ui.runActions({ status: s, state: { next: null } }), s).toEqual(s === "stopped" ? ["cancel"] : []);
     }
     expect(k("waiting")).toEqual(["approve", "reject", "cancel"]);
     expect(k("running")).toEqual(["cancel"]);
     expect(k("failed")).toEqual(["retry"]);
-    expect(k("stopped")).toEqual(["retry"]);
+    expect(k("stopped")).toEqual(["retry", "cancel"]);
+    expect(k("stopped", { refinement: "s1" })).toEqual([]);
     expect(k("cancelled")).toEqual(["retry"]);
     expect(k("succeeded")).toEqual([]);
     expect(k("queued")).toEqual(["cancel"]);
     expect(k("failed", { refinement: "s1" })).toEqual([]);
     expect(k("failed", {}, true)).toEqual(["cancel"]);
-    for (const s of ["failed", "stopped", "cancelled"]) expect(k(s, { next: { kind: "issue_closed" } })).toEqual([]);
+    for (const s of ["failed", "stopped", "cancelled"]) expect(k(s, { next: { kind: "issue_closed" } })).toEqual(s === "stopped" ? ["cancel"] : []);
     expect(k("waiting", { next: { kind: "issue_closed" } })).toEqual(["cancel"]);
     expect(k("failed", { next: { kind: "failed" } })).toEqual(["retry"]);
     expect(k("waiting", {}, true)).toEqual(["cancel"]);
-    for (const s of ["failed", "stopped", "cancelled"]) expect(k(s, { next: { kind: "failed", retired: true } })).toEqual([]);
+    for (const s of ["failed", "stopped", "cancelled"]) expect(k(s, { next: { kind: "failed", retired: true } })).toEqual(s === "stopped" ? ["cancel"] : []);
     expect(k("waiting", { next: { kind: "approval", retired: true } })).toEqual(["cancel"]);
   });
 
@@ -556,7 +557,8 @@ describe("renderMyRun", () => {
       [{ status: "waiting", next: rec("approval") }, ["Approve", "Reject", "Cancel"]],
       [{ status: "running" }, ["Cancel"]],
       [{ status: "failed" }, ["Retry from the failing step"]],
-      [{ status: "stopped" }, ["Retry from the failing step"]],
+      [{ status: "stopped" }, ["Retry from the failing step", "Cancel"]],
+      [{ status: "stopped", refinement: "s1" }, []],
       [{ status: "cancelled" }, ["Retry from the failing step"]],
       [{ status: "succeeded" }, []],
       [{ status: "queued" }, ["Cancel"]],

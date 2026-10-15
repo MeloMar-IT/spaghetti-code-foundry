@@ -17,9 +17,18 @@ function storyOf(run: RunSummary): { repo: string; issue: number } | undefined {
 
 /** Every story the server knows, in columns. */
 export function boardFor(ctx: ApiContext, now = new Date()): Board {
+  const { sources, repos } = boardSources(ctx, now);
+  return buildBoard(sources, { now, repos });
+}
+
+/**
+ * One source per story: the watchers' records, newer live runs taking a stale snapshot over, runs no watcher speaks
+ * for, and queued jobs without a run file. `forUser` gives the words of a user (no amounts, no admin pages).
+ */
+export function boardSources(ctx: ApiContext, now = new Date(), forUser = false): { sources: BoardSource[]; repos: string[] } {
   const cfg = ctx.config();
   const list = knownRuns(ctx);
-  const c = collectNext(ctx, list);
+  const c = collectNext(ctx, list, forUser);
   const q = ctx.scheduler.queue();
   const byRun = new Map(list.map((r) => [r.runId, r]));
   const ownerOf = ownerInfo(ctx, list);
@@ -84,10 +93,10 @@ export function boardFor(ctx: ApiContext, now = new Date()): Board {
     if (ctx.scheduler.get(p.runId)) continue;
     const at = covered.get(key);
     // the board is an admin view: a budget hold names the amount
-    const budget = p.limit === "budget" ? ctx.scheduler.userDailyBudget(ownerOf(p.runId).owner ?? "") : undefined;
-    if (at === undefined) { covered.set(key, sources.length); sources.push({ next: jobNext(p, false, budget), rank: 3, goesFirst: p.priority }); continue; }
+    const budget = !forUser && p.limit === "budget" ? ctx.scheduler.userDailyBudget(ownerOf(p.runId).owner ?? "") : undefined;
+    if (at === undefined) { covered.set(key, sources.length); sources.push({ next: jobNext(p, forUser, budget), rank: 3, goesFirst: p.priority }); continue; }
     if (takesOver(key, p.runId)) {
-      const next = jobNext(p, false, budget);
+      const next = jobNext(p, forUser, budget);
       sources[at] = { next: { ...next, title: sources[at]!.next.title || next.title }, rank: 0, watcher: sources[at]!.watcher, goesFirst: sources[at]!.goesFirst };
     }
   }
@@ -95,7 +104,7 @@ export function boardFor(ctx: ApiContext, now = new Date()): Board {
   const repos = cfg.watchers.filter((w) => w.enabled && w.source === "issues").map((w) => w.github_repo);
   const who = ownerInfo(ctx, list);
   for (const s of sources) Object.assign(s, who(s.next.runId ?? s.runId));
-  return buildBoard(sources, { now, repos });
+  return { sources, repos };
 }
 
 export const boardRoutes: Route = async (ctx, _req, res, seg, method) => {

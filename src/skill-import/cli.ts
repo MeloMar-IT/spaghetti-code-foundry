@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
 import { addLicenceEvidence, collectImportEvidence } from "../skills/import-evidence.js";
 import { prepareLicenceEvidence } from "../skills/import-licence.js";
-import { prepareImport, SkillImportError, type PreparedImport, type RejectedSkill } from "../skills/import-plan.js";
+import { prepareImport, SkillImportError, type ImportRecord, type PreparedImport, type RejectedSkill } from "../skills/import-plan.js";
 import { publishImport } from "../skills/import-stage.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
-import { readSources, shownValue, SOURCES_FILE } from "../skills/sources.js";
+import { readSources, shownValue, SOURCES_FILE, type SkillLibrarySource } from "../skills/sources.js";
 import { GitTreeError, openGitTree, type GitTreeErrorCode } from "./git-tree.js";
 
 // `scf skills import <source-id> [<file>]`: fetches the approved commit of an enabled source and stages its skills
@@ -24,7 +24,7 @@ export interface SkillImportOptions {
 }
 
 const syntax = (why: string) => new Error(`${why}\n${IMPORT_USAGE}`);
-const INTERRUPTED = "PROBLEM the import was interrupted; nothing was staged";
+export const INTERRUPTED = "PROBLEM the import was interrupted; nothing was staged";
 
 export function gitSentence(code: GitTreeErrorCode, key: string, commit: string): string {
   switch (code) {
@@ -50,6 +50,71 @@ export function gitSentence(code: GitTreeErrorCode, key: string, commit: string)
 const rejectedLines = (out: (line: string) => void, rejected: readonly RejectedSkill[]) => {
   for (const r of rejected) out(`REJECTED ${r.root}: ${r.reasons.join("; ")}`);
 };
+
+export interface StageDone {
+  record: ImportRecord;
+  dir: string;
+  state: "staged" | "unchanged";
+}
+
+/**
+ * Fetches `commit` of `source`, runs the import checks and stages it into the quarantine. Prints the staged skills, the
+ * rejected ones and the OK line, or one fixed PROBLEM. Returns 0 with `done` when staged (rejected skills do not change that),
+ * else 1.
+ */
+export async function stageSource(
+  source: SkillLibrarySource,
+  commit: string,
+  out: (line: string) => void,
+  opts: Omit<SkillImportOptions, "cwd"> & { signal: AbortSignal },
+): Promise<{ code: number; done?: StageDone }> {
+  let prep: PreparedImport | undefined;
+  let failed: unknown;
+  try {
+    const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: opts.signal });
+    try {
+      prep = prepareImport(source, tree);
+      // Any git failure, a licence file that cannot be read included, ends the import (the fixed PROBLEM line).
+      const licence = prepareLicenceEvidence(
+        collectImportEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree),
+      );
+      prep = addLicenceEvidence(prep, licence, (opts.now ?? new Date()).toISOString().slice(0, 19) + "Z");
+    } finally {
+      tree.close();
+    }
+  } catch (e) {
+    failed = e;
+  }
+  if (failed !== undefined && !(failed instanceof GitTreeError) && !(failed instanceof SkillImportError)) throw failed;
+  // A signal that came in while a synchronous git call ran is delivered by the next event-loop turns.
+  await new Promise<void>((r) => setImmediate(r));
+  await new Promise<void>((r) => setImmediate(r));
+  if (opts.signal.aborted) {
+    out(INTERRUPTED);
+    return { code: 1 };
+  }
+  try {
+    if (failed !== undefined) throw failed;
+    const done = publishImport(prep!, { home: opts.home });
+    const rec = done.record;
+    for (const s of rec.skills) out(`${shownValue(s.root).padEnd(40)} ${s.name} ${s.digest} ${s.files} files ${s.bytes} bytes`);
+    rejectedLines(out, rec.rejected);
+    out(`OK ${rec.skills.length} skills staged from ${rec.repositoryKey}@${rec.commit.slice(0, 12)} ${rec.digest} (${done.state})`);
+    out(`Quarantine: ${done.dir}`);
+    return { code: 0, done };
+  } catch (e) {
+    if (e instanceof GitTreeError) {
+      out(`PROBLEM ${gitSentence(e.code, source.repositoryKey, commit)}`);
+      return { code: 1 };
+    }
+    if (e instanceof SkillImportError) {
+      if (e.code === "nothing-staged") rejectedLines(out, e.rejected);
+      out(`PROBLEM ${e.message}`);
+      return { code: 1 };
+    }
+    throw e;
+  }
+}
 
 /** `scf skills import`. `positionals` are the operands after "import"; the syntax is checked before any read. */
 export async function skillImportCommand(
@@ -91,52 +156,8 @@ export async function skillImportCommand(
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
-    let prep: PreparedImport | undefined;
-    let failed: unknown;
-    try {
-      const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: aborter.signal });
-      try {
-        prep = prepareImport(source, tree);
-        // Any git failure, a licence file that cannot be read included, ends the import (the fixed PROBLEM line).
-        const licence = prepareLicenceEvidence(
-          collectImportEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree),
-        );
-        prep = addLicenceEvidence(prep, licence, (opts.now ?? new Date()).toISOString().slice(0, 19) + "Z");
-      } finally {
-        tree.close();
-      }
-    } catch (e) {
-      failed = e;
-    }
-    if (failed !== undefined && !(failed instanceof GitTreeError) && !(failed instanceof SkillImportError)) throw failed;
-    // A signal that came in while a synchronous git call ran is delivered by the next event-loop turns.
-    await new Promise<void>((r) => setImmediate(r));
-    await new Promise<void>((r) => setImmediate(r));
-    if (aborter.signal.aborted) {
-      out(INTERRUPTED);
-      return 1;
-    }
-    try {
-      if (failed !== undefined) throw failed;
-      const done = publishImport(prep!,{ home: opts.home });
-      const rec = done.record;
-      for (const s of rec.skills) out(`${shownValue(s.root).padEnd(40)} ${s.name} ${s.digest} ${s.files} files ${s.bytes} bytes`);
-      rejectedLines(out, rec.rejected);
-      out(`OK ${rec.skills.length} skills staged from ${rec.repositoryKey}@${rec.commit.slice(0, 12)} ${rec.digest} (${done.state})`);
-      out(`Quarantine: ${done.dir}`);
-      return rec.rejected.length > 0 ? 1 : 0;
-    } catch (e) {
-      if (e instanceof GitTreeError) {
-        out(`PROBLEM ${gitSentence(e.code, source.repositoryKey, commit)}`);
-        return 1;
-      }
-      if (e instanceof SkillImportError) {
-        if (e.code === "nothing-staged") rejectedLines(out, e.rejected);
-        out(`PROBLEM ${e.message}`);
-        return 1;
-      }
-      throw e;
-    }
+    const r = await stageSource(source, commit, out, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal: aborter.signal });
+    return r.code === 0 && r.done && r.done.record.rejected.length > 0 ? 1 : r.code;
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
