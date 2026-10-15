@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- `skill-sources.yaml`: two sources enabled after the owner's review on 2026-10-15: `spring-agent-skills` (community, Apache-2.0, 6 skills, reviewed at `f2287316`) and `anthropic-skills` (verified, Apache-2.0, `frontend-design`, `webapp-testing` and `mcp-builder` only, at `dbd4588f`, with `licence.reviewed`). Both pass `scf skills promote check`. Anthropic's `docx`, `pdf`, `pptx` and `xlsx` are left out (not open source); `skill-creator` and `claude-api` are refused by the scanner and size limits.
 - Skill libraries publishing 1b-2: release store. `publishRelease` in `src/skills/release-store.ts` writes a schema-2 release to `skill-releases/<catalogue>/<version>` once: built in a private `.tmp-` folder, checked with `verifyRelease`, then moved into place in one step; an existing version is never replaced (`unchanged` or `refused`). New `foundryPackageFiles` (#545). Part 2 of 3 of #540.
 - Skill libraries publishing 1b-1: `skill-releases.yaml` and `scf skills releases check`, offline and read-only (#544). Part 1 of 3 of #540.
   - **File.** `skill-releases.yaml` in the catalogue repository lists the catalogue versions to publish (`schema: 1`, `repository`, up to 200 `releases`). Each release has `catalogue`, `version`, 1 to 500 `skills` (`{source, id}`), an optional `review` (`by`, `on`) and an optional `revoked` list (`id`, `version`, `on`, `reason`). Unknown keys, duplicate ids and duplicate `catalogue`@`version` pairs are refused.
