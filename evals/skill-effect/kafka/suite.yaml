@@ -1,0 +1,132 @@
+# Example sample tasks for `scf skills effect` (schema 1), for a Kafka skill. No network, no credentials: the fixture holds a small
+# kafkajs producer and consumer, and every check runs the changed code against stubbed clients with injected timing.
+# Cost: 5 scenarios x repeat 4 x 2 arms (with and without the skill) = 40 agent sessions.
+# Each check is one line (a folded block) that runs `node` in the work folder; it passes only when the behaviour is right,
+# so a comment or an unused string cannot pass it. Try one scenario first: the check runs inside the sandbox.
+schema: 1
+selection:
+  - id: kafka-dependency
+    repo: fixtures/orders
+    task: Add a retry to the consumer.
+    expect: offered
+  - id: web-only
+    repo: fixtures/web
+    task: Refactor the page templates.
+    expect: not-offered
+conflicts:
+  - id: against-approved
+    with: all
+context:
+  - id: coder-budget
+    max_instruction_tokens: 3000
+    max_description_chars: 160
+tools:
+  - id: read-only
+    policy: { shell: false, network: false, filesystem: read }
+instructions:
+  repeat: 4
+  scenarios:
+    - id: idempotent-producer
+      repo: fixtures/orders
+      task: >-
+        In src/producer.js make the order producer idempotent, so that a retried send cannot write an order twice.
+        Keep the exports and their parameters. Do not import kafkajs in src/producer.js: the caller makes the client.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; setTimeout(() => process.exit(2), 5000).unref();
+        try { const m = await import(pathToFileURL("src/producer.js").href); let cfg; const sends = [];
+        const kafka = { producer: (o) => { cfg = o; return { connect: async () => {}, disconnect: async () => {}, send: async (r) => { sends.push(r); } }; } };
+        const p = m.createOrderProducer(kafka); await m.publishOrder(p, { orderId: "o-1", total: 5 });
+        const acksOk = sends.length > 0 && sends.every((r) => r.acks === undefined || r.acks === -1);
+        const retriesOk = cfg?.retry?.retries !== 0;
+        if (!(cfg && cfg.idempotent === true && acksOk && retriesOk)) process.exitCode = 1; } catch { process.exitCode = 1; }'
+    - id: key-by-order
+      repo: fixtures/orders
+      task: >-
+        In src/producer.js publish each order with its orderId as the message key, so that all messages of one order
+        stay in one partition and in order. Keep the exports and their parameters, and keep the order as JSON in the value.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; setTimeout(() => process.exit(2), 5000).unref();
+        try { const m = await import(pathToFileURL("src/producer.js").href); const sends = [];
+        const producer = { send: async (r) => { sends.push(r); } };
+        const orders = [{ orderId: "o-42", total: 5 }, { orderId: "o-7", total: 9 }];
+        for (const o of orders) await m.publishOrder(producer, o);
+        const msgs = sends.flatMap((r) => r.messages);
+        const ok = msgs.length === 2 && msgs.every((x, i) => x.key !== undefined && x.key !== null && String(x.key) === orders[i].orderId
+        && JSON.parse(String(x.value)).orderId === orders[i].orderId && JSON.parse(String(x.value)).total === orders[i].total);
+        if (!ok) process.exitCode = 1; } catch { process.exitCode = 1; }'
+    - id: commit-after-processing
+      repo: fixtures/orders
+      task: >-
+        In src/consumer.js turn off the automatic offset commit of consumer.run (autoCommit false). In the eachMessage handler
+        commit the offset of a message with consumer.commitOffsets, as [{ topic, partition, offset }] with the offset of the message plus one,
+        only after deps.process has finished for that message. When deps.process fails, do not commit and let the error come out.
+        Keep eachMessage and the exports.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; setTimeout(() => process.exit(2), 5000).unref();
+        try { const m = await import(pathToFileURL("src/consumer.js").href); const log = []; let cfg;
+        const consumer = { connect: async () => {}, subscribe: async () => {}, run: async (c) => { cfg = c; },
+        commitOffsets: async (o) => { log.push(["commit", ...o.map((x) => x.topic + "/" + x.partition + "/" + String(x.offset))]); } };
+        const mk = (offset) => ({ topic: "orders", partition: 0, message: { offset, key: null, value: Buffer.from(JSON.stringify({ orderId: "o-1" })) } });
+        let failing = false;
+        const deps = { process: async () => { await new Promise((r) => setImmediate(r)); log.push(["processed"]); if (failing) throw new Error("boom"); },
+        producer: { send: async () => { throw new Error("down"); } }, sleep: async () => {} };
+        await m.runOrderConsumer(consumer, deps);
+        if (!cfg || cfg.autoCommit !== false) process.exitCode = 1; else {
+        await cfg.eachMessage(mk("10")); failing = true; let threw = false; try { await cfg.eachMessage(mk("12")); } catch { threw = true; }
+        const commits = log.filter((x) => x[0] === "commit").map((x) => x.slice(1).join(","));
+        const inOrder = log.findIndex((x) => x[0] === "processed") < log.findIndex((x) => x[0] === "commit");
+        if (!(threw && inOrder && commits.length === 1 && commits[0] === "orders/0/11")) process.exitCode = 1; } } catch { process.exitCode = 1; }'
+    - id: dead-letter
+      repo: fixtures/orders
+      task: >-
+        In src/consumer.js, when deps.process fails for a message, send that message to the topic orders.dlq with deps.producer.send
+        (record { topic, messages: [{ key, value }] }, with the same key and value as the original message) and treat the message as handled.
+        If that send fails too, handleMessage must fail. Keep the exports and their parameters.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; setTimeout(() => process.exit(2), 5000).unref();
+        try { const m = await import(pathToFileURL("src/consumer.js").href); const sent = [];
+        const mkDeps = (sendFails) => ({ process: async () => { throw new Error("bad order"); },
+        producer: { send: async (r) => { if (sendFails) throw new Error("down"); sent.push(r); } }, sleep: async () => {} });
+        const payload = { topic: "orders", partition: 0, message: { offset: "5", key: Buffer.from("o-9"), value: Buffer.from(JSON.stringify({ orderId: "o-9" })) } };
+        await m.handleMessage(payload, mkDeps(false));
+        const msg = sent.length === 1 && sent[0].topic === "orders.dlq" ? sent[0].messages?.[0] : undefined;
+        const same = msg !== undefined && String(msg.key) === "o-9" && String(msg.value) === payload.message.value.toString();
+        let rejected = false; try { await m.handleMessage(payload, mkDeps(true)); } catch { rejected = true; }
+        const fine = []; let calls = 0;
+        await m.handleMessage(payload, { process: async () => { calls++; }, producer: { send: async (r) => { fine.push(r); } }, sleep: async () => {} });
+        if (!(same && rejected && calls === 1 && fine.length === 0)) process.exitCode = 1; } catch { process.exitCode = 1; }'
+    - id: retry-backoff
+      repo: fixtures/orders
+      task: >-
+        In src/consumer.js make handleMessage retry deps.process when it fails: wait with deps.sleep(ms) between the attempts, each wait longer
+        than the one before (exponential backoff), at most 5 attempts in all, then fail with the last error. Never call setTimeout.
+        Keep the exports and their parameters.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; setTimeout(() => process.exit(2), 5000).unref();
+        try { const m = await import(pathToFileURL("src/consumer.js").href);
+        const payload = { topic: "orders", partition: 0, message: { offset: "5", key: null, value: Buffer.from(JSON.stringify({ orderId: "o-1" })) } };
+        const busy = new Error("busy");
+        const run = async (failures) => { const s = { calls: 0, sleeps: [] };
+        const deps = { process: async () => { s.calls++; if (s.calls <= failures) throw busy; },
+        producer: { send: async () => {} }, sleep: async (ms) => { s.sleeps.push(ms); } };
+        let rejected = false; try { await m.handleMessage(payload, deps); } catch (e) { rejected = e === busy; } return { ...s, rejected }; };
+        const a = await run(2); const b = await run(1000);
+        const up = (x) => x.every((v, i) => typeof v === "number" && v > 0 && (i === 0 || v > x[i - 1]));
+        const okA = !a.rejected && a.calls === 3 && a.sleeps.length === 2 && up(a.sleeps);
+        const okB = b.rejected && b.calls >= 2 && b.calls <= 5 && b.sleeps.length === b.calls - 1 && up(b.sleeps);
+        if (!(okA && okB)) process.exitCode = 1; } catch { process.exitCode = 1; }'

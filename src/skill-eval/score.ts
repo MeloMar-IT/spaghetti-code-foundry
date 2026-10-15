@@ -8,7 +8,7 @@ import { loadConfig, type Config } from "../config.js";
 import { sandboxAvailable } from "../engine/os-sandbox.js";
 import { EVALUATION_SUITE_DEFAULT, type EvaluationDimension } from "../skills/evaluation-rules.js";
 import { scoreEvaluation, type ComparedSkill } from "../skills/evaluation-score.js";
-import type { EvaluationAgent, EvaluationAgentBaseline, EvaluationAgentRun } from "../skills/evaluation-instructions.js";
+import type { EvaluationAgent, EvaluationAgentBaseline, EvaluationAgentRun, InstructionsSuite } from "../skills/evaluation-instructions.js";
 import { prepareScoring, writeScores, type EvaluateCliOptions, type Item, type RecordExtras, type ScoredItem } from "../skills/evaluate-cli.js";
 import { hidden, loadExceptions } from "../skills/staged-import.js";
 import { applyExceptions, promotionBlockers, type ScanException } from "../skills/scan-exceptions.js";
@@ -39,30 +39,38 @@ type Out = (line: string) => void;
 export const INTERRUPTED = "PROBLEM the evaluation was interrupted";
 const MAX_BASELINES = 4;
 
-function blockedReason(it: Item): string | undefined {
+export function blockedReason(it: Item): string | undefined {
   const blockers = promotionBlockers(it.safety).length;
   if (blockers > 0) return `${blockers} promotion blocker${blockers === 1 ? "" : "s"}`;
   if (it.licence !== "allowed") return `licence ${it.licence}`;
   return undefined;
 }
 
-/** The refusals that come before anything is made. Returns the target and the outbound rule, or prints a PROBLEM. */
-function preflight(plan: NonNullable<ReturnType<typeof prepareScoring>>, config: Config, opts: AgentScoreOptions, out: Out): { target: Target; outbound: ReturnType<typeof outboundFor> } | undefined {
+/**
+ * The refusals that come before anything is made: sandbox, model, key, base URL, signal. Returns the target and the outbound rule, or
+ * prints a PROBLEM. `who` names the command in the texts (default `--agent`, for `scf skills score --agent`).
+ */
+export function agentPreflight(
+  ins: InstructionsSuite | undefined,
+  config: Config,
+  opts: { signal?: AbortSignal; who?: string },
+  out: Out,
+): { target: Target; outbound: ReturnType<typeof outboundFor> } | undefined {
+  const who = opts.who ?? "--agent";
   const refuse = (why: string) => {
     out(`PROBLEM ${why}`);
     return undefined;
   };
-  if (!sandboxAvailable()) return refuse("the OS sandbox is not available on this computer; --agent runs only in the sandbox");
-  if (process.env.SCF_USER_SANDBOX === "off" || process.env.FACTORY_USER_SANDBOX === "off") return refuse("the sandbox is switched off (SCF_USER_SANDBOX or FACTORY_USER_SANDBOX); --agent runs only in the sandbox");
-  const ins = plan.prepared.suite.suite.instructions;
-  if (!ins || ins.scenarios.length === 0) return refuse("the suite has no instructions scenarios; there is nothing to run with --agent");
+  if (!sandboxAvailable()) return refuse(`the OS sandbox is not available on this computer; ${who} runs only in the sandbox`);
+  if (process.env.SCF_USER_SANDBOX === "off" || process.env.FACTORY_USER_SANDBOX === "off") return refuse(`the sandbox is switched off (SCF_USER_SANDBOX or FACTORY_USER_SANDBOX); ${who} runs only in the sandbox`);
+  if (!ins || ins.scenarios.length === 0) return refuse(`the suite has no instructions scenarios; there is nothing to run with ${who}`);
   let target: Target;
   try {
     target = toTarget(specOf(config.default_model, config), config);
   } catch (e) {
     return refuse(`the default model cannot be used (${hidden((e as Error).message)})`);
   }
-  if (target.agent !== "claude") return refuse(`the default model runs with ${target.agent}; --agent needs Claude Code`);
+  if (target.agent !== "claude") return refuse(`the default model runs with ${target.agent}; ${who} needs Claude Code`);
   let env: NodeJS.ProcessEnv;
   try {
     env = agentEnvFor(target, evaluationConfig(config, { shell: false, network: false, filesystem: "read" }, []), process.env);
@@ -77,11 +85,21 @@ function preflight(plan: NonNullable<ReturnType<typeof prepareScoring>>, config:
   } catch {
     return refuse("the base URL of the model is not valid");
   }
-  for (const s of plan.scored) {
-    if (s.item.checks.baselines.length > MAX_BASELINES) return refuse(`${s.item.id}: ${s.item.checks.baselines.length} baselines; at most ${MAX_BASELINES} can be run`);
-  }
   if (opts.signal?.aborted) return refuse("the evaluation was interrupted");
   return { target, outbound };
+}
+
+/** The refusals of `score --agent`: the shared ones, then the number of baselines. */
+function preflight(plan: NonNullable<ReturnType<typeof prepareScoring>>, config: Config, opts: AgentScoreOptions, out: Out): { target: Target; outbound: ReturnType<typeof outboundFor> } | undefined {
+  const ready = agentPreflight(plan.prepared.suite.suite.instructions, config, opts, out);
+  if (!ready) return undefined;
+  for (const s of plan.scored) {
+    if (s.item.checks.baselines.length > MAX_BASELINES) {
+      out(`PROBLEM ${s.item.id}: ${s.item.checks.baselines.length} baselines; at most ${MAX_BASELINES} can be run`);
+      return undefined;
+    }
+  }
+  return ready;
 }
 
 export async function scoreImportWithAgent(id: string, suiteFile: string | undefined, out: Out, opts: AgentScoreOptions): Promise<number> {
@@ -230,7 +248,7 @@ async function runItem(
       runtime: { agent: ctx.target.agent, model: ctx.target.model ?? "default" },
       agent,
       findings,
-      evidence: [{ name: "agent-package", digest: own.packageDigest }],
+      evidence: [{ name: "agent-package", digest: own.packageDigest! }],
     },
   };
 }

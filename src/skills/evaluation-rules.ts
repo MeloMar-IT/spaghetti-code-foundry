@@ -68,3 +68,11 @@ export const EVALUATION_AGENT_CONFIG: readonly string[] = [".claude", ".mcp.json
 export const EVALUATION_SUITE_DEFAULT = "skill-evaluation.yaml";
 export const EVALUATIONS_DIR = "skill-evaluations";
 export const EVALUATION_STORE_LIMITS = { recordBytes: 2_097_152, files: 5000, linkTries: 20 } as const;
+
+// The effect of a skill (skills/effect.ts, skill-eval/effect.ts): sample tasks run with and without the skill on the same model.
+export const EFFECTS_DIR = "skill-effects";
+export const EFFECT_FILE_PREFIX = "effect";
+export const EFFECT_RULE = { alpha: 0.05, minDifference: 0.2 } as const;
+export const EFFECT_LIMITS = { runsPerArm: 200, tokens: 1_000_000_000, durationMs: 604_800_000, modelChars: 200, walkNodes: 20000, walkDepth: 8 } as const;
+export const EFFECT_VERDICTS = ["helps", "no-measurable-effect", "harms"] as const;
+export const EFFECT_REASONS = ["pass-rate-higher", "pass-rate-lower", "not-significant", "never-selected"] as const;

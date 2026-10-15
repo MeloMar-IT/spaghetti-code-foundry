@@ -99,7 +99,7 @@ export function gateChecks(candidate: NormalizedSkill, peers: readonly Normalize
   return { rivals, upgrade: relevant.length > 0, baselines, unresolved, ...(baselines[0] ? { baseline: baselines[0] } : {}), unverified };
 }
 
-const foundryVersion = (): string => {
+export const foundryVersion =(): string => {
   try {
     const dir = dirname(fileURLToPath(import.meta.url));
     const v = (JSON.parse(readFileSync(join(dir, "../../package.json"), "utf8")) as { version?: unknown }).version;

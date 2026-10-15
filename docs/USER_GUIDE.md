@@ -4152,6 +4152,37 @@ PASSED kafka-consumer@1.2.0 new
 - **Interruption.** On Ctrl-C or SIGTERM, or on an error, every running job is cancelled and waited for, the temporary folders are removed and your environment is restored. It prints `PROBLEM the evaluation was interrupted` and writes no record. Run it again to get a record.
 - **`evaluate` and `score`.** `scf skills evaluate … --agent` is refused with a message that points to `score --agent`. Plain `scf skills score` and `scf skills gate` are unchanged.
 
+##### Measure the effect of a skill
+
+`scf skills effect` answers one question: does a skill change what an agent does on the sample tasks? It runs the skill's `instructions` scenarios twice on the same model, once with the skill and once without it, and stores the verdict. It runs in the CLI process only, like `score --agent`, and it needs the same requirements: the macOS sandbox (`sandbox-exec`) and a Claude model key.
+
+```
+scf skills effect example-skills kafka-consumer
+scf skills effect kafka-x@1.0.0
+```
+
+The first form is for a staged skill of an import. The second is for an approved, pinned skill of the registry. A skill that is not staged, not approved, not active or not pinned is refused with a `PROBLEM` line, and nothing runs.
+
+- **What runs.** Only the scenarios where the skill is offered: the skill catalogue, built from the scenario's fixture and task, lists the skill with evidence. This is the same choice the agent would see in a normal session. A scenario where the skill is not offered prints `SKIPPED <key> <scenario>: not offered; not run`. Each offered scenario runs `repeat` times in each arm (the `instructions.repeat` of the suite). The without arm runs the same tasks with skills off.
+- **Verdict.** The pass rates of the two arms are compared with a two-sided Fisher exact test. The verdict is:
+  - `helps` when p ≤ 0.05 and the with-arm pass rate is at least 0.2 higher (`pass-rate-higher`);
+  - `harms` when p ≤ 0.05 and it is at least 0.2 lower (`pass-rate-lower`);
+  - `no-measurable-effect` otherwise (`not-significant`).
+
+  If no scenario is offered, nothing runs and the verdict is `no-measurable-effect` (`never-selected`). If scenarios are offered but the skill never loads in the with arm, both arms still run, and the verdict is `never-selected` as well.
+- **Tokens and time.** They are reported only. They do not change the verdict.
+- **Output.** One `RUN` line per run, one `SKIPPED` line per scenario that is not offered, then one `EFFECT` line. Illustrative output (the numbers are made up):
+
+  ```
+  EFFECT example-skills@1.2.0 helps (pass-rate-higher): with 18/20, without 10/20, difference +0.40, p 0.0138; tokens 412000 vs 355000; time 610 s vs 540 s
+  STORED skill-effects/kafka-consumer/3f9a…/effect--0000000001.json
+  ```
+
+  A refusal or an interrupt prints `PROBLEM …` (and `INTERRUPTED` on Ctrl-C, SIGTERM or an error), exits 1 and writes nothing.
+- **Where records go.** `<data folder>/skill-effects/<id>/<digest>/effect--<sequence>.json`. Each record holds the suite, the runs, the verdict and the runtime (Foundry and Node versions, agent and model). Records are only added, never replaced. Nothing reads them automatically yet.
+- **Cost.** The number of agent sessions is offered scenarios × `repeat` × 2. The tokens are about that number times the tokens of one session. For the example suite in `evals/skill-effect/kafka/`, all 5 scenarios are offered, so 5 × 4 × 2 = 40 sessions.
+- **Example set.** `evals/skill-effect/kafka/suite.yaml` has five Kafka tasks (idempotent producer, commit after processing, key by order, dead letter, retry with backoff) on the `fixtures/orders` project. It has no network and no credentials. Its checks are offline behaviour tests with stubbed clients.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
@@ -5044,6 +5075,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
 | `scf skills score <source-id> [<suite-file>] [--agent]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline, except `--agent`, which also runs the instructions scenarios in the macOS sandbox ([Run the scenarios in the sandbox](#run-the-scenarios-in-the-sandbox)); exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes) or `PROBLEM` per staged skill from its newest record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
+| `scf skills effect <source-id> <skill-id> [<suite-file>]` or `scf skills effect <id@version> [<suite-file>]` | Run the skill's sample tasks with and without the skill in the macOS sandbox and store the verdict (`helps`, `no-measurable-effect` or `harms`) under `skill-effects/`; prints `RUN`, `SKIPPED`, `EFFECT`, `STORED` lines; exits 1 on a `PROBLEM` or an interrupt ([Measure the effect of a skill](#measure-the-effect-of-a-skill)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

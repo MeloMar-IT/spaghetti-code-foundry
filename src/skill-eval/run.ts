@@ -111,14 +111,14 @@ export function evaluationConfig(real: Config, policy: ToolsScenario["policy"], 
   });
 }
 
-/** The flow of one run: clone the fixture snapshot, let the agent work, then check. Suite text goes in by variables only. */
-export function evaluationFlow(skillId: string, scenario: InstructionsScenario, model: string | undefined, deadlines: { fixtureSec: number; checkSec: number } = EVAL_DEADLINES): Flow {
+/** The flow of one run: clone the fixture snapshot, let the agent work, then check. Suite text goes in by variables only. Without a skill id the flow has skills off. */
+export function evaluationFlow(skillId: string | undefined, scenario: InstructionsScenario, model: string | undefined, deadlines: { fixtureSec: number; checkSec: number } = EVAL_DEADLINES): Flow {
   return FlowSchema.parse({
     name: "skill-evaluation",
     workspace: "empty",
     one_per_repo: false,
     defaults: model ? { model } : {},
-    skills: { mode: "explicit", ids: [skillId] },
+    skills: skillId === undefined ? { mode: "off" } : { mode: "explicit", ids: [skillId] },
     steps: [
       { id: "fixture", type: "shell", run: 'git clone -q --no-hardlinks "$FACTORY_VAR_EVAL_FIXTURE" .', timeout_sec: deadlines.fixtureSec },
       { id: "work", type: "claude", prompt: "{{task}}", permission_mode: "dontAsk", allowed_tools: scenarioTools(scenario.policy), timeout_sec: scenario.timeout_sec },
@@ -129,19 +129,42 @@ export function evaluationFlow(skillId: string, scenario: InstructionsScenario, 
 
 export type RunFinding = "agent-failed" | "check-failed" | "skill-not-loaded";
 
-/** 1 only when fixture, work and check succeeded and the skill was loaded. A broken fixture, an access failure or a run that did not end is a `problem`. */
-export function scoreRun(s: Pick<RunSummary, "status" | "history" | "reason" | "skillLock" | "skillPlan">, skillId: string): { score: 0 | 1; finding?: RunFinding } | { problem: string } {
+export interface RunOutcome {
+  passed: boolean;
+  failure?: "agent-failed" | "check-failed";
+  /** With a skill id: that skill was loaded. Without: any skill was loaded. */
+  loaded: boolean;
+  tokens: number;
+  durationMs: number;
+}
+
+type Summary = Pick<RunSummary, "status" | "history" | "reason" | "skillLock" | "skillPlan">;
+
+/** What one finished run did. A broken fixture, an access failure or a run that did not end is a `problem`. */
+export function runOutcome(s: Summary, skillId: string | undefined): RunOutcome | { problem: string } {
   if (s.history.some((h) => h.accessFailed)) return { problem: "a step was refused by an access rule" };
   if (s.history.some((h) => h.id === "fixture" && !h.ok)) return { problem: "the fixture step failed" };
   if (s.status !== "succeeded" && s.status !== "failed") return { problem: `a run ended as ${s.status}` };
   const last = (id: string) => [...s.history].reverse().find((h) => h.id === id);
   const work = last("work");
   const check = last("check");
-  if (!work || !work.ok) return { score: 0, finding: "agent-failed" };
-  if (!check || !check.ok) return { score: 0, finding: "check-failed" };
-  const used = evaluateSkillRun(s, SkillExpectSchema.parse({ selected: [skillId] }));
-  if (used.activation.status !== "loaded") return { score: 0, finding: "skill-not-loaded" };
-  return s.status === "succeeded" ? { score: 1 } : { score: 0, finding: "agent-failed" };
+  const failure = !work || !work.ok ? "agent-failed" : !check || !check.ok ? "check-failed" : undefined;
+  const loaded =
+    skillId === undefined
+      ? s.history.some((h) => (h.skills?.loaded.length ?? 0) > 0)
+      : evaluateSkillRun(s, SkillExpectSchema.parse({ selected: [skillId] })).activation.status === "loaded";
+  const tokens = s.history.reduce((n, h) => n + (h.tokens ? h.tokens.input + h.tokens.output : 0), 0);
+  const durationMs = s.history.filter((h) => h.id === "work").reduce((n, h) => n + h.durationMs, 0);
+  return { passed: failure === undefined && s.status === "succeeded", ...(failure ? { failure } : {}), loaded, tokens, durationMs };
+}
+
+/** 1 only when fixture, work and check succeeded and the skill was loaded. A broken fixture, an access failure or a run that did not end is a `problem`. */
+export function scoreRun(s: Summary, skillId: string): { score: 0 | 1; finding?: RunFinding } | { problem: string } {
+  const o = runOutcome(s, skillId);
+  if ("problem" in o) return o;
+  if (o.failure) return { score: 0, finding: o.failure };
+  if (!o.loaded) return { score: 0, finding: "skill-not-loaded" };
+  return o.passed ? { score: 1 } : { score: 0, finding: "agent-failed" };
 }
 
 export interface ArmRun {
@@ -150,6 +173,10 @@ export interface ArmRun {
   runId: string;
   score: 0 | 1;
   finding?: RunFinding;
+  passed: boolean;
+  loaded: boolean;
+  tokens: number;
+  durationMs: number;
 }
 export interface ArmContext {
   /** The temporary root of the evaluation: the arm folders are made inside it. */
@@ -169,10 +196,11 @@ export interface ArmContext {
   onRunStarted?: (runId: string) => void;
 }
 export interface Arm {
-  skillId: string;
+  /** Without a skill id the arm runs with skills off: nothing is written and nothing is pinned. */
+  skillId?: string;
   key: string;
   /** Writes the arm's skill into the temporary `skills/` folder and returns the digest of what was written. */
-  write: (skillsDir: string) => { digest: string } | { problem: string };
+  write?: (skillsDir: string) => { digest: string } | { problem: string };
 }
 
 /**
@@ -180,7 +208,7 @@ export interface Arm {
  * The evaluation limit holds the tools of the scenario, so every running job always has the same limit. On abort or error every submitted job is
  * cancelled and awaited before the limit is reset, the environment is restored and the arm folder is removed.
  */
-export async function runArm(arm: Arm, ctx: ArmContext): Promise<{ runs: ArmRun[]; packageDigest: string } | { problem: string }> {
+export async function runArm(arm: Arm, ctx: ArmContext): Promise<{ runs: ArmRun[]; packageDigest?: string } | { problem: string }> {
   if (ctx.signal.aborted) throw new EvaluationInterrupted();
   const armDir = mkdtempSync(join(ctx.root, "arm-"));
   const submitted: string[] = [];
@@ -190,9 +218,9 @@ export async function runArm(arm: Arm, ctx: ArmContext): Promise<{ runs: ArmRun[
   ctx.signal.addEventListener("abort", cancelAll);
   const restore = switchDataFolder(armDir);
   try {
-    const written = arm.write(join(armDir, "skills"));
-    if ("problem" in written) return written;
-    pinArmSkill(arm.key, written.digest);
+    const written = arm.write ? arm.write(join(armDir, "skills")) : undefined;
+    if (written && "problem" in written) return written;
+    if (written) pinArmSkill(arm.key, written.digest);
     let current = ctx.realConfig;
     scheduler = new Scheduler({ runsDir: join(armDir, "runs"), config: () => current, claudeBin: ctx.claudeBin });
     const denyRead = [...new Set([ctx.realHome, realpathSync(ctx.realHome)])];
@@ -224,12 +252,20 @@ export async function runArm(arm: Arm, ctx: ArmContext): Promise<{ runs: ArmRun[
       for (const [i, m] of mine.entries()) {
         const s = summaries[i];
         if (!s) return { problem: `scenario ${scenario.id}: run ${m.id} cannot be read` };
+        const o = runOutcome(s, arm.skillId);
+        if ("problem" in o) return { problem: `scenario ${scenario.id}: ${o.problem}` };
+        const seen = { passed: o.passed, loaded: o.loaded, tokens: o.tokens, durationMs: o.durationMs };
+        if (arm.skillId === undefined) {
+          if (o.loaded) return { problem: `scenario ${scenario.id}: a run without the skill loaded a skill` };
+          runs.push({ scenario: scenario.id, attempt: i + 1, runId: m.id, score: o.passed ? 1 : 0, ...seen });
+          continue;
+        }
         const r = scoreRun(s, arm.skillId);
         if ("problem" in r) return { problem: `scenario ${scenario.id}: ${r.problem}` };
-        runs.push({ scenario: scenario.id, attempt: i + 1, runId: m.id, score: r.score, ...(r.finding ? { finding: r.finding } : {}) });
+        runs.push({ scenario: scenario.id, attempt: i + 1, runId: m.id, score: r.score, ...(r.finding ? { finding: r.finding } : {}), ...seen });
       }
     }
-    return { runs, packageDigest: written.digest };
+    return { runs, ...(written ? { packageDigest: written.digest } : {}) };
   } finally {
     ctx.signal.removeEventListener("abort", cancelAll);
     cancelLive(scheduler, submitted);
