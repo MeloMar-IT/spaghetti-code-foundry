@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { parse as parseYaml } from "yaml";
+import { parse as parseYaml, stringify } from "yaml";
 import { credentialProblem, riskyFileName } from "./credential-scan.js";
 import {
   SKILL_FOLDERS,
@@ -356,6 +356,36 @@ export function readRegular(path: string, limit: number): Uint8Array | "link" | 
   } finally {
     closeSync(fd);
   }
+}
+
+/** The files of `pkg` as a Foundry package, byte for byte what writeCandidatePackage writes: SKILL.md (name = id), skill.yaml, REVIEW.md if any, then pkg.files. No extraFiles. */
+export function foundryPackageFiles(pkg: SkillPackage): { path: string; content: Uint8Array }[] {
+  const front: Record<string, unknown> = { name: pkg.id, description: pkg.description };
+  if (pkg.license !== undefined) front.license = pkg.license;
+  if (pkg.compatibility !== undefined) front.compatibility = pkg.compatibility;
+  if (pkg.metadata !== undefined) front.metadata = pkg.metadata;
+  if (pkg.allowedTools !== undefined) front["allowed-tools"] = pkg.allowedTools;
+  const manifest: Record<string, unknown> = {
+    id: pkg.id,
+    version: pkg.version,
+    category: pkg.category,
+    capabilities: pkg.capabilities,
+    ...(pkg.detectors.length ? { detectors: pkg.detectors } : {}),
+    ...(pkg.roles.length ? { roles: pkg.roles } : {}),
+    dependencies: pkg.dependencies,
+    conflicts: pkg.conflicts,
+    connectors: pkg.connectors,
+    tool_profile: pkg.tool_profile,
+    risk: pkg.risk,
+    ...(pkg.provider ? { provider: pkg.provider } : {}),
+  };
+  const out: { path: string; content: Uint8Array }[] = [
+    { path: SKILL_MD, content: Buffer.from(`---\n${stringify(front)}---\n\n${pkg.instructions}\n`) },
+    { path: MANIFEST, content: Buffer.from(stringify(manifest)) },
+  ];
+  if (pkg.review !== undefined) out.push({ path: "REVIEW.md", content: Buffer.from(`${pkg.review}\n`) });
+  for (const f of Object.values(pkg.files).flat()) out.push({ path: f.path, content: f.content });
+  return out;
 }
 
 export function loadSkillPackage(dir: string): SkillPackage {

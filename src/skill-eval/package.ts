@@ -1,9 +1,8 @@
 import { cpSync, lstatSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { stringify } from "yaml";
 import { addSkillPins } from "../skills/lock.js";
 import type { NormalizedSkill } from "../skills/normalize.js";
-import { loadSkillPackage, readRegular } from "../skills/package.js";
+import { foundryPackageFiles, loadSkillPackage, readRegular } from "../skills/package.js";
 import type { RegisteredSkill } from "../skills/registry.js";
 import { SKILL_LIMITS } from "../skills/schema.js";
 
@@ -20,35 +19,11 @@ export function writeCandidatePackage(skill: NormalizedSkill, skillsDir: string)
   const pkg = skill.package;
   const dir = join(skillsDir, pkg.id);
   try {
-    const front: Record<string, unknown> = { name: pkg.id, description: pkg.description };
-    if (pkg.license !== undefined) front.license = pkg.license;
-    if (pkg.compatibility !== undefined) front.compatibility = pkg.compatibility;
-    if (pkg.metadata !== undefined) front.metadata = pkg.metadata;
-    if (pkg.allowedTools !== undefined) front["allowed-tools"] = pkg.allowedTools;
-    const manifest: Record<string, unknown> = {
-      id: pkg.id,
-      version: pkg.version,
-      category: pkg.category,
-      capabilities: pkg.capabilities,
-      ...(pkg.detectors.length ? { detectors: pkg.detectors } : {}),
-      ...(pkg.roles.length ? { roles: pkg.roles } : {}),
-      dependencies: pkg.dependencies,
-      conflicts: pkg.conflicts,
-      connectors: pkg.connectors,
-      tool_profile: pkg.tool_profile,
-      risk: pkg.risk,
-      ...(pkg.provider ? { provider: pkg.provider } : {}),
-    };
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "SKILL.md"), `---\n${stringify(front)}---\n\n${pkg.instructions}\n`);
-    writeFileSync(join(dir, "skill.yaml"), stringify(manifest));
-    if (pkg.review !== undefined) writeFileSync(join(dir, "REVIEW.md"), `${pkg.review}\n`);
-    for (const list of Object.values(pkg.files)) {
-      for (const f of list) {
-        const target = join(dir, f.path);
-        mkdirSync(dirname(target), { recursive: true });
-        writeFileSync(target, f.content);
-      }
+    for (const f of foundryPackageFiles(pkg)) {
+      const target = join(dir, f.path);
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, f.content);
     }
     const loaded = loadSkillPackage(dir);
     if (loaded.id !== pkg.id || loaded.version !== pkg.version) return { problem: `${pkg.id}@${pkg.version}: the written package has another id or version` };
