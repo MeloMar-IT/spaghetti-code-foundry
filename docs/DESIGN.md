@@ -158,6 +158,7 @@ hand.
 Skills reach an agent in a fixed order. Each stage has its own module:
 
 - **Profile and catalogue:** `src/skills/repo-profile.ts`, `catalogue.ts` and `run-catalogue.ts`.
+- **Import evaluation** (`src/skills/evaluate-cli.ts`, read through `staged-cli.ts`): `scf skills selections evaluate` runs `evaluateSourceSkills` on a staged import and the selections. It is offline and writes nothing; no run reads it.
 - **Collisions** (`collisions.ts`, rules in `collision-rules.ts`): pure classification and merge of normalized skills; reached from `run-catalogue.ts` only through its optional `candidate` dependency, which no run supplies yet.
 - **Canonical selection** (`canonical.ts`, rules in `canonical-rules.ts`, facts in `canonical-facts.ts`): pure choice of one winner per exclusive capability, in the precedence order of `CANONICAL_LEVELS`; reached from `run-catalogue.ts` only through its optional `canonical` dependency, which no run supplies yet.
 - **Source evaluation** (`source-skill-evaluation.ts`, re-exported by `source-evaluation.ts`, Azure markers in `provider-rules.ts`): pure per-skill verdict of an imported source (selection, licence, undeclared provider needs, overlaps, provider rule); no run calls it yet.

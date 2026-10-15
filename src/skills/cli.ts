@@ -29,6 +29,7 @@ import { SOURCE_CONNECTORS } from "./connectors.js";
 import { overlapLines, overlapReport } from "./overlap.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors } from "./selections.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
+import { selectionsEvaluate } from "./selections-evaluate-cli.js";
 import { flowSkillSteps } from "./tool-policy.js";
 import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow.js";
 
@@ -39,7 +40,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
        scf skills connectors                                     List the reviewed source connectors; reads nothing
        scf skills selections check [<file>]                      Check the skill selections (default: ${SELECTIONS_FILE})
-       scf skills overrides check [<file>]                       Check the owner overrides (default: ${OVERRIDES_FILE})
+       scf skills selections evaluate <source-id> [<file>]       Report which selected skills of a staged import are eligible, held back or overlapping; reads only
+       scf skills overrides check [<file>]                      Check the owner overrides (default: ${OVERRIDES_FILE})
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import, plus the connector report of a known source
@@ -475,7 +477,13 @@ export async function skillsCommand(
   }
 
   if (sub === "selections") {
-    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file');
+    if (operands[0] === "evaluate") {
+      if (operands.length < 2 || operands.length > 3) throw syntax("scf skills selections evaluate: expects a source id and at most one selections file");
+      if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills selections evaluate: the first operand must be a source id");
+      const { skills, cwd, now, today, repo: _repo, ...discover } = opts;
+      return selectionsEvaluate(operands[1]!, operands[2], out, { cwd: cwd ?? process.cwd(), today: today ?? new Date().toISOString().slice(0, 10), now: now ?? new Date(), skills, discover });
+    }
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file, or "evaluate" and a source id');
     return selectionsCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SELECTIONS_FILE), out, opts.today ?? new Date().toISOString().slice(0, 10));
   }
 

@@ -220,7 +220,7 @@ describe("the workflow gate runs nothing", () => {
 describe("scf skills scan is offline and read-only", () => {
   const PROCESS_OR_NET = /^(?:node:)?(?:child_process|vm|worker_threads|http|https|http2|net|tls|dns|dgram)$/;
   const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
-  for (const f of ["cli.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "selections.ts", "import-plan.ts", "normalize.ts"]) {
+  for (const f of ["cli.ts", "staged-import.ts", "selections-evaluate-cli.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "selections.ts", "import-plan.ts", "normalize.ts"]) {
     it(`${f} imports no process or network module and uses no dynamic code`, () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m))).toEqual([]);
@@ -239,7 +239,18 @@ describe("scf skills scan is offline and read-only", () => {
   it("only the CLI and the pure evaluation import selections.js, so no run reads the file", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)selections\.js$/.test(m)));
-    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "source-skill-evaluation.ts")]);
+    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "selections-evaluate-cli.ts"), join("src", "skills", "source-skill-evaluation.ts")]);
+  });
+  it("only src/skills/cli.ts imports selections-evaluate-cli.js", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /^\.\/selections-evaluate-cli\.js$/.test(m)));
+    expect(users).toEqual([join("src", "skills", "cli.ts")]);
+  });
+  it("selections-evaluate-cli.ts writes nothing and stages nothing", () => {
+    for (const f of ["selections-evaluate-cli.ts"]) {
+      const code = codeLines(readFileSync(join(SKILLS, f), "utf8"));
+      expect(code.filter((l) => /writeFileSync|mkdirSync|renameSync|rmSync|unlinkSync|publishImport|pinSkill|pinBuiltinSkills|removeSkillPin|stageImport/.test(l)), f).toEqual([]);
+    }
   });
   it("only source-evaluation.ts imports source-skill-evaluation.js", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));

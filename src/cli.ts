@@ -62,6 +62,7 @@ Usage:
   scf skills gate <source-id> [<suite-file>]     Print which staged skills may be promoted
   scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
   scf skills review <source-id> [--markdown]     Print the licence, attribution and collision report of a staged import
+  scf skills selections evaluate <source-id> [<file>]  Report which selected skills of a staged import are eligible or held, and their overlaps
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -242,7 +243,7 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `selections …`, `scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
+  // `scf skills sources …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
   // writes only into skill-evaluations/ through claimHomeWrite: they run without choosing or moving the data folder.
   if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "gate" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
