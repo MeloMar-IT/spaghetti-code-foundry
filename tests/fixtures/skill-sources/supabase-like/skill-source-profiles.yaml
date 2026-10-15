@@ -1,0 +1,21 @@
+schema: 1
+exclusive: [postgresql]
+sources:
+  - id: supa
+    skills:
+      - name: postgres-practices
+        class: portable
+        capabilities: [postgresql, postgresql-query-performance, postgresql-schema-design, postgresql-row-level-security]
+        high_risk: [postgresql-row-level-security]
+        evaluations: [database-correctness]
+      - name: postgres-basics
+        class: portable
+        capabilities: [postgresql]
+      - name: platform-kit
+        class: vendor
+        capabilities: [supabase-auth, supabase-rls-policies, supabase-edge-functions, supabase-realtime]
+        high_risk: [supabase-auth, supabase-rls-policies]
+        requires:
+          config: [SUPABASE_URL, SUPABASE_ANON_KEY]
+          tools: [network]
+          live_services: [supabase]

@@ -34,6 +34,16 @@ describe("SOURCE_CONNECTORS", () => {
         track: "main",
         licenceReview: "required",
       },
+      {
+        id: "vercel-agent-skills",
+        repository: "https://github.com/vercel-labs/agent-skills",
+        repositoryKey: "github.com/vercel-labs/agent-skills",
+        roots: ["skills", "agent-skills"],
+        adapter: "agent-skills",
+        trust: "verified",
+        licences: ["MIT"],
+        track: "main",
+      },
     ]);
     for (const c of SOURCE_CONNECTORS) for (const k of ["commit", "approved", "ref"]) expect(c).not.toHaveProperty(k);
   });

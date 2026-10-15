@@ -1,7 +1,10 @@
+import { opendirSync } from "node:fs";
 import { resolve } from "node:path";
 import { loadConfig, type Config } from "../config.js";
 import { collectLicenceEvidence } from "../skills/licence.js";
 import { prepareImport, SkillImportError } from "../skills/import-plan.js";
+import { emptyImportLines, frontendEvidence, frontendProfileFor, repoScanGaps } from "../skills/frontend-connector.js";
+import { buildRepoProfile } from "../skills/repo-profile.js";
 import { discoverSkills } from "../skills/registry.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
 import { evaluateSource, evaluationFailed, evaluationLines } from "../skills/source-evaluation.js";
@@ -13,7 +16,7 @@ import { GitTreeError, openGitTree } from "./git-tree.js";
 // `scf skills evaluate <source-id> [<technology>@<version> ...]`: fetches the approved commit of an enabled source into a
 // temporary git folder and reports compatibility, tools, access, licence and overlap. Stages and writes nothing else.
 
-export const EVALUATE_USAGE = "usage: scf skills evaluate <source-id> [<technology>@<version> ...]";
+export const EVALUATE_USAGE = "usage: scf skills evaluate <source-id> [<technology>@<version> ... | --repo <dir>]";
 const MAX_TECHNOLOGIES = 8;
 const TECH_RE = /^([a-z0-9]+(?:-[a-z0-9]+)*)@(\d{1,6}(?:\.\d{1,6}){0,2})$/;
 
@@ -35,12 +38,18 @@ export async function skillEvaluateCommand(
   out: (line: string) => void,
   opts: SkillEvaluateOptions = {},
 ): Promise<number> {
-  for (const [k, v] of Object.entries(args.values)) if (v !== undefined) throw syntax(`scf skills evaluate: unexpected option --${k}`);
+  for (const [k, v] of Object.entries(args.values)) {
+    if (k === "agent" && v !== undefined) throw syntax('scf skills evaluate: --agent belongs to "scf skills score <source-id> [<suite-file>] --agent"');
+    if (v !== undefined && k !== "repo") throw syntax(`scf skills evaluate: unexpected option --${k}`);
+  }
+  const repo = args.values.repo;
+  if (repo !== undefined && (typeof repo !== "string" || repo === "")) throw syntax("scf skills evaluate: --repo needs a folder");
   const [id, ...operands] = args.positionals;
   if (id === undefined) throw syntax("scf skills evaluate: expects a source id");
   if (!SKILL_ID_RE.test(id)) throw syntax("scf skills evaluate: the source id must be a lower-case slug");
   if (operands.length > MAX_TECHNOLOGIES) throw syntax(`scf skills evaluate: at most ${MAX_TECHNOLOGIES} technologies`);
-  const project: { name: string; version: string }[] = [];
+  if (repo !== undefined && operands.length) throw syntax("scf skills evaluate: give technologies or --repo, not both");
+  let project: { name: string; version: string }[] = [];
   for (const op of operands) {
     const m = TECH_RE.exec(op);
     if (!m) throw syntax("scf skills evaluate: a technology must look like oracle@19");
@@ -73,6 +82,32 @@ export async function skillEvaluateCommand(
   if (commit === undefined) {
     out(`PROBLEM the source ${id} has no approved commit (ref.approved)`);
     return 1;
+  }
+  const profile = frontendProfileFor(source.repositoryKey);
+  if (profile && source.scope) {
+    out(`PROBLEM the source ${id} uses the reviewed profile ${profile.id}, so it cannot have a scope`);
+    return 1;
+  }
+  if (repo !== undefined) {
+    if (!profile) {
+      out("PROBLEM --repo needs a source with a reviewed profile; give technologies as <technology>@<version>");
+      return 1;
+    }
+    let scan;
+    try {
+      const abs = resolve(cwd, repo as string);
+      opendirSync(abs).closeSync();
+      scan = buildRepoProfile(abs);
+    } catch {
+      out("PROBLEM the folder given with --repo cannot be read");
+      return 1;
+    }
+    const gaps = repoScanGaps(scan);
+    if (gaps.length) {
+      out(`PROBLEM the folder given with --repo could not be read completely (${gaps.join(", ")}); give technologies as <technology>@<version>`);
+      return 1;
+    }
+    project = frontendEvidence(profile, scan);
   }
   const exc = readScanExceptions(resolve(cwd, SCAN_EXCEPTIONS_FILE), today);
   if (exc.state === "invalid") {
@@ -122,7 +157,8 @@ export async function skillEvaluateCommand(
         retrievedAt: now.toISOString().replace(/\.\d+Z$/, "Z"),
         tools: skills.tools,
         highRisk: skills.unresolved.high_risk,
-        ...(project.length ? { project } : {}),
+        ...(project.length || repo !== undefined ? { project } : {}),
+        results: [],
       });
       for (const line of evaluationLines(evaluation)) out(line);
       return evaluationFailed(evaluation) ? 1 : 0;
@@ -132,6 +168,10 @@ export async function skillEvaluateCommand(
         return 1;
       }
       if (e instanceof SkillImportError) {
+        if (e.code === "nothing-staged" && profile) {
+          for (const line of emptyImportLines(profile, source, commit, e.rejected)) out(line);
+          return 1;
+        }
         if (e.code === "nothing-staged") for (const r of e.rejected) out(`REJECTED ${r.root}: ${r.reasons.join("; ")}`);
         out(`PROBLEM ${e.message}`);
         return 1;

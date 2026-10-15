@@ -49,18 +49,24 @@ Usage:
   scf skills pin --builtin                       Pin the built-in skills that have no pin
   scf skills unpin <id@version>                  Remove a pin
   scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
+  scf skills profiles check [<file>]             Check the source profiles (default: skill-source-profiles.yaml)
+  scf skills profiles evaluate <source-id>       Print PASS or BLOCKED per staged skill of a profiled source and the canonical skill per exclusive capability; reads only
   scf skills connectors                          List the reviewed skill source connectors
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]  Open a pull request that proposes the new upstream commit (never approves)
   scf skills scan <source-id> [<exceptions-file>]  Print the security report of a staged import
   scf skills assess <source-id>                    Print the workflow report of a staged import
-  scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
-  scf skills promote check <source-id> [<exceptions-file>]  Print whether licence and findings allow promotion
+  scf skills compare <source-id>                   Compare a staged import with the built-in java and spring-boot skills
+  scf skills evaluate <source-id> [<technology>@<version> ... | --repo <dir>]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
+  scf skills promote check <source-id> [<exceptions-file>]  Print whether licence, findings and evaluations allow promotion
   scf skills overlap <source-id>                 Compare a staged import with the registered skills (canonical or conflict per capability)
   scf skills score <source-id> [<suite-file>]    Score the skills of a staged import and store the records
   scf skills gate <source-id> [<suite-file>]     Print which staged skills may be promoted
   scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
   scf skills review <source-id> [--markdown]     Print the licence, attribution and collision report of a staged import
+  scf skills selections evaluate <source-id> [<file>]  Report which selected skills of a staged import are eligible or held, and their overlaps
+  scf skills release verify <dir>                Check a catalogue release folder offline (files, digests, approval)
+  scf skills releases check [<file>]             Check the release requests (default: skill-releases.yaml)
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -222,6 +228,7 @@ async function main(argv: string[]): Promise<number> {
       admin: { type: "boolean" },
       replace: { type: "boolean" },
       markdown: { type: "boolean" },
+      agent: { type: "boolean" },
       builtin: { type: "boolean" },
       "stop-work": { type: "boolean" },
       name: { type: "string" },
@@ -241,9 +248,9 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `selections …`, `scan …`, `assess …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
+  // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
   // writes only into skill-evaluations/ through claimHomeWrite: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "gate" || arg === "connectors"))) {
+  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
@@ -321,7 +328,8 @@ async function main(argv: string[]): Promise<number> {
       if (arg === "update") return (await import("./skill-import/update-cli.js")).skillUpdateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "evaluate") return (await import("./skill-import/evaluate-cli.js")).skillEvaluateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "discover") return (await import("./skill-import/discover-cli.js")).skillDiscoverCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
-      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo });
+      const agentScore = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentScore"]>>) => (await import("./skill-eval/score.js")).scoreImportWithAgent(...a);
+      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo, agentScore });
     }
 
     case "flow-guide": {

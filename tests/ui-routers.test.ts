@@ -77,6 +77,7 @@ describe("user router", () => {
     "/runs-filter.js": real.runsFilter,
     "/refinement.js": never,
     "/epics.js": never,
+    "/epic-page.js": never,
     "/repos.js": never,
     "/repo-view.js": never,
     "/user/runs.js": never,
@@ -248,6 +249,16 @@ describe("user router", () => {
     expect((renderEpics.mock.calls[0] as any)[1]).toMatchObject({ admin: false, query: { repo: "a/b" } });
   });
 
+  it("draws #/epics/<id> with renderEpic, not renderEpics", async () => {
+    setup("#/epics/12?repo=a%2Fb");
+    const renderEpic = vi.fn(async () => () => {});
+    const renderEpics = vi.fn(async () => () => {});
+    await loadRouter("user/app.js", deps({ "/epic-page.js": { renderEpic }, "/epics.js": { renderEpics } }));
+    await vi.waitFor(() => expect(renderEpic).toHaveBeenCalled());
+    expect((renderEpic.mock.calls[0] as any)[1]).toMatchObject({ id: "12", admin: false, query: { repo: "a/b" } });
+    expect(renderEpics).not.toHaveBeenCalled();
+  });
+
   it("sends filter changes of the three pages through context.keep, writing the address only", async () => {
     const ctx = contextStub({ keep: (h: string) => (h.includes("repo=") ? h : h.replace("#/runs", "#/runs?repo=all").replace(/\?repo=all\?/, "?repo=all&")) });
     const renderMyRuns = vi.fn();
@@ -297,7 +308,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -519,7 +530,7 @@ describe("support levels", () => {
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
     ...Object.fromEntries(["./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js",
-      "./admin-credentials.js", "./operations.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
+      "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn(), renderModelDetail: vi.fn() },
     "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => dialogs > 0 }) },
     ...over,
@@ -555,6 +566,16 @@ describe("support levels", () => {
     await vi.waitFor(() => expect(renderEpics).toHaveBeenCalledTimes(1));
     expect((renderEpics.mock.calls[0] as any)[1]).toMatchObject({ admin: true, query: { repo: "a/b" } });
     expect(main().textContent).toContain("epics page");
+  });
+
+  it("draws #/epics/<id> with renderEpic, not renderEpics", async () => {
+    const renderEpic = vi.fn(async (box: FakeElement) => { real.dom.mount(box, el("epic page")); return () => {}; });
+    const renderEpics = vi.fn(async () => () => {});
+    await load("#/epics/12?repo=a%2Fb", undefined, { "./epic-page.js": { renderEpic }, "./epics.js": { renderEpics } });
+    await vi.waitFor(() => expect(renderEpic).toHaveBeenCalledTimes(1));
+    expect((renderEpic.mock.calls[0] as any)[1]).toMatchObject({ id: "12", admin: true, query: { repo: "a/b" } });
+    expect(renderEpics).not.toHaveBeenCalled();
+    expect(main().textContent).toContain("epic page");
   });
 
   it("is full with no innerWidth and shows no notice", async () => {

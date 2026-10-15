@@ -144,7 +144,8 @@ describe("skillsCommand", () => {
     expect(r.code).toBe(0);
     expect(lines[0]).toMatch(/^awesome-copilot\s+github\.com\/github\/awesome-copilot skills agent-skills community MIT track main$/);
     expect(lines[1]).toMatch(/^anthropic-skills\s+github\.com\/anthropics\/skills skills agent-skills verified Apache-2\.0 track main$/);
-    expect(lines.at(-1)).toBe("OK 2 connectors");
+    expect(lines[2]).toMatch(/^vercel-agent-skills\s+github\.com\/vercel-labs\/agent-skills skills,agent-skills agent-skills verified MIT track main$/);
+    expect(lines.at(-1)).toBe("OK 3 connectors");
     expect(existsSync(lockFile())).toBe(false);
   });
 
@@ -589,5 +590,114 @@ describe("scf skills review", () => {
     await expect(review(["lib", "x"])).rejects.toThrow("expects one source id");
     await expect(review(["lib"], { replace: true })).rejects.toThrow("unexpected option --replace");
     await expect(review(["Not A Slug"])).rejects.toThrow("must be a source id");
+  });
+});
+
+describe("skillsCommand profiles check", () => {
+  // Samples are built from pieces so that tools/secret-scan finds nothing in this file.
+  const AT = "@";
+  const URL_USER_PW = "https://user:pw" + AT + "example.com";
+  const SKILLS = [
+    "schema: 1",
+    "exclusive: [pdf-write]",
+    "sources:",
+    "  - id: example-skills",
+    "    skills:",
+    "      - name: pdf-reader",
+    "        class: portable",
+    "        capabilities: [pdf-read, pdf-write]",
+    "        high_risk: [pdf-write]",
+    "        requires: { config: [DATABASE_URL], tools: [shell] }",
+    "      - name: sheet-reader",
+    "        class: vendor",
+    "        capabilities: [sheet-read]",
+    "",
+  ].join("\n");
+  async function run(positionals: string[], values: Record<string, unknown> = {}) {
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["profiles", ...positionals], values }, (l) => lines.push(l), { cwd: base });
+    return { code, lines };
+  }
+  it("prints one line per skill, then OK", async () => {
+    writeFileSync(join(base, "p.yaml"), SKILLS);
+    const r = await run(["check", "p.yaml"]);
+    expect(r.code).toBe(0);
+    expect(r.lines).toHaveLength(3);
+    expect(r.lines[0]).toContain("example-skills/pdf-reader");
+    expect(r.lines[0]).toContain("high_risk=pdf-write config=DATABASE_URL tools=shell connectors=- live_services=- evaluations=-");
+    expect(r.lines[2]).toBe("OK 2 skills in 1 sources, 1 exclusive");
+  });
+  it("prints only the summary for an empty catalogue", async () => {
+    writeFileSync(join(base, "skill-source-profiles.yaml"), "schema: 1\nsources: []\n");
+    const r = await run(["check"]);
+    expect(r).toEqual({ code: 0, lines: ["OK 0 skills in 0 sources, 0 exclusive"] });
+  });
+  it("prints PROBLEM lines for an invalid file", async () => {
+    writeFileSync(join(base, "p.yaml"), SKILLS.replace("class: portable", "class: official"));
+    const r = await run(["check", "p.yaml"]);
+    expect(r.code).toBe(1);
+    expect(r.lines).toEqual(["PROBLEM sources[0] (example-skills) skills[0] (pdf-reader) class: must be one of portable, vendor"]);
+  });
+  it("fails on a missing file", async () => {
+    const r = await run(["check"]);
+    expect(r).toEqual({ code: 1, lines: ["PROBLEM the source profile file does not exist"] });
+  });
+  it("rejects bad syntax", async () => {
+    await expect(run([])).rejects.toThrow("usage:");
+    await expect(run(["list"])).rejects.toThrow("usage:");
+    await expect(run(["check", "a", "b"])).rejects.toThrow("usage:");
+    await expect(run(["check"], { replace: true })).rejects.toThrow("usage:");
+  });
+  it("does not touch the data folder", async () => {
+    writeFileSync(join(base, "p.yaml"), SKILLS);
+    await run(["check", "p.yaml"]);
+    expect(readdirSync(home)).toEqual([]);
+  });
+  it("prints nothing unsafe for a hostile file", async () => {
+    const doc = [
+      "schema: 1",
+      "sources:",
+      "  - id: a",
+      "    skills:",
+      "      - name: b",
+      "        class: vendor",
+      "        capabilities: [c]",
+      `        requires: { tools: ["${URL_USER_PW}"] }`,
+      `        "${URL_USER_PW}": 1`,
+      "",
+    ].join("\n");
+    writeFileSync(join(base, "p.yaml"), doc);
+    const r = await run(["check", "p.yaml"]);
+    expect(r.code).toBe(1);
+    expect(r.lines).toHaveLength(2);
+    const out = r.lines.join("\n");
+    expect(out).not.toContain(URL_USER_PW);
+    expect(out).not.toContain("user" + AT);
+    expect(out).not.toContain("pw" + AT);
+  });
+  it("leaves `sources check` unchanged when there is no profile file", async () => {
+    writeFileSync(
+      join(base, "skill-sources.yaml"),
+      [
+        "schema: 1",
+        "sources:",
+        "  - id: example-skills",
+        "    repository: https://github.com/example/skills",
+        "    status: enabled",
+        "    ref: { track: main, approved: '0123456789abcdef0123456789abcdef01234567' }",
+        "    paths: [skills]",
+        "    adapter: agent-skills",
+        "    trust: community",
+        "    licence: { allow: [MIT] }",
+        "    update: { cadence: weekly }",
+        "    owner: '@octocat'",
+        "    review: { by: '@octocat', on: '2026-01-01', commit: '0123456789abcdef0123456789abcdef01234567', licence: MIT }",
+        "",
+      ].join("\n"),
+    );
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["sources", "check"], values: {} }, (l) => lines.push(l), { cwd: base, today: "2026-10-13" });
+    expect(code).toBe(0);
+    expect(lines.at(-1)).toBe("OK 1 sources, 1 enabled");
   });
 });

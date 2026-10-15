@@ -96,7 +96,7 @@ admin for a new one.
 | **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
 | **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
 
-**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Epics**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Epics**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
 **Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
@@ -313,7 +313,7 @@ when the findings file cannot be read): counts only, never a name.
 
 **Epics** (`#/epics`, for admins and users) shows how far each epic of one repository is and when it will be finished. It follows the repository context: with one repository it shows that one; with several, choose one in the **Repository** select. The address is `#/epics?repo=<name>`, and you can save a view.
 
-- **A row** has the epic's name (an issue epic links to GitHub), a progress bar, how the epic grew, the expected finish and what holds it up. The last row, **No epic**, is for stories that belong to no epic.
+- **A row** has the epic's name (a link to the epic's page; an issue epic also has an **On GitHub** link), a progress bar, how the epic grew, the expected finish and what holds it up. The last row, **No epic**, is for stories that belong to no epic and has no page.
 - **Progress.** The bar shows Done, Working, Waiting, Your turn and Failed. The same numbers are written next to it ("3 of 10 done; Working 2, Waiting 4"), so you never need the colours.
 - **Growth.** "Stories: 21 at the start, 95 now (16 were split)" tells you how the epic grew while it ran.
 - **Expected finish** is a range, such as "Mon 12 – Tue 13 Oct", with "most likely …" and the reason in words. "Leaves out: …" names what the forecast does not count. Dates use your browser's time zone. When there is not enough history, the row says **Too early to say** and why, instead of a date.
@@ -321,6 +321,41 @@ when the findings file cannot be read): counts only, never a name.
 - **Order.** Open epics come first, by expected finish, then those that are too early to say, then finished ones (newest first). **No epic** is last.
 - **Fresh data.** The page says how long ago the issues were read ("Issues read 12 min ago"). If not every issue was read, it says the counts can be too low. A repository without a watcher, or one the watcher has not read yet, shows "No data" and the reason. **Refresh** reads again; if that fails, the rows stay and a note says so, with **Retry**.
 - **Small screens.** Below 768 px every row is a card.
+
+#### The epic page
+
+Click an epic's name to open its page (`#/epics/<id>?repo=<name>`). The user display has the same page at `/user/#/epics/<id>`. The breadcrumb and **Epics** link back keep the repository. The page is for owners of the repository and for admins; anyone else sees "This epic is not there, or you cannot see it." It has these parts, top to bottom:
+
+- **Header.** The epic's title (with its issue number), the progress bar and text, the growth, and an **On GitHub** link for an issue epic. **Refresh** reads again; the page also says how old the data is.
+- **Expected finish.** The range and "most likely …" as on the Epics page, the reason in words, and **Leaves out: …** (see below). Under it, the sentence "It cannot know when a usage limit stops work or when a person will answer." (not shown for a finished epic).
+- **How it moved.** One line per saved forecast, newest first, such as "3 days ago: Sun 11 Oct", with the range and the change from the day before ("2 days later", "1 day earlier"). Lines older than the seven newest are under **Earlier**. A line says "Today", "Yesterday" or "N days ago". With no saved forecast the page says so; the first one is saved the first time the Epics page or this page asks for the epic, and days before that are not filled in.
+- **Critical path.** The longest chain of stories still to do, as a sentence with its length, the issue numbers in order ("#12 → #15 (done) → #18"), and "Now at #…": where that chain is now, with the story's state and its status. When nothing is left to build on any chain the page says so.
+- **Stories in build order.** One numbered list in the order the epic builds them. Each story has its issue number and title (a link to GitHub), its state in the app's words ("Working", "Waiting", "Done" and so on), the status line, the help, and notes: "part of #…", "after #…", or "also waits for #… (outside this epic)".
+- **Dependency chains.** A graph: the columns are the build levels, left to right, and each box is a story with its state and a link to its issue. A line runs from a story to the one it waits for. The critical path is marked. Below the graph, notes say when stories depend on each other in a cycle (then none of them can start first) and which stories outside the epic the epic waits for. The part is left out when the epic has no chain data.
+- **Stories over time.** A chart with two lines, **Stories** (stories in the epic) and **Done**, one point per day, with the day labels. **Show as table** gives the same numbers as a table (Day, Stories, Done). The chart counts per UTC day, so its labels are UTC days, not your time zone.
+- **Pace.** "About 2.5 stories a day over the last 14 days (all epics of this repository)", counted from the stories finished in the repository, not in this epic alone. **Show per day** lists the last 14 days, the newest first, with the window ("Last 24 hours", "1–2 days ago", …). "A story takes about 2 h 10 min from the start of its run to done" is the median of the finished story runs; it needs a few finished stories before it is shown.
+
+Dates on the page use your browser's time zone, except the chart's day labels (UTC). The page works at 360 px wide: each part is one column, and only the chain graph scrolls sideways, in its own box.
+
+**Empty, loading and error states.** While the page loads it shows "Loading the epic". An epic with no stories says "This epic has no stories yet.". When the repository has no data yet, the page says why, as the Epics page does. If the epic cannot be loaded, the page shows the error with **Retry**; if it fails again after it was shown once, the old content stays with a note.
+
+**How the forecast is made.** The Foundry works it out again each time it is asked; no one types in an estimate.
+
+- **Pace.** The repository's finished stories over the last 14 days give an average per day. This epic gets its share: the pace times the stories it has left, divided by all stories left in every epic and in **No epic**. A split story counts as its parts, so a story that was split into more parts adds to the days.
+- **Days.** The stories left, with the split growth applied, divided by the epic's pace. This is the **expected** finish.
+- **Lower bound.** The longest chain of stories still to do, times the median story time. The earliest finish is never before this; when the chain is the longest part, the reason names the chain.
+- **Range.** The earliest and the latest finish are the expected finish divided and multiplied by a factor. The factor grows when the daily pace varies a lot and when little of the epic is done yet. Each end is at most three times away from the expected finish.
+- **Reason.** One or two lines say what moves the date most: the pace ("N stories left at about X a day"), the longest chain, or the stories that split into more parts.
+- **Finished.** When every story is done, the page says when it finished and how long it took.
+- **Too early to say.** The forecast is not given when the epic has no stories, or when fewer than three stories were finished in the last 14 days. The page says which one.
+- **Saved each day.** The forecast of each unfinished epic is saved once per day (UTC) and kept for two years. That is what **How it moved** shows.
+
+**What it leaves out.** The forecast counts the work the Foundry does. It does not count:
+
+- **usage limits** — time when a usage limit stops work ("stops for usage limits");
+- **a person's answer** — time a story waits for someone to answer a question or approve a plan ("waiting for a person's answer").
+
+It cannot know when a usage limit stops work or when a person will answer. It also cannot know stories that nobody has written yet, and it assumes the pace of the last 14 days goes on. When a forecast looks wrong, first check **Held up by** on the Epics page and the **Waiting** stories on this page.
 
 ### Work page (redesign, off by default)
 
@@ -2022,9 +2057,13 @@ flowchart LR
   scripts, `npx vitest` (and jest, mocha, playwright …), `pytest`, `python -m pytest`, `gradle`/`mvn`
   test, check, build or verify, and `go test`/`cargo test` go through the same test slots and run at
   the same low priority (the small commands in `tools/agent-bin` come first on the agent's `PATH`).
+  The wrappers of Gradle and Maven, `./gradlew` and `./mvnw` (also as `sh ./gradlew` or with an
+  absolute path), count too when they run a test goal: `test`, `check`, `build`, `verify`,
+  `integrationTest`, `connectedCheck`, `install`, or a task such as `:app:test`. A Gradle run in a
+  slot gets a low-priority Gradle daemon. Other goals, such as `./gradlew assemble`, run unchanged.
   An agent waits at most 5 minutes for a slot (`FACTORY_AGENT_TEST_WAIT_SEC`), then its tests run
-  anyway. Every other command runs unchanged. Not covered: a project's own wrapper started by path,
-  such as `./gradlew test`, and steps of a user's run in the OS sandbox.
+  anyway. Every other command runs unchanged. Not covered: other test scripts started by path, such
+  as `./scripts/test.sh`, and steps of a user's run in the OS sandbox.
 - **Small sessions for easy steps.** Writing the docs and resolving a merge conflict each start a
   fresh session with only what they need, instead of continuing the whole coding conversation. If
   the tests fail after a resolved conflict, the coding session takes over.
@@ -3323,6 +3362,11 @@ The estimate counts the description and `SKILL.md`, not reference files. A resum
 
 - **Sources** come in this order: the data folder, `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned.
 - **Releases.** A folder in the data folder or in `skills.roots` is a catalogue release: it holds `catalogue-release.json` (`schema: 1`, `catalogue`, `version`, `createdAt`, `source` with `repository` and a full `commit`, and `skills` with `id`, `version` and `digest`). It loads only if its catalogue, version and digest are listed in `skills.releases.approved`, and its packages match the manifest exactly. Otherwise the whole folder is refused (`root-refused`) and none of its packages load. `scf skills` shows a `RELEASE` line for each. Skills are never fetched from the network during a run or a resume.
+- **Release manifest 2.** `catalogue-release.json` may also say `schema: 2`. Each skill then lists every file of its package (`files`: `path`, `sha256`, `bytes`), its `provenance` (`source`, `repositoryKey`, `commit`, `path`, `trust` and an optional `review`), its `licences`, its `attribution` files (kept in `<folder>/.attribution/<id>/`), its `evaluation` (`suite`, `record`, and `verdict` `passed`, `failed` or `not-run`) and an optional `revoked` (`on`, `reason`). The release digest covers all of these fields. A schema-1 manifest works as before.
+  - **Integrity.** Each discovery checks a schema-2 folder file by file: every listed file must be there with its size and SHA-256, every package digest must recompute, and no other file may be in a package or in `.attribution/` (only `catalogue-release.json` and `.DS_Store` are allowed besides). A link is refused. Any failure refuses the whole folder (`root-refused`), whatever `allow_unreleased` says.
+  - **Revoked skills.** A skill with `revoked` in an approved schema-2 release is never loaded, from any root. A locked run that uses it stops with the usual "skill integrity: … is missing" reason. A revocation changes the release digest, so the owner approves the new digest in `skills.releases.approved`, and the old one stops matching.
+  - **Evaluation verdict.** Loading does not depend on the verdict. `scf skills release verify` shows it for each skill.
+  - **Offline check.** `scf skills release verify <dir>` checks one release folder with the same rules and opens no network connection. It prints `VERIFIED <catalogue>@<version> <digest> <n> skills` (exit 0), or `PROBLEM …` (exit 1). It then prints `APPROVED` or `NOT-APPROVED` against `skills.releases.approved`. The reason never shows a path or file content.
 - **Local development.** To try an unpublished catalogue, set `skills.releases.allow_unreleased: true`. Folders without an approved release then load, and `scf skills` prints a `NOTE` for each. Keep it `false` (the default) in production. Existing folders are refused after an update until they are an approved release or this is set.
 - **Pins** tie a version to its digest. A mismatch blocks the skill until you pin it again or give it a new version.
 - **Repository skills** are `unapproved`: they are listed only with `skills.repository: true`, never pinned and never selected.
@@ -3448,7 +3492,7 @@ A pin ties one skill version to the exact content you looked at. If the content 
 
 ### Skill library sources
 
-An open-source skill library is added by a reviewed declaration in `skill-sources.yaml`, not by changing importer code. The file only lists allowed sources. Nothing reads it during a run. Only `scf skills import` fetches from the network, and never during a run.
+An open-source skill library is added by a reviewed declaration in `skill-sources.yaml`, not by changing importer code. The file only lists allowed sources. Nothing reads it during a run. Only `scf skills import`, `scf skills evaluate` and `scf skills update` fetch from the network, and never during a run.
 
 ```yaml
 schema: 1
@@ -3491,7 +3535,7 @@ sources:
   Every other upstream capability becomes `confluent-<capability>`, so a vendor skill cannot take over a portable capability by accident. A skill with a vendor capability gets the provider block. A source without `profile` is unchanged. `scf skills sources check` prints `provider confluent (1 portable)` for the source. It refuses a mapping to an invalid slug, a duplicate key and a `profile` without `provider`. A slug longer than 64 characters, or two upstream names that land on the same slug, is a problem that names the skill and the capability; nothing is dropped silently. The profile is not applied during import or scan yet.
 - **Owner and policy.** Every source has an owner and an update cadence.
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
-- **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
+- **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)); and `vercel-agent-skills` (`https://github.com/vercel-labs/agent-skills`): `paths` must be `skills` or `agent-skills` or a folder below one of them, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `MIT` (see [Vercel agent skills](#vercel-agent-skills)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
 - **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. A reviewed source is listed with `reviewed by <by> on <on>`. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
 - **Import and scan.** `scf skills import` and `scf skills scan` read the same file. A community source without a current `review` is refused as an invalid source list: a `PROBLEM` line names the missing or stale review, and nothing is fetched or read.
 
@@ -3511,6 +3555,165 @@ A community source that is not yet reviewed is kept disabled. This entry goes un
 ```
 
 Imported library content is kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
+
+#### Source profiles
+
+`skill-source-profiles.yaml` at the repository root says what each selected skill of a source provides and needs. It sits next to `skill-sources.yaml`, and the same source `id` is used in both. The shipped file has `sources: []`, which is valid. A listed source needs at least one skill. Nothing reads the file during an import or a run yet.
+
+```yaml
+schema: 1
+exclusive: [cosmos-db-access]
+sources:
+  - id: example-skills
+    skills:
+      - name: cosmos-db-setup
+        class: vendor
+        capabilities: [cosmos-db-access]
+        high_risk: [cosmos-db-access]
+        requires:
+          config: [COSMOS_ENDPOINT]
+          tools: [network]
+          connectors: [azure-cli]
+          live_services: [COSMOS_KEY]
+        evaluations: [smoke-test]
+```
+
+- **Fields.** `id` (a lower-case slug, unique, the same as in `skill-sources.yaml`) and `skills` (1 to 100 entries). Each skill has a `name` (a slug, unique in its source), `class` (`portable` or `vendor`), `capabilities` (1 to 32 slugs), `high_risk` (0 to 32 capabilities, each one of the skill's `capabilities`), `requires` and `evaluations` (0 to 16 slugs). `exclusive` (0 to 200 slugs) lists the capabilities that allow only one winner. Unknown keys are refused.
+- **`requires`.** `config` and `live_services` hold names only: a slug or an environment variable name such as `DATABASE_URL`, never a value. `tools` is one or more of `shell`, `network` and `write`. `connectors` is a list of slugs.
+- **Rules.** `high_risk` is a subset of `capabilities`. A capability belongs to either `vendor` or `portable` skills, not both, so use separate capability ids for each class.
+- **Check.** `scf skills profiles check [<file>]` reads `skill-source-profiles.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each skill with its class, capabilities, high-risk capabilities, requirements and evaluations, then `OK <n> skills in <m> sources, <k> exclusive`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values and URLs with user info are never printed.
+
+#### Evaluate the profile gates
+
+`scf skills profiles evaluate <source-id>` shows, for each skill of a staged import, whether it passes the gates it must pass before promotion. It is offline and read-only: nothing is written, promoted or locked, and no credential or project value is read. The command is `profiles evaluate`; `scf skills evaluate` is the source report of [Evaluate a source](#evaluate-a-source).
+
+```
+scf skills profiles evaluate example-skills
+```
+
+```
+PASS cosmos-db-setup (cosmos-db-setup) vendor capabilities=cosmos-db-access high_risk=cosmos-db-access sha256:…
+NEEDS cosmos-db-setup config=COSMOS_ENDPOINT live_services=COSMOS_KEY
+BLOCKED sql-migrations (sql-migrations) portable capabilities=sql-migrations high_risk=- sha256:…: evaluation: correctness not recorded
+MISSING example-skills/backup-tuning: in skill-source-profiles.yaml, not staged
+EVALUATED 2 skills from acme/skills@3c1d… sha256:…: 1 pass, 1 blocked, 1 missing
+```
+
+- **Gates.** Each blocked skill lists its reasons, by gate, in this order:
+  - `declared`: the staged skill has no entry in `skill-source-profiles.yaml`.
+  - `licence`: the stored licence evidence must be `allowed`. Without evidence the reason says to run the import again.
+  - `security`: the skill must normalize and have no open high finding. This is the same decision as `scf skills scan`.
+  - `requirements`: every tool or connector the package needs must be in the skill's `requires`. An undeclared need blocks.
+  - `evaluation`: each kind in the skill's `evaluations` needs a passed record, see below.
+- **NEEDS.** The configuration names and live services a profiled skill declares, as names only. The command grants nothing with them.
+- **MISSING.** A profile entry with no staged skill. It is reported, and it is not a block.
+- **Each line** shows the id, the class, the capabilities, the high-risk capabilities and the digest. A blocked line shows the digest too, so you can copy the id and digest into a record.
+- **Exit code.** 1 when a skill is blocked, a `PROBLEM` line is printed or the canonical recommendation has a `CONFLICT` (see [Canonical skill per capability](#canonical-skill-per-capability)); otherwise 0.
+
+##### Evaluation records
+
+`skill-profile-evaluations.yaml` in the current folder holds the owner's results. It is changed by pull request and read only by `profiles evaluate` and, for a `trust: community` source, by [Compare an import](#compare-an-import) (the `kind: fixtures` records). An absent file means no records, and every required evaluation is then `not recorded`.
+
+```yaml
+schema: 1
+evaluations:
+  - skill: sql-migrations
+    digest: sha256:9d1e0b7a…
+    kind: correctness
+    verdict: passed
+    owner: "@acme/skills"
+    reviewed: 2026-10-01
+    expires: 2027-04-01
+    report: 7c3f…
+```
+
+- **Fields.** `skill` and `kind` are slugs, `digest` is the package digest, `verdict` is `passed` or `failed`, and `owner` is a GitHub user or team. `reviewed` and `expires` are dates. `report` is optional and may hold the digest of a scored record. Up to 500 records.
+- **Lifetime.** `expires` is at most 365 days after `reviewed`, and not before it. `reviewed` may not be in the future.
+- **Matching.** A record counts only for its skill id, its kind and its exact digest. A new upstream digest voids it. A `failed` record at that digest blocks even when a `passed` one exists. An expired record blocks.
+- **Refused.** Wildcards, unknown keys, credential-like text and control characters. An invalid file prints `PROBLEM skill-profile-evaluations.yaml <where>: <message>` lines, and nothing is evaluated.
+
+#### Canonical skill per capability
+
+When an `exclusive` capability of a profiled source is provided by two or more skills, `scf skills profiles evaluate <source-id>` also recommends one of them. The lines come after the per-skill lines and before `EVALUATED`. The same rules as [Overlap with the catalogue](#overlap-with-the-catalogue) apply: a canonical skill is chosen by the same levels, and the rejection codes are the same.
+
+- **Which capabilities.** Only an `exclusive` capability that a skill of this source declares in `skill-source-profiles.yaml`. The providers are the staged skills of the source and the active skills registered locally (built-in and administrator). Installed copies from the repository are not compared.
+- **Blocked candidates.** A staged skill that fails a gate of the evaluation above is never recommended. Its failed gates are the evidence: `gates=` lists them by name (`declared`, `licence`, `security`, `requirements`, `evaluation`). A staged skill whose required evaluation is not recorded is rejected as `discovery-only`. A staged skill with no profile entry is not a provider at all.
+- **Installed copies.** A registered skill that is the same artifact as a staged one and declares the same capabilities keeps its own place and origin. The staged gate failures and the evaluation result are added to it.
+- **High risk.** A capability listed in a profile skill's `high_risk` is marked `high-risk` on its lines.
+- **Lines.**
+  - `CANONICAL <capability>: <id@version> <origin> (<level>)` names the winner, its origin (`staged`, `builtin` or `admin`) and the level that decided it. `only-candidate` means nothing else competed.
+  - `CONFLICT <capability>: <rule>: <message>` means the choice cannot be decided, for example `tie high-risk` when two skills tie on a high-risk capability.
+  - `NONE <capability>: no skill can be used` means every provider is rejected.
+  - `REJECTED <capability> <id@version> <origin>: <code>` gives each loser its code, then `(<level>)` when a level decided it, then `gates=…` when the candidate failed gates.
+  - Only validated ids, versions, codes and the selector's own message are printed. No name, description or path of an upstream skill is printed.
+- **Exit code.** 1 for a `CONFLICT`, a blocked skill or a `PROBLEM` line. A `CANONICAL`, `NONE` or `REJECTED` line alone does not change it.
+- **Catalogue problems.** `PROBLEM catalogue <source> <kind>` means the registered skills could not be read in full. It exits 1.
+- **Limits.** The staged and the registered skills together are at most 1,000. A larger set prints `PROBLEM too many skills or capabilities to compare` and exits 1.
+- **Read only.** The recommendation grants nothing: nothing is promoted, pinned or loaded, and no run reads it. Runs choose skills as before.
+
+For the fixture of the tests, the first output has no correctness record for the portable skill. The second output has a passed `database-correctness` record for it (ids and versions are examples):
+
+```
+CANONICAL postgresql: postgres-basics@1.0.0 staged (only-candidate)
+REJECTED postgresql postgres-practices@1.0.0 staged: discovery-only gates=evaluation
+```
+
+```
+CANONICAL postgresql: postgres-practices@1.0.0 staged (evaluation)
+REJECTED postgresql postgres-basics@1.0.0 staged: outranked (evaluation)
+```
+
+##### Example: Supabase agent skills
+
+This example adds the Supabase skills for PostgreSQL, authentication, row-level security and backend patterns, from `https://github.com/supabase/agent-skills`. It is for the owner of the catalogue; nothing in the repository holds the commit, the project or a key. **The folder names and the licence are placeholders.** They could not be checked against the upstream repository (no network), so check them against the commit you review before you use the entries. Each `# placeholder` comment marks a value to replace.
+
+The entry in `skill-sources.yaml`, under `sources:`:
+
+```yaml
+  - id: supabase-agent-skills
+    repository: https://github.com/supabase/agent-skills
+    status: enabled
+    ref:
+      approved: 0000000000000000000000000000000000000000   # placeholder: the reviewed full commit id goes here
+      track: main                                          # only to look for updates
+    paths: [skills]                                        # placeholder: check the folder names
+    adapter: agent-skills
+    trust: verified                                        # the vendor's own repository
+    licence: { allow: [MIT] }                              # placeholder: check against the approved commit
+    update: { cadence: manual }
+    owner: "@octocat"
+```
+
+The matching entry in `skill-source-profiles.yaml`, with `exclusive: [postgresql]` at the top of the file:
+
+```yaml
+schema: 1
+exclusive: [postgresql]
+sources:
+  - id: supabase-agent-skills
+    skills:
+      - name: supabase-postgres-best-practices         # placeholder: check the folder name
+        class: portable
+        capabilities: [postgresql, postgresql-query-performance, postgresql-schema-design, postgresql-row-level-security]
+        high_risk: [postgresql-row-level-security]
+        evaluations: [database-correctness]
+      - name: supabase                                 # placeholder: check the folder name
+        class: vendor
+        capabilities: [supabase-auth, supabase-rls-policies, supabase-edge-functions, supabase-realtime]
+        high_risk: [supabase-auth, supabase-rls-policies]
+        requires:
+          config: [SUPABASE_URL, SUPABASE_ANON_KEY]
+          tools: [network]
+          live_services: [supabase]
+```
+
+- **Approved commit.** `ref.approved` is a placeholder. The owner replaces it with the full commit id that was reviewed, in a pull request. Until then the source cannot be imported.
+- **Portable and vendor capabilities.** The portable skill provides the four PostgreSQL capabilities. The vendor skill provides the four Supabase capabilities. Each capability belongs to one class only, so a vendor skill cannot take over `postgresql`.
+- **Exclusive.** Only `postgresql` is exclusive. When the portable skill and another skill provide it, `scf skills profiles evaluate supabase-agent-skills` recommends one of them. The Supabase capabilities are not exclusive and get no `CANONICAL` line.
+- **High risk.** The auth capability (`supabase-auth`) and the row-level-security capabilities (`supabase-rls-policies` and `postgresql-row-level-security`) are in `high_risk`, so they are marked `high-risk`.
+- **Evaluation.** The portable skill needs a passed `database-correctness` record for its exact digest in `skill-profile-evaluations.yaml`. Without it the skill is blocked and cannot be recommended. The vendor skill needs no record here.
+- **Configuration names only.** The project URL and the anon key are read as the names `SUPABASE_URL` and `SUPABASE_ANON_KEY`. Their values are never stored in the repository, printed or sent to a command.
+- **Order of checks.** Run `scf skills sources check`, `scf skills profiles check`, `scf skills import supabase-agent-skills`, `scf skills scan supabase-agent-skills` and then `scf skills profiles evaluate supabase-agent-skills`. Each one is read-only, except the import, which only stages the skills in quarantine.
 
 #### Owner overrides and project pins
 
@@ -3616,9 +3819,53 @@ ASSESSED <n> skills from <repository>@<commit> sha256:…: <n> candidates, <n> e
 - **Exit codes.** 0 when the report is printed, even when every skill is excluded: an exclusion is the expected result. 1 for a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, or no workflow profile).
 - **Not done.** Nothing promotes a candidate yet. `workflowBlockers`, `declaredPackage` and `workflowProvenance` in `src/skills/workflow.ts` are for a later promotion step to call. A promoted skill would record its declaration in `SkillProvenance.workflow`.
 
+#### Compare an import
+
+`scf skills compare <source-id>` compares the staged import of a source with the built-in `java` and `spring-boot` skills. For each skill it shows the capabilities it shares with them, every collision, and one recommendation or conflict for each shared capability. It is offline and read-only, like `assess`: nothing is written, loaded or run, and it needs no data folder. It reads `skill-sources.yaml` and the approved commit (`ref.approved`) of the source, then the staged import in quarantine. For a `trust: community` source it also prints a promotion decision per candidate and reads `skill-scan-exceptions.yaml` and `skill-profile-evaluations.yaml` in the current folder (see **Promotion decision** below). Other sources take no exception file. The built-in skills are read straight from their folders; the lock file and the owner overrides are not used, except that `skill-overrides.yaml` in the current folder is read when it exists.
+
+```
+scf skills compare spring-agent-skills
+```
+
+```
+SKILL <id>@<version> <tier> capabilities=<list or ->
+EXCLUDED <id> <code>
+NO-OVERLAP <id>
+COLLISION <id> <class> <reason> <id@version,...> [blocking]
+RECOMMEND <capability> <id@version> (<level>)
+CONFLICT <capability> <reason>
+NOTE <reason>
+PROMOTABLE <id>
+REFUSED <id>: <code>, <code>
+REFUSED <folder>: not-normalized
+COMPARED <n> skills from <repository>@<commit>: <n> collisions (<n> blocking), <n> conflicts
+```
+
+The `PROMOTABLE` and `REFUSED` lines are printed only for a `trust: community` source.
+
+- **Capabilities.** Upstream tags, keywords and capability names are mapped to built-in capability names by a shipped table in `src/skills/community-rules.ts`. For example `spring-boot` with `transactions` maps to `spring-boot-transactions`, and `java` maps to `java-language`. The mapping is used for this comparison only: the skill, its digest and its package are not changed.
+- **Skills.** One `SKILL` line for each imported skill, sorted by id. Its tier is `vetted-community` when the source is enabled and reviewed at the approved commit (`review.commit` equals `ref.approved`), and `discovery-only` otherwise. A skill with no mapped capability also prints `NO-OVERLAP <id>`.
+- **Excluded.** `EXCLUDED <id> stale` means a declared version is no longer supported, and `EXCLUDED <id> incompatible` or `compatibility-unchecked` means the skill cannot be checked against its declared versions. An excluded skill is never recommended. A skill that normalization rejects prints `EXCLUDED <folder> not-normalized`.
+- **Collisions.** `COLLISION` lists each collision with its class, its reason and the members it names. `blocking` at the end marks a collision that stops the comparison.
+- **Recommendations.** For each capability that an imported skill and a built-in skill share, exactly one line is printed. `RECOMMEND` names the winner and the level that decided it (for example `trust-tier`, `owner-override` or `only-candidate`). The built-in skill wins on trust tier over a `vetted-community` skill, unless an owner override says otherwise. `CONFLICT` names the capability and the reason, for example that no skill is eligible.
+- **Notes.** `NOTE` gives the first reason that stops the canonical selection (the same text a run would stop with), and says how many more there are. It is printed only when there is one.
+- **Order.** The same input gives the same output in any order.
+- **Limits.** The comparison is refused with a `PROBLEM` when it would compare more than the allowed number of skills or share more capabilities than the selection rules allow. No project is given, so a skill is not checked against the versions of a project; only the stale check applies.
+- **Promotion decision.** For a `trust: community` source, each staged skill gets one line after the report: `PROMOTABLE <id>` when every check passes, or `REFUSED <id>: <codes>`. The codes are listed in the order below. A staged entry that did not normalize prints `REFUSED <folder>: not-normalized`. These lines come before `COMPARED`, which stays last.
+  - `source-not-enabled`, `review-missing`, `review-stale`, `import-not-approved`: the source is not enabled, has no `review`, or its review or the staged commit does not match `ref.approved`.
+  - `licence-missing`, `licence-ambiguous`, `licence-rejected`, `licence-review`: the licence evidence of the import. `licence-missing` means the import has no licence evidence, so import it again. See [Licence review and provider assumptions](#licence-review-and-provider-assumptions).
+  - `excluded`: the skill needs a live integration, network access or plugin configuration, as in [Scan an import](#scan-an-import).
+  - `import-mismatch`: the skill's id is shared with another staged skill, or the skill does not belong to this source.
+  - `scan-blocked`: a high finding is not accepted in `skill-scan-exceptions.yaml`. `compare` runs the scan itself, so no scan record is needed.
+  - `version-stale`, `version-unchecked`: a declared version is no longer supported, or cannot be checked.
+  - `collision-blocking`, `canonical-conflict`: a blocking collision, or a shared capability with no winner.
+  - `fixtures-missing`: no `kind: fixtures` record for the skill at its exact digest, or the record has expired. `fixtures-failed`: the record at that digest is `failed`. See [Evaluation records](#evaluation-records).
+- **Inputs.** For a `trust: community` source, a missing `skill-scan-exceptions.yaml` means no exceptions, and a missing `skill-profile-evaluations.yaml` means no records. An invalid file prints `PROBLEM <file> <where>: <message>`, no `COMPARED` line, and exits 1. Fixture results come only from the `kind: fixtures` records, matched on the skill id and the exact digest. The gate records of `scf skills gate` are not used, and a missing record is never read as `failed`.
+- **Exit codes.** 0 when there is no conflict, no blocking collision and no `PROBLEM`. 1 for a `CONFLICT`, a blocking collision, or a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, a built-in skill that cannot be read, an invalid `skill-overrides.yaml`, or an invalid exception or record file). For a `trust: community` source, 1 also when a candidate is `REFUSED`, or an entry did not normalize. Most community imports exit 1 until review, licence evidence and fixture records exist; this is intended, and scripts that use `compare` will see it. Other trust tiers keep the exit rule above, unchanged.
+
 #### Evaluate a source
 
-`scf skills evaluate <source-id> [<technology>@<version> ...]` reports what an enabled source offers, before you import it. It fetches the approved commit (`ref.approved`) into a temporary folder, like `scf skills import`, and then writes nothing: no quarantine, no catalogue and no file.
+`scf skills evaluate <source-id> [<technology>@<version> ... | --repo <dir>]` reports what an enabled source offers, before you import it. It fetches the approved commit (`ref.approved`) into a temporary folder, like `scf skills import`, and then writes nothing: no quarantine, no catalogue and no file.
 
 ```
 scf skills evaluate oracle-skills oracle-database@19 oracle-apex@24
@@ -3636,6 +3883,7 @@ EVALUATED 1 skills from github.com/example/oracle-skills@0123456789ab sha256:…
 ```
 
 - **Technologies.** Up to 8, each `<name>@<version>` with a lower-case name such as `oracle-database@19`. A skill is compatible when its version range admits the version you give. Without any technology, no `COMPATIBILITY` verdict is shown.
+- **Project folder.** `--repo <dir>` (only for a source with a reviewed profile, see [Vercel agent skills](#vercel-agent-skills)) reads the versions of the profile's technologies from the `package.json` files of that folder, relative to the current folder, instead of listing them. It cannot be combined with technology operands. Only dependencies are read. An exact version such as `18.2.0` is used as it is, `^18.2.0` gives `18` and `~18.2.0` gives `18.2`. A range such as `>=18`, `<18`, `latest` or `workspace:*`, a missing version, or two different versions, give `unknown`, so the verdict is `unchecked`. The reason is that the report must not claim a version it cannot read. If the scan hits a limit or cannot read a file, the command stops with a `PROBLEM` and no verdict.
 - **Source scope.** A source entry in `skill-sources.yaml` can state what upstream does not: `scope` with up to 8 `capabilities` and up to 8 `technologies` (a name and a version range such as `">=19"`). A range the skill declares itself wins. The scope adds to the skill; it never removes one.
 
 ```yaml
@@ -3649,8 +3897,44 @@ EVALUATED 1 skills from github.com/example/oracle-skills@0123456789ab sha256:…
 - **Access.** `ACCESS` lists what a skill asks for (network, credentials, tools). Importing grants none of it: no cloud credential or live database access is given by an import.
 - **Licence and notices.** `LICENCE` is per skill, from the source's `licence.allow`. A skill whose licence is not allowed is `REFUSED`. The attribution files of an allowed skill are listed as `NOTICE`, so the notices can be kept with it.
 - **Overlap.** For each capability that an imported skill and an installed skill both provide, the report uses the canonical selection. `RECOMMEND` names the winner and why it won; `CONFLICT` means no winner can be chosen; `NONE` means no skill is eligible. A recommendation is not applied: nothing is pinned or changed.
-- **Exit codes.** 0 when every skill passes. 1 when a skill is refused or blocked by a high finding, its licence is not allowed, its compatibility is `incompatible` or `unchecked`, an installed skill fails the integrity check, or a conflict is found. A `PROBLEM` line also exits 1 and names the file or field.
+- **Exit codes.** 0 when every skill passes. 1 when a skill is refused or blocked by a high finding, its licence is not allowed, its compatibility is `incompatible` or `unchecked`, an installed skill fails the integrity check, or a conflict is found. For a source with a reviewed profile, 1 also when a skill is blocked by the profile, or a folder the profile selects is missing from the import. A `PROBLEM` line also exits 1 and names the file or field.
 - **Limits.** The same fetch limits as `scf skills import`. An evaluation that is interrupted (Ctrl-C) prints `PROBLEM` and writes nothing.
+
+##### Vercel agent skills
+
+The connector `vercel-agent-skills` (`https://github.com/vercel-labs/agent-skills`) is the first source with a reviewed profile. The profile is code, not data in `skill-sources.yaml`: it lists the folders the connector selects and what each one may offer. The entry in `skill-sources.yaml` is short:
+
+```yaml
+- id: vercel-agent-skills
+  repository: https://github.com/vercel-labs/agent-skills
+  paths: [skills]
+  trust: verified
+  licence:
+    allow: [MIT]
+  ref:
+    approved: 0000000000000000000000000000000000000000   # placeholder: the reviewed commit goes here
+```
+
+Do not add a `scope` to it: a source with a profile is refused with `PROBLEM`. Its `paths` may list the selected folders instead of `skills`; a folder that is not listed is then not fetched at all, and it does not count toward the import limits.
+
+- **Selected folders.** `frontend` group: `skills/react-best-practices`, `skills/composition-patterns`, `skills/react-native-skills`. `typescript` group: none yet. `skills/web-design-guidelines` is listed but on hold, so it is never offered. `skills/vercel-deploy-claimable` is not selected: the report says `NOT-SELECTED skills/vercel-deploy-claimable` and it is not evaluated, so its licence, findings and size do not change the verdict (its bytes still count toward the import limits while `paths` is `skills`). The profile's capabilities, technologies and category replace the ones the upstream `SKILL.md` declares.
+- **A declaration becomes reviewed** only when its digest (the package digest of that folder, skill-relative paths) is in that folder's `reviewed` list in `frontend-rules.ts`. A list entry is added by a code change, after someone has read that exact `SKILL.md`. Each list is empty in this release, so no folder is reviewed yet. One changed byte gives a new digest, which is not reviewed, and a digest approved for one folder does not approve another.
+- **Evaluation stays `missing`.** Each folder needs the evaluation `skill-gate` to have passed for its digest. No result can be recorded yet, so `evaluation missing` is shown for every folder and the verdict is blocked. A `failed` result also blocks.
+- **Why `web-design-guidelines` is on hold.** It takes its rules from a remote address when it runs, so the content that is reviewed is not the content that runs.
+- **Size.** A skill body over 5000 tokens is `too large`, and is blocked.
+- **What a blocked skill does.** The `CONNECTOR` line names the group, whether the declaration is reviewed, the evaluation state and any hold. Each skill that is blocked is not chosen as a recommendation, and the source verdict exits 1.
+
+For example, the lines of an import in which one selected folder is missing:
+
+```
+CONNECTOR vercel-agent-skills react-best-practices: group=frontend declaration unreviewed; evaluation missing
+MISSING skills/composition-patterns: the profile selects it; the import does not have it
+NOT-SELECTED skills/vercel-deploy-claimable: the profile does not select it; not evaluated
+```
+
+When the import stages nothing, the report lists each selected folder as `REFUSED` (with its reasons) or `MISSING`, each other folder as `NOT-SELECTED`, and ends with `EVALUATED 0 skills … 0 refused` or `N refused`. The exit code is 1.
+
+Upstream facts were not checked when the profile was written. Folder names, the `next` and `react-native` ranges, and the remote fetch of `web-design-guidelines` need a human check against the repository before any digest is added.
 
 #### Check a promotion
 
@@ -3667,10 +3951,11 @@ CHECKED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 promo
 ```
 
 - **What it checks.** The staged import is read and checked as in [Scan an import](#scan-an-import). Then, per skill path: the licence and notice evidence of the commit is checked against the source's licence allow list, the skill is normalized, the scanner runs with the exceptions, and the provenance is recorded.
-- **Lines.** `PROMOTABLE <id> <path> <licences>` for a path that may be promoted, with its licence names. `REFUSED <path>: <status> (<reasons>)` for every other path. The status is the licence status (for example `missing`, `ambiguous`, `review` or `rejected`), `blocked` when a high finding is not accepted, or `not-normalized` when the normalization step rejects the skill. Then one `CHECKED` line with the counts.
-- **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, or with an open high finding. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
+- **Lines.** `PROMOTABLE <id> <path> <licences>` for a path that may be promoted, with its licence names. `REFUSED <path>: <status> (<reasons>)` for every other path. The status is the licence status (for example `missing`, `ambiguous`, `review` or `rejected`), `blocked` when a high finding is not accepted, or `not-normalized` when the normalization step rejects the skill, or `evaluation (<suite>: <codes>)` when a suite of `skill-evaluations.yaml` is not passed for the digest ([Confluent skills](#confluent-skills)). An `EVALUATION` line per suite follows the other lines. Then one `CHECKED` line with the counts.
+- **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, with an open high finding, or with a suite that is not passed for its digest. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
 - **Reasons.** Reasons never show credential-like text; it shows as `(hidden)`. Licence texts are never printed.
-- **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, or an invalid exception file).
+- **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, an invalid exception file, or an invalid `skill-evaluations.yaml`).
+- **Manifest fields.** The promotion manifest (schema 1) lists the provenance of each promoted package. Two optional fields record who vouches for it: `trust` is the trust tier of the source (for example `community`) and is always set; `review` holds `by`, `on` and `commit` of the source's review and is set only when the source has one. The review never holds the licence. Manifests written before these fields stay valid, and `attributionProblem` works on them as before.
 
 #### Licence review and provider assumptions
 
@@ -3728,6 +4013,32 @@ scf skills review example-skills --markdown > review.md
 - **Limits.** More than 1,000 skills to compare prints a `PROBLEM` and checks no collisions.
 - **Exit codes.** 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed (for example a missing import or an unknown source); 0 otherwise.
 
+#### Onboard the community Spring source
+
+`github.com/jiangxianze/spring-agent-skills` is a community repository, so its source must be `trust: community`. It is added by pull request, in the order below. These steps promote nothing: `compare` only prints the decision, and no skill is installed, pinned or offered to a run.
+
+1. **Review.** A person checks the maintainer, the licence and the commit to approve.
+2. **Record the review in `skill-sources.yaml`.** Set `status: enabled`, `ref.approved` to the reviewed commit and `licence.allow` to the licences it accepts. Add `review` with `by`, `on`, `commit` (the same commit) and `licence` (one of `licence.allow`). Start from the example in [Skill library sources](#skill-library-sources).
+3. **Check the file.** `scf skills sources check` must print `OK` and exit 0.
+4. **Import.** `scf skills import spring-agent-skills` fetches the commit into quarantine and keeps its licence files, which `compare` needs.
+5. **Scan.** `scf skills scan spring-agent-skills`. Each reviewed high finding is accepted by its id and digest in `skill-scan-exceptions.yaml`.
+6. **Record the fixture results.** Add one record per candidate skill to `skill-profile-evaluations.yaml`. Take the id and the digest from `scf skills profiles evaluate spring-agent-skills`:
+
+   ```yaml
+   schema: 1
+   evaluations:
+     - skill: java-code-review
+       digest: sha256:…
+       kind: fixtures
+       verdict: passed            # or failed
+       owner: "@octocat"
+       reviewed: 2026-10-14
+       expires: 2027-04-14
+   ```
+
+   A record is for one digest, so a new upstream version needs a new record. The other fields follow [Evaluation records](#evaluation-records).
+7. **Compare.** `scf skills compare spring-agent-skills` prints a `PROMOTABLE` or `REFUSED` line for each candidate. It exits 0 only when every candidate is `PROMOTABLE`. A refused candidate lists its codes, which name the step still missing.
+
 #### Update a source
 
 `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` finds the upstream commit of a source, stages it with the same checks as `scf skills import`, builds the [review report](#review-an-import) and opens a pull request that proposes the new commit. The pull request is the only result. Nothing is approved, promoted, pinned or released until it is merged.
@@ -3782,6 +4093,61 @@ GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…:
 - **Exit codes.** `score` exits 1 when a `PROBLEM` is printed. `gate` exits 0 only when every skill passes and no `PROBLEM` is printed.
 - **Limits.** A record is at most 2 MiB and a folder holds at most 5,000 files. A source that is not enabled is a `PROBLEM` for `gate`.
 - **Not done.** The gate prints the verdict only. No run or promotion reads it yet.
+
+##### The suite file and its instructions section
+
+The suite file has one section per dimension (`selection`, `conflicts`, `context`, `tools`) and an optional `instructions` section for sandboxed agent scenarios. Plain `score` does not run them and writes no `instructions` scores, so without `--agent` the section only changes the suite digest and the gate's rules. `score --agent` runs them; see the next section.
+
+```yaml
+schema: 1
+instructions:
+  mandatory: true            # default false: the gate then needs the instructions dimension
+  repeat: 3                  # 3–20, default 3
+  scenarios:                 # 1–20 scenarios; scenarios × repeat is at most 200
+    - id: retry-consumer
+      repo: fixtures/kafka-consumer   # a fixture folder next to the suite
+      task: Add a retry to the consumer.
+      check: The consumer retries once.   # what the check looks for, at most 2000 characters
+      policy: { shell: true, network: false, filesystem: write }
+      timeout_sec: 900                # 60–3600, default 900
+```
+
+- **Ids.** Scenario ids are unique across the whole suite, including the ids of the other sections.
+- **Fixtures.** A fixture folder may not hold `.claude/` or `.mcp.json` (any letter case, any depth), and may not hold a symbolic link. Such a fixture is a `PROBLEM` at `instructions.scenarios (<id>) repo`. The same limits as the other fixtures apply.
+- **Digest.** A suite without `instructions` keeps its digest. With it, the digest covers each scenario, `mandatory` and `repeat`, and a hash of each fixture: the sorted relative paths, the bytes and the executable bit of every file. Changing one assertion in a fixture changes the digest, so every record must be made again.
+- **Gate.** With `mandatory: true`, a record without an `instructions` score is `FAILED` (`dimension-missing:instructions`). The minimum number of samples is `repeat` × the number of scenarios. With `mandatory: false` the dimension is ignored when it is missing.
+- **Paired baselines.** A record may hold an `agent` block with the scores of its agent runs and of up to four baselines (the same skill at another digest). The gate uses a baseline paired in the record for every dimension, so no stored baseline record is needed. A stored baseline record of an older suite does not affect it. Without a pair, the gate behaves as before: no stored baseline record is `baseline-missing`.
+- **Refused records.** A record whose `agent` block does not match its `dimensions.instructions`, names an unknown scenario, or repeats a run id is `record-invalid`.
+
+##### Run the scenarios in the sandbox
+
+`scf skills score <source-id> [<suite-file>] --agent` also runs the `instructions` scenarios of the suite with a Claude agent, and writes their scores into the record. It needs the macOS sandbox (`sandbox-exec`), a Claude model key and a suite with `instructions`. The offline scores are made as well.
+
+```
+scf skills score example-skills --agent
+```
+
+Illustrative output (the ids and scores are made up):
+
+```
+NOTE network: not host-limited; outbound is limited to port 443, not to the model's host
+RUN kafka-consumer candidate kafka-consumer retry-consumer 1/3 run 6f1c…: 1
+RUN kafka-consumer candidate kafka-consumer retry-consumer 2/3 run 9a0e…: 1
+RUN kafka-consumer candidate kafka-consumer retry-consumer 3/3 run 2bd7…: 0 (skill-not-loaded)
+SCORED kafka-consumer@1.2.0 new: selection=1.00 conflicts=1.00 context=1.00 tools=1.00 instructions=0.67
+PASSED kafka-consumer@1.2.0 new
+```
+
+- **Cost.** A run is one agent session, plus a fixture copy and a check. The runs are scenarios × `repeat` × (1 + baselines). Each baseline is a skill of `gateChecks` (at most 4). A candidate with two scenarios, `repeat: 3` and two baselines has 2 × 3 × 3 = 18 agent sessions. Runs are slow and cost model tokens.
+- **Baselines.** A baseline is run the same number of times as the candidate, with the same suite, and it is also scored offline. Its record is written into the candidate's `agent` block, so the gate can compare the two without a stored baseline record (see above).
+- **Candidate that may not run.** A candidate with promotion blockers, or with a licence that is not `allowed`, prints `SKIPPED <id>: …; no agent run`. It gets the offline record only, and the gate then decides as it does without `--agent`.
+- **Refusals.** These print `PROBLEM …`, exit 1 and write nothing. The sandbox is not available. `SCF_USER_SANDBOX` or `FACTORY_USER_SANDBOX` is `off`. The suite has no `instructions`. The agent is not Claude. The model key is missing. A fixture changed after the suite was digested.
+- **Each run.** A run scores 1 when its fixture step, its work step and its check succeed, and the skill was loaded into the session. Otherwise it scores 0 and prints the cause in brackets: `agent-failed`, `check-failed` or `skill-not-loaded`. A fixture step that fails, or a fixture that cannot be read, is a `PROBLEM <id>: …; no instructions`, and that skill gets no `instructions` score.
+- **What the sandbox guarantees.** Each arm (the candidate, then each baseline) runs one after another in its own temporary data folder. That folder holds only the arm's skill, pinned in its own lock file. A baseline is copied unchanged, and its digest is checked. Your real data folder gets only the evaluation record; its `skills/` and `skills.lock.json` do not change. Every run has no GitHub token, an empty `gh` folder, no personal Claude or MCP settings, a short environment, and a private `CLAUDE_CONFIG_DIR` and `HOME`. The only credential it has is the model key. A check that needs a GitHub token or another stored secret fails. The agent may use only the tools of the scenario policy: `Read`, `Glob`, `Grep` and `LS` always; `Edit`, `Write` and `MultiEdit` for `filesystem: write`; `Bash` for `shell: true`; `WebFetch` and `WebSearch` for `network: true`.
+- **What it does not guarantee.** Outbound network is limited to one port (the model's), not to the model's host, because the macOS sandbox cannot filter by host. The agent therefore sees the model key and can reach any host on that port. Only macOS is supported. The output says so with the `NOTE` line, and the record says so in `agent.network` (`not-host-limited`) and `agent.outbound`.
+- **Deadlines.** The fixture step has 120 seconds, the work step has the scenario's `timeout_sec`, and the check has 300 seconds. A deadline that passes ends that run.
+- **Interruption.** On Ctrl-C or SIGTERM, or on an error, every running job is cancelled and waited for, the temporary folders are removed and your environment is restored. It prints `PROBLEM the evaluation was interrupted` and writes no record. Run it again to get a record.
+- **`evaluate` and `score`.** `scf skills evaluate … --agent` is refused with a message that points to `score --agent`. Plain `scf skills score` and `scf skills gate` are unchanged.
 
 #### Skill identity and content fingerprint
 
@@ -3879,8 +4245,8 @@ NEW kafka-admin: kafka-admin@0.1.0 provider confluent
 OVERLAP 6 skills from github.com/example/skills@0123456789ab sha256:…: 4 shared, 1 new, 2 vendor-only, 1 conflicts
 ```
 
-- **What it reads.** The staged import, normalized, with the source profile applied (see [Source profile](#skill-library-sources)), and the registered skills. Registered skills from the repository are not compared.
-- **Lines.** `CANONICAL <capability>: <id@version> (<level>)` names the winner and the level that decided it (`trust-tier`, `specificity`, and so on; `only-candidate` when nothing else competed). Each loser has a `REJECTED <id@version>: <code>` line under it. `CONFLICT <capability>: <rule> <ids>` names the skills that cannot be decided: `tie` (two skills tie on a high-risk capability and only age or name separates them), `mandatory` (a skill in `skills.selection.include` is not the canonical one) or `winners-overlap` (the best skill for one capability is not the best for another capability it also provides). `NONE <capability>: no skill can be used` means every candidate is rejected. `NEW <capability>: <id@version>` is a capability only the source declares. A skill with provider requirements prints its `provider <name>` on each line.
+- **What it reads.** The staged import, normalized, with the source profile applied (see [Source profile](#skill-library-sources)), the registered skills, and `skill-selections.yaml` ([Skill selections](#skill-selections)). Registered skills from the repository are not compared.
+- **Lines.** `CANONICAL <capability>: <id@version> (<level>)` names the winner and the level that decided it (`trust-tier`, `specificity`, and so on; `only-candidate` when nothing else competed). Each loser has a `REJECTED <id@version>: <code>` line under it. `CONFLICT <capability>: <rule> <ids>` names the skills that cannot be decided: `tie` (two skills tie on a high-risk capability and only age or name separates them), `mandatory` (a skill in `skills.selection.include` is not the canonical one) or `winners-overlap` (the best skill for one capability is not the best for another capability it also provides). `NONE <capability>: no skill can be used` means every candidate is rejected. `NEW <capability>: <id@version>` is a capability only the source declares. A skill with provider requirements prints its `provider <name>` on each line. `VERSIONS <skill>: <technology> <range>, …` gives the declared versions of a skill, when it has any ([Confluent skills](#confluent-skills)).
 - **Rejection codes.** `safety` (an open high finding of the scan, or a failed promotion blocker), `licence` (the licence is not allowed, or `licence.reviewed` is missing or stale), `tools` and the codes of the selection rules (`revoked`, `quarantined`, `discovery-only`, `incompatible`, `compatibility-unchecked`). A skill with a failed gate can never be canonical.
 - **Vendor scope.** A vendor-scoped capability (the source profile's `<provider>-<capability>`) is shared only with a registered skill of the same provider, never with a portable skill. The `OVERLAP` line says how many capabilities were kept vendor-only. A capability that is portable for one staged skill and vendor-scoped for another is a `PROBLEM`.
 - **Problems.** `PROBLEM` lines name the skill and a fixed code: `profile` (the source profile cannot be applied), `scope-collision`, `blocking-collision` (a collision with another skill holds it back), a skill that could not be normalized, or a catalogue that could not be read in full. A damaged staged import prints a fixed text and no reason.
@@ -3938,6 +4304,184 @@ selections:
 - **Requirements.** `requires` lists what the agent itself must call or reach during a run: `clis`, `mcp` servers, `credentials` and `services`. Each name is a lower-case slug. The total is at most 16 names, and a name may be listed only once across all four lists. Each name becomes a connector slug: `cli-<name>`, `mcp-<name>`, `credential-<name>` or `service-<name>` (at most 64 characters). `scf skills selections check` prints them sorted.
 - **Check.** `scf skills selections check [<file>]` reads `skill-selections.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It prints one line per entry (source and skill, scope, provider, product, SDK, connectors, owner, reviewed date and the start of the digest), then `OK <n> selections`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. A missing file is a `PROBLEM` for this command (for readers, it means "no selections"). Credential-like values and control characters are never printed.
 - **Limits.** At most 500 selections. Every problem names its entry and field, for example `selections[0] (microsoft-skills/azure-cosmos-py) requires.mcp[0]`.
+- **Use in checks.** `scf skills overlap` and `scf skills promote check` read this file to give capabilities to a skill that declares none, when its digest matches the staged skill. A skill with its own capabilities is not changed.
+
+#### Confluent skills
+
+The Confluent agent skills (`confluentinc/agent-skills`) are added like any library source, from an example declaration that ships disabled. Their Kafka and Confluent skills must pass two evaluation suites before they can be promoted: `messaging-semantics` and `compatibility`.
+
+1. **Copy the declaration.** Copy the entry from `docs/examples/skill-sources.confluent.yaml` (also in the installed package) into `skill-sources.yaml`. At the commit you reviewed, by pull request:
+   - replace the `placeholder/` paths with the real folders;
+   - check the upstream capability names under `profile.portable` and the version ranges under `scope` and `profile.products`. The example was not checked against upstream;
+   - set `ref.approved` to that full commit id, set `status: enabled` and remove `reason`.
+2. **Run the checks.** `scf skills import confluent-agent-skills`, then `scf skills scan confluent-agent-skills`, `scf skills promote check confluent-agent-skills` and `scf skills overlap confluent-agent-skills`.
+3. **Give capabilities to a skill that declares none.** Upstream skills may carry no capability metadata. For each such skill, add a `skill-selections.yaml` entry with its digest from `import.json` and its capabilities (see [Skill selections](#skill-selections)).
+4. **Write `skill-evaluations.yaml`** from the `EVALUATION` lines of `promote check`. It is optional, and it is changed by pull request. Each record is one suite of one skill at one digest:
+
+```yaml
+schema: 1
+evaluations:
+  - source: confluent-agent-skills
+    skill: kafka-clients
+    digest: sha256:…                  # the skill's digest in import.json
+    suite: messaging-semantics
+    result: passed                    # passed or failed
+    owner: "@octocat"
+    reviewed: 2026-10-13
+  - source: confluent-agent-skills
+    skill: kafka-clients
+    digest: sha256:…
+    suite: compatibility
+    result: passed
+    project: [{ name: apache-kafka, version: 4.1.0 }]   # the project's version of each technology the skill declares
+    owner: "@octocat"
+    reviewed: 2026-10-13
+```
+
+- **Which skills need them.** A skill with a `kafka-` or `confluent-` capability (including one the source scope adds) needs both suites. So does a skill without capabilities from a `confluent` provider source.
+- **Fields.** `project` is for `compatibility` only and is refused for `messaging-semantics`. `note` is optional text of up to 200 characters; text that looks like a credential is refused, and the message names the rule, not the text. A file has at most 500 records. A problem prints `PROBLEM` and exits 1.
+- **A changed skill.** A changed skill has a new digest. Its old records give `other-digest`, so it needs new records and, when it declares none, a new selection.
+
+5. **Read the result.** `promote check` prints one line per suite of each skill that needs them:
+
+```
+EVALUATION confluent-agent-skills/kafka-clients messaging-semantics sha256:…: passed
+EVALUATION confluent-agent-skills/streams-apps messaging-semantics sha256:…: not-recorded
+```
+
+- `passed` means the suite passed for this digest. Otherwise the codes are listed, and the path is `REFUSED <path>: evaluation (<suite>: <codes>)` until they are gone. A messaging code ends with `at <path>:<line>` for the first lines that break the rule (ten at most, then `+N more`).
+- **Records:** `not-recorded` (no record for the suite), `other-digest` (the record is for another digest), `recorded-failed` (`result: failed`), `profile` (the source profile or scope cannot be read; fix the declaration first).
+- **Messaging codes:** `exactly-once`, `ordering`, `keys`, `duplicates`, `retries` and `dead-letters`. Each code names a rule that a line of the upstream text breaks. The check reads text only, and upstream text is never printed. A passing text is not a review of the code, so read the skill as well.
+- **Compatibility codes:** `no-declared-versions` (the skill declares no version), `stale` (a declared range admits only old versions, such as `<=8`), `incompatible` (the project version is outside the declared range) and `unchecked` (the project has no version for a declared technology).
+- **Versions.** `overlap` prints `VERSIONS <skill>: <technology> <range>, …` for each skill with a declared version: its own ranges, the source scope, or the profile products. A vendor skill shows the product ranges, for example `apache-kafka >=4.0, confluent-platform >=8.0, flink >=1.19`.
+- **Overlap.** `CANONICAL`, `CONFLICT`, `NEW` and `REJECTED` lines mean what they mean in [Overlap with the catalogue](#overlap-with-the-catalogue). The summary line gives the counts.
+
+#### Evaluate an import
+
+`scf skills selections evaluate <source-id> [<selections-file>]` says, for each selected skill of a staged import, whether it is eligible or held back, and how the skills overlap. It is offline and read-only: nothing is written, loaded, promoted or run, and no process is started. "Eligible" is a reported verdict, not an approval. Nothing reads the result during a run.
+
+It reads `skill-sources.yaml` in the current folder, the staged import of the source and its stored licence evidence, `skill-selections.yaml` (or the file you name), `skill-scan-exceptions.yaml`, `skill-overrides.yaml` when present, and the skill registry. Run `scf skills import <source-id>` first; that is the only step that fetches.
+
+**Worked example: `microsoft/skills`.** The entry below is a placeholder. The owner must check the upstream licence and choose the commit, and then replace `ref.approved`. The Foundry ships no approved Microsoft commit, and `paths` must list the folders that hold the skills (check the repository layout; if the skills are only reached through symbolic links, list the real folders).
+
+```yaml
+schema: 1
+sources:
+  - id: microsoft-skills
+    repository: https://github.com/microsoft/skills
+    status: enabled
+    ref:
+      approved: <full commit id, reviewed by the owner>   # placeholder: replace it
+      track: main
+    paths: [skills]                                       # the folders with the skills
+    adapter: agent-skills
+    trust: verified
+    licence: { allow: [MIT] }
+    update: { cadence: manual }
+    owner: "@your-team"
+```
+
+The selections name an Azure SDK skill and a Cosmos DB skill, and one portable guidance skill. The skill names are examples, not a list of what the repository holds.
+
+```yaml
+schema: 1
+selections:
+  - source: microsoft-skills
+    skill: azure-storage-blob-py
+    digest: sha256:…                  # from import.json, after the import
+    scope: provider
+    provider: azure
+    product: { name: azure-storage-blob, version: "12" }
+    sdk: { name: azure-storage-blob, language: python, version: ">=12.0" }
+    category: storage
+    capabilities: [blob-storage]
+    owner: "@your-team"
+    reviewed: 2026-10-13
+  - source: microsoft-skills
+    skill: azure-cosmos-py
+    digest: sha256:…
+    scope: provider
+    provider: azure
+    product: { name: azure-cosmos-db, version: "2024-11" }
+    sdk: { name: azure-cosmos, language: python, version: ">=4.7" }
+    category: database
+    capabilities: [cosmos-db]
+    requires: { clis: [az], mcp: [azure], credentials: [azure-identity], services: [azure-cosmos-db] }
+    owner: "@your-team"
+    reviewed: 2026-10-13
+  - source: microsoft-skills
+    skill: cloud-design-guidance
+    digest: sha256:…
+    scope: portable
+    category: architecture
+    capabilities: [cloud-design]
+    owner: "@your-team"
+    reviewed: 2026-10-13
+```
+
+Then, in order: `scf skills sources check`, `scf skills import microsoft-skills` (fetches the commit into quarantine), `scf skills selections check`, and `scf skills selections evaluate microsoft-skills`. The output looks like this; ids are shortened, and the real ids end in a hash:
+
+```
+ELIGIBLE microsoft-skills-azure-storage-blob-py-… provider azure-storage-blob@12 sdk azure-storage-blob@>=12.0
+HELD microsoft-skills-azure-cosmos-py-…: needs-unavailable-tools
+ELIGIBLE microsoft-skills-cloud-design-guidance-… portable - sdk -
+EVALUATED 3 skills from github.com/microsoft/skills@0123456789ab: 2 eligible
+```
+
+- **Eligible.** A skill is `ELIGIBLE` only when its licence verdict from the stored evidence is `allowed`, it is selected with the current digest, and no reason below applies. The line shows the scope, the product and the SDK (`-` when the entry has none).
+- **Held.** `HELD <id>: <reason codes>` lists every reason, sorted, and never stops the command:
+  - `not-selected`: no selection names the skill.
+  - `selection-stale`: the digest in the selection is not the skill's digest in the import.
+  - `licence`: the licence is not allowed by the stored evidence, or is unknown.
+  - `needs-unavailable-tools`: the skill requires a CLI, MCP server, credential or service that is not available here, or the import excluded it (MCP or plugin configuration, network use). The Cosmos DB skill is held this way.
+  - `provider-content-in-portable`: a `portable` skill contains provider-specific text.
+  - `undeclared-requirement`: provider-specific text needs a tool that `requires` does not declare.
+  - `provider-without-policy`: a `provider` skill would replace a `portable` one with the same capability, and no owner override names it. This command does not read project pins.
+  - `blocking-collision`, `safety`: an overlap blocks it, or the security scan blocks it.
+  - `source-not-approved`, `incompatible`, `compatibility-unchecked`: the source or the product version does not check out, or the compatibility is not known.
+  - `not-normalized` (in the output as a skill folder): the import did not normalize the skill; its folder is shown instead of an id.
+- **Overlaps.** Each collision prints `OVERLAP <collision id> <class> <reason> <ids> [<shared capabilities>]`, after the skill lines. The same overlap rules as the rest of the catalogue apply.
+- **Exit codes.** 0 when the evaluation ran, including when skills are held. 1 when a `PROBLEM` is printed or the usage is wrong. A `PROBLEM` names the file or field, and missing licence evidence asks you to import again. A missing selections file is a `PROBLEM`.
+- **Credentials.** Credential-like text is shown as `(hidden)`.
+- **Limits.** The registry must be complete. A missing or unreadable skill root, a refused root, an invalid package or too many registered skills stops the command with a `PROBLEM` and exit 1, so the result is never partial.
+
+#### Publish a catalogue release
+
+The catalogue owner keeps the catalogue versions to publish in `skill-releases.yaml`, next to `skill-sources.yaml`, in the catalogue repository. The file is changed by pull request and checked before the pull request is opened. It grants nothing: no run reads it, and publishing a version is a separate step.
+
+```yaml
+schema: 1
+repository: github.com/acme/scf-skills
+releases:
+  - catalogue: scf-skills        # skill id slug of the catalogue
+    version: 0.1.0               # skill version
+    skills:                      # 1 to 500 skills, each id once
+      - source: openhands-extensions
+        id: example-skill
+    review:                      # optional; publishing needs it
+      by: "@octocat"
+      on: 2026-10-13
+    revoked:                     # optional; each id must be in skills
+      - id: example-skill
+        version: 0.0.9
+        on: 2026-10-14
+        reason: Broken on Node 22
+```
+
+- **Fields.** `schema` must be `1`. `repository` is `github.com/<owner>/<repo>`, the same form as `source.repository` in a release manifest. `releases` lists 1 to 200 entries. Each `catalogue` and `version` pair appears at most once. `catalogue` and each `id` are lower-case slugs of 1 to 64 characters; `version` is a version like `1.2.3`. Each `skills` entry is `{source, id}`, and an `id` is listed once.
+- **Review.** `review` has `by` (a GitHub user or team, such as `@octocat` or `@acme/skills`) and `on` (a real day, not after today). It is optional on purpose: an entry without it is valid here, and the publish command refuses it.
+- **Revoked.** Each revocation has `id`, `version`, `on` (a real day, not after today) and `reason`: 1 to 200 characters, trimmed, with no control character. A revoked `id` must be in `skills`, and it is listed once.
+- **Unknown keys are refused.**
+- **Reading.** The file is read safely. A symbolic link, a file that is not a regular file, a file larger than 256 KiB and YAML with aliases are refused. Warnings from the YAML library are not printed, because they repeat file content.
+
+`scf skills releases check [<file>]` checks the file offline and read-only. It reads `skill-releases.yaml` in the current folder, or the file you name. It works without the data folder. For each entry it prints the catalogue and version, the number of skills and revocations, and the review:
+
+```
+scf-skills@0.1.0 1 skills, 0 revoked, NOT REVIEWED
+OK 1 releases for github.com/acme/scf-skills
+```
+
+Reviewed entries print `reviewed by @octocat on 2026-10-13` in place of `NOT REVIEWED`. The last line says `OK <n> releases for <repository>` and the command exits 0. A problem prints one `PROBLEM <where>: <message>` line per error and exits 1. The message never repeats file content. A missing file prints `PROBLEM the release request file does not exist` and exits 1.
 
 ### Skill catalogue
 
@@ -4448,13 +4992,16 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills connectors` | List the reviewed skill source connectors (id, repository, roots, trust, licences); offline; reads no files |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
-| `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
+| `scf skills compare <source-id>` | Compare a staged import with the built-in `java` and `spring-boot` skills (`SKILL`, `COLLISION`, `RECOMMEND`, `CONFLICT` lines); for a community source also `PROMOTABLE` and `REFUSED` lines; offline and read-only; exits 1 on a conflict, a blocking collision, a refused candidate or a `PROBLEM` ([Compare an import](#compare-an-import)) |
+| `scf skills selections evaluate <source-id> [<selections-file>]` | Print per skill of a staged import whether it is `ELIGIBLE` or `HELD`, and the `OVERLAP` lines; offline and read-only; writes nothing; exits 1 for a `PROBLEM` or a usage error ([Evaluate an import](#evaluate-an-import)) |
+| `scf skills evaluate <source-id> [<technology>@<version> ... \| --repo <dir>]` | Report compatibility, tools, access, licence and overlap of an enabled source; `--repo` reads the versions from the `package.json` files of a folder (sources with a reviewed profile only); writes nothing; exits 1 on a refusal, a block, a conflict, a missing selected folder or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
-| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
-| `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `PROBLEM` and `OVERLAP` lines; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
+| `scf skills profiles evaluate <source-id>` | Print `PASS` or `BLOCKED` per staged skill of a profiled source, with the gate reasons, `NEEDS` and `MISSING` lines, and the `CANONICAL`, `CONFLICT`, `NONE` and `REJECTED` lines per exclusive capability; offline and read-only; exits 1 when a skill is blocked, a `PROBLEM` is printed or a `CONFLICT` is found ([Evaluate the profile gates](#evaluate-the-profile-gates), [Canonical skill per capability](#canonical-skill-per-capability)) |
+| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance, findings and evaluations allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `EVALUATION`, `CHECKED` lines); reads `skill-evaluations.yaml` and `skill-selections.yaml`; offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion), [Confluent skills](#confluent-skills)) |
+| `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `VERSIONS`, `PROBLEM` and `OVERLAP` lines; reads `skill-selections.yaml`; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
 | `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
 | `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
-| `scf skills score <source-id> [<suite-file>]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline; exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
+| `scf skills score <source-id> [<suite-file>] [--agent]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline, except `--agent`, which also runs the instructions scenarios in the macOS sandbox ([Run the scenarios in the sandbox](#run-the-scenarios-in-the-sandbox)); exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes) or `PROBLEM` per staged skill from its newest record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |

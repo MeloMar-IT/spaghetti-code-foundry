@@ -7,12 +7,15 @@ import { isImportLicenceReview, licenceReviewProblem, reviewEvidenceIntact, type
 import type { NormalizedSkill } from "./normalize.js";
 import { isUtcTime } from "./release.js";
 import type { SkillFile } from "./schema.js";
-import { shownValue, type SkillLibrarySource } from "./sources.js";
+import { shownValue, type SkillLibrarySource, type SourceTrustTier } from "./sources.js";
 
 // Decides, per skill of a normalized import, whether it may be promoted: its licence must be accepted by the policy of
 // licence.ts, and it must not need a live integration, use the network or ship plugin configuration (import-exclusions.ts;
 // such a skill is refused with status "excluded"). For a source that needs a licence review (licenceReviewRequired) an otherwise allowed skill is refused with status "review" until `licence.reviewed` equals the digest of the review (licence-review.ts). Builds the manifest of licence and provenance for the promoted packages. Pure: no file system, no process,
 // no clock. evaluateSource (source-evaluation.ts) calls it to report; the story that writes approved artifacts must call it and keep `attribution`.
+
+/** Passed for an import without licence evidence: every skill is `missing`, so the value reaches no package and is never printed. */
+export const NO_EVIDENCE_TIME = "1970-01-01T00:00:00Z";
 
 export interface PackageProvenance {
   id: string;
@@ -33,6 +36,10 @@ export interface PackageProvenance {
   licenceFiles: LicenceFileRecord[];
   attribution: { path: string; sha256: string; bytes: number }[];
   authorNotice: string[];
+  /** The trust tier of the source. Always set by promoteImport; absent in manifests written before #537. */
+  trust?: SourceTrustTier;
+  /** Who reviewed the source, when and at which commit. Set only when the source has a review; never holds its `licence`. */
+  review?: { by: string; on: string; commit: string };
 }
 export interface PromotionManifest {
   schema: 1;
@@ -155,6 +162,8 @@ export function promoteImport(input: {
       licenceFiles: verdict.licenceFiles,
       attribution: attribution.map((a) => ({ path: a.path, sha256: sha(a.content), bytes: a.size })),
       authorNotice: verdict.authorNotice,
+      trust: source.trust,
+      ...(source.review ? { review: { by: source.review.by, on: source.review.on, commit: source.review.commit } } : {}),
     };
     promoted.push({ skill, provenance, attribution });
   }

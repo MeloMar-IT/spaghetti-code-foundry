@@ -5,7 +5,7 @@ import { collectLicenceEvidence, type LicenceEvidence } from "../src/skills/lice
 import { LICENCE_TEMPLATES } from "../src/skills/licence-rules.js";
 import { normalizeImport, type NormalizedSkill } from "../src/skills/normalize.js";
 import { reviewImport, type ImportLicenceReview } from "../src/skills/licence-review.js";
-import { attributionProblem, licenceReviewRequired, promoteImport } from "../src/skills/promotion.js";
+import { attributionProblem, licenceReviewRequired, promoteImport, type PackageProvenance } from "../src/skills/promotion.js";
 import type { SkillLibrarySource } from "../src/skills/sources.js";
 
 const COMMIT = "a".repeat(40);
@@ -235,5 +235,35 @@ describe("promoteImport with a licence review", () => {
     expect(r.promoted.map((p) => p.skill.provenance.name)).toEqual(["a"]);
     const plain = setup({ ...FILES, "skills/b/SKILL.md": md("b") });
     expect(reviewed(plain).review.classification.digest).not.toBe(withB.review.classification.digest);
+  });
+});
+
+describe("promotion manifest: trust and review (#537)", () => {
+  const FILES = { LICENSE: MIT, "skills/a/SKILL.md": md("a") };
+  const review = { by: "@example", on: "2026-10-01", commit: COMMIT, licence: "MIT" };
+
+  it("records the trust tier and the source review, without its licence", () => {
+    const r = run(setup(FILES, { review }));
+    expect(r.manifest.schema).toBe(1);
+    const p = r.manifest.packages[0]!;
+    expect(p.trust).toBe("community");
+    expect(p.review).toEqual({ by: "@example", on: "2026-10-01", commit: COMMIT });
+    expect(p.review).not.toHaveProperty("licence");
+    expect(JSON.parse(r.manifestText).packages[0].review).toEqual(p.review);
+  });
+
+  it("records the trust tier of the source and no review when the source has none", () => {
+    const p = run(setup(FILES)).manifest.packages[0]!;
+    expect(p.trust).toBe("community");
+    expect("review" in p).toBe(false);
+    expect(run(setup(FILES, { trust: "verified" })).manifest.packages[0]!.trust).toBe("verified");
+  });
+
+  it("keeps an older manifest entry without trust and review valid", () => {
+    const r = run(setup(FILES));
+    const { trust: _t, review: _r, ...rest } = r.promoted[0]!.provenance;
+    const older: PackageProvenance = rest;
+    expect(older.trust).toBeUndefined();
+    expect(attributionProblem(older, r.promoted[0]!.attribution)).toBeUndefined();
   });
 });

@@ -307,6 +307,198 @@ describe("gate: mode upgrade", () => {
   });
 });
 
+// ---- the agent block and paired baselines (#535) ----
+
+const AG = "ag-1";
+const THIRD = "sha256:" + "9".repeat(64);
+const insInputs = { dimension: "instructions", repo: "fixtures/x", task: "Fix it", check: "npm test", shell: "true", network: "false", filesystem: "write", timeout_sec: "900" };
+/** A record with an instructions scenario and an agent block: `cand` for the candidate, `base` for the baseline `alpha@OTHER`. */
+const agentRec = (cand: number[], base: number[], o: { baseDims?: Record<string, number[]>; agent?: (a: any) => void } = {}) => {
+  const r = withModel({ instructions: cand }) as any;
+  r.suite.scenarios.push({ id: AG, inputs: insInputs });
+  const run = (arm: string, skill: string, digest: string, p: string) => (score: number, i: number) =>
+    ({ scenario: AG, arm, skill, digest, attempt: i + 1, runId: `${p}-${i}`, score });
+  r.agent = {
+    sandbox: "container",
+    network: "host-limited",
+    outbound: [],
+    repeat: Math.max(3, cand.length, base.length),
+    runs: [...cand.map(run("candidate", "alpha", DIGEST, "c")), ...base.map(run("baseline", "alpha", OTHER, "b"))],
+    baselines: [{ id: "alpha", version: "0.9.0", digest: OTHER, dimensions: o.baseDims ?? { selection: [1], conflicts: [1], context: [1], tools: [1], instructions: base } }],
+  };
+  o.agent?.(r.agent);
+  return r as EvaluationRecord;
+};
+const pairedGate = (cand: unknown, p = pol(), base?: unknown, digest = OTHER) =>
+  track(evaluationGate({ mode: "upgrade", policy: p, candidate: subject({}, cand), baseline: { record: base, digest } }));
+
+describe("evaluation record: the agent block", () => {
+  it("parses and keeps the digest of a record without it", () => {
+    expect("record" in parseEvaluationRecord(agentRec([1, 1, 1], [1, 1, 1]))).toBe(true);
+    expect(evaluationRecordDigest(rec())).toBe("sha256:29a4912ee12e6ccbc2077fbea9171cf8b3430d3c125c54a89e517751da86de9b");
+  });
+  const refuse: [string, (r: any) => void][] = [
+    ["no dimensions.instructions", (r) => delete r.dimensions.instructions],
+    ["candidate runs that differ from dimensions", (r) => (r.agent.runs[2].score = 0)],
+    ["a baseline that differs from its runs", (r) => (r.agent.baselines[0].dimensions.instructions = [1, 1, 0.5])],
+    ["a duplicate run id", (r) => (r.agent.runs[1].runId = r.agent.runs[0].runId)],
+    ["a run of a scenario that is not an instructions scenario", (r) => (r.agent.runs[0].scenario = "s-one")],
+    ["a run of an unknown scenario", (r) => (r.agent.runs[0].scenario = "nope")],
+    ["an attempt larger than repeat", (r) => (r.agent.runs[0].attempt = 4)],
+    ["a run listed twice", (r) => (r.agent.runs[1].attempt = 1)],
+    ["a candidate run of another skill", (r) => (r.agent.runs[0].skill = "zeta")],
+    ["a baseline run of an unlisted skill", (r) => (r.agent.runs[3].digest = THIRD)],
+    ["a baseline that is the candidate", (r) => (r.agent.baselines[0].digest = DIGEST)],
+    ["5 baselines", (r) => (r.agent.baselines = Array.from({ length: 5 }, (_, i) => ({ ...r.agent.baselines[0], digest: "sha256:" + String(i).repeat(64) })))],
+    ["1001 runs", (r) => (r.agent.runs = Array.from({ length: 1001 }, (_, i) => ({ ...r.agent.runs[0], runId: `r-${i}` })))],
+    ["a baseline without instructions", (r) => delete r.agent.baselines[0].dimensions.instructions],
+    ["network open", (r) => (r.agent.network = "open")],
+    ["an unknown sandbox", (r) => (r.agent.sandbox = "none")],
+    ["an unknown key in a run", (r) => (r.agent.runs[0].extra = 1)],
+    ["an unknown key in the block", (r) => (r.agent.extra = 1)],
+    ["a bad run id", (r) => (r.agent.runs[0].runId = "a b")],
+    ["a bad outbound host", (r) => (r.agent.outbound = ["Not A Host!"])],
+    ["a score above 1", (r) => (r.agent.runs[0].score = 1.5)],
+    ["repeat 2", (r) => (r.agent.repeat = 2)],
+  ];
+  it.each(refuse)("refuses %s", (_n, mutate) => {
+    const r = structuredClone(agentRec([1, 1, 1], [1, 1, 1])) as any;
+    mutate(r);
+    const read = parseEvaluationRecord(r);
+    expect("code" in read && read.code).toBe("record-invalid");
+  });
+  it("refuses an agent block that no instructions scenario exists for", () => {
+    const r = structuredClone(agentRec([1, 1, 1], [1, 1, 1])) as any;
+    r.suite.scenarios = r.suite.scenarios.filter((s: { id: string }) => s.id !== AG);
+    const read = parseEvaluationRecord(r);
+    expect("code" in read && read.code).toBe("record-invalid");
+  });
+  it("refuses runs that do not cover every scenario and attempt on both arms (no false pass)", () => {
+    // two scenarios, repeat 3: six candidate runs of `easy` only and six baseline runs of `hard` only
+    const r = agentRec([1, 1, 1, 1, 1, 1], [0, 0, 0, 0, 0, 0]) as any;
+    r.suite.scenarios.push({ id: "ag-2", inputs: insInputs });
+    r.agent.repeat = 3;
+    r.agent.runs.forEach((x: any, i: number) => {
+      x.scenario = x.arm === "candidate" ? AG : "ag-2";
+      x.attempt = (i % 3) + 1;
+    });
+    expect(parseEvaluationRecord(r)).toMatchObject({ code: "record-invalid" });
+    // a scenario with fewer attempts than repeat on one arm
+    const s = agentRec([1, 1, 1], [1, 1, 1]) as any;
+    s.agent.runs = s.agent.runs.filter((x: any) => !(x.arm === "baseline" && x.attempt === 3));
+    s.agent.baselines[0].dimensions.instructions = [1, 1];
+    expect(parseEvaluationRecord(s)).toMatchObject({ code: "record-invalid" });
+  });
+  it("accepts run order and score order that differ from the dimensions", () => {
+    const r = structuredClone(agentRec([0, 0.5, 1], [1, 1, 1])) as any;
+    r.agent.runs.reverse();
+    expect("record" in parseEvaluationRecord(r)).toBe(true);
+  });
+  it("has the same digest for another run, baseline and outbound order", () => {
+    const a = agentRec([1, 0.5, 1], [1, 1, 1], { agent: (x) => (x.outbound = ["b.example", "a.example", "a.example"]) });
+    const b = structuredClone(a) as any;
+    b.agent.runs.reverse();
+    b.agent.outbound = ["a.example", "b.example"];
+    const da = parseEvaluationRecord(a);
+    const db = parseEvaluationRecord(b);
+    expect("digest" in da && "digest" in db && da.digest).toBe("digest" in db ? db.digest : "");
+  });
+  it("changes the digest with a score, a sandbox or a baseline", () => {
+    const d = (r: unknown) => {
+      const read = parseEvaluationRecord(r);
+      if (!("digest" in read)) throw new Error(read.problem);
+      return read.digest;
+    };
+    const base = d(agentRec([1, 1, 1], [1, 1, 1]));
+    expect(d(agentRec([1, 1, 0.5], [1, 1, 1]))).not.toBe(base);
+    expect(d(agentRec([1, 1, 1], [1, 1, 0.5]))).not.toBe(base);
+    expect(d(agentRec([1, 1, 1], [1, 1, 1], { agent: (a) => (a.sandbox = "os") }))).not.toBe(base);
+    expect(d(agentRec([1, 1, 1], [1, 1, 1], { agent: (a) => (a.baselines[0].version = "0.8.0") }))).not.toBe(base);
+    expect(d(rec({}, { instructions: undefined }))).not.toBe(base);
+  });
+  it("accepts the largest record: the candidate and four baselines with 1000 scores in each dimension", () => {
+    const ones = (n: number) => Array.from({ length: n }, () => 1);
+    const offline = () => ({ selection: ones(1000), conflicts: ones(1000), context: ones(1000), tools: ones(1000) });
+    // 10 scenarios × 20 attempts = 200 runs per arm; five arms are exactly 1000 runs.
+    const cand = Array.from({ length: 200 }, (_, i) => (i % 10) / 10);
+    const r = withModel({ ...offline(), instructions: cand }) as any;
+    r.suite.scenarios.push(...Array.from({ length: 10 }, (_, i) => ({ id: `ag-${i}`, inputs: insInputs })));
+    const runs = cand.map((score, i) => ({ scenario: `ag-${Math.floor(i / 20)}`, arm: "candidate", skill: "alpha", digest: DIGEST, attempt: (i % 20) + 1, runId: `c-${i}`, score }));
+    const baselines = ["c", "d", "e", "f"].map((ch, k) => {
+      const digest = "sha256:" + ch.repeat(64);
+      const instructions = Array.from({ length: 200 }, (_, i) => ((i + k) % 10) / 10);
+      runs.push(...instructions.map((score, i) => ({ scenario: `ag-${Math.floor(i / 20)}`, arm: "baseline", skill: "alpha", digest, attempt: (i % 20) + 1, runId: `b${k}-${i}`, score })));
+      return { id: "alpha", version: "0.9.0", digest, dimensions: { ...offline(), instructions } };
+    });
+    r.agent = { sandbox: "os", network: "not-host-limited", outbound: [], repeat: 20, runs, baselines };
+    expect(runs.length).toBe(1000);
+    const read = parseEvaluationRecord(r);
+    expect("record" in read ? "ok" : read.problem).toBe("ok");
+  });
+  it("still refuses a record without an agent block above the old walk limit", () => {
+    const r = rec() as any;
+    r.dimensions.selection = Array.from({ length: 1000 }, () => 1);
+    r.extra = Array.from({ length: 20000 }, () => 1);
+    expect(parseEvaluationRecord(r)).toMatchObject({ code: "record-invalid", problem: "is too large or nested too deep" });
+  });
+});
+
+describe("gate: a paired baseline from the candidate's own record", () => {
+  const reasons = (r: EvaluationGateResult) => r.verdicts[0]!.reasons;
+  it("finds a paired regression [1,1,1] → [0,0,0] with no stored record", () => {
+    expect(reasons(pairedGate(agentRec([0, 0, 0], [1, 1, 1])))).toEqual([{ code: "regression", dimension: "instructions" }]);
+    expect(reasons(pairedGate(agentRec([0, 0, 0], [1, 1, 1]), pol({ mandatory: ["instructions"] })))).toEqual([
+      { code: "below-threshold", dimension: "instructions" },
+      { code: "regression", dimension: "instructions" },
+    ]);
+  });
+  it("passes an equal pair with no stored record, and reports the baseline mean", () => {
+    const r = pairedGate(agentRec([1, 1, 1], [1, 1, 1]));
+    expect(r.verdicts[0]!.outcome).toBe("passed");
+    expect(r.verdicts[0]!.dimensions.find((d) => d.dimension === "instructions")).toMatchObject({ baseline: 1 });
+  });
+  it("is not affected by a stored baseline record of an older suite", () => {
+    const stored = baseRec({}, { suite: { ...rec().suite, digest: OTHER } });
+    expect(pairedGate(agentRec([1, 1, 1], [1, 1, 1]), pol(), stored).verdicts[0]!.outcome).toBe("passed");
+    expect(codes(upgrade(rec(), stored))).toEqual(["baseline-mismatch"]);
+  });
+  it("prefers the pair over a stored record that would pass or fail", () => {
+    const good = baseRec({}, {});
+    expect(codes(pairedGate(agentRec([0, 0, 0], [1, 1, 1]), pol(), good))).toEqual(["regression"]);
+    const worse = baseRec({ selection: [0.1] });
+    expect(pairedGate(agentRec([1, 1, 1], [1, 1, 1]), pol(), worse).verdicts[0]!.outcome).toBe("passed");
+  });
+  it("judges every dimension with the pair", () => {
+    const r = agentRec([1, 1, 1], [1, 1, 1], { baseDims: { selection: [1], conflicts: [1], context: [1], tools: [1], instructions: [1, 1, 1] } });
+    (r.dimensions as any).selection = [0.5];
+    expect(reasons(pairedGate(r)).map((x) => x.code + ":" + x.dimension)).toEqual(["below-threshold:selection", "regression:selection"]);
+  });
+  it("fails a pair that lacks a mandatory offline dimension", () => {
+    const r = agentRec([1, 1, 1], [1, 1, 1], { baseDims: { conflicts: [1], context: [1], tools: [1], instructions: [1, 1, 1] } });
+    expect(reasons(pairedGate(r))).toEqual([{ code: "baseline-invalid", dimension: "selection" }]);
+  });
+  it("uses the stored record path when the pair names another digest", () => {
+    const r = agentRec([1, 1, 1], [1, 1, 1]);
+    expect(codes(pairedGate(r, pol(), undefined, THIRD))).toEqual(["baseline-missing"]);
+    expect(codes(pairedGate(r, pol(), null, THIRD))).toEqual(["baseline-invalid"]);
+  });
+  it("matches the pair by baseline.id too", () => {
+    const run = (id?: string) => track(evaluationGate({ mode: "upgrade", policy: pol(), candidate: subject({}, agentRec([1, 1, 1], [1, 1, 1])), baseline: { digest: OTHER, ...(id ? { id } : {}) } }));
+    expect(run().verdicts[0]!.outcome).toBe("passed");
+    expect(codes(run("zeta"))).toEqual(["baseline-missing"]);
+  });
+  it("changes nothing without a pair: no stored record is baseline-missing, junk is baseline-invalid", () => {
+    expect(codes(pairedGate(rec(), pol(), undefined))).toEqual(["baseline-missing"]);
+    expect(codes(pairedGate(rec(), pol(), null))).toEqual(["baseline-invalid"]);
+    expect(codes(pairedGate(rec(), pol(), { x: 1 }))).toEqual(["baseline-invalid"]);
+  });
+  it("is ignored in duplicate mode", () => {
+    const a = subject({}, agentRec([1, 1, 1], [1, 1, 1]));
+    const b = beta({}, {});
+    expect(dup(a, b).verdicts.map((v) => v.outcome)).toEqual(["passed", "passed"]);
+  });
+});
+
 describe("gate: mode duplicate", () => {
   const A = (dims: Record<string, number[] | undefined> = {}) => subject({}, rec({}, dims));
   const keyA = evaluationKey({ id: "alpha", version: "1.0.0", digest: DIGEST });

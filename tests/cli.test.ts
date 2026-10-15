@@ -275,6 +275,41 @@ describe("data folder", () => {
     expect(scf(["skills", "selections", "check", file], home).status).toBe(0);
   });
 
+  it("scf skills releases check is in the help and does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const file = join(home, "skill-releases.yaml");
+    writeFileSync(file, "schema: 1\nrepository: github.com/acme/scf-skills\nreleases:\n  - catalogue: acme\n    version: 1.0.0\n    skills:\n      - source: s\n        id: k\n");
+    expect(scf(["--help"], home).stdout).toContain("scf skills releases check [<file>]");
+    const r = scf(["skills", "releases", "check", file], home);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("OK 1 releases for");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+  });
+
+  it("scf skills profiles evaluate is in the help, prints a PROBLEM without sources and does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    expect(scf(["--help"], home).stdout).toContain("scf skills profiles evaluate <source-id>");
+    const r = scf(["skills", "profiles", "evaluate", "lib"], home);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("PROBLEM");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+  });
+
+  it("scf skills selections evaluate is in the help, prints a PROBLEM without sources and does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    expect(scf(["--help"], home).stdout).toContain("scf skills selections evaluate <source-id> [<file>]");
+    const r = scf(["skills", "selections", "evaluate", "lib"], home);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("PROBLEM");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+  });
+
   it("scf skills sources check does not choose or move the data folder", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);
@@ -307,6 +342,9 @@ describe("data folder", () => {
     writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
     expect(scf(["flows"], home).status).toBe(1);
     expect(scf(["skills", "sources", "check", file], home).status).toBe(0);
+    const profFile = join(home, "skill-source-profiles.yaml");
+    writeFileSync(profFile, "schema: 1\nsources: []\n");
+    expect(scf(["skills", "profiles", "check", profFile], home).status).toBe(0);
   });
 
   it("scf skills connectors does not choose or move the data folder", () => {
@@ -430,6 +468,14 @@ describe("data folder", () => {
     const r = scf(["skills", "assess"], home);
     expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("scf skills assess <source-id>");
+  });
+
+  it("scf skills compare is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills compare <source-id>");
+    const r = scf(["skills", "compare"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("scf skills compare <source-id>");
   });
 
   it("scf skills assess reads the old data folder and does not move, copy or lock it", () => {

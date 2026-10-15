@@ -1,9 +1,11 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { credentialProblem } from "../src/skills/credential-scan.js";
-import { parseEvaluationRecord } from "../src/skills/evaluation.js";
+import { fileURLToPath } from "node:url";
+import { evaluationGate, parseEvaluationRecord } from "../src/skills/evaluation.js";
+import { instructionFixtureHash, instructionsPolicy } from "../src/skills/evaluation-instructions.js";
 import { EVALUATION_SUITE_LIMITS } from "../src/skills/evaluation-rules.js";
 import { evaluationSuiteDigest, parseEvaluationSuite, readEvaluationSuite, suiteScenarios } from "../src/skills/evaluation-suite.js";
 import { buildRepoProfile, type RepoProfile } from "../src/skills/repo-profile.js";
@@ -309,5 +311,266 @@ describe("readEvaluationSuite", () => {
   it("shows no path of the machine", () => {
     const path = setup((root) => rmSync(join(root, "fixtures/b"), { recursive: true }));
     expect(JSON.stringify(refused(path))).not.toContain(dirname(path));
+  });
+});
+
+// ---- the `instructions` section (#535) ----
+
+const insScenario = (id: string, o: Record<string, unknown> = {}) => ({
+  id, repo: "fixtures/ins", task: "Fix the bug.", check: "npm test", policy: { shell: true, network: false, filesystem: "write" }, ...o,
+});
+const insDoc = (o: Record<string, unknown> = {}) => ({ scenarios: [insScenario("ag-b"), insScenario("ag-a")], ...o });
+const withIns = (o: Record<string, unknown> = {}): unknown =>
+  mutate((d) => {
+    d.instructions = insDoc(o);
+  });
+const HASH = "sha256:" + "d".repeat(64);
+const fixtures = new Map([["fixtures/ins", HASH]]);
+
+describe("the pinned digest of the built-in suite", () => {
+  it("is the value it had before the instructions section", () => {
+    const r = readEvaluationSuite(fileURLToPath(new URL("../evals/skill-gate/suite.yaml", import.meta.url)));
+    expect(r.state === "ok" && r.digest).toBe("sha256:e2e21a80c0c749c4a4580580fe86186c45ea6174f568f131cc2646a7675eca0f");
+    expect(r.state === "ok" && r.instructionFixtures.size).toBe(0);
+  });
+});
+
+describe("parseEvaluationSuite: instructions", () => {
+  it("accepts the section, sorts scenarios and fills the defaults", () => {
+    const r = parseEvaluationSuite(withIns());
+    expect(r.problems).toEqual([]);
+    const ins = r.suite!.instructions!;
+    expect(ins.mandatory).toBe(false);
+    expect(ins.repeat).toBe(3);
+    expect(ins.scenarios.map((s) => s.id)).toEqual(["ag-a", "ag-b"]);
+    expect(ins.scenarios[0]!.timeout_sec).toBe(900);
+  });
+  it("leaves a suite without the section without one", () => {
+    expect(parseEvaluationSuite(good()).suite!.instructions).toBeUndefined();
+  });
+  const long = (n: number) => "a".repeat(n);
+  const many = <T>(n: number, f: (i: number) => T) => Array.from({ length: n }, (_, i) => f(i));
+  const one = (o: Record<string, unknown>) => withIns({ scenarios: [insScenario("ag-a", o)] });
+  const refusals: [string, unknown, string, string][] = [
+    ["a list", mutate((d) => (d.instructions = [])), "instructions", "must be a map"],
+    ["an unknown key", withIns({ extra: 1 }), "instructions", "unknown key"],
+    ["mandatory as text", withIns({ mandatory: "yes" }), "instructions.mandatory", "true or false"],
+    ["repeat 2", withIns({ repeat: 2 }), "instructions.repeat", "between 3 and 20"],
+    ["repeat 21", withIns({ repeat: 21 }), "instructions.repeat", "between 3 and 20"],
+    ["repeat 3.5", withIns({ repeat: 3.5 }), "instructions.repeat", "whole number"],
+    ["no scenarios", mutate((d) => (d.instructions = { repeat: 3 })), "instructions.scenarios", "is required"],
+    ["empty scenarios", withIns({ scenarios: [] }), "instructions.scenarios", "at least one"],
+    ["scenarios as a map", withIns({ scenarios: {} }), "instructions.scenarios", "must be a list"],
+    ["21 scenarios", withIns({ scenarios: many(21, (i) => insScenario(`ag-${i}`)) }), "instructions.scenarios", "at most 20"],
+    ["11 scenarios × 20", withIns({ repeat: 20, scenarios: many(11, (i) => insScenario(`ag-${i}`)) }), "instructions", "at most 200 runs"],
+    ["an id used elsewhere", withIns({ scenarios: [insScenario("conf")] }), "instructions.scenarios[0] (conf) id", "already used by conflicts[0]"],
+    ["an id twice", withIns({ scenarios: [insScenario("ag-a"), insScenario("ag-a")] }), "instructions.scenarios[1] (ag-a) id", "already used by instructions.scenarios[0]"],
+    ["repo ..", one({ repo: "../x" }), "instructions.scenarios[0] (ag-a) repo", "relative"],
+    ["empty task", one({ task: " " }), "instructions.scenarios[0] (ag-a) task", "1 to 2000"],
+    ["no check", mutate((d) => { d.instructions = { scenarios: [insScenario("ag-a")] }; delete d.instructions.scenarios[0].check; }), "instructions.scenarios[0] (ag-a) check", "is required"],
+    ["check of 2001 characters", one({ check: long(2001) }), "instructions.scenarios[0] (ag-a) check", "1 to 2000"],
+    ["no network policy", one({ policy: { shell: true, filesystem: "read" } }), "instructions.scenarios[0] (ag-a) policy.network", "is required"],
+    ["timeout 59", one({ timeout_sec: 59 }), "instructions.scenarios[0] (ag-a) timeout_sec", "between 60 and 3600"],
+    ["timeout 3601", one({ timeout_sec: 3601 }), "instructions.scenarios[0] (ag-a) timeout_sec", "between 60 and 3600"],
+    ["timeout 90.5", one({ timeout_sec: 90.5 }), "instructions.scenarios[0] (ag-a) timeout_sec", "whole number"],
+    ["an unknown scenario key", one({ extra: 1 }), "instructions.scenarios[0] (ag-a)", "unknown key"],
+  ];
+  it.each(refusals)("refuses: %s", (_n, raw, where, message) => {
+    const r = parseEvaluationSuite(raw);
+    expect(r.suite).toBeUndefined();
+    expect(r.problems.some((p) => p.where === where && p.message.includes(message))).toBe(true);
+  });
+  it("accepts the limits", () => {
+    const edge = (o: Record<string, unknown>) => parseEvaluationSuite(withIns({ repeat: 20, scenarios: many(10, (i) => insScenario(`ag-${i}`, o)) })).problems;
+    expect(edge({ timeout_sec: 60 })).toEqual([]);
+    expect(edge({ timeout_sec: 3600, check: long(2000) })).toEqual([]);
+    expect(parseEvaluationSuite(withIns({ repeat: 3, scenarios: many(20, (i) => insScenario(`ag-${i}`)) })).problems).toEqual([]);
+  });
+  it("refuses credential-like text without repeating it", () => {
+    const token = "ghp_" + "a1B2c3D4e5".repeat(4);
+    const r = parseEvaluationSuite(one({ check: `curl ${token}` }));
+    expect(r.problems.some((p) => p.where === "instructions.scenarios[0] (ag-a) check" && p.message.includes("credential"))).toBe(true);
+    expect(JSON.stringify(r.problems)).not.toContain(token);
+  });
+  it("gives inputs a record accepts", () => {
+    const list = suiteScenarios(parseEvaluationSuite(withIns()).suite!);
+    expect(list.map((s) => s.id)).toEqual(["ag-a", "ag-b", "conf", "ctx", "sel-a", "sel-b", "tool"]);
+    expect(list[0]!.inputs).toEqual({ dimension: "instructions", repo: "fixtures/ins", task: "Fix the bug.", check: "npm test", shell: "true", network: "false", filesystem: "write", timeout_sec: "900" });
+  });
+});
+
+describe("evaluationSuiteDigest: instructions", () => {
+  const profiles = new Map([["fixtures/a", profile({ "package.json": pkgJson("kafkajs") })], ["fixtures/b", profile({ "package.json": pkgJson("express") })]]);
+  const digest = (raw: unknown, fx = fixtures) => evaluationSuiteDigest(parseEvaluationSuite(raw).suite!, profiles, fx);
+  it("is the old digest without the section", () => {
+    expect(evaluationSuiteDigest(parseEvaluationSuite(good()).suite!, profiles)).toBe(digest(good(), new Map()));
+  });
+  it("does not change when a default is written out", () => {
+    expect(digest(withIns({ repeat: 3, mandatory: false, scenarios: [insScenario("ag-a", { timeout_sec: 900 })] }))).toBe(digest(withIns({ scenarios: [insScenario("ag-a")] })));
+  });
+  it("changes with the section", () => {
+    const base = digest(withIns());
+    expect(base).not.toBe(digest(good()));
+    const others = [
+      withIns({ repeat: 4 }),
+      withIns({ mandatory: true }),
+      withIns({ scenarios: [insScenario("ag-b"), insScenario("ag-a", { check: "npm run test" })] }),
+      withIns({ scenarios: [insScenario("ag-b"), insScenario("ag-a", { timeout_sec: 901 })] }),
+      withIns({ scenarios: [insScenario("ag-b"), insScenario("ag-a", { policy: { shell: true, network: true, filesystem: "write" } })] }),
+    ];
+    for (const o of others) expect(digest(o)).not.toBe(base);
+    expect(digest(withIns(), new Map([["fixtures/ins", "sha256:" + "e".repeat(64)]]))).not.toBe(base);
+  });
+  it("is stable under scenario order", () => {
+    expect(digest(withIns({ scenarios: [insScenario("ag-a"), insScenario("ag-b")] }))).toBe(digest(withIns()));
+  });
+  it("throws a TypeError when a fixture has no hash", () => {
+    expect(() => digest(withIns(), new Map())).toThrow(TypeError);
+  });
+});
+
+describe("readEvaluationSuite: instruction fixtures", () => {
+  const YAML = [
+    "schema: 1",
+    "selection:",
+    "  - { id: sel-a, repo: fixtures/a, task: Add a retry., expect: offered }",
+    "  - { id: sel-b, repo: fixtures/b, task: Do the thing, expect: not-offered }",
+    "conflicts:",
+    "  - { id: conf, with: all }",
+    "context:",
+    "  - { id: ctx, max_instruction_tokens: 3000 }",
+    "tools:",
+    "  - { id: tool, policy: { shell: false, network: false, filesystem: read } }",
+    "instructions:",
+    "  scenarios:",
+    "    - { id: ag-a, repo: fixtures/ins, task: Fix it, check: npm test, policy: { shell: true, network: false, filesystem: write } }",
+    "",
+  ].join("\n");
+  const TEST = "test('price', () => { expect(1).toBe(1); });\n";
+  const changed = (r: string) => writeFileSync(join(r, "fixtures/ins/test/price.test.js"), TEST.replace("toBe(1)", "toBe(2)"));
+  function setup(extra: (root: string) => void = () => {}) {
+    const root = tmp();
+    for (const [dir, dep] of [["a", "kafkajs"], ["b", "express"], ["ins", "express"]] as const) {
+      mkdirSync(join(root, "fixtures", dir), { recursive: true });
+      writeFileSync(join(root, "fixtures", dir, "package.json"), pkgJson(dep));
+    }
+    mkdirSync(join(root, "fixtures/ins/test"));
+    writeFileSync(join(root, "fixtures/ins/test/price.test.js"), TEST);
+    writeFileSync(join(root, "suite.yaml"), YAML);
+    extra(root);
+    return join(root, "suite.yaml");
+  }
+  const read = (path: string) => {
+    const r = readEvaluationSuite(path);
+    if (r.state !== "ok") throw new Error(`expected ok, got ${r.state}`);
+    return r;
+  };
+  const refused = (path: string) => {
+    const r = readEvaluationSuite(path);
+    if (r.state !== "invalid") throw new Error(`expected invalid, got ${r.state}`);
+    return r.problems;
+  };
+  it("returns a hash for the fixture and a stable digest", () => {
+    const path = setup();
+    const r = read(path);
+    expect([...r.instructionFixtures.keys()]).toEqual(["fixtures/ins"]);
+    expect(r.instructionFixtures.get("fixtures/ins")).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(read(path).digest).toBe(r.digest);
+  });
+  it("changes the digest for one assertion in a test file, which leaves the technologies unchanged", () => {
+    const pathA = setup();
+    const pathB = setup(changed);
+    const a = read(pathA);
+    const b = read(pathB);
+    expect(buildRepoProfile(join(dirname(pathB), "fixtures/ins")).findings).toEqual(buildRepoProfile(join(dirname(pathA), "fixtures/ins")).findings);
+    expect(b.digest).not.toBe(a.digest);
+    expect(b.instructionFixtures.get("fixtures/ins")).not.toBe(a.instructionFixtures.get("fixtures/ins"));
+    expect(b.profiles.get("fixtures/a")!.findings).toEqual(a.profiles.get("fixtures/a")!.findings);
+  });
+  it.skipIf(process.platform === "win32")("changes the digest with the executable bit", () => {
+    const first = read(setup());
+    const second = read(setup((r) => chmodSync(join(r, "fixtures/ins/test/price.test.js"), 0o755)));
+    expect(second.digest).not.toBe(first.digest);
+  });
+  it("changes the hash with an added file or a rename", () => {
+    const base = read(setup()).instructionFixtures.get("fixtures/ins");
+    expect(read(setup((r) => writeFileSync(join(r, "fixtures/ins/more.txt"), "x"))).instructionFixtures.get("fixtures/ins")).not.toBe(base);
+    expect(read(setup((r) => renameSync(join(r, "fixtures/ins/test"), join(r, "fixtures/ins/tests")))).instructionFixtures.get("fixtures/ins")).not.toBe(base);
+  });
+  const config: [string, (root: string) => void][] = [
+    [".claude/settings.json", (r) => { mkdirSync(join(r, "fixtures/ins/.claude")); writeFileSync(join(r, "fixtures/ins/.claude/settings.json"), "{}"); }],
+    ["a nested sub/.mcp.json", (r) => { mkdirSync(join(r, "fixtures/ins/sub")); writeFileSync(join(r, "fixtures/ins/sub/.mcp.json"), "{}"); }],
+    [".Claude/x", (r) => { mkdirSync(join(r, "fixtures/ins/.Claude")); writeFileSync(join(r, "fixtures/ins/.Claude/x"), "x"); }],
+  ];
+  it.each(config)("refuses %s", (_n, make) => {
+    expect(refused(setup(make))).toEqual([{ where: "instructions.scenarios (ag-a) repo", message: expect.stringContaining(".claude or .mcp.json") }]);
+  });
+  it("refuses a symbolic link, a missing folder and a fixture over the limits", () => {
+    expect(refused(setup((r) => symlinkSync(join(r, "fixtures/a"), join(r, "fixtures/ins/loop"))))[0]).toEqual({ where: "instructions.scenarios (ag-a) repo", message: "holds a symbolic link" });
+    expect(refused(setup((r) => rmSync(join(r, "fixtures/ins"), { recursive: true })))[0]).toEqual({ where: "instructions.scenarios (ag-a) repo", message: "is not a folder" });
+    const big = refused(setup((r) => { for (let i = 0; i < 201; i++) writeFileSync(join(r, `fixtures/ins/f${i}.txt`), "x"); }))[0]!;
+    expect(big.where).toBe("instructions.scenarios (ag-a) repo");
+    expect(big.message).toContain("is larger than the fixture limits");
+  });
+  it("gives a problem instead of throwing when the folder cannot be listed", () => {
+    expect(instructionFixtureHash(join(tmp(), "nope"))).toEqual({ problem: expect.stringMatching(/^cannot be read \(\w+\)$/) });
+  });
+  it("gives a problem instead of throwing when a file read fails", () => {
+    const dir = join(dirname(setup()), "fixtures/ins");
+    const boom = (): never => {
+      throw Object.assign(new Error("/secret/path"), { code: "EIO" });
+    };
+    expect(instructionFixtureHash(dir, boom)).toEqual({ problem: "cannot be read (EIO)" });
+    expect(instructionFixtureHash(dir, () => "other")).toEqual({ problem: "cannot be read completely" });
+  });
+  it("has no instruction fixtures without the section", () => {
+    const path = setup((r) => writeFileSync(join(r, "suite.yaml"), YAML.split("instructions:")[0]!));
+    expect(read(path).instructionFixtures.size).toBe(0);
+  });
+});
+
+describe("instructionsPolicy and the gate", () => {
+  const SD = "sha256:" + "b".repeat(64);
+  const AD = "sha256:" + "a".repeat(64);
+  const record = (instructions?: number[]) => ({
+    schema: 1,
+    candidate: { id: "alpha", version: "1.0.0", digest: AD, fingerprint: "fp", source: "s", repositoryKey: "github.com/a/b", commit: "1".repeat(40) },
+    suite: { digest: SD, scenarios: [] },
+    runtime: { foundry: "0.1.0", ...(instructions ? { agent: "claude", model: "m-1" } : {}) },
+    evaluatedAt: "2026-10-13T10:00:00Z",
+    dimensions: { selection: [1], conflicts: [1], context: [1], tools: [1], ...(instructions ? { instructions } : {}) },
+    findings: [],
+    evidence: [],
+  });
+  const gate = (suite: unknown, instructions?: number[]) =>
+    evaluationGate({
+      mode: "new",
+      policy: instructionsPolicy(parseEvaluationSuite(suite).suite!, SD),
+      candidate: { record: record(instructions), digest: AD, safety: { schema: 1, skill: "alpha", digest: AD, report: SD, findings: [] }, licence: "allowed" },
+    });
+  const two = (mandatory: boolean) => withIns({ mandatory, scenarios: [insScenario("ag-a"), insScenario("ag-b")] });
+  const codes = (r: ReturnType<typeof gate>) => r.verdicts[0]!.reasons.map((x) => (x.dimension ? `${x.code}:${x.dimension}` : x.code));
+
+  it("is just the suite digest without the section", () => {
+    expect(instructionsPolicy(parseEvaluationSuite(good()).suite!, SD)).toEqual({ suite: SD });
+  });
+  it("asks for repeat × scenarios samples, mandatory when the suite says so", () => {
+    expect(instructionsPolicy(parseEvaluationSuite(two(true)).suite!, SD)).toEqual({ suite: SD, mandatory: ["instructions"], minSamples: { instructions: 6 } });
+    expect(instructionsPolicy(parseEvaluationSuite(two(false)).suite!, SD)).toEqual({ suite: SD, minSamples: { instructions: 6 } });
+  });
+  it("fails a mandatory instructions dimension without samples, with too few, and passes with enough", () => {
+    expect(codes(gate(two(true)))).toEqual(["dimension-missing:instructions"]);
+    expect(codes(gate(two(true), [1, 1, 1]))).toEqual(["too-few-samples:instructions"]);
+    expect(gate(two(true), [1, 1, 1, 1, 1, 1]).verdicts[0]!.outcome).toBe("passed");
+  });
+  it("ignores an optional instructions dimension without samples", () => {
+    const r = gate(two(false));
+    expect(r.verdicts[0]!.outcome).toBe("passed");
+    expect(r.verdicts[0]!.dimensions.some((d) => d.dimension === "instructions")).toBe(false);
+  });
+  it("reports an optional instructions dimension with too few samples as not passed, without a reason", () => {
+    const r = gate(two(false), [1, 1, 1]);
+    expect(r.verdicts[0]!.outcome).toBe("passed");
+    expect(r.verdicts[0]!.dimensions.find((d) => d.dimension === "instructions")).toMatchObject({ passed: false, mandatory: false });
   });
 });

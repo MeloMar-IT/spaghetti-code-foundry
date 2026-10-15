@@ -81,6 +81,14 @@ describe("skill code does not reach the network", () => {
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
       expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
     });
+    it("compare.ts is pure and compare-cli.ts starts no process and no network", () => {
+      const pure = readFileSync("src/skills/compare.ts", "utf8");
+      for (const name of modulesOf(pure)) expect(name.startsWith("./") && name.endsWith(".js"), name).toBe(true);
+      expect(codeLines(pure).filter((l) => /\bprocess\.|child_process|\bfs\b|node:fs/.test(l))).toEqual([]);
+      const cli = readFileSync("src/skills/compare-cli.ts", "utf8");
+      expect(modulesOf(cli).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
+      expect(codeLines(cli).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+    });
     it("ls-remote.ts starts one detached `git ls-remote` and nothing else", () => {
       const text = readFileSync("src/skill-import/ls-remote.ts", "utf8");
       const code = codeLines(text);
@@ -212,7 +220,7 @@ describe("the workflow gate runs nothing", () => {
 describe("scf skills scan is offline and read-only", () => {
   const PROCESS_OR_NET = /^(?:node:)?(?:child_process|vm|worker_threads|http|https|http2|net|tls|dns|dgram)$/;
   const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
-  for (const f of ["cli.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "selections.ts", "import-plan.ts", "normalize.ts"]) {
+  for (const f of ["cli.ts", "staged-import.ts", "selections-evaluate-cli.ts", "profile-evaluate-cli.ts", "profile-evaluate.ts", "profile-canonical.ts", "profile-evaluations.ts", "scan-staged.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "selections.ts", "import-plan.ts", "normalize.ts", "suite-records.ts", "suite-checks.ts", "suite-rules.ts"]) {
     it(`${f} imports no process or network module and uses no dynamic code`, () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m))).toEqual([]);
@@ -222,7 +230,7 @@ describe("scf skills scan is offline and read-only", () => {
     });
   }
   it("scf skills promote check reads no file in the pure modules and calls no process", () => {
-    for (const f of ["import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts"]) {
+    for (const f of ["import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "suite-checks.ts", "suite-rules.ts"]) {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => /^(?:node:)?(?:fs|fs\/promises|child_process)$/.test(m)), f).toEqual([]);
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m)), f).toEqual([]);
@@ -231,12 +239,45 @@ describe("scf skills scan is offline and read-only", () => {
   it("only the CLI and the pure evaluation import selections.js, so no run reads the file", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)selections\.js$/.test(m)));
-    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "source-skill-evaluation.ts")]);
+    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "selections-evaluate-cli.ts"), join("src", "skills", "source-skill-evaluation.ts")]);
   });
+  it("only src/skills/cli.ts imports selections-evaluate-cli.js", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /^\.\/selections-evaluate-cli\.js$/.test(m)));
+    expect(users).toEqual([join("src", "skills", "cli.ts")]);
+  });
+  it("selections-evaluate-cli.ts writes nothing and stages nothing", () => {
+    for (const f of ["selections-evaluate-cli.ts"]) {
+      const code = codeLines(readFileSync(join(SKILLS, f), "utf8"));
+      expect(code.filter((l) => /writeFileSync|mkdirSync|renameSync|rmSync|unlinkSync|publishImport|pinSkill|pinBuiltinSkills|removeSkillPin|stageImport/.test(l)), f).toEqual([]);
+    }
+  });
+  it("profile-evaluate-cli.ts, profile-evaluate.ts and scan-staged.ts write nothing, stage nothing and take no lock", () => {
+    for (const f of ["profile-evaluate-cli.ts", "profile-evaluate.ts", "profile-canonical.ts", "scan-staged.ts"]) {
+      const code = codeLines(readFileSync(join(SKILLS, f), "utf8"));
+      expect(code.filter((l) => /writeFileSync|mkdirSync|renameSync|rmSync|unlinkSync|publishImport|pinSkill|pinBuiltinSkills|removeSkillPin|stageImport|claimHomeWrite|\b[lL]ock|[a-z]Lock\b/.test(l)), f).toEqual([]);
+    }
+  });
+  it("only src/skills/cli.ts imports profile-evaluate-cli.js", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /^\.\/profile-evaluate-cli\.js$/.test(m)));
+    expect(users).toEqual([join("src", "skills", "cli.ts")]);
+  });
+  for (const f of ["profile-evaluate.ts", "profile-canonical.ts"]) {
+    it(`${f} reads no file and no clock`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => /^(?:node:)?(?:fs|fs\/promises|child_process|process)$/.test(m))).toEqual([]);
+      expect(codeLines(text).filter((l) => /\bprocess\.|Date\.now|new Date/.test(l))).toEqual([]);
+    });
+  }
   it("only source-evaluation.ts imports source-skill-evaluation.js", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)source-skill-evaluation\.js$/.test(m)));
-    expect(users.sort()).toEqual([join("src", "skills", "overlap.ts"), join("src", "skills", "source-evaluation.ts")]);
+    // skill-eval/score.ts reads the registered skills as baselines for `scf skills score --agent`
+    expect(users.sort()).toEqual([join("src", "skill-eval", "score.ts"), join("src", "skills", "overlap.ts"), join("src", "skills", "source-evaluation.ts")]);
+  });
+  it("suite-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "suite-rules.ts"), "utf8"))).toEqual([]);
   });
   it("provider-rules.ts has no imports", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "provider-rules.ts"), "utf8"))).toEqual([]);
@@ -305,4 +346,13 @@ describe("the connector modules run nothing", () => {
   it("connector-rules.ts has no imports", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "connector-rules.ts"), "utf8"))).toEqual([]);
   });
+  for (const f of ["release-verify.ts", "release-cli.ts"]) {
+    it(`${f} starts no process, opens no connection and does not read the process`, () => {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
+      const code = codeLines(text);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      expect(code.filter((l) => /\bprocess\.|spawn|exec\w*\s*\(|\bfork\s*\(/.test(l))).toEqual([]);
+    });
+  }
 });

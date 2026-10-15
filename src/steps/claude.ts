@@ -126,6 +126,8 @@ export interface ClaudeRunOptions {
   isolated?: boolean;
   /** Give the model no tools at all (`--tools ""`). */
   noTools?: boolean;
+  /** Only these tools (`--tools a,b`), no hooks and no personal setup: an evaluation run. `noTools` wins. */
+  tools?: readonly string[];
   /** low | medium | high | xhigh | max */
   effort?: string;
   onProgress?: (msg: string) => void;
@@ -163,6 +165,7 @@ export function buildClaudeArgs(o: ClaudeRunOptions): string[] {
   if (o.effort) args.push("--effort", o.effort);
   if (o.permissionMode) args.push("--permission-mode", o.permissionMode);
   if (o.noTools) args.push("--tools", "");
+  else if (o.tools) args.push("--tools", o.tools.join(","));
   if (o.allowedTools?.length) args.push("--allowedTools", o.allowedTools.join(","));
   const system = [o.isolated ? FACTORY_AGENT_NOTE : "", o.systemPrompt ?? ""].filter(Boolean).join("\n\n");
   if (system) args.push("--append-system-prompt", system);
@@ -170,9 +173,14 @@ export function buildClaudeArgs(o: ClaudeRunOptions): string[] {
   if (o.maxBudgetUsd) args.push("--max-budget-usd", String(o.maxBudgetUsd));
   // Pushing is a flow decision (shell steps + protected-branch hook), never Claude's.
   args.push("--disallowedTools", "Bash(git push*)");
-  if (o.noMcp || o.isolated) args.push("--strict-mcp-config");
-  if (o.isolated) args.push("--setting-sources", "project,local", "--disable-slash-commands");
-  if (o.sandbox) args.push("--settings", JSON.stringify({ sandbox: { enabled: true, autoAllowBashIfSandboxed: true } }));
+  const strict = o.isolated || Boolean(o.tools);
+  if (o.noMcp || strict) args.push("--strict-mcp-config");
+  if (strict) args.push("--setting-sources", "project,local", "--disable-slash-commands");
+  const settings = {
+    ...(o.sandbox ? { sandbox: { enabled: true, autoAllowBashIfSandboxed: true } } : {}),
+    ...(o.tools ? { disableAllHooks: true } : {}),
+  };
+  if (Object.keys(settings).length) args.push("--settings", JSON.stringify(settings));
   return args;
 }
 

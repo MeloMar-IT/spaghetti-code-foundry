@@ -7,7 +7,10 @@ import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
+import { releaseOperandsProblem, releasesCheck, releaseVerify } from "./release-cli.js";
+import { RELEASES_FILE } from "./release-requests.js";
 import { applyConnector, connectorFor } from "./connector.js";
+import { compareStaged } from "./compare-cli.js";
 import { exclusionReasons, importExclusions } from "./import-exclusions.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -16,18 +19,25 @@ import { SkillImportError } from "./import-plan.js";
 import { hidden, plural, filesOf, loadExceptions, stagedImport } from "./staged-import.js";
 import { reviewCommand } from "./review-cli.js";
 import { EVALUATION_SUITE_DEFAULT } from "./evaluation-rules.js";
-import { evaluateOperandsProblem, gateImport, scoreImport } from "./evaluate-cli.js";
+import { evaluateOperandsProblem, gateImport, scoreImport, type EvaluateCliOptions } from "./evaluate-cli.js";
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
 import { licenceReviewProblem, reviewImport } from "./licence-review.js";
-import { licenceReviewRequired, promoteImport } from "./promotion.js";
+import { licenceReviewRequired, NO_EVIDENCE_TIME, promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, type ScanException } from "./scan-exceptions.js";
+import { scanStaged } from "./scan-staged.js";
+import { profilesEvaluate } from "./profile-evaluate-cli.js";
 import { SOURCE_CONNECTORS } from "./connectors.js";
-import { overlapLines, overlapReport } from "./overlap.js";
-import { readSkillSelections, SELECTIONS_FILE, selectionConnectors } from "./selections.js";
+import { overlapLines, overlapReport, versionLines } from "./overlap.js";
+import { readSkillSelections, SELECTIONS_FILE, selectionConnectors, type SkillSelection } from "./selections.js";
+import { PROFILES_FILE, readSourceProfiles } from "./source-profiles.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
+import { selectionsEvaluate } from "./selections-evaluate-cli.js";
+import { suiteLines, suiteRefusal, suiteVerdicts } from "./suite-checks.js";
+import { EVALUATIONS_FILE, readSuiteRecords } from "./suite-records.js";
+import type { SuiteRecord } from "./suite-rules.js";
 import { flowSkillSteps } from "./tool-policy.js";
 import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow.js";
 
@@ -36,22 +46,28 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
-       scf skills connectors                                     List the reviewed source connectors; reads nothing
+       scf skills profiles check [<file>]                        Check the source profiles (default: ${PROFILES_FILE})
+       scf skills profiles evaluate <source-id>                  Print PASS or BLOCKED per staged skill of a profiled source (licence, scan, requirements, evaluations) and the canonical skill per exclusive capability; reads only
+       scf skills connectors                                List the reviewed source connectors; reads nothing
        scf skills selections check [<file>]                      Check the skill selections (default: ${SELECTIONS_FILE})
-       scf skills overrides check [<file>]                       Check the owner overrides (default: ${OVERRIDES_FILE})
+       scf skills selections evaluate <source-id> [<file>]       Report which selected skills of a staged import are eligible, held back or overlapping; reads only
+       scf skills overrides check [<file>]                      Check the owner overrides (default: ${OVERRIDES_FILE})
        scf skills project-pins check [<file>]                    Check the project pins (default: ${PINS_FILE})
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import, plus the connector report of a known source
        scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
-       scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
-       scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence and findings allow promotion; reads only
-       scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; reads only
+       scf skills compare <source-id>                            Compare a staged import with the built-in java and spring-boot skills; reads only
+       scf skills evaluate <source-id> [<technology>@<version> ... | --repo <dir>]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
+       scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence, findings and evaluations allow promotion; reads only
+       scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; uses skill-selections.yaml; reads only
        scf skills review <source-id> [--markdown]                Print the licence, attribution and collision report of a staged import; reads only
-       scf skills score <source-id> [<suite-file>]               Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT})
+       scf skills score <source-id> [<suite-file>] [--agent]     Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT}); --agent also runs the instructions scenarios in the OS sandbox
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
+       scf skills release verify <dir>                           Check a catalogue release folder offline (files, digests, approval); reads only
+       scf skills releases check [<file>]                        Check the release requests offline (default: ${RELEASES_FILE}); reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], promote: [], overlap: [], review: ["markdown"], score: [], gate: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], gate: [], release: [], releases: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -61,6 +77,8 @@ export interface SkillsCommandOptions extends DiscoverOptions {
   now?: Date;
   /** The date used by `scan` for exceptions, as YYYY-MM-DD (tests). Default: today in UTC. */
   today?: string;
+  /** `score --agent`: runs the instructions scenarios in the sandbox. Given by the program's entry point, so this file starts no process. */
+  agentScore?: (id: string, suiteFile: string | undefined, out: (line: string) => void, opts: EvaluateCliOptions) => Promise<number>;
 }
 
 /** `scf skills overrides check` and `scf skills project-pins check`: offline; prints checked fields and the entry digest only. */
@@ -85,6 +103,31 @@ function choicesCheck(file: string, kind: "overrides" | "project-pins", out: (li
   }
   out(`OK ${r.items.length} entries`);
   return expired ? 1 : 0;
+}
+
+/** `scf skills profiles check`: offline, prints checked fields only. */
+function profilesCheck(file: string, out: (line: string) => void): number {
+  const r = readSourceProfiles(file);
+  if (r.state === "none") {
+    out("PROBLEM the source profile file does not exist");
+    return 1;
+  }
+  if (r.state === "invalid") {
+    for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return 1;
+  }
+  const list = (a: readonly string[]) => (a.length ? a.join(",") : "-");
+  let n = 0;
+  for (const src of r.profiles.sources) {
+    for (const s of src.skills) {
+      n++;
+      out(
+        `${`${src.id}/${s.name}`.padEnd(48)} ${s.class} capabilities=${list(s.capabilities)} high_risk=${list(s.high_risk)} config=${list(s.requires.config)} tools=${list(s.requires.tools)} connectors=${list(s.requires.connectors)} live_services=${list(s.requires.live_services)} evaluations=${list(s.evaluations)}`,
+      );
+    }
+  }
+  out(`OK ${n} skills in ${r.profiles.sources.length} sources, ${r.profiles.exclusive.length} exclusive`);
+  return 0;
 }
 
 /** `scf skills sources check`: offline, prints checked fields only. */
@@ -131,6 +174,23 @@ function selectionsCheck(file: string, out: (line: string) => void, today: strin
   return 0;
 }
 
+/** The reviewed files `promote check` and `overlap` read; prints a PROBLEM and returns undefined when one cannot be used. A missing file is empty. */
+function reviewedFiles(out: (line: string) => void, opts: { cwd: string; today: string }, records: boolean): { selections: SkillSelection[]; records: SuiteRecord[] } | undefined {
+  const fail = (file: string, problems: { where: string; message: string }[]) => {
+    for (const p of problems) out(`PROBLEM ${file} ${p.where}: ${p.message}`);
+    return undefined;
+  };
+  const sel = readSkillSelections(resolve(opts.cwd, SELECTIONS_FILE), opts.today);
+  if (sel.state === "invalid") return fail(SELECTIONS_FILE, sel.problems);
+  let recs: SuiteRecord[] = [];
+  if (records) {
+    const r = readSuiteRecords(resolve(opts.cwd, EVALUATIONS_FILE), opts.today);
+    if (r.state === "invalid") return fail(EVALUATIONS_FILE, r.problems);
+    if (r.state === "ok") recs = r.manifest.evaluations;
+  }
+  return { selections: sel.state === "ok" ? sel.manifest.selections : [], records: recs };
+}
+
 /**
  * `scf skills scan`: offline and read-only. Reads the staged import of a source, proves it matches import.json, then
  * scans every skill and prints the report. Returns 1 when a skill is blocked or a PROBLEM was printed.
@@ -145,18 +205,12 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
   if (!staged) return 1;
   const { source, commit, record, files } = staged;
 
-  // The recorded `rejected` text is left out, so the report holds only what normalization decided itself.
-  const { skills: normalized, report: norm } = normalizeImport({ record: { ...record, rejected: [] }, files });
+  const { normalized, skills: scanned } = scanStaged({ record, files }, exceptions, opts.today);
   let blocked = 0;
-  for (const entry of record.skills) {
-    const mine = filesOf(entry.root, files);
-    const scan = scanSkill({ root: entry.root, files: mine });
-    const pkg = normalized.find((s) => s.provenance.root === entry.root);
-    if (pkg) {
-      const decided = applyExceptions(pkg.package.id, scan, exceptions, opts.today);
+  for (const { entry, report: scan, skill: pkg, decided, blockers, exclusions: excluded, quarantine } of scanned) {
+    if (pkg && decided) {
       for (const d of decided.findings) out(`FINDING ${d.finding.id} ${d.finding.severity} ${d.disposition} ${pkg.package.id} ${d.finding.path}: ${d.finding.evidence}`);
-      const n = promotionBlockers(decided).length;
-      const excluded = importExclusions(pkg);
+      const n = blockers.length;
       if (n > 0 || excluded.length > 0) blocked++;
       if (n > 0) out(`BLOCKED ${pkg.package.id}: ${n} high ${n === 1 ? "finding" : "findings"}`);
       if (excluded.length > 0) out(`EXCLUDED ${pkg.package.id}: ${exclusionReasons(excluded).join("; ")}`);
@@ -166,9 +220,8 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
     } else {
       const label = shownValue(entry.root);
       for (const f of scan.findings) out(`FINDING ${f.id} ${f.severity} open ${label} ${f.path}: ${f.evidence}`);
-      const reasons = norm.quarantined.filter((q) => q.root === label).flatMap((q) => q.reasons.map(hidden));
       blocked++;
-      out(`BLOCKED ${label}: not normalized (${reasons.join("; ")})`);
+      out(`BLOCKED ${label}: not normalized (${quarantine.map(hidden).join("; ")})`);
     }
   }
   const connector = connectorFor(source);
@@ -259,9 +312,6 @@ function assessImport(id: string, out: (line: string) => void, opts: { cwd: stri
   return problems > 0 ? 1 : 0;
 }
 
-/** Passed for an import without licence evidence: every skill is `missing`, so the value reaches no package and is never printed. */
-const NO_EVIDENCE_TIME = "1970-01-01T00:00:00Z";
-
 /**
  * `scf skills promote check`: offline and read-only. Prints per staged skill whether licence, provenance and findings
  * allow promotion. Every decision is keyed by the full upstream root; the shown path is used only for printing.
@@ -269,6 +319,7 @@ const NO_EVIDENCE_TIME = "1970-01-01T00:00:00Z";
  */
 function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
   let exceptions: ScanException[] = [];
+  let reviewed: { selections: SkillSelection[]; records: SuiteRecord[] } = { selections: [], records: [] };
   const staged = stagedImport(
     id,
     out,
@@ -276,7 +327,9 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     () => {
       const read = loadExceptions(exceptionsFile, out, opts);
       if (read) exceptions = read;
-      return read !== undefined;
+      const files = reviewedFiles(out, opts, true);
+      if (files) reviewed = files;
+      return read !== undefined && files !== undefined;
     },
     "checked",
   );
@@ -300,9 +353,12 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
   let promotable = 0;
   let refused = 0;
   const lines: string[] = [];
+  const evaluations: string[] = [];
+  const decoder = new TextDecoder();
   for (const entry of record.skills) {
     const path = shownValue(entry.root);
     const skill = byRoot.get(entry.root);
+    let refusal: string | undefined;
     let status: string;
     let licenceReasons: string[] = [];
     let normReasons: string[] = [];
@@ -328,7 +384,12 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
         status = r.status;
         licenceReasons = r.reasons;
       }
-      n = promotionBlockers(applyExceptions(skill.package.id, scanSkill({ root: entry.root, files: filesOf(entry.root, files) }), exceptions, opts.today)).length;
+      const mine = filesOf(entry.root, files);
+      n = promotionBlockers(applyExceptions(skill.package.id, scanSkill({ root: entry.root, files: mine }), exceptions, opts.today)).length;
+      const texts = mine.filter((f) => f.path.endsWith(".md")).map((f) => ({ path: `${entry.root}/${f.path}`, text: decoder.decode(f.content) }));
+      const verdicts = suiteVerdicts({ source, skill, selections: reviewed.selections, records: reviewed.records, texts });
+      refusal = suiteRefusal(verdicts);
+      evaluations.push(...suiteLines(source.id, skill, verdicts));
     } else {
       const verdict = evaluateLicence({ root: entry.root, allow: source.licence.allow, evidence });
       status = verdict.status;
@@ -350,6 +411,9 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     } else if (n > 0) {
       lines.push(`REFUSED ${path}: blocked (${plural(n, "high finding")})`);
       refused++;
+    } else if (refusal !== undefined) {
+      lines.push(`REFUSED ${path}: evaluation (${refusal})`);
+      refused++;
     } else {
       lines.push(`PROMOTABLE ${ok!.id} ${path} ${ok!.licences.join(",")}`);
       promotable++;
@@ -357,6 +421,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
   }
   for (const l of lines) out(l);
   for (const s of normalized) if (s.provenance.assumes) out(`ASSUMES ${hidden(s.package.id)}: ${s.provenance.assumes.join(", ")}`);
+  for (const l of evaluations) out(l);
   const c = review.classification;
   const problem = licenceReviewProblem(source.licence.reviewed, c);
   const state = !licenceReviewRequired(source)
@@ -378,6 +443,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
  */
 function overlapImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string; today: string; skills: Config["skills"]; discover: DiscoverOptions }): number {
   let exceptions: ScanException[] = [];
+  let selections: SkillSelection[] = [];
   const staged = stagedImport(
     id,
     out,
@@ -385,7 +451,9 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
     () => {
       const read = loadExceptions(undefined, out, opts);
       if (read) exceptions = read;
-      return read !== undefined;
+      const files = reviewedFiles(out, opts, false);
+      if (files) selections = files.selections;
+      return read !== undefined && files !== undefined;
     },
     "compared",
   );
@@ -413,7 +481,7 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
 
   let report;
   try {
-    report = overlapReport({ source, skills: entries }, reg.skills, { highRisk: opts.skills.unresolved.high_risk, mandatory: opts.skills.selection.include, tools: opts.skills.tools });
+    report = overlapReport({ source, skills: entries, selections }, reg.skills, { highRisk: opts.skills.unresolved.high_risk, mandatory: opts.skills.selection.include, tools: opts.skills.tools });
   } catch (e) {
     if (!(e instanceof RangeError)) throw e;
     out("PROBLEM too many skills or capabilities to compare");
@@ -421,6 +489,7 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
   }
   for (const line of catalogue) out(line);
   for (const line of overlapLines(report)) out(line);
+  for (const line of versionLines(report)) out(line);
   const notNormalized = record.skills.length - normalized.length;
   if (notNormalized > 0) out(`PROBLEM ${plural(notNormalized, "staged skill")} could not be normalized; see "scf skills scan ${source.id}"`);
   out(`OVERLAP ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${report.shared} shared, ${report.new} new, ${report.vendorOnly} vendor-only, ${report.conflicts} conflicts`);
@@ -460,9 +529,38 @@ export async function skillsCommand(
     if (operands.length !== 1) throw syntax("scf skills unpin: expects one skill (id@version)");
     if (!parseSkillKey(operands[0]!)) throw syntax(`scf skills unpin: ${operands[0]} is not a skill key (id@version)`);
   }
+  if (sub === "release") {
+    const problem = releaseOperandsProblem(operands);
+    if (problem) throw syntax(problem);
+    return releaseVerify(resolve(opts.cwd ?? process.cwd(), operands[1]!), out, (opts.skills ?? loadConfig().skills).releases.approved);
+  }
+  if (sub === "releases") {
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills releases: expects "check" and at most one file');
+    return releasesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? RELEASES_FILE), out, opts.today ?? new Date().toISOString().slice(0, 10));
+  }
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
     return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out, opts.today);
+  }
+
+  if (sub === "profiles") {
+    if (operands[0] === "evaluate") {
+      if (operands.length !== 2) throw syntax("scf skills profiles evaluate: expects one source id");
+      if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills profiles evaluate: the operand must be a source id");
+      const { skills, cwd: _c, now: _n, today: _t, agentScore: _a, ...discover } = opts;
+      return profilesEvaluate(operands[1]!, out, {
+        cwd: opts.cwd ?? process.cwd(),
+        home: opts.home,
+        today: opts.today ?? new Date().toISOString().slice(0, 10),
+        catalogue: () => {
+          const cfg = skills ?? loadConfig().skills;
+          const reg = discoverSkills(cfg, discover);
+          return { skills: reg.skills, problems: reg.problems, tools: cfg.tools };
+        },
+      });
+    }
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills profiles: expects "check" and at most one file, or "evaluate" and a source id');
+    return profilesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? PROFILES_FILE), out);
   }
 
   if (sub === "connectors") {
@@ -473,7 +571,13 @@ export async function skillsCommand(
   }
 
   if (sub === "selections") {
-    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file');
+    if (operands[0] === "evaluate") {
+      if (operands.length < 2 || operands.length > 3) throw syntax("scf skills selections evaluate: expects a source id and at most one selections file");
+      if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills selections evaluate: the first operand must be a source id");
+      const { skills, cwd, now, today, repo: _repo, ...discover } = opts;
+      return selectionsEvaluate(operands[1]!, operands[2], out, { cwd: cwd ?? process.cwd(), today: today ?? new Date().toISOString().slice(0, 10), now: now ?? new Date(), skills, discover });
+    }
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file, or "evaluate" and a source id');
     return selectionsCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SELECTIONS_FILE), out, opts.today ?? new Date().toISOString().slice(0, 10));
   }
 
@@ -496,6 +600,15 @@ export async function skillsCommand(
     return assessImport(operands[0]!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home });
   }
 
+  if (sub === "compare") {
+    if (operands.length !== 1) throw syntax("scf skills compare: expects one source id");
+    if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills compare: the operand must be a source id");
+    const cwd = opts.cwd ?? process.cwd();
+    const today = opts.today ?? new Date().toISOString().slice(0, 10);
+    const staged = stagedImport(operands[0]!, out, { cwd, home: opts.home, today }, undefined, "compared");
+    return staged ? compareStaged(staged, out, { cwd, now: opts.now ?? new Date(), today, builtinRoot: opts.builtinRoot }) : 1;
+  }
+
   if (sub === "promote") {
     if (operands[0] !== "check" || operands.length < 2 || operands.length > 3) throw syntax('scf skills promote: expects "check", a source id and at most one exception file');
     if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills promote check: the first operand must be a source id");
@@ -510,7 +623,7 @@ export async function skillsCommand(
     return reviewCommand(operands[0]!, out, { cwd: cwd ?? process.cwd(), home: opts.home, markdown: args.values.markdown === true, skills, discover: rest });
   }
 
-  const { skills, cwd: _cwd, now: _now, today: _today, ...discover } = opts;
+  const { skills, cwd: _cwd, now: _now, today: _today, agentScore, ...discover } = opts;
   if (sub === "overlap") {
     if (operands.length !== 1) throw syntax("scf skills overlap: expects one source id");
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills overlap: the operand must be a source id");
@@ -522,7 +635,12 @@ export async function skillsCommand(
     if (why) throw syntax(why);
     const run = sub === "score" ? scoreImport : gateImport;
     const today = opts.today ?? new Date().toISOString().slice(0, 10);
-    return run(operands[0]!, operands[1], out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
+    const evalOpts = { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover };
+    if (sub === "score" && args.values.agent === true) {
+      if (!agentScore) throw syntax("scf skills score --agent: not available here");
+      return agentScore(operands[0]!, operands[1], out, evalOpts);
+    }
+    return run(operands[0]!, operands[1], out, evalOpts);
   }
   if (sub === "unpin") {
     const key = operands[0]!;

@@ -158,11 +158,14 @@ hand.
 Skills reach an agent in a fixed order. Each stage has its own module:
 
 - **Profile and catalogue:** `src/skills/repo-profile.ts`, `catalogue.ts` and `run-catalogue.ts`.
+- **Import evaluation** (`src/skills/evaluate-cli.ts`, read through `staged-cli.ts`): `scf skills selections evaluate` runs `evaluateSourceSkills` on a staged import and the selections. It is offline and writes nothing; no run reads it.
 - **Collisions** (`collisions.ts`, rules in `collision-rules.ts`): pure classification and merge of normalized skills; reached from `run-catalogue.ts` only through its optional `candidate` dependency, which no run supplies yet.
 - **Canonical selection** (`canonical.ts`, rules in `canonical-rules.ts`, facts in `canonical-facts.ts`): pure choice of one winner per exclusive capability, in the precedence order of `CANONICAL_LEVELS`; reached from `run-catalogue.ts` only through its optional `canonical` dependency, which no run supplies yet.
+- **Reviewed frontend profiles** (`frontend-rules.ts`, data only; `frontend-connector.ts`, pure functions): used by `source-evaluation.ts` only for a source whose repository has a profile. Selection happens before normalization, and the profile is authoritative: its capabilities, technologies and category replace the upstream ones, and a `scope` is refused. A folder is reviewed only by a digest in its own rule, added by a code change.
 - **Source evaluation** (`source-skill-evaluation.ts`, re-exported by `source-evaluation.ts`, Azure markers in `provider-rules.ts`): pure per-skill verdict of an imported source (selection, licence, undeclared provider needs, overlaps, provider rule); no run calls it yet.
 - **Licence review** (`licence-review.ts`): the digest covers the whole licence evidence that can apply to the staged folders (every licence and notice file above or inside them, with its hash or problem), not only the attribution of the promoted skills. A change to a root `LICENSE` therefore needs a new review even when every skill keeps its own licence. Promotion reads it through `licenceReviewProblem`.
 - **Provider assumptions** (`provider-assumptions.ts`): a pure, declarative scan of a skill's declared tools, `compatibility` and instructions for Claude, MCP and Anthropic API references. It is recorded in `SkillProvenance.provider` and never grants a tool or blocks a skill.
+- **Source profiles** (`src/skills/source-profiles.ts`): pure parser and safe reader of `skill-source-profiles.yaml`, read only by `scf skills profiles check`; no run reads it yet.
 - **Evaluation gate** (`evaluation.ts`, thresholds in `evaluation-rules.ts`): pure verdict of a candidate from its evaluation record; see "Evaluation gate" below. No run calls it yet.
 - **Import review** (`import-review.ts`, rules in `import-review-rules.ts`, command in `review-cli.ts`): pure report of a staged import against the registered skills (licence, attribution, scan, collisions, category); reads only, promotes nothing.
 - **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
@@ -191,6 +194,19 @@ A candidate skill is promoted only on one verdict from its evaluation record (`s
 - **Outcome.** `evaluationOutcome` turns the result into the `passed` or `failed` value of `CanonicalCandidate.evaluation`.
 
 The gate reads no clock, file, process or network, and gives the same answer for the same input in any order. Running suites and storing records is a later step.
+
+#### Agent runs of the scenarios (#536)
+
+`scf skills score <source> --agent` (`src/skill-eval/score.ts`, runner in `src/skill-eval/run.ts`, packages in `package.ts`, fixtures in `fixture.ts`) runs each `instructions` scenario with a Claude agent. Each run is one arm of the flow built in memory: `workspace: empty`, skills `explicit`, and the steps `fixture` (a clone of the snapshot), `work` and `check`, all boxed. It is not a flow file.
+
+- **The user's run is reused.** The temporary data folder has no user entry for its owner, so `userAccount` treats the run as a user's run and fails closed. That turns on the OS sandbox, the short environment, step isolation and the private agent home (`sandboxedRun`, `shortEnvRun`, `stepIsolated`, `agentHomeEnv`) without a change to the engine. The evaluation adds only what a user's run lacks: the evaluation limit below, and a `dontAsk` work step with the tools of its scenario policy.
+- **One process-wide folder switch.** `switchDataFolder` sets `FACTORY_HOME`, `SCF_HOME`, `FACTORY_LOCK_DIR` and `SCF_LOCK_DIR` to the temporary folder. The four are needed because the sandbox, the running-job and monitor code each read a different one first. It also sets `FACTORY_NO_NOTIFY=1` and `FACTORY_NO_FAILURE_MODEL=1`, and clears `SCF_STEP_ENV_PASS` and `FACTORY_STEP_ENV_PASS`. `serverPassList` (`src/engine/short-env.ts`) is always applied, so the environment of a run holds only the model key. Everything is restored in `finally`. The real data folder gets only the evaluation record, and its `skills.lock.json` and `skills/` stay byte for byte the same.
+- **Arms run one after another.** The candidate is written as a Foundry package with `id` as the `SKILL.md` name, and its digest is kept as evidence `agent-package`. A baseline is copied unchanged and its digest is checked. Each arm has its own `skills.lock.json`, so no arm sees another arm's skill. The arm folder is removed when the arm ends.
+- **Paired baselines.** Each of the (at most four) baselines from `gateChecks` runs the same number of times as the candidate, with the same suite. Its offline score is made too. The results go into the candidate's `agent` block, so the gate compares the pair in one record. This is needed because adding `instructions` changes the suite digest, which makes every stored baseline record of an older suite mismatch. `gateImport` and `compareBaseline` therefore prefer the paired baseline.
+- **Limits.** While a run is in progress, the evaluation limit (#534) holds: outbound TCP only to the model's port, the real data folder unreadable, and only the scenario's tools. The network is therefore not host-limited, and the record says so (`agent.network`).
+- **Stop and cleanup.** Each job has a deadline: fixture 120 s, work `timeout_sec`, check 300 s. On SIGINT, SIGTERM or an error, every job is cancelled and awaited before the folders are removed and the environment restored. Then the run prints `PROBLEM the evaluation was interrupted` and writes no record, so a record is never written from a partly run arm.
+- **Refusals first.** Before anything is made, a run is refused when the sandbox is missing or switched off, the suite has no `instructions`, the agent is not Claude, the model key is missing, or a fixture's hash differs from the suite digest's (`evaluationSuiteDigest` covers profile findings only, so instruction fixtures get their own content hash).
+- **Shared code.** `scoreImport` in `src/skills/evaluate-cli.ts` is split into `prepareScoring` and `writeScores`, so the offline and agent paths write the same record. `skillsCommand` gets the runner as `agentScore`, so `src/skills/cli.ts` starts no process; a guard test forbids a dynamic `import()` there.
 
 ### Evidence formats
 
@@ -864,6 +880,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   lock and hooks folders can be read; a Codex read-only step is held by the outer profile only; Docker
   steps are held by the container; with `sandbox.user_runs: off` nothing is held; the push hook does not
   run in a Docker step.
+- **Evaluation limits (#534).** `src/engine/eval-limits.ts` holds one process-wide limit, unset by default, that a later evaluation command sets for untrusted skills. It adds three things to every sandboxed step: outbound TCP only to `*:<port>` or `localhost:<port>` entries (the profile denies `remote ip "*:*"`, then allows each `remote tcp` entry); `denyRead` folders denied before every allow exception (made real with `deepReal`); and, for a Claude agent, `--tools` with only the allowed tools, `disableAllHooks`, and strict MCP and setting sources. Only the port is filtered because Seatbelt accepts only `*` or `localhost` as the host, so a host name is refused. Limit: the tests check the profile text and the arguments, not Seatbelt or Claude Code's enforcement.
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.
@@ -883,6 +900,8 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | Commands with text from an issue | Issue text and step output travel as environment variables only |
 | A reviewer changes code | Reviewers get read-only tools |
 | Untrusted test commands | Optional sandbox: Claude Code's sandbox or Docker |
+| An untrusted skill is evaluated | Evaluation limits (`eval-limits.ts`): outbound TCP to listed ports only, listed folders unreadable, and a Claude agent with only the listed tools and no hooks |
+| A candidate skill's scenarios run an agent | `score --agent` (`src/skill-eval/`): each arm in its own temporary data folder, a user's run (no GitHub token, empty `gh` folder, strict MCP, short environment, only the model key), the evaluation limit, and cleanup on every exit; the outbound network is limited to a port, not a host |
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
 | Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |

@@ -126,7 +126,7 @@ export function quarantineReport(origin: Pick<NormalizeOrigin, "source" | "repos
   return buildReport(origin, [], rejected);
 }
 
-const slugify = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+export const slugify = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
 /** Text or a list of text. A string is split at commas. Undefined when it is neither. */
 function textList(v: unknown): string[] | undefined {

@@ -3,12 +3,13 @@ import { z } from "zod";
 import { credentialProblem } from "./credential-scan.js";
 import { byteCmp } from "./import-plan.js";
 import type { LicenceStatus } from "./licence.js";
+import { agentLines, agentProblems, DimensionsSchema, EvaluationAgentSchema, normaliseAgent, type EvaluationAgent } from "./evaluation-instructions.js";
 import { canonicalJson } from "./normalize-values.js";
 import { isUtcTime } from "./release.js";
 import { promotionBlockers, type DecidedReport } from "./scan-exceptions.js";
 import { SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema } from "./schema.js";
 import {
-  EVALUATION_DIGEST_HEADER, EVALUATION_DIMENSIONS, EVALUATION_EPSILON, EVALUATION_LIMITS, EVALUATION_MANDATORY, EVALUATION_MIN_MARGIN,
+  EVALUATION_DIGEST_HEADER, EVALUATION_DIMENSIONS, EVALUATION_EPSILON, EVALUATION_INSTRUCTIONS_LIMITS, EVALUATION_LIMITS, EVALUATION_MANDATORY, EVALUATION_MIN_MARGIN,
   EVALUATION_MIN_SAMPLES, EVALUATION_MODES, EVALUATION_REASON_CODES, EVALUATION_THRESHOLDS,
   type EvaluationDimension, type EvaluationMode, type EvaluationReasonCode,
 } from "./evaluation-rules.js";
@@ -27,6 +28,8 @@ export interface EvaluationRecord {
   dimensions: Partial<Record<EvaluationDimension, number[]>>;
   findings: { code: string; dimension?: EvaluationDimension; scenario?: string; detail?: string }[];
   evidence: { name: string; digest: string }[];
+  /** The agent runs and the paired baselines of the `instructions` dimension (evaluation-instructions.ts). */
+  agent?: EvaluationAgent;
 }
 
 const L = EVALUATION_LIMITS;
@@ -38,7 +41,6 @@ const FINDING_RE = /^[0-9a-f]{16}$/;
 const token = z.string().regex(TOKEN_RE, "must be a short token");
 const digest = z.string().regex(SKILL_DIGEST_RE, "must be a sha256 digest");
 const dimension = z.enum(EVALUATION_DIMENSIONS);
-const samples = z.array(z.number().finite().min(0).max(1)).min(1).max(L.samples);
 
 export const EvaluationRecordSchema = z
   .object({
@@ -73,15 +75,7 @@ export const EvaluationRecordSchema = z
       .strict(),
     runtime: z.object({ foundry: token, agent: token.optional(), model: token.optional() }).strict(),
     evaluatedAt: z.string().refine(isUtcTime, "must be a UTC time like 2026-01-31T12:00:00Z"),
-    dimensions: z
-      .object({
-        selection: samples.optional(),
-        instructions: samples.optional(),
-        conflicts: samples.optional(),
-        context: samples.optional(),
-        tools: samples.optional(),
-      })
-      .strict(),
+    dimensions: DimensionsSchema,
     findings: z
       .array(
         z
@@ -90,6 +84,7 @@ export const EvaluationRecordSchema = z
       )
       .max(L.findings),
     evidence: z.array(z.object({ name: token, digest }).strict()).max(L.evidence),
+    agent: EvaluationAgentSchema.optional(),
   })
   .strict()
   .superRefine((r, ctx) => {
@@ -106,6 +101,7 @@ export const EvaluationRecordSchema = z
     if (r.dimensions.instructions && (agent === undefined || model === undefined)) {
       ctx.addIssue({ code: "custom", path: ["runtime"], message: "instructions needs the agent and model that scored it" });
     }
+    if (r.agent) for (const i of agentProblems({ ...r, agent: r.agent as EvaluationAgent })) ctx.addIssue({ code: "custom", path: i.path, message: i.message });
   });
 
 export type EvaluationRecordRead =
@@ -135,6 +131,7 @@ function normalise(r: EvaluationRecord): EvaluationRecord {
     dimensions: dims,
     findings,
     evidence: r.evidence.map((e) => ({ name: e.name, digest: e.digest })).sort((a, b) => byteCmp(`${a.name} ${a.digest}`, `${b.name} ${b.digest}`)),
+    ...(r.agent ? { agent: normaliseAgent(r.agent) } : {}),
   };
 }
 
@@ -151,6 +148,7 @@ export function evaluationRecordText(record: EvaluationRecord): string {
     ...EVALUATION_DIMENSIONS.filter((d) => r.dimensions[d]).map((d) => `${d} ${r.dimensions[d]!.join(",")}`),
     ...r.findings.map((f) => canonicalJson(f)),
     ...r.evidence.map((e) => `${e.name} ${e.digest}`),
+    ...(r.agent ? agentLines(r.agent) : []),
   ];
   return EVALUATION_DIGEST_HEADER + lines.map((l) => l + "\n").join("");
 }
@@ -162,8 +160,10 @@ export function evaluationRecordDigest(record: EvaluationRecord): string {
 /** The name of the first credential rule any string or key of the raw value trips; "limit" when it is too big or deep. */
 function rawCredential(raw: unknown): string | undefined {
   let nodes = 0;
+  // A record with an agent block may hold the scores of the candidate and four baselines: it gets a larger allowance.
+  const limit = isObj(raw) && raw.agent !== undefined ? EVALUATION_INSTRUCTIONS_LIMITS.walkNodes : L.walkNodes;
   const walk = (v: unknown, depth: number): string | undefined => {
-    if (++nodes > L.walkNodes || depth > L.walkDepth) return "limit";
+    if (++nodes > limit || depth > L.walkDepth) return "limit";
     if (typeof v === "string") return credentialProblem(v);
     if (Array.isArray(v)) {
       for (const x of v) {
@@ -218,7 +218,7 @@ export interface EvaluationSubject {
 }
 export type EvaluationGateInput =
   | { mode: "new"; policy: EvaluationPolicy; candidate: EvaluationSubject }
-  | { mode: "upgrade"; policy: EvaluationPolicy; candidate: EvaluationSubject; baseline?: { record: unknown; digest: string; id?: string } }
+  | { mode: "upgrade"; policy: EvaluationPolicy; candidate: EvaluationSubject; baseline?: { record?: unknown; digest: string; id?: string } }
   | { mode: "duplicate"; policy: EvaluationPolicy; candidates: readonly [EvaluationSubject, EvaluationSubject] };
 
 export interface EvaluationReason {
@@ -381,30 +381,45 @@ function judge(subject: EvaluationSubject, ep: EffectivePolicy | undefined): Jud
   return { verdict, record, reasons };
 }
 
-/** `baseline.id` names the skill the baseline record is of when it is not the candidate's own id (an upgrade by capability). */
-function compareBaseline(j: Judged, ep: EffectivePolicy, baseline: { record: unknown; digest: string; id?: string } | undefined): void {
+/**
+ * `baseline.id` names the skill the baseline record is of when it is not the candidate's own id (an upgrade by capability).
+ * A baseline of the candidate's own agent block (same id and digest) is preferred, for every dimension: the stored record is then
+ * not read at all. `baseline.record` undefined means none is stored (baseline-missing); null or junk is baseline-invalid.
+ */
+function compareBaseline(j: Judged, ep: EffectivePolicy, baseline: { record?: unknown; digest: string; id?: string } | undefined): void {
   const { record, reasons, verdict } = j;
   if (!record) return;
   if (!isObj(baseline)) {
     reasons.push({ code: "baseline-missing" });
     return;
   }
-  const read = parseEvaluationRecord(baseline.record);
-  if (!("record" in read)) {
-    reasons.push({ code: "baseline-invalid" });
-    return;
-  }
-  const base = read.record;
   if (baseline.id !== undefined && typeof baseline.id !== "string") {
     reasons.push({ code: "baseline-invalid" });
     return;
   }
-  if (base.candidate.id !== (baseline.id ?? record.candidate.id) ||base.candidate.digest !== baseline.digest || base.suite.digest !== ep.suite) {
-    reasons.push({ code: "baseline-mismatch" });
-    return;
+  const want = baseline.id ?? record.candidate.id;
+  const paired = record.agent?.baselines.find((b) => b.id === want && b.digest === baseline.digest);
+  let dims: Partial<Record<EvaluationDimension, number[]>>;
+  if (paired) dims = paired.dimensions;
+  else {
+    if (baseline.record === undefined) {
+      reasons.push({ code: "baseline-missing" });
+      return;
+    }
+    const read = parseEvaluationRecord(baseline.record);
+    if (!("record" in read)) {
+      reasons.push({ code: "baseline-invalid" });
+      return;
+    }
+    const base = read.record;
+    if (base.candidate.id !== want || base.candidate.digest !== baseline.digest || base.suite.digest !== ep.suite) {
+      reasons.push({ code: "baseline-mismatch" });
+      return;
+    }
+    dims = base.dimensions;
   }
   for (const d of EVALUATION_DIMENSIONS) {
-    const b = base.dimensions[d];
+    const b = dims[d];
     const mandatory = ep.mandatory.has(d);
     if (!b) {
       if (mandatory) reasons.push({ code: "baseline-invalid", dimension: d });

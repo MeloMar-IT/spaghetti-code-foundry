@@ -109,6 +109,7 @@ export const api = {
   diff: (id) => req("GET", `/api/runs/${enc(id)}/diff`),
   repos: () => req("GET", "/api/repos"),
   epics: (id) => req("GET", `/api/repos/${enc(id)}/epics`),
+  epic: (id, epicId) => req("GET", `/api/repos/${enc(id)}/epics/${enc(epicId)}`),
   repoMethods: () => req("GET", "/api/repos/methods"),
   addRepo: (body) => req("POST", "/api/repos", body),
   setRepoAuth: (id, body) => req("PUT", `/api/repos/${enc(id)}/auth`, body),

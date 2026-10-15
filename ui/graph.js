@@ -112,3 +112,77 @@ export function renderGraph(flow, { selected, onSelect } = {}) {
       h("span", {}, h("i", { class: "par" }), "parallel")),
     dangling.length ? h("p", { class: "status bad" }, `${dangling.length} jump(s) point to missing steps`) : null);
 }
+
+const CW = 168, CH = 44, CGAP = 40, RGAP = 12, CPAD = 8, LANE_GAP = 8;
+
+/**
+ * Where the stories of an epic's chains go: columns are the build levels (left to right), rows follow the server's order
+ * inside a level. Edges run from a dependency (left) to the story that waits for it. null without nodes.
+ */
+export function chainLayout(chains) {
+  const list = Array.isArray(chains?.nodes) ? chains.nodes : [];
+  if (!list.length) return null;
+  const rowOf = new Map();
+  const seen = new Map();
+  for (const n of list) {
+    const r = seen.get(n.level) ?? 0;
+    seen.set(n.level, r + 1);
+    rowOf.set(n.issue, r);
+  }
+  const nodes = list.map((n) => ({
+    issue: n.issue, title: n.title ?? "", state: n.state, critical: n.critical === true,
+    x: CPAD + n.level * (CW + CGAP), y: CPAD + rowOf.get(n.issue) * (CH + RGAP), level: n.level,
+  }));
+  const at = new Map(nodes.map((n) => [n.issue, n]));
+  const rows = Math.max(...seen.values());
+  const gridBottom = CPAD + rows * CH + (rows - 1) * RGAP;
+  let lanes = 0;
+  const edges = [];
+  for (const e of chains.edges ?? []) {
+    const waits = at.get(e.from);
+    const dep = at.get(e.to);
+    if (!waits || !dep) continue;
+    const critical = e.critical === true;
+    if (waits.level === dep.level) {
+      const x = waits.x - 6;
+      edges.push({ d: `M${waits.x},${dep.y + CH / 2} H${x} V${waits.y + CH / 2} H${waits.x - 2}`, critical, cycle: true });
+    } else {
+      const x0 = dep.x + CW, y0 = dep.y + CH / 2, x1 = waits.x - 2, y1 = waits.y + CH / 2;
+      if (waits.level - dep.level > 1) {
+        // Skips a level: goes down through the gaps between columns and along its own lane under the boxes, never through one.
+        const lane = gridBottom + 8 + lanes++ * LANE_GAP;
+        edges.push({ d: `M${x0},${y0} H${x0 + 14} V${lane} H${x1 - 14} V${y1} H${x1}`, critical, cycle: false, lane: true });
+      } else {
+        const mid = (x0 + x1) / 2;
+        edges.push({ d: `M${x0},${y0} C${mid},${y0} ${mid},${y1} ${x1},${y1}`, critical, cycle: false });
+      }
+    }
+  }
+  const cols = Math.max(...nodes.map((n) => n.level)) + 1;
+  return { width: CPAD * 2 + cols * CW + (cols - 1) * CGAP, height: gridBottom + CPAD + (lanes ? 8 + lanes * LANE_GAP : 0), nodes, edges };
+}
+
+/** The dependency chains as an SVG: each story is a link to its issue (`hrefOf(issue)`), with its state in words (`wordsOf(issue)`). */
+export function chainGraph(chains, { hrefOf, wordsOf } = {}) {
+  const lay = chainLayout(chains);
+  if (!lay) return h("div", { class: "empty" }, "No chains");
+  const defs = svg("defs", {}, ["", "-critical"].map((k) =>
+    svg("marker", { id: `chain-arrow${k}`, viewBox: "0 0 10 10", refX: "9", refY: "5", markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse" },
+      svg("path", { d: "M0,0 L10,5 L0,10 z", class: `chain-arrow${k ? " critical" : ""}` }))));
+  const edges = lay.edges.map((e) => svg("path", { class: `chain-edge${e.critical ? " critical" : ""}${e.cycle ? " cycle" : ""}`, d: e.d, "marker-end": `url(#chain-arrow${e.critical ? "-critical" : ""})` }));
+  const nodes = lay.nodes.map((n) => {
+    const words = wordsOf?.(n.issue) ?? n.state ?? "";
+    const props = { class: "chain-link", "aria-label": `#${n.issue} ${n.title}, ${words}`, transform: `translate(${n.x},${n.y})` };
+    const href = hrefOf?.(n.issue);
+    if (href) Object.assign(props, { href, target: "_blank", rel: "noopener" });
+    return svg("a", props,
+      svg("rect", { class: `chain-node state-${n.state}${n.critical ? " critical" : ""}`, width: CW, height: CH, rx: 8 }),
+      svg("text", { x: 8, y: 18, "font-weight": 600, "font-size": 12 }, `#${n.issue} ${clip(n.title, 20)}`),
+      svg("text", { x: 8, y: 35, class: "sub" }, `${words}${n.critical ? " · critical path" : ""}`),
+      svg("title", {}, `#${n.issue} ${n.title}: ${words}`));
+  });
+  return h("div", {},
+    h("div", { class: "chain-graph" },
+      svg("svg", { class: "chains", role: "group", "aria-label": "Dependency chains", width: lay.width, height: lay.height, viewBox: `0 0 ${lay.width} ${lay.height}` }, defs, edges, nodes)),
+    h("div", { class: "legend" }, h("span", {}, h("i", { class: "crit" }), "critical path")));
+}

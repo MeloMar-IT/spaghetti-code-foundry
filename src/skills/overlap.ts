@@ -9,8 +9,8 @@ import type { NormalizedSkill } from "./normalize.js";
 import type { RegisteredSkill } from "./registry.js";
 import { ToolPolicySchema, type ToolPolicy } from "./schema.js";
 import { registeredCandidate } from "./source-skill-evaluation.js";
-import { profileSkill, vendorCapability } from "./source-profile.js";
 import type { SkillLibrarySource } from "./sources.js";
+import { declaredVersions, effectiveSkill, type SelectionLike } from "./suite-checks.js";
 
 // Compares the skills of a staged source with the registered skills: per capability the canonical skill, a conflict, or "new".
 // Pure: no file system, no process, no clock; the input is never changed. No run reads the report. Every line is built from
@@ -27,6 +27,8 @@ export interface OverlapStagedSkill {
 export interface OverlapStaged {
   source: SkillLibrarySource;
   skills: readonly OverlapStagedSkill[];
+  /** Reviewed selections (skill-selections.yaml): they give capabilities to a skill that declares none, at the same digest. */
+  selections?: readonly SelectionLike[];
 }
 export interface OverlapPolicy {
   highRisk: readonly string[];
@@ -71,6 +73,8 @@ export interface OverlapReport {
   conflicts: number;
   /** Capabilities the profile scoped to the provider. */
   vendorOnly: number;
+  /** The technology versions each staged skill declares (skills with none are left out); sorted by the skill's printed reference. */
+  versions: { skill: OverlapSkill; technologies: { name: string; version: string }[] }[];
   /** No conflict and no problem. */
   ok: boolean;
 }
@@ -102,26 +106,19 @@ export function overlapReport(staged: OverlapStaged, registered: readonly Regist
   const problems: OverlapProblem[] = [];
 
   // 1. The source profile, per skill; which of its capabilities are vendor-scoped and which are portable.
-  const portableMap = new Map((profile?.portable ?? []).map((p) => [p.upstream, p.capability] as const));
+  // A skill that declares no capabilities may get them from a reviewed selection of the same digest (effectiveSkill).
   interface Item { entry: OverlapStagedSkill; skill: NormalizedSkill; vendor: Set<string>; portable: Set<string> }
   const items: Item[] = [];
+  /** Vendor capability → the provider that owns it. */
+  const owners = new Map<string, string>();
   for (const entry of skills) {
-    const caps = entry.skill.package.capabilities ?? [];
-    const vendor = new Set<string>();
-    const portable = new Set<string>();
-    if (profile) {
-      for (const c of caps) {
-        const mapped = portableMap.get(c);
-        if (mapped !== undefined) portable.add(mapped);
-        else vendor.add(vendorCapability(profile.provider, c));
-      }
-    }
-    const r = profileSkill(entry.skill, source);
-    if (!r.skill) {
-      problems.push({ skill: stagedRef(entry.skill, vendor.size ? profile?.provider : undefined), code: "profile" });
+    const e = effectiveSkill(entry.skill, source, staged.selections ?? []);
+    if (!e.skill) {
+      problems.push({ skill: stagedRef(entry.skill, e.vendor.length ? e.provider : undefined), code: "profile" });
       continue;
     }
-    items.push({ entry, skill: r.skill, vendor, portable });
+    items.push({ entry, skill: e.skill, vendor: new Set(e.vendor), portable: new Set(e.portable) });
+    if (e.provider !== undefined) for (const c of e.vendor) owners.set(c, e.provider);
   }
 
   // A slug that is vendor-scoped for one skill and portable for another cannot keep both scopes.
@@ -133,10 +130,13 @@ export function overlapReport(staged: OverlapStaged, registered: readonly Regist
   });
   const vendorSlugs = new Set(scoped.flatMap((i) => [...i.vendor]));
 
-  // 2. Registered skills: a vendor-scoped capability belongs only to a skill of the same provider.
+  // 2. Registered skills: a vendor-scoped capability belongs only to a skill of the provider that owns it.
   const shown = (s: RegisteredSkill): RegisteredSkill => {
-    if (!vendorSlugs.size || (profile && s.pkg.provider?.name === profile.provider)) return s;
-    return { ...s, pkg: { ...s.pkg, capabilities: (s.pkg.capabilities ?? []).filter((c) => !vendorSlugs.has(c)) } };
+    if (!vendorSlugs.size) return s;
+    const mine = (c: string) => vendorSlugs.has(c) && owners.get(c) !== s.pkg.provider?.name;
+    const caps = s.pkg.capabilities ?? [];
+    if (!caps.some(mine)) return s;
+    return { ...s, pkg: { ...s.pkg, capabilities: caps.filter((c) => !mine(c)) } };
   };
   const registeredRef = (s: RegisteredSkill): OverlapSkill => ({
     id: s.id, version: s.version, ...(s.pkg.provider ? { provider: s.pkg.provider.name } : {}), origin: s.source as "builtin" | "admin",
@@ -258,6 +258,10 @@ export function overlapReport(staged: OverlapStaged, registered: readonly Regist
   const conflicts = entries.filter((e) => e.kind === "conflict").length;
   const news = entries.filter((e) => e.kind === "new").length;
   problems.sort((a, b) => byteCmp(problemLine(a), problemLine(b)));
+  const versions = items
+    .map((i) => ({ skill: stagedRef(i.skill), technologies: declaredVersions(i.skill, source) }))
+    .filter((v) => v.technologies.length > 0)
+    .sort((a, b) => byRef(a.skill, b.skill));
   return {
     schema: 1,
     source: source.id,
@@ -267,6 +271,7 @@ export function overlapReport(staged: OverlapStaged, registered: readonly Regist
     new: news,
     conflicts,
     vendorOnly: vendorSlugs.size,
+    versions,
     ok: conflicts === 0 && problems.length === 0,
   };
 }
@@ -278,6 +283,11 @@ function problemLine(p: OverlapProblem): string {
 }
 
 const rejectedLine = (r: OverlapRejection) => `REJECTED ${refText(r.skill)}: ${r.code}${r.skill.provider ? ` provider ${r.skill.provider}` : ""}`;
+
+/** `VERSIONS <id>@<version>: <name range, …>` per staged skill that declares versions. */
+export function versionLines(report: OverlapReport): string[] {
+  return report.versions.map((v) => `VERSIONS ${refText(v.skill)}: ${v.technologies.map((t) => `${t.name} ${t.version}`).join(", ")}`);
+}
 
 /** The lines of the report, without the final summary. The same for any order of the input. */
 export function overlapLines(report: OverlapReport): string[] {
