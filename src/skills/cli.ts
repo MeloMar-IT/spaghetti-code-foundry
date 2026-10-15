@@ -45,7 +45,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
        scf skills profiles check [<file>]                        Check the source profiles (default: ${PROFILES_FILE})
-       scf skills profiles evaluate <source-id>                  Print PASS or BLOCKED per staged skill of a profiled source (licence, scan, requirements, evaluations); reads only
+       scf skills profiles evaluate <source-id>                  Print PASS or BLOCKED per staged skill of a profiled source (licence, scan, requirements, evaluations) and the canonical skill per exclusive capability; reads only
        scf skills connectors                                List the reviewed source connectors; reads nothing
        scf skills selections check [<file>]                      Check the skill selections (default: ${SELECTIONS_FILE})
        scf skills selections evaluate <source-id> [<file>]       Report which selected skills of a staged import are eligible, held back or overlapping; reads only
@@ -537,7 +537,17 @@ export async function skillsCommand(
     if (operands[0] === "evaluate") {
       if (operands.length !== 2) throw syntax("scf skills profiles evaluate: expects one source id");
       if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills profiles evaluate: the operand must be a source id");
-      return profilesEvaluate(operands[1]!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today: opts.today ?? new Date().toISOString().slice(0, 10) });
+      const { skills, cwd: _c, now: _n, today: _t, agentScore: _a, ...discover } = opts;
+      return profilesEvaluate(operands[1]!, out, {
+        cwd: opts.cwd ?? process.cwd(),
+        home: opts.home,
+        today: opts.today ?? new Date().toISOString().slice(0, 10),
+        catalogue: () => {
+          const cfg = skills ?? loadConfig().skills;
+          const reg = discoverSkills(cfg, discover);
+          return { skills: reg.skills, problems: reg.problems, tools: cfg.tools };
+        },
+      });
     }
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills profiles: expects "check" and at most one file, or "evaluate" and a source id');
     return profilesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? PROFILES_FILE), out);

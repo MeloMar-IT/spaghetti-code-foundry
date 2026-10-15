@@ -1,7 +1,10 @@
 import { resolve } from "node:path";
 import { evaluateProfileCandidates, type ProfileCandidateResult } from "./profile-evaluate.js";
+import { profileCanonical, profileCanonicalLines, profileExclusive } from "./profile-canonical.js";
 import { PROFILE_EVALUATIONS_FILE, readProfileEvaluations, type ProfileEvaluationRecord } from "./profile-evaluations.js";
+import type { RegisteredSkill } from "./registry.js";
 import type { ScanException } from "./scan-exceptions.js";
+import type { ToolPolicy } from "./schema.js";
 import { PROFILES_FILE, readSourceProfiles, type SourceProfile } from "./source-profiles.js";
 import { loadExceptions, plural, stagedImport } from "./staged-import.js";
 
@@ -17,9 +20,20 @@ function head(c: ProfileCandidateResult): string {
 }
 
 /** Returns 1 when a candidate is blocked or a PROBLEM was printed. */
-export function profilesEvaluate(id: string, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
+export function profilesEvaluate(
+  id: string,
+  out: (line: string) => void,
+  opts: {
+    cwd: string;
+    home?: string;
+    today: string;
+    /** The registered skills; called only when the source declares an exclusive capability. */
+    catalogue?: () => { skills: readonly RegisteredSkill[]; problems: readonly { source: string; kind: string }[]; tools: ToolPolicy };
+  },
+): number {
   let exceptions: ScanException[] = [];
   let profile: SourceProfile | undefined;
+  let exclusive: string[] = [];
   let records: ProfileEvaluationRecord[] = [];
   const staged = stagedImport(
     id,
@@ -37,7 +51,10 @@ export function profilesEvaluate(id: string, out: (line: string) => void, opts: 
       } else if (profiles.state === "invalid") {
         for (const p of profiles.problems) out(`PROBLEM ${PROFILES_FILE} ${p.where}: ${p.message}`);
         ok = false;
-      } else profile = profiles.profiles.sources.find((s) => s.id === id);
+      } else {
+        profile = profiles.profiles.sources.find((s) => s.id === id);
+        exclusive = profiles.profiles.exclusive;
+      }
       const evaluations = readProfileEvaluations(resolve(opts.cwd, PROFILE_EVALUATIONS_FILE), opts.today);
       if (evaluations.state === "invalid") {
         for (const p of evaluations.problems) out(`PROBLEM ${PROFILE_EVALUATIONS_FILE} ${p.where}: ${p.message}`);
@@ -67,6 +84,33 @@ export function profilesEvaluate(id: string, out: (line: string) => void, opts: 
     }
   }
   for (const name of result.missing) out(`MISSING ${source.id}/${name}: in skill-source-profiles.yaml, not staged`);
+
+  // The canonical skill per exclusive capability; only when this source declares one, so part-3 output stays as it was.
+  let failed = false;
+  if (profileExclusive(profile, exclusive).length > 0 && opts.catalogue) {
+    const reg = opts.catalogue();
+    const problems = [...new Set(reg.problems.filter((p) => p.source !== "repository").map((p) => `PROBLEM catalogue ${p.source} ${p.kind}`))].sort();
+    for (const line of problems) out(line);
+    if (problems.length) failed = true;
+    try {
+      const report = profileCanonical({
+        trust: source.trust,
+        candidates: result.candidates,
+        profile,
+        exclusive,
+        registered: reg.skills,
+        evaluations: records,
+        today: opts.today,
+        tools: reg.tools,
+      });
+      for (const line of profileCanonicalLines(report)) out(line);
+      if (report.conflicts > 0) failed = true;
+    } catch (e) {
+      if (!(e instanceof RangeError)) throw e;
+      out("PROBLEM too many skills or capabilities to compare");
+      failed = true;
+    }
+  }
   out(`EVALUATED ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${pass} pass, ${blocked} blocked, ${result.missing.length} missing`);
-  return blocked > 0 ? 1 : 0;
+  return blocked > 0 || failed ? 1 : 0;
 }

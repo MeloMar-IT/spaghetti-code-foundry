@@ -3,6 +3,7 @@ import { evaluateLicence } from "./licence.js";
 import { findProfileEvaluation, type ProfileEvaluationRecord } from "./profile-evaluations.js";
 import { dayNumber, type ScanException } from "./scan-exceptions.js";
 import { scanStaged } from "./scan-staged.js";
+import type { SkillRisk } from "./schema.js";
 import type { SkillProfile, SourceProfile } from "./source-profiles.js";
 import { hidden, type StagedImport } from "./staged-import.js";
 import { shownValue, type SkillLibrarySource } from "./sources.js";
@@ -23,6 +24,10 @@ export interface ProfileCandidateResult {
   id?: string;
   /** package.digest, when the skill normalized. */
   digest?: string;
+  /** The package version, category and risk, when the skill normalized. */
+  version?: string;
+  category?: string;
+  risk?: SkillRisk;
   /** Absent: not declared. */
   profile?: SkillProfile;
   /** Empty means PASS. Ordered by PROFILE_GATES. */
@@ -68,7 +73,7 @@ export function evaluateProfileCandidates(input: ProfileEvaluateInput): ProfileE
     const result: ProfileCandidateResult = {
       root: shownValue(entry.root),
       name: shownValue(entry.name),
-      ...(pkg ? { id: pkg.id, digest: pkg.digest } : {}),
+      ...(pkg ? { id: pkg.id, digest: pkg.digest, version: pkg.version, category: pkg.category, risk: pkg.risk } : {}),
       ...(declared ? { profile: declared } : {}),
       reasons: [],
       needs: { config: declared ? [...declared.requires.config] : [], live_services: declared ? [...declared.requires.live_services] : [] },
