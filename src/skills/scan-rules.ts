@@ -67,7 +67,19 @@ export const FIXED_RULES = {
   bidiChars: { id: "obfuscation.bidi-chars", severity: "high", says: "Text direction control character" },
   invisibleChars: { id: "obfuscation.invisible-chars", severity: "high", says: "Invisible formatting character" },
   controlChars: { id: "obfuscation.control-chars", severity: "medium", says: "Control character" },
+  // A prompt-injection match that is only quoted as an example (see QUOTED_EXAMPLE_CUE); it never blocks.
+  quotedExample: { id: "prompt-injection.quoted-example", severity: "low", says: "Quotes a prompt-injection phrase as an example" },
 } as const satisfies Record<string, FixedRule>;
+
+/** A cue that introduces a quoted phrase as an example to ignore, refuse or detect. Applied to text where `e.g.` is `eg`. */
+export const QUOTED_EXAMPLE_CUE: RegExp =
+  /\b(?:eg|ie|for\s+(?:example|instance)|such\s+as|examples?\b|ignore|ignoring|disregard|refuse|reject|detect|flag|watch\s+(?:out\s+)?for|look\s+(?:out\s+)?for|beware\s+of|never\s+(?:follow|obey)|treat\b[^\n]{0,40}\bas\s+(?:data|untrusted)|prompt[\s-]injections?|injection\s+attempts?)/gi;
+/** Words between the cue and the quote that make it an instruction. */
+export const QUOTED_EXAMPLE_DIRECTIVE: RegExp = /\b(?:follow|obey|execute|run|say|reply|respond|answer|repeat|output|print|write|type|use|apply|do|perform|comply|instead|then|now)\b/i;
+/** A negation right before the cue. */
+export const QUOTED_EXAMPLE_NEGATION: RegExp = /\b(?:not|never|don't|dont|no|stop|without)\s+(?:\S+\s+){0,2}$/i;
+export const QUOTE_PAIRS: readonly (readonly [string, string])[] = [['"', '"'], ["`", "`"], ["“", "”"], ["‘", "’"], ["«", "»"], ["'", "'"]];
+export const QUOTED_EXAMPLE_LIMITS = { line: 2000, open: 40, close: 160, context: 200, gap: 60 } as const;
 
 export const DOC_EXTENSIONS: readonly string[] = [".md", ".markdown", ".mdx", ".txt", ".rst", ".adoc"];
 export const DOC_NAMES: readonly string[] = ["LICENSE", "LICENCE", "COPYING", "NOTICE", "README", "CHANGELOG", "AUTHORS", "CONTRIBUTING"];

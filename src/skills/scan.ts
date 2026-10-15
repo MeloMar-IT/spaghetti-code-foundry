@@ -8,7 +8,8 @@ import { skillDigest } from "./package.js";
 import { relativePathProblem } from "./schema.js";
 import { shownValue } from "./sources.js";
 import {
-  ALLOWED_BINARY, DOC_EXTENSIONS, DOC_NAMES, FIXED_RULES, MAGIC_RULES, SCAN_ID_HEADER, TEXT_RULES, categoryOf,
+  ALLOWED_BINARY, DOC_EXTENSIONS, DOC_NAMES, FIXED_RULES, MAGIC_RULES, QUOTED_EXAMPLE_CUE, QUOTED_EXAMPLE_DIRECTIVE, QUOTED_EXAMPLE_LIMITS,
+  QUOTED_EXAMPLE_NEGATION, QUOTE_PAIRS, SCAN_ID_HEADER, TEXT_RULES, categoryOf,
   type FixedRule, type ScanCategory, type ScanSeverity, type TextRule,
 } from "./scan-rules.js";
 
@@ -90,7 +91,7 @@ const hasBytes = (bytes: Uint8Array, offset: number, want: readonly number[]): b
 
 /** The finding of one file, with the dedupe by id and the smallest line. */
 class FileScan {
-  constructor(private readonly rawPath: string, private readonly out: Map<string, Entry>, private readonly lines: () => readonly number[]) {}
+  constructor(private readonly rawPath: string, private readonly out: Map<string, Entry>, readonly lines: () => readonly number[]) {}
 
   add(rule: { id: string; severity: ScanSeverity }, matched: string, evidence: string, offset?: number): void {
     const id = findingId(rule.id, this.rawPath, matched);
@@ -118,6 +119,76 @@ function evidenceOf(rule: TextRule, matched: string, hasSecret: boolean): string
   return shown === "(hidden)" ? rule.says : `${rule.says}: ${shown}`;
 }
 
+const SENTENCE_END = /[.!?](?=\s|$)/g;
+const QUOTED_SEGMENT = /"[^"\n]*"|`[^`\n]*`|“[^”\n]*”|‘[^’\n]*’|«[^»\n]*»/g;
+
+/** The offset of the opening quote that holds the match on its line, or -1. Bounded by QUOTED_EXAMPLE_LIMITS. */
+function quoteOpening(line: string, start: number, end: number): number {
+  const L = QUOTED_EXAMPLE_LIMITS;
+  for (const [open, close] of QUOTE_PAIRS) {
+    let at: number;
+    if (open === "'") at = line[start - 1] === "'" ? start - 1 : -1;
+    else {
+      at = line.lastIndexOf(open, start - 1);
+      if (at >= 0 && start - at > L.open) at = -1;
+      if (at >= 0 && open !== close && line.slice(at + 1, start).includes(close)) at = -1;
+      if (at >= 0 && open === close && (line.slice(0, at).split(open).length - 1) % 2 === 1) at = -1;
+    }
+    if (at < 0) continue;
+    const closeAt = line.indexOf(close, end);
+    if (closeAt >= 0 && closeAt - end <= L.close) return at;
+  }
+  return -1;
+}
+
+/**
+ * True when the match of a prompt-injection rule is a quoted example: in quotation marks, introduced in the same
+ * sentence by a cue (QUOTED_EXAMPLE_CUE), with no negation before the cue and no directive between cue and quote.
+ * Anything unclear is false. Bounded: at most a few thousand characters are looked at per match.
+ */
+export function quotedExample(body: string, newlines: readonly number[], start: number, matched: string): boolean {
+  const L = QUOTED_EXAMPLE_LIMITS;
+  if (matched.includes("\n")) return false;
+  const n = lineOf(newlines, start);
+  const lineStart = n >= 2 ? newlines[n - 2]! + 1 : 0;
+  const lineEnd = n - 1 < newlines.length ? newlines[n - 1]! : body.length;
+  if (lineEnd - lineStart > L.line || start + matched.length > lineEnd) return false;
+  const line = body.slice(lineStart, lineEnd).replace(/\r$/, "");
+  const from = start - lineStart;
+  const opening = quoteOpening(line, from, from + matched.length);
+  if (opening < 0) return false;
+  let before = line.slice(0, opening);
+  if (n >= 2) {
+    const prev = body.slice(n >= 3 ? newlines[n - 3]! + 1 : 0, lineStart - 1).replace(/\r$/, "");
+    if (prev.trim() !== "" && prev.length <= L.line) before = prev + "\n" + before;
+  }
+  before = before.slice(-L.context).replace(QUOTED_SEGMENT, ",").replace(/\be\.g\./gi, "eg").replace(/\bi\.e\./gi, "ie");
+  let clauseAt = 0;
+  for (const m of before.matchAll(SENTENCE_END)) clauseAt = m.index + 1;
+  const clause = before.slice(clauseAt);
+  let cue: RegExpExecArray | undefined;
+  const re = new RegExp(QUOTED_EXAMPLE_CUE.source, QUOTED_EXAMPLE_CUE.flags);
+  for (let m = re.exec(clause); m; m = re.exec(clause)) {
+    cue = m;
+    if (m[0] === "") re.lastIndex++;
+  }
+  if (!cue) return false;
+  const gap = clause.slice(cue.index + cue[0].length);
+  if (gap.length > L.gap || QUOTED_EXAMPLE_DIRECTIVE.test(gap)) return false;
+  const lead = clause.slice(0, cue.index);
+  // An instruction before the cue ("Follow this example: ...") counts too, unless it is negated ("Do not follow ...").
+  const plain = lead.replace(/\bdo(?:es)?\s+not\b|\bdon't\b/gi, "not");
+  const directive = QUOTED_EXAMPLE_DIRECTIVE.exec(plain);
+  if (directive) return QUOTED_EXAMPLE_NEGATION.test(plain.slice(0, directive.index));
+  return !QUOTED_EXAMPLE_NEGATION.test(lead);
+}
+
+function quotedEvidence(rule: TextRule, matched: string, hasSecret: boolean): string {
+  const shown = hasSecret ? "(hidden)" : shownValue(matched);
+  const says = FIXED_RULES.quotedExample.says;
+  return shown === "(hidden)" ? `${says} (${rule.id})` : `${says} (${rule.id}): ${shown}`;
+}
+
 function scanText(scan: FileScan, body: string, klass: FileClass, hasSecret: boolean): void {
   for (const rule of GLOBAL_TEXT_RULES) {
     if (rule.scope === "script" && klass !== "script") continue;
@@ -126,7 +197,9 @@ function scanText(scan: FileScan, body: string, klass: FileClass, hasSecret: boo
     let m: RegExpExecArray | null;
     while ((m = re.exec(body))) {
       if (m[0] === "") re.lastIndex++;
-      else scan.add(rule, m[0], evidenceOf(rule, m[0], hasSecret), m.index);
+      else if (rule.id.startsWith("prompt-injection.") && quotedExample(body, scan.lines(), m.index, m[0])) {
+        scan.add(FIXED_RULES.quotedExample, m[0], quotedEvidence(rule, m[0], hasSecret), m.index);
+      } else scan.add(rule, m[0], evidenceOf(rule, m[0], hasSecret), m.index);
     }
   }
 }

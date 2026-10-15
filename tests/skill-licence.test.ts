@@ -343,3 +343,79 @@ describe("evaluateLicence", () => {
     expect(v.authorNotice).not.toContain("Not a notice line");
   });
 });
+
+/** Joins every paragraph into one line, wraps it at `width` and indents every line. */
+function rewrap(text: string, width: number, indent: string): string {
+  return text
+    .split(/\n[ \t]*\n/)
+    .map((p) => {
+      const out: string[] = [];
+      let cur = "";
+      for (const w of p.split(/\s+/).filter(Boolean)) {
+        if (cur !== "" && cur.length + 1 + w.length > width) {
+          out.push(indent + cur);
+          cur = w;
+        } else cur = cur === "" ? w : cur + " " + w;
+      }
+      if (cur !== "") out.push(indent + cur);
+      return out.join("\n");
+    })
+    .join("\n\n") + "\n";
+}
+
+describe("licence layout", () => {
+  const BRACKET = APACHE.replace("{yyyy} {name of copyright owner}", "[yyyy] [name of copyright owner]");
+  const FILLED = APACHE.replace("{yyyy} {name of copyright owner}", "2024 Example Person Name");
+  const id = (t: string) => identifyLicence(b(t)).id;
+
+  it.each([
+    ["re-indented and wrapped narrow", rewrap(APACHE, 20, "        ")],
+    ["wrapped wide", rewrap(APACHE, 100, "")],
+    ["short text", rewrap(APACHE_SHORT, 30, "  ")],
+    ["apache.org placeholder", BRACKET],
+    ["apache.org placeholder, wrapped", rewrap(BRACKET, 20, "   ")],
+    ["https addresses", APACHE.replaceAll("http://www.apache.org/licenses/", "https://www.apache.org/licenses/")],
+    ["filled-in owner wrapped", rewrap(FILLED, 20, "  ")],
+  ])("recognises Apache-2.0: %s", (_n, text) => {
+    expect(id(text)).toBe("Apache-2.0");
+  });
+  it.each([
+    ["MIT", MIT],
+    ["ISC", ISC],
+    ["BSD-2-Clause", BSD2],
+    ["BSD-3-Clause", BSD3],
+  ])("recognises %s however it is wrapped", (want, text) => {
+    expect(id(rewrap(text, 40, "    "))).toBe(want);
+    expect(id(rewrap(text, 20, "  "))).toBe(want);
+  });
+  it.each([
+    ["a changed clause", rewrap(APACHE.replace("grants to You a perpetual", "grants to You a revocable"), 20, "    ")],
+    ["a changed clause, not wrapped", APACHE.replace("grants to You a perpetual", "grants to You a revocable")],
+    ["a changed address host", APACHE.replaceAll("http://www.apache.org/licenses/", "http://www.example.org/licenses/")],
+    ["a sentence after the placeholder", BRACKET.replace("[name of copyright owner]", "[name of copyright owner]\nUse is permitted for educational purposes only.")],
+    ["a changed MIT clause", rewrap(MIT.replace("sublicense, and/or sell", "sublicense"), 40, "    ")],
+    ["an owner paragraph with a restriction", MIT.replace("Copyright (c) 2024 Example Person", "Copyright (c) 2024 Example\nPerson. Use is permitted for educational purposes only.")],
+    ["a four-line owner paragraph", MIT.replace("Copyright (c) 2024 Example Person", "Copyright (c) 2024\nExample\nPerson\nOnly")],
+  ])("does not recognise %s", (_n, text) => {
+    expect(id(text)).toBeUndefined();
+  });
+  it.each([
+    ["MIT", MIT], ["ISC", ISC], ["BSD-2-Clause", BSD2], ["BSD-3-Clause", BSD3],
+  ])("recognises %s with all white space collapsed onto one line", (want, text) => {
+    expect(id(text.replace(/\s+/g, " "))).toBe(want);
+  });
+  it("recognises an owner notice wrapped over four lines", () => {
+    expect(id(MIT.replace("Copyright (c) 2024 Example Person", "Copyright (c)\n2024\nExample\nPerson"))).toBe("MIT");
+    expect(id(rewrap(APACHE.replace("{yyyy} {name of copyright owner}", "2024 Example Person Name"), 8, ""))).toBe("Apache-2.0");
+  });
+  it("does not recognise a collapsed text with a restriction in the owner place", () => {
+    expect(id(MIT.replace("Example Person", "Example Person. Use is permitted for educational purposes only.").replace(/\s+/g, " "))).toBeUndefined();
+    expect(id(MIT.replace("sublicense, and/or sell", "sublicense").replace(/\s+/g, " "))).toBeUndefined();
+  });
+  it("an owner line wrapped over two lines is left out", () => {
+    expect(id(MIT.replace("Copyright (c) 2024 Example Person", "Copyright (c) 2024 Example\nPerson"))).toBe("MIT");
+  });
+  it("evaluateLicence allows the re-wrapped apache.org text", () => {
+    expect(judge([file("skills/a/LICENSE.txt", rewrap(BRACKET, 20, "  "))], { allow: ["Apache-2.0"] })).toMatchObject({ status: "allowed", licences: ["Apache-2.0"] });
+  });
+});
