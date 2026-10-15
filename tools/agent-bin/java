@@ -1,0 +1,3 @@
+#!/bin/sh
+# See _gate.mjs: a Gradle or Maven test run started by its wrapper (./gradlew test, ./mvnw verify) ends in `java`.
+exec node "${0%/*}/_gate.mjs" java "$@"
