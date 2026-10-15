@@ -55,6 +55,9 @@ export const categoryOf = (ruleId: string): ScanCategory => {
   return found;
 };
 
+// Credential paths, case-insensitive by hand: the upload rule is case-sensitive so that the shell tests -f/-d are not curl options.
+const SECRET_PATH = String.raw`(?:\.[Ss][Ss][Hh]\/|\.[Aa][Ww][Ss]\/|\.[Ee][Nn][Vv]\b|[Ii][Dd]_[Rr][Ss][Aa]|\/[Ee][Tt][Cc]\/[Pp][Aa][Ss][Ss][Ww][Dd])`;
+
 export const FIXED_RULES = {
   secretContent: { id: "secret.content", severity: "high", says: "Holds what looks like a credential" },
   secretFileName: { id: "secret.file-name", severity: "high", says: "The file name holds what looks like a credential" },
@@ -149,7 +152,10 @@ export const TEXT_RULES: readonly TextRule[] = [
   rule("unsafe-network.reverse-shell", "high", "Opens a shell over the network",
     /\/dev\/(?:tcp|udp)\/|\b(?:nc|ncat|netcat)\b[^\n]{0,40}\s-[a-z]{0,3}e\b|\bbash\s+-i\s+>&|\bsocat\b[^\n]{0,80}\bexec:/i),
   rule("unsafe-network.upload-secret-file", "high", "Uploads a file that holds credentials",
-    /(?:--data(?:-binary|-raw)?|--upload-file|--post-file|\s-[dFT])[= ]\s{0,3}@?[^\s]{0,60}(?:\.ssh\/|\.aws\/|\.env\b|id_rsa|\/etc\/passwd)/i),
+    new RegExp(
+      String.raw`(?:--data(?:-binary|-raw)?|--upload-file|--post-file|(?<!(?:[[!&|]|\btest)\s{0,8})\s-[dFT])[= ]\s{0,3}@?[^\s]{0,60}${SECRET_PATH}` +
+      String.raw`|\bscp\b[^\n;&|]{0,80}${SECRET_PATH}` +
+      String.raw`|\b(?:nc|ncat|netcat)\b[^\n;&|<]{0,80}<\s{0,3}["']?[^\s;&|]{0,40}${SECRET_PATH}`)),
   rule("unsafe-network.raw-ip", "medium", "Uses a web address that is a raw IP address",
     /\bhttps?:\/\/(?!127\.|0\.0\.0\.0)(?:\d{1,3}\.){3}\d{1,3}\b/i),
   rule("unsafe-network.no-tls-check", "medium", "Turns off the check of a TLS certificate",
