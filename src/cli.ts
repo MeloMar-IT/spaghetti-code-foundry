@@ -53,6 +53,7 @@ Usage:
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills scan <source-id> [<exceptions-file>]  Print the security report of a staged import
   scf skills assess <source-id>                    Print the workflow report of a staged import
+  scf skills compare <source-id>                   Compare a staged import with the built-in java and spring-boot skills
   scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
   scf skills promote check <source-id> [<exceptions-file>]  Print whether licence and findings allow promotion
   scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
@@ -232,8 +233,8 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `selections …`, `scan …`, `assess …`, `evaluate …`, `promote check …` and `connectors` only read: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "evaluate" || arg === "promote" || arg === "connectors"))) {
+  // `scf skills sources …`, `selections …`, `scan …`, `assess …`, `compare …`, `evaluate …`, `promote check …` and `connectors` only read: they run without choosing or moving the data folder.
+  if (!(cmd === "skills" && (arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "evaluate" || arg === "promote" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
