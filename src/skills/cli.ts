@@ -28,6 +28,7 @@ import { applyExceptions, promotionBlockers, type ScanException } from "./scan-e
 import { SOURCE_CONNECTORS } from "./connectors.js";
 import { overlapLines, overlapReport, versionLines } from "./overlap.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors, type SkillSelection } from "./selections.js";
+import { PROFILES_FILE, readSourceProfiles } from "./source-profiles.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
 import { selectionsEvaluate } from "./selections-evaluate-cli.js";
 import { suiteLines, suiteRefusal, suiteVerdicts } from "./suite-checks.js";
@@ -41,6 +42,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
+       scf skills profiles check [<file>]                        Check the source profiles (default: ${PROFILES_FILE})
        scf skills connectors                                     List the reviewed source connectors; reads nothing
        scf skills selections check [<file>]                      Check the skill selections (default: ${SELECTIONS_FILE})
        scf skills selections evaluate <source-id> [<file>]       Report which selected skills of a staged import are eligible, held back or overlapping; reads only
@@ -58,7 +60,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: [], gate: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: [], gate: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -92,6 +94,31 @@ function choicesCheck(file: string, kind: "overrides" | "project-pins", out: (li
   }
   out(`OK ${r.items.length} entries`);
   return expired ? 1 : 0;
+}
+
+/** `scf skills profiles check`: offline, prints checked fields only. */
+function profilesCheck(file: string, out: (line: string) => void): number {
+  const r = readSourceProfiles(file);
+  if (r.state === "none") {
+    out("PROBLEM the source profile file does not exist");
+    return 1;
+  }
+  if (r.state === "invalid") {
+    for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return 1;
+  }
+  const list = (a: readonly string[]) => (a.length ? a.join(",") : "-");
+  let n = 0;
+  for (const src of r.profiles.sources) {
+    for (const s of src.skills) {
+      n++;
+      out(
+        `${`${src.id}/${s.name}`.padEnd(48)} ${s.class} capabilities=${list(s.capabilities)} high_risk=${list(s.high_risk)} config=${list(s.requires.config)} tools=${list(s.requires.tools)} connectors=${list(s.requires.connectors)} live_services=${list(s.requires.live_services)} evaluations=${list(s.evaluations)}`,
+      );
+    }
+  }
+  out(`OK ${n} skills in ${r.profiles.sources.length} sources, ${r.profiles.exclusive.length} exclusive`);
+  return 0;
 }
 
 /** `scf skills sources check`: offline, prints checked fields only. */
@@ -506,6 +533,11 @@ export async function skillsCommand(
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
     return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out, opts.today);
+  }
+
+  if (sub === "profiles") {
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills profiles: expects "check" and at most one file');
+    return profilesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? PROFILES_FILE), out);
   }
 
   if (sub === "connectors") {

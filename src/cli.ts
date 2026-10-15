@@ -49,6 +49,7 @@ Usage:
   scf skills pin --builtin                       Pin the built-in skills that have no pin
   scf skills unpin <id@version>                  Remove a pin
   scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
+  scf skills profiles check [<file>]             Check the source profiles (default: skill-source-profiles.yaml)
   scf skills connectors                          List the reviewed skill source connectors
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]  Open a pull request that proposes the new upstream commit (never approves)
@@ -243,9 +244,9 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
+  // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
   // writes only into skill-evaluations/ through claimHomeWrite: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "gate" || arg === "connectors"))) {
+  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "gate" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }

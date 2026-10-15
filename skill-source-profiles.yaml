@@ -1,0 +1,5 @@
+# Skill source profiles: what each selected upstream skill of a source provides and needs.
+# Add a source (same id as in skill-sources.yaml) and its skills by pull request after review.
+# Check with: scf skills profiles check
+schema: 1
+sources: []
