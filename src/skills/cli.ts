@@ -26,10 +26,13 @@ import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, type ScanException } from "./scan-exceptions.js";
 import { SOURCE_CONNECTORS } from "./connectors.js";
-import { overlapLines, overlapReport } from "./overlap.js";
-import { readSkillSelections, SELECTIONS_FILE, selectionConnectors } from "./selections.js";
+import { overlapLines, overlapReport, versionLines } from "./overlap.js";
+import { readSkillSelections, SELECTIONS_FILE, selectionConnectors, type SkillSelection } from "./selections.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
 import { selectionsEvaluate } from "./selections-evaluate-cli.js";
+import { suiteLines, suiteRefusal, suiteVerdicts } from "./suite-checks.js";
+import { EVALUATIONS_FILE, readSuiteRecords } from "./suite-records.js";
+import type { SuiteRecord } from "./suite-rules.js";
 import { flowSkillSteps } from "./tool-policy.js";
 import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow.js";
 
@@ -48,8 +51,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
        scf skills compare <source-id>                            Compare a staged import with the built-in java and spring-boot skills; reads only
        scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
-       scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence and findings allow promotion; reads only
-       scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; reads only
+       scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence, findings and evaluations allow promotion; reads only
+       scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; uses skill-selections.yaml; reads only
        scf skills review <source-id> [--markdown]                Print the licence, attribution and collision report of a staged import; reads only
        scf skills score <source-id> [<suite-file>]               Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT})
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
@@ -133,6 +136,23 @@ function selectionsCheck(file: string, out: (line: string) => void, today: strin
   }
   out(`OK ${r.manifest.selections.length} selections`);
   return 0;
+}
+
+/** The reviewed files `promote check` and `overlap` read; prints a PROBLEM and returns undefined when one cannot be used. A missing file is empty. */
+function reviewedFiles(out: (line: string) => void, opts: { cwd: string; today: string }, records: boolean): { selections: SkillSelection[]; records: SuiteRecord[] } | undefined {
+  const fail = (file: string, problems: { where: string; message: string }[]) => {
+    for (const p of problems) out(`PROBLEM ${file} ${p.where}: ${p.message}`);
+    return undefined;
+  };
+  const sel = readSkillSelections(resolve(opts.cwd, SELECTIONS_FILE), opts.today);
+  if (sel.state === "invalid") return fail(SELECTIONS_FILE, sel.problems);
+  let recs: SuiteRecord[] = [];
+  if (records) {
+    const r = readSuiteRecords(resolve(opts.cwd, EVALUATIONS_FILE), opts.today);
+    if (r.state === "invalid") return fail(EVALUATIONS_FILE, r.problems);
+    if (r.state === "ok") recs = r.manifest.evaluations;
+  }
+  return { selections: sel.state === "ok" ? sel.manifest.selections : [], records: recs };
 }
 
 /**
@@ -273,6 +293,7 @@ const NO_EVIDENCE_TIME = "1970-01-01T00:00:00Z";
  */
 function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
   let exceptions: ScanException[] = [];
+  let reviewed: { selections: SkillSelection[]; records: SuiteRecord[] } = { selections: [], records: [] };
   const staged = stagedImport(
     id,
     out,
@@ -280,7 +301,9 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     () => {
       const read = loadExceptions(exceptionsFile, out, opts);
       if (read) exceptions = read;
-      return read !== undefined;
+      const files = reviewedFiles(out, opts, true);
+      if (files) reviewed = files;
+      return read !== undefined && files !== undefined;
     },
     "checked",
   );
@@ -304,9 +327,12 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
   let promotable = 0;
   let refused = 0;
   const lines: string[] = [];
+  const evaluations: string[] = [];
+  const decoder = new TextDecoder();
   for (const entry of record.skills) {
     const path = shownValue(entry.root);
     const skill = byRoot.get(entry.root);
+    let refusal: string | undefined;
     let status: string;
     let licenceReasons: string[] = [];
     let normReasons: string[] = [];
@@ -332,7 +358,12 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
         status = r.status;
         licenceReasons = r.reasons;
       }
-      n = promotionBlockers(applyExceptions(skill.package.id, scanSkill({ root: entry.root, files: filesOf(entry.root, files) }), exceptions, opts.today)).length;
+      const mine = filesOf(entry.root, files);
+      n = promotionBlockers(applyExceptions(skill.package.id, scanSkill({ root: entry.root, files: mine }), exceptions, opts.today)).length;
+      const texts = mine.filter((f) => f.path.endsWith(".md")).map((f) => ({ path: `${entry.root}/${f.path}`, text: decoder.decode(f.content) }));
+      const verdicts = suiteVerdicts({ source, skill, selections: reviewed.selections, records: reviewed.records, texts });
+      refusal = suiteRefusal(verdicts);
+      evaluations.push(...suiteLines(source.id, skill, verdicts));
     } else {
       const verdict = evaluateLicence({ root: entry.root, allow: source.licence.allow, evidence });
       status = verdict.status;
@@ -354,6 +385,9 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     } else if (n > 0) {
       lines.push(`REFUSED ${path}: blocked (${plural(n, "high finding")})`);
       refused++;
+    } else if (refusal !== undefined) {
+      lines.push(`REFUSED ${path}: evaluation (${refusal})`);
+      refused++;
     } else {
       lines.push(`PROMOTABLE ${ok!.id} ${path} ${ok!.licences.join(",")}`);
       promotable++;
@@ -361,6 +395,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
   }
   for (const l of lines) out(l);
   for (const s of normalized) if (s.provenance.assumes) out(`ASSUMES ${hidden(s.package.id)}: ${s.provenance.assumes.join(", ")}`);
+  for (const l of evaluations) out(l);
   const c = review.classification;
   const problem = licenceReviewProblem(source.licence.reviewed, c);
   const state = !licenceReviewRequired(source)
@@ -382,6 +417,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
  */
 function overlapImport(id: string, out: (line: string) => void, opts: { cwd: string; home?: string; today: string; skills: Config["skills"]; discover: DiscoverOptions }): number {
   let exceptions: ScanException[] = [];
+  let selections: SkillSelection[] = [];
   const staged = stagedImport(
     id,
     out,
@@ -389,7 +425,9 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
     () => {
       const read = loadExceptions(undefined, out, opts);
       if (read) exceptions = read;
-      return read !== undefined;
+      const files = reviewedFiles(out, opts, false);
+      if (files) selections = files.selections;
+      return read !== undefined && files !== undefined;
     },
     "compared",
   );
@@ -417,7 +455,7 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
 
   let report;
   try {
-    report = overlapReport({ source, skills: entries }, reg.skills, { highRisk: opts.skills.unresolved.high_risk, mandatory: opts.skills.selection.include, tools: opts.skills.tools });
+    report = overlapReport({ source, skills: entries, selections }, reg.skills, { highRisk: opts.skills.unresolved.high_risk, mandatory: opts.skills.selection.include, tools: opts.skills.tools });
   } catch (e) {
     if (!(e instanceof RangeError)) throw e;
     out("PROBLEM too many skills or capabilities to compare");
@@ -425,6 +463,7 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
   }
   for (const line of catalogue) out(line);
   for (const line of overlapLines(report)) out(line);
+  for (const line of versionLines(report)) out(line);
   const notNormalized = record.skills.length - normalized.length;
   if (notNormalized > 0) out(`PROBLEM ${plural(notNormalized, "staged skill")} could not be normalized; see "scf skills scan ${source.id}"`);
   out(`OVERLAP ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${report.shared} shared, ${report.new} new, ${report.vendorOnly} vendor-only, ${report.conflicts} conflicts`);

@@ -25,7 +25,8 @@
     "tools",
     "evals",
     "docs/FLOW_AUTHORING.md",
-    "docs/USER_GUIDE.md"
+    "docs/USER_GUIDE.md",
+    "docs/examples/skill-sources.confluent.yaml"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js dist/factory.js",

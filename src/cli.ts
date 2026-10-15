@@ -56,7 +56,7 @@ Usage:
   scf skills assess <source-id>                    Print the workflow report of a staged import
   scf skills compare <source-id>                   Compare a staged import with the built-in java and spring-boot skills
   scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
-  scf skills promote check <source-id> [<exceptions-file>]  Print whether licence and findings allow promotion
+  scf skills promote check <source-id> [<exceptions-file>]  Print whether licence, findings and evaluations allow promotion
   scf skills overlap <source-id>                 Compare a staged import with the registered skills (canonical or conflict per capability)
   scf skills score <source-id> [<suite-file>]    Score the skills of a staged import and store the records
   scf skills gate <source-id> [<suite-file>]     Print which staged skills may be promoted
