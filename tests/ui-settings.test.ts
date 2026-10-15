@@ -108,6 +108,41 @@ describe("Settings → Network", () => {
   });
 });
 
+describe("Settings → Ask SCF", () => {
+  const cardTitles = (main: FakeElement) => main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes("card")).map((c) => c.all("h3")[0]?.textContent);
+  const cardOf = (main: FakeElement, title: string) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === title)!;
+  const stored = { enabled: false, sensitive_patterns: [" spaced ", "a\nb"], disabled_accounts: ["8f14e45f-ceea-467f-a0e6-1d2f9b5b5c11"], timeout_seconds: 60, max_parallel: 1, max_queued: 10, turns_per_user_per_day: 30, max_cost_usd_per_turn: 0.1 };
+
+  it("sits between User runs and Notifications", async () => {
+    const t = cardTitles((await render({})).main);
+    expect(t.indexOf("Ask SCF")).toBe(t.indexOf("User runs") + 1);
+    expect(t.indexOf("Notifications")).toBe(t.indexOf("Ask SCF") + 1);
+  });
+
+  it("saves the switch and a number and keeps the private patterns and accounts", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { help: stored });
+    const card = cardOf(main, "Ask SCF");
+    const sw = card.all("input").find((i) => i.attrs.type === "checkbox") as any;
+    sw.checked = true;
+    sw.fire("change", { target: sw });
+    const days = card.all("input").filter((i) => i.attrs.type === "number")[0] as any;
+    days.value = "45";
+    days.fire("change", { target: days });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].help.sensitive_patterns).toEqual([" spaced ", "a\nb"]);
+    expect(puts[0].help.disabled_accounts).toEqual(stored.disabled_accounts);
+    expect(puts[0].help.enabled).toBe(true);
+    expect(Object.values(puts[0].help)).toContain(45);
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  it("shows the hint of the redesign switch", async () => {
+    const { main } = await render({});
+    expect(cardOf(main, "Redesign").textContent).toContain("Takes effect at once.");
+  });
+});
+
 describe("Settings → Redesign", () => {
   const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Show the redesigned pages (still being built)"))!.all("input")[0] as any;
 

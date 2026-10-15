@@ -1049,6 +1049,15 @@ Use a token, not a number, for z-index and for the widths below. Keep rules that
 
 **Tests.** `readUiCss()` in `tests/helpers/ui-css.ts` follows the imports and returns the whole stylesheet, for tests that read CSS. It fails on an import that does not resolve and on a `.css` file under `ui/css/` that is not imported. `tests/ui-css.test.ts` checks the import order, that the rule set equals the frozen `tests/fixtures/ui-style-baseline.css`, the tokens, the z-index rule, the module comments, and that no page file starts a rule with a shared component class.
 
+### Every setting has a control
+
+The rule: every setting of `ConfigSchema` has a control in the interface or a reviewed exception. A new setting cannot be added without one.
+
+- **What counts.** `settingKeys()` in `src/settings/describe.ts` lists every key down to the leaves, watcher options included. A record (`watchers`, `providers`, `router.rules`) or a list of records counts once, by its item shape, with the segment `*`. A setting counts as having a control when `describeSettings()` describes it and its control is either generated (`control: "generated"`, drawn from the description) or a named `ui/*.js` module whose text mentions the key. A field of a record counts when `ITEM_SETTINGS` lists it with its module.
+- **Flow variables.** Every variable of every shipped flow needs a `var_info` entry or `set_by_run: true`.
+- **Exceptions.** `src/settings/exceptions.ts` is the one list. Each entry has a reason. A key with a control and an entry fails the test, and so does an entry for a key that no longer exists.
+- **The test.** `tests/settings-inventory.test.ts` is a unit test: it reads the schema, the description, the shipped flows through the flow loader and the text of the Settings modules. It names the key and says whether to describe it or add an exception.
+
 ---
 
 ## 16. Tests
