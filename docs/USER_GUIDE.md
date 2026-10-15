@@ -3376,6 +3376,33 @@ A community source that is not yet reviewed is kept disabled. This entry goes un
 
 Imported library content is kept in `<data folder>/skill-quarantine/`. This folder is never scanned for skills, also when it is listed in `skills.roots`, reached through a link, or `allow_unreleased` is on. Nothing in it is run.
 
+#### Source profiles
+
+`skill-source-profiles.yaml` at the repository root says what each selected skill of a source provides and needs. It sits next to `skill-sources.yaml`, and the same source `id` is used in both. The shipped file has `sources: []`, which is valid. A listed source needs at least one skill. Nothing reads the file during an import or a run yet.
+
+```yaml
+schema: 1
+exclusive: [cosmos-db-access]
+sources:
+  - id: example-skills
+    skills:
+      - name: cosmos-db-setup
+        class: vendor
+        capabilities: [cosmos-db-access]
+        high_risk: [cosmos-db-access]
+        requires:
+          config: [COSMOS_ENDPOINT]
+          tools: [network]
+          connectors: [azure-cli]
+          live_services: [COSMOS_KEY]
+        evaluations: [smoke-test]
+```
+
+- **Fields.** `id` (a lower-case slug, unique, the same as in `skill-sources.yaml`) and `skills` (1 to 100 entries). Each skill has a `name` (a slug, unique in its source), `class` (`portable` or `vendor`), `capabilities` (1 to 32 slugs), `high_risk` (0 to 32 capabilities, each one of the skill's `capabilities`), `requires` and `evaluations` (0 to 16 slugs). `exclusive` (0 to 200 slugs) lists the capabilities that allow only one winner. Unknown keys are refused.
+- **`requires`.** `config` and `live_services` hold names only: a slug or an environment variable name such as `DATABASE_URL`, never a value. `tools` is one or more of `shell`, `network` and `write`. `connectors` is a list of slugs.
+- **Rules.** `high_risk` is a subset of `capabilities`. A capability belongs to either `vendor` or `portable` skills, not both, so use separate capability ids for each class.
+- **Check.** `scf skills profiles check [<file>]` reads `skill-source-profiles.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each skill with its class, capabilities, high-risk capabilities, requirements and evaluations, then `OK <n> skills in <m> sources, <k> exclusive`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values and URLs with user info are never printed.
+
 #### Owner overrides and project pins
 
 Two reviewed records can choose one approved skill for a capability that allows only one. Both are checked with the CLI; no run reads them yet, so runs choose as before.

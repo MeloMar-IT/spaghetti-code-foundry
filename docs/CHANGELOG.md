@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill source connector 2: source profiles (#523). Part 2 of 4 of #222.
+  - **File.** New `skill-source-profiles.yaml` at the repository root, shipped with `schema: 1` and `sources: []`. An empty list is valid. It is not in the package `files`.
+  - **Parser and reader.** New `src/skills/source-profiles.ts` with `parseSourceProfiles` and `readSourceProfiles`. It checks each source's skills (name, class `portable` or `vendor`, capabilities, `high_risk`, `requires` and `evaluations`) and the limits (200 sources, 100 skills per source, 32 capabilities per skill, 16 items per list). The file is read with the same safety rules as `skill-sources.yaml`. A capability cannot be used by both a portable and a vendor skill.
+  - **Output safety.** A message repeats only a valid slug or a plain name. Credential-like values and URLs with user info are never printed; the existing `shownValue` is not used for this.
+  - **Command.** `scf skills profiles check [<file>]` lists each skill and then `OK <n> skills in <m> sources, <k> exclusive`, and exits 0. Otherwise it prints one `PROBLEM` line per error and exits 1. It works offline and does not need the data folder. `profiles` is also a read-only command in `src/cli.ts`.
+  - **Not used yet.** Nothing reads the file during an import or a run.
+  - Tests: new `tests/skill-source-profiles.test.ts` (parser, reader, output safety for each field position); new cases in `tests/skill-cli.test.ts`; one spawned case in `tests/cli.test.ts`.
 - Skill source connector 3: one verdict per imported skill: selection, licence, provider scope and overlaps (#516). Part 3 of 4 of #221.
   - **What it does.** New pure module `src/skills/source-skill-evaluation.ts` with `evaluateSourceSkills`, which takes the source, the normalized skills, the selections, the licence status per skill root, the blocked skill ids from the scan, the registered skills and a `CanonicalPolicy`. Each skill gets `eligible` and a sorted list of fixed reason codes (`SOURCE_SKILL_REASONS`). `src/skills/source-evaluation.ts` re-exports it. No file system, process or clock; no run calls it yet.
   - **Selection.** A skill with no selection is `not-selected`; a selection whose digest differs from the skill is `selection-stale`.

@@ -161,6 +161,7 @@ Skills reach an agent in a fixed order. Each stage has its own module:
 - **Collisions** (`collisions.ts`, rules in `collision-rules.ts`): pure classification and merge of normalized skills; reached from `run-catalogue.ts` only through its optional `candidate` dependency, which no run supplies yet.
 - **Canonical selection** (`canonical.ts`, rules in `canonical-rules.ts`, facts in `canonical-facts.ts`): pure choice of one winner per exclusive capability, in the precedence order of `CANONICAL_LEVELS`; reached from `run-catalogue.ts` only through its optional `canonical` dependency, which no run supplies yet.
 - **Source evaluation** (`source-skill-evaluation.ts`, re-exported by `source-evaluation.ts`, Azure markers in `provider-rules.ts`): pure per-skill verdict of an imported source (selection, licence, undeclared provider needs, overlaps, provider rule); no run calls it yet.
+- **Source profiles** (`src/skills/source-profiles.ts`): pure parser and safe reader of `skill-source-profiles.yaml`, read only by `scf skills profiles check`; no run reads it yet.
 - **Evaluation gate** (`evaluation.ts`, thresholds in `evaluation-rules.ts`): pure verdict of a candidate from its evaluation record; see "Evaluation gate" below. No run calls it yet.
 - **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
 - **Check after the gate:** `planRunSkills`, `startRunSkills` and `recheckRunSkills` in `src/skills/run-plan.ts`, with `resolve.ts` and `assessSkills` in `unresolved.ts`.

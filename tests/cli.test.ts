@@ -289,6 +289,9 @@ describe("data folder", () => {
     writeFileSync(join(oldDir, "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt"), "moved");
     expect(scf(["flows"], home).status).toBe(1);
     expect(scf(["skills", "sources", "check", file], home).status).toBe(0);
+    const profFile = join(home, "skill-source-profiles.yaml");
+    writeFileSync(profFile, "schema: 1\nsources: []\n");
+    expect(scf(["skills", "profiles", "check", profFile], home).status).toBe(0);
   });
 
   it("scf skills connectors does not choose or move the data folder", () => {
