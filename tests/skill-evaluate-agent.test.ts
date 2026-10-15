@@ -3,6 +3,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rea
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { stringify } from "yaml";
 import { ConfigSchema } from "../src/config.js";
 import { evaluationLimits } from "../src/engine/eval-limits.js";
 import { commitIdentity, tokenVarNames } from "../src/engine/isolation.js";
@@ -419,8 +420,18 @@ describe.skipIf(!basic)("runs in the OS sandbox", () => {
     expect(evaluationLimits()).toBeUndefined();
     expect(process.env.FACTORY_HOME).toBe(home);
     noFolders();
+    // the gate also needs an effect verdict: an owner decision stands in for it here
+    writeFileSync(
+      join(cwd, "skill-evaluations.yaml"),
+      stringify({
+        schema: 1,
+        evaluations: [],
+        effect_decisions: [{ skill: rec.candidate.id, digest: rec.candidate.digest, accept: "not-measured", owner: "@octocat", reviewed: "2026-10-01", note: "not measured yet" }],
+      }),
+    );
     const g = await sub("gate");
     expect(g.lines[0]).toMatch(/^PASSED /);
+    expect(g.lines[1]).toMatch(/^DECISION \S+ effect not-measured accepted by @octocat/);
   }, 90_000);
 
   it("pairs an upgrade with its baseline [0,0,0] and leaves the real skills and lock unchanged", async () => {

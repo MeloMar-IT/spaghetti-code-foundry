@@ -161,7 +161,7 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
   const anyGated = entry.skills.some((s) => !revokedOf(s.id));
 
   // 5. The reviewed files (selections, suite records), only for skills that are not revoked.
-  let reviewed: NonNullable<ReturnType<typeof reviewedFiles>> = { selections: [], records: [] };
+  let reviewed: NonNullable<ReturnType<typeof reviewedFiles>> = { selections: [], records: [], decisions: [] };
   if (anyGated) {
     const r = reviewedFiles(out, opts, true);
     if (!r) return stop();

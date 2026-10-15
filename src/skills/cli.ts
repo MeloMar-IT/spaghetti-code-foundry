@@ -20,7 +20,8 @@ import { SkillImportError } from "./import-plan.js";
 import { hidden, plural, filesOf, loadExceptions, reviewedFiles, stagedImport } from "./staged-import.js";
 import { reviewCommand } from "./review-cli.js";
 import { EVALUATION_SUITE_DEFAULT } from "./evaluation-rules.js";
-import { parseEffectOperands, type EffectOperands } from "./effect.js";
+import { effectCheckLine, effectPromotion, effectState, parseEffectOperands, type EffectOperands, type EffectPromotion } from "./effect.js";
+import { readNewestEffect } from "./evaluation-store.js";
 import { evaluateOperandsProblem, gateImport, scoreImport, type EvaluateCliOptions } from "./evaluate-cli.js";
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
@@ -38,7 +39,7 @@ import { PROFILES_FILE, readSourceProfiles } from "./source-profiles.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
 import { selectionsEvaluate } from "./selections-evaluate-cli.js";
 import { suiteLines, suiteRefusal, suiteVerdicts } from "./suite-checks.js";
-import { EVALUATIONS_FILE, readSuiteRecords } from "./suite-records.js";
+import { EVALUATIONS_FILE, readSuiteRecords, type EffectDecision } from "./suite-records.js";
 import type { SuiteRecord } from "./suite-rules.js";
 import { flowSkillSteps } from "./tool-policy.js";
 import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow.js";
@@ -310,7 +311,7 @@ function assessImport(id: string, out: (line: string) => void, opts: { cwd: stri
  */
 function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
   let exceptions: ScanException[] = [];
-  let reviewed: { selections: SkillSelection[]; records: SuiteRecord[] } = { selections: [], records: [] };
+  let reviewed: { selections: SkillSelection[]; records: SuiteRecord[]; decisions: EffectDecision[] } = { selections: [], records: [], decisions: [] };
   const staged = stagedImport(
     id,
     out,
@@ -345,6 +346,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
   let refused = 0;
   const lines: string[] = [];
   const evaluations: string[] = [];
+  const effects: string[] = [];
   const addresses: string[] = [];
   const decoder = new TextDecoder();
   for (const entry of record.skills) {
@@ -356,6 +358,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     let normReasons: string[] = [];
     let n = 0;
     let ok: { id: string; licences: string[] } | undefined;
+    let effect: EffectPromotion | undefined;
     if (skill) {
       addresses.push(...addressLines(skill.package.id, webAddresses(skill, stagedSkillMd(entry.root, files))));
       let result;
@@ -383,6 +386,9 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
       const verdicts = suiteVerdicts({ source, skill, selections: reviewed.selections, records: reviewed.records, texts });
       refusal = suiteRefusal(verdicts);
       evaluations.push(...suiteLines(source.id, skill, verdicts));
+      const read = readNewestEffect(skill.package.id, skill.package.digest, { home: opts.home });
+      effect = effectPromotion(read, reviewed.decisions, skill.package.id, skill.package.digest);
+      effects.push(effectCheckLine(skill.package.id, skill.package.digest, effect, read.state === "invalid" ? hidden(read.problem) : undefined));
     } else {
       const verdict = evaluateLicence({ root: entry.root, allow: source.licence.allow, evidence });
       status = verdict.status;
@@ -407,6 +413,9 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     } else if (refusal !== undefined) {
       lines.push(`REFUSED ${path}: evaluation (${refusal})`);
       refused++;
+    } else if (effect?.code) {
+      lines.push(`REFUSED ${path}: effect (${effect.code})`);
+      refused++;
     } else {
       lines.push(`PROMOTABLE ${ok!.id} ${path} ${ok!.licences.join(",")}`);
       promotable++;
@@ -416,6 +425,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
   for (const l of addresses) out(l);
   for (const s of normalized) if (s.provenance.assumes) out(`ASSUMES ${hidden(s.package.id)}: ${s.provenance.assumes.join(", ")}`);
   for (const l of evaluations) out(l);
+  for (const l of effects) out(l);
   const c = review.classification;
   const problem = licenceReviewProblem(source.licence.reviewed, c);
   const state = !licenceReviewRequired(source)
@@ -676,7 +686,7 @@ export async function skillsCommand(
   }
 
   for (const s of reg.skills) {
-    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.trust} ${s.pin} ${s.digest}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
+    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.trust} ${s.pin} ${s.digest} effect ${effectState(readNewestEffect(s.id, s.digest, { home: discover.home }))}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
   }
   for (const r of reg.sources) {
     const rel = r.release;

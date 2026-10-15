@@ -71,7 +71,15 @@ async function run(positionals: string[], opts: { home?: string; builtinRoot?: s
   });
   return { code, lines, text: lines.join("\n") };
 }
-const promote = (h?: string) => run(["promote", "check", ID], { home: h });
+// Every skill needs an effect verdict or an owner decision; the EFFECT lines of the last check become "not-measured" decisions.
+let effectDecisions: object[] = [];
+const promote = async (h?: string) => {
+  const r = await run(["promote", "check", ID], { home: h });
+  effectDecisions = r.lines
+    .filter((l) => l.startsWith("EFFECT "))
+    .map((l) => ({ skill: l.split(" ")[1], digest: l.split(" ")[2]!.slice(0, -1), accept: "not-measured", owner: "@octocat", reviewed: "2026-10-01", note: "not measured yet" }));
+  return r;
+};
 const digests = (lines: string[]) => new Map(lines.filter((l) => l.startsWith("EVALUATION ")).map((l) => [`${l.split(" ")[1]!.split("/")[1]} ${l.split(" ")[2]}`, l.split(" ")[3]!.slice(0, -1)] as const));
 const names = ["kafka-clients", "streams-apps", "schema-registry", "flink-sql", "cloud-migration"];
 const recordsFor = (d: Map<string, string>, skip: (name: string, suite: string) => object | undefined = () => ({})) => {
@@ -85,7 +93,7 @@ const recordsFor = (d: Map<string, string>, skip: (name: string, suite: string) 
       owner: "@octocat", reviewed: "2026-10-01", ...over,
     });
   }
-  writeFileSync(join(cwd, "skill-evaluations.yaml"), stringify({ schema: 1, evaluations }));
+  writeFileSync(join(cwd, "skill-evaluations.yaml"), stringify({ schema: 1, evaluations, effect_decisions: effectDecisions }));
 };
 const refused = (text: string, path: string) => text.split("\n").find((l) => l.startsWith(`REFUSED ${path}:`));
 

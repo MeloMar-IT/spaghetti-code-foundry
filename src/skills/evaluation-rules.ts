@@ -75,4 +75,7 @@ export const EFFECT_FILE_PREFIX = "effect";
 export const EFFECT_RULE = { alpha: 0.05, minDifference: 0.2 } as const;
 export const EFFECT_LIMITS = { runsPerArm: 200, tokens: 1_000_000_000, durationMs: 604_800_000, modelChars: 200, walkNodes: 20000, walkDepth: 8 } as const;
 export const EFFECT_VERDICTS = ["helps", "no-measurable-effect", "harms"] as const;
+export const EFFECT_ACCEPTS = ["no-effect", "not-measured"] as const;
+/** The codes the gate and promote check add for the effect; not evaluation reason codes. */
+export const EFFECT_GATE_CODES = ["effect-harms", "effect-no-effect", "effect-not-measured", "effect-invalid"] as const;
 export const EFFECT_REASONS = ["pass-rate-higher", "pass-rate-lower", "not-significant", "never-selected"] as const;

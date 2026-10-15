@@ -1,6 +1,7 @@
 import { lstatSync } from "node:fs";
 import { parseDocument } from "yaml";
 import { credentialProblem } from "./credential-scan.js";
+import { EFFECT_ACCEPTS } from "./evaluation-rules.js";
 import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
@@ -15,6 +16,16 @@ export const EVALUATIONS_FILE = "skill-evaluations.yaml";
 export interface SuiteRecords {
   schema: 1;
   evaluations: SuiteRecord[];
+  effect_decisions: EffectDecision[];
+}
+/** An owner's decision to promote a skill whose effect is "no measurable effect" or was never measured. Tied to one digest. */
+export interface EffectDecision {
+  skill: string;
+  digest: string;
+  accept: (typeof EFFECT_ACCEPTS)[number];
+  owner: string;
+  reviewed: string;
+  note: string;
 }
 export type SuiteRecordsRead = { state: "none" } | { state: "invalid"; problems: SourceProblem[] } | { state: "ok"; manifest: SuiteRecords };
 
@@ -79,16 +90,8 @@ interface EntryProblem {
   message: string;
 }
 
-/** Every per-entry rule. Ends on any input. */
-function checkEntry(raw: unknown, today: number): { entry?: SuiteRecord; problems: EntryProblem[] } {
-  const problems: EntryProblem[] = [];
-  const err = (field: string, message: string) => void problems.push({ field, message });
-  if (!isObject(raw)) {
-    err("", "must be a map");
-    return { problems };
-  }
-  for (const k of Object.keys(raw)) if (!ENTRY_KEYS.includes(k)) err("", `unknown key "${shownValue(k)}"`);
-
+/** The text readers every entry check shares. `err` collects the problems. */
+function fieldReaders(err: (field: string, message: string) => void) {
   const text = (v: unknown, field: string, required = true): string | undefined => {
     if (v === undefined) {
       if (required) err(field, "is required");
@@ -126,6 +129,69 @@ function checkEntry(raw: unknown, today: number): { entry?: SuiteRecord; problem
     }
     return t;
   };
+  return { text, matching };
+}
+
+/** The owner, reviewed and note checks both entry kinds share. */
+function ownerReviewed(
+  raw: Record<string, unknown>,
+  today: number,
+  err: (field: string, message: string) => void,
+  text: (v: unknown, field: string, required?: boolean) => string | undefined,
+  noteRequired: boolean,
+) {
+  const owner = text(raw.owner, "owner");
+  if (owner !== undefined && !OWNER_RE.test(owner)) err("owner", "must be a GitHub user or team like @octocat or @acme/skills");
+  const reviewedText = text(raw.reviewed, "reviewed");
+  let reviewed: string | undefined;
+  if (reviewedText !== undefined) {
+    const day = dayNumber(reviewedText);
+    if (day === undefined) err("reviewed", "must be a date like 2026-10-13");
+    else if (day > today) err("reviewed", "must not be in the future");
+    else reviewed = reviewedText;
+  }
+  const note = text(raw.note, "note", noteRequired);
+  if (note !== undefined && (note.trim().length < 1 || note.length > SUITE_LIMITS.noteChars)) {
+    err("note", `must be text of 1 to ${SUITE_LIMITS.noteChars} characters`);
+  }
+  return { owner, reviewed, note };
+}
+
+const DECISION_KEYS = ["skill", "digest", "accept", "owner", "reviewed", "note"];
+
+/** The rules of one effect decision. Ends on any input. */
+function checkDecision(raw: unknown, today: number): { entry?: EffectDecision; problems: EntryProblem[] } {
+  const problems: EntryProblem[] = [];
+  const err = (field: string, message: string) => void problems.push({ field, message });
+  if (!isObject(raw)) {
+    err("", "must be a map");
+    return { problems };
+  }
+  for (const k of Object.keys(raw)) if (!DECISION_KEYS.includes(k)) err("", `unknown key "${shownValue(k)}"`);
+  const { text, matching } = fieldReaders(err);
+  const skill = matching(raw.skill, "skill", SKILL_ID_RE, SLUG_MESSAGE);
+  const digest = matching(raw.digest, "digest", SKILL_DIGEST_RE, "must be a package digest like sha256:<64 hex digits>");
+  let accept: EffectDecision["accept"] | undefined;
+  const acceptText = text(raw.accept, "accept");
+  if (acceptText !== undefined) {
+    if ((EFFECT_ACCEPTS as readonly string[]).includes(acceptText)) accept = acceptText as EffectDecision["accept"];
+    else err("accept", 'must be "no-effect" or "not-measured"');
+  }
+  const { owner, reviewed, note } = ownerReviewed(raw, today, err, text, true);
+  if (problems.length || !skill || !digest || !accept || !owner || !reviewed || note === undefined) return { problems };
+  return { entry: { skill, digest, accept, owner, reviewed, note }, problems };
+}
+
+/** Every per-entry rule. Ends on any input. */
+function checkEntry(raw: unknown, today: number): { entry?: SuiteRecord; problems: EntryProblem[] } {
+  const problems: EntryProblem[] = [];
+  const err = (field: string, message: string) => void problems.push({ field, message });
+  if (!isObject(raw)) {
+    err("", "must be a map");
+    return { problems };
+  }
+  for (const k of Object.keys(raw)) if (!ENTRY_KEYS.includes(k)) err("", `unknown key "${shownValue(k)}"`);
+  const { text, matching } = fieldReaders(err);
 
   const source = matching(raw.source, "source", SKILL_ID_RE, SLUG_MESSAGE);
   const skill = matching(raw.skill, "skill", SKILL_ID_RE, SLUG_MESSAGE);
@@ -175,20 +241,7 @@ function checkEntry(raw: unknown, today: number): { entry?: SuiteRecord; problem
     }
   }
 
-  const owner = text(raw.owner, "owner");
-  if (owner !== undefined && !OWNER_RE.test(owner)) err("owner", "must be a GitHub user or team like @octocat or @acme/skills");
-  const reviewedText = text(raw.reviewed, "reviewed");
-  let reviewed: string | undefined;
-  if (reviewedText !== undefined) {
-    const day = dayNumber(reviewedText);
-    if (day === undefined) err("reviewed", "must be a date like 2026-10-13");
-    else if (day > today) err("reviewed", "must not be in the future");
-    else reviewed = reviewedText;
-  }
-  const note = text(raw.note, "note", false);
-  if (note !== undefined && (note.trim().length < 1 || note.length > SUITE_LIMITS.noteChars)) {
-    err("note", `must be text of 1 to ${SUITE_LIMITS.noteChars} characters`);
-  }
+  const { owner, reviewed, note } = ownerReviewed(raw, today, err, text, false);
 
   if (problems.length || !source || !skill || !digest || !suite || !result || !owner || !reviewed) return { problems };
   return {
@@ -214,7 +267,7 @@ export function parseSuiteRecords(raw: unknown, today: string): { manifest?: Sui
       add("file", "must be a map with schema and evaluations");
       return { problems };
     }
-    for (const k of Object.keys(raw)) if (k !== "schema" && k !== "evaluations") add("file", `unknown key "${shownValue(k)}"`);
+    for (const k of Object.keys(raw)) if (k !== "schema" && k !== "evaluations" && k !== "effect_decisions") add("file", `unknown key "${shownValue(k)}"`);
     if (raw.schema !== 1) add("schema", "schema must be 1");
     const entries = raw.evaluations;
     if (!Array.isArray(entries)) {
@@ -224,6 +277,17 @@ export function parseSuiteRecords(raw: unknown, today: string): { manifest?: Sui
     if (entries.length > SUITE_LIMITS.records) {
       add("evaluations", `must hold at most ${SUITE_LIMITS.records} evaluations`);
       return { problems };
+    }
+    const rawDecisions = raw.effect_decisions;
+    if (rawDecisions !== undefined) {
+      if (!Array.isArray(rawDecisions)) {
+        add("effect_decisions", "must be a list");
+        return { problems };
+      }
+      if (rawDecisions.length > SUITE_LIMITS.records) {
+        add("effect_decisions", `must hold at most ${SUITE_LIMITS.records} decisions`);
+        return { problems };
+      }
     }
     const plain = plainProblem(raw);
     if (plain) {
@@ -249,8 +313,23 @@ export function parseSuiteRecords(raw: unknown, today: string): { manifest?: Sui
       else seen.set(key, i);
       out.push(r.entry);
     });
+    const decisions: EffectDecision[] = [];
+    const seenDecisions = new Map<string, number>();
+    (Array.isArray(rawDecisions) ? (rawDecisions as unknown[]) : []).forEach((e, i) => {
+      const base = `effect_decisions[${i}]`;
+      let tag = base;
+      if (isObject(e) && typeof e.skill === "string" && SKILL_ID_RE.test(e.skill) && !credentialProblem(e.skill)) tag = `${base} (${e.skill})`;
+      const r = checkDecision(e, todayDay);
+      for (const p of r.problems) add(p.field ? `${tag} ${p.field}` : tag, p.message);
+      if (!r.entry) return;
+      const key = `${r.entry.skill}\0${r.entry.digest}\0${r.entry.accept}`;
+      const first = seenDecisions.get(key);
+      if (first !== undefined) add(tag, `is already listed by effect_decisions[${first}]`);
+      else seenDecisions.set(key, i);
+      decisions.push(r.entry);
+    });
     if (problems.length) return { problems };
-    return { manifest: { schema: 1, evaluations: out }, problems };
+    return { manifest: { schema: 1, evaluations: out, effect_decisions: decisions }, problems };
   } catch {
     return { problems: [problem("file", "cannot be checked")] };
   }
