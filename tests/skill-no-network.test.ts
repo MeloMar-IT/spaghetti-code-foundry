@@ -212,7 +212,7 @@ describe("the workflow gate runs nothing", () => {
 describe("scf skills scan is offline and read-only", () => {
   const PROCESS_OR_NET = /^(?:node:)?(?:child_process|vm|worker_threads|http|https|http2|net|tls|dns|dgram)$/;
   const DYNAMIC_CODE = [/\beval\s*\(/, /\bnew\s+Function\b/, /\bFunction\s*\(/, /\bimport\s*\(/, /\brequire\s*\(/];
-  for (const f of ["cli.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "selections.ts", "import-plan.ts", "normalize.ts"]) {
+  for (const f of ["cli.ts", "import-stage.ts", "import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "scan-exceptions.ts", "selections.ts", "import-plan.ts", "normalize.ts", "suite-records.ts", "suite-checks.ts", "suite-rules.ts"]) {
     it(`${f} imports no process or network module and uses no dynamic code`, () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m))).toEqual([]);
@@ -222,7 +222,7 @@ describe("scf skills scan is offline and read-only", () => {
     });
   }
   it("scf skills promote check reads no file in the pure modules and calls no process", () => {
-    for (const f of ["import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts"]) {
+    for (const f of ["import-evidence.ts", "licence.ts", "licence-rules.ts", "promotion.ts", "suite-checks.ts", "suite-rules.ts"]) {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => /^(?:node:)?(?:fs|fs\/promises|child_process)$/.test(m)), f).toEqual([]);
       expect(modulesOf(text).filter((m) => PROCESS_OR_NET.test(m)), f).toEqual([]);
@@ -237,6 +237,9 @@ describe("scf skills scan is offline and read-only", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)source-skill-evaluation\.js$/.test(m)));
     expect(users.sort()).toEqual([join("src", "skills", "overlap.ts"), join("src", "skills", "source-evaluation.ts")]);
+  });
+  it("suite-rules.ts has no imports", () => {
+    expect(modulesOf(readFileSync(join(SKILLS, "suite-rules.ts"), "utf8"))).toEqual([]);
   });
   it("provider-rules.ts has no imports", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "provider-rules.ts"), "utf8"))).toEqual([]);

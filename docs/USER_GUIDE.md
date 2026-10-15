@@ -3667,10 +3667,10 @@ CHECKED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 promo
 ```
 
 - **What it checks.** The staged import is read and checked as in [Scan an import](#scan-an-import). Then, per skill path: the licence and notice evidence of the commit is checked against the source's licence allow list, the skill is normalized, the scanner runs with the exceptions, and the provenance is recorded.
-- **Lines.** `PROMOTABLE <id> <path> <licences>` for a path that may be promoted, with its licence names. `REFUSED <path>: <status> (<reasons>)` for every other path. The status is the licence status (for example `missing`, `ambiguous`, `review` or `rejected`), `blocked` when a high finding is not accepted, or `not-normalized` when the normalization step rejects the skill. Then one `CHECKED` line with the counts.
-- **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, or with an open high finding. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
+- **Lines.** `PROMOTABLE <id> <path> <licences>` for a path that may be promoted, with its licence names. `REFUSED <path>: <status> (<reasons>)` for every other path. The status is the licence status (for example `missing`, `ambiguous`, `review` or `rejected`), `blocked` when a high finding is not accepted, or `not-normalized` when the normalization step rejects the skill, or `evaluation (<suite>: <codes>)` when a suite of `skill-evaluations.yaml` is not passed for the digest ([Confluent skills](#confluent-skills)). An `EVALUATION` line per suite follows the other lines. Then one `CHECKED` line with the counts.
+- **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, with an open high finding, or with a suite that is not passed for its digest. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
 - **Reasons.** Reasons never show credential-like text; it shows as `(hidden)`. Licence texts are never printed.
-- **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, or an invalid exception file).
+- **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, an invalid exception file, or an invalid `skill-evaluations.yaml`).
 
 #### Licence review and provider assumptions
 
@@ -3854,8 +3854,8 @@ NEW kafka-admin: kafka-admin@0.1.0 provider confluent
 OVERLAP 6 skills from github.com/example/skills@0123456789ab sha256:…: 4 shared, 1 new, 2 vendor-only, 1 conflicts
 ```
 
-- **What it reads.** The staged import, normalized, with the source profile applied (see [Source profile](#skill-library-sources)), and the registered skills. Registered skills from the repository are not compared.
-- **Lines.** `CANONICAL <capability>: <id@version> (<level>)` names the winner and the level that decided it (`trust-tier`, `specificity`, and so on; `only-candidate` when nothing else competed). Each loser has a `REJECTED <id@version>: <code>` line under it. `CONFLICT <capability>: <rule> <ids>` names the skills that cannot be decided: `tie` (two skills tie on a high-risk capability and only age or name separates them), `mandatory` (a skill in `skills.selection.include` is not the canonical one) or `winners-overlap` (the best skill for one capability is not the best for another capability it also provides). `NONE <capability>: no skill can be used` means every candidate is rejected. `NEW <capability>: <id@version>` is a capability only the source declares. A skill with provider requirements prints its `provider <name>` on each line.
+- **What it reads.** The staged import, normalized, with the source profile applied (see [Source profile](#skill-library-sources)), the registered skills, and `skill-selections.yaml` ([Skill selections](#skill-selections)). Registered skills from the repository are not compared.
+- **Lines.** `CANONICAL <capability>: <id@version> (<level>)` names the winner and the level that decided it (`trust-tier`, `specificity`, and so on; `only-candidate` when nothing else competed). Each loser has a `REJECTED <id@version>: <code>` line under it. `CONFLICT <capability>: <rule> <ids>` names the skills that cannot be decided: `tie` (two skills tie on a high-risk capability and only age or name separates them), `mandatory` (a skill in `skills.selection.include` is not the canonical one) or `winners-overlap` (the best skill for one capability is not the best for another capability it also provides). `NONE <capability>: no skill can be used` means every candidate is rejected. `NEW <capability>: <id@version>` is a capability only the source declares. A skill with provider requirements prints its `provider <name>` on each line. `VERSIONS <skill>: <technology> <range>, …` gives the declared versions of a skill, when it has any ([Confluent skills](#confluent-skills)).
 - **Rejection codes.** `safety` (an open high finding of the scan, or a failed promotion blocker), `licence` (the licence is not allowed, or `licence.reviewed` is missing or stale), `tools` and the codes of the selection rules (`revoked`, `quarantined`, `discovery-only`, `incompatible`, `compatibility-unchecked`). A skill with a failed gate can never be canonical.
 - **Vendor scope.** A vendor-scoped capability (the source profile's `<provider>-<capability>`) is shared only with a registered skill of the same provider, never with a portable skill. The `OVERLAP` line says how many capabilities were kept vendor-only. A capability that is portable for one staged skill and vendor-scoped for another is a `PROBLEM`.
 - **Problems.** `PROBLEM` lines name the skill and a fixed code: `profile` (the source profile cannot be applied), `scope-collision`, `blocking-collision` (a collision with another skill holds it back), a skill that could not be normalized, or a catalogue that could not be read in full. A damaged staged import prints a fixed text and no reason.
@@ -3913,6 +3913,57 @@ selections:
 - **Requirements.** `requires` lists what the agent itself must call or reach during a run: `clis`, `mcp` servers, `credentials` and `services`. Each name is a lower-case slug. The total is at most 16 names, and a name may be listed only once across all four lists. Each name becomes a connector slug: `cli-<name>`, `mcp-<name>`, `credential-<name>` or `service-<name>` (at most 64 characters). `scf skills selections check` prints them sorted.
 - **Check.** `scf skills selections check [<file>]` reads `skill-selections.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It prints one line per entry (source and skill, scope, provider, product, SDK, connectors, owner, reviewed date and the start of the digest), then `OK <n> selections`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. A missing file is a `PROBLEM` for this command (for readers, it means "no selections"). Credential-like values and control characters are never printed.
 - **Limits.** At most 500 selections. Every problem names its entry and field, for example `selections[0] (microsoft-skills/azure-cosmos-py) requires.mcp[0]`.
+- **Use in checks.** `scf skills overlap` and `scf skills promote check` read this file to give capabilities to a skill that declares none, when its digest matches the staged skill. A skill with its own capabilities is not changed.
+
+#### Confluent skills
+
+The Confluent agent skills (`confluentinc/agent-skills`) are added like any library source, from an example declaration that ships disabled. Their Kafka and Confluent skills must pass two evaluation suites before they can be promoted: `messaging-semantics` and `compatibility`.
+
+1. **Copy the declaration.** Copy the entry from `docs/examples/skill-sources.confluent.yaml` (also in the installed package) into `skill-sources.yaml`. At the commit you reviewed, by pull request:
+   - replace the `placeholder/` paths with the real folders;
+   - check the upstream capability names under `profile.portable` and the version ranges under `scope` and `profile.products`. The example was not checked against upstream;
+   - set `ref.approved` to that full commit id, set `status: enabled` and remove `reason`.
+2. **Run the checks.** `scf skills import confluent-agent-skills`, then `scf skills scan confluent-agent-skills`, `scf skills promote check confluent-agent-skills` and `scf skills overlap confluent-agent-skills`.
+3. **Give capabilities to a skill that declares none.** Upstream skills may carry no capability metadata. For each such skill, add a `skill-selections.yaml` entry with its digest from `import.json` and its capabilities (see [Skill selections](#skill-selections)).
+4. **Write `skill-evaluations.yaml`** from the `EVALUATION` lines of `promote check`. It is optional, and it is changed by pull request. Each record is one suite of one skill at one digest:
+
+```yaml
+schema: 1
+evaluations:
+  - source: confluent-agent-skills
+    skill: kafka-clients
+    digest: sha256:…                  # the skill's digest in import.json
+    suite: messaging-semantics
+    result: passed                    # passed or failed
+    owner: "@octocat"
+    reviewed: 2026-10-13
+  - source: confluent-agent-skills
+    skill: kafka-clients
+    digest: sha256:…
+    suite: compatibility
+    result: passed
+    project: [{ name: apache-kafka, version: 4.1.0 }]   # the project's version of each technology the skill declares
+    owner: "@octocat"
+    reviewed: 2026-10-13
+```
+
+- **Which skills need them.** A skill with a `kafka-` or `confluent-` capability (including one the source scope adds) needs both suites. So does a skill without capabilities from a `confluent` provider source.
+- **Fields.** `project` is for `compatibility` only and is refused for `messaging-semantics`. `note` is optional text of up to 200 characters; text that looks like a credential is refused, and the message names the rule, not the text. A file has at most 500 records. A problem prints `PROBLEM` and exits 1.
+- **A changed skill.** A changed skill has a new digest. Its old records give `other-digest`, so it needs new records and, when it declares none, a new selection.
+
+5. **Read the result.** `promote check` prints one line per suite of each skill that needs them:
+
+```
+EVALUATION confluent-agent-skills/kafka-clients messaging-semantics sha256:…: passed
+EVALUATION confluent-agent-skills/streams-apps messaging-semantics sha256:…: not-recorded
+```
+
+- `passed` means the suite passed for this digest. Otherwise the codes are listed, and the path is `REFUSED <path>: evaluation (<suite>: <codes>)` until they are gone. A messaging code ends with `at <path>:<line>` for the first lines that break the rule (ten at most, then `+N more`).
+- **Records:** `not-recorded` (no record for the suite), `other-digest` (the record is for another digest), `recorded-failed` (`result: failed`), `profile` (the source profile or scope cannot be read; fix the declaration first).
+- **Messaging codes:** `exactly-once`, `ordering`, `keys`, `duplicates`, `retries` and `dead-letters`. Each code names a rule that a line of the upstream text breaks. The check reads text only, and upstream text is never printed. A passing text is not a review of the code, so read the skill as well.
+- **Compatibility codes:** `no-declared-versions` (the skill declares no version), `stale` (a declared range admits only old versions, such as `<=8`), `incompatible` (the project version is outside the declared range) and `unchecked` (the project has no version for a declared technology).
+- **Versions.** `overlap` prints `VERSIONS <skill>: <technology> <range>, …` for each skill with a declared version: its own ranges, the source scope, or the profile products. A vendor skill shows the product ranges, for example `apache-kafka >=4.0, confluent-platform >=8.0, flink >=1.19`.
+- **Overlap.** `CANONICAL`, `CONFLICT`, `NEW` and `REJECTED` lines mean what they mean in [Overlap with the catalogue](#overlap-with-the-catalogue). The summary line gives the counts.
 
 ### Skill catalogue
 
@@ -4425,8 +4476,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
-| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
-| `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `PROBLEM` and `OVERLAP` lines; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
+| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance, findings and evaluations allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `EVALUATION`, `CHECKED` lines); reads `skill-evaluations.yaml` and `skill-selections.yaml`; offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion), [Confluent skills](#confluent-skills)) |
+| `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `VERSIONS`, `PROBLEM` and `OVERLAP` lines; reads `skill-selections.yaml`; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
 | `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
 | `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
 | `scf validate <flow or file>` | Check a flow |

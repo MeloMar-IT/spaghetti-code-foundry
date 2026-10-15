@@ -1,0 +1,23 @@
+# Confluent agent skills (Kafka, Kafka Streams, Schema Registry, Flink, migration). Copy this entry into your
+# skill-sources.yaml. Before enabling, at the commit you reviewed: replace every placeholder/ path with the real folder,
+# check the upstream capability names under profile.portable (skills without capabilities need a skill-selections.yaml
+# entry), check the version ranges under scope and profile.products, set ref.approved to the full commit id, set
+# status: enabled and remove reason. Nothing here was checked against the upstream repository.
+schema: 1
+sources:
+  - id: confluent-agent-skills
+    repository: https://github.com/confluentinc/agent-skills
+    status: disabled
+    reason: waiting for the owner to review the paths, capabilities and versions and approve a commit
+    ref: { track: main }
+    paths: [placeholder/kafka, placeholder/kafka-streams, placeholder/schema-registry, placeholder/flink, placeholder/migration]
+    adapter: agent-skills
+    trust: verified
+    licence: { allow: [Apache-2.0] }
+    scope: { technologies: { apache-kafka: ">=4.0" } }
+    profile:
+      provider: confluent
+      portable: { producer: kafka-producer, consumer: kafka-consumer, streams: kafka-streams, schema-evolution: kafka-schema, transactions: kafka-transactions }
+      products: { apache-kafka: ">=4.0", confluent-platform: ">=8.0", flink: ">=1.19" }
+    update: { cadence: manual }
+    owner: "@MeloMar-IT"

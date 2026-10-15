@@ -10,7 +10,7 @@ export const LICENCE_POLICY: Readonly<Record<string, LicencePolicy>> = Object.fr
   Object.fromEntries([
     ...policy(SOURCE_LICENCES, "allowed"),
     ...policy(["MPL-2.0", "EPL-2.0", "LGPL", "GPL", "AGPL", "CC-BY-SA-4.0"], "review"),
-    ...policy(["BUSL-1.1", "SSPL-1.0", "Elastic-2.0", "PolyForm", "Commons-Clause", "CC-BY-NC", "CC-BY-ND"], "rejected"),
+    ...policy(["BUSL-1.1", "SSPL-1.0", "Elastic-2.0", "PolyForm", "Commons-Clause", "CC-BY-NC", "CC-BY-ND", "Confluent-Community-1.0"], "rejected"),
   ]),
 );
 
@@ -135,6 +135,7 @@ export const LICENCE_FINGERPRINTS: readonly LicenceFingerprint[] = [
   { id: "SSPL-1.0", all: ["server side public license"] },
   { id: "Elastic-2.0", all: ["elastic license"] },
   { id: "PolyForm", all: ["polyform"] },
+  { id: "Confluent-Community-1.0", all: ["confluent community license"] },
   { id: "CC-BY-NC", all: ["creative commons", "noncommercial"] },
   { id: "CC-BY-ND", all: ["creative commons", "noderivatives"], none: ["noncommercial"] },
 ];
@@ -146,5 +147,5 @@ export const REFERENCE_SUFFIXES: readonly string[] = ["", "file", "for details",
 /** Normalised. Text with one of these is never accepted, whatever else it holds. */
 export const REJECT_MARKERS: readonly string[] = [
   "commons clause", "noncommercial", "non commercial", "proprietary", "source available", "business source license",
-  "server side public license", "elastic license", "polyform",
+  "server side public license", "elastic license", "polyform", "confluent community license",
 ];
