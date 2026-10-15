@@ -14,7 +14,7 @@ import {
 } from "./evaluation-rules.js";
 
 // The evaluation record of a candidate skill and the promotion gate over it. Pure: no file system, process,
-// clock or network. The time is an input. Nothing calls this yet; a later story runs the suite and stores records.
+// clock or network. The time is an input. `scf skills score` stores the records (evaluation-store.ts); `scf skills gate` judges them.
 
 export interface EvaluationRecord {
   schema: 1;
@@ -218,7 +218,7 @@ export interface EvaluationSubject {
 }
 export type EvaluationGateInput =
   | { mode: "new"; policy: EvaluationPolicy; candidate: EvaluationSubject }
-  | { mode: "upgrade"; policy: EvaluationPolicy; candidate: EvaluationSubject; baseline?: { record: unknown; digest: string } }
+  | { mode: "upgrade"; policy: EvaluationPolicy; candidate: EvaluationSubject; baseline?: { record: unknown; digest: string; id?: string } }
   | { mode: "duplicate"; policy: EvaluationPolicy; candidates: readonly [EvaluationSubject, EvaluationSubject] };
 
 export interface EvaluationReason {
@@ -381,7 +381,8 @@ function judge(subject: EvaluationSubject, ep: EffectivePolicy | undefined): Jud
   return { verdict, record, reasons };
 }
 
-function compareBaseline(j: Judged, ep: EffectivePolicy, baseline: { record: unknown; digest: string } | undefined): void {
+/** `baseline.id` names the skill the baseline record is of when it is not the candidate's own id (an upgrade by capability). */
+function compareBaseline(j: Judged, ep: EffectivePolicy, baseline: { record: unknown; digest: string; id?: string } | undefined): void {
   const { record, reasons, verdict } = j;
   if (!record) return;
   if (!isObj(baseline)) {
@@ -394,7 +395,11 @@ function compareBaseline(j: Judged, ep: EffectivePolicy, baseline: { record: unk
     return;
   }
   const base = read.record;
-  if (base.candidate.id !== record.candidate.id || base.candidate.digest !== baseline.digest || base.suite.digest !== ep.suite) {
+  if (baseline.id !== undefined && typeof baseline.id !== "string") {
+    reasons.push({ code: "baseline-invalid" });
+    return;
+  }
+  if (base.candidate.id !== (baseline.id ?? record.candidate.id) ||base.candidate.digest !== baseline.digest || base.suite.digest !== ep.suite) {
     reasons.push({ code: "baseline-mismatch" });
     return;
   }

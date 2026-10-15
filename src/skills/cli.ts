@@ -13,15 +13,17 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { SkillImportError } from "./import-plan.js";
-import { hidden, plural, filesOf, stagedImport } from "./staged-import.js";
+import { hidden, plural, filesOf, loadExceptions, stagedImport } from "./staged-import.js";
 import { reviewCommand } from "./review-cli.js";
+import { EVALUATION_SUITE_DEFAULT } from "./evaluation-rules.js";
+import { evaluateOperandsProblem, gateImport, scoreImport } from "./evaluate-cli.js";
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
 import { licenceReviewProblem, reviewImport } from "./licence-review.js";
 import { licenceReviewRequired, promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
-import { applyExceptions, promotionBlockers, readScanExceptions, SCAN_EXCEPTIONS_FILE, type ScanException } from "./scan-exceptions.js";
+import { applyExceptions, promotionBlockers, type ScanException } from "./scan-exceptions.js";
 import { SOURCE_CONNECTORS } from "./connectors.js";
 import { overlapLines, overlapReport } from "./overlap.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors } from "./selections.js";
@@ -45,9 +47,11 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence and findings allow promotion; reads only
        scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; reads only
        scf skills review <source-id> [--markdown]                Print the licence, attribution and collision report of a staged import; reads only
+       scf skills score <source-id> [<suite-file>]               Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT})
+       scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], promote: [], overlap: [], review: ["markdown"] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], promote: [], overlap: [], review: ["markdown"], score: [], gate: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -125,20 +129,6 @@ function selectionsCheck(file: string, out: (line: string) => void, today: strin
   }
   out(`OK ${r.manifest.selections.length} selections`);
   return 0;
-}
-
-/** The exception file for `scan` and `promote check`; prints a PROBLEM and returns undefined when it cannot be used. */
-function loadExceptions(file: string | undefined, out: (line: string) => void, opts: { cwd: string; today: string }): ScanException[] | undefined {
-  const read = readScanExceptions(resolve(opts.cwd, file ?? SCAN_EXCEPTIONS_FILE), opts.today);
-  if (read.state === "invalid") {
-    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return undefined;
-  }
-  if (read.state === "none" && file !== undefined) {
-    out("PROBLEM the exception file does not exist");
-    return undefined;
-  }
-  return read.state === "ok" ? read.manifest.exceptions : [];
 }
 
 /**
@@ -526,6 +516,13 @@ export async function skillsCommand(
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills overlap: the operand must be a source id");
     const today = opts.today ?? new Date().toISOString().slice(0, 10);
     return overlapImport(operands[0]!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, skills: skills ?? loadConfig().skills, discover });
+  }
+  if (sub === "score" || sub === "gate") {
+    const why = evaluateOperandsProblem(sub, operands);
+    if (why) throw syntax(why);
+    const run = sub === "score" ? scoreImport : gateImport;
+    const today = opts.today ?? new Date().toISOString().slice(0, 10);
+    return run(operands[0]!, operands[1], out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
   }
   if (sub === "unpin") {
     const key = operands[0]!;

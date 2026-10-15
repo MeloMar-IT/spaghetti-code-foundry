@@ -3758,6 +3758,31 @@ Walk-through for the awesome-copilot connector:
 3. **Merge.** The source is then pinned by the merged file. `scf skills import awesome-copilot` fetches that commit, and `scf skills review awesome-copilot` shows the report again.
 4. **Next update.** When upstream moves, run `scf skills update awesome-copilot --reviewer @reviewer` again. While upstream is unchanged it prints `UNCHANGED`.
 
+#### Score and gate an import
+
+Two commands decide which skills of a staged import may be promoted. `scf skills score <source-id> [<suite-file>]` scores every skill with the suite and keeps the result. `scf skills gate <source-id> [<suite-file>]` reads the newest result of each skill and prints the verdict. Neither calls a model or starts a process, and neither changes the import, the skill folders, `skill-sources.yaml` or the quarantine.
+
+```
+scf skills score example-skills
+scf skills gate example-skills
+```
+
+```
+SCORED kafka-consumer@1.2.0 new: selection=1.00 conflicts=1.00 context=1.00 tools=1.00
+EVALUATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…: 1 record written to skill-evaluations/example-skills/0123456789ab
+PASSED kafka-consumer@1.2.0 new
+GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…: 1 passed, 0 failed
+```
+
+- **The suite.** Both commands read the suite file you name, or `skill-evaluation.yaml` in the current folder. The gate checks each record against the suite it reads, so a record made with another suite is `FAILED` (`suite-mismatch`). A missing or invalid suite is a `PROBLEM`. Run `score` again after you change the suite.
+- **Records.** Each run adds one record per skill under `<data folder>/skill-evaluations/<source>/<commit>/`. Earlier records are kept. Files are written atomically with mode `0600` in `0700` folders. The newest record is the one written last.
+- **Mode.** The gate picks the mode by itself: `new` (no approved skill with the same id or a shared capability), `upgrade` (compared with the approved skill of the same id or the canonical winner of a shared capability), or `duplicate` (another staged skill shares a capability). A skill can have more than one mode; it passes only when every comparison passes.
+- **Lines.** `PASSED <id>@<version> <mode>` for a skill that may be promoted. `FAILED <id>@<version> <mode>: <reason codes>` for one that may not. Reason codes name the cause, for example `record-invalid`, `digest-mismatch`, `suite-mismatch`, `safety-blocked`, `licence-not-allowed`, `below-threshold`, `baseline-missing` or `regression`; a dimension name follows the code where it applies. `PROBLEM` names the file or field that stops the command. `GATED` gives the counts.
+- **Missing or unreadable records.** A skill with no record, or a record that cannot be read, has the wrong mode or digest, or belongs to another skill, source or commit, is `FAILED`. It is never passed. Run `scf skills score <source-id>` to make the record.
+- **Exit codes.** `score` exits 1 when a `PROBLEM` is printed. `gate` exits 0 only when every skill passes and no `PROBLEM` is printed.
+- **Limits.** A record is at most 2 MiB and a folder holds at most 5,000 files. A source that is not enabled is a `PROBLEM` for `gate`.
+- **Not done.** The gate prints the verdict only. No run or promotion reads it yet.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
@@ -4429,6 +4454,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `PROBLEM` and `OVERLAP` lines; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
 | `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
 | `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
+| `scf skills score <source-id> [<suite-file>]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline; exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
+| `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes) or `PROBLEM` per staged skill from its newest record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

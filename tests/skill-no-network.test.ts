@@ -252,6 +252,26 @@ describe("scf skills scan is offline and read-only", () => {
   it("src/skills/cli.ts imports nothing from skill-import/", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "cli.ts"), "utf8")).filter((m) => /skill-import\//.test(m))).toEqual([]);
   });
+  it("scf skills score and gate start no process, call no network and no model, and reach no migration code", () => {
+    const files = ["evaluate-cli.ts", "evaluation-store.ts", "staged-import.ts"];
+    for (const f of files) {
+      const text = readFileSync(join(SKILLS, f), "utf8");
+      const mods = modulesOf(text);
+      expect(mods.filter((m) => PROCESS_OR_NET.test(m)), f).toEqual([]);
+      expect(mods.filter((m) => /\.\.\/(?:agents|steps|engine|server|queue)\/|home-migrate/.test(m)), f).toEqual([]);
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l)), f).toEqual([]);
+      for (const re of DYNAMIC_CODE) expect(codeLines(text).filter((l) => re.test(l)), `${f} ${re}`).toEqual([]);
+    }
+    // from ../home.js only claimHomeWrite
+    const store = readFileSync(join(SKILLS, "evaluation-store.ts"), "utf8");
+    expect(store.match(/import \{[^}]*\} from "\.\.\/home\.js"/g)).toEqual(['import { claimHomeWrite } from "../home.js"']);
+  });
+  it("the readers in evaluation-store.ts call no write function", () => {
+    const text = readFileSync(join(SKILLS, "evaluation-store.ts"), "utf8");
+    const marker = "// --- read only below this line ---";
+    expect(text.split(marker)).toHaveLength(2);
+    expect(codeLines(text.split(marker)[1]!).join("\n")).not.toMatch(/writeFileSync|writeSync|mkdirSync|renameSync|linkSync|claimHomeWrite|chmodSync|unlinkSync|rmSync|openSync/);
+  });
   it("the reader in import-stage.ts calls no write function", () => {
     const text = readFileSync(join(SKILLS, "import-stage.ts"), "utf8");
     const marker = "// --- read only below this line ---";

@@ -57,6 +57,8 @@ Usage:
   scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
   scf skills promote check <source-id> [<exceptions-file>]  Print whether licence and findings allow promotion
   scf skills overlap <source-id>                 Compare a staged import with the registered skills (canonical or conflict per capability)
+  scf skills score <source-id> [<suite-file>]    Score the skills of a staged import and store the records
+  scf skills gate <source-id> [<suite-file>]     Print which staged skills may be promoted
   scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
   scf skills review <source-id> [--markdown]     Print the licence, attribution and collision report of a staged import
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
@@ -239,8 +241,9 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `selections …`, `scan …`, `assess …`, `overlap …`, `evaluate …`, `promote check …`, `review …` and `connectors` only read: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "connectors"))) {
+  // `scf skills sources …`, `selections …`, `scan …`, `assess …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
+  // writes only into skill-evaluations/ through claimHomeWrite: they run without choosing or moving the data folder.
+  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "gate" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }

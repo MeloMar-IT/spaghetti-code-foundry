@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { credentialProblem } from "./credential-scan.js";
 import type { ImportRecord } from "./import-plan.js";
 import { readStagedImport } from "./import-stage.js";
+import { readScanExceptions, SCAN_EXCEPTIONS_FILE, type ScanException } from "./scan-exceptions.js";
 import { readSources, shownValue, SOURCES_FILE, type SkillLibrarySource } from "./sources.js";
 
 // Reads a staged import for the offline skill commands (scan, assess, promote check, review). Read-only.
@@ -50,4 +51,18 @@ export function filesOf(root: string, files: ReadonlyMap<string, Uint8Array>): {
     if (root === "." || path === root || path.startsWith(root + "/")) mine.push({ path: root === "." ? path : path.slice(root.length + 1), content });
   }
   return mine;
+}
+
+/** The exception file for `scan`, `promote check`, `score` and `gate`; prints a PROBLEM and returns undefined when it cannot be used. */
+export function loadExceptions(file: string | undefined, out: (line: string) => void, opts: { cwd: string; today: string }): ScanException[] | undefined {
+  const read = readScanExceptions(resolve(opts.cwd, file ?? SCAN_EXCEPTIONS_FILE), opts.today);
+  if (read.state === "invalid") {
+    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return undefined;
+  }
+  if (read.state === "none" && file !== undefined) {
+    out("PROBLEM the exception file does not exist");
+    return undefined;
+  }
+  return read.state === "ok" ? read.manifest.exceptions : [];
 }
