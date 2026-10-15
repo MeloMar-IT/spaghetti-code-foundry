@@ -9,6 +9,7 @@ import { credentialProblem } from "./credential-scan.js";
 import { quarantinePath } from "./import-stage.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
 import { matchRelease, readRelease, releaseContentProblem, releaseProblemText, type ReleaseCheck, type ReleaseRead } from "./release.js";
+import { verifyRelease } from "./release-verify.js";
 import { SKILL_DIGEST_RE, type SkillPackage } from "./schema.js";
 
 export type SkillSourceKind = "admin" | "builtin" | "repository";
@@ -63,7 +64,7 @@ export interface SkillProblem {
   integrity?: SkillIntegrityFailure;
 }
 export interface SkillNote {
-  kind: "shadowed" | "repository-disabled";
+  kind: "shadowed" | "repository-disabled" | "revoked";
   label: string;
   package?: string;
   text: string;
@@ -157,6 +158,8 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
   const notes: SkillNote[] = [];
   const reports: SkillSourceReport[] = [];
   const found: RegisteredSkill[] = [];
+  /** `id@version` revoked by an approved schema-2 release, in any root: the security fix wins over every other copy. */
+  const revokedKeys = new Map<string, string>();
   let bytes = 0;
   let stopped = false;
 
@@ -220,13 +223,27 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     let read: ReleaseRead | undefined;
     let rel: ReleaseCheck | undefined;
     const allow = skills.releases.allow_unreleased;
+    const revokedIds = new Set<string>();
     if (src.kind === "admin") {
       read = readRelease(src.root);
       rel = report.release = matchRelease(read, skills.releases.approved);
+      // A broken schema-2 manifest is refused whatever allow_unreleased says.
+      if (read.state === "invalid" && read.v2) {
+        fail("root-refused", "refused", refusal(rel));
+        continue;
+      }
       // An empty folder without a manifest is not a problem.
       if (rel.state !== "approved" && !allow && !(rel.state === "none" && names.length === 0)) {
         fail("root-refused", "refused", refusal(rel));
         continue;
+      }
+      // Only an approved manifest can revoke: a writable folder cannot hide skills.
+      if (read.state === "ok" && read.manifest.schema === 2 && rel.state === "approved") {
+        for (const s of read.manifest.skills) {
+          if (!s.revoked) continue;
+          revokedIds.add(s.id);
+          revokedKeys.set(`${s.id}@${s.version}`, `${read.manifest.catalogue}@${read.manifest.version} (${s.revoked.on})`);
+        }
       }
     }
     const mark: { found: number; bytes: number; stopped: boolean } = { found: found.length, bytes, stopped };
@@ -250,6 +267,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
         bad("symbolic link, not scanned");
         continue;
       }
+      if (revokedIds.has(name)) continue;
       if (stopped) {
         incomplete = true;
         continue;
@@ -275,16 +293,22 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       }
     }
 
-    // Step 2: content, after the packages are read.
-    if (read?.state === "ok" && rel?.state === "approved") {
-      const reason = incomplete
+    // Step 2: content, after the packages are read. A schema-2 release is always checked and always refused when it fails, whatever allow_unreleased says.
+    if (read?.state === "ok" && rel && (rel.state === "approved" || read.manifest.schema === 2)) {
+      const v2 = read.manifest.schema === 2;
+      const listed = revokedIds.size ? { ...read.manifest, skills: read.manifest.skills.filter((s) => !revokedIds.has(s.id)) } : read.manifest;
+      let reason = incomplete
         ? "could not be read completely (a limit was reached)"
         : invalid
           ? "holds a folder that is not a valid package"
-          : releaseContentProblem(read.manifest, found.slice(mark.found));
+          : releaseContentProblem(listed as typeof read.manifest, found.slice(mark.found));
+      if (!reason && v2) {
+        const v = verifyRelease(src.root, read);
+        if (!v.ok) reason = v.reason;
+      }
       if (reason) {
         rel = report.release = { ...rel, state: "mismatch", reason };
-        if (!allow) {
+        if (!allow || v2) {
           found.length = mark.found;
           bytes = mark.bytes;
           stopped = mark.stopped;
@@ -298,6 +322,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
   // Sources were visited in precedence order, so the first sight of a key wins.
   const byKey = new Map<string, RegisteredSkill>();
   for (const s of found) {
+    if (revokedKeys.has(s.key)) continue;
     const have = byKey.get(s.key);
     if (have) {
       const other = have.digest !== s.digest ? " with another digest" : "";
@@ -306,6 +331,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     }
     byKey.set(s.key, s);
   }
+  for (const [key, by] of revokedKeys) notes.push({ kind: "revoked", label: "release", package: key.slice(0, key.lastIndexOf("@")), text: `${key} is revoked by ${by} and is not loaded.` });
   // Pins are looked up by key alone: the source does not matter, only the bytes.
   const lock = readSkillLock(home);
   if (!lock.ok) problems.push({ kind: "lock", source: "admin", label: "skill lock", root: "skill lock", reason: `the skill lock ${lock.reason}; approved and built-in skills cannot be verified` });

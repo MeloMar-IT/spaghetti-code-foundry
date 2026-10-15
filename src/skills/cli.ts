@@ -7,6 +7,7 @@ import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
+import { releaseOperandsProblem, releaseVerify } from "./release-cli.js";
 import { applyConnector, connectorFor } from "./connector.js";
 import { compareStaged } from "./compare-cli.js";
 import { exclusionReasons, importExclusions } from "./import-exclusions.js";
@@ -58,9 +59,10 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills review <source-id> [--markdown]                Print the licence, attribution and collision report of a staged import; reads only
        scf skills score <source-id> [<suite-file>] [--agent]     Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT}); --agent also runs the instructions scenarios in the OS sandbox
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
+       scf skills release verify <dir>                           Check a catalogue release folder offline (files, digests, approval); reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], gate: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], gate: [], release: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -531,6 +533,11 @@ export async function skillsCommand(
   if (sub === "unpin") {
     if (operands.length !== 1) throw syntax("scf skills unpin: expects one skill (id@version)");
     if (!parseSkillKey(operands[0]!)) throw syntax(`scf skills unpin: ${operands[0]} is not a skill key (id@version)`);
+  }
+  if (sub === "release") {
+    const problem = releaseOperandsProblem(operands);
+    if (problem) throw syntax(problem);
+    return releaseVerify(resolve(opts.cwd ?? process.cwd(), operands[1]!), out, (opts.skills ?? loadConfig().skills).releases.approved);
   }
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');

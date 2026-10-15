@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,7 +6,8 @@ import { ConfigSchema } from "../src/config.js";
 import { clearSkillRegistryCache, discoverSkills, findSkill, pinSkill, selectSkill, unreleasedSources, type SkillRegistry } from "../src/skills/registry.js";
 import { RELEASE_FILE, releaseDigest, type ReleaseManifest } from "../src/skills/release.js";
 import { loadSkillPackage } from "../src/skills/package.js";
-import { verifyRunSkillLock, type RunSkillLock } from "../src/skills/run-lock.js";
+import { integrityReason, verifyRunSkillLock, type RunSkillLock } from "../src/skills/run-lock.js";
+import { writeV2Release } from "./helpers/skill-release-v2.js";
 
 const tmps: string[] = [];
 const tmp = () => {
@@ -248,5 +249,127 @@ describe("upgrade and resume", () => {
     const reg = run(e, cfg([e.root(0), e.root(1)], [a, b]));
     expect(reg.byKey.get("x@1.0.0")!.label).toBe("skills.roots[0]");
     expect(reg.problems.find((p) => p.kind === "duplicate")!.reason).toContain("with another digest");
+  });
+});
+
+describe("schema-2 releases in the registry", () => {
+  const ATTR = { a: { LICENSE: "MIT licence text\n" } };
+  function v2(e: Env, opts: Parameters<typeof writeV2Release>[1] = { attribution: ATTR }, ids = ["a", "b"]) {
+    for (const id of ids) pkg(e.root(0), id);
+    return writeV2Release(e.root(0), opts).approved;
+  }
+  const keys = (r: SkillRegistry) => r.skills.map((s) => s.key);
+
+  it("loads an approved release", () => {
+    const e = setup();
+    const ap = v2(e);
+    const reg = run(e, cfg([e.root(0)], [ap]));
+    expect(reg.problems).toEqual([]);
+    expect(keys(reg)).toEqual(["a@1.0.0", "b@1.0.0"]);
+    expect(reg.sources[1]!.release!.state).toBe("approved");
+  });
+
+  it.each([
+    ["change one byte of a package file", (r: string) => writeFileSync(join(r, "a", "skill.yaml"), "id: a\nversion: 1.0.1\n")],
+    ["add one byte to a package file", (r: string) => appendFileSync(join(r, "a", "SKILL.md"), "x")],
+    ["remove one byte of a package file", (r: string) => truncateSync(join(r, "a", "SKILL.md"), statSync(join(r, "a", "SKILL.md")).size - 1)],
+    ["change one byte of an attribution file", (r: string) => writeFileSync(join(r, ".attribution", "a", "LICENSE"), "MIT licence text!\n")],
+    ["add one byte to an attribution file", (r: string) => appendFileSync(join(r, ".attribution", "a", "LICENSE"), "x")],
+    ["remove one byte of an attribution file", (r: string) => truncateSync(join(r, ".attribution", "a", "LICENSE"), 16)],
+    ["an unlisted file in .attribution", (r: string) => writeFileSync(join(r, ".attribution", "a", "extra"), "x")],
+  ])("refuses the release: %s", (_n, mutate) => {
+    const e = setup();
+    const ap = v2(e);
+    mutate(e.root(0));
+    const reg = run(e, cfg([e.root(0)], [ap]));
+    expect(kinds(reg)).toEqual(["root-refused"]);
+    expect(reg.sources[1]).toMatchObject({ status: "refused", packages: 0 });
+    expect(reg.skills).toEqual([]);
+    expect(JSON.stringify(reg.problems)).not.toContain(e.root(0));
+  });
+
+  it("allow_unreleased never softens a schema-2 release, approved or not", () => {
+    const e = setup();
+    const ap = v2(e);
+    appendFileSync(join(e.root(0), ".attribution", "a", "LICENSE"), "x");
+    for (const approved of [[ap], []]) {
+      const reg = run(e, cfg([e.root(0)], approved, {}, true));
+      expect(kinds(reg)).toEqual(["root-refused"]);
+      expect(reg.skills).toEqual([]);
+    }
+  });
+
+  it("refuses a malformed schema-2 manifest even with allow_unreleased", () => {
+    const e = setup();
+    v2(e);
+    const path = join(e.root(0), "catalogue-release.json");
+    const m = JSON.parse(readFileSync(path, "utf8"));
+    delete m.skills[0].files;
+    writeFileSync(path, JSON.stringify(m));
+    const reg = run(e, cfg([e.root(0)], [], {}, true));
+    expect(kinds(reg)).toEqual(["root-refused"]);
+    expect(reg.skills).toEqual([]);
+  });
+
+  it("an intact unapproved schema-2 release still loads under allow_unreleased", () => {
+    const e = setup();
+    v2(e);
+    const reg = run(e, cfg([e.root(0)], [], {}, true));
+    expect(keys(reg)).toEqual(["a@1.0.0", "b@1.0.0"]);
+    expect(unreleasedSources(reg)).toHaveLength(1);
+  });
+
+  it("a tampered schema-1 release still behaves as before under allow_unreleased", () => {
+    const e = setup();
+    pkg(e.root(0), "a");
+    const ap = release(e.root(0));
+    appendFileSync(join(e.root(0), "a", "SKILL.md"), "x");
+    const reg = run(e, cfg([e.root(0)], [ap], {}, true));
+    expect(reg.sources[1]!.release!.state).toBe("mismatch");
+    expect(keys(reg)).toEqual(["a@1.0.0"]);
+  });
+
+  describe("revocation", () => {
+    const revoked = { b: { on: "2026-03-04", reason: "unsafe advice" } };
+    it("never registers a revoked skill, and notes it", () => {
+      const e = setup();
+      const ap = v2(e, { revoked });
+      const reg = run(e, cfg([e.root(0)], [ap]));
+      expect(reg.problems).toEqual([]);
+      expect(keys(reg)).toEqual(["a@1.0.0"]);
+      expect(reg.notes.filter((n) => n.kind === "revoked").map((n) => n.text)).toEqual(["b@1.0.0 is revoked by acme-skills@1.0.0 (2026-03-04) and is not loaded."]);
+    });
+
+    it("drops the same id@version from another root, and tampering with a revoked package still refuses the release", () => {
+      const e = setup();
+      pkg(e.root(1), "b");
+      const other = release(e.root(1), "9.0.0", "other-skills");
+      const ap = v2(e, { revoked });
+      const reg = run(e, cfg([e.root(0), e.root(1)], [ap, other]));
+      expect(keys(reg)).toEqual(["a@1.0.0"]);
+      appendFileSync(join(e.root(0), "b", "SKILL.md"), "x");
+      const bad = run(e, cfg([e.root(0)], [ap]));
+      expect(kinds(bad)).toEqual(["root-refused"]);
+    });
+
+    it("stops a run that locked the revoked skill", () => {
+      const e = setup();
+      const ap = v2(e, { revoked });
+      const reg = run(e, cfg([e.root(0)], [ap]));
+      const lock = { version: 1, skills: [{ id: "b", version: "1.0.0", digest: "sha256:" + "1".repeat(64) }] } as unknown as RunSkillLock;
+      const problems = verifyRunSkillLock(lock, reg);
+      expect(problems.map((p) => p.code)).toEqual(["missing"]);
+      expect(integrityReason(problems[0]!)).toMatch(/^skill integrity: b@1\.0\.0 is missing/);
+    });
+
+    it("ignores a revocation in a release that is not approved", () => {
+      const e = setup();
+      pkg(e.root(1), "b");
+      const other = release(e.root(1), "9.0.0", "other-skills");
+      v2(e, { revoked });
+      const reg = run(e, cfg([e.root(0), e.root(1)], [other], {}, true));
+      expect(keys(reg)).toContain("b@1.0.0");
+      expect(reg.notes.filter((n) => n.kind === "revoked")).toEqual([]);
+    });
   });
 });
