@@ -61,7 +61,7 @@ export interface ApprovedRelease {
   digest: string;
 }
 
-const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
+export const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const CREATED_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 /** A real UTC calendar time: a date that JavaScript would roll over (30 February) is refused. */
@@ -108,7 +108,7 @@ const V1 = z
 /** No control, format or line-separator character, and no lone surrogate (UTF-8 turns it into U+FFFD, so two values would hash the same). */
 const plain = z.string().refine((s) => !hasUnsafeChar(s) && !/\p{Cs}/u.test(s), "holds a control character or a lone surrogate");
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
-const isDay = (s: string) => {
+export const isDay = (s: string) => {
   if (!DAY_RE.test(s)) return false;
   const ms = Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
   return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === s;

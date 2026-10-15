@@ -4445,6 +4445,44 @@ EVALUATED 3 skills from github.com/microsoft/skills@0123456789ab: 2 eligible
 - **Credentials.** Credential-like text is shown as `(hidden)`.
 - **Limits.** The registry must be complete. A missing or unreadable skill root, a refused root, an invalid package or too many registered skills stops the command with a `PROBLEM` and exit 1, so the result is never partial.
 
+#### Publish a catalogue release
+
+The catalogue owner keeps the catalogue versions to publish in `skill-releases.yaml`, next to `skill-sources.yaml`, in the catalogue repository. The file is changed by pull request and checked before the pull request is opened. It grants nothing: no run reads it, and publishing a version is a separate step.
+
+```yaml
+schema: 1
+repository: github.com/acme/scf-skills
+releases:
+  - catalogue: scf-skills        # skill id slug of the catalogue
+    version: 0.1.0               # skill version
+    skills:                      # 1 to 500 skills, each id once
+      - source: openhands-extensions
+        id: example-skill
+    review:                      # optional; publishing needs it
+      by: "@octocat"
+      on: 2026-10-13
+    revoked:                     # optional; each id must be in skills
+      - id: example-skill
+        version: 0.0.9
+        on: 2026-10-14
+        reason: Broken on Node 22
+```
+
+- **Fields.** `schema` must be `1`. `repository` is `github.com/<owner>/<repo>`, the same form as `source.repository` in a release manifest. `releases` lists 1 to 200 entries. Each `catalogue` and `version` pair appears at most once. `catalogue` and each `id` are lower-case slugs of 1 to 64 characters; `version` is a version like `1.2.3`. Each `skills` entry is `{source, id}`, and an `id` is listed once.
+- **Review.** `review` has `by` (a GitHub user or team, such as `@octocat` or `@acme/skills`) and `on` (a real day, not after today). It is optional on purpose: an entry without it is valid here, and the publish command refuses it.
+- **Revoked.** Each revocation has `id`, `version`, `on` (a real day, not after today) and `reason`: 1 to 200 characters, trimmed, with no control character. A revoked `id` must be in `skills`, and it is listed once.
+- **Unknown keys are refused.**
+- **Reading.** The file is read safely. A symbolic link, a file that is not a regular file, a file larger than 256 KiB and YAML with aliases are refused. Warnings from the YAML library are not printed, because they repeat file content.
+
+`scf skills releases check [<file>]` checks the file offline and read-only. It reads `skill-releases.yaml` in the current folder, or the file you name. It works without the data folder. For each entry it prints the catalogue and version, the number of skills and revocations, and the review:
+
+```
+scf-skills@0.1.0 1 skills, 0 revoked, NOT REVIEWED
+OK 1 releases for github.com/acme/scf-skills
+```
+
+Reviewed entries print `reviewed by @octocat on 2026-10-13` in place of `NOT REVIEWED`. The last line says `OK <n> releases for <repository>` and the command exits 0. A problem prints one `PROBLEM <where>: <message>` line per error and exits 1. The message never repeats file content. A missing file prints `PROBLEM the release request file does not exist` and exits 1.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). A skill with a `provider` block has its `needs provider: …` line first (see below). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.

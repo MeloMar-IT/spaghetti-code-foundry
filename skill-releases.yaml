@@ -1,0 +1,10 @@
+# Release requests: the catalogue versions to publish, by pull request after review.
+# An entry without `review` (`by`, `on`) is a draft: `scf skills releases check` accepts it, publishing refuses it.
+schema: 1
+repository: github.com/MeloMar-IT/scf-skills
+releases:
+  - catalogue: scf-skills
+    version: 0.1.0
+    skills:
+      - source: openhands-extensions
+        id: example-skill

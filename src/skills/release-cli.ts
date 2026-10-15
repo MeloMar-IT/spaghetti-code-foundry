@@ -1,4 +1,5 @@
 import { matchRelease, type ApprovedRelease } from "./release.js";
+import { readReleaseRequests } from "./release-requests.js";
 import { verifyRelease } from "./release-verify.js";
 
 /** Undefined for `verify <folder>`, else the syntax error. */
@@ -19,5 +20,25 @@ export function releaseVerify(dir: string, out: (line: string) => void, approved
   }
   out(`VERIFIED ${m.catalogue}@${m.version} ${v.digest} ${m.skills.length} skill${m.skills.length === 1 ? "" : "s"}`);
   out(matchRelease({ state: "ok", manifest: m, digest: v.digest }, approved).state === "approved" ? "APPROVED" : "NOT-APPROVED");
+  return 0;
+}
+
+/** `scf skills releases check`: offline, read-only; prints checked fields only. */
+export function releasesCheck(file: string, out: (line: string) => void, today: string): number {
+  const r = readReleaseRequests(file, today);
+  if (r.state === "none") {
+    out("PROBLEM the release request file does not exist");
+    return 1;
+  }
+  if (r.state === "invalid") {
+    for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return 1;
+  }
+  const m = r.manifest;
+  for (const e of m.releases) {
+    const review = e.review ? `reviewed by ${e.review.by} on ${e.review.on}` : "NOT REVIEWED";
+    out(`${e.catalogue}@${e.version} ${e.skills.length} skills, ${e.revoked?.length ?? 0} revoked, ${review}`);
+  }
+  out(`OK ${m.releases.length} releases for ${m.repository}`);
   return 0;
 }

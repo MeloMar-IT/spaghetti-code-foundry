@@ -275,6 +275,19 @@ describe("data folder", () => {
     expect(scf(["skills", "selections", "check", file], home).status).toBe(0);
   });
 
+  it("scf skills releases check is in the help and does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    const file = join(home, "skill-releases.yaml");
+    writeFileSync(file, "schema: 1\nrepository: github.com/acme/scf-skills\nreleases:\n  - catalogue: acme\n    version: 1.0.0\n    skills:\n      - source: s\n        id: k\n");
+    expect(scf(["--help"], home).stdout).toContain("scf skills releases check [<file>]");
+    const r = scf(["skills", "releases", "check", file], home);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("OK 1 releases for");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+  });
+
   it("scf skills profiles evaluate is in the help, prints a PROBLEM without sources and does not choose or move the data folder", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);
