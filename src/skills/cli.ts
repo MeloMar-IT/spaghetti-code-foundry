@@ -194,7 +194,7 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
   let blocked = 0;
   for (const { entry, report: scan, skill: pkg, decided, blockers, exclusions: excluded, addresses, quarantine } of scanned) {
     if (pkg && decided) {
-      for (const d of decided.findings) out(`FINDING ${d.finding.id} ${d.finding.severity} ${d.disposition} ${pkg.package.id} ${d.finding.path}: ${d.finding.evidence}`);
+      for (const d of decided.findings) out(`FINDING ${d.finding.id} ${d.finding.severity} ${d.disposition} ${pkg.package.id} ${d.finding.path}${d.finding.line !== undefined ? `:${d.finding.line}` : ""}: ${d.finding.evidence}`);
       for (const l of addressLines(pkg.package.id, addresses)) out(l);
       const n = blockers.length;
       if (n > 0 || excluded.length > 0) blocked++;
@@ -205,7 +205,7 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
       }
     } else {
       const label = shownValue(entry.root);
-      for (const f of scan.findings) out(`FINDING ${f.id} ${f.severity} open ${label} ${f.path}: ${f.evidence}`);
+      for (const f of scan.findings) out(`FINDING ${f.id} ${f.severity} open ${label} ${f.path}${f.line !== undefined ? `:${f.line}` : ""}: ${f.evidence}`);
       blocked++;
       out(`BLOCKED ${label}: not normalized (${quarantine.map(hidden).join("; ")})`);
     }

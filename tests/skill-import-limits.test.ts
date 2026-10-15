@@ -209,7 +209,11 @@ describe("fetch watchdog", { timeout: 15_000, retry: 0 }, () => {
   });
 
   it("stops at the time limit", async () => {
-    expect(await code(openGitTree(SOURCE, C40, opts({ timeoutMs: 300 })))).toBe("timeout");
+    // The limit starts when the fetch starts; on a loaded machine the stub may not have run yet after 300 ms.
+    const p = openGitTree(SOURCE, C40, opts({ timeoutMs: 3000 }));
+    p.catch(() => undefined);
+    await hung();
+    expect(await code(p)).toBe("timeout");
     await finish();
   });
 
