@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
+import { parseDocument } from "yaml";
 import { credentialProblem } from "./credential-scan.js";
 import type { SkillSafety } from "./normalize.js";
 import { canonicalJson, plainProblem } from "./normalize-values.js";
@@ -63,7 +63,7 @@ const DAY_MS = 86400000;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Days since 1970-01-01 for a real calendar date like 2026-10-13, else undefined. */
-function dayNumber(s: unknown): number | undefined {
+export function dayNumber(s: unknown): number | undefined {
   if (typeof s !== "string" || !DATE_RE.test(s)) return undefined;
   const ms = Date.UTC(Number(s.slice(0, 4)), Number(s.slice(5, 7)) - 1, Number(s.slice(8, 10)));
   if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== s) return undefined;
@@ -258,7 +258,10 @@ export function readScanExceptions(path: string, today: string, maxBytes = MAX_S
   if (data === "large") return fail(`is larger than ${maxBytes} bytes`);
   let doc: unknown;
   try {
-    doc = parseYaml(Buffer.from(data).toString("utf8"), { maxAliasCount: 0 });
+    // logLevel "silent": the library must not print warnings, they repeat the source line (which may hold a credential).
+    const parsed = parseDocument(Buffer.from(data).toString("utf8"), { logLevel: "silent" });
+    if (parsed.errors.length) throw parsed.errors[0];
+    doc = parsed.toJS({ maxAliasCount: 0 });
   } catch (e) {
     const x = e as { code?: unknown; linePos?: { line?: unknown; col?: unknown }[] };
     const code = typeof x.code === "string" && /^[A-Z_]{1,40}$/.test(x.code) ? x.code : undefined;

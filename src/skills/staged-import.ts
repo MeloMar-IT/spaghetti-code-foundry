@@ -44,14 +44,7 @@ export function stagedImport(id: string, out: (line: string) => void, opts: { cw
   return { source, commit, record: staged.record, files: staged.files, licence: staged.licence };
 }
 
-/** The files of one skill, with paths relative to its root. */
-export function filesOf(root: string, files: ReadonlyMap<string, Uint8Array>): { path: string; content: Uint8Array }[] {
-  const mine: { path: string; content: Uint8Array }[] = [];
-  for (const [path, content] of files) {
-    if (root === "." || path === root || path.startsWith(root + "/")) mine.push({ path: root === "." ? path : path.slice(root.length + 1), content });
-  }
-  return mine;
-}
+export { filesOf } from "./scan-staged.js";
 
 /** The exception file for `scan`, `promote check`, `score` and `gate`; prints a PROBLEM and returns undefined when it cannot be used. */
 export function loadExceptions(file: string | undefined, out: (line: string) => void, opts: { cwd: string; today: string }): ScanException[] | undefined {

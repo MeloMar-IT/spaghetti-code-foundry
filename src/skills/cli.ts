@@ -25,6 +25,8 @@ import { licenceReviewRequired, promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, type ScanException } from "./scan-exceptions.js";
+import { scanStaged } from "./scan-staged.js";
+import { profilesEvaluate } from "./profile-evaluate-cli.js";
 import { SOURCE_CONNECTORS } from "./connectors.js";
 import { overlapLines, overlapReport, versionLines } from "./overlap.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors, type SkillSelection } from "./selections.js";
@@ -43,7 +45,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
        scf skills profiles check [<file>]                        Check the source profiles (default: ${PROFILES_FILE})
-       scf skills connectors                                     List the reviewed source connectors; reads nothing
+       scf skills profiles evaluate <source-id>                  Print PASS or BLOCKED per staged skill of a profiled source (licence, scan, requirements, evaluations); reads only
+       scf skills connectors                                List the reviewed source connectors; reads nothing
        scf skills selections check [<file>]                      Check the skill selections (default: ${SELECTIONS_FILE})
        scf skills selections evaluate <source-id> [<file>]       Report which selected skills of a staged import are eligible, held back or overlapping; reads only
        scf skills overrides check [<file>]                      Check the owner overrides (default: ${OVERRIDES_FILE})
@@ -196,18 +199,12 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
   if (!staged) return 1;
   const { source, commit, record, files } = staged;
 
-  // The recorded `rejected` text is left out, so the report holds only what normalization decided itself.
-  const { skills: normalized, report: norm } = normalizeImport({ record: { ...record, rejected: [] }, files });
+  const { normalized, skills: scanned } = scanStaged({ record, files }, exceptions, opts.today);
   let blocked = 0;
-  for (const entry of record.skills) {
-    const mine = filesOf(entry.root, files);
-    const scan = scanSkill({ root: entry.root, files: mine });
-    const pkg = normalized.find((s) => s.provenance.root === entry.root);
-    if (pkg) {
-      const decided = applyExceptions(pkg.package.id, scan, exceptions, opts.today);
+  for (const { entry, report: scan, skill: pkg, decided, blockers, exclusions: excluded, quarantine } of scanned) {
+    if (pkg && decided) {
       for (const d of decided.findings) out(`FINDING ${d.finding.id} ${d.finding.severity} ${d.disposition} ${pkg.package.id} ${d.finding.path}: ${d.finding.evidence}`);
-      const n = promotionBlockers(decided).length;
-      const excluded = importExclusions(pkg);
+      const n = blockers.length;
       if (n > 0 || excluded.length > 0) blocked++;
       if (n > 0) out(`BLOCKED ${pkg.package.id}: ${n} high ${n === 1 ? "finding" : "findings"}`);
       if (excluded.length > 0) out(`EXCLUDED ${pkg.package.id}: ${exclusionReasons(excluded).join("; ")}`);
@@ -217,9 +214,8 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
     } else {
       const label = shownValue(entry.root);
       for (const f of scan.findings) out(`FINDING ${f.id} ${f.severity} open ${label} ${f.path}: ${f.evidence}`);
-      const reasons = norm.quarantined.filter((q) => q.root === label).flatMap((q) => q.reasons.map(hidden));
       blocked++;
-      out(`BLOCKED ${label}: not normalized (${reasons.join("; ")})`);
+      out(`BLOCKED ${label}: not normalized (${quarantine.map(hidden).join("; ")})`);
     }
   }
   const connector = connectorFor(source);
@@ -536,7 +532,12 @@ export async function skillsCommand(
   }
 
   if (sub === "profiles") {
-    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills profiles: expects "check" and at most one file');
+    if (operands[0] === "evaluate") {
+      if (operands.length !== 2) throw syntax("scf skills profiles evaluate: expects one source id");
+      if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills profiles evaluate: the operand must be a source id");
+      return profilesEvaluate(operands[1]!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today: opts.today ?? new Date().toISOString().slice(0, 10) });
+    }
+    if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills profiles: expects "check" and at most one file, or "evaluate" and a source id');
     return profilesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? PROFILES_FILE), out);
   }
 

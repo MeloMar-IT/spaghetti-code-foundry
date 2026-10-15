@@ -275,6 +275,17 @@ describe("data folder", () => {
     expect(scf(["skills", "selections", "check", file], home).status).toBe(0);
   });
 
+  it("scf skills profiles evaluate is in the help, prints a PROBLEM without sources and does not choose or move the data folder", () => {
+    const { home, oldDir, newDir } = withHome();
+    seedOld(oldDir);
+    expect(scf(["--help"], home).stdout).toContain("scf skills profiles evaluate <source-id>");
+    const r = scf(["skills", "profiles", "evaluate", "lib"], home);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("PROBLEM");
+    expect(r.stderr).not.toContain("note:");
+    expect(existsSync(newDir)).toBe(false);
+  });
+
   it("scf skills selections evaluate is in the help, prints a PROBLEM without sources and does not choose or move the data folder", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);

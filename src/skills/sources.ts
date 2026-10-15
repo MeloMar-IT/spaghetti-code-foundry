@@ -1,5 +1,5 @@
 import { lstatSync } from "node:fs";
-import { parse as parseYaml } from "yaml";
+import { parseDocument } from "yaml";
 import { parseRepoUrl, RepoError } from "../auth/repo-url.js";
 import { rangeSatisfied } from "./canonical-facts.js";
 import { COMMUNITY_REPOSITORIES } from "./community-rules.js";
@@ -571,7 +571,10 @@ export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES, today?: 
   if (data === "large") return fail(`is larger than ${maxBytes} bytes`);
   let doc: unknown;
   try {
-    doc = parseYaml(Buffer.from(data).toString("utf8"), { maxAliasCount: 0 });
+    // logLevel "silent": the library must not print warnings, they repeat the source line (which may hold a credential).
+    const parsed = parseDocument(Buffer.from(data).toString("utf8"), { logLevel: "silent" });
+    if (parsed.errors.length) throw parsed.errors[0];
+    doc = parsed.toJS({ maxAliasCount: 0 });
   } catch (e) {
     const x = e as { code?: unknown; linePos?: { line?: unknown; col?: unknown }[] };
     const code = typeof x.code === "string" && /^[A-Z_]{1,40}$/.test(x.code) ? x.code : undefined;

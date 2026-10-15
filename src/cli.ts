@@ -50,6 +50,7 @@ Usage:
   scf skills unpin <id@version>                  Remove a pin
   scf skills sources check [<file>]              Check a skill source list (default: skill-sources.yaml)
   scf skills profiles check [<file>]             Check the source profiles (default: skill-source-profiles.yaml)
+  scf skills profiles evaluate <source-id>       Print PASS or BLOCKED per staged skill of a profiled source; reads only
   scf skills connectors                          List the reviewed skill source connectors
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]  Open a pull request that proposes the new upstream commit (never approves)
