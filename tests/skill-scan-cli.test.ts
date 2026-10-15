@@ -104,6 +104,47 @@ describe("scf skills scan", () => {
     expect(r.text).not.toContain("FINDING");
   });
 
+  it("lists mentioned web addresses and does not block", async () => {
+    const skillMd = "---\nname: a\ndescription: A skill called a.\nhomepage: https://vercel.com\n---\n\nBody.\n";
+    stage({
+      ...BENIGN,
+      "skills/a/SKILL.md": skillMd,
+      "skills/a/references/pom.xml": "<url>https://repo.maven.apache.org/maven2</url>",
+      "skills/a/metadata.json": '{"homepage":"https://vercel.com/x"}',
+      "skills/a/references/x.md": "see https://u" + ":p@h.io/x",
+    });
+    const r = await scan();
+    expect(r.code).toBe(0);
+    expect(r.lines).toContain(`OK ${idOf("a")}: 0 findings, none blocks`);
+    expect(r.lines).toContain(`ADDRESS ${idOf("a")} mentioned references/pom.xml: https://repo.maven.apache.org/maven2 (under references/, which the agent only reads)`);
+    expect(r.lines).toContain(`ADDRESS ${idOf("a")} mentioned metadata.json: https://vercel.com/x (a document or data file, which the agent only reads)`);
+    expect(r.lines.some((l) => l.startsWith(`ADDRESS ${idOf("a")} mentioned SKILL.md: https://vercel.com (`))).toBe(true);
+    expect(r.lines).toContain(`ADDRESS ${idOf("a")} mentioned references/x.md: https://(hidden)@h.io/x (under references/, which the agent only reads)`);
+    expect(r.text).not.toContain("u" + ":p@");
+  });
+
+  it("hides a credential in the query of a web address", async () => {
+    stage({ ...BENIGN, "skills/a/references/x.md": "see https://h.io/?api_" + "key=A1b2C3d4E5f6 now" });
+    const r = await scan();
+    expect(r.lines).toContain(`ADDRESS ${idOf("a")} mentioned references/x.md: https://h.io/?api_key=(hidden) (under references/, which the agent only reads)`);
+    expect(r.text).not.toContain("A1b2C3d4E5f6");
+  });
+
+  it("a web address in a script is called and excludes the skill", async () => {
+    stage({ ...BENIGN, "skills/a/scripts/b.sh": "URL=https://api.x.io/v1\n" });
+    const r = await scan();
+    expect(r.code).toBe(1);
+    expect(r.lines).toContain(`EXCLUDED ${idOf("a")}: holds a web address in code (scripts/b.sh)`);
+    expect(r.lines).toContain(`ADDRESS ${idOf("a")} called scripts/b.sh: https://api.x.io/v1 (under scripts/, which is code)`);
+  });
+
+  it("a shell file test on .env is not an upload", async () => {
+    stage({ ...BENIGN, "skills/a/scripts/create-topics.sh": "if [[ -f .env ]]; then\n    source .env\nfi\n" });
+    const r = await scan();
+    expect(r.code).toBe(0);
+    expect(r.text).not.toContain("upload");
+  });
+
   it("a skill that needs network prints EXCLUDED, no OK line for it, and exits 1", async () => {
     stage({ ...BENIGN, "skills/c/SKILL.md": "---\nname: c\ndescription: A skill called c.\nallowed-tools: WebFetch\n---\n\nBody.\n" });
     const r = await scan();

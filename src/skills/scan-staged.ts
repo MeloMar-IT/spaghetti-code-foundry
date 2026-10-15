@@ -1,5 +1,5 @@
 import type { ImportRecord } from "./import-plan.js";
-import { importExclusions, type ImportExclusion } from "./import-exclusions.js";
+import { importExclusions, webAddresses, type ImportExclusion, type WebAddress } from "./import-exclusions.js";
 import { normalizeImport, type NormalizationReport, type NormalizedSkill } from "./normalize.js";
 import { scanSkill, type ScanReport } from "./scan.js";
 import { applyExceptions, promotionBlockers, type DecidedFinding, type DecidedReport, type ScanException } from "./scan-exceptions.js";
@@ -16,6 +16,12 @@ export function filesOf(root: string, files: ReadonlyMap<string, Uint8Array>): {
   return mine;
 }
 
+/** The decoded SKILL.md of a skill root, or undefined. */
+export function stagedSkillMd(root: string, files: ReadonlyMap<string, Uint8Array>): string | undefined {
+  const bytes = files.get(root === "." ? "SKILL.md" : `${root}/SKILL.md`);
+  return bytes === undefined ? undefined : new TextDecoder().decode(bytes);
+}
+
 export interface StagedSkillScan {
   /** The staged entry, with its full upstream root. */
   entry: ImportRecord["skills"][number];
@@ -28,6 +34,8 @@ export interface StagedSkillScan {
   blockers: DecidedFinding[];
   /** importExclusions(skill); empty when not normalized. */
   exclusions: ImportExclusion[];
+  /** webAddresses(skill, raw SKILL.md); empty when not normalized. */
+  addresses: WebAddress[];
   /** The raw reasons it did not normalize (print them through `hidden`); empty when normalized. */
   quarantine: string[];
 }
@@ -49,10 +57,13 @@ export function scanStaged(
     if (!skill) {
       const label = shownValue(entry.root);
       const quarantine = report.quarantined.filter((q) => q.root === label).flatMap((q) => q.reasons);
-      return { entry, report: scan, blockers: [], exclusions: [], quarantine };
+      return { entry, report: scan, blockers: [], exclusions: [], addresses: [], quarantine };
     }
     const decided = applyExceptions(skill.package.id, scan, exceptions, today);
-    return { entry, report: scan, skill, decided, blockers: promotionBlockers(decided), exclusions: importExclusions(skill), quarantine: [] };
+    return {
+      entry, report: scan, skill, decided, blockers: promotionBlockers(decided), exclusions: importExclusions(skill),
+      addresses: webAddresses(skill, stagedSkillMd(entry.root, files)), quarantine: [],
+    };
   });
   return { normalized, report, skills };
 }

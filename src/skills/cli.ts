@@ -11,7 +11,7 @@ import { releaseOperandsProblem, releasesCheck, releaseVerify } from "./release-
 import { RELEASES_FILE } from "./release-requests.js";
 import { applyConnector, connectorFor } from "./connector.js";
 import { compareStaged } from "./compare-cli.js";
-import { exclusionReasons, importExclusions } from "./import-exclusions.js";
+import { addressLines, exclusionReasons, importExclusions, webAddresses } from "./import-exclusions.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { flowDir, parseFlow } from "../flow/load.js";
@@ -27,7 +27,7 @@ import { licenceReviewRequired, NO_EVIDENCE_TIME, promoteImport } from "./promot
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, type ScanException } from "./scan-exceptions.js";
-import { scanStaged } from "./scan-staged.js";
+import { scanStaged, stagedSkillMd } from "./scan-staged.js";
 import { profilesEvaluate } from "./profile-evaluate-cli.js";
 import { SOURCE_CONNECTORS } from "./connectors.js";
 import { overlapLines, overlapReport, versionLines } from "./overlap.js";
@@ -207,9 +207,10 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
 
   const { normalized, skills: scanned } = scanStaged({ record, files }, exceptions, opts.today);
   let blocked = 0;
-  for (const { entry, report: scan, skill: pkg, decided, blockers, exclusions: excluded, quarantine } of scanned) {
+  for (const { entry, report: scan, skill: pkg, decided, blockers, exclusions: excluded, addresses, quarantine } of scanned) {
     if (pkg && decided) {
       for (const d of decided.findings) out(`FINDING ${d.finding.id} ${d.finding.severity} ${d.disposition} ${pkg.package.id} ${d.finding.path}: ${d.finding.evidence}`);
+      for (const l of addressLines(pkg.package.id, addresses)) out(l);
       const n = blockers.length;
       if (n > 0 || excluded.length > 0) blocked++;
       if (n > 0) out(`BLOCKED ${pkg.package.id}: ${n} high ${n === 1 ? "finding" : "findings"}`);
@@ -354,6 +355,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
   let refused = 0;
   const lines: string[] = [];
   const evaluations: string[] = [];
+  const addresses: string[] = [];
   const decoder = new TextDecoder();
   for (const entry of record.skills) {
     const path = shownValue(entry.root);
@@ -365,6 +367,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     let n = 0;
     let ok: { id: string; licences: string[] } | undefined;
     if (skill) {
+      addresses.push(...addressLines(skill.package.id, webAddresses(skill, stagedSkillMd(entry.root, files))));
       let result;
       try {
         result = promoteImport({ source, record, skills: [skill], evidence, retrievedAt, review });
@@ -420,6 +423,7 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     }
   }
   for (const l of lines) out(l);
+  for (const l of addresses) out(l);
   for (const s of normalized) if (s.provenance.assumes) out(`ASSUMES ${hidden(s.package.id)}: ${s.provenance.assumes.join(", ")}`);
   for (const l of evaluations) out(l);
   const c = review.classification;

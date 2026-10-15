@@ -127,6 +127,32 @@ describe("scf skills promote check", () => {
     expect(r.lines[1]).toMatch(/^REFUSED skills\/b: rejected \(/);
   });
 
+  it("lists web addresses after the decision lines, without blocking", async () => {
+    stage({ ...BENIGN, LICENSE: MIT, "skills/a/evals/evals.json": '{"prompt":"open https://react.dev/learn"}' });
+    const r = await check();
+    expect(r.code).toBe(0);
+    const at = r.lines.findIndex((l) => l.startsWith(`ADDRESS ${idOf("a")} mentioned evals/evals.json: https://react.dev/learn`));
+    expect(at).toBeGreaterThan(r.lines.indexOf(`PROMOTABLE ${idOf("a")} skills/a MIT`));
+    expect(r.lines[at]).toContain("(under evals/, which the agent only reads)");
+  });
+
+  it("lists a frontmatter address and hides user and password", async () => {
+    const skillMd = "---\nname: a\ndescription: A skill called a.\nhomepage: https://vercel.com\n---\n\nBody.\n";
+    stage({ ...BENIGN, LICENSE: MIT, "skills/a/SKILL.md": skillMd, "skills/a/references/x.md": "see https://u" + ":p@h.io/x" });
+    const r = await check();
+    expect(r.code).toBe(0);
+    expect(r.lines.some((l) => l.startsWith(`ADDRESS ${idOf("a")} mentioned SKILL.md: https://vercel.com `))).toBe(true);
+    expect(r.text).toContain("https://(hidden)@h.io/x");
+    expect(r.text).not.toContain("u" + ":p@");
+  });
+
+  it("hides a credential in the query of a web address", async () => {
+    stage({ ...BENIGN, LICENSE: MIT, "skills/a/references/x.md": "see https://h.io/?api_" + "key=A1b2C3d4E5f6 now" });
+    const r = await check();
+    expect(r.text).toContain("https://h.io/?api_key=(hidden)");
+    expect(r.text).not.toContain("A1b2C3d4E5f6");
+  });
+
   it("refuses an unrecognised licence as ambiguous", async () => {
     stage({ ...BENIGN, LICENSE: "just some words\n" });
     const r = await check();
