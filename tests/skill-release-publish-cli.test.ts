@@ -504,6 +504,8 @@ describe("syntax and helpers", () => {
     expect(parseReleaseTarget("Foo@1")).toBeUndefined();
     expect(releaseOperandsProblem(["publish", "cat@1.0.0"])).toBeUndefined();
     expect(releaseOperandsProblem(["verify", "x"])).toBeUndefined();
+    expect(releaseOperandsProblem(["list"])).toBeUndefined();
+    expect(releaseOperandsProblem(["list", "x"])).toMatch(/"list"/);
     expect(releaseOperandsProblem(["publish", "foo"])).toMatch(/<catalogue>@<version>/);
   });
 

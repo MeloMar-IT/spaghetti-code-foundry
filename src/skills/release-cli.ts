@@ -1,5 +1,10 @@
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { readSkillLock } from "./lock.js";
 import { matchRelease, type ApprovedRelease } from "./release.js";
 import { readReleaseRequests } from "./release-requests.js";
+import { listStoredReleases } from "./release-store.js";
+import { readRunSkillLock } from "./run-lock.js";
 import { verifyRelease } from "./release-verify.js";
 import { SKILL_ID_RE, SKILL_VERSION_RE } from "./schema.js";
 
@@ -16,7 +21,62 @@ export function releaseOperandsProblem(operands: string[]): string | undefined {
   if (operands[0] === "publish" && operands.length === 2) {
     return parseReleaseTarget(operands[1]!) ? undefined : "scf skills release publish: the operand must be <catalogue>@<version>";
   }
-  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, or "publish" and <catalogue>@<version>';
+  if (operands[0] === "list" && operands.length === 1) return undefined;
+  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, "publish" and <catalogue>@<version>, or "list"';
+}
+
+/** `scf skills release list`: every stored release with its approval state and the run locks that use it. Reads only. */
+export function releaseList(out: (line: string) => void, opts: { home: string; runsDir: string; approved: readonly ApprovedRelease[] }): number {
+  // `id@version digest` → names of the runs whose lock holds it
+  const locked = new Map<string, Set<string>>();
+  try {
+    for (const d of readdirSync(opts.runsDir, { withFileTypes: true })) {
+      if (!d.isDirectory() || d.name.startsWith(".")) continue;
+      const r = readRunSkillLock(join(opts.runsDir, d.name));
+      if (!r.ok) continue;
+      for (const s of r.lock.skills) {
+        const k = `${s.id}@${s.version} ${s.digest}`;
+        (locked.get(k) ?? locked.set(k, new Set()).get(k)!).add(d.name);
+      }
+    }
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") out("NOTE the runs folder cannot be read; run locks are not checked");
+  }
+  const lock = readSkillLock(opts.home);
+  const listing = listStoredReleases(opts.home);
+  if (listing.refused) out(`NOTE skill-releases is ${listing.refused.replace(", not scanned", "; it is not read")}`);
+  if (listing.unreadable) out(`PROBLEM ${listing.unreadable} catalogue folder${listing.unreadable === 1 ? "" : "s"} in skill-releases cannot be read; their releases are not listed`);
+  const incomplete = !!listing.refused || listing.unreadable > 0;
+  for (let i = 0; i < listing.hidden; i++) out("RELEASE (name not shown) invalid: the folder name looks like a credential");
+  for (const r of listing.releases) {
+    const name = `${r.catalogue}@${r.version}`;
+    const v = verifyRelease(r.dir);
+    if (!v.ok) {
+      out(`RELEASE ${name} invalid: ${v.reason}`);
+      continue;
+    }
+    const m = v.manifest;
+    if (m.catalogue !== r.catalogue || m.version !== r.version) {
+      out(`RELEASE ${name} invalid: the release folder does not hold ${name}`);
+      continue;
+    }
+    const state = matchRelease({ state: "ok", manifest: m, digest: v.digest }, opts.approved).state;
+    const runs = new Set<string>();
+    for (const s of m.skills) for (const n of locked.get(`${s.id}@${s.version} ${s.digest}`) ?? []) runs.add(n);
+    const n = m.skills.length;
+    out(`RELEASE ${name} ${v.digest} ${state} ${n} skill${n === 1 ? "" : "s"}, ${runs.size ? `locked by ${runs.size} run${runs.size === 1 ? "" : "s"}` : "not locked by any run"}`);
+    if (state !== "approved" || !lock.ok) continue;
+    for (const s of m.skills) {
+      if (!s.revoked && !lock.pins[`${s.id}@${s.version}`]) out(`PIN scf skills pin ${s.id}@${s.version} ${s.digest}`);
+    }
+  }
+  const total = listing.releases.length + listing.hidden;
+  if (incomplete) {
+    out(`The release store could not be read completely; ${total} release${total === 1 ? "" : "s"} listed`);
+    return 1;
+  }
+  out(total ? `OK ${total} release${total === 1 ? "" : "s"}` : "No releases are published");
+  return 0;
 }
 
 /** `scf skills release verify <dir>`: offline; prints checked fields only. Exit 0 when the release is intact, whether or not it is approved. */
