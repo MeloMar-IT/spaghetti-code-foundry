@@ -3578,6 +3578,55 @@ sources:
 - **Rules.** `high_risk` is a subset of `capabilities`. A capability belongs to either `vendor` or `portable` skills, not both, so use separate capability ids for each class.
 - **Check.** `scf skills profiles check [<file>]` reads `skill-source-profiles.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each skill with its class, capabilities, high-risk capabilities, requirements and evaluations, then `OK <n> skills in <m> sources, <k> exclusive`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values and URLs with user info are never printed.
 
+#### Evaluate the profile gates
+
+`scf skills profiles evaluate <source-id>` shows, for each skill of a staged import, whether it passes the gates it must pass before promotion. It is offline and read-only: nothing is written, promoted or locked, and no credential or project value is read. The command is `profiles evaluate`; `scf skills evaluate` is the source report of [Evaluate a source](#evaluate-a-source).
+
+```
+scf skills profiles evaluate example-skills
+```
+
+```
+PASS cosmos-db-setup (cosmos-db-setup) vendor capabilities=cosmos-db-access high_risk=cosmos-db-access sha256:…
+NEEDS cosmos-db-setup config=COSMOS_ENDPOINT live_services=COSMOS_KEY
+BLOCKED sql-migrations (sql-migrations) portable capabilities=sql-migrations high_risk=- sha256:…: evaluation: correctness not recorded
+MISSING example-skills/backup-tuning: in skill-source-profiles.yaml, not staged
+EVALUATED 2 skills from acme/skills@3c1d… sha256:…: 1 pass, 1 blocked, 1 missing
+```
+
+- **Gates.** Each blocked skill lists its reasons, by gate, in this order:
+  - `declared`: the staged skill has no entry in `skill-source-profiles.yaml`.
+  - `licence`: the stored licence evidence must be `allowed`. Without evidence the reason says to run the import again.
+  - `security`: the skill must normalize and have no open high finding. This is the same decision as `scf skills scan`.
+  - `requirements`: every tool or connector the package needs must be in the skill's `requires`. An undeclared need blocks.
+  - `evaluation`: each kind in the skill's `evaluations` needs a passed record, see below.
+- **NEEDS.** The configuration names and live services a profiled skill declares, as names only. The command grants nothing with them.
+- **MISSING.** A profile entry with no staged skill. It is reported, and it is not a block.
+- **Each line** shows the id, the class, the capabilities, the high-risk capabilities and the digest. A blocked line shows the digest too, so you can copy the id and digest into a record.
+- **Exit code.** 1 when a skill is blocked or a `PROBLEM` line is printed; otherwise 0.
+
+##### Evaluation records
+
+`skill-profile-evaluations.yaml` in the current folder holds the owner's results. It is changed by pull request and read only by this command. An absent file means no records, and every required evaluation is then `not recorded`.
+
+```yaml
+schema: 1
+evaluations:
+  - skill: sql-migrations
+    digest: sha256:9d1e0b7a…
+    kind: correctness
+    verdict: passed
+    owner: "@acme/skills"
+    reviewed: 2026-10-01
+    expires: 2027-04-01
+    report: 7c3f…
+```
+
+- **Fields.** `skill` and `kind` are slugs, `digest` is the package digest, `verdict` is `passed` or `failed`, and `owner` is a GitHub user or team. `reviewed` and `expires` are dates. `report` is optional and may hold the digest of a scored record. Up to 500 records.
+- **Lifetime.** `expires` is at most 365 days after `reviewed`, and not before it. `reviewed` may not be in the future.
+- **Matching.** A record counts only for its skill id, its kind and its exact digest. A new upstream digest voids it. A `failed` record at that digest blocks even when a `passed` one exists. An expired record blocks.
+- **Refused.** Wildcards, unknown keys, credential-like text and control characters. An invalid file prints `PROBLEM skill-profile-evaluations.yaml <where>: <message>` lines, and nothing is evaluated.
+
 #### Owner overrides and project pins
 
 Two reviewed records can choose one approved skill for a capability that allows only one. Both are checked with the CLI; no run reads them yet, so runs choose as before.
@@ -4780,6 +4829,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills selections evaluate <source-id> [<selections-file>]` | Print per skill of a staged import whether it is `ELIGIBLE` or `HELD`, and the `OVERLAP` lines; offline and read-only; writes nothing; exits 1 for a `PROBLEM` or a usage error ([Evaluate an import](#evaluate-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ... \| --repo <dir>]` | Report compatibility, tools, access, licence and overlap of an enabled source; `--repo` reads the versions from the `package.json` files of a folder (sources with a reviewed profile only); writes nothing; exits 1 on a refusal, a block, a conflict, a missing selected folder or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
+| `scf skills profiles evaluate <source-id>` | Print `PASS` or `BLOCKED` per staged skill of a profiled source, with the gate reasons, `NEEDS` and `MISSING` lines; offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Evaluate the profile gates](#evaluate-the-profile-gates)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance, findings and evaluations allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `EVALUATION`, `CHECKED` lines); reads `skill-evaluations.yaml` and `skill-selections.yaml`; offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion), [Confluent skills](#confluent-skills)) |
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `VERSIONS`, `PROBLEM` and `OVERLAP` lines; reads `skill-selections.yaml`; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
 | `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
