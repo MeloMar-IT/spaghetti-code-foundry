@@ -4,6 +4,9 @@ import { SOURCE_CONNECTORS, connectorSource } from "../skills/connectors.js";
 import { reviewLines } from "../skills/import-review.js";
 import { readStagedImport } from "../skills/import-stage.js";
 import { reviewStaged } from "../skills/review-cli.js";
+import { sourceChangeLine, type SourceChange } from "../skills/source-change.js";
+import type { ImportGates } from "../skills/source-update.js";
+import { changesSince, newImportGates } from "./update-changes.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
 import { addConnectorEntry, changeApproved, checkEdit, communityReview, updateBranch, updatePullRequest } from "../skills/source-update.js";
 import { OWNER_RE, readSources, shownValue, SOURCES_FILE, type SkillLibrarySource, type SourceReview } from "../skills/sources.js";
@@ -264,9 +267,33 @@ async function run(
   if (read2.state !== "ok") return problem(`the staged import could not be read back; ${NOTHING}`);
   const report = reviewStaged({ source: candidate, commit, record: read2.record, files: read2.files, licence: read2.licence }, { home: opts.home });
   await tick();
+
+  // What changed since the approved commit. An old commit that is not in quarantine is staged first, silently; a failure only
+  // means it could not be compared.
+  let change: SourceChange | "not-compared" | undefined;
+  let gates: ImportGates | undefined;
+  if (oldCommit !== undefined && existing !== undefined) {
+    change = await changesSince({
+      old: existing,
+      oldCommit,
+      next: { source: candidate, staged: read2, review: report },
+      cwd,
+      home: opts.home,
+      today,
+      stage: async (src, c) => {
+        const r = await stageSource(src, c, () => {}, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal });
+        await tick();
+        return r.code === 0 && r.done !== undefined;
+      },
+    });
+    await tick();
+    out(sourceChangeLine(change, oldCommit));
+    // The gates of the new import hold whether or not the old commit could be compared.
+    if (change === "not-compared") gates = newImportGates({ next: { source: candidate, staged: read2, review: report }, cwd, home: opts.home });
+  }
   out(reviewLines(report).at(-1)!);
 
-  const pr = updatePullRequest({ source: candidate, oldCommit, commit, track, review, rejected: read2.record.rejected, report });
+  const pr = updatePullRequest({ source: candidate, oldCommit, commit, track, review, rejected: read2.record.rejected, report, change, gates });
   const proposal = commitFile(ctx, baseCommit, path, Buffer.from(edited.text, "utf8"), blob?.mode ?? "100644", `Skill source ${id}: propose ${c12}`);
   await tick();
 

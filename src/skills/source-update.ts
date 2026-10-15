@@ -1,5 +1,6 @@
 import { isMap, isScalar, isSeq, parse as parseYaml, parseDocument, stringify, type Node, type Pair, type Scalar, type YAMLMap, type YAMLSeq } from "yaml";
-import { reviewFailed, reviewMarkdown, type ImportReview } from "./import-review.js";
+import { reviewMarkdown, type ImportReview } from "./import-review.js";
+import { notComparedMarkdown, SOURCE_CHANGE_LIMITS, sourceChangeMarkdown, type SourceChange } from "./source-change.js";
 import type { RejectedSkill } from "./import-plan.js";
 import { OWNER_RE, parseSources, shownFull, type SkillLibrarySource, type SourceReview } from "./sources.js";
 
@@ -248,6 +249,31 @@ function boundedList(items: readonly string[], budget: number): string[] {
   return out;
 }
 
+/** The gates of the new import that the review report does not hold. A `SourceChange` carries them too. */
+export interface ImportGates {
+  /** An allowed licence still needs a matching `licence.reviewed`. */
+  licenceUnreviewed: boolean;
+  /** Skills without a passing evaluation record for their digest. */
+  evaluationOpen: number;
+}
+
+export type AttentionPart ="security" | "licence" | "evaluation" | "review";
+
+/**
+ * The parts of the verdict that fail. `security`: a blocked scan or a blocking collision. `licence`: a licence that is not
+ * allowed, or evidence that `licence.reviewed` does not cover. `evaluation`: an added or changed skill without a passing record
+ * for its new digest. `review`: problems of the report. `reviewFailed` holds exactly when security, licence or review is named.
+ */
+export function attentionParts(report: ImportReview, gates?: ImportGates): AttentionPart[] {
+  const skills = report.categories.flatMap((c) => c.skills);
+  const parts: AttentionPart[] = [];
+  if (skills.some((s) => s.scan.blocked) || report.collisions.some((c) => c.blocking)) parts.push("security");
+  if (skills.some((s) => s.licence.status !== "allowed") || gates?.licenceUnreviewed) parts.push("licence");
+  if (gates !== undefined && gates.evaluationOpen > 0) parts.push("evaluation");
+  if (report.problems.length > 0) parts.push("review");
+  return parts;
+}
+
 /** The title and the Markdown body of the pull request: values and the review report only, never upstream skill text. */
 export function updatePullRequest(o: {
   source: Pick<SkillLibrarySource, "id" | "repositoryKey" | "paths" | "trust" | "status">;
@@ -257,9 +283,14 @@ export function updatePullRequest(o: {
   review?: SourceReview;
   rejected: readonly RejectedSkill[];
   report: ImportReview;
+  /** What changed since `oldCommit`, or that it could not be compared. Ignored for a first import. */
+  change?: SourceChange | "not-compared";
+  /** The gates of the new import, used when the change is not known (the old commit could not be compared). */
+  gates?: ImportGates;
 }): { title: string; body: string } {
   const { source, oldCommit, commit } = o;
   const c12 = commit.slice(0, 12);
+  const parts = attentionParts(o.report, oldCommit ? (typeof o.change === "object" ? o.change : o.gates) : undefined);
   const title = oldCommit ? `Skill source ${source.id}: update to ${c12}` : `Skill source ${source.id}: first import at ${c12}`;
   const head: string[] = [
     `## Skill source ${oldCommit ? "update" : "first import"}: ${code(source.id)}`,
@@ -268,7 +299,7 @@ export function updatePullRequest(o: {
     `- Tracked ref: ${o.track !== undefined ? code(o.track) : "`HEAD`"}`,
     `- Old commit: ${oldCommit ? code(oldCommit) : "none (first import)"}`,
     `- New commit: ${code(commit)}`,
-    `- Verdict: ${reviewFailed(o.report) ? "needs attention (see the report below)" : "no blocking finding"}`,
+    `- Verdict: ${parts.length > 0 ? `needs attention: ${parts.join(", ")} (see below)` : "no blocking finding"}. Nothing is promoted until the gates pass.`,
     "",
     "Selected paths:",
     "",
@@ -286,6 +317,15 @@ export function updatePullRequest(o: {
     head.push("", "Rejected skill roots (not staged):", "", ...boundedList(o.rejected.map((r) => `- ${code(r.root)}: ${r.reasons.map(code).join("; ")}`), REJECTED_BYTES));
   }
   const header = head.join("\n") + "\n\n";
-  const report = reviewMarkdown(o.report, { bytes: Math.max(1000, PULL_REQUEST_BYTES - Buffer.byteLength(header)) });
-  return { title, body: header + report };
+  const headerBytes = Buffer.byteLength(header);
+  let changes = "";
+  if (oldCommit && o.change !== undefined) {
+    changes =
+      o.change === "not-compared"
+        ? notComparedMarkdown(oldCommit)
+        : sourceChangeMarkdown(o.change, { bytes: Math.max(1000, Math.min(SOURCE_CHANGE_LIMITS.bytes, PULL_REQUEST_BYTES - headerBytes - 1000)) });
+    changes += "\n";
+  }
+  const report = reviewMarkdown(o.report, { bytes: Math.max(1000, PULL_REQUEST_BYTES - headerBytes - Buffer.byteLength(changes)) });
+  return { title, body: header + changes + report };
 }

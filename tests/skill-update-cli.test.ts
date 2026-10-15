@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { UPDATE_USAGE } from "../src/skill-import/update-cli.js";
+import { GitTreeError, openGitTree } from "../src/skill-import/git-tree.js";
 import { LsRemoteError, type LsRemoteErrorCode } from "../src/skill-import/ls-remote.js";
 import { branches, branchOf, catalogueYaml, ghCalls, git, GOOD_REVIEW, SENTINEL, sigCounts, snapshot, update, useWorlds, W, world } from "./helpers/skill-update-world.js";
 
@@ -65,6 +66,47 @@ describe("a community entry, end to end", () => {
     expect(branches(w)).toHaveLength(1);
   });
 
+  it("shows what changed since the approved commit, staging the old commit first", async () => {
+    const { c1, c2 } = W;
+    const w = world();
+    expect(existsSync(join(w.home, "skill-quarantine", "lib", c1))).toBe(false);
+    const r = await update(w, ["lib"], GOOD_REVIEW);
+    expect(r.rc).toBe(0);
+    expect(existsSync(join(w.home, "skill-quarantine", "lib", c1, "import.json"))).toBe(true);
+    // the old commit is staged silently
+    expect(r.lines.filter((l) => l.startsWith("OK ") && l.includes("staged"))).toHaveLength(1);
+    expect(r.lines.at(-3)).toBe(`CHANGES since ${c1.slice(0, 12)}: 0 changed, 1 added, 0 removed, 1 unchanged; 1 needs a new evaluation record`);
+    expect(r.lines.at(-2)).toMatch(/^REVIEWED /);
+
+    const body = readFileSync(w.log, "utf8").split("--- pr body:\n")[1]!;
+    expect(body).toContain(`### Changes since \`${c1.slice(0, 12)}\``);
+    expect(body).toContain("| `skills/b` | added |");
+    expect(body).toContain("Unchanged (1): `skills/a`");
+    expect(body).toContain("new digest: needs a new record");
+    expect(body).toMatch(/- Verdict: needs attention: [a-z, ]*evaluation[a-z, ]* \(see below\)\. Nothing is promoted until the gates pass\./);
+    expect(body.indexOf("### Changes since")).toBeLessThan(body.indexOf("## Skill import review"));
+    expect(body).not.toContain(SENTINEL);
+    expect(Buffer.byteLength(body)).toBeLessThanOrEqual(64_100);
+  });
+
+  it("opens the pull request when the old commit cannot be staged, and says it could not be compared", async () => {
+    const { c1, c2 } = W;
+    const w = world();
+    const open: NonNullable<Parameters<typeof update>[4]>["open"] = async (source, commit, o) => {
+      if (commit === c1) throw new GitTreeError("no-commit");
+      return openGitTree(source, commit, o);
+    };
+    const r = await update(w, ["lib"], GOOD_REVIEW, { open });
+    expect(r.rc).toBe(0);
+    expect(r.lines.at(-3)).toBe(`CHANGES the old commit ${c1.slice(0, 12)} could not be compared`);
+    expect(r.lines.at(-1)).toBe(`OK opened https://github.com/owner/repo/pull/99 for lib@${c2.slice(0, 12)}; nothing is approved until it is merged`);
+    expect(existsSync(join(w.home, "skill-quarantine", "lib", c1))).toBe(false);
+    const body = readFileSync(w.log, "utf8").split("--- pr body:\n")[1]!;
+    expect(body).toContain("could not be staged or read, so it could not be compared");
+    // the gates of the new import hold without the comparison: no evaluation record exists
+    expect(body).toMatch(/- Verdict: needs attention: [a-z, ]*evaluation[a-z, ]* \(see below\)\./);
+  });
+
   it("prints UNCHANGED, with no gh call, when the upstream is at ref.approved", async () => {
     const w = world(catalogueYaml({ lib: W.c2 }));
     const r = await update(w, ["lib"]); // no --reviewer: nothing is proposed, so no review is needed
@@ -112,6 +154,8 @@ describe("other entries and first imports", () => {
     expect(git(w.bare, "diff", "--name-only", "main", branch)).toBe("skill-sources.yaml");
     const log = readFileSync(w.log, "utf8");
     expect(log).toContain("none (first import)");
+    expect(log).not.toContain("Changes since");
+    expect(r.text).not.toContain("CHANGES");
     expect(log).toContain(`Skill source awesome-copilot: first import at ${c2.slice(0, 12)}`);
   });
 
