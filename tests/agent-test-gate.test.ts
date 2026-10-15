@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { testGateEnv } from "../src/agents/run.js";
 import { TOOLS_DIR } from "../src/engine/guards.js";
 // @ts-expect-error a plain ES module of the tools folder, without types
-import { isTestCommand } from "../tools/agent-bin/_gate.mjs";
+import { gatedArgs, isTestCommand } from "../tools/agent-bin/_gate.mjs";
 
 const BIN = resolve("tools/agent-bin");
 
@@ -44,13 +44,50 @@ describe("isTestCommand", () => {
   ])("%s %j is not", (name, args) => expect(isTestCommand(name, args)).toBe(false));
 });
 
+const GW = ["-Xmx64m", "-Dorg.gradle.appname=gradlew", "-classpath", "/p/gradle/wrapper/gradle-wrapper.jar", "org.gradle.wrapper.GradleWrapperMain"];
+const MW = ["-classpath", "/p/.mvn/wrapper/maven-wrapper.jar", "org.apache.maven.wrapper.MavenWrapperMain"];
+const CW = ["-Dmaven.home=/m", "-classpath", "/m/boot/plexus-classworlds.jar", "org.codehaus.plexus.classworlds.launcher.Launcher"];
+
+describe("isTestCommand for java (wrappers)", () => {
+  it.each([
+    [[...GW, "test"]], [[...GW, ":app:test"]], [[...GW, "check"]], [[...GW, "build"]], [[...GW, "integrationTest"]], [[...GW, "install"]],
+    [["-jar", "/p/gradle/wrapper/gradle-wrapper.jar", "test"]], [[...MW, "verify"]], [[...MW, "test"]], [[...CW, "-q", "test"]],
+  ])("%j is a test run", (args) => expect(isTestCommand("java", args)).toBe(true));
+
+  it.each([
+    [[...GW, "assemble"]], [[...GW, "dependencies"]], [[...GW, "--version"]], [[...GW, "compileJava"]], [[...MW, "compile"]], [[...CW, "compile"]],
+    [["-version"]], [["-jar", "app.jar", "test"]], [["-cp", "x", "com.acme.Main", "test"]],
+    [["-jar", "other.jar", "org.gradle.wrapper.GradleWrapperMain", "test"]],
+    [["-cp", "x", "com.acme.Main", "org.gradle.wrapper.GradleWrapperMain", "test"]],
+    [["-cp", "org.gradle.wrapper.GradleWrapperMain", "com.acme.Main", "test"]],
+    [["-m", "mod/org.gradle.wrapper.GradleWrapperMain", "test"]],
+    [["@argfile", "org.gradle.wrapper.GradleWrapperMain", "test"]],
+  ])("%j is not", (args) => expect(isTestCommand("java", args)).toBe(false));
+});
+
+describe("gatedArgs", () => {
+  it("gives a Gradle run a low-priority daemon, in the right place", () => {
+    expect(gatedArgs("gradle", ["test"])).toEqual(["-Dorg.gradle.priority=low", "test"]);
+    expect(gatedArgs("java", [...GW, "test"])).toEqual([...GW, "-Dorg.gradle.priority=low", "test"]);
+    expect(gatedArgs("java", ["-jar", "/p/gradle-wrapper.jar", "test"])).toEqual(["-jar", "/p/gradle-wrapper.jar", "-Dorg.gradle.priority=low", "test"]);
+  });
+  it("leaves a call that sets a priority, Maven and other programs alone", () => {
+    expect(gatedArgs("gradle", ["test", "--priority=normal"])).toEqual(["test", "--priority=normal"]);
+    expect(gatedArgs("gradle", ["-Dorg.gradle.priority=normal", "test"])).toEqual(["-Dorg.gradle.priority=normal", "test"]);
+    expect(gatedArgs("mvn", ["verify"])).toEqual(["verify"]);
+    expect(gatedArgs("java", [...MW, "verify"])).toEqual([...MW, "verify"]);
+    const app = ["-cp", "x", "com.acme.Main", "org.gradle.wrapper.GradleWrapperMain", "test"];
+    expect(gatedArgs("java", app)).toEqual(app);
+  });
+});
+
 describe("tools/agent-bin", () => {
   it("runs a test command through a test slot, at low priority, and passes its output and exit code through", () => {
     const f = fakes(["npx"]);
     const r = run(f, "npx", ["vitest", "run"]);
     expect(r.status).toBe(7);
     const line = readFileSync(f.log, "utf8").trim();
-    expect(line).toMatch(/^npx vitest run nice=1\d? slot=1$/);
+    expect(line).toMatch(/^npx vitest run nice=\d+ slot=1$/);
     expect(Number(/nice=(\d+)/.exec(line)![1])).toBeGreaterThanOrEqual(10);
     // the slot is free again
     expect(readdirSync(f.slots)).toEqual([]);

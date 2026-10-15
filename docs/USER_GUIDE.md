@@ -2057,9 +2057,13 @@ flowchart LR
   scripts, `npx vitest` (and jest, mocha, playwright …), `pytest`, `python -m pytest`, `gradle`/`mvn`
   test, check, build or verify, and `go test`/`cargo test` go through the same test slots and run at
   the same low priority (the small commands in `tools/agent-bin` come first on the agent's `PATH`).
+  The wrappers of Gradle and Maven, `./gradlew` and `./mvnw` (also as `sh ./gradlew` or with an
+  absolute path), count too when they run a test goal: `test`, `check`, `build`, `verify`,
+  `integrationTest`, `connectedCheck`, `install`, or a task such as `:app:test`. A Gradle run in a
+  slot gets a low-priority Gradle daemon. Other goals, such as `./gradlew assemble`, run unchanged.
   An agent waits at most 5 minutes for a slot (`FACTORY_AGENT_TEST_WAIT_SEC`), then its tests run
-  anyway. Every other command runs unchanged. Not covered: a project's own wrapper started by path,
-  such as `./gradlew test`, and steps of a user's run in the OS sandbox.
+  anyway. Every other command runs unchanged. Not covered: other test scripts started by path, such
+  as `./scripts/test.sh`, and steps of a user's run in the OS sandbox.
 - **Small sessions for easy steps.** Writing the docs and resolving a merge conflict each start a
   fresh session with only what they need, instead of continuing the whole coding conversation. If
   the tests fail after a resolved conflict, the coding session takes over.

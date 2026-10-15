@@ -15,6 +15,7 @@ import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { TOOLS_DIR } from "../engine/guards.js";
 import { render } from "../engine/template.js";
 import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
+import { discoverJavaHome, javaStandIn } from "./java-gate.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, type Target } from "./targets.js";
 import { stepOverride, type Override } from "../analyst/overrides.js";
@@ -53,7 +54,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
     if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, iso ? tokenVarNames(engine.config) : []) };
     // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder.
-    if (!boxed) env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir) };
+    if (!boxed) env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir, env.JAVA_HOME) };
     let profile: string | undefined;
     let bin: string | undefined;
     if (boxed) {
@@ -434,10 +435,19 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
  * The environment of the test gate of agent steps: tools/agent-bin first on the PATH and the machine's slots folder
  * (next to `runs/`, where the test steps of a flow take theirs). The gate sends test commands through tools/test-slot.
  */
-export function testGateEnv(path: string | undefined, runDir: string): Record<string, string> {
+export function testGateEnv(path: string | undefined, runDir: string, javaHome?: string): Record<string, string> {
   const bin = join(TOOLS_DIR, "agent-bin");
   const rest = (path ?? "").split(delimiter).filter((p) => p && p !== bin);
-  return { PATH: [bin, ...rest].join(delimiter), FACTORY_TEST_SLOTS_DIR: join(runDir, "..", "..", "test-slots") };
+  const env: Record<string, string> = { PATH: [bin, ...rest].join(delimiter), FACTORY_TEST_SLOTS_DIR: join(runDir, "..", "..", "test-slots") };
+  // A wrapper started by its path (./gradlew, ./mvnw) ends in $JAVA_HOME/bin/java: JAVA_HOME becomes a stand-in JDK whose
+  // java goes through the gate (the JDK the wrapper would find itself, when JAVA_HOME is not set). Without one: the PATH only.
+  const home = javaHome || discoverJavaHome(path);
+  const stand = home ? javaStandIn(home, join(runDir, "..", "..", "agent-java")) : undefined;
+  if (stand) {
+    env.JAVA_HOME = stand.home;
+    env.FACTORY_REAL_JAVA_HOME = stand.real;
+  }
+  return env;
 }
 
 /**
