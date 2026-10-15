@@ -734,6 +734,34 @@ body.side-closed .side { display: none; }
 .epics-table td p { margin: 4px 0 0; }
 .epics-blocks, .epics-holds { margin: 0; padding-left: 1em; }
 .epics-fresh { font-size: var(--text-meta); margin: 0; }
+.epic-section { margin-bottom: var(--space-md); min-width: 0; }
+.epic-section h2, .epic-section h3 { margin-top: 0; }
+.epic-stories, .epic-history { margin: 0; padding-left: 1.4em; }
+.epic-stories li, .epic-history li, .epic-path { overflow-wrap: anywhere; }
+.epic-stories li p { margin: 2px 0 0; }
+.chain-graph { overflow-x: auto; max-width: 100%; }
+.chain-graph svg { display: block; max-width: none; }
+.chain-graph text { font-family: var(--sans); fill: var(--text); }
+.chain-graph .sub { font-size: var(--text-micro); fill: var(--text); font-family: var(--mono); }
+.chain-node { fill: var(--color-neutral-soft); stroke: var(--border); stroke-width: 1.2; }
+.chain-node.state-done { fill: var(--color-success-soft); }
+.chain-node.state-working { fill: var(--color-running-soft); }
+.chain-node.state-your_turn { fill: var(--color-waiting-soft); }
+.chain-node.state-failed { fill: var(--color-danger-soft); }
+.chain-node.critical { stroke: var(--accent); stroke-width: 2; }
+.chain-link:hover .chain-node, .chain-link:focus-visible .chain-node { stroke: var(--accent); }
+.chain-edge { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.chain-edge.critical { stroke: var(--accent); stroke-width: 2; }
+.chain-edge.cycle { stroke-dasharray: 4 3; }
+.chain-arrow { fill: var(--muted); }
+.chain-arrow.critical { fill: var(--accent); }
+.legend i.crit { border-color: var(--accent); }
+.legend i.seg-stories { border-color: var(--color-neutral); }
+.legend i.seg-done { border-color: var(--color-success); }
+.epic-chart .line-stories { fill: none; stroke: var(--color-neutral); stroke-width: 2; }
+.epic-chart .line-done { fill: none; stroke: var(--color-success); stroke-width: 2; }
+.epic-chart .dot-stories { fill: var(--color-neutral); }
+.epic-chart .dot-done { fill: var(--color-success); }
 .work-list { width: 100%; }
 .work-list td { vertical-align: top; overflow-wrap: anywhere; font-size: var(--text-small); }
 .work-list th { font-size: var(--text-meta); text-align: left; }

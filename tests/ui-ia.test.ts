@@ -63,6 +63,14 @@ describe("the navigation lists", () => {
     expect(ia.primaryFor("user").map((p: any) => p.label)).toEqual(["Home", "Epics", "My runs", "My repositories", "Refinement"]);
     for (const role of ["admin", "user"]) expect(ia.resolve(role, "#/epics?repo=acme%2Fapp")).toMatchObject({ redirected: false, page: { id: "epics" }, query: { repo: "acme/app" } });
     for (const role of ["admin", "user"]) {
+      const r = ia.resolve(role, "#/epics/12?repo=acme%2Fapp");
+      expect(r).toMatchObject({ redirected: false, page: { id: "epic" }, arg: "12", title: "Epic #12", query: { repo: "acme/app" }, back: "#/epics?repo=acme%2Fapp" });
+      expect(r.crumbs).toEqual([{ label: "Epics", href: "#/epics?repo=acme%2Fapp" }, { label: "Epic #12", href: null }]);
+      expect(ia.resolve(role, "#/epics/12")).toMatchObject({ back: "#/epics", crumbs: [{ label: "Epics", href: "#/epics" }, { label: "Epic #12", href: null }] });
+      expect(ia.resolve(role, "#/epics/l-abc_-")).toMatchObject({ page: { id: "epic" }, title: "Epic" });
+      expect(ia.resolve(role, "#/epics/12?repo=all").back).toBe("#/epics");
+    }
+    for (const role of ["admin", "user"]) {
       expect(ia.primaryFor(role).length).toBeLessThanOrEqual(ia.MAX_PRIMARY);
       expect(ia.actionsFor(role).map((a: any) => a.href)).toEqual(["#/start"]);
     }
