@@ -865,6 +865,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   lock and hooks folders can be read; a Codex read-only step is held by the outer profile only; Docker
   steps are held by the container; with `sandbox.user_runs: off` nothing is held; the push hook does not
   run in a Docker step.
+- **Evaluation limits (#534).** `src/engine/eval-limits.ts` holds one process-wide limit, unset by default, that a later evaluation command sets for untrusted skills. It adds three things to every sandboxed step: outbound TCP only to `*:<port>` or `localhost:<port>` entries (the profile denies `remote ip "*:*"`, then allows each `remote tcp` entry); `denyRead` folders denied before every allow exception (made real with `deepReal`); and, for a Claude agent, `--tools` with only the allowed tools, `disableAllHooks`, and strict MCP and setting sources. Only the port is filtered because Seatbelt accepts only `*` or `localhost` as the host, so a host name is refused. Limit: the tests check the profile text and the arguments, not Seatbelt or Claude Code's enforcement.
 - **Permissions are enforced on the server.** Every API route has a rule in
   `src/server/permissions.ts`, and a test fails when a route has none.
 - **Blocking** an account signs it out at once, optionally stopping its work.
@@ -884,6 +885,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | Commands with text from an issue | Issue text and step output travel as environment variables only |
 | A reviewer changes code | Reviewers get read-only tools |
 | Untrusted test commands | Optional sandbox: Claude Code's sandbox or Docker |
+| An untrusted skill is evaluated | Evaluation limits (`eval-limits.ts`): outbound TCP to listed ports only, listed folders unreadable, and a Claude agent with only the listed tools and no hooks |
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
 | Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |

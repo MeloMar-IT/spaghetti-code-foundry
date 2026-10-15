@@ -5,6 +5,7 @@ import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { codexExecFlags, resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
+import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
 import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skills/payload.js";
@@ -295,11 +296,13 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     engine.log(`    · ${sessionToolsLine(o.toolCheck.tools)}`);
   }
   logSkills();
+  const limit = evaluationLimits();
   const r = await runClaude({
     ...common,
     env,
     cleanEnv: short,
     sandboxProfile: profile,
+    ...(limit ? { tools: [...limit.tools] } : {}),
     claudeBin: bin ?? engine.claudeBin,
     model: t.model,
     permissionMode: step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE,

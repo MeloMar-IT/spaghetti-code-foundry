@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createUser } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
-import { installDir, ownDir, readPlainFile, resetSandboxCache, SANDBOX_FOLDER_FAILED, SANDBOX_REFUSED, sandboxedRun, sandboxHomeEnv, sandboxProfile, wrapsStep, type SandboxPaths } from "../src/engine/os-sandbox.js";
+import { evaluationLimits, OUTBOUND_REFUSED, READ_DENY_REFUSED, setEvaluationLimits } from "../src/engine/eval-limits.js";
+import { installDir, ownDir, readPlainFile, resetSandboxCache, SANDBOX_FOLDER_FAILED, SANDBOX_REFUSED, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep, type SandboxPaths } from "../src/engine/os-sandbox.js";
 import { spawnTarget } from "../src/steps/process.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
@@ -28,6 +29,17 @@ const at = (text: string, needle: string) => {
   return i;
 };
 const lines = (text: string) => text.split("\n");
+// The read rules in order, the last match wins (what sandbox-exec does).
+const readable = (text: string, path: string): boolean => {
+  let ok = true;
+  for (const l of lines(text)) {
+    const m = /^\((allow|deny) file-read\* \((subpath|literal) "(.*)"\)\)$/.exec(l);
+    if (!m) continue;
+    const hit = m[2] === "literal" ? path === m[3] : path === m[3] || path.startsWith(`${m[3]}/`);
+    if (hit) ok = m[1] === "allow";
+  }
+  return ok;
+};
 
 describe("sandboxProfile", () => {
   const text = sandboxProfile(base, same);
@@ -180,18 +192,6 @@ describe("sandboxProfile for an agent step", () => {
     expect(sandboxProfile({ ...base, agentProgram: undefined }, same)).toBe(text);
   });
 
-  // The read rules in order, the last match wins (what sandbox-exec does).
-  const readable = (text: string, path: string): boolean => {
-    let ok = true;
-    for (const l of lines(text)) {
-      const m = /^\((allow|deny) file-read\* \((subpath|literal) "(.*)"\)\)$/.exec(l);
-      if (!m) continue;
-      const hit = m[2] === "literal" ? path === m[3] : path === m[3] || path.startsWith(`${m[3]}/`);
-      if (hit) ok = m[1] === "allow";
-    }
-    return ok;
-  };
-
   it("no read rule for an agent program opens the agents' settings or login", () => {
     for (const prog of ["/Users/mac/.claude/local/claude", "/Users/mac/.claude/claude", "/Users/mac/.codex/bin/codex"]) {
       const text = sandboxProfile({ ...base, agentProgram: prog, programs: [prog] }, same);
@@ -207,6 +207,98 @@ describe("sandboxProfile for an agent step", () => {
     expect(installDir("/u/node_modules/@anthropic-ai/claude-code/cli.js")).toBe("/u/node_modules/@anthropic-ai/claude-code");
     expect(installDir("/u/node_modules/pkg/bin/x")).toBe("/u/node_modules/pkg");
     expect(installDir("/u/bin/claude")).toBeUndefined();
+  });
+});
+
+describe("evaluation limits", () => {
+  afterEach(() => setEvaluationLimits(undefined));
+  const step = { runDir: "/x/runs/r1", learnings: "" };
+
+  it("adds no network lines and no keys without a limit", () => {
+    const text = sandboxProfile(base, same);
+    expect(text).not.toContain("network-outbound (remote ip");
+    expect(text).not.toContain("remote tcp");
+    expect(evaluationLimits()).toBeUndefined();
+    const p = stepSandboxPaths(step);
+    expect(p).not.toHaveProperty("denyRead");
+    expect(p).not.toHaveProperty("outbound");
+  });
+
+  it("puts the network rules after the unix-socket and mDNSResponder rules", () => {
+    const l = lines(sandboxProfile({ ...base, outbound: ["*:443"] }, same));
+    const idx = [
+      "(deny network-outbound (remote unix-socket))",
+      "mDNSResponder",
+      '(deny network-outbound (remote ip "*:*"))',
+      '(allow network-outbound (remote tcp "*:443"))',
+      "(deny lsopen)",
+    ].map((n) => l.findIndex((x) => x.includes(n)));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+  });
+
+  it("allows localhost ports in input order, and an empty list means no network", () => {
+    const l = lines(sandboxProfile({ ...base, outbound: ["localhost:11434", "*:443"] }, same));
+    expect(l.indexOf('(allow network-outbound (remote tcp "localhost:11434"))')).toBeGreaterThan(0);
+    expect(l.indexOf('(allow network-outbound (remote tcp "localhost:11434"))')).toBeLessThan(l.indexOf('(allow network-outbound (remote tcp "*:443"))'));
+    const none = sandboxProfile({ ...base, outbound: [] }, same);
+    expect(none).toContain('(deny network-outbound (remote ip "*:*"))');
+    expect(none).not.toContain("remote tcp");
+  });
+
+  it("refuses bad outbound entries, in the profile and in the limit", () => {
+    for (const e of ["example.com:443", "*:0", "*:70000", "*:443\n(allow default)", "*:*", "localhost:", "127.0.0.1:80", ":443", "*:0443"]) {
+      expect(() => sandboxProfile({ ...base, outbound: [e] }, same), e).toThrow(OUTBOUND_REFUSED);
+      expect(() => setEvaluationLimits({ outbound: [e], denyRead: [], tools: [] }), e).toThrow(OUTBOUND_REFUSED);
+    }
+    expect(sandboxProfile({ ...base, outbound: ["*:65535"] }, same)).toContain('"*:65535"');
+  });
+
+  it("denies read after the temp deny and before the first allow, with parent folders", () => {
+    const paths: SandboxPaths = { ...base, denyRead: ["/srv/real-data"], runs: "/srv/real-data/eval/runs", runDir: "/srv/real-data/eval/runs/r1" };
+    const text = sandboxProfile(paths, same);
+    const l = lines(text);
+    const deny = l.indexOf('(deny file-read* (subpath "/srv/real-data"))');
+    expect(deny).toBeGreaterThan(l.indexOf('(deny file-read* (subpath "/var/tmpx"))'));
+    expect(deny).toBeLessThan(l.findIndex((x) => x.startsWith("(allow file-read*")));
+    expect(readable(text, "/srv/real-data/config.yaml")).toBe(false);
+    expect(readable(text, "/srv/real-data/eval/runs/r1/x")).toBe(true);
+    for (const d of ["/srv/real-data/eval", "/srv/real-data/eval/runs"]) {
+      expect(l.filter((x) => x === `(allow file-read-metadata (literal "${d}"))`)).toHaveLength(1);
+    }
+    const mapped = sandboxProfile({ ...base, denyRead: ["/tmp/d"] }, (p) => p.replace(/^\/tmp\/d/, "/private/tmp/d"));
+    expect(mapped).toContain('(deny file-read* (subpath "/private/tmp/d"))');
+    expect(() => sandboxProfile({ ...base, denyRead: ["rel/dir"] }, same)).toThrow(READ_DENY_REFUSED);
+    expect(() => setEvaluationLimits({ outbound: [], denyRead: ["rel/dir"], tools: [] })).toThrow(READ_DENY_REFUSED);
+  });
+
+  it("sets, freezes, keeps the old limit after a bad set, and resets", () => {
+    const input = { outbound: ["*:443"], denyRead: ["/srv/d"], tools: ["Read"] };
+    setEvaluationLimits(input);
+    input.outbound.push("*:80");
+    input.denyRead.length = 0;
+    input.tools.push("Bash");
+    const got = evaluationLimits()!;
+    expect(got).toEqual({ outbound: ["*:443"], denyRead: ["/srv/d"], tools: ["Read"] });
+    expect(Object.isFrozen(got) && Object.isFrozen(got.outbound) && Object.isFrozen(got.denyRead) && Object.isFrozen(got.tools)).toBe(true);
+    expect(() => (got.denyRead as string[]).push("/x")).toThrow();
+    expect(() => ((got.tools as string[]).length = 0)).toThrow();
+
+    const p = stepSandboxPaths(step);
+    expect(p.denyRead).toEqual(["/srv/d"]);
+    expect(p.outbound).toEqual(["*:443"]);
+    const text = sandboxProfile(p, same);
+    expect(text).toContain('(deny file-read* (subpath "/srv/d"))');
+    expect(text).toContain('(allow network-outbound (remote tcp "*:443"))');
+    p.outbound!.push("*:1");
+    expect(evaluationLimits()!.outbound).toEqual(["*:443"]);
+
+    expect(() => setEvaluationLimits({ outbound: ["bad"], denyRead: [], tools: [] })).toThrow(OUTBOUND_REFUSED);
+    expect(evaluationLimits()!.tools).toEqual(["Read"]);
+
+    setEvaluationLimits(undefined);
+    expect(evaluationLimits()).toBeUndefined();
+    expect(sandboxProfile(stepSandboxPaths(step), same)).not.toContain("remote tcp");
   });
 });
 

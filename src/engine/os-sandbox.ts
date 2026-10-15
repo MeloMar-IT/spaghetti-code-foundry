@@ -5,6 +5,7 @@ import { basename, delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import type { Config } from "../config.js";
 import { EVIDENCE_DIFF_FILE, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE, EVIDENCE_MANIFEST_FILE } from "../evidence/version.js";
 import { FACTORY_HOME } from "../flow/load.js";
+import { checkOutbound, evaluationLimits, READ_DENY_REFUSED } from "./eval-limits.js";
 import { TOOLS_DIR as TOOLS } from "./guards.js";
 import { userAccount } from "./isolation.js";
 
@@ -75,6 +76,10 @@ export interface SandboxPaths {
   agentProgram?: string;
   /** Writes only in `<runDir>/home` and `<runDir>/tmp` (a read-only Codex step): the workspace stays as it is. */
   workspaceReadOnly?: boolean;
+  /** Folders no step may read, from the evaluation limit. */
+  denyRead?: string[];
+  /** When set, the only outbound TCP: `*:<port>` or `localhost:<port>`. */
+  outbound?: string[];
 }
 
 type Real = (p: string) => string;
@@ -145,7 +150,12 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   const extra = (paths.userRead ?? []).filter((p) => isAbsolute(p)).map((p) => deepReal(p, real));
   const readFirst = [...new Set([...extra, ...programDirs, ...(agentInstall && !opensSecrets(agentInstall) ? [agentInstall] : [])])];
 
-  const denied = [home, data, runs, ...(temp ? [temp] : [])];
+  const outbound = paths.outbound?.map(checkOutbound);
+  const denyRead = (paths.denyRead ?? []).map((p) => {
+    if (!isAbsolute(p)) throw new Error(READ_DENY_REFUSED);
+    return deepReal(p, real);
+  });
+  const denied = [home, data, runs, ...(temp ? [temp] : []), ...denyRead];
   const subpathReads = [runDir, tools, hooks, lockDir, ...(ghDir ? [ghDir] : [])];
   const literalReads = [learnings, join(data, "known_hosts"), ...new Set([agent ? namedReal(agent, real) : undefined, agentReal].filter((p): p is string => Boolean(p)))];
 
@@ -160,7 +170,7 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   const out: string[] = ["(version 1)", "(allow default)"];
   // reads
   // all broad denies first, then every exception (also user_read and program folders inside the data, runs or temp folder)
-  for (const p of [home, data, runs, ...(temp ? [temp] : [])]) out.push(`(deny file-read* (subpath ${quote(p)}))`);
+  for (const p of denied) out.push(`(deny file-read* (subpath ${quote(p)}))`);
   for (const p of readFirst) out.push(`(allow file-read* (subpath ${quote(p)}))`);
   for (const p of subpathReads) out.push(`(allow file-read* (subpath ${quote(p)}))`);
   for (const p of literalReads) out.push(`(allow file-read* (literal ${quote(p)}))`);
@@ -185,6 +195,11 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   out.push('(deny mach-lookup (global-name "com.apple.SecurityServer") (global-name "com.apple.securityd"))');
   out.push("(deny network-outbound (remote unix-socket))");
   out.push('(allow network-outbound (literal "/private/var/run/mDNSResponder"))');
+  // an evaluation limit: TCP only to the listed ports (Seatbelt takes only `*` or `localhost` as the host)
+  if (outbound) {
+    out.push('(deny network-outbound (remote ip "*:*"))');
+    for (const e of outbound) out.push(`(allow network-outbound (remote tcp ${quote(e)}))`);
+  }
   out.push("(deny lsopen)", "(deny appleevent-send)", "(deny job-creation)");
   return out.join("\n");
 }
@@ -203,6 +218,7 @@ function onPath(name: string, path = process.env.PATH ?? ""): string | undefined
 export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?: string; claudeBin?: string; codexBin?: string; userRead?: string[]; agentBin?: string; workspaceReadOnly?: boolean }): SandboxPaths {
   const data = process.env.FACTORY_HOME ?? FACTORY_HOME;
   const programs = [process.execPath, onPath("git"), o.claudeBin ? (isAbsolute(o.claudeBin) ? o.claudeBin : onPath(o.claudeBin)) : onPath("claude"), o.codexBin ? (isAbsolute(o.codexBin) ? o.codexBin : onPath(o.codexBin)) : onPath("codex")];
+  const limit = evaluationLimits();
   return {
     home: homedir(),
     data,
@@ -218,6 +234,7 @@ export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?:
     userRead: o.userRead,
     ...(o.agentBin ? { agentProgram: isAbsolute(o.agentBin) ? o.agentBin : onPath(o.agentBin) } : {}),
     ...(o.workspaceReadOnly ? { workspaceReadOnly: true } : {}),
+    ...(limit ? { denyRead: [...limit.denyRead], outbound: [...limit.outbound] } : {}),
   };
 }
 
