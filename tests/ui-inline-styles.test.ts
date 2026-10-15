@@ -17,7 +17,7 @@ const CLEAN = [
   "ui/dashboard.js", "ui/operations.js", "ui/templates.js", "ui/problems.js", "ui/monitor.js", "ui/next.js",
   "ui/editor.js", "ui/app.js", "ui/flow-page.js", "ui/flow-shell.js", "ui/flow-state.js","ui/step-types.js", "ui/graph.js", "ui/library.js",
   "ui/runs.js", "ui/user/runs.js", "ui/run-skills.js", "ui/repos.js", "ui/repo-connect.js", "ui/repo-view.js", "ui/refinement.js", "ui/refinement-import.js", "ui/refinement-new.js", "ui/refinement-suggest.js", "ui/refinement-publish.js",
-  "ui/refinement-talk.js", "ui/refinement-impact.js", "ui/refinement-ready.js", "ui/settings-skills.js",
+  "ui/refinement-talk.js", "ui/refinement-impact.js", "ui/refinement-ready.js", "ui/settings-skills.js", "ui/epics.js",
 ];
 
 /** Lines left in a clean file. Matched by the text of the line, not the line number. */

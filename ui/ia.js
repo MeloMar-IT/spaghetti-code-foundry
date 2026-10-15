@@ -1,7 +1,7 @@
 // The information architecture: which pages exist, where they live in the navigation, and how an address
 // resolves. No imports, so both displays and the tests can load it.
 
-export const MAX_PRIMARY = 7;
+export const MAX_PRIMARY = 8;
 // "all" in `?repo=` means the unfiltered list; resolve() removes it, so pages never see it.
 export const ALL_REPOS = "all";
 export const FALLBACK = { admin: "#/home", user: "#/runs" };
@@ -25,6 +25,7 @@ export const PAGES = [
   { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home", user: "Home" }, roles: AU },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },
+  { id: "epics", path: "#/epics", title: "Epics", area: "work", dest: "epics", parent: null, nav: "primary", label: { admin: "Epics", user: "Epics" }, roles: AU, scope: true },
   { id: "refinement", path: "#/refinement", title: "Refinement", area: "work", dest: "refinement", parent: null, nav: "primary", label: { admin: "Refinement", user: "Refinement" }, roles: AU, scope: true },
   { id: "refinement-backlog", path: "#/refinement/backlog", title: "Backlog readiness", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "refinement-session", path: "#/refinement/:id", title: "Refinement session", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
@@ -58,6 +59,7 @@ export const PAGES = [
 export const DESTINATIONS = [
   { id: "home", label: { admin: "Home", user: "Home" }, landing: "home", group: "work", roles: AU },
   { id: "board", label: { admin: "Board" }, landing: "board", group: "work", roles: A },
+  { id: "epics", label: { admin: "Epics", user: "Epics" }, landing: "epics", group: "work", roles: AU },
   { id: "refinement", label: { admin: "Refinement", user: "Refinement" }, landing: "refinement", group: "work", roles: AU, rank: { user: 9 } },
   { id: "runs", label: { admin: "Runs", user: "My runs" }, landing: "runs", group: "work", roles: AU },
   { id: "repos", label: { admin: "Repositories", user: "My repositories" }, landing: "repos", group: "work", roles: AU },

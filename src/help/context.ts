@@ -180,6 +180,7 @@ export const HELP_PAGES: readonly HelpPage[] = [
   { id: "home", path: "#/home", title: "Home", roles: AU },
   { id: "board", path: "#/board", title: "Board", roles: A },
   { id: "board-repo", path: "#/board/:id", title: "Board of one repository", roles: A },
+  { id: "epics", path: "#/epics", title: "Epics", roles: AU },
   { id: "refinement", path: "#/refinement", title: "Refinement", roles: AU },
   { id: "refinement-backlog", path: "#/refinement/backlog", title: "Backlog readiness", roles: AU },
   { id: "refinement-session", path: "#/refinement/:id", title: "Refinement session", roles: AU, entity: "refinement" },

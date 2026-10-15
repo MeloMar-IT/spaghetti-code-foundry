@@ -83,6 +83,7 @@ describe("save", () => {
     for (let i = 0; i < 20; i++) expect(s.add(i % 2 ? "runs" : "board", `v${i}`, { repo: "a/b" }).ok).toBe(true);
     const before = st.data["scf.views.u1"];
     expect(s.add("refinement", "one more", { repo: "a/b" }).error).toBe(v.ERRORS.full);
+    expect(v.viewStore("u2", mem()).add("epics", "Epics", { repo: "a/b" }).ok).toBe(true);
     expect(st.data["scf.views.u1"]).toBe(before);
   });
 
@@ -232,6 +233,8 @@ describe("viewHash and sameFilters", () => {
     expect(v.viewHash(view("runs", {}))).toBe("#/runs?repo=all");
     expect(v.viewHash(view("refinement", { repo: "acme/app" }))).toBe("#/refinement?repo=acme%2Fapp");
     expect(v.viewHash(view("refinement", {}))).toBe("#/refinement?repo=all");
+    expect(v.viewHash(view("epics", { repo: "acme/app" }))).toBe("#/epics?repo=acme%2Fapp");
+    expect(v.viewHash(view("epics", {}))).toBe("#/epics?repo=all");
     expect(v.viewHash(view("board", { repo: "acme/app", owner: "u1" }))).toBe("#/board/acme%2Fapp?owner=u1");
     expect(v.viewHash(view("board", { owner: "u1" }))).toBe("#/board?repo=all&owner=u1");
     expect(v.viewHash(view("board", {}))).toBe("#/board?repo=all");
