@@ -3608,7 +3608,7 @@ EVALUATED 2 skills from acme/skills@3c1d… sha256:…: 1 pass, 1 blocked, 1 mis
 - **NEEDS.** The configuration names and live services a profiled skill declares, as names only. The command grants nothing with them.
 - **MISSING.** A profile entry with no staged skill. It is reported, and it is not a block.
 - **Each line** shows the id, the class, the capabilities, the high-risk capabilities and the digest. A blocked line shows the digest too, so you can copy the id and digest into a record.
-- **Exit code.** 1 when a skill is blocked or a `PROBLEM` line is printed; otherwise 0.
+- **Exit code.** 1 when a skill is blocked, a `PROBLEM` line is printed or the canonical recommendation has a `CONFLICT` (see [Canonical skill per capability](#canonical-skill-per-capability)); otherwise 0.
 
 ##### Evaluation records
 
@@ -3631,6 +3631,89 @@ evaluations:
 - **Lifetime.** `expires` is at most 365 days after `reviewed`, and not before it. `reviewed` may not be in the future.
 - **Matching.** A record counts only for its skill id, its kind and its exact digest. A new upstream digest voids it. A `failed` record at that digest blocks even when a `passed` one exists. An expired record blocks.
 - **Refused.** Wildcards, unknown keys, credential-like text and control characters. An invalid file prints `PROBLEM skill-profile-evaluations.yaml <where>: <message>` lines, and nothing is evaluated.
+
+#### Canonical skill per capability
+
+When an `exclusive` capability of a profiled source is provided by two or more skills, `scf skills profiles evaluate <source-id>` also recommends one of them. The lines come after the per-skill lines and before `EVALUATED`. The same rules as [Overlap with the catalogue](#overlap-with-the-catalogue) apply: a canonical skill is chosen by the same levels, and the rejection codes are the same.
+
+- **Which capabilities.** Only an `exclusive` capability that a skill of this source declares in `skill-source-profiles.yaml`. The providers are the staged skills of the source and the active skills registered locally (built-in and administrator). Installed copies from the repository are not compared.
+- **Blocked candidates.** A staged skill that fails a gate of the evaluation above is never recommended. Its failed gates are the evidence: `gates=` lists them by name (`declared`, `licence`, `security`, `requirements`, `evaluation`). A staged skill whose required evaluation is not recorded is rejected as `discovery-only`. A staged skill with no profile entry is not a provider at all.
+- **Installed copies.** A registered skill that is the same artifact as a staged one and declares the same capabilities keeps its own place and origin. The staged gate failures and the evaluation result are added to it.
+- **High risk.** A capability listed in a profile skill's `high_risk` is marked `high-risk` on its lines.
+- **Lines.**
+  - `CANONICAL <capability>: <id@version> <origin> (<level>)` names the winner, its origin (`staged`, `builtin` or `admin`) and the level that decided it. `only-candidate` means nothing else competed.
+  - `CONFLICT <capability>: <rule>: <message>` means the choice cannot be decided, for example `tie high-risk` when two skills tie on a high-risk capability.
+  - `NONE <capability>: no skill can be used` means every provider is rejected.
+  - `REJECTED <capability> <id@version> <origin>: <code>` gives each loser its code, then `(<level>)` when a level decided it, then `gates=…` when the candidate failed gates.
+  - Only validated ids, versions, codes and the selector's own message are printed. No name, description or path of an upstream skill is printed.
+- **Exit code.** 1 for a `CONFLICT`, a blocked skill or a `PROBLEM` line. A `CANONICAL`, `NONE` or `REJECTED` line alone does not change it.
+- **Catalogue problems.** `PROBLEM catalogue <source> <kind>` means the registered skills could not be read in full. It exits 1.
+- **Limits.** The staged and the registered skills together are at most 1,000. A larger set prints `PROBLEM too many skills or capabilities to compare` and exits 1.
+- **Read only.** The recommendation grants nothing: nothing is promoted, pinned or loaded, and no run reads it. Runs choose skills as before.
+
+For the fixture of the tests, the first output has no correctness record for the portable skill. The second output has a passed `database-correctness` record for it (ids and versions are examples):
+
+```
+CANONICAL postgresql: postgres-basics@1.0.0 staged (only-candidate)
+REJECTED postgresql postgres-practices@1.0.0 staged: discovery-only gates=evaluation
+```
+
+```
+CANONICAL postgresql: postgres-practices@1.0.0 staged (evaluation)
+REJECTED postgresql postgres-basics@1.0.0 staged: outranked (evaluation)
+```
+
+##### Example: Supabase agent skills
+
+This example adds the Supabase skills for PostgreSQL, authentication, row-level security and backend patterns, from `https://github.com/supabase/agent-skills`. It is for the owner of the catalogue; nothing in the repository holds the commit, the project or a key. **The folder names and the licence are placeholders.** They could not be checked against the upstream repository (no network), so check them against the commit you review before you use the entries. Each `# placeholder` comment marks a value to replace.
+
+The entry in `skill-sources.yaml`, under `sources:`:
+
+```yaml
+  - id: supabase-agent-skills
+    repository: https://github.com/supabase/agent-skills
+    status: enabled
+    ref:
+      approved: 0000000000000000000000000000000000000000   # placeholder: the reviewed full commit id goes here
+      track: main                                          # only to look for updates
+    paths: [skills]                                        # placeholder: check the folder names
+    adapter: agent-skills
+    trust: verified                                        # the vendor's own repository
+    licence: { allow: [MIT] }                              # placeholder: check against the approved commit
+    update: { cadence: manual }
+    owner: "@octocat"
+```
+
+The matching entry in `skill-source-profiles.yaml`, with `exclusive: [postgresql]` at the top of the file:
+
+```yaml
+schema: 1
+exclusive: [postgresql]
+sources:
+  - id: supabase-agent-skills
+    skills:
+      - name: supabase-postgres-best-practices         # placeholder: check the folder name
+        class: portable
+        capabilities: [postgresql, postgresql-query-performance, postgresql-schema-design, postgresql-row-level-security]
+        high_risk: [postgresql-row-level-security]
+        evaluations: [database-correctness]
+      - name: supabase                                 # placeholder: check the folder name
+        class: vendor
+        capabilities: [supabase-auth, supabase-rls-policies, supabase-edge-functions, supabase-realtime]
+        high_risk: [supabase-auth, supabase-rls-policies]
+        requires:
+          config: [SUPABASE_URL, SUPABASE_ANON_KEY]
+          tools: [network]
+          live_services: [supabase]
+```
+
+- **Approved commit.** `ref.approved` is a placeholder. The owner replaces it with the full commit id that was reviewed, in a pull request. Until then the source cannot be imported.
+- **Portable and vendor capabilities.** The portable skill provides the four PostgreSQL capabilities. The vendor skill provides the four Supabase capabilities. Each capability belongs to one class only, so a vendor skill cannot take over `postgresql`.
+- **Exclusive.** Only `postgresql` is exclusive. When the portable skill and another skill provide it, `scf skills profiles evaluate supabase-agent-skills` recommends one of them. The Supabase capabilities are not exclusive and get no `CANONICAL` line.
+- **High risk.** The auth capability (`supabase-auth`) and the row-level-security capabilities (`supabase-rls-policies` and `postgresql-row-level-security`) are in `high_risk`, so they are marked `high-risk`.
+- **Evaluation.** The portable skill needs a passed `database-correctness` record for its exact digest in `skill-profile-evaluations.yaml`. Without it the skill is blocked and cannot be recommended. The vendor skill needs no record here.
+- **Configuration names only.** The project URL and the anon key are read as the names `SUPABASE_URL` and `SUPABASE_ANON_KEY`. Their values are never stored in the repository, printed or sent to a command.
+- **Order of checks.** Run `scf skills sources check`, `scf skills profiles check`, `scf skills import supabase-agent-skills`, `scf skills scan supabase-agent-skills` and then `scf skills profiles evaluate supabase-agent-skills`. Each one is read-only, except the import, which only stages the skills in quarantine.
 
 #### Owner overrides and project pins
 
@@ -4875,7 +4958,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills selections evaluate <source-id> [<selections-file>]` | Print per skill of a staged import whether it is `ELIGIBLE` or `HELD`, and the `OVERLAP` lines; offline and read-only; writes nothing; exits 1 for a `PROBLEM` or a usage error ([Evaluate an import](#evaluate-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ... \| --repo <dir>]` | Report compatibility, tools, access, licence and overlap of an enabled source; `--repo` reads the versions from the `package.json` files of a folder (sources with a reviewed profile only); writes nothing; exits 1 on a refusal, a block, a conflict, a missing selected folder or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
-| `scf skills profiles evaluate <source-id>` | Print `PASS` or `BLOCKED` per staged skill of a profiled source, with the gate reasons, `NEEDS` and `MISSING` lines; offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Evaluate the profile gates](#evaluate-the-profile-gates)) |
+| `scf skills profiles evaluate <source-id>` | Print `PASS` or `BLOCKED` per staged skill of a profiled source, with the gate reasons, `NEEDS` and `MISSING` lines, and the `CANONICAL`, `CONFLICT`, `NONE` and `REJECTED` lines per exclusive capability; offline and read-only; exits 1 when a skill is blocked, a `PROBLEM` is printed or a `CONFLICT` is found ([Evaluate the profile gates](#evaluate-the-profile-gates), [Canonical skill per capability](#canonical-skill-per-capability)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance, findings and evaluations allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `EVALUATION`, `CHECKED` lines); reads `skill-evaluations.yaml` and `skill-selections.yaml`; offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion), [Confluent skills](#confluent-skills)) |
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `VERSIONS`, `PROBLEM` and `OVERLAP` lines; reads `skill-selections.yaml`; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
 | `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
