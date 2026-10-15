@@ -61,6 +61,7 @@ Usage:
   scf skills promote check <source-id> [<exceptions-file>]  Print whether licence, findings and evaluations allow promotion
   scf skills overlap <source-id>                 Compare a staged import with the registered skills (canonical or conflict per capability)
   scf skills score <source-id> [<suite-file>]    Score the skills of a staged import and store the records
+  scf skills effect <source-id> <skill-id> | <id@version> [<suite-file>]  Measure whether a skill helps (runs agents in the sandbox)
   scf skills gate <source-id> [<suite-file>]     Print which staged skills may be promoted
   scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
   scf skills review <source-id> [--markdown]     Print the licence, attribution and collision report of a staged import
@@ -248,9 +249,9 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
-  // writes only into skill-evaluations/ through claimHomeWrite: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
+  // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …` and `effect …`
+  // write only into skill-evaluations/ and skill-effects/ through claimHomeWrite: they run without choosing or moving the data folder.
+  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
@@ -329,7 +330,8 @@ async function main(argv: string[]): Promise<number> {
       if (arg === "evaluate") return (await import("./skill-import/evaluate-cli.js")).skillEvaluateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "discover") return (await import("./skill-import/discover-cli.js")).skillDiscoverCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       const agentScore = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentScore"]>>) => (await import("./skill-eval/score.js")).scoreImportWithAgent(...a);
-      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo, agentScore });
+      const agentEffect = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentEffect"]>>) => (await import("./skill-eval/effect.js")).effectWithAgent(...a);
+      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo, agentScore, agentEffect });
     }
 
     case "flow-guide": {

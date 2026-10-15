@@ -208,6 +208,21 @@ The gate reads no clock, file, process or network, and gives the same answer for
 - **Refusals first.** Before anything is made, a run is refused when the sandbox is missing or switched off, the suite has no `instructions`, the agent is not Claude, the model key is missing, or a fixture's hash differs from the suite digest's (`evaluationSuiteDigest` covers profile findings only, so instruction fixtures get their own content hash).
 - **Shared code.** `scoreImport` in `src/skills/evaluate-cli.ts` is split into `prepareScoring` and `writeScores`, so the offline and agent paths write the same record. `skillsCommand` gets the runner as `agentScore`, so `src/skills/cli.ts` starts no process; a guard test forbids a dynamic `import()` there.
 
+#### Skill effect (#456)
+
+`scf skills effect` (`src/skills/effect.ts` for the pure logic, `src/skill-eval/effect.ts` for the run, store in `evaluation-store.ts`) asks whether a skill changes an agent's result on the sample tasks. It reuses the runner of #536: each offered `instructions` scenario runs `repeat` times with the skill and `repeat` times without it, on the same model, in the same sandbox. The user guide says how to run it ([Measure the effect of a skill](USER_GUIDE.md)).
+
+- **Measurement.** The outcome is the pass rate of the scenario check, counted per run. Tokens and time are recorded and reported, and they do not enter the verdict.
+- **Why not review findings.** A reviewer session per run would double the cost. The reviewer is itself a model that can be swayed by the skill it reviews, and there is no fixed scale to compare runs on.
+- **Why not fix rounds.** The evaluation flow has one work step. Fix rounds exist only in full flows, and they are capped, so they would mostly measure the reviewer.
+- **Rule.** A two-sided Fisher exact test on the pass counts of the two arms (`EFFECT_RULE`: p ≤ 0.05 and |difference| ≥ 0.2). The result is `helps` or `harms` when both hold, otherwise `no-measurable-effect`. A skill that is not offered in any scenario, or is never loaded in the with arm, is `never-selected`. The test is exact rather than a normal approximation, and each arm is capped at 200 runs (`EFFECT_LIMITS`), which bounds the computation.
+- **Sample size.** With fewer than 4 runs per arm no result can be significant: 3/3 against 0/3 gives p = 0.1. The recommended size is 5 scenarios × `repeat` 4 = 20 runs per arm, which detects 0.9 against 0.5 (18/20 against 10/20, p ≈ 0.014) but not 0.8 against 0.5 (16/20 against 10/20, p ≈ 0.096).
+- **Cost.** `sessions ≈ offered × repeat × 2`, and tokens ≈ sessions × T, where T is the tokens of one session. *Estimate:* T ≈ 40k, so about 1.6 M tokens per skill at the recommended size. This is an estimate, not a measured value.
+- **Both arms always run.** When any scenario is offered, both arms run in full, even if the with arm never loads the skill. The arms therefore always have equal repetitions; the only run-free case is that no scenario is offered.
+- **Records.** One file per run of the command: `skill-effects/<id>/<digest hex>/effect--<sequence>.json`, `schema: 1`. The writer uses the store's shared publish step, so a file is written once and is never replaced. The reader `readNewestEffect` checks the newest file with the full record parser, which recomputes the verdict, enforces the run limits and scans the text for credentials. It never falls back to an older file. Nothing reads these records yet; part 2 of #456 will.
+- **Sample tasks.** The owner-written `instructions` section of the suite. The example set is in `evals/skill-effect/kafka/`. Files shipped inside upstream skills are not used as tasks.
+- **What `scf eval` lacks.** `scf eval` already supports `repeat` (up to 20) and runs the repetitions, so this is not missing. What it does not have: an automatic comparison with and without a skill, the statistical verdict, loading a staged candidate (it runs flows × models only), and storage against a skill digest.
+
 ### Evidence formats
 
 `src/evidence/` defines two formats for what a run did (#134). The engine writes the events (#135,

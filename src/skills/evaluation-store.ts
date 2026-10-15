@@ -3,11 +3,12 @@ import { closeSync, fchmodSync, fsyncSync, linkSync, lstatSync, mkdirSync, openS
 import { join } from "node:path";
 import { dataHome } from "../auth/store.js";
 import { claimHomeWrite } from "../home.js";
+import { parseEffectRecord, type EffectRecord } from "./effect.js";
 import type { EvaluationRecord } from "./evaluation.js";
-import { EVALUATION_STORE_LIMITS, EVALUATIONS_DIR } from "./evaluation-rules.js";
+import { EFFECT_FILE_PREFIX, EFFECTS_DIR, EVALUATION_STORE_LIMITS, EVALUATIONS_DIR } from "./evaluation-rules.js";
 import { byteCmp } from "./import-plan.js";
 import { readRegular } from "./package.js";
-import { SKILL_ID_RE } from "./schema.js";
+import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { approvedRefProblem, shownValue } from "./sources.js";
 
 // The evaluation records of staged skills: <data folder>/skill-evaluations/<source>/<commit>/<id>--<10-digit sequence>.json.
@@ -61,12 +62,12 @@ function plainDir(path: string, label: string, create: boolean): "ok" | "none" {
   return "ok";
 }
 
-/** Walks (and with `create`, makes) skill-evaluations/<parts…> below the real data folder. Undefined: a folder is missing. */
-function chain(realHome: string, parts: string[], create: boolean): string | undefined {
+/** Walks (and with `create`, makes) <top>/<parts…> (default skill-evaluations/) below the real data folder. Undefined: a folder is missing. */
+function chain(realHome: string, parts: string[], create: boolean, top: string = EVALUATIONS_DIR): string | undefined {
   let cur = realHome;
-  const shown: string[] = [EVALUATIONS_DIR];
-  cur = join(cur, EVALUATIONS_DIR);
-  if (plainDir(cur, EVALUATIONS_DIR, create) === "none") return undefined;
+  const shown: string[] = [top];
+  cur = join(cur, top);
+  if (plainDir(cur, top, create) === "none") return undefined;
   for (const p of parts) {
     cur = join(cur, p);
     shown.push(shownValue(p.length > 12 && COMMIT_RE.test(p) ? p.slice(0, 12) : p));
@@ -76,7 +77,7 @@ function chain(realHome: string, parts: string[], create: boolean): string | und
 }
 
 interface Listed { seq: number; name: string }
-/** The records of one skill in a folder, lowest sequence first. Other names are ignored. */
+/** The records of one skill (for effects: the prefix "effect") in a folder, lowest sequence first. Other names are ignored. */
 function listRecords(dir: string, id: string): Listed[] {
   const names = readdirSync(dir);
   if (names.length > L.files) throw new EvaluationStoreError("the evaluation folder holds too many files");
@@ -90,20 +91,16 @@ function listRecords(dir: string, id: string): Listed[] {
   return mine.sort((a, b) => a.seq - b.seq || byteCmp(a.name, b.name));
 }
 
-/** Writes and publishes one record. The record must come from parseEvaluationRecord. */
-export function writeEvaluationRecord(record: EvaluationRecord, opts: { home?: string } = {}): { file: string; seq: number } {
-  const { id, source, commit } = record.candidate;
-  if (!nameOk(source, commit, id)) throw new EvaluationStoreError("the record names a source, skill or commit that cannot be stored");
-  const text = JSON.stringify(record, null, 2) + "\n";
+/** Writes `text` to the next free `<prefix>--<seq>.json` in <top>/<parts…> below the data folder and publishes it with an exclusive link. */
+function publish(home: string, top: string, parts: string[], prefix: string, text: string, claimDir: string): { file: string; seq: number } {
   if (Buffer.byteLength(text) > L.recordBytes) throw new EvaluationStoreError("the record is too large to store");
-  const home = opts.home ?? dataHome();
-  const dir = evaluationsDir(source, commit, home);
+  const dir = claimDir;
   let result: { file: string; seq: number } | undefined;
 
   const write = () => {
     mkdirSync(home, { recursive: true, mode: 0o700 });
     const realHome = realpathSync(home);
-    const made = chain(realHome, [source, commit], true)!;
+    const made = chain(realHome, parts, true, top)!;
     if (evaluationStoreSettings.realpath(made) !== made) throw new EvaluationStoreError("the evaluation folder is not inside the data folder");
     const tmp = join(made, TMP_PREFIX + randomBytes(8).toString("hex"));
     let fd: number | undefined = openSync(tmp, "wx", 0o600);
@@ -116,10 +113,10 @@ export function writeEvaluationRecord(record: EvaluationRecord, opts: { home?: s
       closeSync(fd);
       fd = undefined;
       for (let i = 0; i < L.linkTries; i++) {
-        const last = listRecords(made, id).at(-1)?.seq ?? 0;
+        const last = listRecords(made, prefix).at(-1)?.seq ?? 0;
         const seq = last + 1;
         if (seq > 9_999_999_999) throw new EvaluationStoreError("the evaluation folder is full");
-        const name = recordFileName(id, seq);
+        const name = recordFileName(prefix, seq);
         try {
           evaluationStoreSettings.link(tmp, join(made, name));
         } catch (e) {
@@ -158,6 +155,31 @@ export function writeEvaluationRecord(record: EvaluationRecord, opts: { home?: s
     throw new EvaluationStoreError(`the evaluation folder cannot be written (${codeOf(e)})`);
   }
   return result!;
+}
+
+/** Writes and publishes one record. The record must come from parseEvaluationRecord. */
+export function writeEvaluationRecord(record: EvaluationRecord, opts: { home?: string } = {}): { file: string; seq: number } {
+  const { id, source, commit } = record.candidate;
+  if (!nameOk(source, commit, id)) throw new EvaluationStoreError("the record names a source, skill or commit that cannot be stored");
+  const text = JSON.stringify(record, null, 2) + "\n";
+  const home = opts.home ?? dataHome();
+  return publish(home, EVALUATIONS_DIR, [source, commit], id, text, evaluationsDir(source, commit, home));
+}
+
+// The effect records: <data folder>/skill-effects/<id>/<digest hex>/effect--<10-digit sequence>.json. Their own top folder, so the
+// evaluation readers never see them.
+const effectNameOk = (id: string, digest: string): boolean => SKILL_ID_RE.test(id) && SKILL_DIGEST_RE.test(digest);
+const hexOf = (digest: string) => digest.slice("sha256:".length);
+export const effectsDir = (id: string, digest: string, home = dataHome()): string => join(home, EFFECTS_DIR, id, hexOf(digest));
+
+/** Writes and publishes one effect record. The record must come from parseEffectRecord. `file` is shown relative to the data folder. */
+export function writeEffectRecord(record: EffectRecord, opts: { home?: string } = {}): { file: string; seq: number } {
+  const { id, digest } = record.skill;
+  if (!effectNameOk(id, digest)) throw new EvaluationStoreError("the record names a skill or digest that cannot be stored");
+  const text = JSON.stringify(record, null, 2) + "\n";
+  const home = opts.home ?? dataHome();
+  const done = publish(home, EFFECTS_DIR, [id, hexOf(digest)], EFFECT_FILE_PREFIX, text, effectsDir(id, digest, home));
+  return { file: `${EFFECTS_DIR}/${id}/${hexOf(digest).slice(0, 12)}/${done.file}`, seq: done.seq };
 }
 
 // --- read only below this line ---
@@ -220,6 +242,39 @@ export function readNewestRecord(source: string, commit: string, id: string, opt
   } catch (e) {
     if (e instanceof EvaluationStoreError) return { state: "invalid", problem: e.message };
     return { state: "invalid", problem: `the evaluation folder cannot be read (${codeOf(e)})` };
+  }
+}
+
+export type EffectRead = { state: "none" } | { state: "invalid"; problem: string } | { state: "ok"; record: EffectRecord; file: string };
+
+/** The newest effect record (highest sequence) of one skill digest, checked again with parseEffectRecord. An older record is never used instead. */
+export function readNewestEffect(id: string, digest: string, opts: { home?: string } = {}): EffectRead {
+  if (!effectNameOk(id, digest)) return { state: "invalid", problem: "the skill or digest is not a valid name" };
+  const hex = hexOf(digest);
+  try {
+    const home = opts.home ?? dataHome();
+    let realHome: string;
+    try {
+      realHome = realpathSync(home);
+    } catch (e) {
+      if (enoent(e)) return { state: "none" };
+      throw e;
+    }
+    const dir = chain(realHome, [id, hex], false, EFFECTS_DIR);
+    if (dir === undefined) return { state: "none" };
+    const newest = listRecords(dir, EFFECT_FILE_PREFIX).at(-1);
+    if (!newest) return { state: "none" };
+    const label = `${EFFECTS_DIR}/${id}/${hex.slice(0, 12)}/${shownValue(newest.name)}`;
+    const read = readRecordFile(join(dir, newest.name));
+    if ("problem" in read) return { state: "invalid", problem: `the record ${label} ${read.problem}` };
+    const s = isObj(read.raw) && isObj(read.raw.skill) ? read.raw.skill : undefined;
+    if (!s || s.id !== id || s.digest !== digest) return { state: "invalid", problem: `the record ${label} is of another skill or digest` };
+    const parsed = parseEffectRecord(read.raw);
+    if ("problem" in parsed) return { state: "invalid", problem: `the record ${label} is not valid (${parsed.problem})` };
+    return { state: "ok", record: parsed.record, file: label };
+  } catch (e) {
+    if (e instanceof EvaluationStoreError) return { state: "invalid", problem: e.message };
+    return { state: "invalid", problem: `the effect folder cannot be read (${codeOf(e)})` };
   }
 }
 

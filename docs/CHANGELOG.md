@@ -4,6 +4,17 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill effect 1: `scf skills effect` runs a skill's sample tasks with and without the skill on the same model, and stores whether it helps, has no measurable effect or harms (#542). Part 1 of 2 of #456.
+  - **Command.** `scf skills effect <source-id> <skill-id> [<suite-file>]` for a staged skill, or `scf skills effect <id@version> [<suite-file>]` for an approved, pinned skill. Only the `instructions` scenarios where the skill is offered run, with `repeat` runs per arm.
+  - **Verdict.** A two-sided Fisher exact test on the pass counts. `helps` or `harms` when p ≤ 0.05 and the pass rates differ by at least 0.2; otherwise `no-measurable-effect`. A skill that never loads in its with-arm is `never-selected`.
+  - **Output.** `RUN`, `SKIPPED`, `EFFECT` and `STORED` lines; `PROBLEM` and `INTERRUPTED` on refusal or interrupt, which store nothing.
+  - **Records.** New `skill-effects/<id>/<digest>/effect--<seq>.json` (`schema: 1`), written through the shared store publish path. `readNewestEffect` re-checks the newest record and never falls back to an older one. Nothing reads these records yet.
+  - **Store.** `writeEvaluationRecord` now uses the shared publish step; the existing store and score tests are unchanged.
+  - **Runner.** `runOutcome` in `src/skill-eval/run.ts`; `scoreRun` is built on it. An arm can run with skills off.
+  - **Code.** New `src/skills/effect.ts` and `src/skill-eval/effect.ts`; `agentPreflight` and `blockedReason` exported from `src/skill-eval/score.ts`; `foundryVersion` exported from `src/skills/evaluate-cli.ts`; the command in `src/skills/cli.ts`; the help line in `src/cli.ts`.
+  - **Example.** `evals/skill-effect/kafka/` holds a 5-scenario Kafka suite and a kafkajs fixture.
+  - **Tests.** `tests/skill-effect.test.ts` (pure logic, store, command syntax, example set) and `tests/skill-effect-agent.test.ts` (sandbox runs with the fake `claude`, refusals, interruption).
+  - Docs: `docs/USER_GUIDE.md` ("Measure the effect of a skill"); `docs/DESIGN.md` ("Skill effect (#456)").
 - Skill libraries publishing 1b-2: release store. `publishRelease` in `src/skills/release-store.ts` writes a schema-2 release to `skill-releases/<catalogue>/<version>` once: built in a private `.tmp-` folder, checked with `verifyRelease`, then moved into place in one step; an existing version is never replaced (`unchanged` or `refused`). New `foundryPackageFiles` (#545). Part 2 of 3 of #540.
 - Skill libraries publishing 1b-1: `skill-releases.yaml` and `scf skills releases check`, offline and read-only (#544). Part 1 of 3 of #540.
   - **File.** `skill-releases.yaml` in the catalogue repository lists the catalogue versions to publish (`schema: 1`, `repository`, up to 200 `releases`). Each release has `catalogue`, `version`, 1 to 500 `skills` (`{source, id}`), an optional `review` (`by`, `on`) and an optional `revoked` list (`id`, `version`, `on`, `reason`). Unknown keys, duplicate ids and duplicate `catalogue`@`version` pairs are refused.
