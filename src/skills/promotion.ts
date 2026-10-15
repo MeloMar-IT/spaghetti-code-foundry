@@ -14,6 +14,9 @@ import { shownValue, type SkillLibrarySource, type SourceTrustTier } from "./sou
 // such a skill is refused with status "excluded"). For a source that needs a licence review (licenceReviewRequired) an otherwise allowed skill is refused with status "review" until `licence.reviewed` equals the digest of the review (licence-review.ts). Builds the manifest of licence and provenance for the promoted packages. Pure: no file system, no process,
 // no clock. evaluateSource (source-evaluation.ts) calls it to report; the story that writes approved artifacts must call it and keep `attribution`.
 
+/** Passed for an import without licence evidence: every skill is `missing`, so the value reaches no package and is never printed. */
+export const NO_EVIDENCE_TIME = "1970-01-01T00:00:00Z";
+
 export interface PackageProvenance {
   id: string;
   version: string;

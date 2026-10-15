@@ -3607,7 +3607,7 @@ EVALUATED 2 skills from acme/skills@3c1d… sha256:…: 1 pass, 1 blocked, 1 mis
 
 ##### Evaluation records
 
-`skill-profile-evaluations.yaml` in the current folder holds the owner's results. It is changed by pull request and read only by this command. An absent file means no records, and every required evaluation is then `not recorded`.
+`skill-profile-evaluations.yaml` in the current folder holds the owner's results. It is changed by pull request and read only by `profiles evaluate` and, for a `trust: community` source, by [Compare an import](#compare-an-import) (the `kind: fixtures` records). An absent file means no records, and every required evaluation is then `not recorded`.
 
 ```yaml
 schema: 1
@@ -3733,7 +3733,7 @@ ASSESSED <n> skills from <repository>@<commit> sha256:…: <n> candidates, <n> e
 
 #### Compare an import
 
-`scf skills compare <source-id>` compares the staged import of a source with the built-in `java` and `spring-boot` skills. For each skill it shows the capabilities it shares with them, every collision, and one recommendation or conflict for each shared capability. It is offline and read-only, like `assess`: nothing is written, loaded or run, and it needs no data folder. It reads `skill-sources.yaml` and the approved commit (`ref.approved`) of the source, then the staged import in quarantine. It takes no exception file. The built-in skills are read straight from their folders; the lock file and the owner overrides are not used, except that `skill-overrides.yaml` in the current folder is read when it exists.
+`scf skills compare <source-id>` compares the staged import of a source with the built-in `java` and `spring-boot` skills. For each skill it shows the capabilities it shares with them, every collision, and one recommendation or conflict for each shared capability. It is offline and read-only, like `assess`: nothing is written, loaded or run, and it needs no data folder. It reads `skill-sources.yaml` and the approved commit (`ref.approved`) of the source, then the staged import in quarantine. For a `trust: community` source it also prints a promotion decision per candidate and reads `skill-scan-exceptions.yaml` and `skill-profile-evaluations.yaml` in the current folder (see **Promotion decision** below). Other sources take no exception file. The built-in skills are read straight from their folders; the lock file and the owner overrides are not used, except that `skill-overrides.yaml` in the current folder is read when it exists.
 
 ```
 scf skills compare spring-agent-skills
@@ -3747,8 +3747,13 @@ COLLISION <id> <class> <reason> <id@version,...> [blocking]
 RECOMMEND <capability> <id@version> (<level>)
 CONFLICT <capability> <reason>
 NOTE <reason>
+PROMOTABLE <id>
+REFUSED <id>: <code>, <code>
+REFUSED <folder>: not-normalized
 COMPARED <n> skills from <repository>@<commit>: <n> collisions (<n> blocking), <n> conflicts
 ```
+
+The `PROMOTABLE` and `REFUSED` lines are printed only for a `trust: community` source.
 
 - **Capabilities.** Upstream tags, keywords and capability names are mapped to built-in capability names by a shipped table in `src/skills/community-rules.ts`. For example `spring-boot` with `transactions` maps to `spring-boot-transactions`, and `java` maps to `java-language`. The mapping is used for this comparison only: the skill, its digest and its package are not changed.
 - **Skills.** One `SKILL` line for each imported skill, sorted by id. Its tier is `vetted-community` when the source is enabled and reviewed at the approved commit (`review.commit` equals `ref.approved`), and `discovery-only` otherwise. A skill with no mapped capability also prints `NO-OVERLAP <id>`.
@@ -3758,7 +3763,17 @@ COMPARED <n> skills from <repository>@<commit>: <n> collisions (<n> blocking), <
 - **Notes.** `NOTE` gives the first reason that stops the canonical selection (the same text a run would stop with), and says how many more there are. It is printed only when there is one.
 - **Order.** The same input gives the same output in any order.
 - **Limits.** The comparison is refused with a `PROBLEM` when it would compare more than the allowed number of skills or share more capabilities than the selection rules allow. No project is given, so a skill is not checked against the versions of a project; only the stale check applies.
-- **Exit codes.** 0 when there is no conflict and no blocking collision. 1 for a `CONFLICT`, a blocking collision, or a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, a built-in skill that cannot be read, or an invalid `skill-overrides.yaml`).
+- **Promotion decision.** For a `trust: community` source, each staged skill gets one line after the report: `PROMOTABLE <id>` when every check passes, or `REFUSED <id>: <codes>`. The codes are listed in the order below. A staged entry that did not normalize prints `REFUSED <folder>: not-normalized`. These lines come before `COMPARED`, which stays last.
+  - `source-not-enabled`, `review-missing`, `review-stale`, `import-not-approved`: the source is not enabled, has no `review`, or its review or the staged commit does not match `ref.approved`.
+  - `licence-missing`, `licence-ambiguous`, `licence-rejected`, `licence-review`: the licence evidence of the import. `licence-missing` means the import has no licence evidence, so import it again. See [Licence review and provider assumptions](#licence-review-and-provider-assumptions).
+  - `excluded`: the skill needs a live integration, network access or plugin configuration, as in [Scan an import](#scan-an-import).
+  - `import-mismatch`: the skill's id is shared with another staged skill, or the skill does not belong to this source.
+  - `scan-blocked`: a high finding is not accepted in `skill-scan-exceptions.yaml`. `compare` runs the scan itself, so no scan record is needed.
+  - `version-stale`, `version-unchecked`: a declared version is no longer supported, or cannot be checked.
+  - `collision-blocking`, `canonical-conflict`: a blocking collision, or a shared capability with no winner.
+  - `fixtures-missing`: no `kind: fixtures` record for the skill at its exact digest, or the record has expired. `fixtures-failed`: the record at that digest is `failed`. See [Evaluation records](#evaluation-records).
+- **Inputs.** For a `trust: community` source, a missing `skill-scan-exceptions.yaml` means no exceptions, and a missing `skill-profile-evaluations.yaml` means no records. An invalid file prints `PROBLEM <file> <where>: <message>`, no `COMPARED` line, and exits 1. Fixture results come only from the `kind: fixtures` records, matched on the skill id and the exact digest. The gate records of `scf skills gate` are not used, and a missing record is never read as `failed`.
+- **Exit codes.** 0 when there is no conflict, no blocking collision and no `PROBLEM`. 1 for a `CONFLICT`, a blocking collision, or a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, a built-in skill that cannot be read, an invalid `skill-overrides.yaml`, or an invalid exception or record file). For a `trust: community` source, 1 also when a candidate is `REFUSED`, or an entry did not normalize. Most community imports exit 1 until review, licence evidence and fixture records exist; this is intended, and scripts that use `compare` will see it. Other trust tiers keep the exit rule above, unchanged.
 
 #### Evaluate a source
 
@@ -3909,6 +3924,32 @@ scf skills review example-skills --markdown > review.md
 - **Markdown.** `--markdown` prints the same facts as a table per category with notes below it, for a pull-request body. The output is bounded to 60,000 bytes; when it is cut, the last line says how many lines were left out.
 - **Limits.** More than 1,000 skills to compare prints a `PROBLEM` and checks no collisions.
 - **Exit codes.** 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed (for example a missing import or an unknown source); 0 otherwise.
+
+#### Onboard the community Spring source
+
+`github.com/jiangxianze/spring-agent-skills` is a community repository, so its source must be `trust: community`. It is added by pull request, in the order below. These steps promote nothing: `compare` only prints the decision, and no skill is installed, pinned or offered to a run.
+
+1. **Review.** A person checks the maintainer, the licence and the commit to approve.
+2. **Record the review in `skill-sources.yaml`.** Set `status: enabled`, `ref.approved` to the reviewed commit and `licence.allow` to the licences it accepts. Add `review` with `by`, `on`, `commit` (the same commit) and `licence` (one of `licence.allow`). Start from the example in [Skill library sources](#skill-library-sources).
+3. **Check the file.** `scf skills sources check` must print `OK` and exit 0.
+4. **Import.** `scf skills import spring-agent-skills` fetches the commit into quarantine and keeps its licence files, which `compare` needs.
+5. **Scan.** `scf skills scan spring-agent-skills`. Each reviewed high finding is accepted by its id and digest in `skill-scan-exceptions.yaml`.
+6. **Record the fixture results.** Add one record per candidate skill to `skill-profile-evaluations.yaml`. Take the id and the digest from `scf skills profiles evaluate spring-agent-skills`:
+
+   ```yaml
+   schema: 1
+   evaluations:
+     - skill: java-code-review
+       digest: sha256:…
+       kind: fixtures
+       verdict: passed            # or failed
+       owner: "@octocat"
+       reviewed: 2026-10-14
+       expires: 2027-04-14
+   ```
+
+   A record is for one digest, so a new upstream version needs a new record. The other fields follow [Evaluation records](#evaluation-records).
+7. **Compare.** `scf skills compare spring-agent-skills` prints a `PROMOTABLE` or `REFUSED` line for each candidate. It exits 0 only when every candidate is `PROMOTABLE`. A refused candidate lists its codes, which name the step still missing.
 
 #### Update a source
 
@@ -4825,7 +4866,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills connectors` | List the reviewed skill source connectors (id, repository, roots, trust, licences); offline; reads no files |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
-| `scf skills compare <source-id>` | Compare a staged import with the built-in `java` and `spring-boot` skills (`SKILL`, `COLLISION`, `RECOMMEND`, `CONFLICT` lines); offline and read-only; exits 1 on a conflict, a blocking collision or a `PROBLEM` ([Compare an import](#compare-an-import)) |
+| `scf skills compare <source-id>` | Compare a staged import with the built-in `java` and `spring-boot` skills (`SKILL`, `COLLISION`, `RECOMMEND`, `CONFLICT` lines); for a community source also `PROMOTABLE` and `REFUSED` lines; offline and read-only; exits 1 on a conflict, a blocking collision, a refused candidate or a `PROBLEM` ([Compare an import](#compare-an-import)) |
 | `scf skills selections evaluate <source-id> [<selections-file>]` | Print per skill of a staged import whether it is `ELIGIBLE` or `HELD`, and the `OVERLAP` lines; offline and read-only; writes nothing; exits 1 for a `PROBLEM` or a usage error ([Evaluate an import](#evaluate-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ... \| --repo <dir>]` | Report compatibility, tools, access, licence and overlap of an enabled source; `--repo` reads the versions from the `package.json` files of a folder (sources with a reviewed profile only); writes nothing; exits 1 on a refusal, a block, a conflict, a missing selected folder or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |

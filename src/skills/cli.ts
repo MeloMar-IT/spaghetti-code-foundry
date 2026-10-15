@@ -21,7 +21,7 @@ import { evaluateOperandsProblem, gateImport, scoreImport, type EvaluateCliOptio
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
 import { licenceReviewProblem, reviewImport } from "./licence-review.js";
-import { licenceReviewRequired, promoteImport } from "./promotion.js";
+import { licenceReviewRequired, NO_EVIDENCE_TIME, promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, type ScanException } from "./scan-exceptions.js";
@@ -308,9 +308,6 @@ function assessImport(id: string, out: (line: string) => void, opts: { cwd: stri
   return problems > 0 ? 1 : 0;
 }
 
-/** Passed for an import without licence evidence: every skill is `missing`, so the value reaches no package and is never printed. */
-const NO_EVIDENCE_TIME = "1970-01-01T00:00:00Z";
-
 /**
  * `scf skills promote check`: offline and read-only. Prints per staged skill whether licence, provenance and findings
  * allow promotion. Every decision is keyed by the full upstream root; the shown path is used only for printing.
@@ -584,8 +581,9 @@ export async function skillsCommand(
     if (operands.length !== 1) throw syntax("scf skills compare: expects one source id");
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills compare: the operand must be a source id");
     const cwd = opts.cwd ?? process.cwd();
-    const staged = stagedImport(operands[0]!, out, { cwd, home: opts.home, today: opts.today }, undefined, "compared");
-    return staged ? compareStaged(staged, out, { cwd, now: opts.now ?? new Date(), builtinRoot: opts.builtinRoot }) : 1;
+    const today = opts.today ?? new Date().toISOString().slice(0, 10);
+    const staged = stagedImport(operands[0]!, out, { cwd, home: opts.home, today }, undefined, "compared");
+    return staged ? compareStaged(staged, out, { cwd, now: opts.now ?? new Date(), today, builtinRoot: opts.builtinRoot }) : 1;
   }
 
   if (sub === "promote") {
