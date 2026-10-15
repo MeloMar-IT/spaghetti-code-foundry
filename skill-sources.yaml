@@ -34,3 +34,14 @@ sources:
     licence: { allow: [Apache-2.0], reviewed: "sha256:29dbee3d1090c592ce3b0e14dc5db51eeac838ed7fb616f1c2ea26e2f89ca431" }
     update: { cadence: manual }
     owner: "@MeloMar-IT"
+  - id: addyosmani-agent-skills
+    repository: https://github.com/addyosmani/agent-skills
+    status: enabled
+    ref: { approved: aeac41d4d005999432bb7312f7ff06383a91d59d, track: main }
+    paths: [skills/api-and-interface-design, skills/ci-cd-and-automation, skills/code-review-and-quality, skills/code-simplification, skills/constraint-driven-development, skills/debugging-and-error-recovery, skills/deprecation-and-migration, skills/documentation-and-adrs, skills/git-workflow-and-versioning, skills/incremental-implementation, skills/observability-and-instrumentation, skills/performance-optimization, skills/planning-and-task-breakdown, skills/security-and-hardening, skills/spec-driven-development, skills/test-driven-development]
+    adapter: agent-skills
+    trust: community
+    licence: { allow: [MIT] }
+    update: { cadence: manual }
+    owner: "@MeloMar-IT"
+    review: { by: "@MeloMar-IT", on: 2026-10-15, commit: aeac41d4d005999432bb7312f7ff06383a91d59d, licence: MIT }
