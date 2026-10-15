@@ -4,6 +4,9 @@ export const COMMUNITY_REPOSITORIES: readonly string[] = ["github.com/jiangxianz
 /** The built-in skills `scf skills compare` compares an import with. */
 export const COMPARE_BUILTINS = ["java", "spring-boot"] as const;
 
+/** The `kind` of the records in skill-profile-evaluations.yaml that hold a community skill's Java/Spring fixture result. */
+export const COMMUNITY_FIXTURE_KIND = "fixtures";
+
 /** Other spellings of an upstream term, applied before the rules. */
 export const COMMUNITY_TERM_ALIASES: Readonly<Record<string, string>> = {
   springboot: "spring-boot",

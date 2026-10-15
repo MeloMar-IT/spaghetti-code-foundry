@@ -3,14 +3,21 @@ import { join, resolve } from "node:path";
 import { OVERRIDES_FILE } from "./choice-rules.js";
 import { planSkillChoices } from "./choices.js";
 import { compareFailed, compareLines, compareWithBuiltins, type BuiltinSkill } from "./compare.js";
-import { COMPARE_BUILTINS } from "./community-rules.js";
-import { SkillImportError, type ImportRecord } from "./import-plan.js";
-import { normalizeImport } from "./normalize.js";
+import { communityPromotionCheck, communityPromotionLines, type FixtureResult } from "./community-promotion.js";
+import { COMMUNITY_FIXTURE_KIND, COMPARE_BUILTINS } from "./community-rules.js";
+import { byteCmp, SkillImportError } from "./import-plan.js";
+import { reviewImport } from "./licence-review.js";
+import { normalizeImport, type NormalizedSkill } from "./normalize.js";
+import { findProfileEvaluation, PROFILE_EVALUATIONS_FILE, readProfileEvaluations, type ProfileEvaluationRecord } from "./profile-evaluations.js";
+import { NO_EVIDENCE_TIME } from "./promotion.js";
+import { scanSkill } from "./scan.js";
+import type { ScanException } from "./scan-exceptions.js";
+import { filesOf, loadExceptions, type StagedImport } from "./staged-import.js";
 import { loadSkillPackage, readRegular } from "./package.js";
 import { readChoiceFile } from "./project-pins.js";
 import { BUILTIN_SKILLS } from "./registry.js";
 import { UNRESOLVED_HIGH_RISK_DEFAULT } from "./resolve-rules.js";
-import { shownValue, type SkillLibrarySource } from "./sources.js";
+import { shownValue } from "./sources.js";
 
 type FileEntry = { path: string; content: Uint8Array };
 
@@ -59,16 +66,29 @@ export function loadBuiltins(root: string): BuiltinSkill[] {
   return skills;
 }
 
+function fixtureResults(records: readonly ProfileEvaluationRecord[], skills: readonly NormalizedSkill[], today: string): Record<string, FixtureResult> {
+  const results: Record<string, FixtureResult> = {};
+  for (const s of skills) {
+    const found = findProfileEvaluation(records, s.package.id, COMMUNITY_FIXTURE_KIND, s.package.digest, today);
+    if (found.state === "passed" || found.state === "failed") results[s.package.id] = found.state;
+  }
+  return results;
+}
+
 /**
  * `scf skills compare`, after the staged import was read and proven: normalizes it, compares it with the built-in java and
- * spring-boot skills and prints the report. Reads only. Returns 1 for a conflict, a blocking collision or a PROBLEM.
+ * spring-boot skills and prints the report. For a `trust: community` source it also prints PROMOTABLE or REFUSED per candidate
+ * (communityPromotionCheck), from the licence evidence of the staged import, skill-scan-exceptions.yaml and the `kind: fixtures`
+ * records of skill-profile-evaluations.yaml. Reads only. Returns 1 for a conflict, a blocking collision or a PROBLEM, and for a
+ * community source also for a refused candidate or an entry that did not normalize.
  */
 export function compareStaged(
-  staged: { source: SkillLibrarySource; commit: string; record: ImportRecord; files: ReadonlyMap<string, Uint8Array> },
+  staged: Pick<StagedImport, "source" | "commit" | "record" | "files" | "licence">,
   out: (line: string) => void,
-  opts: { cwd: string; now: Date; builtinRoot?: string },
+  opts: { cwd: string; now: Date; today: string; builtinRoot?: string },
 ): number {
   const { source, record, files } = staged;
+  const community = source.trust === "community";
 
   let builtins: BuiltinSkill[];
   try {
@@ -88,13 +108,49 @@ export function compareStaged(
   // No repository is given, so only the overrides of scope all apply.
   const overrides = read.state === "ok" ? planSkillChoices({ overrides: read.items, now: opts.now, exclusive }).overrides : {};
 
+  let exceptions: ScanException[] = [];
+  let evaluations: ProfileEvaluationRecord[] = [];
+  if (community) {
+    const ex = loadExceptions(undefined, out, { cwd: opts.cwd, today: opts.today });
+    const ev = readProfileEvaluations(resolve(opts.cwd, PROFILE_EVALUATIONS_FILE), opts.today);
+    if (ev.state === "invalid") for (const p of ev.problems) out(`PROBLEM ${PROFILE_EVALUATIONS_FILE} ${p.where}: ${p.message}`);
+    else if (ev.state === "ok") evaluations = ev.manifest.evaluations;
+    if (ex === undefined || ev.state === "invalid") return 1;
+    exceptions = ex;
+  }
+
   try {
-    const { skills, report: norm } = normalizeImport({ record: { ...record, rejected: [] }, files });
+    const prep = { record: { ...record, rejected: [] }, files };
+    const review = community
+      ? reviewImport({
+        allow: source.licence.allow,
+        prep,
+        evidence: staged.licence ?? { repositoryKey: record.repositoryKey, commit: record.commit, files: [] },
+      })
+      : undefined;
+    const { skills, report: norm } = review ? review.normalized : normalizeImport(prep);
     const report = compareWithBuiltins({
       source, skills, builtins, overrides, highRisk: UNRESOLVED_HIGH_RISK_DEFAULT,
     });
-    for (const line of compareLines(report, norm.quarantined)) out(line);
-    return compareFailed(report) ? 1 : 0;
+    const lines = compareLines(report, norm.quarantined);
+    let refused = false;
+    if (review) {
+      const scans = Object.fromEntries(skills.map((s) => [s.package.id, scanSkill({ root: s.provenance.root, files: filesOf(s.provenance.root, files) })]));
+      const decisions = communityPromotionCheck({
+        source, record, skills, evidence: review.evidence, retrievedAt: record.retrievedAt ?? NO_EVIDENCE_TIME,
+        licenceReview: review, scans, exceptions, today: opts.today, builtins, overrides,
+        highRisk: UNRESOLVED_HIGH_RISK_DEFAULT, fixtures: fixtureResults(evaluations, skills, opts.today),
+      });
+      const normalized = new Set(skills.map((s) => s.provenance.root));
+      const missing = record.skills
+        .filter((s) => !normalized.has(s.root))
+        .map((s) => `REFUSED ${shownValue(s.root)}: not-normalized`)
+        .sort(byteCmp);
+      lines.splice(lines.length - 1, 0, ...communityPromotionLines(decisions), ...missing);
+      refused = decisions.some((d) => d.decision === "refused") || missing.length > 0;
+    }
+    for (const line of lines) out(line);
+    return compareFailed(report) || refused ? 1 : 0;
   } catch (e) {
     if (e instanceof SkillImportError) {
       out(`PROBLEM ${shownValue(e.message)}`);
