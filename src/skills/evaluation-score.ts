@@ -29,6 +29,8 @@ export interface EvaluationScoreInput {
   suite: EvaluationSuite;
   /** One profile per `repo` of the selection scenarios. */
   profiles: ReadonlyMap<string, RepoProfile>;
+  /** The content hash of every instructions fixture (readEvaluationSuite). The offline scorers do not use the scenarios. */
+  instructionFixtures?: ReadonlyMap<string, string>;
   /** The candidate with the facts of its source record (collisionCandidate). */
   candidate: CollisionCandidate;
   /** The approved skills: the registry and approved imports. */
@@ -289,7 +291,7 @@ export function scoreEvaluation(input: EvaluationScoreInput): EvaluationScore {
   let findings = [selection, conflicts, context, tools].flatMap((p) => p.findings).sort((a, b) => byteCmp(canonicalJson(a), canonicalJson(b)));
   if (findings.length > MAX_FINDINGS) findings = [...findings.slice(0, MAX_FINDINGS - 1), { code: "findings-truncated" }];
   return {
-    suite: { digest: evaluationSuiteDigest(suite, input.profiles), scenarios: suiteScenarios(suite) },
+    suite: { digest: evaluationSuiteDigest(suite, input.profiles, input.instructionFixtures), scenarios: suiteScenarios(suite) },
     dimensions,
     findings,
     mode: conflicts.mode,

@@ -6,6 +6,7 @@ import { credentialProblem } from "./credential-scan.js";
 import {
   EVALUATION_LIMITS, EVALUATION_SUITE_DIGEST_HEADER, EVALUATION_SUITE_LIMITS, type EvaluationDimension,
 } from "./evaluation-rules.js";
+import { instructionFixtureHash, parseInstructions, type InstructionsSuite } from "./evaluation-instructions.js";
 import { byteCmp } from "./import-plan.js";
 import { canonicalJson, plainProblem } from "./normalize-values.js";
 import { readRegular } from "./package.js";
@@ -15,6 +16,8 @@ import { hasUnsafeChar, shownValue, type SourceProblem } from "./sources.js";
 
 // The suite file of the skill evaluation: scenarios for selection, conflicts, context size and tool boundaries, checked like
 // skill-scan-exceptions.yaml. Pure except readEvaluationSuite, which reads the file and its fixture folders. Nothing is run.
+// evaluation-instructions.ts imports helpers from here and this file imports it back: that cycle is safe only because neither
+// file uses the other's bindings while it is loading (only inside functions). Keep it so.
 
 const L = EVALUATION_SUITE_LIMITS;
 export interface SelectionScenario { id: string; repo: string; task: string; modules: string[]; expect: "offered" | "not-offered" }
@@ -27,16 +30,17 @@ export interface EvaluationSuite {
   conflicts: ConflictScenario[];
   context: ContextScenario[];
   tools: ToolsScenario[];
+  instructions?: InstructionsSuite;
 }
 export type EvaluationSuiteRead =
   | { state: "none" }
   | { state: "invalid"; problems: SourceProblem[] }
-  | { state: "ok"; suite: EvaluationSuite; profiles: Map<string, RepoProfile>; digest: string };
+  | { state: "ok"; suite: EvaluationSuite; profiles: Map<string, RepoProfile>; instructionFixtures: Map<string, string>; digest: string };
 
 type Raw = Record<string, unknown>;
 type Dim = Exclude<EvaluationDimension, "instructions">;
 const DIMS: readonly Dim[] = ["selection", "conflicts", "context", "tools"];
-const isObject = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isObject = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** The one way to make a problem: nothing in it is credential-like. */
 function problem(where: string, message: string): SourceProblem {
@@ -45,10 +49,10 @@ function problem(where: string, message: string): SourceProblem {
 }
 const safeSlug = (v: unknown): v is string => typeof v === "string" && SKILL_ID_RE.test(v) && credentialProblem(v) === undefined;
 
-interface Problems { add(field: string, message: string): void }
+export interface Problems { add(field: string, message: string): void }
 
 /** Checks one scenario map; `keys` are the allowed keys. Returns the id and the map, or undefined after reporting. */
-function checkScenario(raw: unknown, keys: readonly string[], p: Problems): Raw | undefined {
+export function checkScenario(raw: unknown, keys: readonly string[], p: Problems): Raw | undefined {
   if (!isObject(raw)) {
     p.add("", "must be a map");
     return undefined;
@@ -73,7 +77,7 @@ function whole(raw: Raw, field: string, max: number, p: Problems, required: bool
   }
   return v;
 }
-function bool(raw: Raw, field: string, p: Problems): boolean | undefined {
+export function bool(raw: Raw, field: string, p: Problems): boolean | undefined {
   const v = raw[field];
   if (v === undefined) {
     p.add(field, "is required");
@@ -85,7 +89,7 @@ function bool(raw: Raw, field: string, p: Problems): boolean | undefined {
   }
   return v;
 }
-function text(raw: Raw, field: string, max: number, p: Problems): string | undefined {
+export function text(raw: Raw, field: string, max: number, p: Problems): string | undefined {
   const v = raw[field];
   if (v === undefined || v === null) {
     p.add(field, "is required");
@@ -112,7 +116,7 @@ function text(raw: Raw, field: string, max: number, p: Problems): string | undef
   return t;
 }
 /** A plain relative path of 1..pathChars characters, no comma, no control character. */
-function pathValue(v: unknown, field: string, p: Problems): string | undefined {
+export function pathValue(v: unknown, field: string, p: Problems): string | undefined {
   if (typeof v !== "string") {
     p.add(field, "must be text");
     return undefined;
@@ -185,7 +189,7 @@ function contextOf(raw: Raw, id: string, p: Problems): ContextScenario | undefin
   if ((raw.max_instruction_tokens !== undefined && t === undefined) || (raw.max_description_chars !== undefined && c === undefined)) return undefined;
   return { id, ...(t !== undefined ? { max_instruction_tokens: t } : {}), ...(c !== undefined ? { max_description_chars: c } : {}) };
 }
-function toolsOf(raw: Raw, id: string, p: Problems): ToolsScenario | undefined {
+export function toolsOf(raw: Raw, id: string, p: Problems): ToolsScenario | undefined {
   const pol = raw.policy;
   if (pol === undefined) {
     p.add("policy", "is required");
@@ -204,6 +208,22 @@ function toolsOf(raw: Raw, id: string, p: Problems): ToolsScenario | undefined {
   if (fs !== "read" && fs !== "write") sub.add("filesystem", fs === undefined ? "is required" : 'must be "read" or "write"');
   if (!ok || shell === undefined || network === undefined || (fs !== "read" && fs !== "write")) return undefined;
   return { id, policy: { shell, network, filesystem: fs } };
+}
+
+/** Checks a scenario id and claims it in `used` (id → where it was first named). Returns the id, or undefined after reporting. */
+export function claimId(idRaw: unknown, base: string, used: Map<string, string>, p: Problems): string | undefined {
+  if (idRaw === undefined) p.add("id", "is required");
+  else if (typeof idRaw !== "string" || !SKILL_ID_RE.test(idRaw)) p.add("id", "must be a lower-case slug of 1–64 characters (letters, digits, single hyphens)");
+  else if (credentialProblem(idRaw)) p.add("id", "holds what looks like a credential");
+  else {
+    const first = used.get(idRaw);
+    if (first !== undefined) p.add("id", `is already used by ${first}`);
+    else {
+      used.set(idRaw, base);
+      return idRaw;
+    }
+  }
+  return undefined;
 }
 
 const KEYS: Record<Dim, readonly string[]> = {
@@ -226,7 +246,7 @@ export function parseEvaluationSuite(raw: unknown): { suite?: EvaluationSuite; p
     add("file", "must be a map with schema and the scenarios");
     return { problems };
   }
-  for (const k of Object.keys(raw)) if (k !== "schema" && !(DIMS as readonly string[]).includes(k)) add("file", `unknown key "${shownValue(k)}"`);
+  for (const k of Object.keys(raw)) if (k !== "schema" && k !== "instructions" && !(DIMS as readonly string[]).includes(k)) add("file", `unknown key "${shownValue(k)}"`);
   if (raw.schema !== 1) add("schema", "schema must be 1");
 
   const suite: EvaluationSuite = { schema: 1, selection: [], conflicts: [], context: [], tools: [] };
@@ -258,18 +278,7 @@ export function parseEvaluationSuite(raw: unknown): { suite?: EvaluationSuite; p
       const p: Problems = { add: (field, message) => add(field ? `${tag} ${field}` : tag, message) };
       const map = checkScenario(item, KEYS[dim], p);
       if (!map) return;
-      let id: string | undefined;
-      if (idRaw === undefined) p.add("id", "is required");
-      else if (typeof idRaw !== "string" || !SKILL_ID_RE.test(idRaw)) p.add("id", "must be a lower-case slug of 1–64 characters (letters, digits, single hyphens)");
-      else if (credentialProblem(idRaw)) p.add("id", "holds what looks like a credential");
-      else {
-        const first = used.get(idRaw);
-        if (first !== undefined) p.add("id", `is already used by ${first}`);
-        else {
-          used.set(idRaw, base);
-          id = idRaw;
-        }
-      }
+      const id = claimId(idRaw, base, used, p);
       const found =
         dim === "selection" ? selectionOf(map, id ?? "", p)
         : dim === "conflicts" ? conflictOf(map, id ?? "", p)
@@ -277,6 +286,10 @@ export function parseEvaluationSuite(raw: unknown): { suite?: EvaluationSuite; p
         : toolsOf(map, id ?? "", p);
       if (found && id !== undefined) (suite[dim] as unknown[]).push(found);
     });
+  }
+  if (raw.instructions !== undefined) {
+    const ins = parseInstructions(raw.instructions, used, add);
+    if (ins) suite.instructions = ins;
   }
   if (total > L.scenarios) add("file", `must hold at most ${L.scenarios} scenarios in all`);
   if (Array.isArray(raw.selection) && raw.selection.length > 0 && raw.selection.length <= L.perDimension) {
@@ -308,17 +321,31 @@ export function suiteScenarios(suite: EvaluationSuite): { id: string; inputs: Re
   for (const s of suite.tools) {
     out.push({ id: s.id, inputs: { dimension: "tools", shell: String(s.policy.shell), network: String(s.policy.network), filesystem: s.policy.filesystem } });
   }
+  for (const s of suite.instructions?.scenarios ?? []) {
+    out.push({
+      id: s.id,
+      inputs: {
+        dimension: "instructions", repo: s.repo, task: s.task, check: s.check,
+        shell: String(s.policy.shell), network: String(s.policy.network), filesystem: s.policy.filesystem, timeout_sec: String(s.timeout_sec),
+      },
+    });
+  }
   return out.sort((a, b) => byteCmp(a.id, b.id));
 }
 
 const sha = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
-/** Pure. Throws TypeError when a fixture named by the suite has no profile. Key order and scenario order do not matter. */
-export function evaluationSuiteDigest(suite: EvaluationSuite, profiles: ReadonlyMap<string, RepoProfile>): string {
+/**
+ * Pure. Throws TypeError when a fixture named by the suite has no profile, or an instructions fixture has no hash.
+ * Key order and scenario order do not matter. Without `instructions` the digest is the one it always was.
+ */
+export function evaluationSuiteDigest(suite: EvaluationSuite, profiles: ReadonlyMap<string, RepoProfile>, fixtures: ReadonlyMap<string, string> = new Map()): string {
   const h = createHash("sha256");
   h.update(EVALUATION_SUITE_DIGEST_HEADER);
   const lines: [string, string][] = [];
   for (const dim of DIMS) for (const s of suite[dim]) lines.push([s.id, canonicalJson({ dimension: dim, ...s })]);
+  const ins = suite.instructions;
+  if (ins) for (const s of ins.scenarios) lines.push([s.id, canonicalJson({ dimension: "instructions", ...s })]);
   for (const [, line] of lines.sort((a, b) => byteCmp(a[0], b[0]))) h.update(line + "\n");
   for (const repo of [...new Set(suite.selection.map((s) => s.repo))].sort(byteCmp)) {
     const profile = profiles.get(repo);
@@ -327,6 +354,14 @@ export function evaluationSuiteDigest(suite: EvaluationSuite, profiles: Readonly
     const fh = createHash("sha256");
     for (const f of profile.findings) fh.update(canonicalJson(f) + "\n");
     h.update(`fixture ${repo} ${fh.digest("hex")}\n`);
+  }
+  if (ins) {
+    h.update(`instructions ${canonicalJson({ mandatory: ins.mandatory, repeat: ins.repeat })}\n`);
+    for (const repo of [...new Set(ins.scenarios.map((s) => s.repo))].sort(byteCmp)) {
+      const hash = fixtures.get(repo);
+      if (!hash) throw new TypeError("an instructions fixture of the suite has no hash");
+      h.update(`instruction-fixture ${repo} ${hash}\n`);
+    }
   }
   return "sha256:" + h.digest("hex");
 }
@@ -451,6 +486,23 @@ export function readEvaluationSuite(path: string): EvaluationSuiteRead {
     const why = refused.get(s.repo);
     if (why) problems.push(problem(`selection (${s.id}) repo`, why));
   }
+  const instructionFixtures = new Map<string, string>();
+  const insRefused = new Map<string, string>();
+  for (const repo of new Set((suite.instructions?.scenarios ?? []).map((s) => s.repo))) {
+    const dir = join(base, repo);
+    const why = fixtureFolder(base, repo) ?? fixtureInventory(dir);
+    if (why) {
+      insRefused.set(repo, why);
+      continue;
+    }
+    const got = instructionFixtureHash(dir);
+    if ("hash" in got) instructionFixtures.set(repo, got.hash);
+    else insRefused.set(repo, got.problem);
+  }
+  for (const s of suite.instructions?.scenarios ?? []) {
+    const why = insRefused.get(s.repo);
+    if (why) problems.push(problem(`instructions.scenarios (${s.id}) repo`, why));
+  }
   if (problems.length) return { state: "invalid", problems };
-  return { state: "ok", suite, profiles, digest: evaluationSuiteDigest(suite, profiles) };
+  return { state: "ok", suite, profiles, instructionFixtures, digest: evaluationSuiteDigest(suite, profiles, instructionFixtures) };
 }

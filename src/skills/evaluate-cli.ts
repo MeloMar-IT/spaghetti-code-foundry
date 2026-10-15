@@ -10,6 +10,7 @@ import { evaluationGate, parseEvaluationRecord, type EvaluationGateInput, type E
 import { EVALUATION_REASON_CODES, EVALUATION_SUITE_DEFAULT, type EvaluationMode } from "./evaluation-rules.js";
 import { scoreEvaluation, type ComparedSkill } from "./evaluation-score.js";
 import { EvaluationStoreError, findNewestRecordOf, readNewestRecord, writeEvaluationRecord, type StoredRecordRead } from "./evaluation-store.js";
+import { instructionsPolicy } from "./evaluation-instructions.js";
 import { readEvaluationSuite, type EvaluationSuiteRead } from "./evaluation-suite.js";
 import { byteCmp } from "./import-plan.js";
 import { evaluateLicence, type LicenceStatus } from "./licence.js";
@@ -212,7 +213,7 @@ export function scoreImport(id: string, suiteFile: string | undefined, out: Out,
     ];
     let score;
     try {
-      score = scoreEvaluation({ suite: suite.suite, profiles: suite.profiles, candidate: it.cand, approved, ...(baseline ? { baseline } : {}), safety: it.safety });
+      score = scoreEvaluation({ suite: suite.suite, profiles: suite.profiles, instructionFixtures: suite.instructionFixtures, candidate: it.cand, approved, ...(baseline ? { baseline } : {}), safety: it.safety });
     } catch (e) {
       if (!(e instanceof RangeError || e instanceof TypeError)) throw e;
       out(`PROBLEM ${it.id}: cannot be scored (${hidden(e.message)})`);
@@ -268,7 +269,7 @@ export function gateImport(id: string, suiteFile: string | undefined, out: Out, 
   }
   let problems = p.problems;
   const home = opts.home;
-  const policy = { suite: suite.digest };
+  const policy = instructionsPolicy(suite.suite, suite.digest);
   const subjectFor = (it: Item): EvaluationSubject & { problem?: string } => {
     const s = subjectOf(readNewestRecord(staged.source.id, staged.commit, it.id, { home }));
     return { record: s.record, digest: it.skill.package.digest, safety: it.safety, licence: it.licence, ...(s.problem ? { problem: s.problem } : {}) };
@@ -295,14 +296,12 @@ export function gateImport(id: string, suiteFile: string | undefined, out: Out, 
       // One comparison per baseline; the skill passes only when all of them pass. Without a baseline: baseline-missing.
       const list: (RegisteredSkill | undefined)[] = [...checks.baselines, ...(checks.unresolved || checks.baselines.length === 0 ? [undefined] : [])];
       for (const b of list) {
-        let baseInput: { record: unknown; digest: string; id?: string } | undefined;
+        // No stored record: the gate may still pair a baseline of the candidate's own record, else it gives baseline-missing.
+        let baseInput: { record?: unknown; digest: string; id?: string } | undefined;
         if (b) {
           const found = findNewestRecordOf(b.id, b.digest, { home });
-          if (found.state === "ok") baseInput = { record: found.raw, digest: b.digest, id: b.id };
-          else if (found.state === "invalid") {
-            baseInput = { record: undefined, digest: b.digest, id: b.id };
-            notes.push(`baseline ${b.key}: ${found.problem}`);
-          }
+          baseInput = { record: found.state === "ok" ? found.raw : found.state === "invalid" ? null : undefined, digest: b.digest, id: b.id };
+          if (found.state === "invalid") notes.push(`baseline ${b.key}: ${found.problem}`);
         }
         take({ mode: "upgrade", policy, candidate: me, ...(baseInput ? { baseline: baseInput } : {}) }, own);
       }
