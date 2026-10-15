@@ -27,6 +27,8 @@ export interface ReviewedSkill {
   id?: string;
   version?: string;
   fingerprint?: string;
+  /** Sorted `package.capabilities`; absent when the skill was not normalized. */
+  capabilities?: string[];
   category: string;
   categoryFrom: "declared" | "name" | "default";
   trust: typeof REVIEW_TRUST;
@@ -145,7 +147,7 @@ export function reviewImport(input: {
       root: entry.root,
       name: entry.name,
       digest: entry.digest,
-      ...(skill ? { id: skill.package.id, version: skill.package.version, fingerprint: skill.identity.fingerprint } : {}),
+      ...(skill ? { id: skill.package.id, version: skill.package.version, fingerprint: skill.identity.fingerprint, capabilities: [...(skill.package.capabilities ?? [])].sort(byteCmp) } : {}),
       category: cat.category,
       categoryFrom: cat.from,
       trust: REVIEW_TRUST,

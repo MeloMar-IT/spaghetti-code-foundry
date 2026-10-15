@@ -34,6 +34,7 @@ import { scanStaged, stagedSkillMd } from "./scan-staged.js";
 import { profilesEvaluate } from "./profile-evaluate-cli.js";
 import { SOURCE_CONNECTORS } from "./connectors.js";
 import { overlapLines, overlapReport, versionLines } from "./overlap.js";
+import { catalogueProblems, overlapStagedSkills } from "./overlap-staged.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors, type SkillSelection } from "./selections.js";
 import { PROFILES_FILE, readSourceProfiles } from "./source-profiles.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
@@ -464,25 +465,11 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
   );
   if (!staged) return 1;
   const { source, commit, record, files } = staged;
-  const review = reviewImport({
-    allow: source.licence.allow,
-    prep: { record: { ...record, rejected: [] }, files },
-    evidence: staged.licence ?? { repositoryKey: record.repositoryKey, commit: record.commit, files: [] },
-  });
-  // The same gate as promotion: an allowed licence still needs the matching licence.reviewed.
-  const unreviewed = licenceReviewRequired(source) && licenceReviewProblem(source.licence.reviewed, review.classification) !== undefined;
-  const verdicts = new Map(review.classification.paths.map((p) => [p.root, p.status] as const));
-  const normalized = review.normalized.skills;
-  const entries = normalized.map((skill) => {
-    const root = skill.provenance.root;
-    const status = verdicts.get(root) ?? "missing";
-    const blockers = promotionBlockers(applyExceptions(skill.package.id, scanSkill({ root, files: filesOf(root, files) }), exceptions, opts.today));
-    return { skill, licence: status === "allowed" && unreviewed ? ("review" as const) : status, safe: blockers.length === 0 };
-  });
+  const { skills: entries, notNormalized } = overlapStagedSkills({ source, record, files, licence: staged.licence }, exceptions, opts.today, selections);
 
   const reg = discoverSkills(opts.skills, opts.discover);
   // A catalogue that could not be read in full would show skills as new that are not.
-  const catalogue = [...new Set(reg.problems.filter((p) => p.source !== "repository").map((p) => `PROBLEM catalogue ${p.source} ${p.kind}`))].sort();
+  const catalogue = catalogueProblems(reg);
 
   let report;
   try {
@@ -495,7 +482,6 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
   for (const line of catalogue) out(line);
   for (const line of overlapLines(report)) out(line);
   for (const line of versionLines(report)) out(line);
-  const notNormalized = record.skills.length - normalized.length;
   if (notNormalized > 0) out(`PROBLEM ${plural(notNormalized, "staged skill")} could not be normalized; see "scf skills scan ${source.id}"`);
   out(`OVERLAP ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${report.shared} shared, ${report.new} new, ${report.vendorOnly} vendor-only, ${report.conflicts} conflicts`);
   return report.ok && notNormalized === 0 && catalogue.length === 0 ? 0 : 1;

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { connectorFor, connectorSource } from "../src/skills/connectors.js";
-import type { ImportReview } from "../src/skills/import-review.js";
-import { addConnectorEntry, changeApproved, checkEdit, communityReview, PULL_REQUEST_BYTES, repoFromUrl, scalarText, updateBranch, updatePullRequest } from "../src/skills/source-update.js";
+import { reviewFailed, type ImportReview, type ReviewedSkill } from "../src/skills/import-review.js";
+import { SOURCE_CHANGE_LIMITS, type SourceChange } from "../src/skills/source-change.js";
+import { addConnectorEntry, attentionParts, changeApproved, checkEdit, communityReview, PULL_REQUEST_BYTES, repoFromUrl, scalarText, updateBranch, updatePullRequest } from "../src/skills/source-update.js";
 import { parseSources, type SkillLibrarySource } from "../src/skills/sources.js";
 
 const TODAY = "2026-10-15";
@@ -271,6 +272,67 @@ describe("updatePullRequest", () => {
     expect(body).toContain("`" + long + "`");
     expect(body).not.toContain("<!--");
   });
+  describe("the change section and the verdict parts", () => {
+    const sk = (o: Partial<ReviewedSkill> = {}): ReviewedSkill => ({
+      root: "skills/a", name: "a", digest: "sha256:" + "1".repeat(64), id: "a", version: "1.0.0", category: "general", categoryFrom: "default", trust: "community", promoted: false,
+      licence: { status: "allowed", reasons: [], licences: ["MIT"], attribution: [], authorNotice: [] },
+      scan: { blocked: false, findings: 0, high: 0, reasons: [] }, sameName: [], ...o,
+    }) as ReviewedSkill;
+    const withSkills = (...skills: ReviewedSkill[]) => report({ categories: [{ category: "general", existing: [], skills }] });
+    const change = (o: Partial<SourceChange> = {}): SourceChange => ({
+      oldCommit: OLD, newCommit: NEW, oldDigest: "sha256:" + "a".repeat(64), newDigest: "sha256:" + "b".repeat(64),
+      counts: { added: 0, removed: 0, changed: 0, unchanged: 1 }, skills: [], licenceUnreviewed: false, canonical: { entries: [], omitted: 0 }, evaluationOpen: 0, ...o,
+    });
+    const verdict = (body: string) => body.split("\n").find((l) => l.startsWith("- Verdict:"))!;
+
+    it("puts the section between the header and the review report", () => {
+      const { body } = updatePullRequest({ source, oldCommit: OLD, commit: NEW, rejected: [], report: report(), change: change() });
+      const at = body.indexOf("### Changes since `" + OLD.slice(0, 12) + "`");
+      expect(at).toBeGreaterThan(body.indexOf("This pull request changes only"));
+      expect(at).toBeLessThan(body.indexOf("## Skill import review"));
+    });
+    it("says when the old commit could not be compared", () => {
+      const { body } = updatePullRequest({ source, oldCommit: OLD, commit: NEW, rejected: [], report: report(), change: "not-compared" });
+      expect(body).toContain("could not be staged or read, so it could not be compared");
+    });
+    it("has no section for a first import, whatever change is given", () => {
+      const { body } = updatePullRequest({ source, commit: NEW, rejected: [], report: report(), change: change() });
+      expect(body).not.toContain("Changes since");
+    });
+    it("names the failing parts, each alone and together", () => {
+      const pr = (r: ImportReview, c?: SourceChange) => verdict(updatePullRequest({ source, oldCommit: OLD, commit: NEW, rejected: [], report: r, change: c }).body);
+      const gates = "Nothing is promoted until the gates pass.";
+      expect(pr(report(), change())).toBe(`- Verdict: no blocking finding. ${gates}`);
+      expect(pr(withSkills(sk({ scan: { blocked: true, findings: 1, high: 1, reasons: ["x"] } })), change())).toBe(`- Verdict: needs attention: security (see below). ${gates}`);
+      expect(pr(withSkills(sk({ licence: { status: "review", reasons: [], licences: [], attribution: [], authorNotice: [] } })), change())).toBe(`- Verdict: needs attention: licence (see below). ${gates}`);
+      expect(pr(report(), change({ licenceUnreviewed: true }))).toBe(`- Verdict: needs attention: licence (see below). ${gates}`);
+      expect(pr(report(), change({ evaluationOpen: 2 }))).toBe(`- Verdict: needs attention: evaluation (see below). ${gates}`);
+      expect(pr(report({ problems: ["p"] }), change())).toBe(`- Verdict: needs attention: review (see below). ${gates}`);
+      expect(pr(withSkills(sk({ scan: { blocked: true, findings: 1, high: 1, reasons: ["x"] } })), change({ evaluationOpen: 1 }))).toBe(`- Verdict: needs attention: security, evaluation (see below). ${gates}`);
+      expect(pr(report(), undefined)).toBe(`- Verdict: no blocking finding. ${gates}`);
+    });
+    it("uses the gates of the new import when the old commit could not be compared", () => {
+      const pr = (gates?: { licenceUnreviewed: boolean; evaluationOpen: number }) =>
+        verdict(updatePullRequest({ source, oldCommit: OLD, commit: NEW, rejected: [], report: report(), change: "not-compared", gates }).body);
+      expect(pr({ licenceUnreviewed: true, evaluationOpen: 2 })).toContain("needs attention: licence, evaluation (see below)");
+      expect(pr({ licenceUnreviewed: false, evaluationOpen: 0 })).toContain("no blocking finding");
+    });
+    it("agrees with reviewFailed for the parts that are not about evaluation", () => {
+      for (const r of [report(), withSkills(sk()), report({ problems: ["p"] }), withSkills(sk({ scan: { blocked: true, findings: 0, high: 0, reasons: [] } }))]) {
+        expect(attentionParts(r).length > 0).toBe(reviewFailed(r));
+      }
+    });
+    it("stays within 64,000 bytes with a change section of 20 kB and a huge report", () => {
+      const skills = Array.from({ length: 3000 }, (_, i) => ({ root: `skills/${i}/${"r".repeat(100)}`, kind: "added" as const, newDigest: "sha256:" + "c".repeat(64), metadata: {}, licence: {}, scan: {} }));
+      const problems = Array.from({ length: 3000 }, (_, i) => `problem ${i} ${"z".repeat(100)}`);
+      const { body } = updatePullRequest({ source, oldCommit: OLD, commit: NEW, rejected: [], report: report({ problems }), change: change({ skills, counts: { added: 3000, removed: 0, changed: 0, unchanged: 0 } }) });
+      expect(Buffer.byteLength(body)).toBeLessThanOrEqual(PULL_REQUEST_BYTES);
+      const section = body.slice(body.indexOf("### Changes since"), body.indexOf("## Skill import review"));
+      expect(Buffer.byteLength(section)).toBeLessThanOrEqual(SOURCE_CHANGE_LIMITS.bytes + 1);
+      expect(section).toContain("more lines were left out");
+    });
+  });
+
   it("stays within 64,000 bytes with many long paths, many rejected roots and a huge report", () => {
     const paths = Array.from({ length: 2000 }, (_, i) => `skills/${String(i).padStart(4, "0")}/${"p".repeat(150)}`);
     const rejected = Array.from({ length: 500 }, (_, i) => ({ root: `skills/r${i}/${"q".repeat(150)}`, reasons: ["reason ".repeat(20)] }));

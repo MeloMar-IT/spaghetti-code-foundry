@@ -4062,7 +4062,14 @@ scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer
 - **Reviewer.** An enabled community source needs `--reviewer <@user>` for a new commit: the entry gets a `review` (`by`, `on` today, `commit` and `licence`). `--licence <id>` names the licence when `licence.allow` has more than one and there is no earlier review. A run that prints `UNCHANGED` needs no reviewer.
 - **Where the change goes.** The branch is `skill-update/<source-id>-<commit>` (12 characters of the commit). Only `ref.approved` and `review` of that entry change, or one new entry at the end of `sources:`. Every other byte of the file stays. The edited file must pass the same rules as `scf skills sources check`, or nothing is pushed.
 - **Pull request.** The title is `Skill source <id>: update to <commit>` (or `first import at <commit>`). The body holds the old and the new commit, the tracked ref, the selected paths, the verdict and the review report: licence, attribution, collisions and scan. It holds no text of the upstream skills.
-- **Output.** One line per outcome:
+- **Changes since the approved commit.** For an update, the body has a `### Changes since <old commit>` section between the header and the review report:
+  - Each skill root is `added`, `removed`, `changed` (its digest differs) or `unchanged`. Per changed skill: the paths added, removed and changed (by SHA-256), the name, version, category and capabilities as old → new, the licence status and licence ids, the scan `blocked` flag and the high and total finding counts, and the evaluation.
+  - **Evaluation.** The verdict of the newest record for the old digest is shown, and whether a record exists for the new digest. Otherwise the line says `needs a new record`. A changed digest never inherits the old verdict.
+  - **Canonical skills.** For the capabilities of added or changed skills, the current canonical winners of the catalogue are listed (the same selection as `scf skills overlap`). A row that adds a `CONFLICT` is marked `(new conflict)`.
+  - **Verdict.** The verdict line reads `needs attention: <parts>` when security, licence, evaluation or review fails, and says that nothing is promoted until the gates pass.
+  - **Old commit not comparable.** When the old commit is not in quarantine, it is staged first with the checks of `scf skills import`. If that fails, the section says the old commit could not be compared, and the pull request is still opened. A first import has no section.
+  - Lists lengthen only up to a fixed number, then show `… and N more`. The section has its own byte budget inside the pull request limit.
+- **Output.** One line per outcome. A `CHANGES since <old commit>: <n> changed, <n> added, <n> removed, <n> unchanged` line comes before the `REVIEWED` line when the old commit was compared, or `CHANGES the old commit <commit> could not be compared`:
   - `UNCHANGED <id> is at <commit> (ref.approved); nothing to propose`: the upstream commit is already approved. Nothing is opened.
   - `OPEN <url> for <id>@<commit>; no second pull request was opened`: a pull request for this source and commit is open already.
   - `OK opened <url> for <id>@<commit>; nothing is approved until it is merged`: the new pull request.
@@ -4073,7 +4080,7 @@ scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer
 Walk-through for the awesome-copilot connector:
 
 1. **Propose.** `scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer`. The first run prints the pull request address and the `REVIEWED` line of the report.
-2. **Review.** Read the pull request: the licence (`MIT` for this connector), the attribution, the collisions and the scan in the body. Check that the reviewer named is the one who checked them.
+2. **Review.** Read the pull request: the changes since the approved commit, the licence (`MIT` for this connector), the attribution, the collisions and the scan in the body. Check that the reviewer named is the one who checked them.
 3. **Merge.** The source is then pinned by the merged file. `scf skills import awesome-copilot` fetches that commit, and `scf skills review awesome-copilot` shows the report again.
 4. **Next update.** When upstream moves, run `scf skills update awesome-copilot --reviewer @reviewer` again. While upstream is unchanged it prints `UNCHANGED`.
 
