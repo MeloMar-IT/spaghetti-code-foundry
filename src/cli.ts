@@ -66,6 +66,7 @@ Usage:
   scf skills review <source-id> [--markdown]     Print the licence, attribution and collision report of a staged import
   scf skills selections evaluate <source-id> [<file>]  Report which selected skills of a staged import are eligible or held, and their overlaps
   scf skills release verify <dir>                Check a catalogue release folder offline (files, digests, approval)
+  scf skills release publish <catalogue>@<version>  Publish a catalogue release from skill-releases.yaml (reviewed, promotable, evaluation passed)
   scf skills releases check [<file>]             Check the release requests (default: skill-releases.yaml)
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
@@ -248,8 +249,8 @@ async function main(argv: string[]): Promise<number> {
     return cmd || values.help ? 0 : 1;
   }
 
-  // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, and `score …`
-  // writes only into skill-evaluations/ through claimHomeWrite: they run without choosing or moving the data folder.
+  // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, `score …`
+  // writes only into skill-evaluations/ and `release publish …` only into skill-releases/, both through claimHomeWrite: they run without choosing or moving the data folder.
   if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);

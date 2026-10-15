@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries publishing 1b-3: `scf skills release publish <catalogue>@<version>` publishes a schema-2 release in the catalogue repository from the skills in `skill-releases.yaml` that were staged, promoted and evaluated after review, and writes it once to `skill-releases/<catalogue>/<version>`. Revoked skills need only a loadable package and an honest evaluation verdict, so a bad skill can always be revoked. Config, pins and `skills.lock.json` are never changed. Part 3 of 3 of #540 (#546).
 - Skill libraries publishing 1b-2: release store. `publishRelease` in `src/skills/release-store.ts` writes a schema-2 release to `skill-releases/<catalogue>/<version>` once: built in a private `.tmp-` folder, checked with `verifyRelease`, then moved into place in one step; an existing version is never replaced (`unchanged` or `refused`). New `foundryPackageFiles` (#545). Part 2 of 3 of #540.
 - Skill libraries publishing 1b-1: `skill-releases.yaml` and `scf skills releases check`, offline and read-only (#544). Part 1 of 3 of #540.
   - **File.** `skill-releases.yaml` in the catalogue repository lists the catalogue versions to publish (`schema: 1`, `repository`, up to 200 `releases`). Each release has `catalogue`, `version`, 1 to 500 `skills` (`{source, id}`), an optional `review` (`by`, `on`) and an optional `revoked` list (`id`, `version`, `on`, `reason`). Unknown keys, duplicate ids and duplicate `catalogue`@`version` pairs are refused.

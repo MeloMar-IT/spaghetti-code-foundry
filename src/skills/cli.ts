@@ -7,7 +7,8 @@ import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
-import { releaseOperandsProblem, releasesCheck, releaseVerify } from "./release-cli.js";
+import { parseReleaseTarget, releaseOperandsProblem, releasesCheck, releaseVerify } from "./release-cli.js";
+import { releasePublish } from "./release-publish.js";
 import { RELEASES_FILE } from "./release-requests.js";
 import { applyConnector, connectorFor } from "./connector.js";
 import { compareStaged } from "./compare-cli.js";
@@ -16,7 +17,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { SkillImportError } from "./import-plan.js";
-import { hidden, plural, filesOf, loadExceptions, stagedImport } from "./staged-import.js";
+import { hidden, plural, filesOf, loadExceptions, reviewedFiles, stagedImport } from "./staged-import.js";
 import { reviewCommand } from "./review-cli.js";
 import { EVALUATION_SUITE_DEFAULT } from "./evaluation-rules.js";
 import { evaluateOperandsProblem, gateImport, scoreImport, type EvaluateCliOptions } from "./evaluate-cli.js";
@@ -64,7 +65,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills score <source-id> [<suite-file>] [--agent]     Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT}); --agent also runs the instructions scenarios in the OS sandbox
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills release verify <dir>                           Check a catalogue release folder offline (files, digests, approval); reads only
-       scf skills releases check [<file>]                        Check the release requests offline (default: ${RELEASES_FILE}); reads only
+       scf skills release publish <catalogue>@<version>          Publish a catalogue release from ${RELEASES_FILE} (reviewed, promotable, evaluation passed); writes only skill-releases/
+       scf skills releases check [<file>]                       Check the release requests offline (default: ${RELEASES_FILE}); reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
 const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], gate: [], release: [], releases: [] };
@@ -172,23 +174,6 @@ function selectionsCheck(file: string, out: (line: string) => void, today: strin
   }
   out(`OK ${r.manifest.selections.length} selections`);
   return 0;
-}
-
-/** The reviewed files `promote check` and `overlap` read; prints a PROBLEM and returns undefined when one cannot be used. A missing file is empty. */
-function reviewedFiles(out: (line: string) => void, opts: { cwd: string; today: string }, records: boolean): { selections: SkillSelection[]; records: SuiteRecord[] } | undefined {
-  const fail = (file: string, problems: { where: string; message: string }[]) => {
-    for (const p of problems) out(`PROBLEM ${file} ${p.where}: ${p.message}`);
-    return undefined;
-  };
-  const sel = readSkillSelections(resolve(opts.cwd, SELECTIONS_FILE), opts.today);
-  if (sel.state === "invalid") return fail(SELECTIONS_FILE, sel.problems);
-  let recs: SuiteRecord[] = [];
-  if (records) {
-    const r = readSuiteRecords(resolve(opts.cwd, EVALUATIONS_FILE), opts.today);
-    if (r.state === "invalid") return fail(EVALUATIONS_FILE, r.problems);
-    if (r.state === "ok") recs = r.manifest.evaluations;
-  }
-  return { selections: sel.state === "ok" ? sel.manifest.selections : [], records: recs };
 }
 
 /**
@@ -532,6 +517,11 @@ export async function skillsCommand(
   if (sub === "release") {
     const problem = releaseOperandsProblem(operands);
     if (problem) throw syntax(problem);
+    if (operands[0] === "publish") {
+      const today = opts.today ?? new Date().toISOString().slice(0, 10);
+      const { skills, cwd: _cwd, now: _now, today: _today, agentScore: _agent, ...discover } = opts;
+      return releasePublish(parseReleaseTarget(operands[1]!)!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
+    }
     return releaseVerify(resolve(opts.cwd ?? process.cwd(), operands[1]!), out, (opts.skills ?? loadConfig().skills).releases.approved);
   }
   if (sub === "releases") {

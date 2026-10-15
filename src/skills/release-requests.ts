@@ -8,7 +8,7 @@ import { SkillIdSchema, SkillVersionSchema } from "./schema.js";
 import { hasUnsafeChar, MAX_SOURCES_BYTES, OWNER_RE, type SourceProblem } from "./sources.js";
 
 // Owner-reviewed release requests: which catalogue versions to publish from which promoted skills.
-// Pure except readReleaseRequests (it reads one file). Called by `scf skills releases check` (release-cli.ts) and, later, by the publish command.
+// Pure except readReleaseRequests (it reads one file). Called by `scf skills releases check` (release-cli.ts) and by the publish command (release-publish.ts).
 
 export const RELEASES_FILE = "skill-releases.yaml";
 export const MAX_RELEASE_REQUESTS = 200;
@@ -141,6 +141,11 @@ export function readReleaseRequests(path: string, today: string, maxBytes = MAX_
   if (data === "link") return fail("is a symbolic link");
   if (data === "other") return fail("is not a readable regular file");
   if (data === "large") return fail(`is larger than ${maxBytes} bytes`);
+  return releaseRequestsFromBytes(data, today);
+}
+
+/** The YAML and schema part of `readReleaseRequests`, for a caller that has read the bytes itself (one read, one snapshot). */
+export function releaseRequestsFromBytes(data: Uint8Array, today: string): ReleaseRequestsRead {
   let doc: unknown;
   try {
     // logLevel "silent": the library must not print warnings, they repeat the source line.
