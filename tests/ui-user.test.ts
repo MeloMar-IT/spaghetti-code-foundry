@@ -14,16 +14,17 @@ describe("ui/user/index.html", () => {
     expect(html).toMatch(/<span id="top-actions" class="top-actions">\s*<span id="context" class="context"><\/span>/);
     expect(html).not.toContain("health-btn");
   });
-  it("has exactly five links with the user pages", () => {
+  it("has exactly six links with the user pages", () => {
     const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[3]]);
     expect(links).toEqual([
       ["#/start", "start", "Start work"], // the top action comes first in the document
       ["#/home", "home", "Home"], // the first link of the sidebar
+      ["#/epics", "epics", "Epics"],
       ["#/runs", "runs", "My runs"],
       ["#/repos", "repos", "My repositories"],
       ["#/refinement", "refinement", "Refinement"],
     ]);
-    expect(html.split("data-nav=").length - 1).toBe(5);
+    expect(html.split("data-nav=").length - 1).toBe(6);
     expect(html).toContain('<a class="brand" href="#/home">');
   });
   it("has nothing of the admin page", () => {
