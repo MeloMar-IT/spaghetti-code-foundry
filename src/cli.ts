@@ -54,7 +54,7 @@ Usage:
   scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]  Open a pull request that proposes the new upstream commit (never approves)
   scf skills scan <source-id> [<exceptions-file>]  Print the security report of a staged import
   scf skills assess <source-id>                    Print the workflow report of a staged import
-  scf skills evaluate <source-id> [<technology>@<version> ...]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
+  scf skills evaluate <source-id> [<technology>@<version> ... | --repo <dir>]  Report compatibility, tools, access, licence and overlap of a source; writes nothing
   scf skills promote check <source-id> [<exceptions-file>]  Print whether licence and findings allow promotion
   scf skills overlap <source-id>                 Compare a staged import with the registered skills (canonical or conflict per capability)
   scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)

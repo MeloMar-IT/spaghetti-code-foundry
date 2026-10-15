@@ -3,6 +3,9 @@ import { selectCanonicalSkills, type CanonicalCandidate, type CanonicalResult } 
 import { CANONICAL_LIMITS } from "./canonical-rules.js";
 import { COLLISION_LIMITS } from "./collision-rules.js";
 import { collisionCandidate } from "./collisions.js";
+import type { EvaluationResult } from "./connector.js";
+import { applyFrontendRule, frontendProfileFor, partitionRecord, type FrontendRecord } from "./frontend-connector.js";
+import type { FrontendProfile } from "./frontend-rules.js";
 import { byteCmp, SkillImportError, type ImportRecord, type RejectedSkill } from "./import-plan.js";
 import type { LicenceEvidence, LicenceStatus } from "./licence.js";
 import { reviewImport } from "./licence-review.js";
@@ -20,7 +23,7 @@ import { skillNeeds } from "./tool-policy.js";
 
 export { evaluateSourceSkills, type SourceSkillsEvaluation, type SourceSkillsInput, type SourceSkillVerdict } from "./source-skill-evaluation.js";
 
-export type TechnologyOrigin = "skill" | "source";
+export type TechnologyOrigin = "skill" | "source" | "profile";
 type Tech = { name: string; version?: string };
 
 const MAX_CAPABILITIES = 32;
@@ -78,6 +81,8 @@ export interface EvaluatedSkill {
   risk: SkillRisk;
   licence: { status: LicenceStatus | "excluded"; licences: string[]; reasons: string[]; attribution: string[]; authorNotice: string[] };
   blockers: number;
+  /** The reviewed profile's record; only for a source with a profile. */
+  connector?: FrontendRecord;
 }
 export interface InstalledIntegrity {
   key: string;
@@ -100,6 +105,10 @@ export interface SourceEvaluation {
   shared: string[];
   comparison: CanonicalResult;
   manifest: PromotionManifest;
+  /** Only for a source with a reviewed profile: its id, the folders it does not select and the selected ones the import lacks. */
+  profile?: string;
+  notSelected?: string[];
+  missing?: string[];
 }
 
 const inside = (root: string, p: string) => root === "." || p === root || p.startsWith(root + "/");
@@ -115,24 +124,39 @@ export function evaluateSource(input: {
   tools: ToolPolicy;
   highRisk: readonly string[];
   project?: readonly Tech[];
+  /** Evaluation results recorded for skills; none can be recorded yet. */
+  results?: readonly EvaluationResult[];
+  /** Tests only: a profile used instead of the lookup by repository. */
+  profile?: FrontendProfile;
 }): SourceEvaluation {
   const { source, prep, evidence, installed, exceptions, today, tools, highRisk, project } = input;
-  const review = reviewImport({ allow: source.licence.allow, prep, evidence });
+  const profile = input.profile ?? frontendProfileFor(source.repositoryKey);
+  if (profile && source.scope) throw new TypeError("a source with a reviewed profile cannot have a scope");
+  const part = profile ? partitionRecord(profile, prep.record) : undefined;
+  const used = part ? { ...prep, record: part.record } : prep;
+  const review = reviewImport({ allow: source.licence.allow, prep: used, evidence });
   const { skills: normalized, report } = review.normalized;
   const refused: RejectedSkill[] = report.quarantined.map((q) => ({ root: q.root, reasons: [...q.reasons] }));
 
-  const scoped: { skill: NormalizedSkill; origins: Record<string, TechnologyOrigin> }[] = [];
+  const scoped: { skill: NormalizedSkill; origins: Record<string, TechnologyOrigin>; connector?: FrontendRecord }[] = [];
   for (const n of normalized) {
+    if (profile) {
+      const a = applyFrontendRule(profile, n, input.results ?? []);
+      const origins: Record<string, TechnologyOrigin> = {};
+      for (const t of a.skill.provenance.technologies) origins[t.name] = "profile";
+      scoped.push({ skill: a.skill, origins, connector: a.record });
+      continue;
+    }
     const r = applySourceScope(n, source);
     if (r.ok) scoped.push({ skill: r.skill, origins: r.origins });
     else refused.push({ root: shownValue(n.provenance.root), reasons: r.reasons });
   }
 
-  const promotion = promoteImport({ source, record: prep.record, skills: scoped.map((s) => s.skill), evidence: review.evidence, retrievedAt: input.retrievedAt, review });
+  const promotion = promoteImport({ source, record: used.record, skills: scoped.map((s) => s.skill), evidence: review.evidence, retrievedAt: input.retrievedAt, review });
   const manifest = promotion.manifest;
 
   const evaluated: { e: EvaluatedSkill; skill: NormalizedSkill }[] = [];
-  for (const { skill, origins } of scoped) {
+  for (const { skill, origins, connector } of scoped) {
     const { package: pkg, provenance } = skill;
     const files: { path: string; content: Uint8Array }[] = [];
     for (const [path, content] of prep.files) {
@@ -164,6 +188,7 @@ export function evaluateSource(input: {
         risk: pkg.risk,
         licence,
         blockers,
+        ...(connector ? { connector } : {}),
       },
     });
   }
@@ -173,10 +198,10 @@ export function evaluateSource(input: {
   // An excluded skill (live integration, network, plugin configuration) says nothing about its licence: a connector shows as
   // the "tools" gate; any other exclusion is held back by the "safety" gate.
   const imported: CanonicalCandidate[] = evaluated.map(({ skill, e }) =>
-    canonicalFromCollision(collisionCandidate(skill, source), {
+    canonicalFromCollision(collisionCandidate(skill, source, e.connector && e.connector.evaluation !== "missing" ? { evaluation: e.connector.evaluation } : {}), {
       licence: e.licence.status === "excluded" ? "allowed" : e.licence.status,
       sourceStatus: source.status,
-      safety: e.blockers === 0 && !(e.licence.status === "excluded" && e.connectors.length === 0),
+      safety: e.blockers === 0 && !(e.licence.status === "excluded" && e.connectors.length === 0) && !(e.connector && e.connector.blocked.length > 0),
       tools,
       ...(project ? { evidence: project } : {}),
     }),
@@ -210,11 +235,12 @@ export function evaluateSource(input: {
     shared,
     comparison,
     manifest,
+    ...(profile && part ? { profile: profile.id, notSelected: part.notSelected, missing: part.missing } : {}),
   };
 }
 
 export function evaluationFailed(e: SourceEvaluation): boolean {
-  return e.refused.length > 0 || e.integrity.length > 0 || e.skills.some((s) => s.licence.status !== "allowed" || s.blockers > 0 || s.compatibility === "incompatible" || s.compatibility === "unchecked") || !e.comparison.ok;
+  return e.refused.length > 0 || (e.missing?.length ?? 0) > 0 || e.skills.some((s) => (s.connector?.blocked.length ?? 0) > 0) || e.integrity.length > 0 || e.skills.some((s) => s.licence.status !== "allowed" || s.blockers > 0 || s.compatibility === "incompatible" || s.compatibility === "unchecked") || !e.comparison.ok;
 }
 
 const label = (r: { id: string; version: string }) => `${r.id}@${r.version}`;
@@ -236,8 +262,18 @@ export function evaluationLines(e: SourceEvaluation): string[] {
     else out.push(`REFUSED ${shownValue(s.root)}: licence ${s.licence.status}: ${list(s.licence.reasons)}`);
     if (s.licence.attribution.length) out.push(`NOTICE ${s.id}: kept ${s.licence.attribution.length} files: ${list(s.licence.attribution)}`);
     if (s.blockers > 0) out.push(`BLOCKED ${s.id}: ${s.blockers} high findings; see "scf skills scan"`);
+    if (s.connector) {
+      const c = s.connector;
+      out.push(
+        `CONNECTOR ${c.profile} ${s.id}: group=${c.group} declaration ${c.reviewed ? "reviewed" : "unreviewed"}; evaluation ${c.evaluation}` +
+          (c.hold !== undefined ? `; hold: ${shownValue(c.hold)}` : "") +
+          (c.blocked.includes("too-large") ? `; too large: ${c.tokens} tokens, at most ${c.maxTokens}` : ""),
+      );
+    }
   }
   for (const r of e.refused) out.push(`REFUSED ${r.root}: ${list(r.reasons)}`);
+  for (const r of e.notSelected ?? []) out.push(`NOT-SELECTED ${shownValue(r)}: the profile does not select it; not evaluated`);
+  for (const r of e.missing ?? []) out.push(`MISSING ${r}: the profile selects it; the import does not have it`);
   for (const i of e.integrity) {
     const [id, version] = i.key.split("@");
     out.push(

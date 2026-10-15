@@ -8,6 +8,7 @@ import { normalizeImport } from "../src/skills/normalize.js";
 import type { RegisteredSkill } from "../src/skills/registry.js";
 import { ToolPolicySchema } from "../src/skills/schema.js";
 import { applySourceScope, evaluateSource, evaluationFailed, evaluationLines, type SourceEvaluation } from "../src/skills/source-evaluation.js";
+import type { FrontendProfile } from "../src/skills/frontend-rules.js";
 import type { SkillLibrarySource } from "../src/skills/sources.js";
 
 const COMMIT = "a".repeat(40);
@@ -255,5 +256,119 @@ describe("evaluateSource: licence review", () => {
     const staged = reviewImport({ allow: ["MIT"], prep, evidence: canonicalLicenceEvidence(live) }).classification.digest;
     const e = run(files, { licence: { allow: ["MIT"], reviewed: staged } });
     expect(e.skills[0]!.licence.status).toBe("allowed");
+  });
+});
+
+describe("evaluateSource with a reviewed profile", () => {
+  type Rule = FrontendProfile["skills"][string];
+  const RULE: Rule = {
+    group: "frontend",
+    capabilities: ["react-composition"],
+    technologies: [{ name: "react", version: ">=18" }],
+    reviewed: [],
+    evaluations: ["skill-gate"],
+  };
+  const profile = (rules: Record<string, Rule> = { "db/sql": RULE }, max = 5000): FrontendProfile => ({
+    id: "example-profile", profile: 1, repositoryKey: "github.com/example/skills", evidence: ["react"], maxSkillTokens: max, skills: rules,
+  });
+  const PFILES = { LICENSE: MIT, "db/NOTICE": NOTICE, "db/sql/SKILL.md": md("sql") };
+  const plain = (): Partial<SkillLibrarySource> => ({ scope: undefined });
+  const prun = (files: Record<string, string>, p: FrontendProfile, more: Partial<Parameters<typeof evaluateSource>[0]> = {}, over: Partial<SkillLibrarySource> = plain()) =>
+    run(files, over, { profile: p, installed: [installed({ id: "other", caps: ["react-composition"] })], ...more });
+  const first = (files: Record<string, string>) => prun(files, profile()).skills[0]!;
+  const passed = (files: Record<string, string>) => {
+    const s = first(files);
+    return [{ skill: s.id, digest: s.digest, evaluation: "skill-gate", result: "passed" as const }];
+  };
+  /** Reviewed for the fixture digest, with a passing result. */
+  const good = (rule: Partial<Rule> = {}, max = 5000, files: Record<string, string> = PFILES, more: Partial<Parameters<typeof evaluateSource>[0]> = {}) =>
+    prun(files, profile({ "db/sql": { ...RULE, reviewed: [first(files).digest], ...rule } }, max), { results: passed(files), project: [{ name: "react", version: "18.2.0" }], ...more });
+
+  it("passes when reviewed, evaluated, small and compatible", () => {
+    const e = good();
+    expect(pick(e, "CONNECTOR")[0]).toMatch(/^CONNECTOR example-profile lib-sql-[0-9a-f]+: group=frontend declaration reviewed; evaluation passed$/);
+    expect(e.skills[0]!.connector!.blocked).toEqual([]);
+    expect(e.skills[0]!.technologies[0]!.from).toBe("profile");
+    expect(pick(e, "COMPATIBILITY")[0]).toContain("(profile); project: version");
+    expect(evaluationFailed(e)).toBe(false);
+  });
+  it.each([
+    ["an empty reviewed list", () => good({ reviewed: [] })],
+    ["a hold", () => good({ hold: "pulls remote rules" })],
+    ["no results", () => prun(PFILES, profile({ "db/sql": { ...RULE, reviewed: [first(PFILES).digest] } }), { project: [{ name: "react", version: "18.2.0" }] })],
+    ["a failed result", () => {
+      const s = first(PFILES);
+      return prun(PFILES, profile({ "db/sql": { ...RULE, reviewed: [s.digest] } }), { results: [{ skill: s.id, digest: s.digest, evaluation: "skill-gate", result: "failed" }], project: [{ name: "react", version: "18.2.0" }] });
+    }],
+    ["a body over the limit", () => good({}, 1)],
+  ])("blocks on %s", (_n, make) => {
+    const e = make();
+    expect(evaluationFailed(e)).toBe(true);
+    expect(e.skills[0]!.connector!.blocked.length).toBeGreaterThan(0);
+    expect(rejection(e, "lib-sql")!.code).toBe("safety");
+  });
+  it("prints the hold, the evaluation and the size on the line", () => {
+    expect(pick(good({ hold: "pulls remote rules" }), "CONNECTOR")[0]).toContain("; hold: pulls remote rules");
+    expect(pick(good({}, 1), "CONNECTOR")[0]).toMatch(/; too large: \d+ tokens, at most 1$/);
+    expect(pick(prun(PFILES, profile()), "CONNECTOR")[0]).toContain("declaration unreviewed; evaluation missing");
+  });
+  it("checks compatibility against the profile only", () => {
+    const comp = (project: { name: string; version: string }[], files = PFILES) => good({}, 5000, files, { project }).skills[0]!.compatibility;
+    expect(comp([{ name: "react", version: "17.0.2" }])).toBe("incompatible");
+    expect(comp([{ name: "react", version: "unknown" }])).toBe("unchecked");
+    expect(comp([])).toBe("incompatible");
+    expect(comp([{ name: "typescript", version: "5.4.0" }], { ...PFILES, "db/sql/SKILL.md": md("sql", "technologies: [typescript]\n") })).toBe("incompatible");
+  });
+  it("refuses a scope", () => {
+    expect(() => prun(PFILES, profile(), {}, {})).toThrow(TypeError);
+  });
+  it("selects before normalizing", () => {
+    const files = { ...PFILES, "db/other/SKILL.md": md("other") };
+    const e = good({}, 5000, files);
+    expect(e.notSelected).toEqual(["db/other"]);
+    expect(pick(e, "NOT-SELECTED")).toEqual(["NOT-SELECTED db/other: the profile does not select it; not evaluated"]);
+    expect(e.skills).toHaveLength(1);
+    expect(evaluationFailed(e)).toBe(false);
+  });
+  it("does not report an unselected malformed sibling as refused", () => {
+    const e = good({}, 5000, { ...PFILES, "db/bad/SKILL.md": "no front matter" });
+    expect(e.refused).toEqual([]);
+    expect(e.notSelected).toEqual(["db/bad"]);
+    expect(evaluationFailed(e)).toBe(false);
+  });
+  it("does not let a same-name sibling quarantine a selected skill", () => {
+    const e = good({}, 5000, { ...PFILES, "db/twin/SKILL.md": md("sql") });
+    expect(e.skills).toHaveLength(1);
+    expect(e.refused).toEqual([]);
+    expect(evaluationFailed(e)).toBe(false);
+  });
+  it("fails on a missing root", () => {
+    const e = prun(PFILES, profile({ "db/sql": RULE, "db/gone": RULE }));
+    expect(e.missing).toEqual(["db/gone"]);
+    expect(pick(e, "MISSING")).toEqual(["MISSING db/gone: the profile selects it; the import does not have it"]);
+    expect(evaluationFailed(e)).toBe(true);
+  });
+  it("reports every root as missing when only unselected skills are staged", () => {
+    const e = prun({ LICENSE: MIT, "db/other/SKILL.md": md("other") }, profile());
+    expect(e.skills).toEqual([]);
+    expect(e.missing).toEqual(["db/sql"]);
+    expect(lines(e).at(-1)).toMatch(/^EVALUATED 0 skills /);
+    expect(evaluationFailed(e)).toBe(true);
+  });
+  it("lets a built-in skill win a shared capability", () => {
+    const s = first(PFILES);
+    const rule: Rule = { ...RULE, group: "typescript", capabilities: ["strict-typing"], reviewed: [s.digest] };
+    const e = run(PFILES, plain(), {
+      profile: profile({ "db/sql": rule }),
+      installed: [installed({ id: "typescript", source: "builtin", caps: ["strict-typing"] })],
+    });
+    expect(pick(e, "RECOMMEND")[0]).toMatch(/^RECOMMEND strict-typing: typescript@/);
+  });
+  it("leaves a source without a profile as it was", () => {
+    const e = run(GOOD);
+    expect(e.notSelected).toBeUndefined();
+    expect(e.missing).toBeUndefined();
+    expect(e.profile).toBeUndefined();
+    expect(pick(e, "CONNECTOR")).toEqual([]);
   });
 });

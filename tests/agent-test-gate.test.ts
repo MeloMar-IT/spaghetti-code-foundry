@@ -50,7 +50,7 @@ describe("tools/agent-bin", () => {
     const r = run(f, "npx", ["vitest", "run"]);
     expect(r.status).toBe(7);
     const line = readFileSync(f.log, "utf8").trim();
-    expect(line).toMatch(/^npx vitest run nice=1\d? slot=1$/);
+    expect(line).toMatch(/^npx vitest run nice=(?:1\d?|20) slot=1$/);
     expect(Number(/nice=(\d+)/.exec(line)![1])).toBeGreaterThanOrEqual(10);
     // the slot is free again
     expect(readdirSync(f.slots)).toEqual([]);

@@ -3448,7 +3448,7 @@ A pin ties one skill version to the exact content you looked at. If the content 
 
 ### Skill library sources
 
-An open-source skill library is added by a reviewed declaration in `skill-sources.yaml`, not by changing importer code. The file only lists allowed sources. Nothing reads it during a run. Only `scf skills import` fetches from the network, and never during a run.
+An open-source skill library is added by a reviewed declaration in `skill-sources.yaml`, not by changing importer code. The file only lists allowed sources. Nothing reads it during a run. Only `scf skills import`, `scf skills evaluate` and `scf skills update` fetch from the network, and never during a run.
 
 ```yaml
 schema: 1
@@ -3491,7 +3491,7 @@ sources:
   Every other upstream capability becomes `confluent-<capability>`, so a vendor skill cannot take over a portable capability by accident. A skill with a vendor capability gets the provider block. A source without `profile` is unchanged. `scf skills sources check` prints `provider confluent (1 portable)` for the source. It refuses a mapping to an invalid slug, a duplicate key and a `profile` without `provider`. A slug longer than 64 characters, or two upstream names that land on the same slug, is a problem that names the skill and the capability; nothing is dropped silently. The profile is not applied during import or scan yet.
 - **Owner and policy.** Every source has an owner and an update cadence.
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
-- **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
+- **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)); and `vercel-agent-skills` (`https://github.com/vercel-labs/agent-skills`): `paths` must be `skills` or `agent-skills` or a folder below one of them, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `MIT` (see [Vercel agent skills](#vercel-agent-skills)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
 - **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. A reviewed source is listed with `reviewed by <by> on <on>`. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
 - **Import and scan.** `scf skills import` and `scf skills scan` read the same file. A community source without a current `review` is refused as an invalid source list: a `PROBLEM` line names the missing or stale review, and nothing is fetched or read.
 
@@ -3618,7 +3618,7 @@ ASSESSED <n> skills from <repository>@<commit> sha256:…: <n> candidates, <n> e
 
 #### Evaluate a source
 
-`scf skills evaluate <source-id> [<technology>@<version> ...]` reports what an enabled source offers, before you import it. It fetches the approved commit (`ref.approved`) into a temporary folder, like `scf skills import`, and then writes nothing: no quarantine, no catalogue and no file.
+`scf skills evaluate <source-id> [<technology>@<version> ... | --repo <dir>]` reports what an enabled source offers, before you import it. It fetches the approved commit (`ref.approved`) into a temporary folder, like `scf skills import`, and then writes nothing: no quarantine, no catalogue and no file.
 
 ```
 scf skills evaluate oracle-skills oracle-database@19 oracle-apex@24
@@ -3636,6 +3636,7 @@ EVALUATED 1 skills from github.com/example/oracle-skills@0123456789ab sha256:…
 ```
 
 - **Technologies.** Up to 8, each `<name>@<version>` with a lower-case name such as `oracle-database@19`. A skill is compatible when its version range admits the version you give. Without any technology, no `COMPATIBILITY` verdict is shown.
+- **Project folder.** `--repo <dir>` (only for a source with a reviewed profile, see [Vercel agent skills](#vercel-agent-skills)) reads the versions of the profile's technologies from the `package.json` files of that folder, relative to the current folder, instead of listing them. It cannot be combined with technology operands. Only dependencies are read. An exact version such as `18.2.0` is used as it is, `^18.2.0` gives `18` and `~18.2.0` gives `18.2`. A range such as `>=18`, `<18`, `latest` or `workspace:*`, a missing version, or two different versions, give `unknown`, so the verdict is `unchecked`. The reason is that the report must not claim a version it cannot read. If the scan hits a limit or cannot read a file, the command stops with a `PROBLEM` and no verdict.
 - **Source scope.** A source entry in `skill-sources.yaml` can state what upstream does not: `scope` with up to 8 `capabilities` and up to 8 `technologies` (a name and a version range such as `">=19"`). A range the skill declares itself wins. The scope adds to the skill; it never removes one.
 
 ```yaml
@@ -3649,8 +3650,44 @@ EVALUATED 1 skills from github.com/example/oracle-skills@0123456789ab sha256:…
 - **Access.** `ACCESS` lists what a skill asks for (network, credentials, tools). Importing grants none of it: no cloud credential or live database access is given by an import.
 - **Licence and notices.** `LICENCE` is per skill, from the source's `licence.allow`. A skill whose licence is not allowed is `REFUSED`. The attribution files of an allowed skill are listed as `NOTICE`, so the notices can be kept with it.
 - **Overlap.** For each capability that an imported skill and an installed skill both provide, the report uses the canonical selection. `RECOMMEND` names the winner and why it won; `CONFLICT` means no winner can be chosen; `NONE` means no skill is eligible. A recommendation is not applied: nothing is pinned or changed.
-- **Exit codes.** 0 when every skill passes. 1 when a skill is refused or blocked by a high finding, its licence is not allowed, its compatibility is `incompatible` or `unchecked`, an installed skill fails the integrity check, or a conflict is found. A `PROBLEM` line also exits 1 and names the file or field.
+- **Exit codes.** 0 when every skill passes. 1 when a skill is refused or blocked by a high finding, its licence is not allowed, its compatibility is `incompatible` or `unchecked`, an installed skill fails the integrity check, or a conflict is found. For a source with a reviewed profile, 1 also when a skill is blocked by the profile, or a folder the profile selects is missing from the import. A `PROBLEM` line also exits 1 and names the file or field.
 - **Limits.** The same fetch limits as `scf skills import`. An evaluation that is interrupted (Ctrl-C) prints `PROBLEM` and writes nothing.
+
+##### Vercel agent skills
+
+The connector `vercel-agent-skills` (`https://github.com/vercel-labs/agent-skills`) is the first source with a reviewed profile. The profile is code, not data in `skill-sources.yaml`: it lists the folders the connector selects and what each one may offer. The entry in `skill-sources.yaml` is short:
+
+```yaml
+- id: vercel-agent-skills
+  repository: https://github.com/vercel-labs/agent-skills
+  paths: [skills]
+  trust: verified
+  licence:
+    allow: [MIT]
+  ref:
+    approved: 0000000000000000000000000000000000000000   # placeholder: the reviewed commit goes here
+```
+
+Do not add a `scope` to it: a source with a profile is refused with `PROBLEM`. Its `paths` may list the selected folders instead of `skills`; a folder that is not listed is then not fetched at all, and it does not count toward the import limits.
+
+- **Selected folders.** `frontend` group: `skills/react-best-practices`, `skills/composition-patterns`, `skills/react-native-skills`. `typescript` group: none yet. `skills/web-design-guidelines` is listed but on hold, so it is never offered. `skills/vercel-deploy-claimable` is not selected: the report says `NOT-SELECTED skills/vercel-deploy-claimable` and it is not evaluated, so its licence, findings and size do not change the verdict (its bytes still count toward the import limits while `paths` is `skills`). The profile's capabilities, technologies and category replace the ones the upstream `SKILL.md` declares.
+- **A declaration becomes reviewed** only when its digest (the package digest of that folder, skill-relative paths) is in that folder's `reviewed` list in `frontend-rules.ts`. A list entry is added by a code change, after someone has read that exact `SKILL.md`. Each list is empty in this release, so no folder is reviewed yet. One changed byte gives a new digest, which is not reviewed, and a digest approved for one folder does not approve another.
+- **Evaluation stays `missing`.** Each folder needs the evaluation `skill-gate` to have passed for its digest. No result can be recorded yet, so `evaluation missing` is shown for every folder and the verdict is blocked. A `failed` result also blocks.
+- **Why `web-design-guidelines` is on hold.** It takes its rules from a remote address when it runs, so the content that is reviewed is not the content that runs.
+- **Size.** A skill body over 5000 tokens is `too large`, and is blocked.
+- **What a blocked skill does.** The `CONNECTOR` line names the group, whether the declaration is reviewed, the evaluation state and any hold. Each skill that is blocked is not chosen as a recommendation, and the source verdict exits 1.
+
+For example, the lines of an import in which one selected folder is missing:
+
+```
+CONNECTOR vercel-agent-skills react-best-practices: group=frontend declaration unreviewed; evaluation missing
+MISSING skills/composition-patterns: the profile selects it; the import does not have it
+NOT-SELECTED skills/vercel-deploy-claimable: the profile does not select it; not evaluated
+```
+
+When the import stages nothing, the report lists each selected folder as `REFUSED` (with its reasons) or `MISSING`, each other folder as `NOT-SELECTED`, and ends with `EVALUATED 0 skills … 0 refused` or `N refused`. The exit code is 1.
+
+Upstream facts were not checked when the profile was written. Folder names, the `next` and `react-native` ranges, and the remote fetch of `web-design-guidelines` need a human check against the repository before any digest is added.
 
 #### Check a promotion
 
@@ -4423,7 +4460,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills connectors` | List the reviewed skill source connectors (id, repository, roots, trust, licences); offline; reads no files |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
-| `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
+| `scf skills evaluate <source-id> [<technology>@<version> ... \| --repo <dir>]` | Report compatibility, tools, access, licence and overlap of an enabled source; `--repo` reads the versions from the `package.json` files of a folder (sources with a reviewed profile only); writes nothing; exits 1 on a refusal, a block, a conflict, a missing selected folder or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `PROBLEM` and `OVERLAP` lines; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |

@@ -43,6 +43,16 @@ export const SOURCE_CONNECTORS: readonly SkillSourceConnector[] = Object.freeze(
     track: "main",
     licenceReview: "required" as const,
   }),
+  Object.freeze({
+    id: "vercel-agent-skills",
+    repository: "https://github.com/vercel-labs/agent-skills",
+    repositoryKey: "github.com/vercel-labs/agent-skills",
+    roots: Object.freeze(["skills", "agent-skills"]) as string[],
+    adapter: "agent-skills" as const,
+    trust: "verified" as const,
+    licences: Object.freeze(["MIT"]) as string[],
+    track: "main",
+  }),
 ]);
 
 export function connectorFor(repositoryKey: string): SkillSourceConnector | undefined {

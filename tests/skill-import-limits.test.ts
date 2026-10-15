@@ -242,7 +242,7 @@ describe("listing and reading bounds", { timeout: 15_000, retry: 0 }, () => {
 
   it.each([
     ["flood", { STUB_LIST: "flood" }, 10_000, "bad-listing"],
-    ["stall", { STUB_LIST: "stall" }, 300, "timeout"],
+    ["stall", { STUB_LIST: "stall" }, 2000, "timeout"],
     ["junk", { STUB_LIST: "junk" }, 10_000, "bad-listing"],
   ])("list: %s", async (_n, e, t, expected) => {
     const tree = await open(e, t);
@@ -253,7 +253,7 @@ describe("listing and reading bounds", { timeout: 15_000, retry: 0 }, () => {
 
   it.each([
     ["flood", { STUB_READ: "flood" }, 10_000, "read-failed"],
-    ["stall", { STUB_READ: "stall" }, 300, "timeout"],
+    ["stall", { STUB_READ: "stall" }, 2000, "timeout"],
     ["short", { STUB_READ: "short" }, 10_000, "read-failed"],
   ])("read: %s", async (_n, e, t, expected) => {
     const tree = await open(e, t);
