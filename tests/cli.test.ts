@@ -432,6 +432,14 @@ describe("data folder", () => {
     expect(r.stderr).toContain("scf skills assess <source-id>");
   });
 
+  it("scf skills compare is in the help and checks its syntax first", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills compare <source-id>");
+    const r = scf(["skills", "compare"], home);
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("scf skills compare <source-id>");
+  });
+
   it("scf skills assess reads the old data folder and does not move, copy or lock it", () => {
     const { home, oldDir, newDir } = withHome();
     seedOld(oldDir);

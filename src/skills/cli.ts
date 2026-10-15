@@ -8,6 +8,7 @@ import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
 import { applyConnector, connectorFor } from "./connector.js";
+import { compareStaged } from "./compare-cli.js";
 import { exclusionReasons, importExclusions } from "./import-exclusions.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -43,6 +44,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills import <source-id> [<file>]                    Fetch the approved commit of a source into quarantine
        scf skills scan <source-id> [<exceptions-file>]           Print the security report of a staged import, plus the connector report of a known source
        scf skills assess <source-id>                             Print the workflow report of a staged import; reads only
+       scf skills compare <source-id>                            Compare a staged import with the built-in java and spring-boot skills; reads only
        scf skills evaluate <source-id> [<technology>@<version> ...]   Report compatibility, tools, access, licence and overlap of a source; writes nothing
        scf skills promote check <source-id> [<exceptions-file>]  Print per staged skill whether licence and findings allow promotion; reads only
        scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; reads only
@@ -51,7 +53,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], promote: [], overlap: [], review: ["markdown"], score: [], gate: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: [], gate: [] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -494,6 +496,14 @@ export async function skillsCommand(
     if (operands.length !== 1) throw syntax("scf skills assess: expects one source id");
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills assess: the operand must be a source id");
     return assessImport(operands[0]!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home });
+  }
+
+  if (sub === "compare") {
+    if (operands.length !== 1) throw syntax("scf skills compare: expects one source id");
+    if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills compare: the operand must be a source id");
+    const cwd = opts.cwd ?? process.cwd();
+    const staged = stagedImport(operands[0]!, out, { cwd, home: opts.home, today: opts.today }, undefined, "compared");
+    return staged ? compareStaged(staged, out, { cwd, now: opts.now ?? new Date(), builtinRoot: opts.builtinRoot }) : 1;
   }
 
   if (sub === "promote") {

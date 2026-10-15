@@ -81,6 +81,14 @@ describe("skill code does not reach the network", () => {
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
       expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
     });
+    it("compare.ts is pure and compare-cli.ts starts no process and no network", () => {
+      const pure = readFileSync("src/skills/compare.ts", "utf8");
+      for (const name of modulesOf(pure)) expect(name.startsWith("./") && name.endsWith(".js"), name).toBe(true);
+      expect(codeLines(pure).filter((l) => /\bprocess\.|child_process|\bfs\b|node:fs/.test(l))).toEqual([]);
+      const cli = readFileSync("src/skills/compare-cli.ts", "utf8");
+      expect(modulesOf(cli).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
+      expect(codeLines(cli).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+    });
     it("ls-remote.ts starts one detached `git ls-remote` and nothing else", () => {
       const text = readFileSync("src/skill-import/ls-remote.ts", "utf8");
       const code = codeLines(text);

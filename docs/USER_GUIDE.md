@@ -3616,6 +3616,35 @@ ASSESSED <n> skills from <repository>@<commit> sha256:…: <n> candidates, <n> e
 - **Exit codes.** 0 when the report is printed, even when every skill is excluded: an exclusion is the expected result. 1 for a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, or no workflow profile).
 - **Not done.** Nothing promotes a candidate yet. `workflowBlockers`, `declaredPackage` and `workflowProvenance` in `src/skills/workflow.ts` are for a later promotion step to call. A promoted skill would record its declaration in `SkillProvenance.workflow`.
 
+#### Compare an import
+
+`scf skills compare <source-id>` compares the staged import of a source with the built-in `java` and `spring-boot` skills. For each skill it shows the capabilities it shares with them, every collision, and one recommendation or conflict for each shared capability. It is offline and read-only, like `assess`: nothing is written, loaded or run, and it needs no data folder. It reads `skill-sources.yaml` and the approved commit (`ref.approved`) of the source, then the staged import in quarantine. It takes no exception file. The built-in skills are read straight from their folders; the lock file and the owner overrides are not used, except that `skill-overrides.yaml` in the current folder is read when it exists.
+
+```
+scf skills compare spring-agent-skills
+```
+
+```
+SKILL <id>@<version> <tier> capabilities=<list or ->
+EXCLUDED <id> <code>
+NO-OVERLAP <id>
+COLLISION <id> <class> <reason> <id@version,...> [blocking]
+RECOMMEND <capability> <id@version> (<level>)
+CONFLICT <capability> <reason>
+NOTE <reason>
+COMPARED <n> skills from <repository>@<commit>: <n> collisions (<n> blocking), <n> conflicts
+```
+
+- **Capabilities.** Upstream tags, keywords and capability names are mapped to built-in capability names by a shipped table in `src/skills/community-rules.ts`. For example `spring-boot` with `transactions` maps to `spring-boot-transactions`, and `java` maps to `java-language`. The mapping is used for this comparison only: the skill, its digest and its package are not changed.
+- **Skills.** One `SKILL` line for each imported skill, sorted by id. Its tier is `vetted-community` when the source is enabled and reviewed at the approved commit (`review.commit` equals `ref.approved`), and `discovery-only` otherwise. A skill with no mapped capability also prints `NO-OVERLAP <id>`.
+- **Excluded.** `EXCLUDED <id> stale` means a declared version is no longer supported, and `EXCLUDED <id> incompatible` or `compatibility-unchecked` means the skill cannot be checked against its declared versions. An excluded skill is never recommended. A skill that normalization rejects prints `EXCLUDED <folder> not-normalized`.
+- **Collisions.** `COLLISION` lists each collision with its class, its reason and the members it names. `blocking` at the end marks a collision that stops the comparison.
+- **Recommendations.** For each capability that an imported skill and a built-in skill share, exactly one line is printed. `RECOMMEND` names the winner and the level that decided it (for example `trust-tier`, `owner-override` or `only-candidate`). The built-in skill wins on trust tier over a `vetted-community` skill, unless an owner override says otherwise. `CONFLICT` names the capability and the reason, for example that no skill is eligible.
+- **Notes.** `NOTE` gives the first reason that stops the canonical selection (the same text a run would stop with), and says how many more there are. It is printed only when there is one.
+- **Order.** The same input gives the same output in any order.
+- **Limits.** The comparison is refused with a `PROBLEM` when it would compare more than the allowed number of skills or share more capabilities than the selection rules allow. No project is given, so a skill is not checked against the versions of a project; only the stale check applies.
+- **Exit codes.** 0 when there is no conflict and no blocking collision. 1 for a `CONFLICT`, a blocking collision, or a `PROBLEM` (no staged import, unknown source, a source without `ref.approved`, an invalid source list, a built-in skill that cannot be read, or an invalid `skill-overrides.yaml`).
+
 #### Evaluate a source
 
 `scf skills evaluate <source-id> [<technology>@<version> ...]` reports what an enabled source offers, before you import it. It fetches the approved commit (`ref.approved`) into a temporary folder, like `scf skills import`, and then writes nothing: no quarantine, no catalogue and no file.
@@ -4448,6 +4477,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills connectors` | List the reviewed skill source connectors (id, repository, roots, trust, licences); offline; reads no files |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
 | `scf skills assess <source-id>` | Print the workflow report of a staged import (`CONFLICT`, `CANDIDATE`, `EXCLUDED` lines); offline and read-only; exits 1 only for a `PROBLEM` ([Assess an import](#assess-an-import)) |
+| `scf skills compare <source-id>` | Compare a staged import with the built-in `java` and `spring-boot` skills (`SKILL`, `COLLISION`, `RECOMMEND`, `CONFLICT` lines); offline and read-only; exits 1 on a conflict, a blocking collision or a `PROBLEM` ([Compare an import](#compare-an-import)) |
 | `scf skills evaluate <source-id> [<technology>@<version> ...]` | Report compatibility, tools, access, licence and overlap of an enabled source; writes nothing; exits 1 on a refusal, a block, a conflict or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
