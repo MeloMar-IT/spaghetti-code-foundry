@@ -13,3 +13,24 @@ sources:
     licence: { allow: [MIT] }
     update: { cadence: manual }
     owner: "@MeloMar-IT"
+  - id: spring-agent-skills
+    repository: https://github.com/jiangxianze/spring-agent-skills
+    status: enabled
+    ref: { approved: f228731681cc37e6abd83058a4d2a6311eba994f, track: main }
+    paths: [skills]
+    adapter: agent-skills
+    trust: community
+    licence: { allow: [Apache-2.0] }
+    update: { cadence: manual }
+    owner: "@MeloMar-IT"
+    review: { by: "@MeloMar-IT", on: 2026-10-15, commit: f228731681cc37e6abd83058a4d2a6311eba994f, licence: Apache-2.0 }
+  - id: anthropic-skills
+    repository: https://github.com/anthropics/skills
+    status: enabled
+    ref: { approved: dbd4588f9e1033efb41dad4bef2f7947c8993d44, track: main }
+    paths: [skills/frontend-design, skills/webapp-testing, skills/mcp-builder]
+    adapter: agent-skills
+    trust: verified
+    licence: { allow: [Apache-2.0], reviewed: "sha256:29dbee3d1090c592ce3b0e14dc5db51eeac838ed7fb616f1c2ea26e2f89ca431" }
+    update: { cadence: manual }
+    owner: "@MeloMar-IT"
