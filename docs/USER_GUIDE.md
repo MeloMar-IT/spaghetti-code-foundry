@@ -3710,6 +3710,36 @@ scf skills review example-skills --markdown > review.md
 - **Limits.** More than 1,000 skills to compare prints a `PROBLEM` and checks no collisions.
 - **Exit codes.** 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed (for example a missing import or an unknown source); 0 otherwise.
 
+#### Update a source
+
+`scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` finds the upstream commit of a source, stages it with the same checks as `scf skills import`, builds the [review report](#review-an-import) and opens a pull request that proposes the new commit. The pull request is the only result. Nothing is approved, promoted, pinned or released until it is merged.
+
+Run it in the clone of the catalogue repository, in the folder that holds `skill-sources.yaml`. Its `origin` must be a GitHub repository, and `gh` must be installed and signed in (`FACTORY_GH_BIN` names another `gh`).
+
+```
+scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer
+```
+
+- **Entry or connector.** A source with an entry must be `enabled`; `disabled`, `quarantined` and `retired` are refused. A connector with no entry yet (for example `awesome-copilot`) needs `--owner`: the first run adds its entry, with the commit, the paths and the licence from the connector. `--owner` is refused for an entry that already exists.
+- **Tracked ref.** The upstream commit is that of `ref.track`: a branch or a tag (an annotated tag gives the commit it points at). A name that is both a branch and a tag is refused. Without `ref.track`, the commit is HEAD.
+- **Reviewer.** An enabled community source needs `--reviewer <@user>` for a new commit: the entry gets a `review` (`by`, `on` today, `commit` and `licence`). `--licence <id>` names the licence when `licence.allow` has more than one and there is no earlier review. A run that prints `UNCHANGED` needs no reviewer.
+- **Where the change goes.** The branch is `skill-update/<source-id>-<commit>` (12 characters of the commit). Only `ref.approved` and `review` of that entry change, or one new entry at the end of `sources:`. Every other byte of the file stays. The edited file must pass the same rules as `scf skills sources check`, or nothing is pushed.
+- **Pull request.** The title is `Skill source <id>: update to <commit>` (or `first import at <commit>`). The body holds the old and the new commit, the tracked ref, the selected paths, the verdict and the review report: licence, attribution, collisions and scan. It holds no text of the upstream skills.
+- **Output.** One line per outcome:
+  - `UNCHANGED <id> is at <commit> (ref.approved); nothing to propose`: the upstream commit is already approved. Nothing is opened.
+  - `OPEN <url> for <id>@<commit>; no second pull request was opened`: a pull request for this source and commit is open already.
+  - `OK opened <url> for <id>@<commit>; nothing is approved until it is merged`: the new pull request.
+  - `PROBLEM <sentence>` and exit 1: an unreachable upstream, a failed push or `gh` call, a refused source or option. The sentence is fixed text; git's and gh's own messages are never printed. A failed run leaves no branch behind on `origin`. When the branch cannot be removed, the `PROBLEM` names it: delete it by hand.
+- **Ctrl-C.** The update stops and, as far as it has pushed, removes its own branch. Nothing is proposed.
+- **Merging.** Merging the pull request is the approval. Until then the working copy's `skill-sources.yaml` on the default branch does not change.
+
+Walk-through for the awesome-copilot connector:
+
+1. **Propose.** `scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer`. The first run prints the pull request address and the `REVIEWED` line of the report.
+2. **Review.** Read the pull request: the licence (`MIT` for this connector), the attribution, the collisions and the scan in the body. Check that the reviewer named is the one who checked them.
+3. **Merge.** The source is then pinned by the merged file. `scf skills import awesome-copilot` fetches that commit, and `scf skills review awesome-copilot` shows the report again.
+4. **Next update.** When upstream moves, run `scf skills update awesome-copilot --reviewer @reviewer` again. While upstream is unchanged it prints `UNCHANGED`.
+
 #### Skill identity and content fingerprint
 
 Each normalized skill has five identity terms. Nothing reads them yet, so they do not change what runs use.
@@ -4379,6 +4409,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance and findings allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `CHECKED` lines); offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion)) |
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `PROBLEM` and `OVERLAP` lines; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
+| `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
 | `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |

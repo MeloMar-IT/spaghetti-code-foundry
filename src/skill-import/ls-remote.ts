@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { trackRefProblem } from "../skills/sources.js";
 import { gitEnv, OPTIONS } from "./git-tree.js";
 
 // Reads the commit that HEAD of a remote repository points at now: one `git ls-remote`, with the same hardening as the
@@ -32,6 +33,42 @@ const ANSWER_RE = /^([0-9a-f]{40}|[0-9a-f]{64})\tHEAD\n$/;
 
 /** The commit HEAD of the repository points at now. The process group and the temporary folder are gone when it settles. */
 export async function resolveHead(repository: string, opts: LsRemoteOptions = {}): Promise<string> {
+  const text = await ask(repository, ["HEAD"], opts);
+  const m = ANSWER_RE.exec(text);
+  if (!m) throw new LsRemoteError("bad-answer");
+  return m[1]!;
+}
+
+const LINE_RE = /^([0-9a-f]{40}|[0-9a-f]{64})\t(\S+)\n/;
+export type TrackResult = { commit: string } | { missing: "no-ref" | "ambiguous" };
+
+/**
+ * The commit a branch or a tag points at now, from one `git ls-remote`. An annotated tag gives the commit it points at (the
+ * peeled line), not the tag object. A branch and a tag of the same name are ambiguous. Only the three exact ref names asked for
+ * are read from the answer.
+ */
+export async function resolveTrack(repository: string, track: string, opts: LsRemoteOptions = {}): Promise<TrackResult> {
+  if (trackRefProblem(track) !== undefined) throw new LsRemoteError("bad-answer");
+  const branch = `refs/heads/${track}`;
+  const tag = `refs/tags/${track}`;
+  const peeled = `${tag}^{}`;
+  const text = await ask(repository, [branch, tag, peeled], opts);
+  const found = new Map<string, string>();
+  let rest = text;
+  while (rest.length > 0) {
+    const m = LINE_RE.exec(rest);
+    if (!m) throw new LsRemoteError("bad-answer");
+    rest = rest.slice(m[0].length);
+    if (m[2] === branch || m[2] === tag || m[2] === peeled) found.set(m[2], m[1]!);
+  }
+  const b = found.get(branch);
+  const t = found.get(peeled) ?? found.get(tag);
+  if (b !== undefined && t !== undefined) return { missing: "ambiguous" };
+  const commit = b ?? t;
+  return commit === undefined ? { missing: "no-ref" } : { commit };
+}
+
+async function ask(repository: string, patterns: readonly string[], opts: LsRemoteOptions): Promise<string> {
   if (opts.signal?.aborted) throw new LsRemoteError("interrupted");
   let tmp: string;
   try {
@@ -45,7 +82,7 @@ export async function resolveHead(repository: string, opts: LsRemoteOptions = {}
     delete env.GIT_DIR;
     env.GIT_CEILING_DIRECTORIES = tmp;
     const url = opts.remote !== undefined ? "file://" + resolve(opts.remote) : repository;
-    return await run(url, tmp, env, opts.timeoutMs ?? LS_REMOTE_LIMITS.timeoutMs, opts.signal);
+    return await run(url, patterns, tmp, env, opts.timeoutMs ?? LS_REMOTE_LIMITS.timeoutMs, opts.signal);
   } catch (e) {
     throw e instanceof LsRemoteError ? e : new LsRemoteError("unreachable");
   } finally {
@@ -57,7 +94,7 @@ export async function resolveHead(repository: string, opts: LsRemoteOptions = {}
   }
 }
 
-function run(url: string, cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+function run(url: string, patterns: readonly string[], cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number, signal?: AbortSignal): Promise<string> {
   return new Promise<string>((done, fail) => {
     let child: ChildProcess | undefined;
     let hit: LsRemoteErrorCode | undefined;
@@ -91,7 +128,7 @@ function run(url: string, cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      child = spawn("git", [...OPTIONS, "ls-remote", "--quiet", "--", url, "HEAD"], { cwd, env, detached: true, stdio: ["ignore", "pipe", "ignore"] });
+      child = spawn("git", [...OPTIONS, "ls-remote", "--quiet", "--", url, ...patterns], { cwd, env, detached: true, stdio: ["ignore", "pipe", "ignore"] });
     } catch {
       settle(undefined, "unreachable");
       return;
@@ -111,9 +148,7 @@ function run(url: string, cwd: string, env: NodeJS.ProcessEnv, timeoutMs: number
       if (hit) return settle(undefined, hit);
       if (status !== 0) return settle(undefined, "unreachable");
       const text = Buffer.concat(chunks).toString("latin1");
-      const m = ANSWER_RE.exec(text);
-      if (!m) return settle(undefined, "bad-answer");
-      settle(m[1]);
+      settle(text);
     });
     if (signal?.aborted) trip("interrupted");
   });

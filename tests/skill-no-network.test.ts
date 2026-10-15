@@ -86,11 +86,39 @@ describe("skill code does not reach the network", () => {
       const code = codeLines(text);
       const starts = code.filter((l) => /\b(?:spawn|spawnSync)\s*\(/.test(l));
       expect(starts).toHaveLength(1);
-      expect(starts[0]).toContain('spawn("git", [...OPTIONS, "ls-remote", "--quiet", "--", url, "HEAD"], {');
+      expect(starts[0]).toContain('spawn("git", [...OPTIONS, "ls-remote", "--quiet", "--", url, ...patterns], {');
       expect(starts[0]).toContain("detached: true");
       expect(code.filter((l) => /\bspawnSync\b|(?<![.\w])exec\s*\(|execSync|execFile|\bfork\s*\(/.test(l))).toEqual([]);
       expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual(["node:child_process"]);
+    });
+    it("catalogue-git.ts names exactly the git commands of the update and starts only git and gh with argument arrays", () => {
+      const text = readFileSync("src/skill-import/catalogue-git.ts", "utf8");
+      const code = codeLines(text);
+      const m = text.match(/CATALOGUE_GIT_COMMANDS\s*=\s*\[([^\]]*)\]/);
+      expect([...m![1]!.matchAll(/"([^"]+)"/g)].map((x) => x[1])).toEqual(["config", "rev-parse", "symbolic-ref", "fetch", "ls-tree", "cat-file", "hash-object", "read-tree", "update-index", "write-tree", "commit-tree", "push", "ls-remote"]);
+      const starts = code.filter((l) => /\b(?:spawn|spawnSync)\s*\(/.test(l));
+      expect(starts).toHaveLength(2);
+      expect(starts[0]).toContain('spawnSync("git", [cmd, ...rest], {');
+      expect(starts[1]).toContain("spawnSync(ghBin(ctx.env), args, {");
+      expect(code.filter((l) => /(?<![.\w])exec\s*\(|execSync|execFile|\bfork\s*\(|\bshell\b|\bspawn\s*\(/.test(l))).toEqual([]);
+      expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+      expect(modulesOf(text).filter((x) => NETWORK_MODULES.test(`"${x}"`))).toEqual(["node:child_process"]);
+    });
+    it("update-cli.ts uses no process and no network", () => {
+      const text = readFileSync("src/skill-import/update-cli.ts", "utf8");
+      expect(modulesOf(text).filter((x) => NETWORK_MODULES.test(`"${x}"`))).toEqual([]);
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
+    });
+    it("source-update.ts reads no file, starts no process and reads no clock", () => {
+      const text = readFileSync(join(SKILLS, "source-update.ts"), "utf8");
+      expect(modulesOf(text).filter((x) => /^(?:node:)?(?:fs|fs\/promises|os|child_process|path|process)$/.test(x))).toEqual([]);
+      expect(codeLines(text).filter((l) => /Date\.now|new Date|process\./.test(l))).toEqual([]);
+    });
+    it("the update modules import nothing that pins, locks or releases", () => {
+      for (const f of ["src/skills/source-update.ts", "src/skill-import/update-cli.ts", "src/skill-import/catalogue-git.ts"]) {
+        expect(modulesOf(readFileSync(f, "utf8")).filter((x) => /(?:registry|lock|release|promotion|selections)\.js$/.test(x)), f).toEqual([]);
+      }
     });
     it("discover-cli.ts uses no process and no network", () => {
       const text = readFileSync("src/skill-import/discover-cli.ts", "utf8");

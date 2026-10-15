@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { LsRemoteError, resolveHead } from "../src/skill-import/ls-remote.js";
+import { LsRemoteError, resolveHead, resolveTrack } from "../src/skill-import/ls-remote.js";
 import { skillDiscoverCommand } from "../src/skill-import/discover-cli.js";
 import { candidatesPath } from "../src/skills/discovery.js";
 import { killPids } from "./helpers/kill-pids.js";
@@ -187,5 +187,49 @@ describe("resolveHead with real git", { timeout: 30_000, retry: 0 }, () => {
   });
   it("gives unreachable for a missing path", async () => {
     expect(await code(resolveHead(REPO, { remote: join(repo, "missing") }))).toBe("unreachable");
+  });
+});
+
+describe("resolveTrack with real git", { timeout: 30_000, retry: 0 }, () => {
+  let repo: string;
+  let first: string;
+  let second: string;
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...a], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } }).trim();
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), "ls-remote-track-"));
+    git("init", "--quiet", "-b", "main");
+    writeFileSync(join(repo, "f"), "1");
+    git("add", "f");
+    git("commit", "--quiet", "-m", "one");
+    first = git("rev-parse", "HEAD");
+    git("tag", "light");
+    git("tag", "-a", "-m", "annotated", "v1");
+    git("branch", "dev");
+    git("branch", "same");
+    git("tag", "same");
+    writeFileSync(join(repo, "f"), "2");
+    git("commit", "--quiet", "-am", "two");
+    second = git("rev-parse", "HEAD");
+  });
+
+  it("reads a branch that is not the default one", async () => {
+    expect(await resolveTrack(REPO, "dev", { remote: repo })).toEqual({ commit: first });
+    expect(await resolveTrack(REPO, "main", { remote: repo })).toEqual({ commit: second });
+  });
+  it("reads a lightweight tag and peels an annotated tag to its commit", async () => {
+    expect(await resolveTrack(REPO, "light", { remote: repo })).toEqual({ commit: first });
+    expect(git("rev-parse", "refs/tags/v1")).not.toBe(first);
+    expect(await resolveTrack(REPO, "v1", { remote: repo })).toEqual({ commit: first });
+  });
+  it("reports a missing and an ambiguous ref", async () => {
+    expect(await resolveTrack(REPO, "nope", { remote: repo })).toEqual({ missing: "no-ref" });
+    expect(await resolveTrack(REPO, "same", { remote: repo })).toEqual({ missing: "ambiguous" });
+  });
+  it("does not take a longer ref name for the one asked for", async () => {
+    expect(await resolveTrack(REPO, "ligh", { remote: repo })).toEqual({ missing: "no-ref" });
+  });
+  it("refuses a track that is not a ref name, and keeps HEAD working", async () => {
+    expect(await code(resolveTrack(REPO, "--upload-pack=x", { remote: repo }))).toBe("bad-answer");
+    expect(await resolveHead(REPO, { remote: repo })).toBe(second);
   });
 });

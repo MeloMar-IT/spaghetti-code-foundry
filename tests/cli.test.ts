@@ -197,6 +197,24 @@ describe("data folder", () => {
     expect(scf(["--help"], home).stdout).toContain("scf skills import <source-id> [<file>]");
   });
 
+  it("scf skills update is in the help and checks its syntax before any process starts", () => {
+    const { home } = withHome();
+    expect(scf(["--help"], home).stdout).toContain("scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]");
+    const usage = "usage: scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]";
+    const none = scf(["skills", "update"], home);
+    expect(none.status).not.toBe(0);
+    expect(none.stderr).toContain(usage);
+    const bad = scf(["skills", "update", "Bad_Id"], home);
+    expect(bad.status).not.toBe(0);
+    expect(bad.stderr).toContain(usage);
+    const opt = scf(["skills", "update", "x", "--repo", "."], home);
+    expect(opt.status).not.toBe(0);
+    expect(opt.stderr).toContain("unexpected option --repo");
+    const owner = scf(["skills", "update", "x", "--owner", "nobody"], home);
+    expect(owner.status).not.toBe(0);
+    expect(owner.stderr).toContain("--owner must be a GitHub user or team");
+  });
+
   it("scf skills discover is in the help and checks its syntax first", () => {
     const { home } = withHome();
     expect(scf(["--help"], home).stdout).toContain("scf skills discover [<export-file> [<file>]]");
