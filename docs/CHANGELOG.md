@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Skill libraries publishing 1b-2: release store. `publishRelease` in `src/skills/release-store.ts` writes a schema-2 release to `skill-releases/<catalogue>/<version>` once: built in a private `.tmp-` folder, checked with `verifyRelease`, then moved into place in one step; an existing version is never replaced (`unchanged` or `refused`). New `foundryPackageFiles` (#545). Part 2 of 3 of #540.
 - Skill libraries publishing 1a: release manifest 2 with file digests, provenance, licences, attribution, evaluation summary and revocation; offline `scf skills release verify` (#539). Part 1 of 3 of #204.
   - **Manifest.** `catalogue-release.json` accepts `schema: 2`. Each skill adds `files`, `provenance`, `licences`, `attribution` (kept in `.attribution/<id>/`), `evaluation` (`suite`, `record`, `verdict`) and an optional `revoked`. The v2 digest uses the header `scf-skill-catalogue-release-v2`. Schema 1 is unchanged.
   - **Verify.** New `verifyRelease(root)` in `src/skills/release-verify.ts` checks every listed file (presence, regular file, size, SHA-256), each package digest, and that no unlisted file is in a package or in `.attribution/`. It follows no link, opens no network connection and starts no process.
