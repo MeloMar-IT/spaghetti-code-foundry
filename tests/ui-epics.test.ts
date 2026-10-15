@@ -54,7 +54,7 @@ describe("the table", () => {
     expect(t.all("caption")[0]!.textContent).toBe("Epics of acme/app");
     const rows = t.all("tbody")[0]!.all("tr");
     expect(rows).toHaveLength(4);
-    const names = rows.map((r) => r.all("td")[0]!.textContent);
+    const names = rows.map((r) => r.all("td")[0]!.all("strong")[0]!.textContent);
     expect(names).toEqual(["#12 Payments", "Search", "#3 Old", "No epic"]);
   });
 
@@ -76,7 +76,20 @@ describe("the table", () => {
     expect(links.map((a) => a.getAttribute("href"))).toEqual(["https://github.com/acme/app/issues/12", "https://github.com/acme/app/issues/3"]);
     expect(links[0]!.getAttribute("rel")).toBe("noopener");
     const search = b.all("tbody")[0]!.all("tr")[1]!;
-    expect(search.all("a")).toHaveLength(0);
+    expect(search.all("a").filter((a) => (a.getAttribute("href") ?? "").startsWith("https://"))).toHaveLength(0);
+  });
+
+  it("links the name of every epic to its page, and leaves the No epic row plain", async () => {
+    const b = box();
+    await mountPage(b, api());
+    const rows = b.all("tbody")[0]!.all("tr");
+    const nameLink = (i: number) => rows[i]!.all("td")[0]!.all("strong")[0]!.all("a")[0];
+    expect(nameLink(0)!.getAttribute("href")).toBe("#/epics/12?repo=acme%2Fapp");
+    expect(nameLink(0)!.textContent).toBe("#12 Payments");
+    expect(nameLink(1)!.getAttribute("href")).toBe("#/epics/l-x?repo=acme%2Fapp");
+    expect(rows[3]!.all("td")[0]!.all("a")).toHaveLength(0);
+    expect(rows[1]!.all("td")[0]!.textContent).not.toContain("On GitHub");
+    expect(rows[0]!.all("td")[0]!.textContent).toContain("On GitHub");
   });
 
   it("shows the growth, the range with its reason, and what holds it up", async () => {

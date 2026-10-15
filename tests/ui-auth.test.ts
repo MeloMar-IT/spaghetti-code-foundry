@@ -586,6 +586,12 @@ describe("roles in the page", () => {
     for (const h of ["#/repos/x?repo=a%2Fb", "#/repos/", "", undefined, "#/settings", "#/runs/a/b", "#/set-password/x"]) expect(auth.isUserHash(h), String(h)).toBe(false);
   });
 
+  it("isUserHash accepts one epic's page, with its repository in the query", () => {
+    for (const h of ["#/epics/12", "#/epics/12?repo=a%2Fb", "#/epics/l-x_y"]) expect(auth.isUserHash(h), h).toBe(true);
+    for (const h of ["#/epics/a/b", "#/epics/"]) expect(auth.isUserHash(h), h).toBe(false);
+    expect(auth.userPage("#/epics/12?repo=a%2Fb")).toEqual({ hash: "#/epics/12?repo=a%2Fb", section: "epics", id: "12" });
+  });
+
   it("isUserHash takes a query only on Runs, Refinement and Repositories; userPage drops it from the section", () => {
     for (const h of ["#/runs?repo=a%2Fb", "#/refinement?owner=x", "#/repos?x=1", "#/runs?"]) expect(auth.isUserHash(h), h).toBe(true);
     for (const h of ["#/start?repo=a%2Fb", "#/runs/abc?repo=a%2Fb", "#/refinement/s-1?x=1", "#/settings?repo=a%2Fb"]) expect(auth.isUserHash(h), h).toBe(false);

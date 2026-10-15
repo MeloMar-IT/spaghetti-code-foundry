@@ -26,6 +26,7 @@ export const PAGES = [
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },
   { id: "epics", path: "#/epics", title: "Epics", area: "work", dest: "epics", parent: null, nav: "primary", label: { admin: "Epics", user: "Epics" }, roles: AU, scope: true },
+  { id: "epic", path: "#/epics/:id", title: (id) => (/^\d+$/.test(id ?? "") ? `Epic #${id}` : "Epic"), area: "work", dest: "epics", parent: "epics", nav: "detail", label: {}, roles: AU, keepRepo: true },
   { id: "refinement", path: "#/refinement", title: "Refinement", area: "work", dest: "refinement", parent: null, nav: "primary", label: { admin: "Refinement", user: "Refinement" }, roles: AU, scope: true },
   { id: "refinement-backlog", path: "#/refinement/backlog", title: "Backlog readiness", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
   { id: "refinement-session", path: "#/refinement/:id", title: "Refinement session", area: "work", dest: "refinement", parent: "refinement", nav: "detail", label: {}, roles: AU },
@@ -187,7 +188,15 @@ export function resolve(role, hash) {
   if (!m) return fallback("unknown");
   const q = parseQuery(query);
   if (q.repo === ALL_REPOS) delete q.repo; // "all" is the unfiltered list: pages never see it
-  return { ...describe(role, m.page, m.arg, hash, null), query: q };
+  const d = describe(role, m.page, m.arg, hash, null);
+  // A detail page of one repository (`keepRepo`) leads back to its list with the same repository.
+  if (m.page.keepRepo && q.repo) {
+    const up = pageById(m.page.parent).path;
+    const to = `${up}?repo=${encodeURIComponent(q.repo)}`;
+    d.back = to;
+    d.crumbs = d.crumbs.map((c) => (c.href === up ? { ...c, href: to } : c));
+  }
+  return { ...d, query: q };
 }
 
 /** The letter after `g` for a page ("g r" goes to Runs). Only the pages a role has are offered. */

@@ -2,6 +2,7 @@ import { api } from "./api.js";
 import { h, mount, svg, table } from "./dom.js";
 import { ALL_REPOS } from "./ia.js";
 import { defaultGo, filterGone, withQuery } from "./filters.js";
+import { epicHref } from "./epic-page-model.js";
 import { barSegments, finishView, freshText, growthSentence, blockTexts, pickRepo, progressText, repoChoices, sortRows } from "./epics-model.js";
 import { emptyState, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 import { collectionPage } from "./templates.js";
@@ -26,15 +27,18 @@ export function epicRow(row, { repo, timeZone, now = new Date() } = {}) {
   const opts = { timeZone, now };
   const fin = finishView(row, opts);
   const blocks = blockTexts(row.holdUps);
-  const name = row.issue != null && repo
-    ? h("a", { href: `https://github.com/${repo}/issues/${row.issue}`, target: "_blank", rel: "noopener" }, `#${row.issue} ${row.title}`)
-    : row.title;
+  const link = !row.noEpic && row.id != null && repo;
+  const label = row.issue != null ? `#${row.issue} ${row.title}` : row.title;
+  const name = link ? h("a", { href: epicHref(repo, row.id) }, label) : row.issue != null ? label : row.title;
+  const github = row.issue != null && repo
+    ? h("p", { class: "muted" }, h("a", { href: `https://github.com/${repo}/issues/${row.issue}`, target: "_blank", rel: "noopener", "aria-label": `Issue #${row.issue} on GitHub` }, "On GitHub"))
+    : null;
   const likely = fin.likely && fin.likely !== fin.text ? ` (most likely ${fin.likely})` : "";
   const heldCell = fin.kind === "finished" ? "—"
     : blocks.length ? h("ul", { class: "epics-holds" }, blocks.map((u) => h("li", { "data-kind": u.kind }, u.text, muted(u.help))))
       : "Nothing";
   return h("tr", {},
-    h("td", {}, h("strong", {}, name)),
+    h("td", {}, h("strong", {}, name), github),
     h("td", {}, progressBar(row.counts, row.total), h("p", {}, progressText(row.counts, row.total))),
     h("td", {}, row.noEpic ? "—" : growthSentence(row) || "—"),
     h("td", {}, row.noEpic ? "—" : [h("strong", {}, fin.text, likely), muted(fin.reason), muted(fin.note)]),
