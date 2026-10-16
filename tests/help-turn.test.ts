@@ -108,6 +108,26 @@ describe("a help turn", () => {
     expect(logs).toEqual(["help: 3 part(s) of a reply were left out"]);
   });
 
+  it("asks for a plan in the prompt, keeps a checked plan, and turns a high-impact step on an uncertain source into a check", async () => {
+    const prompt = turnPrompt({ owner: ANN.id, role: "user", question: "q", history: [] }, []);
+    expect(prompt).toContain('"plan": [{"kind": one of ["explanation","navigation","check","input","reversible","high-impact"]');
+    expect(prompt).toContain("Never say that a step was done or that it worked");
+    const step = { kind: "high-impact", title: "Start the step again", evidence: ["diagnosis-run-0123456789"], expected: "It runs.", failure: "It fails.", fallback: "Stop." };
+    const plan = [{ kind: "check", title: "Look at the run", to: "#/runs" }, step];
+    const source = (uncertain: boolean) => ({ id: "diagnosis-run-0123456789", kind: "state" as const, title: "Diagnosis: failed", ref: "#/runs", observedAt: "2026-03-01T09:00:00.000Z", ...(uncertain ? { uncertain: true } : {}) });
+    const reply = async (uncertain: boolean) => {
+      const s = svc(answer({ type: "guided-resolution", summary: "Steps.", certainty: "confirmed", evidence: ["diagnosis-run-0123456789"], plan }), { evidence: () => [source(uncertain)] });
+      const turn = s.ask(ANN, { question: "How do I fix it?" });
+      await s.idle();
+      return last(ANN.id, turn.conversation.id).reply!;
+    };
+    expect((await reply(false)).plan!.map((p) => p.kind)).toEqual(["check", "high-impact"]);
+    const doubted = await reply(true);
+    expect(doubted.certainty).toBe("likely");
+    expect(doubted.plan!.map((p) => p.kind)).toEqual(["check", "check"]);
+    expect(doubted.plan![1]).toMatchObject({ wouldBe: "high-impact", proposal: "Start the step again" });
+  });
+
   it("answers a request it does not serve with the fixed limitation and next step", async () => {
     const s = svc(answer({ limit: "changes-state", summary: "Done, I cancelled it." }));
     const turn = s.ask(ANN, { question: "Cancel my run" });

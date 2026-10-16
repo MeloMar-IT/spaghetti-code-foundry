@@ -112,7 +112,7 @@ export function triesNote(message) {
  * What the drawer shows for one message: `kind` is question, waiting, answer, failed, limit or stopped. Text stays
  * text. `limit`: a failure that trying again now cannot solve (a limit, a budget, the setup).
  */
-export function entryOf(message, { elapsedMs = 0, role = "user" } = {}) {
+export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () => [] } = {}) {
   const text = typeof message?.text === "string" ? message.text : "";
   if (message?.role === "user") return { id: message.id, kind: "question", who: "You", text, note: "" };
   const note = triesNote(message);
@@ -120,7 +120,7 @@ export function entryOf(message, { elapsedMs = 0, role = "user" } = {}) {
   if (message?.status === "failed") return { id: message.id, kind: message.failure?.retry === false ? "limit" : "failed", who: "Ask SCF", text: text || "Ask SCF could not answer.", note };
   if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: text || "You stopped this answer.", note };
   // a reply with its checked parts is laid out by them; the text is what is left when there are none
-  const layout = replyLayout(message?.reply, role);
+  const layout = replyLayout(message?.reply, role, planDone(message?.id));
   return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : text, note, ...(layout ? { layout } : {}) };
 }
 
@@ -336,7 +336,7 @@ export function cardsOf(reply, role) {
  * sources and assumptions to unfold. Null when there is no reply to lay out. `basis`: the sources of the kind the
  * question needs, shown next to the answer, so a statement about the current state can be traced to what was read.
  */
-export function replyLayout(reply, role = "user") {
+export function replyLayout(reply, role = "user", done = []) {
   if (!reply || typeof reply !== "object" || !str(reply.summary)) return null;
   const sources = reply.limit ? [] : sourcesOf(reply, role);
   const trust = trustOf(reply, sources);
@@ -347,7 +347,67 @@ export function replyLayout(reply, role = "user") {
     trust,
     basis: { needs, sources: sources.filter((s) => s.kind === needs) },
     cards: cardsOf(reply, role),
+    plan: planOf(reply, role, done),
     sources,
     assumptions: assumptionsOf(reply, sources, trust),
+  };
+}
+
+// ---- a plan: ordered steps that the person follows; nothing in it runs ------------------------------
+
+/** The labels of the six kinds of step (STEP_RULES in src/help/plan.ts; a test keeps them equal). */
+export const STEP_WORDS = {
+  explanation: "Explanation",
+  navigation: "Open a page",
+  check: "Read-only check",
+  input: "Your input",
+  reversible: "Reversible change",
+  "high-impact": "High-impact change",
+};
+
+/** The one sentence under a step the person marked: Ask SCF never checks the result of a step. */
+export const stepNote = (done) => (done ? "You marked this. Ask SCF has not checked the result." : "");
+
+/** Where this tab keeps which steps of a reply were marked. Only indices, never a text. */
+export const planKey = (messageId) => `scf-ask-plan-${String(messageId ?? "").replace(/[^A-Za-z0-9-]/g, "")}`;
+
+/**
+ * The plan of a reply as steps for the drawer, or null when there is none (or the reply is a limit). `done`: the
+ * indices the person marked in this tab. The first step not marked is the current one. A step never says that it
+ * worked: `note` is only what the person marked.
+ */
+export function planOf(reply, role = "user", done = []) {
+  const steps = list(reply?.plan);
+  if (reply?.limit || !steps.length) return null;
+  const marked = new Set(list(done).filter((n) => Number.isInteger(n)));
+  const current = steps.findIndex((_, i) => !marked.has(i));
+  const rows = steps.map((s, i) => {
+    const kind = Object.hasOwn(STEP_WORDS, s?.kind) ? s.kind : "explanation";
+    const wouldBe = s?.wouldBe === "high-impact" || s?.wouldBe === "reversible" ? s.wouldBe : "";
+    return {
+      n: i + 1,
+      kind,
+      label: STEP_WORDS[kind],
+      danger: kind === "high-impact" || wouldBe === "high-impact",
+      title: str(s?.title),
+      instructions: str(s?.instructions),
+      link: pageLink(role, str(s?.to), { fixed: true }),
+      expected: str(s?.expected),
+      failure: str(s?.failure),
+      fallback: str(s?.fallback),
+      wouldBe,
+      wouldBeLabel: wouldBe === "high-impact" ? "Would be a high-impact change" : wouldBe ? "Would be a change" : "",
+      proposal: str(s?.proposal),
+      done: marked.has(i),
+      current: i === current,
+      note: stepNote(marked.has(i)),
+    };
+  });
+  const high = rows.filter((r) => r.danger).length;
+  return {
+    steps: rows,
+    highImpact: high,
+    header: `${rows.length === 1 ? "1 step" : `${rows.length} steps`}${high ? `, ${high === 1 ? "1 is a high-impact change" : `${high} are high-impact changes`}` : ""}. Nothing is done until you do it.`,
+    manual: true,
   };
 }

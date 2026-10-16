@@ -79,6 +79,17 @@ describe("reading conversations", () => {
     expect(r.text).not.toContain(ann.user.id);
   });
 
+  it("gives a user every text of a plan step: instructions, what to expect, the failure signal and the fallback", async () => {
+    const turn = addQuestion(ann.user.id, { question: "How do I fix it?" });
+    const withPlan = checkReply({
+      summary: "Steps.",
+      plan: [{ kind: "check", title: "Look at the log", instructions: "Read the last lines.", evidence: [], expected: "You see a copy.", failure: "It is empty.", fallback: "Leave it." }],
+    }, { role: "user" })!.reply;
+    finishTurn(turn.conversation.id, ref(turn), withPlan);
+    const c = (await call(ann, "GET", `/api/help/conversations/${turn.conversation.id}`)).json();
+    expect(c.messages[1].reply.plan[0]).toMatchObject({ kind: "check", instructions: "Read the last lines.", expected: "You see a copy.", failure: "It is empty.", fallback: "Leave it." });
+  });
+
   it("answers another account's conversation exactly like an unknown one, to a user and to an administrator", async () => {
     const id = seeded(ann, "Ann's private question");
     const before = readFileSync(helpPath(), "utf8");

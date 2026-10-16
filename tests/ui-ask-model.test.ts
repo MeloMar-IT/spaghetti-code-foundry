@@ -464,3 +464,53 @@ describe("a reply as the server checked it", () => {
     expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", tries: 1 })).toEqual({ id: "a1", kind: "answer", who: "Ask SCF", text: "plain", note: "" });
   });
 });
+
+describe("a plan", () => {
+  const step = (over: any = {}) => ({ kind: "reversible", title: "Make a copy", evidence: [], expected: "A copy.", failure: "Empty.", fallback: "Stop.", ...over });
+  const planned = (plan: any[], over: any = {}) => reply({ type: "guided-resolution", plan, ...over });
+
+  it("has the labels of the server's six kinds of step", async () => {
+    const { STEP_RULES } = await import("../src/help/plan.js");
+    expect(Object.fromEntries(Object.entries(STEP_RULES).map(([k, v]) => [k, v.label]))).toEqual(m.STEP_WORDS);
+  });
+
+  it("is null without steps and for a limit reply", () => {
+    expect(m.planOf(reply(), "user")).toBeNull();
+    expect(m.planOf(planned([step()], { limit: { code: "changes-state" } }), "user")).toBeNull();
+    expect(m.replyLayout(reply(), "user").plan).toBeNull();
+    expect(m.replyLayout(planned([step()]), "user").plan.steps).toHaveLength(1);
+  });
+
+  it("marks danger for a high-impact step and for one that would be, and counts them", () => {
+    const p = m.planOf(planned([step(), step({ kind: "high-impact" }), { kind: "check", title: "Check first", wouldBe: "high-impact", proposal: "Delete it" }, { kind: "check", title: "Check first", wouldBe: "reversible", proposal: "Copy it" }]), "user");
+    expect(p.steps.map((s: any) => s.danger)).toEqual([false, true, true, false]);
+    expect(p.highImpact).toBe(2);
+    expect(p.header).toBe("4 steps, 2 are high-impact changes. Nothing is done until you do it.");
+    expect(p.steps[2]).toMatchObject({ wouldBeLabel: "Would be a high-impact change", proposal: "Delete it" });
+    expect(p.steps[3]).toMatchObject({ wouldBeLabel: "Would be a change" });
+    expect(p.steps[0].label).toBe("Reversible change");
+  });
+
+  it("makes the first step that is not marked the current one, and says that a mark is not a check", () => {
+    const p = m.planOf(planned([step(), step(), step()]), "user", [0, 2]);
+    expect(p.steps.map((s: any) => s.current)).toEqual([false, true, false]);
+    expect(p.steps.map((s: any) => s.note)).toEqual(["You marked this. Ask SCF has not checked the result.", "", "You marked this. Ask SCF has not checked the result."]);
+    expect(m.planOf(planned([step()]), "user", [0]).steps[0].current).toBe(false);
+  });
+
+  it("links only to a page of the role", () => {
+    const p = m.planOf(planned([step({ to: "#/runs" }), step({ to: "#/settings" }), step({ to: "https://evil.example" })]), "user");
+    expect(p.steps.map((s: any) => s.link?.href ?? null)).toEqual(["#/runs", null, null]);
+  });
+
+  it("keeps the marks of a message under a key that holds only its id", () => {
+    expect(m.planKey("a1")).toBe("scf-ask-plan-a1");
+    expect(m.planKey("a/../1")).toBe("scf-ask-plan-a1");
+  });
+
+  it("passes the marks of each message on to its layout", () => {
+    const msg = { id: "a1", role: "assistant", status: "done", text: "", reply: planned([step(), step()]) };
+    expect(m.entryOf(msg, { planDone: (id: string) => (id === "a1" ? [0] : []) }).layout.plan.steps.map((s: any) => s.done)).toEqual([true, false]);
+    expect(m.entryOf(msg).layout.plan.steps.map((s: any) => s.done)).toEqual([false, false]);
+  });
+});

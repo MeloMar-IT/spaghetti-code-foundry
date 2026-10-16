@@ -2,7 +2,7 @@ import { api as realApi } from "./api.js";
 import { confirmDialog, mount, tabStops, trapTarget } from "./dom.js";
 import {
   CONSEQUENCES, MAX_READ_FAILURES, QUESTION_MAX, announce, closesOn, contextFor, controlsFor, explainAskError, historyRows, isWaiting, lastOf,
-  pollDelay, restorePick, sendPlan, staleGuard, suggestionsFor, threadOf, waitNote, whereOf,
+  planKey, pollDelay, restorePick, sendPlan, staleGuard, suggestionsFor, threadOf, waitNote, whereOf,
 } from "./ask-model.js";
 import { actionNodes, askButton, askFrame, entryNode, historyNodes, suggestionNodes } from "./ask-view.js";
 
@@ -27,12 +27,36 @@ function tabStore() {
 }
 
 /**
+ * Which steps of a plan the person marked, kept in this tab: only indices, per reply, and never a text. It never throws;
+ * when the tab has no sessionStorage the marks last as long as the drawer.
+ */
+export function tabProgress() {
+  const mem = new Map();
+  const clean = (v) => (Array.isArray(v) ? [...new Set(v.filter((n) => Number.isInteger(n) && n >= 0 && n < 100))].sort((x, y) => x - y) : []);
+  const tab = () => { try { return globalThis.sessionStorage ?? null; } catch { return null; } };
+  return {
+    get(id) {
+      try {
+        const raw = tab()?.getItem(planKey(id));
+        if (raw) return clean(JSON.parse(raw));
+      } catch { /* use what the drawer holds */ }
+      return mem.get(id) ?? [];
+    },
+    set(id, indices) {
+      const v = clean(indices);
+      mem.set(id, v);
+      try { tab()?.setItem(planKey(id), JSON.stringify(v)); } catch { /* kept in the drawer only */ }
+    },
+  };
+}
+
+/**
  * Builds the drawer for a role and puts its button into `slot`. `deps` are for tests: the calls, the address, the
  * timers, the clock, the confirmation and the store of this tab. `list`: the conversations the server listed at the
  * start. Returns { open, close, send, stop, … , state }.
  */
 export function createAsk(role, {
-  slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], store = tabStore(), now = () => Date.now(),
+  slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], store = tabStore(), progress = tabProgress(), now = () => Date.now(),
   confirmer = confirmDialog, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
 } = {}) {
   // `restore`: the conversation to read when the drawer opens for the first time after a reload.
@@ -78,8 +102,8 @@ export function createAsk(role, {
       return;
     }
     // a link to a page closes the drawer, so the page it opens is seen; the address changes by the link itself
-    const view = { now: now(), onNavigate: () => close({ back: false }) };
-    ui.thread.replaceChildren(...threadOf(st.conversation, { elapsedMs: elapsed(), role }).map((entry) => entryNode(entry, view)));
+    const view = { now: now(), onNavigate: () => close({ back: false }), onToggle: (id, i) => toggleStep(id, i) };
+    ui.thread.replaceChildren(...threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id) }).map((entry) => entryNode(entry, view)));
     ui.thread.hidden = !st.conversation;
     mount(ui.actions, actionNodes(controlsFor(st.conversation, { busy: st.busy }), CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
     // suggestions are for a start: a conversation that runs has its own questions
@@ -95,6 +119,15 @@ export function createAsk(role, {
     const plan = sendPlan({ draft: "x", busy: st.busy, conversation: st.conversation });
     if (plan.ok) ui.send.removeAttribute("aria-disabled");
     else ui.send.setAttribute("aria-disabled", "true");
+  }
+  /** The person marks a step of a plan as done, or takes the mark back. Only their own mark; nothing runs. */
+  function toggleStep(id, i) {
+    const marked = progress.get(id);
+    progress.set(id, marked.includes(i) ? marked.filter((n) => n !== i) : [...marked, i]);
+    draw();
+    // the lists are drawn again: the focus goes back to the button that was pressed
+    const entry = Array.from(ui.thread.children).find((c) => c.getAttribute("data-message") === String(id));
+    Array.from(entry?.querySelectorAll("button[data-step]") ?? []).find((b) => b.getAttribute("data-step") === String(i))?.focus?.();
   }
   function say(text) {
     if (text) ui.status.textContent = text;

@@ -5,6 +5,7 @@ import { claudeProviderEnv, isAuthError, isQuotaError, specOf, toTarget, type Ta
 import type { Config } from "../config.js";
 import { tokenVarNames } from "../engine/isolation.js";
 import { runClaude, type ClaudeRunOptions, type ClaudeRunResult } from "../steps/claude.js";
+import { STEP_KINDS } from "./plan.js";
 import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, checkReply, hideNames, type Evidence, type HelpRole, type Reply } from "./contract.js";
 import { SELECTION_MAX, resolveContext, type EntityResolver, type ResolvedContext } from "./context.js";
 import { GuardError, Removals, guardExcerpt, type GuardOptions, type SecretCategory } from "./guard.js";
@@ -306,6 +307,7 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     "- A source of the kind `state` is what the server observed at the time in `observedAt`. In the explanation keep three things apart, in this order and with these words: \"Observed:\" what a source shows, \"So:\" what you conclude from it, \"You could:\" what you suggest.",
     "- When a source says it may be out of date, or that sources disagree, say that the state is uncertain and name both sides. Do not pick one.",
     "- A source whose title starts with \"Diagnosis\" is what the product itself says is wrong. When the question is why something does not work, build the answer on it and name, in the explanation: the symptom, the cause, the supporting evidence, the missing evidence and the safest next check. Give a cause only as that source gives it, and say whether it is confirmed or a hypothesis. When it says the cause is not recognised, or there is no such source, say that the cause is not known and give the safest next check: never make up a cause, a file, a setting, a command or any other detail that no source holds.",
+    "- When the question is how to solve a problem, give `plan`: ordered steps, the safest reversible one first. Put a check that verifies a change directly after it. Every change step needs `expected`, `failure` and `fallback`. Give a high-impact change only when a diagnosis source confirms the cause. Never say that a step was done or that it worked: you cannot know.",
     "- Never ask for, repeat or guess a password, a token or a key.",
     `- The person is ${input.role === "admin" ? "an administrator" : "a user, not an administrator: say nothing about settings, accounts, the monitor or other people's work"}.`,
     "",
@@ -318,6 +320,7 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     ' "recommendations": [things the person could do themselves, one sentence each],',
     ` "links": [{"to": one of ${JSON.stringify(NAV_PAGES.filter((p) => p.roles.includes(input.role)).map((p) => p.to))}}],`,
     ' "drafts": [{"title": …, "text": a text the person may copy; it is not sent anywhere}],',
+    ` "plan": [{"kind": one of ${JSON.stringify(STEP_KINDS)}, "title": …, "instructions": …, "to": one of the pages above or leave out, "evidence": [ids from \`sources\`], "expected": what the person should see, "failure": what failure looks like, "fallback": what to do then}],`,
     ' "actions": [],',
     ' "limit": only when you do not answer, one of the codes below}',
     "",
@@ -599,7 +602,7 @@ export class HelpTurns {
     const names = job.role === "admin" ? [] : [target.model, target.providerName, target.label];
     let checked: ReturnType<typeof checkReply>;
     try {
-      checked = checkReply(jsonOf(r.output), { role: job.role, offered, clean: (t) => hideNames(seen.clean(redact(t)), names) });
+      checked = checkReply(jsonOf(r.output), { role: job.role, offered, uncertain: ready.uncertain, clean: (t) => hideNames(seen.clean(redact(t)), names) });
     } catch (e) {
       // a reply that cannot be checked for secrets is not kept
       this.deps.log?.(`help: a reply was not kept (${e instanceof GuardError ? e.message : "it could not be checked"})`);
