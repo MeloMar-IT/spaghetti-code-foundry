@@ -347,6 +347,8 @@ export const ConfigSchema = z
     help: z
       .object({
         enabled: z.boolean().default(false),
+        /** Lets Ask SCF propose a resume or cancel of a person's own run (and, after #568, carry it out once they confirm). Off: every proposed action is dropped. */
+        actions: z.boolean().default(false),
         /**
          * Emergency stop: nobody can ask, try again or check a page; turns that already run finish and every account keeps
          * reading, exporting and deleting its conversations. `enabled: false` is "never set up" and shows no button.

@@ -6557,6 +6557,7 @@ not stored.
 help:
   enabled: true
   paused: false                 # true: the emergency stop, see "Pause" below
+  actions: false                # Ask SCF may propose a resume or cancel of a person's own run (below); default false
   audience: everyone            # or admins, or pilot: administrators and pilot_accounts
   pilot_accounts: []            # account ids that may ask in the pilot stage, besides the administrators
   model: haiku                  # a model spec; without it, default_model
@@ -6591,6 +6592,14 @@ only (up to 1,000 account ids). `disabled_accounts` still wins over both.
 The two money limits are not applied with `cost_limits: false` or for a model without a price
 (a local model, a subscription login). Help turns are not runs: their cost is counted here, not
 in the daily budget of runs.
+
+**Proposed actions (`help.actions`).** Off by default. On, Ask SCF may propose to **resume** or **cancel** a run, but only one of
+your own runs, for administrators and users alike: an administrator gets no exception for another
+account's run. The proposal shows a fixed text of what would happen, written by the server, and it is
+kept only when the run is current and the evidence agrees (a run that is out of date, or that the
+Foundry's own pages disagree about, is not offered). **Nothing is carried out yet:** a proposal
+changes nothing, and Ask SCF cannot confirm a result. An older build refuses this key in
+`config.yaml`, so take it out before you go back.
 
 **What a turn can reach.** A turn is one call of Claude Code with no tools at all, no MCP servers,
 no permissions, none of your personal setup and no GitHub token, in an empty temporary folder that

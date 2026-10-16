@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PLAN_MAX, PlanStepSchema, STEP_KINDS, STEP_RULES, checkPlan, type Impact } from "./plan.js";
+import { PLAN_MAX, PlanStepSchema, STEP_KINDS, STEP_RULES, checkPlan, claimsResult, type Impact } from "./plan.js";
 
 /**
  * The contract of Ask SCF, the help assistant inside the product: what it answers, what a reply may hold, what
@@ -64,10 +64,49 @@ export interface ActionDef {
   roles: HelpRole[];
   /** How much the action can change: a step that uses it is at least this impact. */
   impact: Impact;
+  /** Whether the action can be taken back. */
+  undoable: boolean;
+  /** What it does, in the server's words: the only impact text a kept action shows. */
+  effect: string;
 }
 
-/** The actions Ask SCF may propose. Empty: today it changes nothing at all, so every proposed action is dropped. */
-export const ACTIONS: readonly ActionDef[] = [];
+/**
+ * The actions Ask SCF may propose: only the asker's own runs, an admin gets no exception (`liveEvidence` enforces
+ * this). Nothing is carried out here; the effect texts say what would happen, never what happened.
+ */
+export const ACTIONS: readonly ActionDef[] = [
+  { id: "resume-run", title: "Resume the run", roles: AU, impact: "reversible", undoable: true, effect: "The run goes on from the step where it stopped. It can be stopped again later." },
+  { id: "cancel-run", title: "Cancel the run", roles: AU, impact: "high", undoable: false, effect: "The run stops and is marked as cancelled. Ask SCF cannot undo this." },
+];
+
+export const ABOUT_KINDS = ["run"] as const;
+export const AboutSchema = z.object({ kind: z.enum(ABOUT_KINDS), id: z.string().regex(/^[\w-]{1,128}$/) }).strict();
+export type About = z.infer<typeof AboutSchema>;
+
+/** A checked copy of what a source is about, or undefined. */
+export function aboutOf(v: unknown): About | undefined {
+  const p = AboutSchema.safeParse(v);
+  return p.success ? { kind: p.data.kind, id: p.data.id } : undefined;
+}
+
+const ACTION_CLAIM = /\b(?:was|were|is|has\s+been|have\s+been|got)\s+(?:resumed|restarted|started|queued|cancelled|canceled|stopped|removed)\b/i;
+const ACTION_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
+
+/**
+ * True when a text says an action already happened. Give it the model's whole, raw text: nothing is cut and no
+ * `[removed …]` marker is taken out first, so a claim cannot hide past the length limit or inside a fake marker.
+ * Stricter than claimsResult: no exemption for questions.
+ */
+export function claimsAction(text: string): boolean {
+  const t = text.replace(/\r\n/g, "\n").replace(ACTION_CONTROL, " ");
+  return claimsResult(t) || ACTION_CLAIM.test(t);
+}
+
+export const ACTION_DROPPED = {
+  unbound: "action: not bound to a source the server offered",
+  uncertain: "action: its source is uncertain",
+  claimed: "action: claimed a result that was not checked",
+} as const;
 
 export const actionAllowed = (role: HelpRole, id: string): boolean => ACTIONS.some((a) => a.id === id && a.roles.includes(role));
 
@@ -247,7 +286,9 @@ export function hideNames(text: string, names: readonly (string | undefined)[], 
 const line = (max: number) => z.string().min(1).max(max);
 const LinkSchema = z.object({ label: line(TEXT_MAX.label), to: line(TEXT_MAX.ref) }).strict();
 const DraftSchema = z.object({ title: line(TEXT_MAX.label), text: line(TEXT_MAX.draft) }).strict();
-const ActionSchema = z.object({ id: line(TEXT_MAX.label), title: line(TEXT_MAX.label), impact: line(TEXT_MAX.item) }).strict();
+const ActionSchema = z
+  .object({ id: line(TEXT_MAX.label), title: line(TEXT_MAX.label), impact: line(TEXT_MAX.item), source: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/), about: AboutSchema })
+  .strict();
 const LimitSchema = z.object({ code: z.enum(LIMIT_CODES), limitation: line(TEXT_MAX.item), nextStep: line(TEXT_MAX.item), to: line(TEXT_MAX.ref).optional() }).strict();
 
 /** A reply after the server's checks: this is what is stored and shown. */
@@ -291,6 +332,8 @@ export interface CheckInput {
   clean?: (text: string) => string;
   /** Ids of offered sources the server marked as old or in disagreement: a reply that cites one is "likely" at most. */
   uncertain?: readonly string[];
+  /** What each offered source is about (from `Prepared.targets`). Only an action bound to one of these is kept; without it none is. */
+  targets?: Readonly<Record<string, About>>;
 }
 
 export interface Checked {
@@ -305,7 +348,7 @@ const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g;
 /**
  * Checks what a model answered against the contract and returns the reply the server keeps, or undefined when it is
  * not a reply at all. Nothing in it is trusted: evidence must be one the server offered, a link must be a page the
- * role has, an action must be on the server's list (none is), a limit is replaced by the server's own words, and the
+ * role has, an action must be on the server's list and bound to a cited, current state source the server tied to a run, a limit is replaced by the server's own words, and the
  * certainty follows the evidence.
  */
 export function checkReply(raw: unknown, input: CheckInput): Checked | undefined {
@@ -358,11 +401,25 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
   }
 
   const actions: Reply["actions"] = [];
+  const targets = input.targets ?? {};
+  const doubt = input.uncertain ?? [];
   for (const a of r.actions) {
-    const id = typeof obj(a)?.id === "string" ? (obj(a)!.id as string) : "";
-    const def = ACTIONS.find((x) => x.id === id && x.roles.includes(input.role));
-    if (!def) dropped.push("action: not on the server's list");
-    else if (actions.length < LIST_MAX.actions) actions.push({ id: def.id, title: def.title, impact: clean(obj(a)?.impact, TEXT_MAX.item) || def.title });
+    const o = obj(a);
+    const def = ACTIONS.find((x) => x.id === o?.id && x.roles.includes(input.role));
+    if (!def) {
+      dropped.push("action: not on the server's list");
+      continue;
+    }
+    const source = typeof o?.source === "string" ? o.source : "";
+    const cited = evidence.find((e) => e.id === source);
+    const about = Object.hasOwn(targets, source) ? aboutOf(targets[source]) : undefined;
+    // the whole raw text: never the cleaned and cut one, which could hide a claim
+    const said = typeof o?.impact === "string" ? o.impact : "";
+    if (!cited || cited.kind !== "state") dropped.push(ACTION_DROPPED.unbound);
+    else if (doubt.includes(source)) dropped.push(ACTION_DROPPED.uncertain);
+    else if (!about || about.kind !== "run") dropped.push(ACTION_DROPPED.unbound);
+    else if (claimsAction(said)) dropped.push(ACTION_DROPPED.claimed);
+    else if (!actions.some((x) => x.id === def.id && x.about.id === about.id) && actions.length < LIST_MAX.actions) actions.push({ id: def.id, title: def.title, impact: def.effect, source, about });
   }
 
   let certainty = certaintyOf(r.type, r.certainty, evidence);
@@ -372,6 +429,8 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
     uncertain: input.uncertain ?? [],
     certainty,
     action: (id) => {
+      // a step may name only an action the server kept as a bound proposal: with help.actions off none is
+      if (!actions.some((x) => x.id === id)) return undefined;
       const def = ACTIONS.find((x) => x.id === id && x.roles.includes(input.role));
       return def ? { id: def.id, impact: def.impact } : undefined;
     },

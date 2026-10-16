@@ -165,6 +165,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
   "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
   "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),
+  "help.actions": G("Ask SCF may propose actions", "Lets Ask SCF propose to resume or cancel a person's own run, and later carry it out after they confirm; off, it only explains."),
   "help.keep_days": G("Keep conversations (days)", "A conversation nobody changed for this many days is deleted; not set means 90."),
   "help.model": G("Ask SCF model", "The model that answers, a Claude Code target; not set means the default model."),
   "help.timeout_seconds": G("Time for one answer (seconds)", "A turn that takes longer is stopped."),
