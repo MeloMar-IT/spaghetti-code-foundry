@@ -48,7 +48,7 @@ export const RunSkillLockEntrySchema = z
     version: SkillVersionSchema,
     digest,
     /** The kind only, never a label or a path. */
-    source: z.enum(["admin", "builtin"]),
+    source: z.enum(["admin", "builtin", "catalogue"]),
     role: z.enum(SKILL_ROLES),
     selection: z.enum(RESOLVE_REASONS),
     /** The category of the package when it was locked (version 2). */
@@ -95,7 +95,7 @@ export function buildRunSkillLock(i: {
   runId: string;
   resolution: SkillResolution;
   request: SkillRequest;
-  sourceOf: (id: string, version: string) => "admin" | "builtin";
+  sourceOf: (id: string, version: string) => RunSkillLockEntry["source"];
   /** The category of a locked package; when no skill has one the lock is written as version 1. */
   categoryOf?: (id: string, version: string) => string | undefined;
   planHash: string;

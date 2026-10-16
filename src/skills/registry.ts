@@ -15,7 +15,7 @@ import { SkillIntegrityError, SkillPinError, SkillSelectError, type SkillPinErro
 import { code, cut, packageBytes, personalAgentPath } from "./registry-util.js";
 import { SKILL_DIGEST_RE, type SkillPackage } from "./schema.js";
 
-export type SkillSourceKind = "admin" | "builtin" | "repository";
+export type SkillSourceKind = "admin" | "builtin" | "catalogue" | "repository";
 export interface SkillSource {
   kind: SkillSourceKind;
   /** `built-in`, `data folder`, `skills.roots[1]` or `repository`. Never a path. */
@@ -32,7 +32,7 @@ export interface SkillSourceReport extends SkillSource {
   /** For administrator folders that could be listed. */
   release?: ReleaseCheck;
 }
-/** `approved`: administrator folders. `builtin`: ships with the release. `unapproved`: the repository, never selectable. */
+/** `approved`: administrator folders and verified approved releases.`builtin`: ships with the release. `unapproved`: the repository, never selectable. */
 export type SkillTrust = "approved" | "builtin" | "unapproved";
 /** `unverified`: the lock cannot be read. */
 export type SkillPinState = "pinned" | "unpinned" | "mismatch" | "unverified";
@@ -106,7 +106,7 @@ export { personalAgentPath };
 function buildSources(skills: Config["skills"], opts: DiscoverOptions, listing: StoreListing): SkillSource[] {
   const home = opts.home ?? dataHome();
   const list: SkillSource[] = [{ kind: "admin", label: "data folder", root: join(home, "skills"), optional: true }];
-  for (const s of storeSources(listing, skills.releases.approved).sources) list.push({ kind: "admin", optional: false, ...s });
+  for (const s of storeSources(listing, skills.releases.approved).sources) list.push({ kind: "catalogue", optional: false, ...s });
   skills.roots.forEach((root, i) => {
     if (!releaseStorePath(root, home)) list.push({ kind: "admin", label: `skills.roots[${i}]`, root, optional: false });
   });
@@ -119,7 +119,7 @@ export function skillSources(skills: Config["skills"], opts: DiscoverOptions = {
   return buildSources(skills, opts, listStoredReleases(opts.home ?? dataHome()));
 }
 
-const TRUST: Record<SkillSourceKind, SkillTrust> = { admin: "approved", builtin: "builtin", repository: "unapproved" };
+const TRUST: Record<SkillSourceKind, SkillTrust> = { admin: "approved", catalogue: "approved", builtin: "builtin", repository: "unapproved" };
 
 const refusal = (rel: ReleaseCheck) =>
   releaseProblemText(rel) +
@@ -156,7 +156,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
   skills.roots.forEach((root, i) => {
     if (releaseStorePath(root, home)) notes.push({ kind: "store-root", label: `skills.roots[${i}]`, text: `skills.roots[${i}] is inside the release store; published releases load through skills.releases.approved, so this entry is ignored. Remove it from skills.roots.` });
   });
-  if (store.refused) problems.push({ kind: "root-refused", source: "admin", label: "release store", root: "release store", reason: store.refused });
+  if (store.refused) problems.push({ kind: "root-refused", source: "catalogue", label: "release store", root: "release store", reason: store.refused });
 
   for (const src of buildSources(skills, opts, listing)) {
     const report: SkillSourceReport = { ...src, status: "ok", packages: 0 };
@@ -219,7 +219,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     let rel: ReleaseCheck | undefined;
     const allow = skills.releases.allow_unreleased && !src.stored;
     const revokedIds = new Set<string>();
-    if (src.kind === "admin") {
+    if (src.kind === "admin" || src.kind === "catalogue") {
       read = readRelease(src.root);
       rel = report.release = matchRelease(read, skills.releases.approved, skills.releases.keys);
       // A store folder must hold exactly the schema-2 release its folder name says.
@@ -366,7 +366,11 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       continue;
     }
     const pin: SkillPin | undefined = lock.pins[s.key];
-    if (!pin) continue;
+    // The approved, verified release lists this digest (store sources never load under allow_unreleased); a hand pin with another digest stays a mismatch.
+    if (!pin) {
+      if (s.source === "catalogue") s.pin = "pinned";
+      continue;
+    }
     if (pin.digest === s.digest) {
       s.pin = "pinned";
       continue;

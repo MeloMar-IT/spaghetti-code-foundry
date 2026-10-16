@@ -45,7 +45,7 @@ export function reviewStaged(staged: StagedImport, opts: Pick<ReviewCommandOptio
   // Every registered version, also a shadowed one: an import can mirror any of them.
   const existing: ExistingSkill[] = [];
   for (const s of reg.skills) {
-    if (s.source !== "builtin" && s.source !== "admin") continue;
+    if (s.source !== "builtin" && s.source !== "admin" && s.source !== "catalogue") continue;
     const read = filesOfRegistered(s.dir, Object.values(s.pkg.files).flat(), s.digest);
     if (!read) problems.push(hidden(`existing skill ${s.key} (${s.label}) changed while it was read; it was not compared`));
     else existing.push({ skill: s, files: read });

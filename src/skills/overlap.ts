@@ -40,7 +40,7 @@ export interface OverlapSkill {
   version: string;
   /** The name of the provider block, when the skill has one. */
   provider?: string;
-  origin: "staged" | "builtin" | "admin";
+  origin: "staged" | "builtin" | "admin" | "catalogue";
 }
 export type OverlapCode = (typeof CANONICAL_REJECT_CODES)[number];
 export interface OverlapRejection {
@@ -139,7 +139,7 @@ export function overlapReport(staged: OverlapStaged, registered: readonly Regist
     return { ...s, pkg: { ...s.pkg, capabilities: caps.filter((c) => !mine(c)) } };
   };
   const registeredRef = (s: RegisteredSkill): OverlapSkill => ({
-    id: s.id, version: s.version, ...(s.pkg.provider ? { provider: s.pkg.provider.name } : {}), origin: s.source as "builtin" | "admin",
+    id: s.id, version: s.version, ...(s.pkg.provider ? { provider: s.pkg.provider.name } : {}), origin: s.source as OverlapSkill["origin"],
   });
 
   // 3. Blocking collisions hold a staged skill back, like the evaluation of a source does.
@@ -161,7 +161,7 @@ export function overlapReport(staged: OverlapStaged, registered: readonly Regist
         if (m.fingerprint === i.skill.identity.fingerprint && m.source === source.id) continue;
         const o: OverlapSkill = {
           id: m.id, version: m.version, ...(m.settings.provider ? { provider: m.settings.provider.name } : {}),
-          origin: m.source === source.id ? "staged" : (m.source as "builtin" | "admin"),
+          origin: m.source === source.id ? "staged" : (m.source as OverlapSkill["origin"]),
         };
         others.set(withProvider(o), o);
       }

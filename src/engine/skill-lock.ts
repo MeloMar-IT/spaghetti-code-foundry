@@ -137,7 +137,10 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
       runId: s.runId,
       resolution,
       request,
-      sourceOf: (id, version) => (reg.byKey.get(`${id}@${version}`)?.source === "builtin" ? "builtin" : "admin"),
+      sourceOf: (id, version) => {
+        const k = reg.byKey.get(`${id}@${version}`)?.source;
+        return k === "builtin" || k === "catalogue" ? k : "admin";
+      },
       categoryOf: (id, version) => reg.byKey.get(`${id}@${version}`)?.pkg.category,
       planHash,
       commit: s.workdir ? commit : undefined,
