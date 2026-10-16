@@ -122,7 +122,12 @@ export function skillSources(skills: Config["skills"], opts: DiscoverOptions = {
 const TRUST: Record<SkillSourceKind, SkillTrust> = { admin: "approved", builtin: "builtin", repository: "unapproved" };
 
 const refusal = (rel: ReleaseCheck) =>
-  releaseProblemText(rel) + (rel.state === "none" ? ". Approve a release, or set skills.releases.allow_unreleased on a development install" : "");
+  releaseProblemText(rel) +
+  (rel.state === "none"
+    ? ". Approve a release, or set skills.releases.allow_unreleased on a development install"
+    : rel.state === "unsigned"
+      ? '. Sign it with "scf skills release sign" and put key and signature in its skills.releases.approved entry'
+      : "");
 
 /** Administrator folders that are loaded without an approved release (development only). */
 export function unreleasedSources(reg: Pick<SkillRegistry, "sources">): (SkillSourceReport & { release: ReleaseCheck })[] {
@@ -216,7 +221,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     const revokedIds = new Set<string>();
     if (src.kind === "admin") {
       read = readRelease(src.root);
-      rel = report.release = matchRelease(read, skills.releases.approved);
+      rel = report.release = matchRelease(read, skills.releases.approved, skills.releases.keys);
       // A store folder must hold exactly the schema-2 release its folder name says.
       if (src.stored) {
         const m = read.state === "ok" ? read.manifest : undefined;
@@ -231,6 +236,11 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       }
       // A broken schema-2 manifest is refused whatever allow_unreleased says.
       if (read.state === "invalid" && read.v2) {
+        fail("root-refused", "refused", refusal(rel));
+        continue;
+      }
+      // An approved release without a trusted signature is refused whatever allow_unreleased says.
+      if (rel.state === "unsigned") {
         fail("root-refused", "refused", refusal(rel));
         continue;
       }

@@ -90,7 +90,7 @@ describe("reading the schema", () => {
     expect(leaf("sandbox.user_read")).toMatchObject({ kind: "list", maxItems: 50 });
     expect(leaf("sandbox.user_read").fields).toBeUndefined();
     expect(leaf("monitor.report_to").kind).toBe("text");
-    expect(leaf("skills.releases.approved")).toMatchObject({ kind: "list", maxItems: 50, fields: [{ key: "catalogue", kind: "text" }, { key: "version", kind: "text" }, { key: "digest", kind: "text" }] });
+    expect(leaf("skills.releases.approved")).toMatchObject({ kind: "list", maxItems: 50, fields: [{ key: "catalogue", kind: "text" }, { key: "version", kind: "text" }, { key: "digest", kind: "text" }, { key: "key", kind: "text" }, { key: "signature", kind: "text" }] });
     expect(leaf("daily_budget_usd")).toMatchObject({ exclusiveMin: 0 });
     expect(leaf("daily_budget_usd").min).toBeUndefined();
     for (const l of schemaLeaves()) for (const n of [l.min, l.max, l.exclusiveMin]) expect(Math.abs(n ?? 0)).not.toBe(Number.MAX_SAFE_INTEGER);
@@ -116,7 +116,7 @@ describe("what is described", () => {
     expect(isCovered("monitoring")).toBe(false);
     for (const k of ["ui.redesign", "help.enabled", "default_model", "router.fallback"]) expect(isCovered(k), k).toBe(true);
     for (const k of ["help.disabled_accounts", "help.sensitive_patterns", "providers", "router.rules"]) expect(isCovered(k), k).toBe(false);
-    expect(described).toHaveLength(105);
+    expect(described).toHaveLength(106);
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {
@@ -190,6 +190,7 @@ describe("the advertised ranges are the schema's", () => {
   const item = (key: string, i: number): unknown => {
     if (key === "step_env.pass" || key === "step_env.agent_pass") return `VAR_${i}`;
     if (key === "sandbox.user_read" || key === "skills.roots") return `/p/${i}`;
+    if (key === "skills.releases.keys") return { id: `k${i}`, ed25519: Buffer.alloc(32, i + 1).toString("base64") };
     if (key === "skills.releases.approved") return { catalogue: `c${i}`, version: "1.0.0", digest: `sha256:${"a".repeat(64)}` };
     return `s${i}`;
   };
@@ -200,7 +201,7 @@ describe("the advertised ranges are the schema's", () => {
     return [];
   };
   const TABLE = new Set([
-    "step_env.pass", "step_env.agent_pass", "sandbox.user_read", "skills.roots", "skills.releases.approved",
+    "step_env.pass", "step_env.agent_pass", "sandbox.user_read", "skills.roots", "skills.releases.approved", "skills.releases.keys",
     "skills.catalogue.include", "skills.selection.include", "skills.catalogue.exclude", "skills.selection.exclude", "skills.unresolved.high_risk",
   ]);
 

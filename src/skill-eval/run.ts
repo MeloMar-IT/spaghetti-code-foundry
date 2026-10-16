@@ -105,7 +105,7 @@ export function evaluationConfig(real: Config, policy: ToolsScenario["policy"], 
       builtin: false,
       roots: [],
       repository: false,
-      releases: { allow_unreleased: true, approved: [] },
+      releases: { allow_unreleased: true, approved: [], keys: [] },
       tools: { shell: policy.shell, network: policy.network, filesystem: policy.filesystem, missing: "degrade" },
     },
   });

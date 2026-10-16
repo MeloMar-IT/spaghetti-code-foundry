@@ -68,7 +68,8 @@ Usage:
   scf skills selections evaluate <source-id> [<file>]  Report which selected skills of a staged import are eligible or held, and their overlaps
   scf skills release verify <dir>                Check a catalogue release folder offline (files, digests, approval)
   scf skills release publish <catalogue>@<version>  Publish a catalogue release from skill-releases.yaml (reviewed, promotable, evaluation passed)
-  scf skills releases check [<file>]             Check the release requests (default: skill-releases.yaml)
+  scf skills release sign <catalogue>@<version> --key <private-key-file>  Sign a stored release with an Ed25519 key; prints the approved entry
+  scf skills releases check [<file>]           Check the release requests (default: skill-releases.yaml)
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -232,6 +233,7 @@ async function main(argv: string[]): Promise<number> {
       markdown: { type: "boolean" },
       agent: { type: "boolean" },
       builtin: { type: "boolean" },
+      key: { type: "string" },
       "stop-work": { type: "boolean" },
       name: { type: "string" },
       owner: { type: "string" },

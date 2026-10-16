@@ -362,7 +362,7 @@ describe("skills.releases config", () => {
   const parse = (releases: unknown) => ConfigSchema.safeParse({ skills: { releases } });
   const e = { catalogue: "acme", version: "1.0.0", digest: d("a") };
   it("has defaults, and an older config without it parses", () => {
-    expect(ConfigSchema.parse({}).skills.releases).toEqual({ allow_unreleased: false, approved: [] });
+    expect(ConfigSchema.parse({}).skills.releases).toEqual({ allow_unreleased: false, approved: [], keys: [] });
     expect(ConfigSchema.parse({ skills: { builtin: false } }).skills.releases.allow_unreleased).toBe(false);
   });
   it("refuses bad entries", () => {
