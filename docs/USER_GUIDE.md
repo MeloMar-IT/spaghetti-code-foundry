@@ -3358,6 +3358,10 @@ skills:
 
 The estimate counts the description and `SKILL.md`, not reference files. A resumed session costs one reminder line; a new session gets the block once.
 
+#### Same skill twice
+
+Two installed skills with the same description and instructions are the same text to the model. The Foundry sends that text once: the first copy in load order keeps the section, and its `also="…"` attribute names the other copies. The other copies still count as loaded in the run, and their lock entries stay, but they cost no tokens. A copy is never reported as omitted, and it never blocks a mandatory skill. The same applies to review blocks, where the key is the description and `REVIEW.md`. In the catalogue, one entry is offered per text: the best tier wins, then the lowest id, then the lowest version. The run log says `n mirror(s) collapsed`. Skills whose text differs by even one character are not merged.
+
 #### Trust
 
 - **Sources** come in this order: the data folder, the approved releases in `skill-releases/` (see "Retained releases" below), `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned.

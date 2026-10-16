@@ -222,6 +222,7 @@ function reviewSession(engine: SessionEngine, list: PayloadSkill[], reg: ReturnT
     below: coding.estimatedTokens,
   });
   for (const k of payload.omitted) engine.log(`    ! review context: ${k} left out: over budget`);
+  for (const c of payload.collapsed ?? []) engine.log(`    · review context: ${c.key} has the same text as ${c.into}; loaded once`);
   if (payload.loaded.length) engine.log(`    · review context: ${payload.loaded.join(", ")} (${payload.bytes} bytes, about ${payload.estimatedTokens} tokens)`);
   return payload.loaded.length || payload.omitted.length ? { payload } : {};
 }
@@ -285,6 +286,7 @@ export function skillSession(engine: SessionEngine, deps: SkillLockDeps = {}, ro
     const payload = renderSkillPayload(usable, { maxTokens: engine.config.skills.selection.max_tokens });
     if (payload.blocked) return { refused: `${SKILL_BLOCKED_PREFIX}${payload.blocked} does not fit the skill context budget (skills.selection.max_tokens)` };
     for (const k of payload.omitted) engine.log(`    ! skill context: ${k} left out: over budget`);
+    for (const c of payload.collapsed ?? []) engine.log(`    · skill context: ${c.key} has the same text as ${c.into}; loaded once`);
     return check ? { payload, tools: check } : { payload };
   } catch {
     return { refused: NOT_WRITTEN };
