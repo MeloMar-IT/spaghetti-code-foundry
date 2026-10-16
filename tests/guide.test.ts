@@ -192,7 +192,7 @@ describe("user guide: automatic skills", () => {
 
   it("has its sub-sections in order", () => {
     expect([...auto.matchAll(/^#### (.+)$/gm)].map((m) => m[1])).toEqual([
-      "What happens by itself", "What policy decides", "Write a skill", "Context budgets", "Trust",
+      "What happens by itself", "What policy decides", "Write a skill", "Context budgets", "Same skill twice", "Trust",
       "The two pipelines and skills", "Find out why a run stopped",
     ]);
   });
