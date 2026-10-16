@@ -343,27 +343,28 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
   // One path, two calls: `{ message, index }` previews an approved action with a token; `{ message, offer }` follows an offer.
   if (seg.length === 4 && method === "POST" && seg[3] === "actions") {
-    const first = await readJson(req);
-    if (!(first && typeof first === "object" && "offer" in first)) {
-      try {
-        send(res, 200, prepareAction(ctx, user, id, first, deps));
-      } catch (e) {
-        if (e instanceof ActionRefused) throw new HttpError(e.status, e.message);
-        throw mapped(ctx, e);
-      }
-      return true;
-    }
-    // An offer of a stored reply: checked again for the account as it is now; nothing is stored.
+    // Checked again for the account as it is now; the conversation is looked at before the body, for both calls.
     if (!ctx.config().help.enabled) throw new HttpError(503, REFUSAL_WORDS.off);
+    let preview = false;
     try {
       const no = helpAllowed(ctx, asker);
       if (no === "not-allowed") throw new HttpError(REFUSED[no], REFUSAL_WORDS[no]);
       guardedHelp(ctx, () => offerConversation(ctx, asker, id));
-      const body = first;
+      const body = await readJson(req);
+      // a body with an `index` and no `offer` asks for the preview of an approved action; anything else is an offer click
+      if ("index" in body && !("offer" in body)) {
+        preview = true;
+        send(res, 200, prepareAction(ctx, user, id, body, deps));
+        return true;
+      }
       const done = guardedHelp(ctx, () => runOffer(ctx, asker, id, body, { patterns: ctx.config().help.sensitive_patterns ?? [] }));
       auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), done.type);
       send(res, 200, done);
     } catch (e) {
+      if (preview) {
+        if (e instanceof ActionRefused) throw new HttpError(e.status, e.message);
+        throw mapped(ctx, e);
+      }
       // a refusal because of who asks (403) or because the conversation or the thing is not there (404, 410) is audited; a bad body is not
       const why = e instanceof HttpError ? (e.status === 403 ? "denied" : e.status === 404 || e.status === 410 ? "stale" : undefined) : undefined;
       if (why) auditHelp(ctx, user.id, "help-action", "failed", targetOf(id), `refused: ${why}`);
