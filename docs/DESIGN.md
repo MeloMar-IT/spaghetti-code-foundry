@@ -941,6 +941,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
 | `help.json` | The Ask SCF conversations of every account (mode 0600) |
+| `help-stats.json` | The Ask SCF quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `issue-lists/` | One file per watched repository: the last full issue list read by the watchers (number, title, state, labels, links, dependencies; no issue text), with `readAt` and `cut`. Written atomically; removed when no watcher is left for the repository |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |
@@ -1448,8 +1449,10 @@ Tests: `tests/help-diagnosis.test.ts`.
 the store's retention and the usage ledger.
 
 - **Admission** (`helpAllowed` in `api-help.ts`, passed to `HelpTurns` as `allow`): after the
-  off switch and before anything is stored, the account is read again (`currentAccount`), then
-  `help.audience`, `help.disabled_accounts`, and the account's `dailyBudgetUsd` of `limits.json`
+  off switch and the pause (`help.paused`, `helpPaused`; `HelpTurns.admit` refuses `paused` and
+  `POST /api/help/context` answers 503 with the same sentence) and before anything is stored, the account is read again (`currentAccount`), then
+  `help.audience` (`pilot` admits `help.pilot_accounts` besides the administrators),
+  `help.disabled_accounts`, and the account's `dailyBudgetUsd` of `limits.json`
   against the cost of its help turns today (`usageToday`). The refusal code `not-allowed` is 403;
   `limit` is 429. A check that throws refuses. `POST /api/help/context` uses the same check.
 - **Retention** (`setRetentionDays`, `retentionMs` in `store.ts`): `help.keep_days` replaces the
@@ -1462,6 +1465,34 @@ the store's retention and the usage ledger.
   the correlation id: it is the id of the reply message in the conversation. No text of a
   conversation is in a line. `ui/audit.js` lists the three names for the filter.
 - **Export**: `GET /api/help/export`, own conversations only, through `conversationView`.
+
+### Ask SCF: feedback and quality numbers
+
+#245 adds no second access rule. A rating is a field of its reply, so the conversation's owner check and
+retention apply to it. The quality numbers are a separate file that names no account.
+
+- **Rating.** `rateReply` (`store.ts`) sets or clears `feedback` on a finished assistant message under the
+  data-folder lock. `checkFeedback` takes only `message`, `vote` and `reasons`; the reasons are the fixed
+  `FEEDBACK_REASONS` and come only with `not-helpful`. The schema is strict, so an older build refuses
+  `help.json` once a message has `feedback`. The route checks ownership before it reads the body: another
+  account's id answers 404 and the body is not parsed.
+- **Resolved.** `complete` counts `resolved` only when the body says `resolved: true` and the conversation
+  was active with a finished answer. The count is taken in the route, because the store does not see the body.
+- **Numbers.** `src/help/telemetry.ts` keeps `help-stats.json` (`version: 1`, `days`). A row is strict: fixed
+  counter names, failure, refusal and reason codes, and six latency buckets. `addStats` runs under
+  `withAuthLock`, adds to the row of today (or of the day a vote was given, `opts.day`), and ignores a day
+  older than the keep time. A number that is not finite counts as 0 and no count goes below 0. `sweepStats`
+  removes rows older than 90 days; the hourly sweeper calls it. A failed write is logged in fixed words by
+  the caller (`HelpTurns.count`, `countQuietly`) and never fails a turn or a request.
+- **Where counted.** `HelpTurns`: refusals by code (`refused`, including the limits of the store), turns and
+  retries at `start`, stops at `cancel`, failures with their latency at `fail`, answers with their latency,
+  sources, limits and actions offered at `finish`. The routes count `abandoned` (a pending turn of a deleted
+  conversation), `resolved` and the ratings. `helpSweeper` counts the turns a restart interrupted on the first
+  sweep only.
+- **Stages.** `rolloutStage` (`api-help.ts`) derives off, paused, administrators, pilot or everyone from the
+  settings alone. A queued turn checks the pause again in `run` and fails as `setup`, before any model call.
+- **Actions.** `actionsOffered`, `actionsRun` and `actionsFailed` are in the schema now. The last two stay 0
+  until #239 and #240 record them.
 
 ### Ask SCF: the guard
 

@@ -20,7 +20,9 @@ import {
   archiveConversation,
   cancelTurn,
   checkContext,
+  checkFeedback,
   checkQuestion,
+  rateReply,
   completeConversation,
   deleteConversation,
   failTurn,
@@ -449,5 +451,91 @@ describe("the file, older installs and newer versions", () => {
     expect(readdirSync(home).sort()).toEqual(["help.json", "refinements.json", "runs"]);
     // a question may hold text that looks like a path: the move must not rewrite it
     expect(jsonFiles(home)).toEqual([join(home, "runs", "old", "run.json")]);
+  });
+});
+
+describe("rating an answer", () => {
+  const answered = (owner = ANN) => {
+    const turn = ask(owner);
+    finishTurn(turn.conversation.id, ref(turn), reply(), at);
+    return { id: turn.conversation.id, message: turn.reply.id, question: turn.question.id };
+  };
+  const rate = (a: { id: string; message: string }, vote: "helpful" | "not-helpful" | null, reasons: string[] = [], owner = ANN) =>
+    rateReply(owner, a.id, checkFeedback({ message: a.message, vote, reasons }), at);
+
+  it("stores a vote on the finished reply, and the same vote again saves nothing", () => {
+    const a = answered();
+    t += 1000;
+    const first = rate(a, "helpful");
+    expect(first.before).toBeUndefined();
+    expect(first.after).toEqual({ vote: "helpful", reasons: [], at: "2026-03-01T10:00:01.000Z" });
+    expect(getConversation(ANN, a.id, at).messages[1]!.feedback).toEqual(first.after);
+    const file = raw();
+    t += 1000;
+    const again = rate(a, "helpful");
+    expect(again.before).toEqual(again.after);
+    expect(raw()).toBe(file);
+  });
+
+  it("changes and clears a vote, and keeps the time of a vote when only its reasons change", () => {
+    const a = answered();
+    rate(a, "not-helpful");
+    t += 1000;
+    const reasons = rate(a, "not-helpful", ["incorrect", "outdated"]);
+    expect(reasons.before!.at).toBe(reasons.after!.at);
+    expect(reasons.after!.reasons).toEqual(["incorrect", "outdated"]);
+    t += 1000;
+    const flipped = rate(a, "helpful");
+    expect(flipped.before!.vote).toBe("not-helpful");
+    expect(flipped.after).toMatchObject({ vote: "helpful", reasons: [], at: "2026-03-01T10:00:02.000Z" });
+    const cleared = rate(a, null);
+    expect(cleared.after).toBeUndefined();
+    expect(getConversation(ANN, a.id, at).messages[1]!.feedback).toBeUndefined();
+  });
+
+  it("refuses free text, unknown or repeated reasons, and reasons with a helpful vote", () => {
+    const bad = (body: unknown) => code(() => checkFeedback(body));
+    expect(bad({ message: "m", vote: "helpful", reasons: ["incorrect"] })).toBe("bad-feedback");
+    expect(bad({ message: "m", vote: "not-helpful", reasons: ["because I say so"] })).toBe("bad-feedback");
+    expect(bad({ message: "m", vote: "not-helpful", reasons: ["unclear", "unclear"] })).toBe("bad-feedback");
+    expect(bad({ message: "m", vote: "not-helpful", comment: "free text" })).toBe("bad-feedback");
+    expect(bad({ message: "m", vote: "great" })).toBe("bad-feedback");
+    expect(bad({ vote: "helpful" })).toBe("bad-feedback");
+    expect(bad("helpful")).toBe("bad-feedback");
+    expect(bad(null)).toBe("bad-feedback");
+    expect(checkFeedback({ message: "m", vote: "none" })).toEqual({ message: "m", vote: null, reasons: [] });
+    expect(checkFeedback({ message: "m", vote: "not-helpful" })).toEqual({ message: "m", vote: "not-helpful", reasons: [] });
+  });
+
+  it("is for the owner's finished replies only", () => {
+    const a = answered();
+    expect(code(() => rate(a, "helpful", [], BOB))).toBe("not-found");
+    expect(code(() => rate({ id: UNKNOWN, message: a.message }, "helpful"))).toBe("not-found");
+    expect(code(() => rate({ id: a.id, message: a.question }, "helpful"))).toBe("bad-state");
+    expect(code(() => rate({ id: a.id, message: UNKNOWN }, "helpful"))).toBe("bad-state");
+    const waiting = ask(ANN, a.id, "And?");
+    expect(code(() => rate({ id: a.id, message: waiting.reply.id }, "helpful"))).toBe("bad-state");
+    failTurn(a.id, ref(waiting), { code: "provider", retry: true }, at);
+    expect(code(() => rate({ id: a.id, message: waiting.reply.id }, "helpful"))).toBe("bad-state");
+    deleteConversation(ANN, a.id, at);
+    expect(code(() => rate(a, "helpful"))).toBe("deleted");
+  });
+
+  it("is dropped with a retry, and a file with a rating on an unfinished reply is refused", () => {
+    const a = answered();
+    rate(a, "not-helpful", ["unclear"]);
+    expect(raw()).toContain("not-helpful");
+    const second = ask(ANN, a.id, "And?");
+    failTurn(a.id, ref(second), { code: "provider", retry: true }, at);
+    const retried = retryTurn(ANN, a.id, at);
+    expect(retried.reply.feedback).toBeUndefined();
+    const file = JSON.parse(raw());
+    file.conversations[0].messages[3].feedback = { vote: "helpful", reasons: [], at: "2026-03-01T10:00:00.000Z" };
+    writeFileSync(helpPath(), JSON.stringify(file));
+    expect(() => listConversations(ANN, at)).toThrow(StoreError);
+    delete file.conversations[0].messages[3].feedback;
+    delete file.conversations[0].messages[1].feedback;
+    writeFileSync(helpPath(), JSON.stringify(file));
+    expect(listConversations(ANN, at)[0]!.messages[1]!.feedback).toBeUndefined();
   });
 });

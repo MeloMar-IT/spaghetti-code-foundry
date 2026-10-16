@@ -66,12 +66,19 @@ export function isWaiting(conversation) {
   return !!last && last.role === "assistant" && last.status === "pending";
 }
 
+/** The sentence of the server for a paused Ask SCF (REFUSAL_WORDS.paused in src/help/turn.ts; a test keeps them equal). */
+export const PAUSED_WORDS = "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.";
+
+/** True when an error of a send or a retry is the answer of a paused Ask SCF, and not another 503 (switched off, secret check). */
+export const isPausedError = (e) => Number(e?.status) === 503 && String(e?.message ?? "").trim() === PAUSED_WORDS;
+
 /**
  * Whether a question can be sent now, and what is sent: `{ ok: true, to, body }` (`to`: the conversation it goes to,
  * null for a new one) or `{ ok: false, reason }`. Nothing is sent while a request is on its way (`busy`) or while a
  * reply is being written, so a second Send never starts a second turn.
  */
-export function sendPlan({ draft, busy = false, conversation = null, where = null, attach = true } = {}) {
+export function sendPlan({ draft, busy = false, conversation = null, where = null, attach = true, paused = false } = {}) {
+  if (paused) return { ok: false, reason: PAUSED_WORDS };
   if (busy) return { ok: false, reason: "Your question is being sent." };
   if (isWaiting(conversation)) return { ok: false, reason: "Ask SCF is still answering. Wait for the answer first." };
   const question = String(draft ?? "").replace(/\r\n/g, "\n").trim();
@@ -121,7 +128,37 @@ export function entryOf(message, { elapsedMs = 0, role = "user" } = {}) {
   if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: text || "You stopped this answer.", note };
   // a reply with its checked parts is laid out by them; the text is what is left when there are none
   const layout = replyLayout(message?.reply, role);
-  return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : text, note, ...(layout ? { layout } : {}) };
+  const vote = message?.feedback?.vote === "helpful" || message?.feedback?.vote === "not-helpful" ? message.feedback.vote : null;
+  const reasons = vote === "not-helpful" ? list(message.feedback.reasons).filter((r) => r in REASON_WORDS) : [];
+  return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : text, note, rateable: true, feedback: { vote, reasons }, ...(layout ? { layout } : {}) };
+}
+
+// ---- rating an answer -------------------------------------------------------------------------------
+
+/** The reasons for a vote of not-helpful, with their words (FEEDBACK_REASONS in src/help/store.ts; a test keeps the keys equal). */
+export const REASON_WORDS = {
+  incorrect: "It was wrong",
+  outdated: "It was out of date",
+  "not-my-question": "It did not answer my question",
+  unclear: "It was unclear",
+  "missing-sources": "It named no source I could check",
+  unsafe: "It was unsafe or should not have been said",
+};
+
+/**
+ * The body of a rating. Pressing the vote that is already set takes it back (`vote: null`). Reasons go only with
+ * not-helpful, and only the known ones, each once. No free text exists.
+ */
+export function feedbackPlan(message, vote, reasons = [], current = null) {
+  const next = vote === "helpful" || vote === "not-helpful" ? vote : null;
+  const toggled = next !== null && next === current ? null : next;
+  const kept = toggled === "not-helpful" ? [...new Set(list(reasons))].filter((r) => r in REASON_WORDS) : [];
+  return { message, vote: toggled, reasons: kept };
+}
+
+/** What the status line says after a rating was saved. */
+export function voteNote(vote) {
+  return vote === "helpful" ? "Saved: this answer helped." : vote === "not-helpful" ? "Saved: this answer did not help." : "Your vote was taken back.";
 }
 
 /** The messages of a conversation as the drawer shows them, oldest first. */
@@ -164,7 +201,7 @@ export function closesOn(event, { dialogOnTop = false } = {}) {
  * Try again or Stop sends nothing. Try again is offered only where it can help; it uses the same question and the
  * same reply, so nothing is shown twice.
  */
-export function controlsFor(conversation, { busy = false } = {}) {
+export function controlsFor(conversation, { busy = false, paused = false } = {}) {
   const none = { stop: false, retry: false, archive: false, restore: false, remove: false };
   if (!conversation || conversation.state === "deleted") return none;
   const last = lastOf(conversation);
@@ -173,12 +210,22 @@ export function controlsFor(conversation, { busy = false } = {}) {
   const ended = !archived && !!last && last.role === "assistant" && ((last.status === "failed" && last.failure?.retry !== false) || last.status === "cancelled");
   return {
     stop: waiting && !busy,
-    retry: ended && !busy,
+    // a paused Ask SCF starts no turn, so there is nothing to try again
+    retry: ended && !busy && !paused,
     // the server archives no conversation whose reply is still being written
     archive: !archived && !waiting && !busy,
     restore: archived && !busy,
     remove: !busy,
   };
+}
+
+/**
+ * Whether "This solved my problem" is offered: an open conversation whose last message is a finished answer. It closes
+ * the conversation and says so to the server; closing in any other way (by the API) is not counted as solved.
+ */
+export function solveOffered(conversation, { busy = false } = {}) {
+  const last = lastOf(conversation);
+  return !busy && conversation?.state === "active" && last?.role === "assistant" && last.status === "done";
 }
 
 /** What each control does, said before it is pressed. */
@@ -188,6 +235,7 @@ export const CONSEQUENCES = {
   archive: "Moves this conversation out of your list. You can take it back from the archived ones.",
   restore: "Takes this conversation back into your list.",
   remove: "Removes the questions and answers of this conversation at once. They cannot be brought back.",
+  solved: "Closes this conversation and tells the Foundry that the answers solved your problem. Only a number is counted; you can still read it.",
   fresh: "Starts an empty conversation. This one stays in your list.",
 };
 

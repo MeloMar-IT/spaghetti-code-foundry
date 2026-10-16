@@ -221,6 +221,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET help/usage": no("help/usage", 200),
   "GET help/conversations/:id": { path: `help/conversations/${UNKNOWN}`, user: 404, admin: 404 },
   "POST help/conversations/:id/complete": { path: `help/conversations/${UNKNOWN}/complete`, body: {}, user: 404, admin: 404 },
+  "POST help/conversations/:id/feedback": { path: `help/conversations/${UNKNOWN}/feedback`, body: { message: UNKNOWN, vote: "helpful" }, user: 404, admin: 404 },
   "POST help/conversations/:id/archive": { path: `help/conversations/${UNKNOWN}/archive`, body: {}, user: 404, admin: 404 },
   "POST help/conversations/:id/restore": { path: `help/conversations/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
   "DELETE help/conversations/:id": { path: `help/conversations/${UNKNOWN}`, user: 404, admin: 404 },

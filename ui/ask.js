@@ -1,10 +1,10 @@
 import { api as realApi } from "./api.js";
 import { confirmDialog, mount, tabStops, trapTarget } from "./dom.js";
 import {
-  CONSEQUENCES, MAX_READ_FAILURES, QUESTION_MAX, announce, closesOn, contextFor, controlsFor, explainAskError, historyRows, isWaiting, lastOf,
-  pollDelay, restorePick, sendPlan, staleGuard, suggestionsFor, threadOf, waitNote, whereOf,
+  CONSEQUENCES, MAX_READ_FAILURES, PAUSED_WORDS, QUESTION_MAX, REASON_WORDS, announce, closesOn, contextFor, controlsFor, explainAskError, feedbackPlan, historyRows, isPausedError, isWaiting, lastOf,
+  pollDelay, restorePick, sendPlan, solveOffered, staleGuard, suggestionsFor, threadOf, voteNote, waitNote, whereOf,
 } from "./ask-model.js";
-import { actionNodes, askButton, askFrame, entryNode, historyNodes, suggestionNodes } from "./ask-view.js";
+import { actionNodes, askButton, askFrame, entryNode, historyNodes, rateNodes, suggestionNodes } from "./ask-view.js";
 
 // Ask SCF: the help drawer of both displays. One implementation; ui/app.js and ui/user/app.js only call initAsk.
 // The drawer lies over the page and never draws the page again, so what is typed or open there stays as it is.
@@ -32,11 +32,14 @@ function tabStore() {
  * start. Returns { open, close, send, stop, … , state }.
  */
 export function createAsk(role, {
-  slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], store = tabStore(), now = () => Date.now(),
+  slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], paused = false, store = tabStore(), now = () => Date.now(),
   confirmer = confirmDialog, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
 } = {}) {
   // `restore`: the conversation to read when the drawer opens for the first time after a reload.
-  const st = { open: false, view: "talk", conversation: null, busy: false, attach: true, polls: 0, failures: 0, timer: null, rows: [], archived: false, restore: restorePick(list, store.get()), waitKey: "", waitSince: 0, saidSlow: false };
+  const st = { open: false, view: "talk", conversation: null, busy: false, attach: true, polls: 0, failures: 0, timer: null, rows: [], archived: false, restore: restorePick(list, store.get()), waitKey: "", waitSince: 0, saidSlow: false,
+    // `paused`: the administrator's emergency stop, as the server last said so (never guessed from another error)
+    // `drafts`: reasons ticked for an answer and not saved yet, by message, so a redraw keeps them
+    paused: paused === true, drafts: new Map() };
   const guard = staleGuard();
   let opener = null;
   const where = () => whereOf(role, hash());
@@ -72,16 +75,29 @@ export function createAsk(role, {
     ui.history.hidden = !history;
     ui.historyBtn.setAttribute("aria-expanded", String(history));
     ui.historyBtn.textContent = history ? "Back to the conversation" : "History";
+    // the notice is on both views: in the list too, a person can see why asking does not work
+    ui.paused.textContent = PAUSED_WORDS;
+    ui.paused.hidden = !st.paused;
     if (history) {
       ui.archivedBtn.setAttribute("aria-pressed", String(st.archived));
       mount(ui.list, historyNodes(st.rows, { current: st.conversation?.id, archived: st.archived, onOpen: (id) => void openConversation(id), now: now() }));
       return;
     }
     // a link to a page closes the drawer, so the page it opens is seen; the address changes by the link itself
-    const view = { now: now(), onNavigate: () => close({ back: false }) };
-    ui.thread.replaceChildren(...threadOf(st.conversation, { elapsedMs: elapsed(), role }).map((entry) => entryNode(entry, view)));
+    const view = {
+      now: now(),
+      onNavigate: () => close({ back: false }),
+      reasonWords: REASON_WORDS,
+      onRate: (message, vote) => void rate(message, vote),
+      onReasons: (message, reasons) => void rate(message, "not-helpful", reasons, true),
+      draftOf: (message) => st.drafts.get(message),
+      onDraft: (message, reasons) => st.drafts.set(message, reasons),
+    };
+    // `mount` keeps the focus on the control with the same name, so voting by keyboard works across a redraw
+    mount(ui.thread, threadOf(st.conversation, { elapsedMs: elapsed(), role }).flatMap((entry) => [entryNode(entry, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
     ui.thread.hidden = !st.conversation;
-    mount(ui.actions, actionNodes(controlsFor(st.conversation, { busy: st.busy }), CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
+    const controls = { ...controlsFor(st.conversation, { busy: st.busy, paused: st.paused }), solved: solveOffered(st.conversation, { busy: st.busy }) };
+    mount(ui.actions, actionNodes(controls, CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), solved: () => void solve(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
     // suggestions are for a start: a conversation that runs has its own questions
     ui.suggestBox.hidden = !!st.conversation;
     if (!st.conversation) {
@@ -92,7 +108,7 @@ export function createAsk(role, {
       }));
     }
     drawContext();
-    const plan = sendPlan({ draft: "x", busy: st.busy, conversation: st.conversation });
+    const plan = sendPlan({ draft: "x", busy: st.busy, conversation: st.conversation, paused: st.paused });
     if (plan.ok) ui.send.removeAttribute("aria-disabled");
     else ui.send.setAttribute("aria-disabled", "true");
   }
@@ -173,14 +189,29 @@ export function createAsk(role, {
       return true;
     } catch (e) {
       st.busy = false;
+      // only the exact sentence of a paused Ask SCF pauses the drawer: another 503 (switched off, secret check) does not
+      if (isPausedError(e)) st.paused = true;
       if (current()) ui.error.textContent = explainAskError(e);
       draw();
       return false;
     }
   }
 
+  /** Asks the server whether Ask SCF is still paused. A failed read leaves it as it was. */
+  async function refreshPaused() {
+    try {
+      const info = await api.helpConversations(st.archived);
+      st.paused = info?.paused === true;
+    } catch {
+      /* keep what is known */
+    }
+    draw();
+  }
+
   async function send() {
-    const plan = sendPlan({ draft: ui.question.value, busy: st.busy, conversation: st.conversation, where: where(), attach: st.attach });
+    // paused: look again before refusing, so an unpaused Ask SCF is usable without a reload
+    if (st.paused) await refreshPaused();
+    const plan = sendPlan({ draft: ui.question.value, busy: st.busy, conversation: st.conversation, where: where(), attach: st.attach, paused: st.paused });
     if (!plan.ok) {
       ui.error.textContent = plan.reason;
       ui.question.focus();
@@ -200,9 +231,29 @@ export function createAsk(role, {
     return act(() => api.cancelHelp(id), (next) => { take(next); backToBox(); });
   }
   function retry() {
-    if (!controlsFor(st.conversation, { busy: st.busy }).retry) return false;
+    if (!controlsFor(st.conversation, { busy: st.busy, paused: st.paused }).retry) return false;
     const id = mine();
     return act(() => api.retryHelp(id), (next) => { st.polls = 0; take(next); backToBox(); });
+  }
+  /** Rates one finished answer, or takes the vote back by pressing it again. `keep`: save the ticked reasons for the vote that is set. */
+  function rate(message, vote, reasons, keep = false) {
+    const entry = st.conversation?.messages?.find((m) => m.id === message);
+    if (!entry || entry.role !== "assistant" || entry.status !== "done") return false;
+    const id = mine();
+    const current = entry.feedback?.vote ?? null;
+    const body = keep ? { message, vote: "not-helpful", reasons: feedbackPlan(message, "not-helpful", reasons).reasons } : feedbackPlan(message, vote, [], current);
+    return act(() => api.rateHelp(id, body), (next) => {
+      st.drafts.delete(message);
+      st.conversation = next;
+      draw();
+      say(voteNote(body.vote));
+    });
+  }
+  /** "This solved my problem": closes the conversation and says so, which is the only way a conversation counts as resolved. */
+  function solve() {
+    if (!solveOffered(st.conversation, { busy: st.busy })) return false;
+    const id = mine();
+    return act(() => api.solveHelp(id), (next) => { take(next); say("The conversation is closed. Thank you."); });
   }
   function archive() {
     if (!controlsFor(st.conversation, { busy: st.busy }).archive) return false;
@@ -251,6 +302,7 @@ export function createAsk(role, {
     }
     // the person left the list, or asked for the other one, before this answer came
     if (st.view !== "history" || st.archived !== archived) return;
+    st.paused = info?.paused === true;
     st.rows = historyRows(info?.conversations);
     ui.status.textContent = archived ? `${st.rows.length} archived conversations.` : `${st.rows.length} conversations.`;
     draw();
@@ -352,7 +404,7 @@ export function createAsk(role, {
     ui.drawer.remove?.();
     if (slot) { slot.replaceChildren(); slot.hidden = true; }
   }
-  return { open, close, send, stop, stopAnswer, retry, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
+  return { open, close, send, stop, stopAnswer, retry, rate, solve, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
 }
 
 /**
@@ -368,5 +420,5 @@ export async function initAsk(role, deps = {}) {
     return null;
   }
   if (info?.enabled !== true) return null;
-  return createAsk(role, { slot: document.getElementById("ask-scf"), list: info.conversations, ...deps, api });
+  return createAsk(role, { slot: document.getElementById("ask-scf"), list: info.conversations, paused: info.paused === true, ...deps, api });
 }

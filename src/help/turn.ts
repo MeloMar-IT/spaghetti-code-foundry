@@ -21,6 +21,7 @@ import {
   checkContext,
   checkQuestion,
   HelpError,
+  REFUSAL_CODES,
   QUESTION_MAX,
   addUsage,
   cancelTurn,
@@ -30,6 +31,7 @@ import {
   spentToday,
   usageToday,
 } from "./store.js";
+import { addStats, type StatsDelta } from "./telemetry.js";
 
 /**
  * The help-turn service of Ask SCF: one question in, one checked reply out. It is its own small runner, apart from
@@ -38,7 +40,13 @@ import {
  * contract decides what of it is kept. Turns wait in a queue, one per account at a time.
  */
 
-export type RefusalCode = "off" | "not-allowed" | "busy" | "queue-full" | "limit" | "unsafe";
+export type RefusalCode = (typeof REFUSAL_CODES)[number];
+
+/**
+ * Whether the emergency stop is on (`help.paused`). Everything that would start a turn or, later, run an action
+ * must check it: nothing new starts, and reading, exporting and deleting stay open.
+ */
+export const helpPaused = (config: Config): boolean => config.help.paused === true;
 
 /** A turn that is not started. Nothing is stored for it. The message is safe to show. */
 export class TurnRefused extends Error {
@@ -53,6 +61,7 @@ export class TurnRefused extends Error {
 
 export const REFUSAL_WORDS: Record<RefusalCode, string> = {
   off: "Ask SCF is switched off on this Foundry. An administrator can switch it on.",
+  paused: "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.",
   "not-allowed": "Ask SCF is not switched on for your account. Ask an administrator of this Foundry.",
   busy: "Ask SCF is still answering another question of yours. Wait for it, or stop it first.",
   "queue-full": "Ask SCF is busy with the questions of other people. Try again in a moment.",
@@ -352,6 +361,8 @@ interface Job {
   ref: TurnRef;
   input: TurnInput;
   stop: AbortController;
+  /** When the turn was started (ms), for the latency in the statistics. */
+  since: number;
 }
 
 /** The running and waiting turns of one server. In memory only: a restart ends them, and the store then marks them as interrupted. */
@@ -394,6 +405,7 @@ export class HelpTurns {
   private admit(asker: Asker): void {
     const help = this.deps.config().help;
     if (!help.enabled || this.stopped) throw new TurnRefused("off", REFUSAL_WORDS.off);
+    if (help.paused === true) throw new TurnRefused("paused", REFUSAL_WORDS.paused);
     let no: RefusalCode | undefined;
     try {
       no = this.deps.allow?.(asker);
@@ -407,7 +419,27 @@ export class HelpTurns {
     if (usageToday(asker.id, this.opts).turns >= help.turns_per_user_per_day) throw new TurnRefused("limit", REFUSAL_WORDS.limit);
   }
 
-  private start(asker: Asker, turn: Turn): Turn {
+  private nowMs(): number {
+    return (this.deps.now ?? (() => new Date()))().getTime();
+  }
+
+  /** Adds to the quality numbers. A failure to store them is logged in fixed words and never fails a turn or a request. */
+  private count(delta: StatsDelta): void {
+    try {
+      addStats(delta, this.opts);
+    } catch {
+      this.deps.log?.("help: the statistics of a turn could not be stored");
+    }
+  }
+
+  /** Counts a question that was refused before a turn started, once, by its code. */
+  private refused(e: unknown): void {
+    if (e instanceof TurnRefused) this.count({ refused: { [e.code]: 1 } });
+    // the limits of the store: too many conversations or messages, or the last reply is still waited for
+    else if (e instanceof HelpError && (e.code === "limit" || e.code === "busy")) this.count({ refused: { [e.code]: 1 } });
+  }
+
+  private start(asker: Asker, turn: Turn, again = false): Turn {
     const ref: TurnRef = { message: turn.reply.id, tries: turn.reply.tries ?? 1 };
     try {
       addUsage(asker.id, { turns: 1 }, this.opts);
@@ -420,8 +452,10 @@ export class HelpTurns {
       }
       throw e;
     }
+    this.count({ counts: { turns: 1, ...(again ? { retries: 1 } : {}) } });
     const at = turn.conversation.messages.findIndex((m) => m.id === turn.question.id);
     this.queue.push({
+      since: this.nowMs(),
       owner: asker.id,
       role: asker.role,
       conversation: turn.conversation.id,
@@ -443,6 +477,15 @@ export class HelpTurns {
    * check itself fails nothing is kept (`unsafe`).
    */
   ask(asker: Asker, input: NewQuestion): Turn {
+    try {
+      return this.accept(asker, input);
+    } catch (e) {
+      this.refused(e);
+      throw e;
+    }
+  }
+
+  private accept(asker: Asker, input: NewQuestion): Turn {
     this.admit(asker);
     const question = checkQuestion(input.question);
     let context = checkContext(input.context);
@@ -466,13 +509,19 @@ export class HelpTurns {
 
   /** Starts the failed or stopped last turn of a conversation again, in the same messages. It counts as a turn of today. */
   retry(asker: Asker, conversation: string): Turn {
-    this.admit(asker);
-    return this.start(asker, retryTurn(asker.id, conversation, this.opts));
+    try {
+      this.admit(asker);
+      return this.start(asker, retryTurn(asker.id, conversation, this.opts), true);
+    } catch (e) {
+      this.refused(e);
+      throw e;
+    }
   }
 
   /** The owner stops the reply that is waited for: the stored reply says so at once, and the model call is ended. */
   cancel(asker: Asker, conversation: string): Conversation {
     const r = cancelTurn(asker.id, conversation, this.opts);
+    this.count({ counts: { stopped: 1 } });
     this.drop(r.message);
     return r.conversation;
   }
@@ -518,7 +567,10 @@ export class HelpTurns {
     if (job.stop.signal.aborted) return;
     this.deps.log?.(`help: a turn failed (${code})`);
     try {
-      if (failTurn(job.conversation, job.ref, { code, retry: RETRY[code] }, this.opts)) addUsage(job.owner, { failed: 1 }, this.opts);
+      if (failTurn(job.conversation, job.ref, { code, retry: RETRY[code] }, this.opts)) {
+        addUsage(job.owner, { failed: 1 }, this.opts);
+        this.count({ failed: { [code]: 1 }, latencyMs: this.nowMs() - job.since });
+      }
     } catch {
       this.deps.log?.("help: the result of a turn could not be stored");
     }
@@ -526,6 +578,8 @@ export class HelpTurns {
 
   private async run(job: Job): Promise<void> {
     const config = this.deps.config();
+    // a turn that waited in the queue when the pause came does not start
+    if (helpPaused(config)) return this.fail(job, "setup");
     const found = helpTarget(config);
     if ("problem" in found) return this.fail(job, "setup");
     const { target } = found;
@@ -555,6 +609,7 @@ export class HelpTurns {
       return this.fail(job, "setup");
     }
     const offered = ready.offered;
+    this.count({ counts: offered.length ? { evidenceOffered: 1 } : { evidenceNone: 1 } });
     if (ready.removed.length) this.deps.log?.(`help: secrets were taken out of what a turn sends (${ready.removed.join(", ")})`);
     if (ready.withheld) this.deps.log?.(`help: ${ready.withheld} source(s) were held back from a turn`);
 
@@ -611,7 +666,12 @@ export class HelpTurns {
     // a reply that rests on a source the server marked as old or in disagreement is not "confirmed", whatever the model said
     const reply = doubted(checked.reply, ready.uncertain);
     try {
-      finishTurn(job.conversation, job.ref, reply, this.opts, seen.removed);
+      if (finishTurn(job.conversation, job.ref, reply, this.opts, seen.removed)) {
+        this.count({
+          counts: { answered: 1, ...(reply.evidence.length ? { cited: 1 } : {}), ...(reply.limit ? { limited: 1 } : {}), ...(reply.actions.length ? { actionsOffered: reply.actions.length } : {}) },
+          latencyMs: this.nowMs() - job.since,
+        });
+      }
     } catch {
       this.deps.log?.("help: the result of a turn could not be stored");
     }

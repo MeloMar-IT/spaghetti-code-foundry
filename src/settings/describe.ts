@@ -142,7 +142,7 @@ export function unsupportedSettings(): string[] {
 /** Whether the key is one of the described settings. The prefixes end in a dot: `monitoring` is not covered. */
 export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
-  if (key === "help.disabled_accounts" || key === "help.sensitive_patterns") return false;
+  if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns") return false;
   if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan"].includes(key)) return true;
   return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help."].some((p) => key.startsWith(p));
 }
@@ -163,7 +163,8 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "router.fallback": A("Fallback models", "Models tried in order when an agent step hits a rate or usage limit, or a budget for free targets.", "new-runs", "models.js"),
   "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
-  "help.audience": G("Who may ask", "Every account, or administrators only; not set means every account."),
+  "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
+  "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),
   "help.keep_days": G("Keep conversations (days)", "A conversation nobody changed for this many days is deleted; not set means 90."),
   "help.model": G("Ask SCF model", "The model that answers, a Claude Code target; not set means the default model."),
   "help.timeout_seconds": G("Time for one answer (seconds)", "A turn that takes longer is stopped."),

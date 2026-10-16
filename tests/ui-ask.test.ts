@@ -410,7 +410,7 @@ describe("a turn from question to answer", () => {
     expect(d.ui.suggestBox.hidden).toBe(true);
     await vi.advanceTimersByTimeAsync(1500);
     expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask SCFBecause."]);
-    expect(actions(d)).toEqual(["Archive", "Delete"]);
+    expect(actions(d)).toEqual(["This solved my problem", "Archive", "Delete"]);
     d.ui.question.value = "And then?";
     await d.send();
     expect(api.askHelp).toHaveBeenLastCalledWith("c1", { question: "And then?", context: { page: "#/runs" } });
@@ -545,7 +545,7 @@ describe("archive and deletion", () => {
     await d.restore();
     expect(api.restoreHelp).toHaveBeenCalledWith("c1");
     expect(d.ui.status.textContent).toBe("The conversation is back in your list.");
-    expect(actions(d)).toEqual(["Archive", "Delete"]);
+    expect(actions(d)).toEqual(["This solved my problem", "Archive", "Delete"]);
   });
 
   it("deletion: asks first with the consequence, and does nothing on Cancel", async () => {
@@ -924,5 +924,184 @@ describe("narrow screens and reduced motion (ui/css/pages/ask.css)", () => {
     expect(decl(".ask-scrim")).toContain("z-index: var(--layer-menu)");
     expect(decl(".ask-drawer")).toContain("z-index: calc(var(--layer-menu) + 1)");
     for (const r of rules) expect(r.selector, r.selector).toMatch(/^\.ask-/);
+  });
+});
+
+describe("rating an answer", () => {
+  const A1 = "a1";
+  const rated = (feedback?: any) => conv([q("Why?"), a("done", { id: A1, text: "Because.", ...(feedback ? { feedback } : {}) })]);
+  const buttons = (d: any) => walk(d.ui.thread).filter((e) => e.tag === "button");
+  const byFocus = (d: any, name: string) => walk(d.ui.thread).find((e) => e.attrs["data-focus"] === name)!;
+  const rateApi = (current: () => any) => vi.fn(async (_id: any, body: any) => {
+    const next = body.vote === null ? rated() : rated({ vote: body.vote, reasons: body.reasons, at: "2026-03-01T10:00:00.000Z" });
+    current();
+    return next;
+  });
+
+  async function opened(feedback?: any, over: any = {}) {
+    const made = make({ ...over, api: { helpConversation: vi.fn(async () => rated(feedback)), rateHelp: rateApi(() => {}), ...over.api } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    return made;
+  }
+
+  it("offers two buttons that say whether they are pressed, and saves a vote", async () => {
+    const { d, api } = await opened();
+    const group = walk(d.ui.thread).find((e) => e.attrs.role === "group" && e.attrs["aria-label"] === "Was this answer helpful?")!;
+    expect(group).toBeTruthy();
+    expect(buttons(d).map((b) => [b.textContent, b.attrs["aria-pressed"]])).toEqual([["Helpful", "false"], ["Not helpful", "false"]]);
+    byFocus(d, "ask-rate-a1-helpful").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.rateHelp).toHaveBeenCalledWith("c1", { message: A1, vote: "helpful", reasons: [] });
+    expect(d.ui.status.textContent).toBe("Saved: this answer helped.");
+    expect(buttons(d).map((b) => b.attrs["aria-pressed"])).toEqual(["true", "false"]);
+    // pressing it again takes the vote back
+    byFocus(d, "ask-rate-a1-helpful").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.rateHelp).toHaveBeenLastCalledWith("c1", { message: A1, vote: null, reasons: [] });
+    expect(d.ui.status.textContent).toBe("Your vote was taken back.");
+  });
+
+  it("has no rating on a question, a waiting reply or a failed one", async () => {
+    const { d } = await asked();
+    expect(buttons(d).filter((b) => b.attrs["data-focus"]?.startsWith("ask-rate"))).toEqual([]);
+    const f = make({ api: { helpConversation: vi.fn(async () => failed("provider", true, PROVIDER)) } });
+    f.d.open();
+    await f.d.openConversation("c1");
+    expect(walk(f.d.ui.thread).filter((e) => e.attrs["data-focus"]?.startsWith("ask-rate"))).toEqual([]);
+  });
+
+  it("asks for reasons after Not helpful, from a fixed list, and saves the ones ticked", async () => {
+    const { d, api } = await opened({ vote: "not-helpful", reasons: [], at: "2026-03-01T10:00:00.000Z" });
+    const fieldset = walk(d.ui.thread).find((e) => e.tag === "fieldset")!;
+    expect(walk(fieldset).find((e) => e.tag === "legend")!.textContent).toContain("What was wrong?");
+    const boxes = walk(fieldset).filter((e) => e.tag === "input");
+    expect(boxes.map((b) => b.attrs.type)).toEqual(Array(6).fill("checkbox"));
+    expect(walk(fieldset).filter((e) => e.tag === "textarea")).toEqual([]);
+    for (const reason of ["outdated", "unclear"]) {
+      const box = byFocus(d, `ask-reason-a1-${reason}`);
+      box.checked = true;
+      box.fire("change", { target: box });
+    }
+    byFocus(d, "ask-reasons-save-a1").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.rateHelp).toHaveBeenCalledWith("c1", { message: A1, vote: "not-helpful", reasons: ["outdated", "unclear"] });
+  });
+
+  it("keeps the focus and the ticked reasons when the drawer is drawn again", async () => {
+    const { d, setHash } = await opened({ vote: "not-helpful", reasons: [], at: "2026-03-01T10:00:00.000Z" });
+    const box = byFocus(d, "ask-reason-a1-incorrect");
+    box.checked = true;
+    box.fire("change", { target: box });
+    box.focus();
+    setHash("#/repos");
+    const again = byFocus(d, "ask-reason-a1-incorrect");
+    expect(again).not.toBe(box);
+    expect(again.checked).toBe(true);
+    expect(byFocus(d, "ask-reason-a1-unclear").checked).toBe(false);
+    expect(doc().activeElement).toBe(again);
+    // pressing a vote with the keyboard keeps the focus on that button after the call
+    const vote = byFocus(d, "ask-rate-a1-not-helpful");
+    vote.focus();
+    vote.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(doc().activeElement?.attrs["data-focus"]).toBe("ask-rate-a1-not-helpful");
+    expect(walk(d.ui.thread)).toContain(doc().activeElement);
+  });
+
+  it("keeps ticked reasons while a later answer is waited for", async () => {
+    const first = [q("Why?"), a("done", { id: A1, text: "Because.", feedback: { vote: "not-helpful", reasons: [], at: "2026-03-01T10:00:00.000Z" } })];
+    const waiting = conv([...first, q("And?", "q2"), a("pending", { id: "a2", replyTo: "q2" })]);
+    const { d, api } = make({ api: { helpConversation: vi.fn(async () => waiting) } });
+    d.open();
+    await d.openConversation("c1");
+    const box = byFocus(d, "ask-reason-a1-unclear");
+    box.checked = true;
+    box.fire("change", { target: box });
+    box.focus();
+    api.helpConversation.mockClear();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(api.helpConversation).toHaveBeenCalled();
+    const again = byFocus(d, "ask-reason-a1-unclear");
+    expect(again.checked).toBe(true);
+    expect(doc().activeElement).toBe(again);
+  });
+
+  it("closes a conversation as solved only through its own button", async () => {
+    const closed = { ...rated(), state: "completed" };
+    const solveHelp = vi.fn(async () => closed);
+    const { d } = await opened(undefined, { api: { solveHelp } });
+    press(d, "This solved my problem");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(solveHelp).toHaveBeenCalledWith("c1");
+    expect(d.state.conversation.state).toBe("completed");
+    expect(actions(d)).not.toContain("This solved my problem");
+  });
+});
+
+describe("the pause", () => {
+  const PAUSED = "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.";
+  const refuse = (message: string) => vi.fn(async () => { throw Object.assign(new Error(message), { status: 503 }); });
+
+  it("shows a notice, refuses Send and Try again, and still reads the history", async () => {
+    const { d, api } = make({ deps: { paused: true }, api: { helpConversation: vi.fn(async () => failed("provider", true, PROVIDER)), helpConversations: vi.fn(async () => ({ enabled: true, paused: true, conversations: [] })) } });
+    d.open();
+    expect(d.ui.paused.hidden).toBe(false);
+    expect(d.ui.paused.textContent).toBe(PAUSED);
+    expect(d.ui.send.attrs["aria-disabled"]).toBe("true");
+    await d.openConversation("c1");
+    expect(texts(d.ui.thread, "ask-failed")).toEqual([`Ask SCF${PROVIDER}`]);
+    expect(actions(d)).toEqual(["Archive", "Delete"]);
+    expect(await d.retry()).toBe(false);
+    d.ui.question.value = "Why?";
+    expect(await d.send()).toBe(false);
+    expect(d.ui.error.textContent).toBe(PAUSED);
+    expect(api.askHelp).not.toHaveBeenCalled();
+    expect(api.retryHelp).toBeUndefined();
+  });
+
+  it("learns of a pause from the server's sentence, and not from another 503", async () => {
+    const off = "Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry.";
+    const { d } = make({ api: { askHelp: refuse(off) } });
+    d.open();
+    d.ui.question.value = "Why?";
+    await d.send();
+    expect(d.state.paused).toBe(false);
+    expect(d.ui.paused.hidden).toBe(true);
+    expect(d.ui.send.attrs["aria-disabled"]).toBeUndefined();
+    expect(d.ui.error.textContent).toBe(off);
+
+    const paused = make({ api: { askHelp: refuse(PAUSED) } });
+    paused.d.open();
+    paused.d.ui.question.value = "Why?";
+    await paused.d.send();
+    expect(paused.d.state.paused).toBe(true);
+    expect(paused.d.ui.paused.hidden).toBe(false);
+    expect(paused.d.ui.send.attrs["aria-disabled"]).toBe("true");
+  });
+
+  it("asks the server again when it was paused, so an unpaused Ask SCF works without a reload", async () => {
+    const { d, api } = make({ deps: { paused: true }, api: { helpConversations: vi.fn(async () => ({ enabled: true, paused: false, conversations: [] })) } });
+    d.open();
+    d.ui.question.value = "Why?";
+    await d.send();
+    expect(api.helpConversations).toHaveBeenCalledTimes(1);
+    expect(api.askHelp).toHaveBeenCalledTimes(1);
+    expect(d.state.paused).toBe(false);
+    expect(d.ui.paused.hidden).toBe(true);
+  });
+
+  it("is taken from the list of conversations", async () => {
+    const { d } = make({ api: { helpConversations: vi.fn(async () => ({ enabled: true, paused: true, conversations: [] })) } });
+    d.open();
+    await d.showHistory();
+    expect(d.state.paused).toBe(true);
+    expect(d.ui.paused.hidden).toBe(false);
+  });
+
+  it("is passed on by the start of the drawer", async () => {
+    const d = await ask.initAsk("user", { api: { helpConversations: async () => ({ enabled: true, paused: true, conversations: [] }) }, host: new FakeElement("body"), win: {} });
+    expect(d.state.paused).toBe(true);
+    d.stop();
   });
 });

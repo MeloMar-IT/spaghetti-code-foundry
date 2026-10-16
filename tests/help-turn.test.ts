@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { CERTAINTY_WORDS, LIMIT_CODES, limitationFor, type Evidence } from "../src/help/contract.js";
 import { CANCELLED_WORDS, FAILURE_CODES, FAILURE_WORDS, HelpError, deleteConversation, getConversation, helpPath, listConversations, readUsage, usageToday, type Message } from "../src/help/store.js";
+import { readStats, statsPath } from "../src/help/telemetry.js";
 import { HISTORY_CHARS, HelpTurns, REFUSAL_WORDS, RETRY, TurnRefused, classifyFailure, helpTarget, jsonOf, turnPrompt, type HelpDeps } from "../src/help/turn.js";
 import type { ClaudeRunOptions, ClaudeRunResult } from "../src/steps/claude.js";
 
@@ -297,7 +298,7 @@ describe("when a turn does not end with an answer", () => {
 
 describe("limits, fair use and separate accounts", () => {
   it("is off until an administrator switches it on, and then stores and calls nothing", () => {
-    expect(ConfigSchema.parse({}).help).toEqual({ enabled: false, timeout_seconds: 60, max_parallel: 1, max_queued: 10, turns_per_user_per_day: 30, max_cost_usd_per_turn: 0.1 });
+    expect(ConfigSchema.parse({}).help).toEqual({ enabled: false, paused: false, timeout_seconds: 60, max_parallel: 1, max_queued: 10, turns_per_user_per_day: 30, max_cost_usd_per_turn: 0.1 });
     expect(() => ConfigSchema.parse({ help: { tools: ["Bash"] } })).toThrow();
     config = ConfigSchema.parse({});
     const s = svc();
@@ -453,6 +454,132 @@ describe("what is kept from a user and from the file", () => {
     deleteConversation(ANN.id, turn.conversation.id, { now });
     expect(readUsage()).toEqual([{ day: "2026-03-01", owner: ANN.id, turns: 1, failed: 0, costUsd: 0.02, inputTokens: 100, outputTokens: 20 }]);
     expect(JSON.parse(readFileSync(helpPath(), "utf8")).usage).toHaveLength(1);
+  });
+});
+
+describe("the pause and the quality numbers", () => {
+  const stats = () => readStats()[0]!;
+
+  it("refuses a question and a retry while paused, stores nothing and calls no model", async () => {
+    const s = svc(fails("boom"));
+    const turn = s.ask(ANN, { question: "What is a run?" });
+    await s.idle();
+    const calledBefore = calls.length;
+    config = cfg({ paused: true });
+    expect(refusal(() => s.ask(BOB, { question: "Another?" }))).toBe("refused: paused");
+    expect(refusal(() => s.retry(ANN, turn.conversation.id))).toBe("refused: paused");
+    expect(listConversations(BOB.id, { now })).toEqual([]);
+    expect(last(ANN.id, turn.conversation.id).status).toBe("failed");
+    expect(calls.length).toBe(calledBefore);
+    expect(stats().refused).toEqual({ paused: 2 });
+    // reading and deleting stay possible, and unpausing restores asking
+    expect(listConversations(ANN.id, { now })).toHaveLength(1);
+    config = cfg({ paused: false });
+    expect(refusal(() => s.retry(ANN, turn.conversation.id))).toBeUndefined();
+    await s.idle();
+  });
+
+  it("does not start a turn that waited in the queue when the pause came", async () => {
+    const g = gated();
+    const s = svc(g.run);
+    const a = s.ask(ANN, { question: "First?" });
+    const b = s.ask(BOB, { question: "Second?" });
+    await tick();
+    expect(g.open).toHaveLength(1);
+    config = cfg({ paused: true });
+    g.open[0]!.release();
+    await s.idle();
+    expect(last(ANN.id, a.conversation.id).status).toBe("done");
+    expect(last(BOB.id, b.conversation.id)).toMatchObject({ status: "failed", failure: { code: "setup" } });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("counts an answered turn: sources, citations, limits and how long it took", async () => {
+    const source: Evidence = { id: "S1", kind: "doc", title: "Runs", ref: "docs/USER_GUIDE.md#runs" };
+    const s = svc(
+      async (o) => {
+        calls.push(o);
+        t += 20_000;
+        return { ok: true, output: JSON.stringify({ ...GOOD, evidence: ["S1"] }), costUsd: 0.01 };
+      },
+      { evidence: () => [source] },
+    );
+    s.ask(ANN, { question: "What is a run?" });
+    await s.idle();
+    const none = svc(answer({ ...GOOD, limit: "not-scf" }));
+    none.ask(BOB, { question: "Weather?" });
+    await none.idle();
+    const row = stats();
+    expect(row).toMatchObject({ turns: 2, retries: 0, answered: 2, evidenceOffered: 1, evidenceNone: 1, cited: 1, limited: 1, failed: {}, latency: [1, 0, 1, 0, 0, 0] });
+  });
+
+  it("counts a failed turn once, with its code and its time, also after a retry", async () => {
+    const s = svc(async (o) => {
+      calls.push(o);
+      t += 70_000;
+      return { ok: false, output: "", error: "timed out", costUsd: 0 };
+    });
+    const turn = s.ask(ANN, { question: "What is a run?" });
+    await s.idle();
+    expect(stats()).toMatchObject({ turns: 1, answered: 0, failed: { timeout: 1 }, latency: [0, 0, 0, 0, 1, 0] });
+    s.retry(ANN, turn.conversation.id);
+    await s.idle();
+    expect(stats()).toMatchObject({ turns: 2, retries: 1, failed: { timeout: 2 } });
+  });
+
+  it("counts a refused question by its code: the limit, a busy account and an unsafe check", async () => {
+    config = cfg({ turns_per_user_per_day: 1 });
+    const g = gated();
+    const s = svc(g.run);
+    s.ask(ANN, { question: "First?" });
+    expect(refusal(() => s.ask(ANN, { question: "Again?" }))).toBe("refused: busy");
+    g.open[0]!.release();
+    await s.idle();
+    expect(refusal(() => s.ask(ANN, { question: "Again?" }))).toBe("refused: limit");
+    const unsafe = svc(answer(GOOD), { guard: () => ({ patterns: ["("] }) });
+    expect(refusal(() => unsafe.ask(BOB, { question: "A question?" }))).toBe("refused: unsafe");
+    expect(stats().refused).toEqual({ busy: 1, limit: 1, unsafe: 1 });
+    expect(listConversations(BOB.id, { now })).toEqual([]);
+  });
+
+  it("counts the limits of the store: too many messages in one conversation", () => {
+    const s = svc(answer(GOOD));
+    const turn = s.ask(ANN, { question: "What is a run?" });
+    expect(turn.conversation.id).toBeTruthy();
+    // the store refuses a conversation that is full; it counts as a limit, once
+    const full = svc(answer(GOOD), { now });
+    const refused = (e: unknown) => (full as unknown as { refused(e: unknown): void }).refused(e);
+    refused(new HelpError("limit", "a conversation can have at most 100 messages"));
+    refused(new HelpError("bad-question", "type your question"));
+    expect(stats().refused).toEqual({ limit: 1 });
+  });
+
+  it("counts a stopped answer", async () => {
+    const g = gated();
+    const s = svc(g.run);
+    const turn = s.ask(ANN, { question: "What is a run?" });
+    await tick();
+    s.cancel(ANN, turn.conversation.id);
+    await s.idle();
+    expect(stats()).toMatchObject({ turns: 1, stopped: 1, answered: 0, failed: {} });
+  });
+
+  it("goes on when the numbers cannot be stored", async () => {
+    writeFileSync(statsPath(), "not json");
+    const s = svc();
+    const turn = s.ask(ANN, { question: "What is a run?" });
+    await s.idle();
+    expect(last(ANN.id, turn.conversation.id).status).toBe("done");
+    expect(logs).toContain("help: the statistics of a turn could not be stored");
+    expect(readFileSync(statsPath(), "utf8")).toBe("not json");
+  });
+
+  it("keeps no text, no account and no conversation in the numbers", async () => {
+    const s = svc();
+    const turn = s.ask(ANN, { question: "zebra-question-text" });
+    await s.idle();
+    const text = readFileSync(statsPath(), "utf8");
+    for (const secret of ["zebra-question-text", ANN.id, turn.conversation.id, "A run is one start"]) expect(text).not.toContain(secret);
   });
 });
 

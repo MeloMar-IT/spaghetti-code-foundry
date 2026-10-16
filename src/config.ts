@@ -347,8 +347,15 @@ export const ConfigSchema = z
     help: z
       .object({
         enabled: z.boolean().default(false),
-        /** Who may ask when Ask SCF is on: every account (also without the setting), or administrators only. */
-        audience: z.enum(["everyone", "admins"]).optional(),
+        /**
+         * Emergency stop: nobody can ask, try again or check a page; turns that already run finish and every account keeps
+         * reading, exporting and deleting its conversations. `enabled: false` is "never set up" and shows no button.
+         */
+        paused: z.boolean().default(false),
+        /** Who may ask when Ask SCF is on: every account (also without the setting), administrators only, or administrators and `pilot_accounts`. */
+        audience: z.enum(["everyone", "admins", "pilot"]).optional(),
+        /** With `audience: "pilot"`: the accounts (by id) that may ask besides the administrators. */
+        pilot_accounts: z.array(z.uuid()).max(1000).optional(),
         /** Accounts (by id) that may not ask, whatever their role. They keep reading, exporting and deleting their conversations. */
         disabled_accounts: z.array(z.uuid()).max(1000).optional(),
         /** A conversation that is not changed for this many days is deleted; without it 90. A lower number deletes older ones at once. */
