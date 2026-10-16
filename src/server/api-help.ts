@@ -35,6 +35,7 @@ import { addStats, readStats, sumStats, sweepStats } from "../help/telemetry.js"
 import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpPaused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
 import type { Config } from "../config.js";
 import { currentAccount, snapshotResolver } from "./help-context.js";
+import { handoffsFor, recordHandoff } from "./help-handoff.js";
 import { liveEvidence, offerConversation, runOffer } from "./help-evidence.js";
 import { ActionRefused, cancelAction, confirmAction, prepareAction, type ActionDeps } from "./help-actions.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
@@ -370,6 +371,21 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
       if (why) auditHelp(ctx, user.id, "help-action", "failed", targetOf(id), `refused: ${why}`);
       throw e;
     }
+    return true;
+  }
+  // A hand-off of a finished answer to another page. No model is called, so it works while Ask SCF is off or paused. Only the conversation changes.
+  if (seg.length === 4 && seg[3] === "handoffs" && (method === "GET" || method === "POST")) {
+    const guard = { patterns: ctx.config().help.sensitive_patterns ?? [] };
+    if (method === "GET") {
+      const message = new URL(req.url ?? "/", "http://x").searchParams.get("message");
+      send(res, 200, { offers: guardedHelp(ctx, () => handoffsFor(ctx, asker, id, message, guard)).offers });
+      return true;
+    }
+    guardedHelp(ctx, () => offerConversation(ctx, asker, id));
+    const body = await readJson(req);
+    const { conversation, offer } = guardedHelp(ctx, () => recordHandoff(ctx, asker, id, body, guard));
+    auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), `handoff ${offer.where}`);
+    send(res, 200, { conversation: conversationView(conversation, user), offer });
     return true;
   }
   if (seg.length === 2 && method === "GET") {

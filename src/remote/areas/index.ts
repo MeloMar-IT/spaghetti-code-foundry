@@ -14,6 +14,8 @@ export const API_ONLY: Record<string, string> = {
   "POST help/conversations/:id/actions": "a button of a reply in the Ask SCF drawer: it opens a page, or previews an action Ask SCF proposed (#568); the command line has neither",
   "POST help/conversations/:id/actions/confirm": "the confirmation of an action Ask SCF proposed; done in the Ask SCF drawer (#568), not from the command line",
   "POST help/conversations/:id/actions/cancel": "the dropped token of an action Ask SCF proposed; done in the Ask SCF drawer (#568), not from the command line",
+  "GET help/conversations/:id/handoffs": "the pages a reply of the Ask SCF drawer can be taken to; the command line has no page to open",
+  "POST help/conversations/:id/handoffs": "records a hand-off made from the Ask SCF drawer; the command line has no page to open",
   "GET runs/:id/events": "a live stream that does not end; the command line reads a whole answer before it prints",
   "GET restart": "the state the Settings page shows next to its restart box; the restart itself is asked for in the interface",
   "POST restart": "restarts the server when no story is running; asked for in the interface after a settings change",

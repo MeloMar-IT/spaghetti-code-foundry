@@ -106,6 +106,8 @@ const SessionSchema = z
     repo: z.string().refine(validGithubName),
     title: z.string().min(1).max(SESSION_TITLE_MAX),
     idea: z.string().min(1).max(IDEA_MAX),
+    /** The Ask SCF conversation (of the owner) this session was started from. Shown to the owner only. */
+    fromHelp: z.uuid().optional(),
     source: SourceSchema.optional(),
     state: z.enum(STATES),
     stateBefore: z.enum(OPEN_STATES as [string, ...string[]]).optional(),
@@ -212,6 +214,8 @@ export interface NewSession {
   repo: unknown;
   idea: unknown;
   title?: unknown;
+  /** The id of the owner's Ask SCF conversation the session was started from (checked by the caller). */
+  fromHelp?: string;
 }
 
 // ---- reading ---------------------------------------------------------------------------------------
@@ -248,6 +252,7 @@ export function createSession(owner: string, input: NewSession, opts: CreateOpti
     repo,
     title: title ?? titleFromIdea(idea),
     idea,
+    ...(input.fromHelp ? { fromHelp: input.fromHelp } : {}),
     state: "exploring",
     drafts: [],
     log: [{ at, by: owner, what: "created" }],

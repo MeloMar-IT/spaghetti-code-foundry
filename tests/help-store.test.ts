@@ -17,6 +17,7 @@ import {
   MESSAGE_LIMIT,
   QUESTION_MAX,
   addOutcome,
+  addHandoff,
   addQuestion,
   archiveConversation,
   cancelTurn,
@@ -596,6 +597,77 @@ describe("outcomes of approved actions", () => {
     const file = JSON.parse(raw());
     file.conversations[0].messages[1].status = "cancelled";
     delete file.conversations[0].messages[1].reply;
+    writeFileSync(helpPath(), JSON.stringify(file));
+    expect(() => listConversations(ANN, at)).toThrow(StoreError);
+  });
+});
+
+describe("hand-offs", () => {
+  const rec = (message: string, page = "#/refinement") => ({ message, where: "refinement" as const, page, copied: ["title" as const, "text" as const, "link" as const] });
+  const finished = () => {
+    const turn = ask();
+    finishTurn(turn.conversation.id, ref(turn), reply(), at);
+    return { id: turn.conversation.id, question: turn.question.id, message: turn.reply.id };
+  };
+
+  it("appends a record and changes `updated` but not `state`", () => {
+    const a = finished();
+    t += 5000;
+    const done = addHandoff(ANN, a.id, rec(a.message), at);
+    expect(done.state).toBe("active");
+    expect(done.updated).toBe("2026-03-01T10:00:05.000Z");
+    expect(done.handoffs).toEqual([{ ...rec(a.message), at: "2026-03-01T10:00:05.000Z" }]);
+    expect(getConversation(ANN, a.id, at).handoffs).toHaveLength(1);
+  });
+
+  it("is refused for another owner, a deleted and an archived conversation", () => {
+    const a = finished();
+    expect(code(() => addHandoff(BOB, a.id, rec(a.message), at))).toBe("not-found");
+    archiveConversation(ANN, a.id, at);
+    expect(code(() => addHandoff(ANN, a.id, rec(a.message), at))).toBe("bad-state");
+    restoreConversation(ANN, a.id, at);
+    deleteConversation(ANN, a.id, at);
+    expect(code(() => addHandoff(ANN, a.id, rec(a.message), at))).toBe("deleted");
+  });
+
+  it("is refused for a question, and for a reply that is pending or failed", () => {
+    const a = finished();
+    expect(code(() => addHandoff(ANN, a.id, rec(a.question), at))).toBe("bad-state");
+    const pending = ask(ANN, a.id, "And then?");
+    expect(code(() => addHandoff(ANN, a.id, rec(pending.reply.id), at))).toBe("bad-state");
+    failTurn(a.id, ref(pending), { code: "provider", retry: true }, at);
+    expect(code(() => addHandoff(ANN, a.id, rec(pending.reply.id), at))).toBe("bad-state");
+    expect(code(() => addHandoff(ANN, a.id, rec(UNKNOWN), at))).toBe("bad-state");
+  });
+
+  it("keeps only the last 50 records", () => {
+    const a = finished();
+    for (let i = 0; i < 55; i++) {
+      t += 1000;
+      addHandoff(ANN, a.id, rec(a.message, `#/runs/r${i}`), at);
+    }
+    const list = getConversation(ANN, a.id, at).handoffs!;
+    expect(list).toHaveLength(50);
+    expect(list[0]!.page).toBe("#/runs/r5");
+    expect(list[49]!.page).toBe("#/runs/r54");
+  });
+
+  it("loads a file without `handoffs`, and removes the records with the conversation", () => {
+    const a = finished();
+    expect(getConversation(ANN, a.id, at).handoffs).toBeUndefined();
+    expect(raw()).not.toContain("handoffs");
+    addHandoff(ANN, a.id, rec(a.message), at);
+    expect(raw()).toContain("handoffs");
+    deleteConversation(ANN, a.id, at);
+    expect(raw()).not.toContain("handoffs");
+    expect(getConversation(ANN, a.id, at).handoffs).toBeUndefined();
+  });
+
+  it("refuses a file whose record names an unknown message", () => {
+    const a = finished();
+    addHandoff(ANN, a.id, rec(a.message), at);
+    const file = JSON.parse(raw());
+    file.conversations[0].handoffs[0].message = UNKNOWN;
     writeFileSync(helpPath(), JSON.stringify(file));
     expect(() => listConversations(ANN, at)).toThrow(StoreError);
   });

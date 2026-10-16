@@ -1,4 +1,5 @@
-import { glyph, h, timeAgo } from "./dom.js";
+import { previewOf } from "./ask-handoff.js";
+import { glyph, h, modal, mount, timeAgo } from "./dom.js";
 
 // The nodes of the Ask SCF drawer. No decisions here (those are in ui/ask-model.js) and no calls (ui/ask.js).
 // Every text of a conversation is put in as text: `h` never reads a string as HTML.
@@ -170,7 +171,47 @@ export function entryNode(entry, opts = {}) {
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
     entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i) }) : entry.text,
+    entry.kind === "answer" && opts.onHandoff ? h("button", { type: "button", class: "small", "data-handoff": entry.id, onClick: () => opts.onHandoff(entry.id) }, "Continue on another page") : null,
+    entry.handoffs?.length ? h("ul", { class: "muted small", "aria-label": "Where you took this answer" },
+      entry.handoffs.map((r) => h("li", {}, r.href ? h("a", { href: r.href, onClick: () => opts.onNavigate?.() }, r.text) : r.text, r.at ? ` ${timeAgo(r.at, opts.now)}` : ""))) : null,
     entry.note ? h("span", { class: "ask-note" }, entry.note) : null);
+}
+
+/**
+ * The content of the hand-off preview. Without `picked`: the offers as buttons. With it: what would be copied (as text),
+ * the note, and Cancel / confirm. `on`: onPick(offer), onCancel(), onConfirm().
+ */
+export function handoffPreviewNodes(choices, on) {
+  const { offers, picked } = choices;
+  if (!picked) {
+    return [
+      h("p", { class: "muted" }, "Where do you want to take this answer? You see what is copied before anything opens."),
+      ...offers.map((o) => h("div", { class: "ask-card", role: "group", "aria-label": o.title },
+        h("div", { class: "ask-card-head" }, h("strong", {}, o.title), h("span", { class: "pill sem-neutral" }, o.fill ? "Copies text" : "Opens a page")),
+        h("button", { type: "button", class: "small", "data-handoff-pick": o.key, onClick: () => on.onPick(o) }, "Choose"))),
+      h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { type: "button", onClick: () => on.onCancel() }, "Cancel")),
+    ];
+  }
+  const p = picked.preview;
+  return [
+    h("h3", {}, p.title),
+    ...(p.nothing ? [h("p", {}, "Nothing is copied. The page opens.")]
+      : p.rows.map((r) => h("div", { class: "stack" }, h("b", {}, r.label), h("pre", { class: "pre-wrap" }, r.text)))),
+    h("p", { class: "muted small" }, p.note),
+    h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { type: "button", "data-handoff-cancel": "1", onClick: () => on.onCancel() }, "Cancel"), h("button", { type: "button", class: "primary", "data-handoff-confirm": "1", onClick: () => on.onConfirm() }, p.confirm)),
+  ];
+}
+
+/** The hand-off dialog: choose a page when there are several, see the preview, confirm. Resolves with the chosen offer, or null on Cancel or Escape. */
+export async function handoffDialog({ offers, conversationTitle = "" }) {
+  const chosen = await modal("Continue on another page", (close) => {
+    const box = h("div", { class: "stack" });
+    const show = (offer) => mount(box, handoffPreviewNodes({ offers, picked: offer ? { offer, preview: previewOf(offer, conversationTitle) } : null }, { onPick: show, onCancel: () => close(null), onConfirm: () => close(offer) }));
+    show(offers.length === 1 ? offers[0] : null);
+    return box;
+  });
+  // the close button of the dialog, Escape and a click outside resolve undefined
+  return chosen ?? null;
 }
 
 /** The suggested questions as buttons. Picking one fills the question box; it does not send. */

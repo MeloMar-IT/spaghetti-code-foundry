@@ -5,6 +5,7 @@ import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } fro
 import { ReplySchema, displayText, type Reply } from "./contract.js";
 import { OUTCOMES_KEPT, OutcomeSchema, type Outcome } from "./outcome.js";
 import { CONTEXT_KINDS, ContextError, ContextSchema, checkEnvelope, type PageContext } from "./context.js";
+import { HANDOFF_KEEP, HandoffRecordSchema, type HandoffRecord } from "./handoff.js";
 import { SECRET_CATEGORIES, type SecretCategory } from "./guard.js";
 
 export { CONTEXT_KINDS, type PageContext };
@@ -154,6 +155,8 @@ const ConversationSchema = z
     /** While deleted: `expired` when the retention time ended it, not the owner. */
     deletedBy: z.enum(["owner", "expired"]).optional(),
     messages: z.array(MessageSchema).max(MESSAGE_LIMIT),
+    /** The answers the owner took to another page (the last HANDOFF_KEEP). A file written before they existed has none. */
+    handoffs: z.array(HandoffRecordSchema).max(HANDOFF_KEEP).optional(),
     created: z.iso.datetime(),
     updated: z.iso.datetime(),
   })
@@ -167,6 +170,10 @@ const ConversationSchema = z
     if (c.state === "deleted" && (c.messages.length > 0 || c.title !== "")) issue("messages");
     if (c.state !== "deleted" && c.title === "") issue("title");
     const ids = new Set<string>();
+    if (c.state === "deleted" && c.handoffs !== undefined) issue("handoffs");
+    c.handoffs?.forEach((h, i) => {
+      if (!c.messages.some((m) => m.id === h.message && m.role === "assistant")) ctx.addIssue({ code: "custom", message: "invalid", path: ["handoffs", i, "message"] });
+    });
     c.messages.forEach((m, i) => {
       if (ids.has(m.id)) ctx.addIssue({ code: "custom", message: "duplicate", path: ["messages", i, "id"] });
       ids.add(m.id);
@@ -486,6 +493,20 @@ export function addOutcome(owner: string, id: string, message: string, outcome: 
     if (!m || m.role !== "assistant" || m.status !== "done") throw new HelpError("bad-state", "only a finished answer can hold an outcome");
     const outcomes = [...(m.outcomes ?? []), OutcomeSchema.parse(outcome)].slice(-OUTCOMES_KEPT);
     const next: Conversation = { ...c, messages: c.messages.map((x) => (x === m ? { ...m, outcomes } : x)) };
+    return { next, value: copy(next) };
+  })!;
+}
+
+/**
+ * Records that the owner took a finished answer to another page. Only the conversation changes (`updated`, not
+ * `state`); the last HANDOFF_KEEP records are kept. An archived conversation and anything but a finished reply are `bad-state`.
+ */
+export function addHandoff(owner: string, id: string, rec: Omit<HandoffRecord, "at">, opts: StoreOptions = {}): Conversation {
+  return change(owner, id, opts, (c, at) => {
+    if (c.state === "archived") throw new HelpError("bad-state", "restore the conversation first");
+    const m = c.messages.find((x) => x.id === rec.message);
+    if (!m || m.role !== "assistant" || m.status !== "done") throw new HelpError("bad-state", "only a finished answer can be taken to another page");
+    const next: Conversation = { ...c, handoffs: [...(c.handoffs ?? []), { ...rec, at }].slice(-HANDOFF_KEEP), updated: at };
     return { next, value: copy(next) };
   })!;
 }

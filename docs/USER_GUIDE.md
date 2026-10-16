@@ -3279,6 +3279,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask SCF reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`; nothing is stored; 404 when the thing is gone or you can no longer see it, 403 when you may not open it now, 410 for a deleted conversation. Or see what an action Ask SCF proposed in one of your answers would do (`message`, `index`): the server describes it in its own words and gives a confirmation token that works once for 5 minutes; nothing changes. 503 while Ask SCF or its actions are switched off |
 | `POST /api/help/conversations/:id/actions/confirm` | yes | yes | carry out a previewed action with its token (`token`, `message`, `index`): the server checks the token, that the run did not change since the preview, the settings, your account and the rule of the same button on the run's page (your own runs only, an admin too), then reads the result back from the run and answers `{ outcome, stored }`; 409 for a token that is used, expired or does not fit, or a run that changed; writes an audit line |
 | `POST /api/help/conversations/:id/actions/cancel` | yes | yes | drop the confirmation token of a preview (`token`); nothing changes |
+| `GET /api/help/conversations/:id/handoffs` | yes | yes | the pages you may take one answer of your Ask SCF conversation to (`?message=`), with what each would copy; checked again for your account now; nothing is written |
+| `POST /api/help/conversations/:id/handoffs` | yes | yes | record that you took an answer of your Ask SCF conversation to another page (`message`, `offer`, and the `page` and `fill` you saw); only the conversation changes, never the target; 409 when the offer, its page or what it copies changed |
 | `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
 | `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
@@ -6304,6 +6306,7 @@ safest thing you can do instead. These sentences come from the server, not from 
 | You ask it to write or improve a story | Writing and improving stories is the work of Refinement, with the architect. Ask SCF does not do it a second time. | Open Refinement and start a session, or go on with one. |
 | You ask what happens next with a run or an issue | What happens next with a run or an issue, and who has to act, is stated by the Foundry itself. Ask SCF does not give a second answer that could differ. | Open the run under My runs: its page says what happens next. |
 | You ask about a finding of the monitor | What the monitor of the Foundry found is for the administrators. Ask SCF does not show it to you. | Ask an administrator of this Foundry. |
+| You ask it to start a session or publish an issue | Ask SCF does not start a Refinement session and does not publish an issue. **Continue on another page** only opens the New session form with the text filled in. | Check the form, then press **Start session** yourself. Nothing is saved before that. |
 
 For an administrator some of these sentences differ: they point to Home, Problems or Settings instead of to an administrator.
 
@@ -6535,6 +6538,37 @@ you never read the text of the AI service.
 | Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
 | You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
 | The server cannot check texts for secrets (its stored credentials cannot be read, or a pattern in the settings is broken) | Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry. |
+
+### Take an answer to another page
+
+Under a finished answer, **Continue on another page** takes that answer to a page that already does
+the work. You choose the page first. Before anything happens, you see exactly what is copied.
+
+**The pages.** Everyone can take an answer to **Run details**, when the answer is about a run you
+can see, and to **Refinement**: a new session from the answer, or from one of its drafts. An
+administrator can also take it to **Problems** (for a finding the answer is about) and to **Your
+turn on Home** (for a status answer or a next step). Only the pages you may open now are offered.
+
+**The preview.** For a Refinement session the preview lists the title, the text, the repository
+(only one you still own) and a **Link back** to this conversation. Run details, Problems and Your
+turn copy nothing: the page just opens. **Cancel** copies nothing, records nothing and opens nothing.
+
+**What is saved where.** The hand-off is recorded only in this conversation, as a line under the
+answer ("You took this answer to Run details"). The last 50 hand-offs of a conversation are kept. The
+target is not changed by the hand-off. A Refinement session opens its New session form filled in,
+and it is saved only when you press **Start session** there. You can change the text first. If the
+answer's repository is no longer yours, you must choose one; nothing is picked for you.
+
+**Who can read it.** A Refinement session made this way is read like any other session:
+administrators of this Foundry can read it. Its text is a copy of the answer.
+
+**The link back.** A session started from an answer shows "Started from one of your Ask SCF
+conversations" and an **Open the conversation** button. The link is kept in the session and only you
+see it: administrators and "View as user" do not. No id goes into the text of the session.
+
+**If the answer changed.** When the run, the repository or a source of the answer changed or became
+unavailable between your preview and your confirm, Ask SCF asks you to look at the answer again. Nothing
+is recorded.
 
 ### Secrets and copied text
 

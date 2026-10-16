@@ -4,7 +4,9 @@ import {
   CONSEQUENCES, MAX_READ_FAILURES, PAUSED_WORDS, QUESTION_MAX, REASON_WORDS, announce, closesOn, contextFor, controlsFor, explainAskError, explainOfferError, feedbackPlan, historyRows, isPausedError, isWaiting, lastOf,
   offerTarget, planKey, pollDelay, restorePick, sendPlan, solveOffered, staleGuard, suggestionsFor, threadOf, voteNote, waitNote, whereOf,
 } from "./ask-model.js";
-import { actionNodes, askButton, askFrame, entryNode, historyNodes, rateNodes, suggestionNodes } from "./ask-view.js";
+import { actionNodes, askButton, askFrame, entryNode, handoffDialog, historyNodes, rateNodes, suggestionNodes } from "./ask-view.js";
+import { ASK_OPEN_EVENT, isConversationId, offersOf, recordsOf, wishOf } from "./ask-handoff.js";
+import { sendWish } from "./palette-data.js";
 
 // Ask SCF: the help drawer of both displays. One implementation; ui/app.js and ui/user/app.js only call initAsk.
 // The drawer lies over the page and never draws the page again, so what is typed or open there stays as it is.
@@ -58,7 +60,7 @@ export function tabProgress() {
 export function createAsk(role, {
   slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], paused = false, store = tabStore(), progress = tabProgress(), now = () => Date.now(),
   go = (to) => { if (win.location) win.location.hash = to; },
-  confirmer = confirmDialog, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
+  confirmer = confirmDialog, previewer = handoffDialog, wish = sendWish, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
 } = {}) {
   // `restore`: the conversation to read when the drawer opens for the first time after a reload.
   const st = { open: false, view: "talk", conversation: null, busy: false, attach: true, polls: 0, failures: 0, timer: null, rows: [], archived: false, restore: restorePick(list, store.get()), waitKey: "", waitSince: 0, saidSlow: false,
@@ -112,6 +114,7 @@ export function createAsk(role, {
     const view = {
       now: now(),
       onOffer: (id, i) => void runOffer(id, i),
+      onHandoff: (id) => void handOff(id),
       onNavigate: () => close({ back: false }),
       onToggle: (id, i) => toggleStep(id, i),
       reasonWords: REASON_WORDS,
@@ -121,7 +124,7 @@ export function createAsk(role, {
       onDraft: (message, reasons) => st.drafts.set(message, reasons),
     };
     // `mount` keeps the focus on the control with the same name, so voting by keyboard works across a redraw
-    mount(ui.thread, threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id) }).flatMap((entry) => [entryNode(entry, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
+    mount(ui.thread, threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id) }).flatMap((entry) => [entryNode({ ...entry, handoffs: recordsOf(st.conversation, entry.id, role) }, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
     ui.thread.hidden = !st.conversation;
     const controls = { ...controlsFor(st.conversation, { busy: st.busy, paused: st.paused }), solved: solveOffered(st.conversation, { busy: st.busy }) };
     mount(ui.actions, actionNodes(controls, CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), solved: () => void solve(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
@@ -254,6 +257,34 @@ export function createAsk(role, {
       close({ back: false });
       go(link.href);
     }, explainOfferError);
+  }
+
+  /** "Continue on another page": the server lists the pages, the person sees what is copied, and only on confirm is the hand-off recorded. The target is changed by nothing here. */
+  async function handOff(message) {
+    const id = mine();
+    if (!id || st.busy) return false;
+    const current = guard.ticket();
+    let raw;
+    try {
+      raw = await api.helpHandoffs(id, message);
+    } catch (e) {
+      if (current()) { ui.error.textContent = explainAskError(e); draw(); }
+      return false;
+    }
+    if (!current()) return false;
+    ui.error.textContent = "";
+    const offers = offersOf(raw?.offers, role);
+    if (!offers.length) { say("There is no other page for this answer."); return false; }
+    const pick = await previewer({ offers, conversationTitle: st.conversation?.title ?? "" });
+    if (!current()) return false;
+    if (!pick) { say("Nothing was copied."); return false; }
+    return act(() => api.recordHandoff(id, { message, offer: pick.key, page: pick.page, ...(pick.fill ? { fill: pick.fill } : {}) }), (r) => {
+      take(r.conversation);
+      const w = wishOf(r.offer);
+      if (w) wish(w.page, w.wish);
+      close({ back: false });
+      go(r.offer.page);
+    });
   }
 
   async function send() {
@@ -436,6 +467,14 @@ export function createAsk(role, {
   const onHash = () => { if (st.open) draw(); };
   document.addEventListener("keydown", onKey);
   win.addEventListener?.("hashchange", onHash);
+  // the link back from a refinement session: open the drawer on that conversation
+  const onOpenAsk = (e) => {
+    const cid = e?.detail?.id;
+    if (!isConversationId(cid)) return;
+    open();
+    void openConversation(cid);
+  };
+  win.addEventListener?.(ASK_OPEN_EVENT, onOpenAsk);
 
   host.append(ui.scrim, ui.drawer);
   if (slot) {
@@ -448,11 +487,12 @@ export function createAsk(role, {
     guard.next();
     document.removeEventListener("keydown", onKey);
     win.removeEventListener?.("hashchange", onHash);
+    win.removeEventListener?.(ASK_OPEN_EVENT, onOpenAsk);
     ui.scrim.remove?.();
     ui.drawer.remove?.();
     if (slot) { slot.replaceChildren(); slot.hidden = true; }
   }
-  return { open, close, send, runOffer, stop, stopAnswer, retry, rate, solve, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
+  return { open, close, send, runOffer, handOff, stop, stopAnswer, retry, rate, solve, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
 }
 
 /**
