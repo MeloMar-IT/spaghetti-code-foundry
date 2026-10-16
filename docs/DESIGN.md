@@ -1243,7 +1243,8 @@ chapter 14 of the user guide holds the same sentences as the code.
 ### Ask SCF: confirmed actions
 
 Part 1 of 2 of #567 (#569), behind `help.actions`, off by default. It only binds a proposal to the
-run the server knows about; nothing is carried out yet (#568 and part 2 do that).
+run the server knows about. Part 2 of 2 (#570) carries out a previewed action through the API; the
+drawer's confirm control is #568.
 
 - **The list.** `ACTIONS` has `resume-run` (`reversible`, `undoable: true`) and `cancel-run` (`high`,
   `undoable: false`), both for `admin` and `user`. Each has a fixed `effect` text written by the
@@ -1263,6 +1264,46 @@ run the server knows about; nothing is carried out yet (#568 and part 2 do that)
 - **Outside check.** `actionProblems(reply, ready, role)` in `src/server/help-evals.ts` re-checks each
   kept action against the prepared turn, and `scf eval help` reports each problem as `unsafe-action`,
   which blocks a release. The scenarios are in the `action` group.
+
+**Part 2 (#570): preview, confirm and cancel.** `prepareAction`, `confirmAction` and `cancelAction` in
+`src/server/help-actions.ts`; the routes are in `src/server/api-help.ts`, before the generic POST block.
+Every error that is a refusal becomes an `ActionRefused` with a code, a status and a fixed sentence.
+
+- **Preview.** `previewOf` builds the answer from fixed words and the run's own fields; no model text
+  is in it. Only the grant is written, in memory.
+- **Grants.** `ActionGrants` (`src/help/grants.ts`) keeps each token under its sha256; the token is never
+  stored. A grant lasts `GRANT_TTL_MS` (5 minutes), at most `GRANTS_PER_OWNER` (5) per owner and
+  `GRANTS_MAX` (1000) in all, and a new preview replaces the grant for the same reply action. `peek`
+  reads a copy without using the token; `take` uses it up, and burns it when the binding does not match
+  (owner, conversation, reply, index). `grantsOf(ctx)` keeps one set per server in a WeakMap.
+- **State version.** `stateVersion(scheduler, runId)` is a sha256 of the run (status, history length and
+  last record, answers, next and waiting step, resumes, finish time) and of the queue: whether the run
+  is queued or active, and the identity of its queued job (`scheduler.queuedJob`: enqueue time, kind,
+  `from`, decision, source, priority, who queued it). A job taken out and queued again changes it.
+- **Confirm, in order.** `peek` gives a fast 409 for an unknown, used or expired token. A resume then
+  awaits `checkResume` (the same gate as the run's page; the await may take a while). Then one
+  synchronous block, with no `await`: `take`, the binding and the proposed action again, the state
+  version, the switches and the account (`checkSwitches`, read again), `mayAct` (the run's rule, the
+  owner only) and `applies`. Two confirms cannot both pass, and a permission change during the gate
+  wait is seen here. Refusals are audited once (`refused: <code>`) and change nothing.
+- **Executor and error boundary.** `startResume` (sync submit and audit) or `cancelRun` runs inside
+  one `try` that covers the executor and the read-back. A throw there leaves the token used, is logged
+  as "did not end cleanly" and does not become a 500. The state is then read again, best effort.
+- **Read-back.** `watchRun` subscribes to the scheduler's events and waits at most `READ_BACK_MS`
+  (5000, overridable by `deps.readBackMs`). `armed` is set after `subscribe` returns, so replayed events
+  are ignored; the timer is `unref`'d; the subscription and timer are released in a `finally` on every
+  path.
+- **Result.** `decide` works from the fresh state only. `done` is reported only after read-back. For a
+  cancel, `cancelled` is checked before "still active", so a stop that was saved while the run finishes
+  is `stopped` only when the status says `cancelled`; a run that ended with another status first is
+  `not-done`. `OUTCOME_WORDS` gives the fixed words and recovery for each result.
+- **Storage.** `addOutcome` (`src/help/store.ts`) adds the outcome to a finished reply and keeps the
+  newest `OUTCOMES_KEPT` (10). `OutcomeSchema` (`src/help/outcome.ts`) is strict. A failed store or audit
+  write answers `stored: false`; the outcome is still returned.
+
+Tests: `tests/help-grants.test.ts`, `tests/help-actions.test.ts` (the checks, with a replaced gate),
+`tests/help-actions-run.test.ts` (the real scheduler: stale evidence, read-back, the error boundary) and
+`tests/help-actions-api.test.ts` (HTTP with `FAKE_HELP`).
 
 ### Ask SCF: stored conversations
 

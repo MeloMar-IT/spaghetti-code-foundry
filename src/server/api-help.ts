@@ -36,6 +36,7 @@ import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpPaused, helpTarget, type Ask
 import type { Config } from "../config.js";
 import { currentAccount, snapshotResolver } from "./help-context.js";
 import { liveEvidence } from "./help-evidence.js";
+import { ActionRefused, cancelAction, confirmAction, prepareAction, type ActionDeps } from "./help-actions.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -301,6 +302,19 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
   if (seg[1] !== "conversations") return false;
   const id = seg[2] ?? "";
+  // Approved actions: a preview with a token, the confirmation, and dropping the token. Before the generic POST block.
+  if (method === "POST" && seg[3] === "actions" && (seg.length === 4 || (seg.length === 5 && (seg[4] === "confirm" || seg[4] === "cancel")))) {
+    const deps: ActionDeps = { allow: (a) => helpAllowed(ctx, a) };
+    try {
+      if (seg.length === 4) send(res, 200, prepareAction(ctx, user, id, await readJson(req), deps));
+      else if (seg[4] === "cancel") send(res, 200, cancelAction(ctx, user, id, await readJson(req), deps));
+      else send(res, 200, await confirmAction(ctx, user, id, () => readJson(req), deps));
+    } catch (e) {
+      if (e instanceof ActionRefused) throw new HttpError(e.status, e.message);
+      throw mapped(ctx, e);
+    }
+    return true;
+  }
   /** Takes a turn and writes its audit line: started (with the id of the turn) or refused (with the code). A question that is not valid writes none. */
   const audited = (conversation: string | undefined, how: "ask" | "retry", fn: () => Turn): Turn => {
     try {

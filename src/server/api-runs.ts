@@ -7,6 +7,7 @@ import { runDiff } from "../engine/diff.js";
 import { readTranscript } from "../engine/transcript.js";
 import { runEvidenceView } from "./evidence-view.js";
 import { auditAction } from "../auth/audit.js";
+import type { User } from "../auth/users.js";
 import { ownsRepo } from "../auth/repos.js";
 import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { isRefinementFlow } from "../flow/usage.js";
@@ -54,6 +55,52 @@ export function runsListFor(ctx: ApiContext, owner?: string, archived = false): 
     .flatMap((b) => checkedRun(ctx.scheduler, b.dirName, owner) ?? []);
 }
 
+export type ResumeAction = "resume" | "approve" | "reject";
+
+/** The lock key and the place of a bug story, for a job that resumes a run. */
+export function jobMetaFor(ctx: ApiContext, user: User, s: RunSummary, source: string): JobMeta {
+  const vars = s.vars ?? {};
+  const lockKey = vars.github_repo && (vars.issue || vars.pr) ? `${vars.github_repo}#${vars.issue || vars.pr}` : undefined;
+  // A bug story keeps its place at the front: its watcher saw the label at its last check.
+  const story = ctx.watchers.tracked().flatMap((t) => t.issues).find((i) => i.runId === s.runId && i.priority);
+  return { lockKey, source, queuedBy: user.id, ...(story ? { priority: true, storyAt: story.createdAt } : {}) };
+}
+
+/** The checks of a resume, approve or reject in the route's order: 404 run, 400 from, 403 from for a non-admin, 409 refinement, gate 409, 409 not waiting. Changes nothing. */
+export async function checkResume(ctx: ApiContext, user: User, id: string, action: ResumeAction, body: Record<string, unknown>, gate: typeof gateRun = gateRun): Promise<{ run: RunSummary; from?: string }> {
+  const s = ctx.scheduler.get(id);
+  if (!s) throw new HttpError(404, "run not found");
+  const from = str(body, "from", false) || undefined;
+  if (from && user.role !== "admin") throw new HttpError(403, "only an admin can restart a run from a step");
+  // The one-read-at-a-time rules live in the session: an architect run is continued from there, for every role.
+  if (isRefinementRun(s.source)) throw new HttpError(409, "this run belongs to a refinement session; ask the architect again from that session");
+  // One live look at the issue; a closed one is not continued (see run-gate.ts).
+  const g = await gate(s, ctx.config());
+  if (!g.ok) throw new HttpError(409, g.message);
+  if (action !== "resume" && s.status !== "waiting") throw new HttpError(409, "run is not waiting for approval");
+  return { run: s, from };
+}
+
+/** Synchronous: 400 when the run is active or queued, then submit and audit. */
+export function startResume(ctx: ApiContext, user: User, id: string, run: RunSummary, action: ResumeAction, opts: { from?: string; body?: Record<string, unknown>; source?: string } = {}): void {
+  const { scheduler } = ctx;
+  // The same answer for both roles; any other failure of submit is unexpected (and generic for a user).
+  if (scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(400, `run ${id} is already queued or running`);
+  scheduler.submit(
+    action === "resume"
+      ? { kind: "resume", runId: id, from: opts.from }
+      : { kind: "resume", runId: id, decision: { approved: action === "approve", by: "ui", note: str(opts.body ?? {}, "note", false) || undefined } },
+    jobMetaFor(ctx, user, run, opts.source ?? `ui ${action}`),
+  );
+  auditAction(ctx.diagLog, user.id, `run-${action}`, id);
+}
+
+/** Cancels a run or takes its job out of the queue. May throw (persist). */
+export function cancelRun(ctx: ApiContext, user: User, id: string): boolean {
+  const cancelled = ctx.scheduler.cancel(id, actorOf(undefined, user.id));
+  if (cancelled) auditAction(ctx.diagLog, user.id, "run-cancel", id);
+  return cancelled;
+}
 
 export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const { opts, scheduler } = ctx;
@@ -71,14 +118,6 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   };
   // Present only when an answer sent now would be accepted. The active check is left out on purpose: finish() sends its last update while the run is still active.
   const answerable = (r: RunSummary) => (!scheduler.isQueued(r.runId) && !answerBlock(r, ctx.config().watchers) && answerRoom(r) > 0 ? { canAnswer: true as const } : {});
-  // The lock key and the place of a bug story, for a job that resumes a run.
-  const jobMeta = (s: RunSummary, source: string): JobMeta => {
-    const vars = s.vars ?? {};
-    const lockKey = vars.github_repo && (vars.issue || vars.pr) ? `${vars.github_repo}#${vars.issue || vars.pr}` : undefined;
-    // A bug story keeps its place at the front: its watcher saw the label at its last check.
-    const story = ctx.watchers.tracked().flatMap((t) => t.issues).find((i) => i.runId === s.runId && i.priority);
-    return { lockKey, source, queuedBy: user.id, ...(story ? { priority: true, storyAt: story.createdAt } : {}) };
-  };
   if (seg[0] === "queue" && method === "GET") {
     // A queued architect read says which refinement session it is for; the source itself stays with the admin.
     const sessionOf = new Map(scheduler.queue().pending.flatMap((p) => (refinementSessionOf(p.source) ? [[p.runId, refinementSessionOf(p.source)!] as const] : [])));
@@ -202,8 +241,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, { runId: id, archived }), true;
   }
   if (action === "cancel" && method === "POST") {
-    const cancelled = scheduler.cancel(id, actorOf(undefined, user.id));
-    if (cancelled) auditAction(ctx.diagLog, user.id, "run-cancel", id);
+    const cancelled = cancelRun(ctx, user, id);
     return send(res, 200, { cancelled }), true;
   }
 
@@ -226,7 +264,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const block = answerBlock(s, ctx.config().watchers);
     if (block) throw new HttpError(409, block);
     try {
-      scheduler.answer(id, text, user.id, jobMeta(s, "ui answer"));
+      scheduler.answer(id, text, user.id, jobMetaFor(ctx, user, s, "ui answer"));
     } catch (e) {
       if (e instanceof AnswerRefused) throw new HttpError(e.kind === "state" ? 409 : e.kind === "size" ? 400 : 500, e.message);
       throw e;
@@ -237,25 +275,8 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
 
   if ((action === "resume" || action === "approve" || action === "reject") && method === "POST") {
     const body = await readJson(req);
-    const s = scheduler.get(id);
-    if (!s) throw new HttpError(404, "run not found");
-    const from = str(body, "from", false) || undefined;
-    if (from && !admin) throw new HttpError(403, "only an admin can restart a run from a step");
-    // The one-read-at-a-time rules live in the session: an architect run is continued from there, for every role.
-    if (isRefinementRun(s.source)) throw new HttpError(409, "this run belongs to a refinement session; ask the architect again from that session");
-    // One live look at the issue; a closed one is not continued (see run-gate.ts).
-    const gate = await gateRun(s, ctx.config());
-    if (!gate.ok) throw new HttpError(409, gate.message);
-    if (action !== "resume" && s.status !== "waiting") throw new HttpError(409, "run is not waiting for approval");
-    // The same answer for both roles; any other failure of submit is unexpected (and generic for a user).
-    if (scheduler.isActive(id) || scheduler.isQueued(id)) throw new HttpError(400, `run ${id} is already queued or running`);
-    scheduler.submit(
-      action === "resume"
-        ? { kind: "resume", runId: id, from }
-        : { kind: "resume", runId: id, decision: { approved: action === "approve", by: "ui", note: str(body, "note", false) || undefined } },
-      jobMeta(s, `ui ${action}`),
-    );
-    auditAction(ctx.diagLog, user.id, `run-${action}`, id);
+    const { run, from } = await checkResume(ctx, user, id, action, body);
+    startResume(ctx, user, id, run, action, { from, body });
     return send(res, 202, { runId: id }), true;
   }
 

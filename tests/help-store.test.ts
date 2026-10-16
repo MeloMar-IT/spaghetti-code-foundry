@@ -16,6 +16,7 @@ import {
   KEEP_MS,
   MESSAGE_LIMIT,
   QUESTION_MAX,
+  addOutcome,
   addQuestion,
   archiveConversation,
   cancelTurn,
@@ -550,5 +551,52 @@ describe("rating an answer", () => {
     delete file.conversations[0].messages[1].feedback;
     writeFileSync(helpPath(), JSON.stringify(file));
     expect(listConversations(ANN, at)[0]!.messages[1]!.feedback).toBeUndefined();
+  });
+});
+
+describe("outcomes of approved actions", () => {
+  const outcome = (n: number) => ({
+    action: "cancel-run",
+    about: { kind: "run" as const, id: "r1" },
+    result: "done" as const,
+    words: `Outcome ${n}`,
+    recovery: "Open the run.",
+    seen: "cancelled" as const,
+    at: "2026-03-01T10:00:00.000Z",
+  });
+  const finished = () => {
+    const turn = ask();
+    finishTurn(turn.conversation.id, ref(turn), reply(), at);
+    return { id: turn.conversation.id, message: turn.reply.id, question: turn.question.id };
+  };
+
+  it("keeps the newest 10 on a finished reply, and reads them back", () => {
+    const c = finished();
+    for (let n = 1; n <= 12; n++) addOutcome(ANN, c.id, c.message, outcome(n), at);
+    const kept = getConversation(ANN, c.id, at).messages[1]!.outcomes!;
+    expect(kept.map((o) => o.words)).toEqual(Array.from({ length: 10 }, (_, i) => `Outcome ${i + 3}`));
+    expect(listConversations(ANN, at)[0]!.messages[1]!.outcomes).toHaveLength(10);
+  });
+
+  it("refuses a pending or failed reply, a user message, another account and an extra key", () => {
+    const turn = ask();
+    expect(code(() => addOutcome(ANN, turn.conversation.id, turn.reply.id, outcome(1), at))).toBe("bad-state");
+    failTurn(turn.conversation.id, ref(turn), { code: "provider", retry: true }, at);
+    expect(code(() => addOutcome(ANN, turn.conversation.id, turn.reply.id, outcome(1), at))).toBe("bad-state");
+    const c = finished();
+    expect(code(() => addOutcome(ANN, c.id, c.question, outcome(1), at))).toBe("bad-state");
+    expect(code(() => addOutcome(BOB, c.id, c.message, outcome(1), at))).toBe("not-found");
+    expect(() => addOutcome(ANN, c.id, c.message, { ...outcome(1), extra: "x" } as never, at)).toThrow();
+    expect(getConversation(ANN, c.id, at).messages[1]!.outcomes).toBeUndefined();
+  });
+
+  it("a file with an outcome on an unfinished reply is refused", () => {
+    const c = finished();
+    addOutcome(ANN, c.id, c.message, outcome(1), at);
+    const file = JSON.parse(raw());
+    file.conversations[0].messages[1].status = "cancelled";
+    delete file.conversations[0].messages[1].reply;
+    writeFileSync(helpPath(), JSON.stringify(file));
+    expect(() => listConversations(ANN, at)).toThrow(StoreError);
   });
 });

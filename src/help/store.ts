@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { ReplySchema, displayText, type Reply } from "./contract.js";
+import { OUTCOMES_KEPT, OutcomeSchema, type Outcome } from "./outcome.js";
 import { CONTEXT_KINDS, ContextError, ContextSchema, checkEnvelope, type PageContext } from "./context.js";
 import { SECRET_CATEGORIES, type SecretCategory } from "./guard.js";
 
@@ -114,6 +115,8 @@ const MessageSchema = z
     failure: FailureSchema.optional(),
     /** A finished reply: how the owner rated it. Only a vote and fixed reasons, never a text. */
     feedback: FeedbackSchema.optional(),
+    /** A finished reply: what approved actions ended as, read back from the run (the newest OUTCOMES_KEPT). */
+    outcomes: z.array(OutcomeSchema).max(OUTCOMES_KEPT).optional(),
     /** A reply: how often the turn was started (1, and one more for every retry). */
     tries: z.number().int().min(1).max(1000).optional(),
     /** A reply: when it last changed (answered, failed, stopped or started again). */
@@ -126,7 +129,7 @@ const MessageSchema = z
     const issue = (path: string) => ctx.addIssue({ code: "custom", message: "invalid", path: [path] });
     if (m.role === "user") {
       if (m.status !== "done") issue("status");
-      for (const k of ["replyTo", "reply", "failure", "feedback", "tries", "updated"] as const) if (m[k] !== undefined) issue(k);
+      for (const k of ["replyTo", "reply", "failure", "feedback", "outcomes", "tries", "updated"] as const) if (m[k] !== undefined) issue(k);
     } else {
       if (m.replyTo === undefined) issue("replyTo");
       if (m.tries === undefined) issue("tries");
@@ -134,6 +137,7 @@ const MessageSchema = z
       if ((m.status === "done") !== (m.reply !== undefined)) issue("reply");
       if ((m.status === "failed") !== (m.failure !== undefined)) issue("failure");
       if (m.feedback !== undefined && m.status !== "done") issue("feedback");
+      if (m.outcomes !== undefined && m.status !== "done") issue("outcomes");
     }
   });
 export type Message = z.infer<typeof MessageSchema>;
@@ -473,6 +477,17 @@ export function rateReply(owner: string, id: string, rating: Rating, opts: Store
     return { next, value: undefined };
   });
   return out!;
+}
+
+/** Adds an outcome to a finished reply of the owner; the newest OUTCOMES_KEPT stay. `updated` is not changed (like rateReply). */
+export function addOutcome(owner: string, id: string, message: string, outcome: Outcome, opts: StoreOptions = {}): Conversation {
+  return change(owner, id, opts, (c) => {
+    const m = c.messages.find((x) => x.id === message);
+    if (!m || m.role !== "assistant" || m.status !== "done") throw new HelpError("bad-state", "only a finished answer can hold an outcome");
+    const outcomes = [...(m.outcomes ?? []), OutcomeSchema.parse(outcome)].slice(-OUTCOMES_KEPT);
+    const next: Conversation = { ...c, messages: c.messages.map((x) => (x === m ? { ...m, outcomes } : x)) };
+    return { next, value: copy(next) };
+  })!;
 }
 
 /** Marks a turn as failed, with the fixed sentence for its reason. */
