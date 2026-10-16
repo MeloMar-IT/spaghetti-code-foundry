@@ -68,6 +68,7 @@ Usage:
   scf skills review <source-id> [--markdown]     Print the licence, attribution and collision report of a staged import
   scf skills selections evaluate <source-id> [<file>]  Report which selected skills of a staged import are eligible or held, and their overlaps
   scf skills release verify <dir>                Check a catalogue release folder offline (files, digests, approval)
+  scf skills release diff <catalogue>@<old> <catalogue>@<new>  Show what a newer stored release changes (offline)
   scf skills release publish <catalogue>@<version>  Publish a catalogue release from skill-releases.yaml (reviewed, promotable, evaluation passed)
   scf skills release sign <catalogue>@<version> --key <private-key-file>  Sign a stored release with an Ed25519 key; prints the approved entry
   scf skills release adopt [<catalogue>@<version>]  Copy signed approved releases from their local artifact into skill-releases/ after checking them; offline

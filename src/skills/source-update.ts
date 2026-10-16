@@ -236,7 +236,7 @@ export function repoFromUrl(url: string): string | undefined {
 const code = (s: string): string => "`" + shownFull(s).replace(/<!--/g, "<!- -").replace(/`/g, "'") + "`";
 
 /** Lines of a list while they fit in `budget` bytes; the rest is one "… and N more" line. Each shown item is whole. */
-function boundedList(items: readonly string[], budget: number): string[] {
+export function boundedList(items: readonly string[], budget: number): string[] {
   const out: string[] = [];
   let bytes = 0;
   for (let i = 0; i < items.length; i++) {

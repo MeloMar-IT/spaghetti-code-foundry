@@ -3,9 +3,12 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, read
 import { join } from "node:path";
 import { matchRelease, type ApprovedRelease } from "./release.js";
 import { readReleaseRequests } from "./release-requests.js";
+import { loadSkillPackage } from "./package.js";
+import type { RegisteredSkill } from "./registry.js";
+import { catalogueChangeLines, catalogueChanges, releaseEntry } from "./release-changes.js";
 import { personalAgentPath } from "./registry-util.js";
 import { approvalSignatureState, approvalText, decodeBase64Exact, ed25519PublicKey, rawPublicKey, releaseSignatureToken, signApproval, type ReleaseKey } from "./release-signature.js";
-import { listStoredReleases, publishRelease, readReleaseContent, ReleaseStoreError, releaseStorePath } from "./release-store.js";
+import { listStoredReleases, publishRelease, readReleaseContent, ReleaseStoreError, releaseStorePath, type StoredRelease } from "./release-store.js";
 import { readRunSkillLock } from "./run-lock.js";
 import { verifyRelease } from "./release-verify.js";
 import { artifactPathProblem, SKILL_ID_RE, SKILL_VERSION_RE } from "./schema.js";
@@ -30,7 +33,12 @@ export function releaseOperandsProblem(operands: string[]): string | undefined {
     return operands.length === 1 || parseReleaseTarget(operands[1]!) ? undefined : "scf skills release adopt: the operand must be <catalogue>@<version>";
   }
   if (operands[0] === "list" && operands.length === 1) return undefined;
-  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, "publish", "sign" or "adopt" and <catalogue>@<version>, or "list"';
+  if (operands[0] === "diff") {
+    const a = operands.length === 3 ? parseReleaseTarget(operands[1]!) : undefined;
+    const b = operands.length === 3 ? parseReleaseTarget(operands[2]!) : undefined;
+    return a && b && a.catalogue === b.catalogue ? undefined : "scf skills release diff: expects <catalogue>@<old> <catalogue>@<new> of one catalogue";
+  }
+  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, "publish", "sign" or "adopt" and <catalogue>@<version>, "diff" and two <catalogue>@<version>, or "list"';
 }
 
 const MAX_KEY_FILE_BYTES = 16384;
@@ -214,6 +222,66 @@ export function releaseAdopt(target: { catalogue: string; version: string } | un
     }
   }
   return refused || (target && missing) ? 1 : 0;
+}
+
+type Target = { catalogue: string; version: string };
+
+/** One stored release, checked and loaded: its manifest and the registered packages. Prints the PROBLEM and returns undefined on failure. */
+function loadStored(t: Target, releases: readonly StoredRelease[], out: (line: string) => void) {
+  const name = `${t.catalogue}@${t.version}`;
+  const found = releases.find((r) => r.catalogue === t.catalogue && r.version === t.version);
+  if (!found) {
+    out(`PROBLEM release ${name} is not in the release store`);
+    return undefined;
+  }
+  const v = verifyRelease(found.dir);
+  if (!v.ok) {
+    out(`PROBLEM release ${name} invalid: ${v.reason}`);
+    return undefined;
+  }
+  const m = v.manifest;
+  if (m.catalogue !== t.catalogue || m.version !== t.version) {
+    out(`PROBLEM release ${name} invalid: the release folder does not hold ${name}`);
+    return undefined;
+  }
+  const packages: RegisteredSkill[] = [];
+  for (const s of m.skills) {
+    try {
+      const pkg = loadSkillPackage(join(found.dir, s.id));
+      if (pkg.id !== s.id || pkg.version !== s.version || pkg.digest !== s.digest) throw new Error("differs");
+      packages.push(releaseEntry(pkg, t));
+    } catch {
+      out(`PROBLEM release ${name}: skill ${s.id} does not load`);
+      return undefined;
+    }
+  }
+  return { manifest: m, digest: v.digest, packages };
+}
+
+/** `scf skills release diff <catalogue>@<old> <catalogue>@<new>`: offline, from the release store. Approval is not needed. Reads only. */
+export function releaseDiff(old: Target, next: Target, out: (line: string) => void, opts: { home: string; highRisk: readonly string[] }): number {
+  const listing = listStoredReleases(opts.home);
+  if (listing.refused) {
+    out(`PROBLEM skill-releases is ${listing.refused}`);
+    return 1;
+  }
+  const a = loadStored(old, listing.releases, out);
+  if (!a) return 1;
+  const b = loadStored(next, listing.releases, out);
+  if (!b) return 1;
+  let changes;
+  try {
+    changes = catalogueChanges(a.manifest, b.manifest, { old: a.packages, next: b.packages }, { highRisk: opts.highRisk });
+  } catch (e) {
+    if (!(e instanceof RangeError || e instanceof TypeError)) throw e;
+    out(`PROBLEM ${e.message}`);
+    return 1;
+  }
+  const lines = catalogueChangeLines(changes);
+  for (const l of lines) out(l);
+  const n = lines.length;
+  out(`DIFF ${old.catalogue}@${old.version} ${a.digest} -> ${next.catalogue}@${next.version} ${b.digest}: ${n === 0 ? "no changes" : `${n} change${n === 1 ? "" : "s"}`}`);
+  return 0;
 }
 
 /** `scf skills release list`: every stored release with its approval state and the run locks that use it. Reads only. */
