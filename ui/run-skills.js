@@ -92,7 +92,7 @@ function resolvedRow(r, admin, repo) {
     h("td", {}, typeof r.estimatedTokens === "number" ? `about ${r.estimatedTokens} tokens` : DASH),
     h("td", {}, h("span", { class: `pill ${integrityClass(r.integrity)}` }, label(INTEGRITY_LABELS, r.integrity))),
     h("td", {}, session(r)),
-    admin ? h("td", {}, r.source === "builtin" ? "built-in" : r.source === "admin" ? "administrator folder" : DASH) : null,
+    admin ? h("td", {}, r.source === "builtin" ? "built-in" : r.source === "admin" ? "administrator folder" : r.source === "catalogue" ? "approved catalogue" : DASH) : null,
     admin ? h("td", typeof r.digest === "string" ? { class: "mono", title: r.digest } : {}, typeof r.digest === "string" ? r.digest.slice(0, 19) : DASH) : null);
 }
 

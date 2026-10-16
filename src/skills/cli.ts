@@ -686,7 +686,7 @@ export async function skillsCommand(
   }
 
   for (const s of reg.skills) {
-    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.trust} ${s.pin} ${s.digest} effect ${effectState(readNewestEffect(s.id, s.digest, { home: discover.home }))}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
+    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.source} ${s.trust} ${s.pin} ${s.digest} effect ${effectState(readNewestEffect(s.id, s.digest, { home: discover.home }))}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
   }
   for (const r of reg.sources) {
     const rel = r.release;

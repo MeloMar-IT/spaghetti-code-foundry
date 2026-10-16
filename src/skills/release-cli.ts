@@ -1,7 +1,6 @@
 import { createPrivateKey, verify, type KeyObject } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
-import { readSkillLock } from "./lock.js";
 import { matchRelease, type ApprovedRelease } from "./release.js";
 import { readReleaseRequests } from "./release-requests.js";
 import { approvalText, decodeBase64Exact, ed25519PublicKey, rawPublicKey, releaseSignatureToken, signApproval, type ReleaseKey } from "./release-signature.js";
@@ -115,7 +114,6 @@ export function releaseList(out: (line: string) => void, opts: { home: string; r
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") out("NOTE the runs folder cannot be read; run locks are not checked");
   }
-  const lock = readSkillLock(opts.home);
   const listing = listStoredReleases(opts.home);
   if (listing.refused) out(`NOTE skill-releases is ${listing.refused.replace(", not scanned", "; it is not read")}`);
   if (listing.unreadable) out(`PROBLEM ${listing.unreadable} catalogue folder${listing.unreadable === 1 ? "" : "s"} in skill-releases cannot be read; their releases are not listed`);
@@ -138,11 +136,7 @@ export function releaseList(out: (line: string) => void, opts: { home: string; r
     const runs = new Set<string>();
     for (const s of m.skills) for (const n of locked.get(`${s.id}@${s.version} ${s.digest}`) ?? []) runs.add(n);
     const n = m.skills.length;
-    out(`RELEASE ${name} ${v.digest} ${state}${token ? ` ${token}` : ""} ${n} skill${n === 1 ? "" : "s"}, ${runs.size ? `locked by ${runs.size} run${runs.size === 1 ? "" : "s"}` : "not locked by any run"}`);
-    if (state !== "approved" || !lock.ok) continue;
-    for (const s of m.skills) {
-      if (!s.revoked && !lock.pins[`${s.id}@${s.version}`]) out(`PIN scf skills pin ${s.id}@${s.version} ${s.digest}`);
-    }
+    out(`RELEASE ${name} ${v.digest} ${state}${token ? ` ${token}` : ""} ${n} skill${n === 1 ? "" : "s"}, ${runs.size ? `locked by ${runs.size} run${runs.size === 1 ? "" : "s"}` : "not locked by any run"}${state === "approved" ? " (source catalogue)" : ""}`);
   }
   const total = listing.releases.length + listing.hidden;
   if (incomplete) {

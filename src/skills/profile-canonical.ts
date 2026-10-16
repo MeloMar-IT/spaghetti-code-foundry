@@ -14,7 +14,7 @@ import type { SourceTrustTier } from "./sources.js";
 // Pure: no file system, no clock, no process. A report that grants nothing: it promotes nothing and no run reads it.
 // Only validated ids, versions, enum codes and the selector's own message are printed; no free text of an upstream skill.
 
-export type ProfileOrigin = "staged" | "builtin" | "admin";
+export type ProfileOrigin = "staged" | "builtin" | "admin" | "catalogue";
 type CanonicalGate = (typeof CANONICAL_GATES)[number];
 
 export interface ProfileCanonicalInput {
@@ -77,7 +77,7 @@ const sameCaps = (a: readonly string[], b: readonly string[]) => a.length === b.
 export function profileCanonical(input: ProfileCanonicalInput): ProfileCanonicalReport {
   const scope = profileExclusive(input.profile, input.exclusive);
   const active = input.registered
-    .filter((s) => s.active && (s.source === "builtin" || s.source === "admin"))
+    .filter((s) => s.active && (s.source === "builtin" || s.source === "admin" || s.source === "catalogue"))
     .sort((a, b) => byteCmp(a.key, b.key));
   if (input.candidates.length + active.length > COLLISION_LIMITS.candidates) throw new RangeError("too many skill candidates");
 

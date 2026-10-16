@@ -362,6 +362,12 @@ describe("runSkillView: what is left out", () => {
     expect(admin.resolved[0]).toMatchObject({ digest: digestOf("a"), source: "admin" });
     expect(admin.commit).toBe("f".repeat(40));
   });
+  it("passes the catalogue source of a lock entry to an administrator", () => {
+    const cat = JSON.parse(JSON.stringify(lock)) as RunSkillLock;
+    cat.skills[0]!.source = "catalogue";
+    const admin = view(runOf(req, { skillLock: summaryOf(cat), skillPlan: planOf(r, req) }), { admin: true, readLock: () => read(cat), registry: withRegistry(r) })!;
+    expect(admin.resolved[0]).toMatchObject({ source: "catalogue" });
+  });
   it("shows no digest from the summary or the plan to a user", () => {
     const user = view(run(), { readLock: () => ({ ok: false, reason: "invalid" }) });
     expect(keys(user).has("digest")).toBe(false);

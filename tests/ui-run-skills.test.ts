@@ -114,6 +114,7 @@ describe("the resolved table", () => {
     const rows = cells(c);
     expect(text(rows[0]![6]!)).toBe("built-in");
     expect(text(rows[1]![6]!)).toBe("administrator folder");
+    expect(text(cells(card(view({ resolved: [row({ source: "catalogue" })] }), { admin: true }))[0]![6]!)).toBe("approved catalogue");
     const digest = rows[0]![7]!;
     expect(text(digest)).toBe(`sha256:${"a".repeat(12)}`);
     expect(digest.attrs.title).toBe(`sha256:${"a".repeat(64)}`);

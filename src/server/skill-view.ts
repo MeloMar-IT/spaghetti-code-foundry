@@ -44,7 +44,7 @@ export interface ResolvedSkill {
   review?: true;
   /** Administrator only. */
   digest?: string;
-  source?: "admin" | "builtin";
+  source?: "admin" | "builtin" | "catalogue";
 }
 export interface RunSkillView {
   /** ok: a valid lock. none: not locked yet. missing: the file is gone. changed: unreadable, invalid or not the one the run wrote. */

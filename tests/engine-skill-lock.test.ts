@@ -15,10 +15,10 @@ const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })));
 
 const digestOf = (c: string) => `sha256:${c.repeat(64)}`;
-function sk(id: string, o: { version?: string; digest?: string; pin?: string } = {}): RegisteredSkill {
+function sk(id: string, o: { version?: string; digest?: string; pin?: string; source?: string } = {}): RegisteredSkill {
   const version = o.version ?? "1.0.0";
   return {
-    key: `${id}@${version}`, id, version, source: "admin", label: "data folder", dir: "/secret/dir", active: true,
+    key: `${id}@${version}`, id, version, source: o.source ?? "admin", label: "data folder", dir: "/secret/dir", active: true,
     trust: "approved", pin: o.pin ?? "pinned", digest: o.digest ?? digestOf("a"),
     pkg: { id, version, description: `About ${id}.`, instructions: "Do it.", roles: [], dependencies: [], conflicts: [] },
   } as unknown as RegisteredSkill;
@@ -124,6 +124,14 @@ describe("ensureSkillLock", () => {
       expect(t.save).not.toHaveBeenCalled();
     }
     expect(discover).not.toHaveBeenCalled();
+  });
+
+  it("records the source kind of each locked skill: catalogue, builtin or admin", () => {
+    const t = setup(gateOutput(["a", "b", "c"]));
+    const discover = () => reg(sk("a", { source: "catalogue" }), sk("b", { source: "builtin" }), sk("c"));
+    expect(ensureSkillLock(t.engine, { discover, commitOf })).toBeUndefined();
+    const r = readRunSkillLock(t.runDir);
+    expect(r.ok && r.lock.skills.map((s) => [s.id, s.source])).toEqual([["a", "catalogue"], ["b", "builtin"], ["c", "admin"]]);
   });
 
   it("makes the lock at the first agent step, keeps the summary and the commit, and verifies afterwards", () => {

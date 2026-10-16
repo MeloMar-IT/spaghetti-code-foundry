@@ -71,8 +71,6 @@ describe("retained approved releases", () => {
   it("keeps an old lock valid after a newer release is approved, and drops it when the approval is removed", () => {
     const a1 = store("c", "1.0.0", { x: "1.0.0" });
     let reg = discover(cfg([a1]));
-    pin(reg, "x@1.0.0");
-    reg = discover(cfg([a1]));
     const first = resolveSkills(reg, ["x"]);
     expect(first.selected.map((s) => `${s.id}@${s.version}`)).toEqual(["x@1.0.0"]);
     const old = lockOf("x", "1.0.0", reg.byKey.get("x@1.0.0")!.digest);
@@ -81,12 +79,7 @@ describe("retained approved releases", () => {
     const a2 = store("c", "1.1.0", { x: "1.1.0" });
     reg = discover(cfg([a1, a2]));
     expect(findSkill(reg, "x")!.version).toBe("1.1.0");
-    // Approval is not a pin (Q1): the new package is active but not selectable yet.
-    expect(resolveSkills(reg, ["x"]).selected).toEqual([]);
-    expect(verifyRunSkillLock(old, reg)).toEqual([]);
-
-    pin(reg, "x@1.1.0");
-    reg = discover(cfg([a1, a2]));
+    // The approved release is the approval: the new package is selectable at once.
     expect(verifyRunSkillLock(old, reg)).toEqual([]);
     expect(resolveSkills(reg, ["x"]).selected.map((s) => `${s.id}@${s.version}`)).toEqual(["x@1.1.0"]);
     expect(reg.byKey.get("x@1.0.0")).toMatchObject({ active: false, shadowedBy: "x@1.1.0", label: "release c@1.0.0" });
@@ -297,7 +290,7 @@ describe("scf skills with the release store", () => {
     expect(r.lines).toContain('NOTE release c@1.1.0 is published but not in skills.releases.approved, so it is not loaded; see "scf skills release list".');
   });
 
-  it("release list shows state, run locks and pin hints", async () => {
+  it("release list shows state, run locks and the catalogue source", async () => {
     const a = store("c", "1.0.0", { x: "1.0.0" });
     store("c", "1.1.0", { x: "1.1.0" });
     const reg = discover(cfg([a]));
@@ -313,16 +306,15 @@ describe("scf skills with the release store", () => {
     expect(r.code).toBe(0);
     const text = r.lines.join("\n");
     expect(r.lines[0]).toMatch(/^RELEASE c@1\.1\.0 sha256:[0-9a-f]{64} unapproved 1 skill, not locked by any run$/);
-    expect(r.lines[1]).toBe(`RELEASE c@1.0.0 ${(await run(["release", "list"], cfg([a]))).lines[1]!.split(" ")[2]} approved 1 skill, locked by 1 run`);
-    expect(r.lines[2]).toBe(`PIN scf skills pin x@1.0.0 ${d}`);
+    expect(r.lines[1]).toBe(`RELEASE c@1.0.0 ${(await run(["release", "list"], cfg([a]))).lines[1]!.split(" ")[2]} approved 1 skill, locked by 1 run (source catalogue)`);
+    expect(r.lines.some((l) => l.startsWith("PIN "))).toBe(false);
     expect(r.lines.at(-1)).toBe("OK 2 releases");
     expect(text).not.toContain("x@1.1.0 sha256");
     expect(existsSync(join(home, "skill-releases", "c", "1.1.0"))).toBe(true);
   });
 
-  it("release list: no PIN line once pinned, and an empty store", async () => {
+  it("release list: no PIN line, pinned or not, and an empty store", async () => {
     const a = store("c", "1.0.0", { x: "1.0.0" });
-    pin(discover(cfg([a])), "x@1.0.0");
     const r = await run(["release", "list"], cfg([a]));
     expect(r.lines.some((l) => l.startsWith("PIN "))).toBe(false);
     rmSync(join(home, "skill-releases"), { recursive: true });
