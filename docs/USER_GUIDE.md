@@ -4578,6 +4578,21 @@ The same inputs always give the same digest, so publishing again with the same c
 
 To use the release, copy the `APPROVE` line into `skills.releases.approved` (catalogue, version and digest). The folder in `skill-releases/` is loaded from there; you do not add it to `skills.roots`. Until you approve it, its skills do not load, unless `skills.releases.allow_unreleased` is on. Then pin the skills you want to select (see "Retained releases" in "Trust"). `scf skills release list` shows which releases are approved and which runs lock them.
 
+Before you approve a newer release, see what it changes:
+
+```
+scf skills release diff scf-skills@0.1.0 scf-skills@0.2.0
+```
+
+It reads both releases from `skill-releases/` and prints one line per change, with no network and no writes:
+
+- `ADDED <id>@<version> <digest>` and `REMOVED <id>@<version> <digest>`: a skill that is only in the new or only in the old release.
+- `CHANGED <id> <old version> <old digest> -> <new version> <new digest>`: the same skill with another version or digest.
+- `DEPRECATED <id>@<version> <digest> revoked <day>: <reason>`: a skill revoked in the new release, also when it was already revoked before (`(already revoked)`).
+- `CANONICAL <capability> <old> -> <new>`: a capability that several skills provide and whose canonical winner changed. A side is `<id>@<version>`, `conflict:<code>` or `none`.
+
+The last line is `DIFF … : <n> changes`, or `no changes`. Both releases must belong to the same catalogue. A release that is missing or does not verify prints `PROBLEM …` and the command exits 1. The output is the same for the same input.
+
 Known limits:
 
 - The release digest is the digest of the Foundry-format package of each skill, not the import digest that records the name.

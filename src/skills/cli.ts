@@ -7,7 +7,7 @@ import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
-import { parseReleaseTarget, releaseList, releaseOperandsProblem, releasesCheck, releaseVerify } from "./release-cli.js";
+import { parseReleaseTarget, releaseDiff, releaseList, releaseOperandsProblem, releasesCheck, releaseVerify } from "./release-cli.js";
 import { releasePublish } from "./release-publish.js";
 import { RELEASES_FILE } from "./release-requests.js";
 import { applyConnector, connectorFor } from "./connector.js";
@@ -69,7 +69,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills effect <id@version> [<suite-file>]            The same for an approved, pinned skill
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills release verify <dir>                           Check a catalogue release folder offline (files, digests, approval); reads only
-       scf skills release list                                   List the published releases, their approval and the runs that lock them; reads only
+       scf skills release diff <catalogue>@<old> <catalogue>@<new>  Show what a newer stored release changes (added, removed, changed, deprecated, canonical); reads only
+       scf skills release list                                 List the published releases, their approval and the runs that lock them; reads only
       scf skills release publish <catalogue>@<version>         Publish a catalogue release from ${RELEASES_FILE} (reviewed, promotable, evaluation passed); writes only skill-releases/
        scf skills releases check [<file>]                       Check the release requests offline (default: ${RELEASES_FILE}); reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
@@ -541,6 +542,9 @@ export async function skillsCommand(
       const today = opts.today ?? new Date().toISOString().slice(0, 10);
       const { skills, cwd: _cwd, now: _now, today: _today, agentScore: _agent, ...discover } = opts;
       return releasePublish(parseReleaseTarget(operands[1]!)!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
+    }
+    if (operands[0] === "diff") {
+      return releaseDiff(parseReleaseTarget(operands[1]!)!, parseReleaseTarget(operands[2]!)!, out, { home: opts.home ?? dataHome(), highRisk: (opts.skills ?? loadConfig().skills).unresolved.high_risk });
     }
     if (operands[0] === "list") {
       const home = opts.home ?? dataHome();
