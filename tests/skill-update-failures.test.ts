@@ -2,7 +2,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { branches, branchOf, ghCalls, git, GOOD_REVIEW, sigCounts, update, useWorlds, W, world, type World } from "./helpers/skill-update-world.js";
+import { CatalogueError, openSourcePullRequests } from "../src/skill-import/catalogue-git.js";
+import { bodies, branches, branchOf, FAKE_GH, forbiddenCalls, ghCalls, git, GOOD_REVIEW, setBody, sigCounts, update, useWorlds, W, world, type World } from "./helpers/skill-update-world.js";
 
 // Failures and interrupts of `scf skills update` after the staging: no half-made branch, no text of git or gh, and a branch that
 // someone else made is never touched (see tests/helpers/skill-update-world.ts).
@@ -50,6 +51,46 @@ describe("failures after the staging leave no half-made branch", () => {
     const again = await update(w, ["lib"], GOOD_REVIEW);
     expect(again.lines).toEqual([`OPEN https://github.com/acme/catalogue/pull/7 for lib@${W.c2.slice(0, 12)}; no second pull request was opened`]);
     expect(git(w.bare, "rev-parse", name)).toBe(theirs);
+    expect(ghCalls(w).filter((c) => c.includes("pr view") || c.includes("pr edit"))).toEqual([]);
+    expect(forbiddenCalls(w)).toEqual([]);
+  });
+
+  it("a failing gh pr edit prints a fixed sentence and leaves the pull request as it was", async () => {
+    const w = world(undefined, { FAKE_GH_FAIL: "pr edit", FAKE_GH_FAIL_TEXT: "SECRET-TEXT" });
+    const first = await update(w, ["lib"], GOOD_REVIEW);
+    const url = first.lines.at(-1)!.split(" ")[2]!;
+    setBody(w, url, { body: "planted" });
+    const head = git(w.bare, "rev-parse", branchOf("lib", W.c2));
+    const r = await update(w, ["lib"]);
+    expect(r.rc).toBe(1);
+    expect(r.lines.at(-1)).toBe(`PROBLEM gh could not update the pull request ${url}; it was left as it was`);
+    expect(r.text).not.toContain("SECRET-TEXT");
+    expect(bodies(w)[url]!.body).toBe("planted");
+    expect(git(w.bare, "rev-parse", branchOf("lib", W.c2))).toBe(head);
+    expect(ghCalls(w).filter((c) => c.includes("pr create"))).toHaveLength(1);
+    expect(forbiddenCalls(w)).toEqual([]);
+  });
+
+  it("a failing gh pr view prints a fixed sentence and edits nothing", async () => {
+    const w = world(undefined, { FAKE_GH_FAIL: "pr view", FAKE_GH_FAIL_TEXT: "SECRET-TEXT" });
+    const first = await update(w, ["lib"], GOOD_REVIEW);
+    const url = first.lines.at(-1)!.split(" ")[2]!;
+    const r = await update(w, ["lib"]);
+    expect(r.rc).toBe(1);
+    expect(r.lines.at(-1)).toBe(`PROBLEM the pull request ${url} could not be read with gh; it was left as it was`);
+    expect(r.text).not.toContain("SECRET-TEXT");
+    expect(ghCalls(w).filter((c) => c.includes("pr edit"))).toEqual([]);
+  });
+
+  it("an open pull request whose branch is not on origin is a problem, not an edit", async () => {
+    const w = world();
+    const name = branchOf("lib", W.c2);
+    const url = "https://github.com/acme/catalogue/pull/7";
+    writeFileSync(`${w.log}.prs.json`, JSON.stringify([{ number: 7, headRefName: name, state: "OPEN", url }]));
+    const r = await update(w, ["lib"], GOOD_REVIEW);
+    expect(r.rc).toBe(1);
+    expect(r.lines.at(-1)).toBe(`PROBLEM the branch ${name} of the pull request ${url} could not be read from origin; it was left as it was`);
+    expect(ghCalls(w).filter((c) => c.includes("pr view") || c.includes("pr edit") || c.includes("pr create"))).toEqual([]);
   });
 
   it("names the branch it could not remove", async () => {
@@ -62,6 +103,34 @@ describe("failures after the staging leave no half-made branch", () => {
     expect(r.rc).toBe(1);
     expect(r.lines.at(-1)).toBe(`PROBLEM gh could not open the pull request; the branch ${name} may still be on origin: delete it by hand`);
     expect(branches(w)).toEqual([`refs/heads/${name}`]);
+  });
+});
+
+describe("openSourcePullRequests", () => {
+  const ctx = (prs: string) => ({ cwd: W.root, env: { FACTORY_GH_BIN: FAKE_GH, FAKE_GH_LOG: join(W.root, "unit-gh.log"), FAKE_GH_PRS: prs } });
+  const code = (f: () => unknown) => {
+    try {
+      f();
+    } catch (e) {
+      return e instanceof CatalogueError ? e.code : "other";
+    }
+    return "none";
+  };
+  it("keeps open pull requests of the exact prefix and a safe address", () => {
+    const list = [
+      { url: "https://github.com/a/b/pull/1", headRefName: "skill-update/lib-aaaaaaaaaaaa", state: "OPEN" },
+      { url: "https://github.com/a/b/pull/1", headRefName: "skill-update/lib-aaaaaaaaaaaa", state: "OPEN" },
+      { url: "https://github.com/a/b/pull/2", headRefName: "skill-update/lib-AAAAAAAAAAAA", state: "OPEN" },
+      { url: "https://github.com/a/b/pull/3", headRefName: "skill-update/lib-aaaaaaaaaaaaa", state: "OPEN" },
+      { url: "https://github.com/a/b/pull/4", headRefName: "skill-update/lib-bbbbbbbbbbbb", state: "MERGED" },
+      { url: "https://github.com/a/b/issues/5", headRefName: "skill-update/lib-cccccccccccc", state: "OPEN" },
+    ];
+    expect(openSourcePullRequests(ctx(JSON.stringify(list)), "a/b", "skill-update/lib-")).toEqual([{ url: "https://github.com/a/b/pull/1", branch: "skill-update/lib-aaaaaaaaaaaa" }]);
+  });
+  it("fails with gh-failed on an answer it cannot use or a prefix it refuses", () => {
+    expect(code(() => openSourcePullRequests(ctx("not json"), "a/b", "skill-update/lib-"))).toBe("gh-failed");
+    expect(code(() => openSourcePullRequests(ctx('{"a":1}'), "a/b", "skill-update/lib-"))).toBe("gh-failed");
+    expect(code(() => openSourcePullRequests(ctx("[]"), "a/b", "skill-update/li b-"))).toBe("gh-failed");
   });
 });
 

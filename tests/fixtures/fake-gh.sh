@@ -1,6 +1,8 @@
 #!/bin/sh
 # Stand-in for the GitHub CLI. Logs every call to $FAKE_GH_LOG; "repo clone <url> <folder> -- <git flags>" clones $FAKE_GH_REMOTE into the folder.
-# State lives next to the log: $FAKE_GH_LOG.pr (PR url once created), $FAKE_GH_LOG.checks (CI call count).
+# State lives next to the log: $FAKE_GH_LOG.pr (PR url once created), $FAKE_GH_LOG.checks (CI call count), $FAKE_GH_LOG.prs.json (open PRs;
+# "pr list" honours --head and --limit on it), $FAKE_GH_LOG.bodies.json ({url: {title, body}}: set by "pr create" and "pr edit --body-file -",
+# read by "pr view --json title,body").
 # $FAKE_GH_AUTH_LOG=<file>: every call appends one line, tab separated: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN (each "-" when unset),
 # "host" when GH_CONFIG_DIR is unset (else the number of entries in that folder), and the arguments.
 if [ -n "$FAKE_GH_AUTH_LOG" ]; then
@@ -197,7 +199,11 @@ case "$1 $2" in
                         node -e 'const l=JSON.parse(process.env.FAKE_GH_ISSUES||"[]"),w=process.argv[1];process.stdout.write(JSON.stringify(w?l.filter(i=>(i.labels||[]).some(y=>y.name===w)):l))' "$lab"
                       else printf '%s' "${FAKE_GH_ISSUES:-[]}"; fi ;; esac ;;
   "pr list")     case "$*" in *"--state merged"*) printf '%s' "${FAKE_GH_MERGED_PRS:-[]}"; exit 0 ;; esac
-                 if [ -n "$FAKE_GH_PRS" ]; then printf '%s' "$FAKE_GH_PRS"; elif [ -f "$FAKE_GH_LOG.prs.json" ]; then cat "$FAKE_GH_LOG.prs.json"; else echo '[]'; fi ;;
+                 if [ -n "$FAKE_GH_PRS" ]; then printf '%s' "$FAKE_GH_PRS"; elif [ -f "$FAKE_GH_LOG.prs.json" ]; then
+                   # --head <branch> keeps the PRs of that branch, --limit <n> the first n of them (the order of the file).
+                   lim=""; hd=""; prev=""; for a in "$@"; do [ "$prev" = "--limit" ] && lim="$a"; [ "$prev" = "--head" ] && hd="$a"; prev="$a"; done
+                   node -e 'const fs=require("fs");let l=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const [lim,hd]=[process.argv[2],process.argv[3]];if(hd)l=l.filter(x=>x.headRefName===hd);if(lim)l=l.slice(0,Number(lim));process.stdout.write(JSON.stringify(l))' "$FAKE_GH_LOG.prs.json" "$lim" "$hd"
+                 else echo '[]'; fi ;;
   "issue edit") case "$*" in *--body-file*) echo "--- issue body edit: $*" >> "$FAKE_GH_LOG"; cat >> "$FAKE_GH_LOG" ;; esac
     # --add-label / --remove-label change the labels of an issue of $FAKE_GH_LOG.issues.json (an issue that is not there is left alone).
     case "$*" in *-label*) node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i)process.exit(0);const a=process.argv.slice(3);for(let k=0;k<a.length;k++){if(a[k]==="--remove-label")i.labels=i.labels.filter(y=>y.name.toLowerCase()!==a[k+1].toLowerCase());if(a[k]==="--add-label"&&!i.labels.some(y=>y.name.toLowerCase()===a[k+1].toLowerCase()))i.labels.push({name:a[k+1]})}fs.writeFileSync(f,JSON.stringify(l))' "$FAKE_GH_LOG.issues.json" "$3" "$@" ;; esac ;;
@@ -206,17 +212,21 @@ case "$1 $2" in
       *) if grep -qxF -- "$name" "$FAKE_GH_LOG.labels" 2>/dev/null; then echo "label with name \"$name\" already exists; use --force to update its color and description" >&2; exit 1; fi
          echo "$name" >> "$FAKE_GH_LOG.labels" ;;
     esac ;;
-  "pr edit")     echo "--- pr edit: $*" >> "$FAKE_GH_LOG"; cat >> "$FAKE_GH_LOG" ;;
+  "pr edit")     echo "--- pr edit: $*" >> "$FAKE_GH_LOG"; cat > "$FAKE_GH_LOG.lastbody"; cat "$FAKE_GH_LOG.lastbody" >> "$FAKE_GH_LOG"; printf '\n--- end pr edit\n' >> "$FAKE_GH_LOG"
+                 # "--body-file -" stores the new title (--title, else the old one) and body of the PR in $FAKE_GH_LOG.bodies.json.
+                 case "$*" in *"--body-file -"*) title=""; prev=""; for a in "$@"; do [ "$prev" = "--title" ] && title="$a"; prev="$a"; done
+                   node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const u=process.argv[2];const old=m[u]||{title:""};m[u]={title:process.argv[3]||old.title,body:fs.readFileSync(process.argv[4],"utf8")};fs.writeFileSync(f,JSON.stringify(m))' "$FAKE_GH_LOG.bodies.json" "$3" "$title" "$FAKE_GH_LOG.lastbody" ;; esac ;;
   "pr ready")    ;;
   "repo clone")  # the folder is $4; the flags after "--" go to git clone, as in the real gh (the remote is a local folder, so any GIT_ALLOW_PROTOCOL is dropped)
                  dest="$4"; shift 4; [ "$1" = "--" ] && shift
                  ( unset GIT_ALLOW_PROTOCOL; git clone "$@" "$FAKE_GH_REMOTE" "$dest" ) ;;
-  "pr create")   echo "--- pr body:" >> "$FAKE_GH_LOG"; cat >> "$FAKE_GH_LOG"
-                 head=""; prev=""; for a in "$@"; do [ "$prev" = "--head" ] && head="$a"; prev="$a"; done
+  "pr create")   echo "--- pr body:" >> "$FAKE_GH_LOG"; cat > "$FAKE_GH_LOG.lastbody"; cat "$FAKE_GH_LOG.lastbody" >> "$FAKE_GH_LOG"
+                 head=""; title=""; prev=""; for a in "$@"; do [ "$prev" = "--head" ] && head="$a"; [ "$prev" = "--title" ] && title="$a"; prev="$a"; done
                  # Remember created PRs (pr list returns them): number, head branch, state OPEN.
-                 node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const n=99+l.length;l.push({number:n,headRefName:process.argv[2],state:"OPEN",url:"https://github.com/owner/repo/pull/"+n});fs.writeFileSync(f,JSON.stringify(l));console.log(l.at(-1).url)' "$FAKE_GH_LOG.prs.json" "$head" | tee "$FAKE_GH_LOG.pr" ;;
+                 node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const n=99+l.length;l.push({number:n,headRefName:process.argv[2],state:"OPEN",createdAt:new Date(Date.UTC(2026,5,1)+n*60000).toISOString(),url:"https://github.com/owner/repo/pull/"+n});fs.writeFileSync(f,JSON.stringify(l));const b=process.argv[5];const m=fs.existsSync(b)?JSON.parse(fs.readFileSync(b,"utf8")):{};m[l.at(-1).url]={title:process.argv[3],body:fs.readFileSync(process.argv[4],"utf8")};fs.writeFileSync(b,JSON.stringify(m));console.log(l.at(-1).url)' "$FAKE_GH_LOG.prs.json" "$head" "$title" "$FAKE_GH_LOG.lastbody" "$FAKE_GH_LOG.bodies.json" | tee "$FAKE_GH_LOG.pr" ;;
   "pr view")
     case "$*" in
+      *"--json title,body"*) node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const v=m[process.argv[2]];if(!v)process.exit(1);console.log(JSON.stringify(v))' "$FAKE_GH_LOG.bodies.json" "$3" || exit 1 ;;
       *reviewDecision*) echo "${FAKE_GH_REVIEW_DECISION:-}" ;;
       *comments,reviews,commits*) printf '%s' "${FAKE_GH_PR_VIEW:-{\"comments\":[],\"reviews\":[],\"commits\":[]\}}" ;;
       *reviews,comments*) printf '%s\n' "${FAKE_GH_PR_COMMENTS:---- alice:\nplease rename x}" ;;

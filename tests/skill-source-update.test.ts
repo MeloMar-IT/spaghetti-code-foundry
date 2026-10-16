@@ -3,7 +3,7 @@ import { parse } from "yaml";
 import { connectorFor, connectorSource } from "../src/skills/connectors.js";
 import { reviewFailed, type ImportReview, type ReviewedSkill } from "../src/skills/import-review.js";
 import { SOURCE_CHANGE_LIMITS, type SourceChange } from "../src/skills/source-change.js";
-import { addConnectorEntry, attentionParts, changeApproved, checkEdit, communityReview, PULL_REQUEST_BYTES, repoFromUrl, scalarText, updateBranch, updatePullRequest } from "../src/skills/source-update.js";
+import { addConnectorEntry, attentionParts, changeApproved, checkEdit, communityReview, PULL_REQUEST_BYTES, repoFromUrl, scalarText, updateBranch, updateBranchPrefix, updatePullRequest } from "../src/skills/source-update.js";
 import { parseSources, type SkillLibrarySource } from "../src/skills/sources.js";
 
 const TODAY = "2026-10-15";
@@ -218,7 +218,11 @@ describe("communityReview", () => {
 });
 
 describe("small helpers", () => {
-  it("names the branch", () => expect(updateBranch("awesome-copilot", NEW)).toBe(`skill-update/awesome-copilot-${NEW.slice(0, 12)}`));
+  it("names the branch", () => {
+    expect(updateBranch("awesome-copilot", NEW)).toBe(`skill-update/awesome-copilot-${NEW.slice(0, 12)}`);
+    expect(updateBranchPrefix("lib") + "abc").toBe("skill-update/lib-abc");
+    expect(updateBranch("lib", NEW).startsWith(updateBranchPrefix("lib"))).toBe(true);
+  });
   it("keeps or chooses a quote style", () => {
     expect(scalarText("abc", "QUOTE_SINGLE")).toBe("'abc'");
     expect(scalarText("abc", "QUOTE_DOUBLE")).toBe('"abc"');
@@ -265,6 +269,21 @@ describe("updatePullRequest", () => {
     expect(body).toContain("needs attention");
     expect(body).toContain("`skills/bad`: `no SKILL.md`");
     expect(body).toContain("`HEAD`");
+  });
+  it("lists the pull requests it supersedes before the review, and no more than its budget", () => {
+    const list = [
+      { url: "https://github.com/acme/catalogue/pull/7", branch: "skill-update/lib-aaaaaaaaaaaa" },
+      { url: "https://github.com/acme/catalogue/pull/8", branch: "skill-update/lib-bbbbbbbbbbbb" },
+    ];
+    const { body } = updatePullRequest({ source, commit: NEW, rejected: [], report: report(), supersedes: list });
+    expect(body).toContain("Supersedes (these stay open and are not changed):");
+    expect(body).toContain("- https://github.com/acme/catalogue/pull/7 (`skill-update/lib-aaaaaaaaaaaa`)");
+    expect(body.indexOf("Supersedes")).toBeLessThan(body.indexOf("## Skill import review"));
+    for (const none of [undefined, []]) expect(updatePullRequest({ source, commit: NEW, rejected: [], report: report(), supersedes: none }).body).not.toContain("Supersedes");
+    const many = Array.from({ length: 2000 }, (_, i) => ({ url: `https://github.com/acme/catalogue/pull/${i + 1}`, branch: "skill-update/lib-aaaaaaaaaaaa" }));
+    const big = updatePullRequest({ source, commit: NEW, rejected: [], report: report(), supersedes: many }).body;
+    expect(big).toMatch(/- … and \d+ more/);
+    expect(Buffer.byteLength(big)).toBeLessThanOrEqual(PULL_REQUEST_BYTES + 1000);
   });
   it("writes a long path whole and breaks up a bot marker", () => {
     const long = "skills/" + "d".repeat(190);

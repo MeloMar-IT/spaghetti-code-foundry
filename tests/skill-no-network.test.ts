@@ -112,6 +112,8 @@ describe("skill code does not reach the network", () => {
       expect(code.filter((l) => /(?<![.\w])exec\s*\(|execSync|execFile|\bfork\s*\(|\bshell\b|\bspawn\s*\(/.test(l))).toEqual([]);
       expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
       expect(modulesOf(text).filter((x) => NETWORK_MODULES.test(`"${x}"`))).toEqual(["node:child_process"]);
+      // the tool never merges, approves, closes or readies a pull request: no such gh word is in the code
+      expect(code.filter((l) => /"(?:merge|close|review|--approve|ready)"/.test(l))).toEqual([]);
     });
     it("update-cli.ts uses no process and no network", () => {
       const text = readFileSync("src/skill-import/update-cli.ts", "utf8");
