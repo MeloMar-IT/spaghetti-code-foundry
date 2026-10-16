@@ -13,7 +13,9 @@ const PATHS_BYTES = 24_000;
 const REJECTED_BYTES = 12_000;
 
 /** The branch of one update. */
-export const updateBranch = (id: string, commit: string): string => `skill-update/${id}-${commit.slice(0, 12)}`;
+export const updateBranchPrefix = (id: string): string => `skill-update/${id}-`;
+export const updateBranch = (id: string, commit: string): string => `${updateBranchPrefix(id)}${commit.slice(0, 12)}`;
+const SUPERSEDES_BYTES = 4_000;
 
 type Problem = { problem: string };
 
@@ -287,6 +289,8 @@ export function updatePullRequest(o: {
   change?: SourceChange | "not-compared";
   /** The gates of the new import, used when the change is not known (the old commit could not be compared). */
   gates?: ImportGates;
+  /** Open pull requests of older revisions of this source. They are only listed. */
+  supersedes?: readonly { url: string; branch: string }[];
 }): { title: string; body: string } {
   const { source, oldCommit, commit } = o;
   const c12 = commit.slice(0, 12);
@@ -312,6 +316,9 @@ export function updatePullRequest(o: {
       "",
       `Merging records that ${code(o.review.by)} reviewed the maintainer and licence ${code(o.review.licence)} of ${code(commit.slice(0, 12))} on ${o.review.on}. Do not merge unless that is true.`,
     );
+  }
+  if (o.supersedes !== undefined && o.supersedes.length > 0) {
+    head.push("", "Supersedes (these stay open and are not changed):", "", ...boundedList(o.supersedes.map((p) => `- ${p.url} (${code(p.branch)})`), SUPERSEDES_BYTES));
   }
   if (o.rejected.length > 0) {
     head.push("", "Rejected skill roots (not staged):", "", ...boundedList(o.rejected.map((r) => `- ${code(r.root)}: ${r.reasons.map(code).join("; ")}`), REJECTED_BYTES));

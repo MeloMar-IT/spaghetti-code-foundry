@@ -229,6 +229,55 @@ export function openPullRequest(ctx: CatalogueContext, repo: string, branch: str
   return undefined;
 }
 
+const PR_URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\/pull\/[0-9]{1,10}$/;
+const OPEN_PULL_REQUESTS_LIMIT = 1000;
+
+/**
+ * The open pull requests whose head is `prefix` plus 12 lower-case hex digits (the update branches of one source), in the order
+ * of gh. gh pages through the repository up to a fixed limit; the filter is local.
+ */
+export function openSourcePullRequests(ctx: CatalogueContext, repo: string, prefix: string): { url: string; branch: string; createdAt?: string }[] {
+  if (!BRANCH_RE.test(prefix)) throw new CatalogueError("gh-failed");
+  const out = gh(ctx, ["pr", "list", "--repo", repo, "--state", "open", "--json", "url,headRefName,state,createdAt", "--limit", String(OPEN_PULL_REQUESTS_LIMIT)]);
+  let list: unknown;
+  try {
+    list = JSON.parse(out);
+  } catch {
+    throw new CatalogueError("gh-failed");
+  }
+  if (!Array.isArray(list)) throw new CatalogueError("gh-failed");
+  const found = new Map<string, { branch: string; createdAt?: string }>();
+  for (const p of list as { url?: unknown; headRefName?: unknown; state?: unknown; createdAt?: unknown }[]) {
+    if (!p || typeof p.headRefName !== "string" || typeof p.url !== "string" || typeof p.state !== "string") continue;
+    if (p.state.toUpperCase() !== "OPEN" || !p.headRefName.startsWith(prefix)) continue;
+    if (!/^[0-9a-f]{12}$/.test(p.headRefName.slice(prefix.length))) continue;
+    if (!URL_RE.test(p.url) || !PR_URL_RE.test(p.url) || found.has(p.url)) continue;
+    found.set(p.url, { branch: p.headRefName, ...(typeof p.createdAt === "string" ? { createdAt: p.createdAt } : {}) });
+  }
+  return [...found].map(([url, v]) => ({ url, ...v }));
+}
+
+/** The title and the text of a pull request, as GitHub holds them. */
+export function pullRequestText(ctx: CatalogueContext, repo: string, url: string): { title: string; body: string } {
+  if (!URL_RE.test(url)) throw new CatalogueError("gh-failed");
+  const out = gh(ctx, ["pr", "view", url, "--repo", repo, "--json", "title,body"]);
+  let v: unknown;
+  try {
+    v = JSON.parse(out);
+  } catch {
+    throw new CatalogueError("gh-failed");
+  }
+  const o = v as { title?: unknown; body?: unknown } | null;
+  if (!o || typeof o.title !== "string" || typeof o.body !== "string") throw new CatalogueError("gh-failed");
+  return { title: o.title, body: o.body };
+}
+
+/** Changes the title and the text of an open pull request; the body goes in on standard input. */
+export function editPullRequest(ctx: CatalogueContext, o: { repo: string; url: string; title: string; body: string }): void {
+  if (!URL_RE.test(o.url)) throw new CatalogueError("gh-failed");
+  gh(ctx, ["pr", "edit", o.url, "--repo", o.repo, "--title", o.title, "--body-file", "-"], o.body);
+}
+
 /** Opens the pull request; the body goes in on standard input. Returns its address. */
 export function createPullRequest(ctx: CatalogueContext, o: { repo: string; base: string; head: string; title: string; body: string }): string {
   const out = gh(ctx, ["pr", "create", "--repo", o.repo, "--base", o.base, "--head", o.head, "--title", o.title, "--body-file", "-"], o.body);

@@ -8,20 +8,24 @@ import { sourceChangeLine, type SourceChange } from "../skills/source-change.js"
 import type { ImportGates } from "../skills/source-update.js";
 import { changesSince, newImportGates } from "./update-changes.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
-import { addConnectorEntry, changeApproved, checkEdit, communityReview, updateBranch, updatePullRequest } from "../skills/source-update.js";
-import { OWNER_RE, readSources, shownValue, SOURCES_FILE, type SkillLibrarySource, type SourceReview } from "../skills/sources.js";
+import { addConnectorEntry, changeApproved, checkEdit, communityReview, updateBranch, updateBranchPrefix, updatePullRequest } from "../skills/source-update.js";
+import { OWNER_RE, readSources, shownValue, sourcesFromBytes, SOURCES_FILE, type SkillLibrarySource, type SourceReview } from "../skills/sources.js";
 import {
   CatalogueError,
   commitFile,
   createPullRequest,
   defaultBranch,
   deleteOwnBranch,
+  editPullRequest,
   fetchBase,
   openPullRequest,
+  openSourcePullRequests,
   originRepo,
+  pullRequestText,
   pushNewBranch,
   readBlob,
   showPrefix,
+  type Blob,
   type CatalogueContext,
   type CatalogueErrorCode,
 } from "./catalogue-git.js";
@@ -145,6 +149,157 @@ export async function skillUpdateCommand(
   }
 }
 
+interface UpdateRun {
+  id: string;
+  commit: string;
+  c12: string;
+  branch: string;
+  repo: string;
+  ctx: CatalogueContext;
+  cwd: string;
+  today: string;
+  track: string | undefined;
+  existing: SkillLibrarySource | undefined;
+  out: (line: string) => void;
+  opts: SkillUpdateOptions;
+  signal: AbortSignal;
+  tick: () => Promise<void>;
+}
+
+const openLine = (url: string, id: string, c12: string) => `OPEN ${url} for ${id}@${c12}; no second pull request was opened`;
+
+/** Fetches the default branch and checks that skill-sources.yaml here is the one on origin. A string is the problem sentence. */
+async function baseState(
+  ctx: CatalogueContext,
+  file: string,
+  path: string,
+  tick: () => Promise<void>,
+): Promise<string | { base: string; baseCommit: string; blob: Blob | undefined }> {
+  const base = defaultBranch(ctx);
+  await tick();
+  const baseCommit = fetchBase(ctx, base);
+  await tick();
+  const blob = readBlob(ctx, baseCommit, path);
+  await tick();
+  const working = workingFile(file);
+  if (working === "unreadable" || !sameBytes(blob?.content, working)) {
+    return `${SOURCES_FILE} in this folder differs from ${SOURCES_FILE} on origin/${base}; commit, restore or pull it and try again; ${NOTHING}`;
+  }
+  return { base, baseCommit, blob };
+}
+
+/** Stages the commit, reviews it and builds the title and body. A number is an exit code: the run ends there. */
+async function proposalText(r: UpdateRun, candidate: SkillLibrarySource, review: SourceReview | undefined): Promise<{ title: string; body: string } | number> {
+  const { id, commit, out, opts, signal, tick, cwd, today, existing } = r;
+  const oldCommit = existing?.ref.approved;
+  const staged = await stageSource(candidate, commit, out, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal });
+  if (staged.code !== 0 || !staged.done) return staged.code === 0 ? 1 : staged.code;
+  const read2 = readStagedImport(id, commit, { home: opts.home });
+  if (read2.state !== "ok") {
+    out(`PROBLEM the staged import could not be read back; ${NOTHING}`);
+    return 1;
+  }
+  const report = reviewStaged({ source: candidate, commit, record: read2.record, files: read2.files, licence: read2.licence }, { home: opts.home });
+  await tick();
+
+  // What changed since the approved commit. An old commit that is not in quarantine is staged first, silently; a failure only
+  // means it could not be compared.
+  let change: SourceChange | "not-compared" | undefined;
+  let gates: ImportGates | undefined;
+  if (oldCommit !== undefined && existing !== undefined) {
+    change = await changesSince({
+      old: existing,
+      oldCommit,
+      next: { source: candidate, staged: read2, review: report },
+      cwd,
+      home: opts.home,
+      today,
+      stage: async (src, c) => {
+        const s = await stageSource(src, c, () => {}, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal });
+        await tick();
+        return s.code === 0 && s.done !== undefined;
+      },
+    });
+    await tick();
+    out(sourceChangeLine(change, oldCommit));
+    // The gates of the new import hold whether or not the old commit could be compared.
+    if (change === "not-compared") gates = newImportGates({ next: { source: candidate, staged: read2, review: report }, cwd, home: opts.home });
+  }
+  out(reviewLines(report).at(-1)!);
+
+  // Older open pull requests of this source are only named; they are never touched.
+  // Commits have no order here, so "older" means a pull request opened before this one. A new proposal has no pull request
+  // yet: every other open one is older. A pull request with no known time is never called older than a known one.
+  const open = openSourcePullRequests(r.ctx, r.repo, updateBranchPrefix(id));
+  const own = open.find((p) => p.branch === r.branch);
+  const supersedes = open.filter((p) => p !== own && (own === undefined || (p.createdAt !== undefined && own.createdAt !== undefined && p.createdAt < own.createdAt)));
+  await tick();
+  return updatePullRequest({ source: candidate, oldCommit, commit, track: r.track, review, rejected: read2.record.rejected, report, change, gates, supersedes });
+}
+
+/**
+ * The pull request of this branch is open: rebuild its text from the proposal the branch holds and edit it when the text differs.
+ * The branch is never pushed again. A branch that does not hold this proposal is only reported.
+ */
+async function refresh(r: UpdateRun, url: string, path: string): Promise<number> {
+  const { id, commit, c12, branch, out, tick } = r;
+  const problem = (text: string): number => {
+    out(`PROBLEM ${text}`);
+    return 1;
+  };
+  const was = "it was left as it was";
+  let blob: Blob | undefined;
+  try {
+    const head = fetchBase(r.ctx, branch);
+    await tick();
+    blob = readBlob(r.ctx, head, path);
+    await tick();
+  } catch (e) {
+    if (e instanceof CatalogueError && (e.code === "fetch-failed" || e.code === "read-failed")) {
+      return problem(`the branch ${branch} of the pull request ${url} could not be read from origin; ${was}`);
+    }
+    throw e;
+  }
+  const entry = blob && proposedEntry(blob.content, id, commit, r.today);
+  if (!entry) {
+    out(openLine(url, id, c12));
+    return 0;
+  }
+  // The review claim is the one the creation path makes: only an enabled community entry carries it.
+  const review = entry.status === "enabled" && entry.trust === "community" ? entry.review : undefined;
+  const text = await proposalText({ ...r, track: entry.ref.track }, entry, review);
+  if (typeof text === "number") return text;
+
+  let current: { title: string; body: string };
+  try {
+    current = pullRequestText(r.ctx, r.repo, url);
+  } catch (e) {
+    if (e instanceof CatalogueError && e.code === "gh-failed") return problem(`the pull request ${url} could not be read with gh; ${was}`);
+    throw e;
+  }
+  await tick();
+  if (current.title === text.title && Buffer.from(current.body).equals(Buffer.from(text.body))) {
+    out(openLine(url, id, c12));
+    return 0;
+  }
+  try {
+    editPullRequest(r.ctx, { repo: r.repo, url, title: text.title, body: text.body });
+  } catch (e) {
+    if (e instanceof CatalogueError && e.code === "gh-failed") return problem(`gh could not update the pull request ${url}; ${was}`);
+    throw e;
+  }
+  out(`UPDATED ${url} for ${id}@${c12}; nothing is approved until it is merged`);
+  return 0;
+}
+
+/** The enabled entry `id` of the branch file when it proposes `commit`. */
+function proposedEntry(content: Buffer, id: string, commit: string, today: string): SkillLibrarySource | undefined {
+  const read = sourcesFromBytes(content, today);
+  if (read.state !== "ok") return undefined;
+  const entry = read.manifest.sources.find((s) => s.id === id);
+  return entry && entry.status === "enabled" && entry.ref.approved === commit ? entry : undefined;
+}
+
 async function run(
   id: string,
   given: { owner?: string; reviewer?: string; licence?: string },
@@ -229,22 +384,13 @@ async function run(
   const branch = updateBranch(id, commit);
   const already = openPullRequest(ctx, repo, branch);
   await tick();
-  if (already !== undefined) {
-    out(`OPEN ${already} for ${id}@${c12}; no second pull request was opened`);
-    return 0;
-  }
 
-  const base = defaultBranch(ctx);
-  await tick();
-  const baseCommit = fetchBase(ctx, base);
-  await tick();
   const path = prefix + SOURCES_FILE;
-  const blob = readBlob(ctx, baseCommit, path);
-  await tick();
-  const working = workingFile(file);
-  if (working === "unreadable" || !sameBytes(blob?.content, working)) {
-    return problem(`${SOURCES_FILE} in this folder differs from ${SOURCES_FILE} on origin/${base}; commit, restore or pull it and try again; ${NOTHING}`);
-  }
+  const state = await baseState(ctx, file, path, tick);
+  if (typeof state === "string") return problem(state);
+  const { base, baseCommit, blob } = state;
+  const r: UpdateRun = { id, commit, c12, branch, repo, ctx, cwd, today, track, existing, out, opts, signal, tick };
+  if (already !== undefined) return refresh(r, already, path);
   const beforeText = blob?.content.toString("utf8");
 
   // The review record, when the entry is an enabled community entry: stated by a person, confirmed by the merge.
@@ -261,39 +407,8 @@ async function run(
   if ("problem" in checked) return problem(`${checked.problem}; ${NOTHING}`);
   const candidate = checked.entry;
 
-  const staged = await stageSource(candidate, commit, out, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal });
-  if (staged.code !== 0 || !staged.done) return staged.code === 0 ? 1 : staged.code;
-  const read2 = readStagedImport(id, commit, { home: opts.home });
-  if (read2.state !== "ok") return problem(`the staged import could not be read back; ${NOTHING}`);
-  const report = reviewStaged({ source: candidate, commit, record: read2.record, files: read2.files, licence: read2.licence }, { home: opts.home });
-  await tick();
-
-  // What changed since the approved commit. An old commit that is not in quarantine is staged first, silently; a failure only
-  // means it could not be compared.
-  let change: SourceChange | "not-compared" | undefined;
-  let gates: ImportGates | undefined;
-  if (oldCommit !== undefined && existing !== undefined) {
-    change = await changesSince({
-      old: existing,
-      oldCommit,
-      next: { source: candidate, staged: read2, review: report },
-      cwd,
-      home: opts.home,
-      today,
-      stage: async (src, c) => {
-        const r = await stageSource(src, c, () => {}, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal });
-        await tick();
-        return r.code === 0 && r.done !== undefined;
-      },
-    });
-    await tick();
-    out(sourceChangeLine(change, oldCommit));
-    // The gates of the new import hold whether or not the old commit could be compared.
-    if (change === "not-compared") gates = newImportGates({ next: { source: candidate, staged: read2, review: report }, cwd, home: opts.home });
-  }
-  out(reviewLines(report).at(-1)!);
-
-  const pr = updatePullRequest({ source: candidate, oldCommit, commit, track, review, rejected: read2.record.rejected, report, change, gates });
+  const pr = await proposalText(r, candidate, review);
+  if (typeof pr === "number") return pr;
   const proposal = commitFile(ctx, baseCommit, path, Buffer.from(edited.text, "utf8"), blob?.mode ?? "100644", `Skill source ${id}: propose ${c12}`);
   await tick();
 
@@ -312,7 +427,7 @@ async function run(
       // not known; the push failure is reported
     }
     if (competing !== undefined) {
-      out(`OPEN ${competing} for ${id}@${c12}; no second pull request was opened`);
+      out(openLine(competing, id, c12));
       return 0;
     }
     const sentence = catalogueSentence(e.code);
