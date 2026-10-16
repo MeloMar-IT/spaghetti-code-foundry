@@ -8,7 +8,7 @@ import { assessSkills } from "../skills/unresolved.js";
 import { draftSkillRequest, planGateRecord, planSkillRequest } from "../skills/request.js";
 import { resolveOptionsFrom, resolveSkills } from "../skills/resolve.js";
 import {
-  buildRunSkillLock, integrityReason, planHashOf, readRunSkillLock, runSkillLockSummary, verifyRunSkillLock, writeRunSkillLock,
+  buildRunSkillLock, integrityReason, planHashOf, readRunSkillLock, runSkillLockNotes, runSkillLockReasons, runSkillLockSummary, verifyRunSkillLock, writeRunSkillLock,
   type RunSkillLock,
 } from "../skills/run-lock.js";
 import { checkSkillTools, type SessionTools, type SkillToolNeed, type ToolCheck } from "../skills/tool-policy.js";
@@ -23,7 +23,7 @@ export const SKILL_BLOCKED_PREFIX = "skill selection is blocked: ";
 export const SKILL_LOCK_CHANGED = "skill integrity: the skill lock of this run is missing or was changed";
 const NOT_WRITTEN = "skill integrity: the skill lock of this run could not be written";
 
-type Discover = (skills: SkillsConfig) => Pick<SkillRegistry, "skills" | "byKey" | "problems">;
+type Discover = (skills: SkillsConfig) => Pick<SkillRegistry, "skills" | "byKey" | "problems" | "lifecycle" | "revoked">;
 /** What `ensure` hands back besides the verdict: the lock of the current plan and the registry it was checked against. */
 interface EnsureOut {
   lock?: RunSkillLock;
@@ -62,7 +62,12 @@ function verifyLock(engine: Pick<Engine, "config" | "log">, lock: RunSkillLock, 
   const reg = discover(engine.config.skills);
   const problems = verifyRunSkillLock(lock, reg);
   for (const p of problems) engine.log(`    ! ${integrityReason(p)}`);
-  if (problems.length) return integrityReason(problems[0]!);
+  if (problems.length) {
+    // The reason text of the administrator goes to the log only, never into the stop reason.
+    for (const n of runSkillLockReasons(lock, reg)) engine.log(`    ! ${n}`);
+    return integrityReason(problems[0]!);
+  }
+  for (const n of runSkillLockNotes(lock, reg)) engine.log(`    ! ${n}`);
   if (out) {
     out.lock = lock;
     out.reg = reg;
@@ -154,6 +159,7 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
         ? "    · skill lock: no skills"
         : `    · skill lock: ${built.skills.map((k) => `${k.id}@${k.version}`).join(", ")} (about ${built.estimatedTokens} tokens)`,
     );
+    for (const n of runSkillLockNotes(built, reg)) engine.log(`    ! ${n}`);
     if (out) {
       out.lock = built;
       out.reg = reg;

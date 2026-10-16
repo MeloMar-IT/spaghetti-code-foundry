@@ -194,6 +194,9 @@ const EXAMPLES: Record<string, Example> = {
   "PUT users/:id/app-repos": no(`users/${UNKNOWN}/app-repos`, 404, { repos: [] }),
   "POST password": { path: "password", body: {}, user: 400, admin: 400 },
   "DELETE users/:id": no(`users/${UNKNOWN}`, 404),
+  "GET skills/lifecycle": no("skills/lifecycle", 200),
+  "POST skills/lifecycle": no("skills/lifecycle", 400, {}),
+  "POST skills/lifecycle/allow-run": no("skills/lifecycle/allow-run", 400, {}),
   "GET audit": no("audit", 200),
   // the walk reads every answer as JSON; a good export is CSV and is covered in audit-api.test.ts
   "GET audit/export": no("audit/export?user=x", 400),

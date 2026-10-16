@@ -5,6 +5,8 @@ import { OVERRIDES_FILE, PINS_FILE } from "./choice-rules.js";
 import { choiceDigest, type SkillChoice, type SkillOverride } from "./choices.js";
 import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
+import { LIFECYCLE_STATES, RUN_ID_RE, skillLifecyclePath } from "./lifecycle.js";
+import { allowRunCommand, lifecycleCommand } from "./lifecycle-cli.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
 import { homedir } from "node:os";
@@ -77,9 +79,11 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills release list                                 List the published releases, their approval and the runs that lock them; reads only
       scf skills release publish <catalogue>@<version>         Publish a catalogue release from ${RELEASES_FILE} (reviewed, promotable, evaluation passed); writes only skill-releases/
        scf skills releases check [<file>]                       Check the release requests offline (default: ${RELEASES_FILE}); reads only
+       scf skills lifecycle [<id@version> [<state> --reason <text> [--replacement <id@version>]]] [--runs-dir <dir>]  List the skills that are not active, show the history of one, or set deprecated, quarantined, retired, revoked or active
+       scf skills allow-run <run-id> <id@version> --reason <text> [--runs-dir <dir>]  Let one run go on with a quarantined version (then resume the run)
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], effect: [], gate: [], release: ["key"], releases: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], effect: [], gate: [], release: ["key"], releases: [], lifecycle: ["reason", "replacement", "runs-dir"], "allow-run": ["reason", "runs-dir"] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -524,6 +528,26 @@ export async function skillsCommand(
     if (operands.length !== 1) throw syntax("scf skills unpin: expects one skill (id@version)");
     if (!parseSkillKey(operands[0]!)) throw syntax(`scf skills unpin: ${operands[0]} is not a skill key (id@version)`);
   }
+  if (sub === "lifecycle") {
+    if (operands.length > 2) throw syntax("scf skills lifecycle: expects at most a skill (id@version) and a state");
+    const [key, state] = operands;
+    if (key !== undefined && !parseSkillKey(key)) throw syntax(`scf skills lifecycle: ${key} is not a skill key (id@version)`);
+    if (state !== undefined && !(LIFECYCLE_STATES as readonly string[]).includes(state)) throw syntax(`scf skills lifecycle: the state must be one of ${LIFECYCLE_STATES.join(", ")}`);
+    const reason = args.values.reason;
+    const replacement = args.values.replacement;
+    if (state === undefined && (reason !== undefined || replacement !== undefined)) throw syntax("scf skills lifecycle: --reason and --replacement go with a state");
+    if (state !== undefined && (typeof reason !== "string" || !reason)) throw syntax("scf skills lifecycle: setting a state needs --reason <text>");
+    if (replacement !== undefined) {
+      if (state === "active") throw syntax("scf skills lifecycle: --replacement goes with a state other than active");
+      if (typeof replacement !== "string" || !parseSkillKey(replacement)) throw syntax("scf skills lifecycle: --replacement must be a skill key (id@version)");
+    }
+  }
+  if (sub === "allow-run") {
+    if (operands.length !== 2) throw syntax("scf skills allow-run: expects a run id and a skill (id@version)");
+    if (!RUN_ID_RE.test(operands[0]!)) throw syntax("scf skills allow-run: the first operand must be a run id");
+    if (!parseSkillKey(operands[1]!)) throw syntax(`scf skills allow-run: ${operands[1]} is not a skill key (id@version)`);
+    if (typeof args.values.reason !== "string" || !args.values.reason) throw syntax("scf skills allow-run: needs --reason <text>");
+  }
   if (sub === "release") {
     const problem = releaseOperandsProblem(operands);
     if (problem) throw syntax(problem);
@@ -684,6 +708,13 @@ export async function skillsCommand(
   }
 
   const reg = discoverSkills(skills ?? loadConfig().skills, discover);
+  if (sub === "lifecycle" || sub === "allow-run") {
+    const home = opts.home ?? dataHome();
+    const runsDir = resolve(typeof args.values["runs-dir"] === "string" ? (args.values["runs-dir"] as string) : join(home, "runs"));
+    const o = { reg, runsDir, home };
+    const v = { reason: args.values.reason as string | undefined, replacement: args.values.replacement as string | undefined };
+    return sub === "lifecycle" ? lifecycleCommand(operands, v, out, o) : allowRunCommand(operands, v, out, o);
+  }
   if (sub === "pin") {
     if (builtin) {
       const r = pinBuiltinSkills(reg);
@@ -701,7 +732,7 @@ export async function skillsCommand(
   }
 
   for (const s of reg.skills) {
-    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.source} ${s.trust} ${s.pin} ${s.digest} effect ${effectState(readNewestEffect(s.id, s.digest, { home: discover.home }))}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
+    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.source} ${s.trust} ${s.pin} ${s.digest} effect ${effectState(readNewestEffect(s.id, s.digest, { home: discover.home }))}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}${s.lifecycle ? ` lifecycle ${s.lifecycle.state}${s.lifecycle.replacement ? ` → ${s.lifecycle.replacement}` : ""}` : ""}`);
   }
   for (const r of reg.sources) {
     const rel = r.release;
@@ -712,8 +743,9 @@ export async function skillsCommand(
   }
   for (const n of reg.notes) out(`NOTE ${n.text}`);
   const lockPath = skillLockPath(discover.home ?? dataHome());
+  const lifecyclePath = skillLifecyclePath(discover.home ?? dataHome());
   for (const p of reg.problems) {
-    const root = p.kind === "lock" ? lockPath : (reg.sources.find((r) => r.label === p.label)?.root ?? p.root);
+    const root = p.kind === "lock" ? lockPath : p.kind === "lifecycle" ? lifecyclePath : (reg.sources.find((r) => r.label === p.label)?.root ?? p.root);
     out(`PROBLEM ${p.label} ${root}${p.package && p.kind !== "integrity" ? "/" + p.package : ""}: ${p.reason}`);
   }
   return reg.problems.length ? 1 : 0;

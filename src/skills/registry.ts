@@ -6,6 +6,7 @@ import type { Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
 import { addSkillPins, parseSkillKey, readSkillLock, SkillLockError, type SkillPin } from "./lock.js";
 import { credentialProblem } from "./credential-scan.js";
+import { effectiveLifecycle, readSkillLifecycle, type EffectiveLifecycle, type SkillLifecycleStatus, type SkillReleaseRevocation } from "./lifecycle.js";
 import { quarantinePath } from "./import-stage.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
 import { matchRelease, readRelease, releaseContentProblem, releaseProblemText, type ReleaseCheck, type ReleaseRead } from "./release.js";
@@ -57,9 +58,11 @@ export interface RegisteredSkill {
   pin: SkillPinState;
   digest: string;
   pkg: SkillPackage;
+  /** Set only on a non-active approved or built-in entry: the local state, or the release revocation that wins over it. */
+  lifecycle?: EffectiveLifecycle;
 }
 export interface SkillProblem {
-  kind: "root-missing" | "root-unreadable" | "root-refused" | "invalid-package" | "duplicate" | "too-many" | "integrity" | "lock";
+  kind: "root-missing" | "root-unreadable" | "root-refused" | "invalid-package" | "duplicate" | "too-many" | "integrity" | "lock" | "lifecycle";
   source: SkillSourceKind;
   label: string;
   root: string;
@@ -82,6 +85,10 @@ export interface SkillRegistry {
   problems: SkillProblem[];
   notes: SkillNote[];
   sources: SkillSourceReport[];
+  /** Local lifecycle states other than active, by `id@version`. Independent of `byKey`. */
+  lifecycle?: ReadonlyMap<string, SkillLifecycleStatus>;
+  /** Keys revoked by an approved schema-2 release. */
+  revoked?: ReadonlyMap<string, SkillReleaseRevocation>;
 }
 export interface DiscoverOptions {
   repo?: string;
@@ -144,7 +151,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
   const reports: SkillSourceReport[] = [];
   const found: RegisteredSkill[] = [];
   /** `id@version` revoked by an approved schema-2 release, in any root: the security fix wins over every other copy. */
-  const revokedKeys = new Map<string, string>();
+  const revokedKeys = new Map<string, SkillReleaseRevocation>();
   // Approved store releases are not held to the registry-wide limits (an old lock must stay valid, and they do not use up the room of the other roots). They are bounded by the approved list, MAX_SKILLS_PER_ROOT and verifyRelease.
   const budgets = { main: { n: 0, bytes: 0, stopped: false }, store: { n: 0, bytes: 0, stopped: false } };
   /** key + digest of packages already kept from an earlier store release: a later identical copy is not a duplicate. */
@@ -254,7 +261,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
         for (const s of read.manifest.skills) {
           if (!s.revoked) continue;
           revokedIds.add(s.id);
-          revokedKeys.set(`${s.id}@${s.version}`, `${read.manifest.catalogue}@${read.manifest.version} (${s.revoked.on})`);
+          revokedKeys.set(`${s.id}@${s.version}`, { by: `${read.manifest.catalogue}@${read.manifest.version}`, on: s.revoked.on, reason: s.revoked.reason });
         }
       }
     }
@@ -355,7 +362,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     }
     byKey.set(s.key, s);
   }
-  for (const [key, by] of revokedKeys) notes.push({ kind: "revoked", label: "release", package: key.slice(0, key.lastIndexOf("@")), text: `${key} is revoked by ${by} and is not loaded.` });
+  for (const [key, r] of revokedKeys) notes.push({ kind: "revoked", label: "release", package: key.slice(0, key.lastIndexOf("@")), text: `${key} is revoked by ${r.by} (${r.on}) and is not loaded.` });
   // Pins are looked up by key alone: the source does not matter, only the bytes.
   const lock = readSkillLock(home);
   if (!lock.ok) problems.push({ kind: "lock", source: "admin", label: "skill lock", root: "skill lock", reason: `the skill lock ${lock.reason}; approved and built-in skills cannot be verified` });
@@ -387,6 +394,19 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       integrity,
     });
   }
+  // The local lifecycle record. When it cannot be read, nothing approved or built-in can be selected (see resolveSkills).
+  const life = readSkillLifecycle(home);
+  const lifecycle = new Map<string, SkillLifecycleStatus>();
+  if (!life.ok) {
+    problems.push({ kind: "lifecycle", source: "admin", label: "skill lifecycle", root: "skill lifecycle", reason: `the skill lifecycle record ${life.reason}; approved and built-in skills cannot be selected` });
+  } else {
+    for (const [k, st] of life.statuses) if (st.state !== "active") lifecycle.set(k, st);
+    for (const s of byKey.values()) {
+      if (s.trust === "unapproved") continue;
+      const e = effectiveLifecycle({ lifecycle, revoked: revokedKeys }, s.key);
+      if (e) s.lifecycle = e;
+    }
+  }
   const winner = new Map<string, RegisteredSkill>();
   for (const s of byKey.values()) if (!winner.has(s.id)) winner.set(s.id, s);
   for (const s of byKey.values()) {
@@ -403,7 +423,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
   const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   // Map order is discovery order: the precedence of the source, then the folder name.
   const skillsList = [...byKey.values()].map((s, i) => ({ s, i })).sort((a, b) => cmp(a.s.id, b.s.id) || a.i - b.i).map((x) => x.s);
-  return { byKey, skills: skillsList, problems, notes, sources: reports };
+  return { byKey, skills: skillsList, problems, notes, sources: reports, lifecycle, revoked: revokedKeys };
 }
 
 /** The active entry of an id, or the exact `id@version`. */

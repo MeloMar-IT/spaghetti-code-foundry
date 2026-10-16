@@ -210,6 +210,8 @@ async function main(argv: string[]): Promise<number> {
       repo: { type: "string", short: "r" },
       var: { type: "string", short: "v", multiple: true },
       "runs-dir": { type: "string" },
+      reason: { type: "string" },
+      replacement: { type: "string" },
       global: { type: "boolean" },
       force: { type: "boolean" },
       port: { type: "string", short: "p" },

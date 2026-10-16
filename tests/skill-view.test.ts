@@ -298,6 +298,25 @@ describe("runSkillView: integrity and category", () => {
   it("changed for another digest", () => expect(integrityOf(withRegistry(reg(sk("a", { digest: digestOf("d") }))))).toBe("changed"));
   it("missing when the package is gone", () => expect(integrityOf(withRegistry(reg()))).toBe("missing"));
   it("unpinned when the pin is gone", () => expect(integrityOf(withRegistry(reg(sk("a", { pin: "unpinned" }))))).toBe("unpinned"));
+  it("quarantined and revoked from the lifecycle, and unverified when the lifecycle record cannot be read", () => {
+    const status = (state: string) => ({ state, seq: 1, since: "2026-01-01T00:00:00.000Z", by: "cli", reason: "r", allowedRuns: [] });
+    const withLife = (state: string) => withRegistry({ ...reg(sk("a")), lifecycle: new Map([["a@1.0.0", status(state)]]), revoked: new Map() });
+    expect(integrityOf(withLife("quarantined"))).toBe("quarantined");
+    expect(integrityOf(withLife("revoked"))).toBe("revoked");
+    expect(integrityOf(withLife("retired"))).toBe("verified");
+    const revoked = withRegistry({ ...reg(), revoked: new Map([["a@1.0.0", { by: "acme@1.0.0", on: "2026-03-04", reason: "x" }]]) });
+    expect(integrityOf(revoked)).toBe("revoked");
+    const broken = withRegistry({ ...reg(sk("a")), problems: [{ kind: "lifecycle" }] });
+    expect(integrityOf(broken)).toBe("unverified");
+  });
+  it("shows every locked skill as unverified when the lifecycle record cannot be read", () => {
+    const two = request({ id: "a" }, { id: "b" });
+    const both = reg(sk("a"), sk("b"));
+    const l = lockOf(both, two);
+    const registry = withRegistry({ ...both, problems: [{ kind: "lifecycle" }] });
+    const v = view(runOf(two, { skillLock: summaryOf(l) }), { readLock: () => read(l), registry })!;
+    expect(v.resolved.map((r) => r.integrity)).toEqual(["unverified", "unverified"]);
+  });
   it("not checked when the registry throws or is absent, and then has no time", () => {
     const v = view(run(), { readLock: () => read(lock), registry: () => { throw new Error("x"); } })!;
     expect(v.resolved[0]!.integrity).toBe("not-checked");

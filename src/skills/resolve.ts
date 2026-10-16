@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { SkillsConfig } from "../config.js";
 import { estimateTokens } from "./catalogue.js";
+import { INELIGIBLE_STATES } from "./lifecycle.js";
 import { findSkill, selectSkill, SkillSelectError, type RegisteredSkill, type SkillRegistry } from "./registry.js";
 import { SKILL_REQUEST_LIMITS } from "./request.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE, RESOLVE_REASONS, RESOLVE_REJECT_CODES } from "./resolve-rules.js";
@@ -132,6 +133,11 @@ export function resolveSkills(
     if (excluded.has(id)) return { ok: false, code: "excluded" };
     const active = findSkill(registry, id);
     if (!active) return { ok: false, code: "unknown" };
+    // A quarantined, retired or revoked version is never selected, and there is no fallback to another version.
+    // An unreadable lifecycle record makes every approved or built-in skill ineligible.
+    if (active.trust !== "unapproved" && (registry.problems.some((p) => p.kind === "lifecycle") || (active.lifecycle && INELIGIBLE_STATES.has(active.lifecycle.state)))) {
+      return { ok: false, code: "ineligible", version: active.version };
+    }
     let skill: RegisteredSkill;
     try {
       skill = selectSkill(registry, active.id, active.version);

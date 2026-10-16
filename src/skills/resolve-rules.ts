@@ -13,7 +13,7 @@ export const RESOLVE_REASONS = ["mandatory", "requested", "dependency"] as const
 export const RESOLVE_REJECT_CODES = [
   "excluded", "unknown", "unapproved", "unpinned", "mismatch", "unverified", "role", "too-large",
   "dependency-cycle", "dependency-unavailable", "dependency-version", "conflict", "over-count", "over-budget",
-  "blocked",
+  "blocked", "ineligible",
 ] as const;
 
 // What happens to a skill that cannot be used.
@@ -27,6 +27,7 @@ export const UNRESOLVED_KIND: Record<(typeof RESOLVE_REJECT_CODES)[number], (typ
   unpinned: "untrusted",
   mismatch: "untrusted",
   unverified: "untrusted",
+  ineligible: "untrusted",
   role: "untrusted",
   "too-large": "oversized",
   "over-count": "oversized",

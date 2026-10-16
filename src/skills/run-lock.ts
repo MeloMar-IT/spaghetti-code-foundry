@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, lstatSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { effectiveLifecycle, lifecycleReasonProblem, type EffectiveLifecycle } from "./lifecycle.js";
 import { readRegular } from "./package.js";
 import { SkillSelectError, selectSkill, type SkillRegistry } from "./registry.js";
 import { SkillRequestItemSchema, type SkillRequest } from "./request.js";
@@ -196,19 +197,48 @@ export function runSkillLockSummary(lock: RunSkillLock, lockDigest: string): Run
 
 export type RunSkillLockProblem = {
   key: string;
-  code: "missing" | "changed" | "unpinned" | "unverified" | "unapproved";
+  code: "missing" | "changed" | "unpinned" | "unverified" | "unapproved" | "quarantined" | "revoked" | "lifecycle";
   expected: string;
   actual?: string;
+  /** `<catalogue>@<version>` of the release that revokes the key. */
+  release?: string;
+  replacement?: string;
+  runId?: string;
 };
 
-/** Every locked skill must still be there at exactly its version, approved, pinned, with its digest. Never looks at the active default. */
-export function verifyRunSkillLock(lock: RunSkillLock, reg: Pick<SkillRegistry, "byKey" | "problems">): RunSkillLockProblem[] {
+type LockReg = Pick<SkillRegistry, "byKey" | "problems" | "lifecycle" | "revoked">;
+
+/**
+ * Every locked skill must still be there at exactly its version, approved, pinned, with its digest. Never looks at the active default.
+ * Then the lifecycle: a revoked version always stops the run, a quarantined one stops it unless this run is allowed.
+ * A lifecycle problem of the registry comes first, before every other problem.
+ */
+export function verifyRunSkillLock(lock: RunSkillLock, reg: LockReg): RunSkillLockProblem[] {
   const out: RunSkillLockProblem[] = [];
+  const lifeBad = reg.problems.some((p) => p.kind === "lifecycle");
+  // One problem per locked key, all before the others: no skill counts as verified when its lifecycle cannot be checked.
+  if (lifeBad) for (const e of lock.skills) out.push({ key: `${e.id}@${e.version}`, code: "lifecycle", expected: e.digest });
   for (const e of lock.skills) {
     const key = `${e.id}@${e.version}`;
+    const replacement = reg.lifecycle?.get(key)?.replacement;
+    const rel = reg.revoked?.get(key);
+    // A key revoked by a release is not in byKey: say so instead of "missing".
+    if (rel) {
+      out.push({ key, code: "revoked", expected: e.digest, release: rel.by, ...(replacement ? { replacement } : {}) });
+      continue;
+    }
     try {
       const s = selectSkill(reg, e.id, e.version);
-      if (s.digest !== e.digest) out.push({ key, code: "changed", expected: e.digest, actual: s.digest });
+      if (s.digest !== e.digest) {
+        out.push({ key, code: "changed", expected: e.digest, actual: s.digest });
+        continue;
+      }
+      if (lifeBad) continue;
+      const life = effectiveLifecycle(reg, key);
+      if (life?.state === "revoked") out.push({ key, code: "revoked", expected: e.digest, ...(life.replacement ? { replacement: life.replacement } : {}) });
+      else if (life?.state === "quarantined" && !life.allowedRuns.some((a) => a.runId === lock.runId)) {
+        out.push({ key, code: "quarantined", expected: e.digest, runId: lock.runId, ...(life.replacement ? { replacement: life.replacement } : {}) });
+      }
     } catch (err) {
       const code = err instanceof SkillSelectError ? err.code : "unknown";
       const actual = reg.byKey.get(key)?.digest;
@@ -223,9 +253,52 @@ export function verifyRunSkillLock(lock: RunSkillLock, reg: Pick<SkillRegistry, 
   return out;
 }
 
+/** Locked keys with a non-active lifecycle that does not stop this run. */
+function goingOn(lock: RunSkillLock, reg: LockReg): { key: string; life: EffectiveLifecycle }[] {
+  const list: { key: string; life: EffectiveLifecycle }[] = [];
+  if (reg.problems.some((p) => p.kind === "lifecycle")) return list;
+  for (const e of lock.skills) {
+    const key = `${e.id}@${e.version}`;
+    const life = effectiveLifecycle(reg, key);
+    if (!life || life.state === "revoked") continue;
+    if (life.state === "quarantined" && !life.allowedRuns.some((a) => a.runId === lock.runId)) continue;
+    list.push({ key, life });
+  }
+  return list;
+}
+
+/** Lines for the run log about locked skills that go on although their lifecycle is not active. Validated fields only. */
+export function runSkillLockNotes(lock: RunSkillLock, reg: LockReg): string[] {
+  return goingOn(lock, reg).map(({ key, life }) => {
+    if (life.state === "quarantined") {
+      const a = life.allowedRuns.find((x) => x.runId === lock.runId)!;
+      return `skill lifecycle: ${key} is quarantined; this run is allowed (#${a.seq} by ${a.by})`;
+    }
+    return `skill lifecycle: ${key} is ${life.state}${life.replacement ? ` (replaced by ${life.replacement})` : ""}; this run goes on with it`;
+  });
+}
+
+/** Lines for the run log only, with the reason text of the administrator or the release. Never put these into a stop reason. */
+export function runSkillLockReasons(lock: RunSkillLock, reg: LockReg): string[] {
+  const out: string[] = [];
+  for (const e of lock.skills) {
+    const key = `${e.id}@${e.version}`;
+    const life = effectiveLifecycle(reg, key);
+    if (life) out.push(`skill lifecycle: ${key} ${life.state}: ${lifecycleReasonProblem(life.reason) === undefined ? life.reason : "(reason not shown)"}`);
+  }
+  return out;
+}
+
 export function integrityReason(p: RunSkillLockProblem): string {
   const p0 = "skill integrity: ";
+  const repl = p.replacement ? ` (replaced by ${p.replacement})` : "";
   switch (p.code) {
+    case "revoked":
+      return `${p0}${p.key} is revoked${p.release ? ` by release ${p.release}` : ""}${repl}. A revoked skill is not loaded again: plan the issue again to lock other skills.`;
+    case "quarantined":
+      return `${p0}${p.key} is quarantined${repl}. An administrator may let this run go on with "scf skills allow-run ${p.runId ?? "<run-id>"} ${p.key} --reason …" and resume it; or plan the issue again.`;
+    case "lifecycle":
+      return `${p0}${p.key} cannot be verified: the skill lifecycle record cannot be read`;
     case "changed":
       return `${p0}${p.key} changed since this run locked it (locked ${p.expected}, now ${p.actual ?? "unknown"})`;
     case "missing":
