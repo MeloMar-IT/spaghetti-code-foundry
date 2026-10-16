@@ -1,10 +1,10 @@
 import { api as realApi } from "./api.js";
 import { confirmDialog, mount, tabStops, trapTarget } from "./dom.js";
 import {
-  CONSEQUENCES, MAX_READ_FAILURES, PAUSED_WORDS, QUESTION_MAX, REASON_WORDS, announce, closesOn, contextFor, controlsFor, explainAskError, explainOfferError, feedbackPlan, historyRows, isPausedError, isWaiting, lastOf,
-  offerTarget, planKey, pollDelay, restorePick, sendPlan, solveOffered, staleGuard, suggestionsFor, threadOf, voteNote, waitNote, whereOf,
+  CONSEQUENCES, MAX_READ_FAILURES, PAUSED_WORDS, QUESTION_MAX, REASON_WORDS, announce, closesOn, contextFor, controlsFor, NOT_STORED_NOTE, REVIEW_TEXT, explainActionError, explainAskError, explainOfferError, feedbackPlan, historyRows, isPausedError, isWaiting, lastOf,
+  offerTarget, outcomeOf, planKey, previewDanger, previewRows, pollDelay, restorePick, sendPlan, solveOffered, staleGuard, suggestionsFor, threadOf, voteNote, waitNote, whereOf,
 } from "./ask-model.js";
-import { actionNodes, askButton, askFrame, entryNode, handoffDialog, historyNodes, rateNodes, suggestionNodes } from "./ask-view.js";
+import { actionNodes, askButton, askFrame, entryNode, handoffDialog, historyNodes, rateNodes, reviewDialog, suggestionNodes } from "./ask-view.js";
 import { ASK_OPEN_EVENT, isConversationId, offersOf, recordsOf, wishOf } from "./ask-handoff.js";
 import { sendWish } from "./palette-data.js";
 
@@ -60,13 +60,16 @@ export function tabProgress() {
 export function createAsk(role, {
   slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], paused = false, store = tabStore(), progress = tabProgress(), now = () => Date.now(),
   go = (to) => { if (win.location) win.location.hash = to; },
-  confirmer = confirmDialog, previewer = handoffDialog, wish = sendWish, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
+  confirmer = confirmDialog, previewer = handoffDialog, review = reviewDialog, wish = sendWish, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
 } = {}) {
   // `restore`: the conversation to read when the drawer opens for the first time after a reload.
   const st = { open: false, view: "talk", conversation: null, busy: false, attach: true, polls: 0, failures: 0, timer: null, rows: [], archived: false, restore: restorePick(list, store.get()), waitKey: "", waitSince: 0, saidSlow: false,
     // `paused`: the administrator's emergency stop, as the server last said so (never guessed from another error)
     // `drafts`: reasons ticked for an answer and not saved yet, by message, so a redraw keeps them
-    paused: paused === true, drafts: new Map() };
+    paused: paused === true, drafts: new Map(),
+    // `outcomes`: results that confirm returned, by message, kept only while the person stays in the conversation
+    // `reviewing`: a change is being reviewed (the preview, the dialog, the confirm)
+    outcomes: new Map(), reviewing: false };
   const guard = staleGuard();
   let opener = null;
   const where = () => whereOf(role, hash());
@@ -115,6 +118,7 @@ export function createAsk(role, {
       now: now(),
       onOffer: (id, i) => void runOffer(id, i),
       onHandoff: (id) => void handOff(id),
+      onReview: (id, i) => void reviewAction(id, i),
       onNavigate: () => close({ back: false }),
       onToggle: (id, i) => toggleStep(id, i),
       reasonWords: REASON_WORDS,
@@ -124,7 +128,7 @@ export function createAsk(role, {
       onDraft: (message, reasons) => st.drafts.set(message, reasons),
     };
     // `mount` keeps the focus on the control with the same name, so voting by keyboard works across a redraw
-    mount(ui.thread, threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id) }).flatMap((entry) => [entryNode({ ...entry, handoffs: recordsOf(st.conversation, entry.id, role) }, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
+    mount(ui.thread, threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id), outcomes: (id) => st.outcomes.get(id) ?? [] }).flatMap((entry) => [entryNode({ ...entry, handoffs: recordsOf(st.conversation, entry.id, role) }, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
     ui.thread.hidden = !st.conversation;
     const controls = { ...controlsFor(st.conversation, { busy: st.busy, paused: st.paused }), solved: solveOffered(st.conversation, { busy: st.busy }) };
     mount(ui.actions, actionNodes(controls, CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), solved: () => void solve(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
@@ -173,6 +177,7 @@ export function createAsk(role, {
   function leave() {
     guard.next();
     st.conversation = null;
+    st.outcomes.clear();
     st.restore = null;
     st.polls = 0;
     st.failures = 0;
@@ -287,6 +292,55 @@ export function createAsk(role, {
       close({ back: false });
       go(r.offer.page);
     });
+  }
+
+  /**
+   * The person presses "Review the change": the server prepares a preview, the person confirms or cancels it, and the
+   * result the server read back is drawn. The token lives only here. An answer that comes after the person went to
+   * another conversation is ignored, and the token of a late preview is dropped.
+   */
+  async function reviewAction(message, index) {
+    const id = mine();
+    if (!id || st.busy || st.reviewing) return false;
+    const current = guard.ticket();
+    st.reviewing = true;
+    try {
+      let prep = null;
+      const prepared = await act(async () => { prep = await api.prepareHelpAction(id, { message, index }); }, () => draw(), explainActionError);
+      if (!prepared || !prep) return false;
+      if (!current()) { await dropToken(id, prep.token); return false; }
+      const yes = await review({ ...REVIEW_TEXT, rows: previewRows(prep.preview), danger: previewDanger(prep.preview) });
+      if (!yes || !current()) {
+        await dropToken(id, prep.token);
+        if (current()) { draw(); say("Nothing was changed."); }
+        return false;
+      }
+      let res = null;
+      const confirmed = await act(async () => { res = await api.confirmHelpAction(id, { token: prep.token, message, index }); }, () => {}, explainActionError);
+      if (!confirmed || !res || !current()) return false;
+      // the result is drawn and said at once; the read below only brings the stored copy
+      st.outcomes.set(message, [...(st.outcomes.get(message) ?? []), res.outcome]);
+      const o = outcomeOf(res.outcome);
+      draw();
+      say(o ? `${o.word}. ${o.words}${res.stored === false ? ` ${NOT_STORED_NOTE}` : ""}` : "");
+      const snapshot = st.conversation;
+      let next = null;
+      try {
+        next = await api.helpConversation(id);
+      } catch {
+        /* the local copy keeps the result visible */
+      }
+      // a question sent, or a poll that came meanwhile, is newer than this read: it is not overwritten
+      if (next && current() && st.conversation === snapshot) take(next);
+      return true;
+    } finally {
+      st.reviewing = false;
+      draw();
+    }
+  }
+  /** Drops a confirmation the person did not use. It runs out in 5 minutes anyway, so a failure is not shown. */
+  async function dropToken(id, token) {
+    try { await api.cancelHelpAction(id, token); } catch { /* it runs out by itself */ }
   }
 
   async function send() {
@@ -406,6 +460,8 @@ export function createAsk(role, {
     st.view = "talk";
     st.polls = 0;
     st.failures = 0;
+    // another conversation: what this tab held of the first one is gone
+    if (next?.id !== st.conversation?.id) st.outcomes.clear();
     // the same conversation before and after: opening one is not announced as a new answer
     st.conversation = next;
     take(next);
@@ -494,7 +550,7 @@ export function createAsk(role, {
     ui.drawer.remove?.();
     if (slot) { slot.replaceChildren(); slot.hidden = true; }
   }
-  return { open, close, send, runOffer, handOff, stop, stopAnswer, retry, rate, solve, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
+  return { open, close, send, runOffer, handOff, reviewAction, stop, stopAnswer, retry, rate, solve, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
 }
 
 /**

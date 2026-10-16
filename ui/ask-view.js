@@ -45,7 +45,7 @@ export function askFrame(on, { questionMax, hints = {} }) {
   history.hidden = true;
   const drawer = h("aside", { id: "ask-drawer", class: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title", tabindex: "-1" },
     h("div", { class: "ask-head" }, h("h2", { id: "ask-title" }, "Ask SCF"), fresh, historyBtn, close),
-    h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. It changes nothing."),
+    h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. Nothing changes unless you review and confirm an action."),
     paused,
     status,
     talk,
@@ -67,13 +67,14 @@ const sourceLine = (src, { now, onNavigate }) => [
 ];
 
 /** One proposal of a reply as a card. It says whether it only reads or would change something. It has no control that does anything; a page is a plain link. */
-export function cardNode(card, { onNavigate } = {}) {
+export function cardNode(card, { onNavigate, onReview, focusKey } = {}) {
   return h("div", { class: `ask-card ask-card-${card.kind}`, role: "group", "aria-label": `${card.title}. ${card.effect === "changes-state" ? "Changes state" : "Read-only"}` },
     h("div", { class: "ask-card-head" },
       h("strong", {}, card.title),
       h("span", { class: `pill ${card.effect === "changes-state" ? "sem-warning" : "sem-neutral"}` }, card.effect === "changes-state" ? "Changes state" : "Read-only")),
     card.link ? h("a", { href: card.link.href, onClick: () => onNavigate?.() }, card.link.title) : null,
     card.text ? h(card.pre ? "pre" : "p", { class: "ask-card-text" }, card.text) : null,
+    card.act !== undefined ? h("button", { type: "button", class: "small", "data-act": String(card.act), "data-focus": `ask-review-${focusKey ?? ""}-${card.act}`, onClick: () => onReview?.(card.act) }, "Review the change") : null,
     h("p", { class: "ask-card-note muted" }, card.note));
 }
 
@@ -101,6 +102,33 @@ export function checkNodes(layout, { now } = {}) {
       return at > 0 ? [h("dt", {}, l.slice(0, at)), h("dd", {}, l.slice(at + 2))] : [h("dt", {}, "Note"), h("dd", {}, l)];
     })) : null,
     h("p", { class: "ask-card-note muted", title: layout.observedAt }, `read ${timeAgo(layout.observedAt, now)}${layout.uncertain ? ". Some of it may be out of date." : ""}`));
+}
+
+/** The dialog that shows the server's preview. Resolves true only for the confirm button; Cancel, Escape, the cross and the backdrop give false. */
+export function reviewDialog({ title, intro, rows, danger, note, confirm }) {
+  let cancelBtn;
+  const done = modal(title, (close) => {
+    cancelBtn = h("button", { type: "button", onClick: () => close(false) }, "Cancel");
+    return h("div", { class: "stack" },
+      h("p", {}, intro),
+      rows.map((r) => h("p", {}, h("strong", {}, `${r.label}: `), r.text)),
+      h("span", { class: `pill ${danger ? "sem-danger" : "sem-warning"}` }, danger ? "High impact" : "Reversible"),
+      h("p", { class: "muted" }, note),
+      h("div", { class: "row" }, h("span", { class: "spacer" }), cancelBtn,
+        h("button", { type: "button", class: danger ? "danger" : "primary", onClick: () => close(true) }, confirm)));
+  });
+  cancelBtn.focus();
+  return done.then((answer) => answer === true);
+}
+
+/** What the server read back after a confirmed change: a word, its words and what to do next. All text. */
+export function outcomeNodes(outcomes) {
+  return h("div", { class: "ask-cards", "aria-label": "What the change did" }, outcomes.map((o) =>
+    h("div", { class: "ask-card ask-card-outcome", role: "group", "aria-label": `${o.title}: ${o.word}` },
+      h("div", { class: "ask-card-head" }, h("strong", {}, o.title), h("span", { class: `pill ${o.pill}` }, o.word)),
+      h("p", { class: "ask-card-text" }, o.words),
+      o.recovery ? h("p", { class: "ask-card-note muted" }, o.recovery) : null,
+      o.at ? h("p", { class: "muted" }, `Read back ${timeAgo(o.at)}`) : null)));
 }
 
 const pillClass = (s) => (s.kind === "high-impact" ? "sem-danger" : s.kind === "reversible" ? "sem-warning" : "sem-neutral");
@@ -142,6 +170,7 @@ export function replyNodes(layout, opts = {}) {
     basis.sources.length ? h("ul", { class: "ask-basis", "aria-label": basis.needs === "state" ? "The current state this answer rests on" : "The documentation this answer rests on" },
       basis.sources.map((src) => h("li", {}, sourceLine(src, opts)))) : null,
     layout.cards.length ? h("div", { class: "ask-cards" }, layout.cards.map((c) => cardNode(c, opts))) : null,
+    layout.outcomes?.length ? outcomeNodes(layout.outcomes) : null,
     layout.offers?.length ? h("div", { class: "ask-cards", "aria-label": "Pages you can open and checks you can run" }, layout.offers.map((o) => offerNode(o, opts))) : null,
     trust.state === "limit" ? null : h("details", { class: "ask-sources" },
       h("summary", {}, `Sources and assumptions (${sources.length === 1 ? "1 source" : `${sources.length} sources`})`),
@@ -185,7 +214,7 @@ export function entryNode(entry, opts = {}) {
     h("span", { class: "ask-who" }, entry.who),
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
-    entry.kind === "check" ? checkNodes(entry.check, opts) : entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i) }) : entry.text,
+    entry.kind === "check" ? checkNodes(entry.check, opts) : entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i), onReview: (i) => opts.onReview?.(entry.id, i), focusKey: entry.id }) : entry.text,
     entry.kind === "answer" && opts.onHandoff ? h("button", { type: "button", class: "small", "data-handoff": entry.id, onClick: () => opts.onHandoff(entry.id) }, "Continue on another page") : null,
     entry.handoffs?.length ? h("ul", { class: "muted small", "aria-label": "Where you took this answer" },
       entry.handoffs.map((r) => h("li", {}, r.href ? h("a", { href: r.href, onClick: () => opts.onNavigate?.() }, r.text) : r.text, r.at ? ` ${timeAgo(r.at, opts.now)}` : ""))) : null,

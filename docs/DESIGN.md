@@ -1243,8 +1243,11 @@ chapter 14 of the user guide holds the same sentences as the code.
 ### Ask SCF: confirmed actions
 
 Part 1 of 2 of #567 (#569), behind `help.actions`, off by default. It only binds a proposal to the
-run the server knows about. Part 2 of 2 (#570) carries out a previewed action through the API; the
-drawer's confirm control is #568.
+run the server knows about. Part 2 of 2 (#570) carries out a previewed action through the API. The
+drawer's review and confirm control is #568: `ui/api.js` (`prepareHelpAction`, `confirmHelpAction`,
+`cancelHelpAction`, all through `req`), `ui/ask.js` (`reviewAction`, the `review` option that tests
+replace), `ui/ask-model.js` (`previewRows`, `outcomeOf`) and `ui/ask-view.js` (`reviewDialog`,
+`outcomeNodes`). The prompt lists the role's action ids only when `help.actions` is on (`turnPrompt`).
 
 - **The list.** `ACTIONS` has `resume-run` (`reversible`, `undoable: true`) and `cancel-run` (`high`,
   `undoable: false`), both for `admin` and `user`. Each has a fixed `effect` text written by the
