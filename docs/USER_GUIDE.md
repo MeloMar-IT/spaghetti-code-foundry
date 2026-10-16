@@ -6196,7 +6196,7 @@ Ask SCF does three kinds of work only by sending you to the place that already d
 
 ### What a reply can hold
 
-A reply has up to five kinds of parts. They look different, so you always know what is only text
+A reply has up to six kinds of parts. They look different, so you always know what is only text
 and what would change something.
 
 | Part | What it is | Changes something |
@@ -6204,8 +6204,16 @@ and what would change something.
 | Answer | What is true, as far as Ask SCF can see. Nothing happens. | no |
 | Recommendation | What you could do. You decide and you do it; nothing happens by itself. | no |
 | Navigation | A link to a page of the Foundry that you may open. Opening it is your click. | no |
+| Plan | Ordered steps to solve a problem. Nothing happens until you do a step yourself. | no |
 | Draft | A text for you to copy or change. It is not sent, saved or posted anywhere. | no |
 | Action | A change to the Foundry or to GitHub. Never done without your explicit approval. | yes, after your approval |
+
+A plan is a short list of steps, safest first. Each step says what kind it is: an explanation, a page
+to open, a read-only check, something only you can decide, a reversible change or a high-impact change.
+Every change step says what you should see, what a failure looks like and what to do then. A high-impact
+step always shows a danger label and is never folded away. Ask SCF does not run a step:
+you do it yourself, or follow the plan by hand. "I did this" only ticks the step in this browser tab
+(it is kept for the tab's session, not on the server); Ask SCF has not checked the result.
 
 An action runs only when all of this holds:
 

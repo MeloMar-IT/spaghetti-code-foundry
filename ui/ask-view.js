@@ -73,6 +73,34 @@ export function cardNode(card, { onNavigate } = {}) {
     h("p", { class: "ask-card-note muted" }, card.note));
 }
 
+const pillClass = (s) => (s.kind === "high-impact" ? "sem-danger" : s.kind === "reversible" ? "sem-warning" : "sem-neutral");
+
+/**
+ * A plan as an ordered list of cards, one per step, each with its kind. A high-impact step (or one that would be) always
+ * shows its danger pill and is never folded away. The person follows it by hand or presses "I did this"; the mark is theirs
+ * and nothing here runs a step or says that it worked. `onToggle(index)`, `onNavigate()`.
+ */
+export function planNodes(plan, { onToggle, onNavigate } = {}) {
+  const total = plan.steps.length;
+  return h("div", { class: "ask-plan-box" },
+    h("p", { class: "ask-plan-head" }, h("strong", {}, "Plan: "), plan.header),
+    h("ol", { class: "ask-plan" }, plan.steps.map((s, i) => h("li", { class: `ask-step${s.current ? " ask-step-current" : ""}${s.danger ? " ask-step-danger" : ""}`, "aria-current": s.current ? "step" : null },
+      h("div", { class: "ask-card-head" },
+        h("span", { class: "ask-step-n" }, `Step ${s.n} of ${total}`),
+        h("span", { class: `pill ${pillClass(s)}` }, s.label),
+        s.wouldBeLabel ? h("span", { class: `pill ${s.danger ? "sem-danger" : "sem-warning"}` }, s.wouldBeLabel) : null),
+      h("strong", {}, s.title),
+      s.proposal ? h("p", { class: "ask-step-proposal muted" }, `Proposed, not confirmed: ${s.proposal}`) : null,
+      s.link ? h("a", { href: s.link.href, onClick: () => onNavigate?.() }, s.link.title) : null,
+      s.instructions ? h("p", { class: "ask-card-text" }, s.instructions) : null,
+      s.expected || s.failure || s.fallback ? h("dl", { class: "ask-step-signals" },
+        s.expected ? [h("dt", {}, "What you should see"), h("dd", {}, s.expected)] : null,
+        s.failure ? [h("dt", {}, "If it fails"), h("dd", {}, s.failure)] : null,
+        s.fallback ? [h("dt", {}, "Then"), h("dd", {}, s.fallback)] : null) : null,
+      h("button", { type: "button", class: "small", "data-step": String(i), "aria-pressed": String(s.done), onClick: () => onToggle?.(i) }, s.done ? "Not done yet" : "I did this"),
+      s.note ? h("p", { class: "ask-card-note muted" }, s.note) : null))));
+}
+
 /** A reply by its parts: the short answer, how sure it is and what it rests on, the proposals, and the sources and assumptions to unfold. */
 export function replyNodes(layout, opts = {}) {
   const { trust, basis, sources, assumptions } = layout;
@@ -80,6 +108,7 @@ export function replyNodes(layout, opts = {}) {
     h("p", { class: "ask-summary" }, layout.summary),
     layout.explanation ? h("p", { class: "ask-explain" }, layout.explanation) : null,
     h("p", { class: `ask-trust ask-trust-${trust.state}` }, glyph(trust.glyph), " ", h("strong", {}, trust.label), ". ", trust.text),
+    layout.plan ? planNodes(layout.plan, opts) : null,
     basis.sources.length ? h("ul", { class: "ask-basis", "aria-label": basis.needs === "state" ? "The current state this answer rests on" : "The documentation this answer rests on" },
       basis.sources.map((src) => h("li", {}, sourceLine(src, opts)))) : null,
     layout.cards.length ? h("div", { class: "ask-cards" }, layout.cards.map((c) => cardNode(c, opts))) : null,
@@ -94,11 +123,11 @@ export function replyNodes(layout, opts = {}) {
 
 /** One message of the conversation. `opts`: now (ms) for the age of a source, onNavigate() when a link to a page is followed. */
 export function entryNode(entry, opts = {}) {
-  return h("div", { class: `ask-entry ask-${entry.kind}` },
+  return h("div", { class: `ask-entry ask-${entry.kind}`, "data-message": entry.id ?? null },
     h("span", { class: "ask-who" }, entry.who),
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
-    entry.layout ? replyNodes(entry.layout, opts) : entry.text,
+    entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i) }) : entry.text,
     entry.note ? h("span", { class: "ask-note" }, entry.note) : null);
 }
 

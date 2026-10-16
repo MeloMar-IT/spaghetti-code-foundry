@@ -86,6 +86,19 @@ describe("a conversation and its messages", () => {
     expect(readdirSync(home).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("stores a plan with the reply, and a reply without a plan has no plan key", () => {
+    const withPlan = checkReply({ summary: "Steps.", plan: [{ kind: "check", title: "Look at the log", to: "#/runs", evidence: [] }] }, { role: "user" })!.reply;
+    const turn = ask();
+    finishTurn(turn.conversation.id, ref(turn), withPlan, at);
+    const stored = getConversation(ANN, turn.conversation.id, at).messages[1]!;
+    expect(stored.reply!.plan).toEqual([{ kind: "check", title: "Look at the log", to: "#/runs", evidence: [] }]);
+    expect(stored.text).toContain("1. [Read-only check] Look at the log");
+    const plain = ask(BOB);
+    finishTurn(plain.conversation.id, ref(plain), reply(), at);
+    expect(raw()).not.toContain('"plan":[]');
+    expect("plan" in getConversation(BOB, plain.conversation.id, at).messages[1]!.reply!).toBe(false);
+  });
+
   it("keeps the structured reply apart from the text a person reads, and writes that text itself", () => {
     const turn = ask();
     const r = reply();

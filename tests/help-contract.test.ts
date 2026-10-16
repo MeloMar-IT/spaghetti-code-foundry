@@ -39,8 +39,8 @@ describe("the Ask SCF contract", () => {
     for (const t of ["status", "troubleshooting", "guided-resolution"] as const) expect(QUESTION_RULES[t].evidence).toBe("state");
   });
 
-  it("tells answers, recommendations, navigation, drafts and actions apart: only an action changes something", () => {
-    expect([...PART_KINDS]).toEqual(["answer", "recommendation", "navigation", "draft", "action"]);
+  it("tells answers, recommendations, navigation, plans, drafts and actions apart: only an action changes something", () => {
+    expect([...PART_KINDS]).toEqual(["answer", "recommendation", "navigation", "plan", "draft", "action"]);
     for (const k of PART_KINDS) {
       expect(PART_RULES[k].changesState, k).toBe(k === "action");
       expect(PART_RULES[k].needsConfirmation, k).toBe(k === "action");
@@ -223,6 +223,56 @@ describe("what a normal user never sees", () => {
     expect(user.limits).toHaveLength(LIMIT_CODES.length);
     expect(user.actions).toEqual([]);
     expect(contractFor("admin").pages.length).toBe(NAV_PAGES.length);
+  });
+});
+
+describe("the plan of a reply", () => {
+  const DIAG: Evidence = { id: "diagnosis-run-0123456789", kind: "state", title: "Diagnosis: the step failed", ref: "#/runs", observedAt: "2026-01-01T10:00:00.000Z" };
+  const step = (over: Record<string, unknown> = {}) => ({ kind: "reversible", title: "Save a copy of the log", evidence: ["S1"], expected: "You have a copy.", failure: "The copy is empty.", fallback: "Leave it as it is.", ...over });
+  const high = (over: Record<string, unknown> = {}) => step({ kind: "high-impact", title: "Start the step again", evidence: [DIAG.id], ...over });
+  const base = { type: "guided-resolution", summary: "Steps.", certainty: "confirmed", evidence: ["S1", DIAG.id] };
+  const check = (plan: unknown[], over: Record<string, unknown> = {}, input: Record<string, unknown> = {}) => checkReply({ ...base, plan, ...over }, { role: "user", offered: [STATE, DIAG], ...input })!;
+
+  it("is stored only when it has steps: no plan key otherwise", () => {
+    expect("plan" in check([]).reply).toBe(false);
+    expect("plan" in checkReply(good, { role: "user", offered: [DOC] })!.reply).toBe(false);
+    expect("plan" in check(["x", 3, null]).reply).toBe(false);
+    expect(check([step()]).reply.plan).toHaveLength(1);
+    expect(ReplySchema.safeParse(check([step(), high()]).reply).success).toBe(true);
+  });
+
+  it("a limit reply never has a plan", () => {
+    expect("plan" in checkReply({ ...good, limit: "changes-state", plan: [step()] }, { role: "user", offered: [DOC] })!.reply).toBe(false);
+  });
+
+  it("a high-impact step stays only on a confirmed, certain diagnosis; an uncertain source turns it into a check", () => {
+    const kept = check([high()]);
+    expect(kept.reply.plan![0]).toMatchObject({ kind: "high-impact" });
+    const doubted = check([high()], {}, { uncertain: [DIAG.id] });
+    expect(doubted.reply.certainty).toBe("likely");
+    expect(doubted.reply.plan![0]).toMatchObject({ kind: "check", wouldBe: "high-impact", proposal: "Start the step again" });
+  });
+
+  it("the text of the plan: kinds, would-be warning and what to expect, without a claim of success", () => {
+    const text = displayText(check([step(), high({ evidence: [] })]).reply);
+    expect(text).toContain("Plan (nothing is done until you do it):");
+    expect(text).toContain("1. [Reversible change] Save a copy of the log");
+    expect(text).toContain("Would be a high-impact change, do not do it yet: Start the step again");
+    expect(text).toContain("What you should see: You have a copy.");
+    expect(text).toContain("If it fails: The copy is empty.");
+    expect(text).toContain("Then: Leave it as it is.");
+    expect(text).not.toMatch(/succeeded|done\b(?! until)/i);
+  });
+
+  it("the contract lists the six kinds of step", () => {
+    expect(contractFor("user").steps.map((s) => s.id)).toEqual(["explanation", "navigation", "check", "input", "reversible", "high-impact"]);
+  });
+
+  it("a user keeps the instructions, expected, failure, fallback and proposal of every step", () => {
+    const reply = check([step({ instructions: "Paste it into a note." }), high({ evidence: [] })]).reply;
+    const seen = forRole("user", reply).plan!;
+    expect(seen[0]).toMatchObject({ instructions: "Paste it into a note.", expected: "You have a copy.", failure: "The copy is empty.", fallback: "Leave it as it is." });
+    expect(seen[1]).toMatchObject({ proposal: "Start the step again", expected: expect.any(String), fallback: expect.any(String) });
   });
 });
 

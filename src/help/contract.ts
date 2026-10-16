@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PLAN_MAX, PlanStepSchema, STEP_KINDS, STEP_RULES, checkPlan, type Impact } from "./plan.js";
 
 /**
  * The contract of Ask SCF, the help assistant inside the product: what it answers, what a reply may hold, what
@@ -29,17 +30,18 @@ export const QUESTION_RULES: Record<QuestionType, { what: string; evidence: Evid
 
 // ---- what a reply may hold -------------------------------------------------------------------------
 
-export const PART_KINDS = ["answer", "recommendation", "navigation", "draft", "action"] as const;
+export const PART_KINDS = ["answer", "recommendation", "navigation", "plan", "draft", "action"] as const;
 export type PartKind = (typeof PART_KINDS)[number];
 
 /**
- * The five parts of a reply. Only an action changes something, and only an action needs a confirmation; the other four
+ * The six parts of a reply. Only an action changes something, and only an action needs a confirmation; the other five
  * are text and links, and nothing happens until the person does it.
  */
 export const PART_RULES: Record<PartKind, { what: string; changesState: boolean; needsConfirmation: boolean }> = {
   answer: { what: "What is true, as far as Ask SCF can see. Nothing happens.", changesState: false, needsConfirmation: false },
   recommendation: { what: "What you could do. You decide and you do it; nothing happens by itself.", changesState: false, needsConfirmation: false },
   navigation: { what: "A link to a page of the Foundry that you may open. Opening it is your click.", changesState: false, needsConfirmation: false },
+  plan: { what: "Ordered steps to solve a problem. Nothing happens until you do a step yourself.", changesState: false, needsConfirmation: false },
   draft: { what: "A text for you to copy or change. It is not sent, saved or posted anywhere.", changesState: false, needsConfirmation: false },
   action: { what: "A change to the Foundry or to GitHub. Never done without your explicit approval.", changesState: true, needsConfirmation: true },
 };
@@ -60,6 +62,8 @@ export interface ActionDef {
   id: string;
   title: string;
   roles: HelpRole[];
+  /** How much the action can change: a step that uses it is at least this impact. */
+  impact: Impact;
 }
 
 /** The actions Ask SCF may propose. Empty: today it changes nothing at all, so every proposed action is dropped. */
@@ -258,6 +262,7 @@ export const ReplySchema = z
     links: z.array(LinkSchema).max(LIST_MAX.links),
     drafts: z.array(DraftSchema).max(LIST_MAX.drafts),
     actions: z.array(ActionSchema).max(LIST_MAX.actions),
+    plan: z.array(PlanStepSchema).max(PLAN_MAX).optional(),
     limit: LimitSchema.optional(),
   })
   .strict();
@@ -274,6 +279,7 @@ const RawSchema = z.object({
   links: z.array(z.unknown()).catch([]),
   drafts: z.array(z.unknown()).catch([]),
   actions: z.array(z.unknown()).catch([]),
+  plan: z.array(z.unknown()).catch([]),
   limit: z.unknown().optional(),
 });
 
@@ -283,6 +289,8 @@ export interface CheckInput {
   offered?: readonly Evidence[];
   /** Makes a text safe to keep (secrets out); applied to every text of the reply. */
   clean?: (text: string) => string;
+  /** Ids of offered sources the server marked as old or in disagreement: a reply that cites one is "likely" at most. */
+  uncertain?: readonly string[];
 }
 
 export interface Checked {
@@ -357,16 +365,32 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
     else if (actions.length < LIST_MAX.actions) actions.push({ id: def.id, title: def.title, impact: clean(obj(a)?.impact, TEXT_MAX.item) || def.title });
   }
 
+  let certainty = certaintyOf(r.type, r.certainty, evidence);
+  if (certainty === "confirmed" && evidence.some((e) => (input.uncertain ?? []).includes(e.id))) certainty = "likely";
+  const checkedPlan = checkPlan(r.plan, {
+    cited: evidence,
+    uncertain: input.uncertain ?? [],
+    certainty,
+    action: (id) => {
+      const def = ACTIONS.find((x) => x.id === id && x.roles.includes(input.role));
+      return def ? { id: def.id, impact: def.impact } : undefined;
+    },
+    page: (to) => navPage(input.role, to),
+    clean,
+  });
+  dropped.push(...checkedPlan.dropped);
+
   const reply: Reply = {
     type: r.type,
     summary,
     explanation: clean(r.explanation, TEXT_MAX.explanation),
-    certainty: certaintyOf(r.type, r.certainty, evidence),
+    certainty,
     evidence,
     recommendations,
     links,
     drafts,
     actions,
+    ...(checkedPlan.plan.length ? { plan: checkedPlan.plan } : {}),
   };
   return { reply, dropped };
 }
@@ -376,6 +400,17 @@ export function displayText(reply: Reply): string {
   const out: string[] = [reply.summary];
   if (reply.explanation) out.push("", reply.explanation);
   if (reply.recommendations.length) out.push("", reply.limit ? "What you can do:" : "What you could do:", ...reply.recommendations.map((x) => `- ${x}`));
+  if (reply.plan?.length) {
+    out.push("", "Plan (nothing is done until you do it):");
+    reply.plan.forEach((s, i) => {
+      out.push(`${i + 1}. [${STEP_RULES[s.kind].label}] ${s.title}`);
+      if (s.wouldBe) out.push(`   ${s.wouldBe === "high-impact" ? "Would be a high-impact change, do not do it yet" : "Would be a change, do not do it yet"}: ${s.proposal ?? ""}`);
+      if (s.instructions) out.push(`   ${s.instructions}`);
+      if (s.expected) out.push(`   What you should see: ${s.expected}`);
+      if (s.failure) out.push(`   If it fails: ${s.failure}`);
+      if (s.fallback) out.push(`   Then: ${s.fallback}`);
+    });
+  }
   if (reply.drafts.length) for (const d of reply.drafts) out.push("", `Draft (not sent): ${d.title}`, d.text);
   if (reply.actions.length) out.push("", "Needs your approval before anything happens:", ...reply.actions.map((a) => `- ${a.title}: ${a.impact}`));
   if (reply.links.length) out.push("", "Pages:", ...reply.links.map((l) => `- ${l.label} (${l.to})`));
@@ -392,6 +427,7 @@ export function contractFor(role: HelpRole) {
     readOnly: READ_ONLY_BY_DEFAULT,
     questions: QUESTION_TYPES.map((id) => ({ id, what: QUESTION_RULES[id].what })),
     parts: PART_KINDS.map((id) => ({ id, ...PART_RULES[id] })),
+    steps: STEP_KINDS.map((id) => ({ id, ...STEP_RULES[id] })),
     actionRules: [...ACTION_RULES],
     actions: ACTIONS.filter((a) => a.roles.includes(role)).map((a) => ({ id: a.id, title: a.title })),
     certainty: CERTAINTY.map((id) => ({ id, words: CERTAINTY_WORDS[id] })),

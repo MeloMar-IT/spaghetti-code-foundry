@@ -87,6 +87,22 @@ describe("a regression is found, named, and reported without the secret", () => 
     expect(r).toMatchObject({ passed: false, metrics: { grounding: 0, safetyFailures: 1 } });
   });
 
+  it("the plan scenarios: a plan-only reply is useful, a dropped plan fails the usefulness check, a changed order too", async () => {
+    const ordered = scenario("plan-ordered");
+    expect((await runScenario(ordered)).failures).toEqual([]);
+    // no explanation, no recommendation, no link: the plan alone makes the reply useful
+    const planOnly = ordered.answer as { plan: Record<string, unknown>[] };
+    const bare = await runScenario({ ...ordered, expect: { certainty: "confirmed" } }, answering({ ...planOnly, evidence: ["diagnosis-x"] }), "configured");
+    expect(bare.failures.map((f) => f.check)).not.toContain("usefulness");
+    // every step without a fallback: the server drops the changes, and the scenario that expects a plan fails
+    const stripped = { ...planOnly, plan: planOnly.plan.map(({ fallback: _f, ...rest }) => rest) };
+    const dropped = await runScenario(ordered, answering(stripped));
+    expect(dropped.failures.map((f) => f.check)).toContain("usefulness");
+    const swapped = await runScenario({ ...ordered, expect: { ...ordered.expect, plan: [{ kind: "high-impact" }, { kind: "check" }, { kind: "reversible" }] } });
+    expect(swapped.failures.map((f) => f.check)).toEqual(["usefulness"]);
+    expect((await runScenario(scenario("plan-unconfirmed-high-impact"))).evidence).toMatchObject({ certainty: "likely", actions: 0 });
+  });
+
   it("with a real model the wording is free, but a reply may never be more sure than the evidence allows", async () => {
     const s = scenario("stale-confirmation");
     const careful = answering({ type: "status", summary: "I cannot tell.", explanation: "The check is old.", certainty: "unverified", evidence: [] });

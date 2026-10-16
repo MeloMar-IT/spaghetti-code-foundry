@@ -926,3 +926,84 @@ describe("narrow screens and reduced motion (ui/css/pages/ask.css)", () => {
     for (const r of rules) expect(r.selector, r.selector).toMatch(/^\.ask-/);
   });
 });
+
+describe("a plan in the drawer", () => {
+  const SEEN = "2026-10-12T10:00:00.000Z";
+  const state = { id: "s1", kind: "state", title: "Run r-1 failed", ref: "#/runs/r-1", observedAt: SEEN };
+  const signals = { expected: "You see a copy.", failure: "It is empty.", fallback: "Stop." };
+  const plan = [
+    { kind: "reversible", title: "Save a copy of the log", evidence: ["s1"], ...signals },
+    { kind: "check", title: "Check first. Change nothing yet.", instructions: "Look at the page.", to: "#/runs", evidence: [], wouldBe: "high-impact", proposal: "Delete the run", ...signals },
+    { kind: "input", title: "Pick a branch", evidence: [] },
+  ];
+  const reply = { type: "guided-resolution", summary: "Steps.", explanation: "", certainty: "confirmed", evidence: [state], recommendations: [], links: [], drafts: [], actions: [], plan };
+  const memory = () => { const m = new Map<string, number[]>(); return { get: (id: string) => m.get(id) ?? [], set: (id: string, v: number[]) => void m.set(id, v) }; };
+  async function shown(over: any = {}) {
+    const made = make({ ...over, api: { helpConversation: vi.fn(async () => conv([q("How?"), a("done", { reply })])) } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    return made;
+  }
+  const cards = (d: any) => walk(d.ui.thread).filter((e) => e.classList.contains("ask-step"));
+  const buttons = (d: any) => walk(d.ui.thread).filter((e) => e.attrs["data-step"] !== undefined);
+
+  it("is an ordered list with one card per step, a danger pill on a step that would be high impact, and the proposal", async () => {
+    const { d } = await shown({ deps: { progress: memory() } });
+    const list = walk(d.ui.thread).find((e) => e.classList.contains("ask-plan"))!;
+    expect(list.tag).toBe("ol");
+    expect(cards(d)).toHaveLength(3);
+    const second = cards(d)[1]!;
+    const pills = walk(second).filter((e) => e.classList.contains("pill")).map((e) => `${e.attrs.class}: ${e.textContent}`);
+    expect(pills).toEqual(["pill sem-neutral: Read-only check", "pill sem-danger: Would be a high-impact change"]);
+    expect(second.classList.contains("ask-step-danger")).toBe(true);
+    expect(second.textContent).toContain("Proposed, not confirmed: Delete the run");
+    expect(second.textContent).toContain("What you should see");
+    expect(second.textContent).toContain("If it fails");
+    expect(cards(d)[0]!.attrs["aria-current"]).toBe("step");
+    expect(walk(d.ui.thread).find((e) => e.classList.contains("ask-plan-head"))!.textContent).toContain("1 is a high-impact change");
+  });
+
+  it("marks a step as done by the person's click, moves the current step, and says nothing was checked", async () => {
+    const progress = memory();
+    const { d } = await shown({ deps: { progress } });
+    buttons(d)[0]!.click();
+    expect(progress.get("a1")).toEqual([0]);
+    expect(buttons(d)[0]!.attrs["aria-pressed"]).toBe("true");
+    expect(cards(d)[0]!.attrs["aria-current"]).toBeUndefined();
+    expect(cards(d)[1]!.attrs["aria-current"]).toBe("step");
+    expect(cards(d)[0]!.textContent).toContain("You marked this. Ask SCF has not checked the result.");
+    expect(d.ui.thread.textContent).not.toMatch(/succeeded|worked/i);
+    buttons(d)[0]!.click();
+    expect(progress.get("a1")).toEqual([]);
+  });
+
+  it("reads the marks back after a redraw", async () => {
+    const progress = memory();
+    progress.set("a1", [1]);
+    const { d } = await shown({ deps: { progress } });
+    expect(buttons(d).map((b) => b.attrs["aria-pressed"])).toEqual(["false", "true", "false"]);
+    expect(cards(d)[0]!.attrs["aria-current"]).toBe("step");
+  });
+
+  it("keeps the marks in the tab and does not break when the tab has no storage", async () => {
+    const tab = new Map<string, string>();
+    (globalThis as any).sessionStorage = { getItem: (k: string) => tab.get(k) ?? null, setItem: (k: string, v: string) => void tab.set(k, v), removeItem: (k: string) => void tab.delete(k) };
+    try {
+      const { d } = await shown();
+      buttons(d)[2]!.click();
+      expect([...tab.entries()].filter(([k]) => k.startsWith("scf-ask-plan-"))).toEqual([["scf-ask-plan-a1", "[2]"]]);
+      (globalThis as any).sessionStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+      buttons(d)[0]!.click();
+      expect(buttons(d)[0]!.attrs["aria-pressed"]).toBe("true");
+    } finally {
+      delete (globalThis as any).sessionStorage;
+    }
+  });
+
+  it("shows a reply without a plan as before", async () => {
+    const made = make({ api: { helpConversation: vi.fn(async () => conv([q("How?"), a("done", { reply: { ...reply, plan: undefined } })])) } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    expect(cards(made.d)).toEqual([]);
+  });
+});
