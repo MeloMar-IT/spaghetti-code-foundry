@@ -6,6 +6,7 @@ import { PLAN_CHECK_STEP, planGateRecord, planSkillRequest, SKILL_REQUEST_GATES,
 import { RESOLVE_REASONS, RESOLVE_REJECT_CODES, UNRESOLVED_ACTIONS, UNRESOLVED_KINDS } from "../skills/resolve-rules.js";
 import { planHashOf, readRunSkillLock, safeText, verifyRunSkillLock, type RunSkillLock, type RunSkillLockRead } from "../skills/run-lock.js";
 import { relativePathProblem, SkillIdSchema, SkillVersionSchema } from "../skills/schema.js";
+import { skillSelectionView, type SkillSelectionView } from "./skill-selection-view.js";
 import { hidePaths } from "./user-view.js";
 
 // What a run page shows of the skills of a run: what the plan asked for ("requested") and what the run locked
@@ -60,6 +61,8 @@ export interface RunSkillView {
   checkedAt?: string;
   /** Administrator only. */
   commit?: string;
+  /** Why the skills were chosen; absent when there is nothing to explain. */
+  selection?: SkillSelectionView;
   requested: RequestedSkill[];
   resolved: ResolvedSkill[];
 }
@@ -326,6 +329,13 @@ function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined 
   if (!rows.length && !requested.length && !failed && !noted && lock !== "missing" && lock !== "changed") return undefined;
 
   const tokens = locked ? locked.estimatedTokens : rows.some((r) => r.estimatedTokens !== undefined) ? rows.reduce((n, r) => n + (r.estimatedTokens ?? 0), 0) : tokensOf(kept?.estimatedTokens);
+  const selection = (() => {
+    try {
+      return skillSelectionView(s, { admin: opts.admin, catalogueCurrent: !planChanged, lockPlanHash: locked?.planHash ?? (typeof kept?.planHash === "string" ? kept.planHash : undefined) });
+    } catch {
+      return undefined;
+    }
+  })();
   const view: RunSkillView = {
     lock,
     ...(planChanged ? { planChanged: true as const } : {}),
@@ -334,6 +344,7 @@ function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined 
     ...(tokens !== undefined && rows.length ? { estimatedTokens: tokens } : {}),
     ...(checkedAt ? { checkedAt } : {}),
     ...(opts.admin && locked?.commit ? { commit: locked.commit } : {}),
+    ...(selection ? { selection } : {}),
     requested,
     resolved: rows,
   };
