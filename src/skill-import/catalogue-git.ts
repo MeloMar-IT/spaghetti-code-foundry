@@ -285,3 +285,40 @@ export function createPullRequest(ctx: CatalogueContext, o: { repo: string; base
   if (!URL_RE.test(url)) throw new CatalogueError("gh-failed");
   return url;
 }
+
+const REVIEWER_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,99})?$/;
+
+/** Asks a GitHub user or team (`@octocat`, `@acme/skills`) to review an open pull request. */
+export function requestReviewer(ctx: CatalogueContext, o: { repo: string; url: string; reviewer: string }): void {
+  const handle = o.reviewer.replace(/^@/, "");
+  if (!URL_RE.test(o.url) || !REVIEWER_RE.test(handle)) throw new CatalogueError("gh-failed");
+  gh(ctx, ["pr", "edit", o.url, "--repo", o.repo, "--add-reviewer", handle]);
+}
+
+/** Who was asked to review a pull request (`requested`) and who did (`reviewed`): user logins and team names. */
+export function pullRequestReviewers(ctx: CatalogueContext, repo: string, url: string): { requested: string[]; reviewed: string[] } {
+  if (!URL_RE.test(url)) throw new CatalogueError("gh-failed");
+  const out = gh(ctx, ["pr", "view", url, "--repo", repo, "--json", "reviewRequests,reviews"]);
+  let v: unknown;
+  try {
+    v = JSON.parse(out);
+  } catch {
+    throw new CatalogueError("gh-failed");
+  }
+  const o = v as { reviewRequests?: unknown; reviews?: unknown } | null;
+  if (!o || !Array.isArray(o.reviewRequests) || !Array.isArray(o.reviews)) throw new CatalogueError("gh-failed");
+  const requested: string[] = [];
+  for (const r of o.reviewRequests as { login?: unknown; slug?: unknown; organization?: { login?: unknown } }[]) {
+    if (!r) continue;
+    if (typeof r.login === "string") requested.push(r.login);
+    if (typeof r.slug === "string") {
+      requested.push(r.slug);
+      if (typeof r.organization?.login === "string") requested.push(`${r.organization.login}/${r.slug}`);
+    }
+  }
+  const reviewed: string[] = [];
+  for (const r of o.reviews as { author?: { login?: unknown } }[]) {
+    if (typeof r?.author?.login === "string") reviewed.push(r.author.login);
+  }
+  return { requested, reviewed };
+}

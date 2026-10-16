@@ -3523,7 +3523,7 @@ sources:
       licence: MIT
 ```
 
-- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `licence.reviewed` (optional; the licence review digest, see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
+- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `licence.reviewed` (optional; the licence review digest, see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `update.reviewer` (optional; a GitHub user or team, as `owner`; see below), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
 - **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
 - **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
 - **Review of a community source.** `review` records who checked the maintainer and the licence, and when. It has four fields: `by` (a GitHub user or team, as `owner`), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id, equal to `ref.approved`) and `licence` (one of `licence.allow`). An enabled `trust: community` source is refused without `review`, and when `review.commit` is not `ref.approved`. A new commit needs a new review, so changing one word cannot raise the trust.
@@ -3541,6 +3541,7 @@ sources:
 
   Every other upstream capability becomes `confluent-<capability>`, so a vendor skill cannot take over a portable capability by accident. A skill with a vendor capability gets the provider block. A source without `profile` is unchanged. `scf skills sources check` prints `provider confluent (1 portable)` for the source. It refuses a mapping to an invalid slug, a duplicate key and a `profile` without `provider`. A slug longer than 64 characters, or two upstream names that land on the same slug, is a problem that names the skill and the capability; nothing is dropped silently. The profile is not applied during import or scan yet.
 - **Owner and policy.** Every source has an owner and an update cadence.
+- **Reviewer for unattended updates.** `update.reviewer` names the GitHub user or team that reviews a new commit of an enabled `trust: community` source when `scf skills update --due` runs without a person. The tool never invents a reviewer. Without it, such a source prints `PROBLEM … needs update.reviewer` and no pull request is opened. The field is part of this file, so it is set by a reviewed pull request. `scf skills sources check` validates it; an existing file without it stays valid.
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
 - **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)); and `vercel-agent-skills` (`https://github.com/vercel-labs/agent-skills`): `paths` must be `skills` or `agent-skills` or a folder below one of them, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `MIT` (see [Vercel agent skills](#vercel-agent-skills)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
 - **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. A reviewed source is listed with `reviewed by <by> on <on>`. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
@@ -4090,6 +4091,61 @@ Walk-through for the awesome-copilot connector:
 2. **Review.** Read the pull request: the changes since the approved commit, the licence (`MIT` for this connector), the attribution, the collisions and the scan in the body. Check that the reviewer named is the one who checked them.
 3. **Merge.** The source is then pinned by the merged file. `scf skills import awesome-copilot` fetches that commit, and `scf skills review awesome-copilot` shows the report again.
 4. **Next update.** When upstream moves, run `scf skills update awesome-copilot --reviewer @reviewer` again. While upstream is unchanged it prints `UNCHANGED`.
+
+#### Check every due source
+
+`scf skills update --due [--all]` checks every enabled source whose update cadence is due, one after the other, and gives each the same outcome as `scf skills update <source-id>`. Use it on a schedule, so no one has to remember each library.
+
+```
+scf skills update --due
+scf skills update --due --all
+```
+
+- **Which sources.** `--due` takes the enabled sources whose `update.cadence` is not `manual` and is due. A source is due when it was never checked, when its last check ended with `PROBLEM` (it is retried on the next run), or when its last check is at least 1 day (`daily`), 7 days (`weekly`) or 30 days (`monthly`) old. `--all` checks every enabled source and ignores the cadence. `manual` sources are never due by `--due`; they are checked only by `scf skills update <source-id>`. `--due` cannot be used with a source id, and takes no `--owner`, `--reviewer` or `--licence`: a community source names its reviewer in `update.reviewer`.
+- **The list.** The sources are read from `skill-sources.yaml` on `origin/<default branch>`, not from the working copy. A clone that is behind origin needs no `git pull`. A file that is not on origin, or that does not pass `scf skills sources check`, stops the run with one `PROBLEM` line per error.
+- **Community sources.** For a new commit of an enabled community source, the pull request names `update.reviewer` as the reviewer. The reviewer is asked on GitHub after the pull request is opened. The pull request says that the review has not been done yet; do not merge before it is. A licence that is not clear from `licence.allow` still needs a person: the source prints `PROBLEM … needs --licence` and nothing is opened.
+- **One source fails, the others go on.** Each source prints its lines prefixed with its id, for example `awesome-copilot: OPEN <url> for awesome-copilot@<commit>; no second pull request was opened`. An unchanged source produces no branch and no pull request, and a second run over the same revision produces no second pull request.
+- **Summary and exit code.** The last line counts the outcomes: `CHECKED <n> sources: <n> UNCHANGED, <n> OPEN, <n> UPDATED, <n> OK, <n> PROBLEM`, with `not due` and `manual` counts when some sources were skipped. The run exits 1 when any source printed `PROBLEM`, and also when it was interrupted (Ctrl-C).
+- **Record of checks.** After the check of each source ends, its time and outcome are written to `skill-update-checks.json` in the data folder (schema 1, written atomically). A missing or unreadable file means every source counts as never checked; the run prints one `NOTE` for it and goes on. The file is not in the repository and holds no secrets.
+
+Schedule it with cron, run from the clone of the catalogue repository (the folder that holds `skill-sources.yaml`). Give `scf` by its full path, and check the log:
+
+```
+# crontab -e: every day at 06:00
+0 6 * * * cd /Users/you/catalogue && /usr/local/bin/scf skills update --due >> /Users/you/Library/Logs/scf-skill-update.log 2>&1
+```
+
+On macOS, launchd runs it the same way. Save this as `~/Library/LaunchAgents/com.example.scf-skill-update.plist` and load it with `launchctl load`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.scf-skill-update</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>cd /Users/you/catalogue &amp;&amp; /usr/local/bin/scf skills update --due</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>6</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/you/Library/Logs/scf-skill-update.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/scf-skill-update.log</string>
+</dict>
+</plist>
+```
+
+`gh` must be installed and signed in for the user that runs the job, the same as for a single source.
 
 #### Score and gate an import
 
@@ -5116,6 +5172,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance, findings, evaluations and effect allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `EVALUATION`, `EFFECT`, `CHECKED` lines); reads `skill-evaluations.yaml` (evaluations and effect decisions), `skill-selections.yaml` and the effect records; offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion), [Confluent skills](#confluent-skills)) |
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `VERSIONS`, `PROBLEM` and `OVERLAP` lines; reads `skill-selections.yaml`; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
 | `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it, or refresh the open one (`UNCHANGED`, `OPEN`, `UPDATED` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
+| `scf skills update --due [--all]` | Check every enabled source whose update cadence is due (`--all`: every enabled source), one line per outcome per source and a `CHECKED` summary; exits 1 on any `PROBLEM` ([Check every due source](#check-every-due-source)) |
 | `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
 | `scf skills score <source-id> [<suite-file>] [--agent]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline, except `--agent`, which also runs the instructions scenarios in the macOS sandbox ([Run the scenarios in the sandbox](#run-the-scenarios-in-the-sandbox)); exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes, including the effect codes), `DECISION` or `PROBLEM` per staged skill from its newest evaluation record and its newest effect record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
