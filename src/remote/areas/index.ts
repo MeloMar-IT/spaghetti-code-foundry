@@ -11,6 +11,8 @@ export const ALL: Cmd[] = [...SYSTEM, ...WORK, ...SETUP, ...PEOPLE, ...REFINE, .
 
 /** Calls of the server that have no command, each with the reason. A test fails when a call is in neither list. */
 export const API_ONLY: Record<string, string> = {
+  "GET help/conversations/:id/handoffs": "the pages a reply of the Ask SCF drawer can be taken to; the command line has no page to open",
+  "POST help/conversations/:id/handoffs": "records a hand-off made from the Ask SCF drawer; the command line has no page to open",
   "POST help/conversations/:id/actions": "a button of a reply in the Ask SCF drawer that opens a page; the command line has no page to open",
   "GET runs/:id/events": "a live stream that does not end; the command line reads a whole answer before it prints",
   "GET restart": "the state the Settings page shows next to its restart box; the restart itself is asked for in the interface",

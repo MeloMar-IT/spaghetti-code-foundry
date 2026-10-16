@@ -222,6 +222,8 @@ export const api = {
   rateHelp: (id, body) => req("POST", `/api/help/conversations/${enc(id)}/feedback`, body, true),
   solveHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/complete`, { resolved: true }, true),
   helpOffer: (id, body) => req("POST", `/api/help/conversations/${enc(id)}/actions`, body, true),
+  helpHandoffs: (id, message) => req("GET", `/api/help/conversations/${enc(id)}/handoffs?message=${enc(message)}`, undefined, true),
+  recordHandoff: (id, body) => req("POST", `/api/help/conversations/${enc(id)}/handoffs`, body, true),
   archiveHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/archive`, {}, true),
   restoreHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/restore`, {}, true),
   deleteHelp: (id) => req("DELETE", `/api/help/conversations/${enc(id)}`, undefined, true),

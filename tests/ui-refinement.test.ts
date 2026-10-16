@@ -1190,3 +1190,213 @@ describe("states of the list and the session", () => {
     expect(sent).toEqual([{ method: "POST", url: "/api/refinement/s1/drop", body: {} }]);
   });
 });
+
+describe("a hand-off from Ask SCF", () => {
+  const CONV = "11111111-1111-4111-8111-111111111111";
+  const fill = (over: object = {}) => ({ title: "Why does it wait?", text: "Question:\nWhy?", fromHelp: CONV, ...over });
+  let wishes: any;
+  let handoff: any;
+  beforeAll(async () => {
+    wishes = await import("../ui/palette-data.js" as string);
+    handoff = await import("../ui/ask-handoff.js" as string);
+  });
+  beforeEach(() => wishes.resetWishes());
+  const type = (name: string, value: string) => {
+    const el = field(root(), name)!;
+    el.value = value;
+    el.fire("input");
+  };
+  const escape = () => (document as any).listeners.keydown.forEach((f: any) => f({ key: "Escape" }));
+  const optionsOf = () => walk(field(root(), "repo")!).filter((e) => e.tag === "option").map((e) => e.textContent);
+
+  it("sessionBody sends fromHelp for an idea only, and drops a bad one", () => {
+    expect(fresh.sessionBody({ repo: "a/b", idea: "x", fromHelp: CONV })).toEqual({ repo: "a/b", idea: "x", fromHelp: CONV });
+    expect(fresh.sessionBody({ repo: "a/b", kind: "issue", issue: "3", fromHelp: CONV })).toEqual({ repo: "a/b", issue: 3 });
+    for (const bad of ["c1", 5, null, undefined]) expect(fresh.sessionBody({ repo: "a/b", idea: "x", fromHelp: bad })).toEqual({ repo: "a/b", idea: "x" });
+  });
+
+  it("opens the dialog filled in, saves nothing until Start session, and then sends fromHelp", async () => {
+    void fresh.wishedSession(["acme/app"], undefined, { fill: fill() });
+    expect(field(root(), "title")!.value).toBe("Why does it wait?");
+    expect(field(root(), "idea")!.value).toBe("Question:\nWhy?");
+    expect(root().textContent).toContain("Filled in from Ask SCF. Check the text and change it as you like. Nothing is saved until you press Start session.");
+    await flush();
+    expect(sent).toEqual([]);
+    press(button(root(), "Start session"));
+    await flush();
+    expect(sent).toEqual([{ method: "POST", url: "/api/refinement", body: { repo: "acme/app", idea: "Question:\nWhy?", title: "Why does it wait?", fromHelp: CONV } }]);
+  });
+
+  it("calls nothing when the dialog is closed, and keeps nothing", async () => {
+    void fresh.wishedSession(["acme/app"], undefined, { fill: fill() });
+    escape();
+    await flush();
+    expect(sent).toEqual([]);
+    expect(fresh.keptSession()).toBeNull();
+  });
+
+  it("does not erase a draft kept from an earlier dialog, and never keeps fromHelp", async () => {
+    void fresh.newSessionDialog(["acme/app"], undefined);
+    type("idea", "Draft A");
+    escape();
+    expect(fresh.keptSession()).toMatchObject({ idea: "Draft A" });
+    void fresh.wishedSession(["acme/app"], undefined, { fill: fill() });
+    press(button(root(), "Start session"));
+    await flush();
+    expect(sent).toHaveLength(1);
+    expect(fresh.keptSession()).toMatchObject({ idea: "Draft A" });
+    expect(JSON.stringify(fresh.keptSession())).not.toContain(CONV);
+    root().replaceChildren();
+    void fresh.newSessionDialog(["acme/app"], undefined);
+    expect(field(root(), "idea")!.value).toBe("Draft A");
+  });
+
+  it("selects the repository of the fill over a kept one", () => {
+    void fresh.newSessionDialog(["a/one", "b/two"], undefined);
+    const select = field(root(), "repo")!;
+    select.value = "a/one";
+    select.fire("change");
+    escape();
+    expect(fresh.keptSession()).toMatchObject({ repo: "a/one" });
+    root().replaceChildren();
+    void fresh.wishedSession(["a/one", "b/two"], undefined, { fill: fill({ repo: "b/two" }) });
+    expect(field(root(), "repo")!.value).toBe("b/two");
+  });
+
+  it("keeps the kept repository when the fill names none", () => {
+    void fresh.newSessionDialog(["a/one", "b/two"], undefined);
+    const select = field(root(), "repo")!;
+    select.value = "b/two";
+    select.fire("change");
+    escape();
+    root().replaceChildren();
+    void fresh.wishedSession(["a/one", "b/two"], undefined, { fill: fill() });
+    expect(field(root(), "repo")!.value).toBe("b/two");
+    expect(field(root(), "idea")!.value).toBe("Question:\nWhy?");
+  });
+
+  it("makes the person choose when the repository of the fill is not in the list", async () => {
+    void fresh.wishedSession(["a/one", "b/two"], undefined, { fill: fill({ repo: "gone/repo" }) });
+    expect(optionsOf()).toEqual(["Choose a repository", "a/one", "b/two"]);
+    expect(field(root(), "repo")!.value).toBe("");
+    press(button(root(), "Start session"));
+    await flush();
+    expect(bad(root())).toEqual(["Choose a repository."]);
+    expect(sent).toEqual([]);
+  });
+
+  it("opens the empty dialog for the palette's wish, still preferring the kept repository, and nothing without a wish", () => {
+    void fresh.newSessionDialog(["a/one", "b/two"], undefined);
+    const select = field(root(), "repo")!;
+    select.value = "b/two";
+    select.fire("change");
+    escape();
+    root().replaceChildren();
+    void fresh.wishedSession(["a/one", "b/two"], undefined, {});
+    expect(field(root(), "repo")!.value).toBe("b/two");
+    expect(field(root(), "idea")!.value).toBe("");
+    expect(root().textContent).not.toContain("Filled in from Ask SCF");
+    root().replaceChildren();
+    expect(fresh.wishedSession(["a/one"], undefined, null)).toBeUndefined();
+    expect(root().children).toHaveLength(0);
+    // a fill that is not valid is no fill
+    void fresh.wishedSession(["a/one"], undefined, { fill: fill({ fromHelp: "c1" }) });
+    expect(field(root(), "idea")!.value).toBe("");
+  });
+
+  describe("on the page", () => {
+    const listed = { ok: true, status: 200, statusText: "x", json: async () => ({ sessions: [], repos }) };
+    let release: () => void;
+    let held: Promise<void>;
+    const slowList = () => {
+      held = new Promise<void>((r) => (release = r));
+      const before = globalThis.fetch as any;
+      (globalThis as any).fetch = async (url: string, init: { method: string }) => {
+        if (init.method === "GET" && url === "/api/refinement") {
+          await held;
+          return listed;
+        }
+        return before(url, init);
+      };
+    };
+    afterEach(() => vi.restoreAllMocks());
+
+    it("opens the filled dialog even when the list loads more slowly than a wish lives", async () => {
+      slowList();
+      wishes.sendWish("refinement", { fill: fill() });
+      const rendering = ui.renderRefinement(main(), {});
+      await flush();
+      const now = Date.now();
+      vi.spyOn(Date, "now").mockReturnValue(now + 10_000);
+      release();
+      await rendering;
+      await flush();
+      expect(field(root(), "title")!.value).toBe("Why does it wait?");
+    });
+
+    it("opens the dialog for a wish that is sent while the list is still loading", async () => {
+      slowList();
+      const rendering = ui.renderRefinement(main(), {});
+      await flush();
+      wishes.sendWish("refinement", { fill: fill() });
+      expect(root().children).toHaveLength(0);
+      release();
+      await rendering;
+      await flush();
+      expect(field(root(), "title")!.value).toBe("Why does it wait?");
+      // afterwards a wish opens the dialog at once
+      root().replaceChildren();
+      wishes.sendWish("refinement", { fill: fill({ title: "Second" }) });
+      expect(field(root(), "title")!.value).toBe("Second");
+    });
+
+    it("opens no dialog when the person went elsewhere before the list came", async () => {
+      slowList();
+      wishes.sendWish("refinement", { fill: fill() });
+      const rendering = ui.renderRefinement(main(), {});
+      await flush();
+      (globalThis as any).location.hash = "#/runs";
+      release();
+      await rendering;
+      await flush();
+      expect(root().children).toHaveLength(0);
+    });
+  });
+
+  describe("the link back", () => {
+    afterEach(() => (document as any).getElementById("ask-btn")?.remove?.());
+    it("shows nothing without fromHelp or with a bad one", () => {
+      expect(fresh.helpOrigin({})).toEqual([]);
+      expect(fresh.helpOrigin({ fromHelp: "c1" })).toEqual([]);
+    });
+    it("opens the conversation through the event when the drawer exists", () => {
+      const seen: string[] = [];
+      const onOpen = (e: any) => seen.push(e.detail.id);
+      (globalThis as any).addEventListener = (t: string, fn: any) => { if (t === handoff.ASK_OPEN_EVENT) (globalThis as any).__fire = fn; };
+      (globalThis as any).dispatchEvent = (e: any) => (globalThis as any).__fire?.(e);
+      (globalThis as any).CustomEvent = class { type: string; detail: any; constructor(t: string, init: any) { this.type = t; this.detail = init.detail; } };
+      (globalThis as any).addEventListener(handoff.ASK_OPEN_EVENT, onOpen);
+      const slot = new FakeElement("span");
+      slot.attrs.id = "ask-btn";
+      const real = (document as any).getElementById.bind(document);
+      (document as any).getElementById = (id: string) => (id === "ask-btn" ? slot : real(id));
+      try {
+        const nodes = fresh.helpOrigin({ fromHelp: CONV });
+        expect(nodes).toHaveLength(1);
+        expect(nodes[0].textContent).toContain("Started from one of your Ask SCF conversations.");
+        const open = walk(nodes[0]).find((e) => e.textContent === "Open the conversation")!;
+        open.click();
+        expect(seen).toEqual([CONV]);
+        // without the button of the drawer there is no control
+        (document as any).getElementById = (id: string) => (id === "ask-btn" ? null : real(id));
+        expect(walk(fresh.helpOrigin({ fromHelp: CONV })[0])).toEqual([]);
+      } finally {
+        (document as any).getElementById = real;
+        delete (globalThis as any).addEventListener;
+        delete (globalThis as any).dispatchEvent;
+        delete (globalThis as any).CustomEvent;
+        delete (globalThis as any).__fire;
+      }
+    });
+  });
+});
