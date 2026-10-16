@@ -282,3 +282,97 @@ describe("canonicalStop", () => {
     expect(stop).toBe(`${CANONICAL_STOP_PREFIX}"w" is a canonical skill but needs "l", which is not. Pin the skills so that they agree, then run again.`);
   });
 });
+
+describe("companions: complementary providers of an exclusive capability", () => {
+  const both = (id: string, o: Partial<CanonicalCandidate> = {}) => cand(id, { composable: ["cap"], ...o });
+  const win = (id: string, o: Partial<CanonicalCandidate> = {}) => both(id, { tier: "local", ...o });
+  const ids = (r: CanonicalResolution) => r.companions.map((c) => c.id);
+  const perms = (xs: CanonicalCandidate[]): CanonicalCandidate[][] =>
+    xs.length <= 1 ? [xs] : xs.flatMap((x, i) => perms([...xs.slice(0, i), ...xs.slice(i + 1)]).map((p) => [x, ...p]));
+
+  it("loads a provider next to the winner when both declare the capability", () => {
+    const b = both("b");
+    const res = selectCanonicalSkills([win("a"), b], pol());
+    const r = res.resolutions[0]!;
+    expect(r.winner?.id).toBe("a");
+    expect(ids(r)).toEqual(["b"]);
+    expect(codeOf(r, "b")).toBeUndefined();
+    expect(res.companions).toEqual([canonicalKey(b)]);
+    expect(res.left).toEqual([]);
+    expect(res.ok).toBe(true);
+  });
+  it("is never a companion when only one side declares it, in either order", () => {
+    for (const cs of [[win("a"), cand("b")], [cand("a", { tier: "local" }), both("b")]]) {
+      const res = selectCanonicalSkills(cs, pol());
+      expect(res.resolutions[0]!.companions).toEqual([]);
+      expect(res.companions).toEqual([]);
+      expect(codeOf(res.resolutions[0]!, "b")).toMatchObject({ code: "outranked" });
+      expect(res.left).toEqual([canonicalKey(cs[1]!)]);
+    }
+  });
+  it("lists several companions in rank order", () => {
+    const r = one([both("c", { tier: "vetted-community" }), win("z"), both("a", { tier: "official-vendor" }), both("m", { tier: "scf-curated" })]);
+    expect(r.winner?.id).toBe("z");
+    expect(ids(r)).toEqual(["m", "a", "c"]);
+  });
+  it("never takes an ineligible provider", () => {
+    const r = one([win("a"), both("b", { failed: ["safety"] })]);
+    expect(r.companions).toEqual([]);
+    expect(codeOf(r, "b")?.code).toBe("safety");
+  });
+  it("never takes a provider that loses another exclusive capability it provides", () => {
+    const cs = [win("a"), both("b", { capabilities: ["cap", "other"], composable: ["cap"] }), cand("c", { capabilities: ["other"], tier: "local" })];
+    const res = selectCanonicalSkills(cs, pol({ exclusive: ["cap", "other"] }));
+    const r = res.resolutions.find((x) => x.capability === "cap")!;
+    expect(r.companions).toEqual([]);
+    expect(codeOf(r, "b")).toMatchObject({ code: "overlap", via: "other" });
+    expect(res.left).toContain(canonicalKey(cs[1]!));
+  });
+  it("takes it when the other capability is composable for both", () => {
+    const b = both("b", { capabilities: ["cap", "other"], composable: ["cap", "other"] });
+    const cs = [win("a"), b, cand("c", { capabilities: ["other"], tier: "local", composable: ["other"] })];
+    const res = selectCanonicalSkills(cs, pol({ exclusive: ["cap", "other"] }));
+    expect(res.resolutions.map((r) => ids(r))).toEqual([["b"], ["b"]]);
+    expect(res.companions).toEqual([canonicalKey(b)]);
+  });
+  it("removes a companion everywhere when it fails one capability", () => {
+    // b would accompany "cap" and "other", but the winner of "other" does not declare it.
+    const b = both("b", { capabilities: ["cap", "other"], composable: ["cap", "other"] });
+    const cs = [win("a"), b, cand("c", { capabilities: ["other"], tier: "local" })];
+    const res = selectCanonicalSkills(cs, pol({ exclusive: ["cap", "other"] }));
+    expect(res.companions).toEqual([]);
+    expect(res.resolutions.map((r) => ids(r))).toEqual([[], []]);
+    expect(res.left).toEqual([canonicalKey(b)]);
+  });
+  it("lets a provider win one capability and accompany the winner of another", () => {
+    // x wins "other" and is only a companion for "cap", where a wins; both declare cap composable.
+    const x = cand("x", { capabilities: ["cap", "other"], composable: ["cap"], tier: "scf-curated" });
+    const a = win("a");
+    const res = selectCanonicalSkills([a, x, cand("y", { capabilities: ["other"], tier: "vetted-community" })], pol({ exclusive: ["cap", "other"] }));
+    expect(res.ok).toBe(true);
+    const cap = res.resolutions.find((r) => r.capability === "cap")!;
+    const other = res.resolutions.find((r) => r.capability === "other")!;
+    expect(cap.winner?.id).toBe("a");
+    expect(ids(cap)).toEqual(["x"]);
+    expect(other.winner?.id).toBe("x");
+    expect(res.selected).toContain(canonicalKey(x));
+    expect(res.companions).toEqual([]);
+  });
+  it("gives no companions in a conflict", () => {
+    const res = selectCanonicalSkills([win("a", { risk: "high" }), win("b", { risk: "high" })], pol());
+    expect(res.resolutions[0]!.outcome).toBe("conflict");
+    expect(res.resolutions[0]!.companions).toEqual([]);
+    expect(res.companions).toEqual([]);
+  });
+  it("does not depend on the input order, and selected, companions and left partition the providers", () => {
+    const set = [win("a"), both("b", { tier: "scf-curated" }), both("c", { tier: "official-vendor" }), cand("d", { tier: "vetted-community" })];
+    const first = selectCanonicalSkills(set, pol());
+    expect(ids(first.resolutions[0]!)).toEqual(["b", "c"]);
+    for (const order of perms(set)) expect(selectCanonicalSkills(order, pol())).toEqual(first);
+    const all = [...first.selected, ...first.companions, ...first.left].sort();
+    expect(all).toEqual(set.map(canonicalKey).sort());
+  });
+  it("refuses a composable entry that is not a capability", () => {
+    expect(() => selectCanonicalSkills([cand("a", { composable: ["nope"] })], pol())).toThrow(TypeError);
+  });
+});

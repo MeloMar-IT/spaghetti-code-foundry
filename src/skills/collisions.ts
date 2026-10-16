@@ -32,6 +32,8 @@ export interface MemberSettings {
   /** Sorted by name. */
   dependencies: { name: string; minVersion?: string; fingerprint?: string }[];
   connectors: string[];
+  /** Sorted; absent when empty. */
+  composable?: string[];
   toolProfile: SkillToolProfile;
   risk: SkillRisk;
   technologies: { name: string; version?: string }[];
@@ -171,6 +173,7 @@ function settingsOf(skill: NormalizedSkill, targets: Readonly<Record<string, str
     category: pkg.category,
     dependencies,
     connectors: sorted(pkg.connectors ?? []),
+    ...(pkg.composable?.length ? { composable: sorted(pkg.composable) } : {}),
     toolProfile: { ...pkg.tool_profile },
     risk: pkg.risk,
     technologies: provenance.technologies.map((t) => ({ ...t })).sort((a, b) => byteCmp(a.name, b.name) || byteCmp(a.version ?? "", b.version ?? "")),

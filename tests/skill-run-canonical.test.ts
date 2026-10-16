@@ -21,13 +21,13 @@ const tmp = () => {
   return d;
 };
 
-function sk(id: string, o: { source?: string; caps?: string[]; deps?: string[]; text?: string; needs?: boolean } = {}): RegisteredSkill {
+function sk(id: string, o: { source?: string; caps?: string[]; deps?: string[]; text?: string; needs?: boolean; composable?: string[] } = {}): RegisteredSkill {
   return {
     key: `${id}@1.0.0`, id, version: "1.0.0", source: o.source ?? "admin", label: "data folder", dir: "/d", active: true, trust: "approved", pin: "pinned",
     digest: `sha256:${"a".repeat(64)}`,
     pkg: {
       id, version: "1.0.0", description: `About ${id}.`, instructions: o.text ?? "Do it.", roles: [], dependencies: (o.deps ?? []).map((d) => ({ id: d })), conflicts: [],
-      capabilities: o.caps ?? ["cap"], category: "general", risk: "low", ...(o.needs ? { tool_profile: { shell: true } } : {}),
+      capabilities: o.caps ?? ["cap"], composable: o.composable ?? [], category: "general", risk: "low", ...(o.needs ? { tool_profile: { shell: true } } : {}),
     },
   } as unknown as RegisteredSkill;
 }
@@ -86,7 +86,7 @@ describe("liveCanonicalDeps", () => {
 
 describe("canonicalRecord", () => {
   const ref = (id: string) => ({ id, version: "1.0.0", fingerprint: "fp", tier: "local" as const });
-  const res = (o: Partial<CanonicalResolution>): CanonicalResolution => ({ capability: "cap", outcome: "selected", highRisk: false, rejected: [], ignored: [], ...o });
+  const res = (o: Partial<CanonicalResolution>): CanonicalResolution => ({ capability: "cap", outcome: "selected", highRisk: false, companions: [], rejected: [], ignored: [], ...o });
 
   it("keeps five rejected entries and counts the rest", () => {
     const rejected = Array.from({ length: 7 }, (_, i) => ({ ...ref(`r${i}`), code: "outranked" as const, level: "trust-tier" as const }));
@@ -95,6 +95,13 @@ describe("canonicalRecord", () => {
     expect(r!.rejected).toHaveLength(5);
     expect(r!.rejected[0]).toEqual({ skill: "r0@1.0.0", code: "outranked", level: "trust-tier" });
     expect(r!.rejectedOmitted).toBe(2);
+  });
+
+  it("lists companions as id@version, and only when there are some", () => {
+    const [r] = canonicalRecord([res({ winner: ref("w"), companions: [ref("c1"), ref("c2")] })]);
+    expect(r!.companions).toEqual(["c1@1.0.0", "c2@1.0.0"]);
+    const [plain] = canonicalRecord([res({ winner: ref("w") })]);
+    expect(plain).not.toHaveProperty("companions");
   });
 
   it("leaves out a capability with nothing to say, keeps ignored choices, and holds no free text", () => {
@@ -162,6 +169,78 @@ describe("lockCanonical and canonicalResolve", () => {
     expect(r.dropped).toEqual(["b"]);
     expect(r.resolution.selected.map((s) => s.id)).toEqual(["a"]);
     expect(r.record[0]).toMatchObject({ winner: "a@1.0.0", decidedBy: "trust-tier", rejected: [{ skill: "b@1.0.0", code: "outranked", level: "trust-tier" }] });
+  });
+
+  describe("companions", () => {
+    const text = "Long instructions. ".repeat(100);
+    // z wins on the tier; "a" sorts first but is a companion and must be loaded after it.
+    const win = (composable = true) => sk("z", { source: "admin", text, composable: composable ? ["cap"] : [] });
+    const comp = (composable = true) => sk("a", { source: "builtin", text: `${text} More.`, composable: composable ? ["cap"] : [] });
+    const resolve = (registry: ReturnType<typeof reg>, ids: string[], limits?: { maxTokens: number }) => {
+      const r = canonicalResolve({ reg: registry, ids, opts: { ...opts, ...(limits ? { limits } : {}) }, deps: deps() });
+      if (!("record" in r)) throw new Error("expected a record");
+      return r;
+    };
+
+    it("loads the winner first, then the companion, and records it", () => {
+      const r = resolve(reg(comp(), win()), ["a", "z"]);
+      expect(r.resolution.selected.map((s) => s.id)).toEqual(["z", "a"]);
+      expect(r.dropped).toEqual([]);
+      expect(r.record[0]).toMatchObject({ winner: "z@1.0.0", companions: ["a@1.0.0"] });
+      expect(r.record[0]!.rejected).toEqual([]);
+    });
+
+    it("leaves the companion out as over-budget when only the winner fits, and never the winner", () => {
+      const r = resolve(reg(comp(), win()), ["a", "z"], { maxTokens: 700 });
+      expect(r.resolution.selected.map((s) => s.id)).toEqual(["z"]);
+      expect(r.resolution.decisions.find((d) => d.id === "a")).toMatchObject({ outcome: "rejected", code: "over-budget" });
+      expect(r.dropped).toEqual([]);
+    });
+
+    it("keeps the winner first when a request needs the companion as a dependency", () => {
+      const helper = sk("a-helper", { source: "admin", caps: [], deps: ["a"], text: "x" });
+      const r = resolve(reg(helper, comp(), win()), ["a", "a-helper", "z"], { maxTokens: 700 });
+      expect(r.resolution.selected.map((s) => s.id)).toEqual(["z"]);
+    });
+
+    it("holds back a request that needs the companion only as a dependency", () => {
+      const helper = sk("a-helper", { source: "admin", caps: [], deps: ["a"], text: "x" });
+      const r = resolve(reg(helper, comp(), win()), ["a-helper", "z"], { maxTokens: 700 });
+      expect(r.resolution.selected.map((s) => s.id)).toEqual(["z"]);
+      expect(r.record[0]).toMatchObject({ winner: "z@1.0.0" });
+      const roomy = resolve(reg(helper, comp(), win()), ["a-helper", "z"]);
+      expect(roomy.resolution.selected.map((s) => s.id)).toEqual(["z", "a", "a-helper"]);
+    });
+
+    it("orders a companion that wins another capability after the winner it accompanies", () => {
+      const both = (): CanonicalDeps => deps({ policy: { exclusive: ["cap", "other"], highRisk: [] } });
+      const dual = sk("a", { source: "builtin", caps: ["cap", "other"], text, composable: ["cap"] });
+      const run = (limits?: { maxTokens: number }) => {
+        const r = canonicalResolve({ reg: reg(dual, win()), ids: ["a", "z"], opts: { ...opts, ...(limits ? { limits } : {}) }, deps: both() });
+        if (!("record" in r)) throw new Error("expected a record");
+        return r;
+      };
+      expect(run().resolution.selected.map((s) => s.id)).toEqual(["z", "a"]);
+      const tight = run({ maxTokens: 700 });
+      expect(tight.resolution.selected.map((s) => s.id)).toEqual(["z"]);
+      expect(tight.record.find((x) => x.capability === "cap")).toMatchObject({ winner: "z@1.0.0" });
+    });
+
+    it("drops a provider that does not declare it", () => {
+      const r = resolve(reg(comp(false), win()), ["a", "z"]);
+      expect(r.dropped).toEqual(["a"]);
+      expect(r.resolution.selected.map((s) => s.id)).toEqual(["z"]);
+      const one = resolve(reg(comp(), win(false)), ["a", "z"]);
+      expect(one.dropped).toEqual(["a"]);
+    });
+
+    it("tells mirrors apart by what they declare", () => {
+      // Same text; one declares composable, one does not: they are not merged, so the companion is judged on its own.
+      const x = sk("a", { source: "builtin", text, composable: ["cap"] });
+      const y = { ...sk("a2", { source: "builtin", text, composable: [] }), pkg: { ...sk("a2", { text, composable: [] }).pkg, description: x.pkg.description } } as RegisteredSkill;
+      const r = resolve(reg(x, y, win()), ["a", "z"]);
+      expect(r.resolution.selected.map((s) => s.id)).toEqual(["z", "a"]);
+    });
   });
 
   it("keeps a pin-resolved decision", () => {

@@ -137,6 +137,8 @@ export const SkillManifestSchema = z
     version: SkillVersionSchema,
     category: slug.default("general"),
     capabilities: z.array(slug).max(32).default([]),
+    /** Exclusive capabilities this skill may be loaded with another provider for. Each one is also in `capabilities`. */
+    composable: z.array(slug).max(32).default([]),
     detectors: z.array(SkillDetectorSchema).max(32).default([]),
     roles: z.array(z.enum(SKILL_ROLES)).max(SKILL_ROLES.length).default([]),
     dependencies: z.array(dependency).max(32).default([]),
@@ -149,6 +151,10 @@ export const SkillManifestSchema = z
   .strict()
   .superRefine((m, ctx) => {
     duplicates(ctx, "capabilities", m.capabilities);
+    duplicates(ctx, "composable", m.composable);
+    m.composable.forEach((c, i) => {
+      if (!m.capabilities.includes(c)) ctx.addIssue({ code: "custom", path: ["composable", i], message: "is not one of the capabilities" });
+    });
     duplicates(ctx, "roles", m.roles);
     duplicates(ctx, "conflicts", m.conflicts);
     duplicates(ctx, "connectors", m.connectors);

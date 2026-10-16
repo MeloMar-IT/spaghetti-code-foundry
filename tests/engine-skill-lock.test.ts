@@ -17,14 +17,14 @@ const dirs: string[] = [];
 afterEach(() => dirs.splice(0).forEach((d) => rmSync(d, { recursive: true, force: true })));
 
 const digestOf = (c: string) => `sha256:${c.repeat(64)}`;
-function sk(id: string, o: { version?: string; digest?: string; pin?: string; source?: string; caps?: string[]; deps?: string[] } = {}): RegisteredSkill {
+function sk(id: string, o: { version?: string; digest?: string; pin?: string; source?: string; caps?: string[]; deps?: string[]; composable?: string[]; text?: string } = {}): RegisteredSkill {
   const version = o.version ?? "1.0.0";
   return {
     key: `${id}@${version}`, id, version, source: o.source ?? "admin", label: "data folder", dir: "/secret/dir", active: true,
     trust: "approved", pin: o.pin ?? "pinned", digest: o.digest ?? digestOf("a"),
     pkg: {
-      id, version, description: `About ${id}.`, instructions: "Do it.", roles: [], dependencies: (o.deps ?? []).map((d) => ({ id: d })), conflicts: [],
-      capabilities: o.caps ?? [], ...(o.caps ? { category: "general" } : {}), risk: "low",
+      id, version, description: `About ${id}.`, instructions: o.text ?? "Do it.", roles: [], dependencies: (o.deps ?? []).map((d) => ({ id: d })), conflicts: [],
+      capabilities: o.caps ?? [], ...(o.composable ? { composable: o.composable } : {}), ...(o.caps ? { category: "general" } : {}), risk: "low",
     },
   } as unknown as RegisteredSkill;
 }
@@ -571,6 +571,50 @@ describe("exclusive capabilities at lock time", () => {
     const text = readFileSync(file(t.runDir), "utf8");
     expect(text).not.toContain("canonical");
     expect(text).not.toContain("skillSelection");
+  });
+
+  describe("companions", () => {
+    const text = "Long instructions. ".repeat(100);
+    // "z" (admin) wins over "a" (builtin); "a" sorts first but must load second.
+    const win = () => sk("z", { caps: ["cap"], source: "admin", composable: ["cap"], text, digest: digestOf("b") });
+    const comp = () => sk("a", { caps: ["cap"], source: "builtin", composable: ["cap"], text: `${text} More.`, digest: digestOf("c") });
+    const payloadOf = (r: ReturnType<typeof skillSession>) => ("payload" in r ? r.payload : undefined);
+    const lowBudget = (t: ReturnType<typeof setup>) => { t.engine.config = ConfigSchema.parse({ skills: { selection: { max_tokens: 700 } } }); };
+
+    it("locks the winner first, then the companion, and records it", () => {
+      const t = setup(gateOutput(["a", "z"]));
+      expect(ensureSkillLock(t.engine, { discover: () => reg(comp(), win()), commitOf, canonical: canon() })).toBeUndefined();
+      expect(lockedIds(t.runDir)).toEqual(["z", "a"]);
+      expect(t.summary.skillSelection!.canonical[0]).toMatchObject({ winner: "z@1.0.0", companions: ["a@1.0.0"] });
+      expect(t.logs.some((l) => l.includes("left out"))).toBe(false);
+    });
+
+    it("leaves the companion out of the lock when only the winner fits", () => {
+      const t = setup(gateOutput(["a", "z"]));
+      lowBudget(t);
+      expect(ensureSkillLock(t.engine, { discover: () => reg(comp(), win()), commitOf, canonical: canon() })).toBeUndefined();
+      expect(lockedIds(t.runDir)).toEqual(["z"]);
+      expect(t.logs).toContain("    · skill lock: a left out: over-budget");
+    });
+
+    it("omits the companion from the payload when the budget shrinks after the lock, and keeps the winner", () => {
+      const t = setup(gateOutput(["a", "z"]));
+      const discover = () => reg(comp(), win());
+      const first = skillSession(t.engine, { discover, commitOf, canonical: canon() });
+      expect(payloadOf(first)!.loaded).toEqual(["z@1.0.0", "a@1.0.0"]);
+      lowBudget(t);
+      const p = payloadOf(skillSession(t.engine, { discover, commitOf, canonical: canon() }))!;
+      expect(p.loaded).toEqual(["z@1.0.0"]);
+      expect(p.omitted).toEqual(["a@1.0.0"]);
+    });
+
+    it("drops a provider that does not declare the capability, as before", () => {
+      const t = setup(gateOutput(["a", "z"]));
+      const plain = sk("a", { caps: ["cap"], source: "builtin", text });
+      expect(ensureSkillLock(t.engine, { discover: () => reg(plain, win()), commitOf, canonical: canon() })).toBeUndefined();
+      expect(lockedIds(t.runDir)).toEqual(["z"]);
+      expect(t.logs).toContain("    · skill lock: a left out: not-canonical");
+    });
   });
 
   it("a mandatory loser blocks and no lock is written", () => {

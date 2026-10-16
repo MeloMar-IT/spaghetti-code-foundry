@@ -27,6 +27,8 @@ export interface CanonicalCandidate {
   evaluation?: "passed" | "failed";
   /** UTC time of the approved release (isUtcTime). */
   approvedAt?: string;
+  /** Exclusive capabilities this skill may be loaded with another provider for. A subset of `capabilities`. */
+  composable?: readonly string[];
 }
 export interface CanonicalPolicy {
   exclusive: readonly string[];
@@ -52,6 +54,8 @@ export interface CanonicalResolution {
   outcome: "selected" | "conflict" | "none";
   highRisk: boolean;
   winner?: CanonicalRef;
+  /** Eligible providers loaded after the winner, in rank order. Empty without a winner. */
+  companions: CanonicalRef[];
   decidedBy?: CanonicalLevel | "only-candidate";
   conflict?: (typeof CANONICAL_CONFLICTS)[number];
   /** In ranking order, then lexical. In a conflict it holds every provider. */
@@ -68,6 +72,8 @@ export interface CanonicalResult {
   resolutions: CanonicalResolution[];
   /** canonicalKey of the winners, sorted. */
   selected: string[];
+  /** canonicalKey of companions that are not winners, sorted. */
+  companions: string[];
   /** canonicalKey of every other provider of an exclusive capability, sorted. */
   left: string[];
 }
@@ -109,6 +115,10 @@ function checkCandidate(c: CanonicalCandidate): void {
   if (!CANONICAL_TIERS.includes(c.tier)) throw new TypeError("a candidate tier is not known");
   if (!CANONICAL_STATUSES.includes(c.status)) throw new TypeError("a candidate status is not known");
   if (c.approvedAt !== undefined && !isUtcTime(c.approvedAt)) throw new TypeError("a candidate approval time is not a UTC time");
+  for (const cap of c.composable ?? []) {
+    checkSlug("a composable capability", cap);
+    if (!c.capabilities.includes(cap)) throw new TypeError("a composable capability is not one of the capabilities");
+  }
 }
 
 /** The record as it is compared: sorted lists, no empty fields. */
@@ -118,6 +128,7 @@ function recordOf(c: CanonicalCandidate): Record<string, unknown> {
     tier: c.tier, status: c.status, failed: sortedStrings(c.failed), compatibility: c.compatibility,
     ...(c.evaluation !== undefined ? { evaluation: c.evaluation } : {}),
     ...(c.approvedAt !== undefined ? { approvedAt: c.approvedAt } : {}),
+    ...(c.composable?.length ? { composable: sortedStrings(c.composable) } : {}),
   };
 }
 
@@ -207,7 +218,7 @@ interface Work {
   ignored: CanonicalResolution["ignored"];
   conflict?: Conflict;
   message?: string;
-  /** Rejection overrides for the would-be winner or a mandatory skill. */
+  /** Rejection overrides for the would-be winner, a mandatory skill or a provider that cannot be a companion. */
   marks: Map<string, Partial<CanonicalRejection>>;
 }
 
@@ -269,21 +280,45 @@ export function selectCanonicalSkills(candidates: readonly CanonicalCandidate[],
     }
   }
 
-  // 3. A winner has to win every exclusive capability it provides.
+  // 3. A winner has to win, or accompany the winner of, every exclusive capability it provides. A companion is an eligible provider
+  // ranked after the winner when both list the capability as composable, and it is covered the same way for its other capabilities.
+  // Offers only shrink and winners only turn into conflicts, so the loop ends and the result does not depend on the input order.
+  const comp = (e: Entry, cap: string) => (e.c.composable ?? []).includes(cap);
+  const offer = new Map<string, Scored[]>(
+    works.map((w) => {
+      const win = w.conflict ? undefined : provisional.get(w.cap);
+      return [w.cap, win && comp(win, w.cap) ? w.eligible.filter((s) => s.e !== win && !w.marks.has(s.e.key) && comp(s.e, w.cap)) : []];
+    }),
+  );
+  const covered = (e: Entry, cap: string) => provisional.get(cap) === e || offer.get(cap)!.some((o) => o.e === e);
   const wins = new Map<string, string[]>();
   for (const [cap, e] of provisional) if (e) wins.set(e.key, [...(wins.get(e.key) ?? []), cap]);
-  for (const [key, won] of [...wins].sort((a, b) => byteCmp(a[0], b[0]))) {
-    const e = entries.find((x) => x.key === key)!;
-    const provided = exclusive.filter((cap) => e.caps.includes(cap));
-    const lost = provided.filter((cap) => !won.includes(cap));
-    if (!lost.length) continue;
-    const via = lost[0]!;
-    for (const cap of won) {
-      const w = works.find((x) => x.cap === cap)!;
-      if (w.conflict) continue;
-      w.conflict = "winners-overlap";
-      w.message = `${e.c.id}@${e.c.version} is the best skill for "${cap}" but not for "${via}", which it also provides. Pin one skill for both capabilities, then run again.`;
-      w.marks.set(key, { code: "overlap", via });
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const w of works) {
+      const before = offer.get(w.cap)!;
+      const kept = before.filter((s) => {
+        const via = exclusive.find((c) => c !== w.cap && s.e.caps.includes(c) && !covered(s.e, c));
+        if (via === undefined) return true;
+        w.marks.set(s.e.key, { code: "overlap", via });
+        return false;
+      });
+      if (kept.length !== before.length) { offer.set(w.cap, kept); changed = true; }
+    }
+    for (const [key, won] of [...wins].sort((a, b) => byteCmp(a[0], b[0]))) {
+      const e = entries.find((x) => x.key === key)!;
+      const lost = exclusive.filter((cap) => e.caps.includes(cap) && !covered(e, cap));
+      if (!lost.length) continue;
+      const via = lost[0]!;
+      for (const cap of won) {
+        const w = works.find((x) => x.cap === cap)!;
+        if (w.conflict) continue;
+        w.conflict = "winners-overlap";
+        w.message = `${e.c.id}@${e.c.version} is the best skill for "${cap}" but not for "${via}", which it also provides. Pin one skill for both capabilities, then run again.`;
+        w.marks.set(key, { code: "overlap", via });
+        offer.set(cap, []);
+        changed = true;
+      }
     }
   }
 
@@ -292,7 +327,8 @@ export function selectCanonicalSkills(candidates: readonly CanonicalCandidate[],
   const resolutions = works.map((w): CanonicalResolution => {
     const winner = w.top && !w.conflict ? w.top : undefined;
     const rejected: CanonicalRejection[] = [];
-    const ranked = w.eligible.filter((s) => s !== winner).map((s) => {
+    const mine = new Set(offer.get(w.cap)!.map((s) => s.e.key));
+    const ranked = w.eligible.filter((s) => s !== winner && !mine.has(s.e.key)).map((s) => {
       const mark = w.marks.get(s.e.key);
       if (mark) return { ...ref(s.e.c), code: "outranked" as Code, ...mark } as CanonicalRejection;
       const level = CANONICAL_LEVELS[firstDiff(w.top!, s)]!;
@@ -308,6 +344,7 @@ export function selectCanonicalSkills(candidates: readonly CanonicalCandidate[],
       outcome: winner ? "selected" : w.conflict ? "conflict" : "none",
       highRisk: w.highRisk,
       ...(winner ? { winner: ref(winner.e.c) } : {}),
+      companions: winner ? offer.get(w.cap)!.map((s) => ref(s.e.c)) : [],
       ...(w.decidedBy && !w.conflict ? { decidedBy: w.decidedBy } : {}),
       ...(w.conflict ? { conflict: w.conflict } : {}),
       rejected,
@@ -316,8 +353,9 @@ export function selectCanonicalSkills(candidates: readonly CanonicalCandidate[],
     };
   });
   const chosen = new Set(selected);
-  const left = entries.filter((e) => !chosen.has(e.key) && e.caps.some((c) => exclusive.includes(c))).map((e) => e.key);
-  return { schema: 1, ok: !resolutions.some((r) => r.outcome === "conflict"), resolutions, selected: sortedStrings([...chosen]), left: sortedStrings(left) };
+  const companionKeys = new Set(resolutions.flatMap((r) => r.companions.map((c) => canonicalKey(c))).filter((k) => !chosen.has(k)));
+  const left = entries.filter((e) => !chosen.has(e.key) && !companionKeys.has(e.key) && e.caps.some((c) => exclusive.includes(c))).map((e) => e.key);
+  return { schema: 1, ok: !resolutions.some((r) => r.outcome === "conflict"), resolutions, selected: sortedStrings([...chosen]), companions: sortedStrings([...companionKeys]), left: sortedStrings(left) };
 }
 
 /** The reason a step must stop: the first conflict message, or a winner that needs a left-out skill. undefined when nothing stops. */
