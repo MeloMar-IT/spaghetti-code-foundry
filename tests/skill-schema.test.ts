@@ -51,6 +51,7 @@ describe("SkillManifestSchema", () => {
       ...base,
       category: "general",
       capabilities: [],
+      composable: [],
       detectors: [],
       roles: [],
       dependencies: [],
@@ -59,6 +60,13 @@ describe("SkillManifestSchema", () => {
       tool_profile: { shell: false, network: false, filesystem: "read" },
       risk: "low",
     });
+  });
+  it("composable must be capabilities, once each, at most 32", () => {
+    expect(SkillManifestSchema.parse({ ...base, capabilities: ["a", "b"], composable: ["a"] }).composable).toEqual(["a"]);
+    expect(paths({ ...base, capabilities: ["a"], composable: ["c"] })).toEqual(["composable.0"]);
+    expect(paths({ ...base, capabilities: ["a"], composable: ["a", "a"] })).toContain("composable.1");
+    const many = Array.from({ length: 33 }, (_, i) => `c${i}`);
+    expect(paths({ ...base, capabilities: many, composable: many })).toContain("composable");
   });
   it("rejects bad connectors", () => {
     expect(paths({ ...base, connectors: ["Kafka"] })).toEqual(["connectors.0"]);

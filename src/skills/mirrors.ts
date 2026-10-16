@@ -65,5 +65,6 @@ export const registryRank = (s: Pick<RegisteredSkill, "id" | "version" | "source
 export function safetyProfile(c: CanonicalCandidate, withheld: boolean): string {
   return JSON.stringify([
     [...c.capabilities].sort(byteCmp), c.category, c.risk, c.status, [...c.failed].sort(byteCmp), c.compatibility, c.evaluation ?? null, withheld,
+    [...(c.composable ?? [])].sort(byteCmp),
   ]);
 }

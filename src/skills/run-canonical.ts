@@ -45,6 +45,8 @@ export interface CanonicalSelectionRecord {
   rejected: { skill: string; code: CanonicalRejection["code"]; level?: CanonicalLevel }[];
   rejectedOmitted?: number;
   ignored?: CanonicalResolution["ignored"];
+  /** id@version, in load order after the winner. Absent without companions. */
+  companions?: string[];
 }
 
 /** The live dependencies, or undefined when no capability is exclusive. Never throws. */
@@ -155,6 +157,8 @@ export interface CanonicalCheck {
   left: Set<string>;
   /** Per selected representative: [its id, ...the ids of its merged copies]. */
   copies: string[][];
+  /** Ids of the companions (their representatives and merged copies), each after the winner it accompanies. A companion that wins another capability is listed. */
+  companions: string[];
   applied: AppliedChoice[];
   /** Starts with CANONICAL_STOP_PREFIX. */
   blocked?: string;
@@ -211,9 +215,31 @@ export function checkCanonical(i: { reg: Registry; judged: readonly RegisteredSk
     mandatory: [...new Set(i.mandatory.map((id) => repIdOf.get(id) ?? id))],
   });
   const leftIds = new Set<string>();
-  const copies = canonical.selected.flatMap((k) => { const s = byKey.get(k); return s ? [[s.id, ...(members.get(k) ?? [])]] : []; });
+  const groupOf = (k: string) => { const s = byKey.get(k); return s ? [[s.id, ...(members.get(k) ?? [])]] : []; };
+  const copies = [...canonical.selected, ...canonical.companions].flatMap(groupOf);
+  // Every companion, also one that wins another capability, in an order where each winner comes before its companions.
+  const companions: string[] = [];
+  const before = new Map<string, Set<string>>(); // companion id -> ids of the winners it accompanies
+  for (const r of canonical.resolutions) {
+    if (!r.winner) continue;
+    const winners = groupOf(canonicalKey(r.winner)).flat();
+    for (const c of r.companions)
+      for (const id of groupOf(canonicalKey(c)).flat()) {
+        if (!companions.includes(id)) companions.push(id);
+        const set = before.get(id) ?? new Set<string>();
+        for (const w of winners) if (w !== id) set.add(w);
+        before.set(id, set);
+      }
+  }
+  const ordered: string[] = [];
+  for (let rest = [...companions]; rest.length; ) {
+    const next = rest.find((id) => [...(before.get(id) ?? [])].every((w) => !rest.includes(w))) ?? rest[0]!;
+    ordered.push(next);
+    rest = rest.filter((id) => id !== next);
+  }
+  companions.splice(0, companions.length, ...ordered);
   let applied: AppliedChoice[] = [];
-  const result = (blocked?: string): CanonicalCheck => ({ canonical, left: leftIds, copies, applied, ...(blocked ? { blocked } : {}) });
+  const result = (blocked?: string): CanonicalCheck => ({ canonical, left: leftIds, copies, companions, applied, ...(blocked ? { blocked } : {}) });
   if (deps.choices) {
     // `plan` is set here: a planning failure is in `known`, and the check below stops on it.
     const checked = mappedPlan
@@ -240,7 +266,7 @@ export function checkCanonical(i: { reg: Registry; judged: readonly RegisteredSk
     if (held) return result(`${CANONICAL_STOP_PREFIX}"${held.id}" is always loaded (skills.selection.include) but it fails a safety gate. Take it off the include list or fix the gate, then run again.`);
   }
   const mandatoryIds = new Set(mandatoryRoots.map((m) => m.id));
-  const broken = [...new Set([...canonical.selected.flatMap((k) => (byKey.has(k) ? [byKey.get(k)!] : [])), ...mandatoryRoots])]
+  const broken = [...new Set([...[...canonical.selected, ...canonical.companions].flatMap((k) => (byKey.has(k) ? [byKey.get(k)!] : [])), ...mandatoryRoots])]
     .filter((s) => !leftIds.has(s.id) || mandatoryIds.has(s.id))
     .flatMap((s) => {
       const n = needsAny(reg, s, leftIds);
@@ -254,7 +280,7 @@ export function canonicalRecord(from: CanonicalResult | readonly CanonicalResolu
   const resolutions = Array.isArray(from) ? (from as readonly CanonicalResolution[]) : (from as CanonicalResult).resolutions;
   const out: CanonicalSelectionRecord[] = [];
   for (const r of resolutions) {
-    if (!r.winner && r.rejected.length === 0 && r.ignored.length === 0) continue;
+    if (!r.winner && r.rejected.length === 0 && r.ignored.length === 0 && r.companions.length === 0) continue;
     const rejected = r.rejected.slice(0, CANONICAL_RECORD_LIMITS.rejected).map((x) => ({ skill: `${x.id}@${x.version}`, code: x.code, ...(x.level ? { level: x.level } : {}) }));
     const omitted = r.rejected.length - rejected.length;
     out.push({
@@ -262,12 +288,24 @@ export function canonicalRecord(from: CanonicalResult | readonly CanonicalResolu
       outcome: r.outcome,
       ...(r.winner ? { winner: `${r.winner.id}@${r.winner.version}` } : {}),
       ...(r.decidedBy ? { decidedBy: r.decidedBy } : {}),
+      ...(r.companions.length ? { companions: r.companions.map((c) => `${c.id}@${c.version}`) } : {}),
       rejected,
       ...(omitted > 0 ? { rejectedOmitted: omitted } : {}),
       ...(r.ignored.length ? { ignored: r.ignored.map((g) => ({ level: g.level, value: g.value, reason: g.reason })) } : {}),
     });
   }
   return out;
+}
+
+/** The roots plus the usable targets of the owner choices (judged, never loaded), so the choice check agrees with the catalogue. */
+function judgedFor(reg: Registry, roots: readonly RegisteredSkill[], start: ChoiceStart, usable: (s: RegisteredSkill) => boolean): RegisteredSkill[] {
+  const judged = new Map<string, RegisteredSkill>();
+  for (const r of roots) judged.set(r.key, r);
+  for (const p of start.plan?.planned ?? []) {
+    const t = reg.byKey.get(p.target) ?? findSkill(reg, p.target);
+    if (t && t.active && t.trust !== "unapproved" && !judged.has(t.key) && usable(t)) judged.set(t.key, t);
+  }
+  return [...judged.values()];
 }
 
 const PRIORITY = { mandatory: 0, dependency: 1, requested: 2 } as const;
@@ -286,17 +324,8 @@ export function lockCanonical(i: {
 }): { blocked: string } | { drop: string[]; resolutions: CanonicalResolution[] } {
   try {
     const { reg, resolution } = i;
-    const judged = new Map<string, RegisteredSkill>();
-    for (const s of resolution.selected) {
-      const r = reg.byKey.get(`${s.id}@${s.version}`);
-      if (r) judged.set(r.key, r);
-    }
-    // The usable targets of the owner choices are judged too (never loaded), so the choice check agrees with the catalogue.
-    for (const p of i.start.plan?.planned ?? []) {
-      const t = reg.byKey.get(p.target) ?? findSkill(reg, p.target);
-      if (t && t.active && t.trust !== "unapproved" && !judged.has(t.key) && i.usable(t)) judged.set(t.key, t);
-    }
-    const check = checkCanonical({ reg, judged: [...judged.values()], mandatory: i.mandatory, deps: i.deps, start: i.start });
+    const roots = resolution.selected.flatMap((s) => { const r = reg.byKey.get(`${s.id}@${s.version}`); return r ? [r] : []; });
+    const check = checkCanonical({ reg, judged: judgedFor(reg, roots, i.start, i.usable), mandatory: i.mandatory, deps: i.deps, start: i.start });
     if (check.blocked) return { blocked: check.blocked };
     const reasonOf = new Map(resolution.selected.map((s) => [s.id, s]));
     const marked = new Set<string>();
@@ -328,6 +357,28 @@ export function lockCanonical(i: {
   }
 }
 
+/**
+ * The companions of an exclusive capability, in load order (requested or loaded as a dependency). They are judged over the whole requested closure
+ * so the resolver can admit them after every other request. Never throws: any failure gives [] (the plain order); a blocked
+ * check is left to the real rounds.
+ */
+export function companionOrder(i: { reg: Registry; ids: readonly string[]; opts: ResolveOptions; deps: CanonicalDeps; start: ChoiceStart; usable: (s: RegisteredSkill) => boolean }): string[] {
+  try {
+    const { reg, opts } = i;
+    const mandatory = opts.include ?? [];
+    const roots = [...new Set([...mandatory, ...i.ids])].flatMap((id) => {
+      const s = findSkill(reg, id);
+      return s && (mandatory.includes(id) || i.usable(s)) ? [s] : [];
+    });
+    const judged = judgedFor(reg, withDependencies(reg, roots), i.start, i.usable);
+    const check = checkCanonical({ reg, judged, mandatory, deps: i.deps, start: i.start });
+    // Not only the requested ids: a companion that is loaded as a dependency needs its place too.
+    return check.companions;
+  } catch {
+    return [];
+  }
+}
+
 /** The decision that caused a removal is kept: a later round, with the loser gone, would only see an only-candidate. */
 function keepDecision(seen: Map<string, CanonicalResolution>, round: readonly CanonicalResolution[]): void {
   const key = (r: CanonicalResolution) => (r.winner ? `${r.winner.id}@${r.winner.version}` : undefined);
@@ -353,8 +404,10 @@ export function canonicalResolve(i: { reg: Registry; ids: readonly string[]; opt
   const seen = new Map<string, CanonicalResolution>();
   const dropped: string[] = [];
   let ids = [...i.ids];
+  const later = companionOrder({ reg, ids, opts, deps, start, usable });
+  const rounds = later.length ? { ...opts, later } : opts;
   for (;;) {
-    const resolution = resolveSkills(reg, ids, opts);
+    const resolution = resolveSkills(reg, ids, rounds);
     if (!resolution.ok) return { notOk: resolution };
     const r = lockCanonical({ reg, resolution, mandatory: opts.include ?? [], deps, start, usable });
     if ("blocked" in r) return r;

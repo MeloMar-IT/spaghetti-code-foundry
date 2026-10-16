@@ -25,6 +25,7 @@ export const STANDARD_KEYS = ["name", "description", "license", "compatibility",
 export const FIELD_ALIASES = {
   version: ["version"],
   capabilities: ["capabilities", "tags", "keywords"],
+  composable: ["composable"],
   category: ["category"],
   dependencies: ["dependencies", "depends-on"],
   technologies: ["technologies", "requires", "engines"],
@@ -33,7 +34,7 @@ export const FIELD_ALIASES = {
 } as const;
 
 /** Keys of skill.yaml that are read; the others are kept as provenance. */
-export const MANIFEST_FIELDS = ["version", "capabilities", "dependencies", "category", "tool_profile", "connectors", "risk", "provider"] as const;
+export const MANIFEST_FIELDS = ["version", "capabilities", "composable", "dependencies", "category", "tool_profile", "connectors", "risk", "provider"] as const;
 
 export const MCP_TOOL_PREFIX = "mcp__";
 

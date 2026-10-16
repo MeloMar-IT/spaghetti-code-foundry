@@ -435,6 +435,21 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
       }
     }
   }
+  let composable: string[] = [];
+  const rawComposable = read(FIELD_ALIASES.composable);
+  if (rawComposable !== undefined) {
+    const list = textList(rawComposable);
+    if (!list) fail("composable: must be a list of text");
+    else {
+      const slugs = list.map(slugify);
+      if (slugs.some((s) => !SKILL_ID_RE.test(s))) fail("composable: an entry cannot be made a lower-case slug of 1–64 characters");
+      else {
+        composable = [...new Set(slugs)].sort(byteCmp);
+        if (composable.length > 32) fail("composable: more than 32 entries");
+        for (const c of composable) if (!capabilities.includes(c)) fail(`composable: "${c}" is not one of the capabilities`);
+      }
+    }
+  }
   let category = "general";
   const rawCategory = read(FIELD_ALIASES.category);
   if (rawCategory !== undefined) {
@@ -623,6 +638,7 @@ export function normalizeSkill(origin: NormalizeOrigin, skill: ExternalSkill): N
     version,
     category,
     capabilities,
+    composable,
     detectors: [],
     roles: [],
     dependencies,

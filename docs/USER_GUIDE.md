@@ -3343,7 +3343,7 @@ skills:
    risk: low
    ```
 
-   More fields: `detectors`, `connectors`, `tool_profile`, `provider`. A `provider` block says that the skill needs a vendor: `provider: {name: acme, products: [{name: kafka, version: "3.7"}], tools: [kafka-admin]}`. `name` is a slug; at most 16 products and 16 tools. A skill without it is portable. The block is text only: it grants no connector, shell or network access. The catalogue and `scf skills` show it (see [Skill catalogue](#skill-catalogue)). The eleven built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `nodejs`, `rest-openapi`, `kafka`, `ibm-mq`, `cassandra`, `oracle`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
+   More fields: `detectors`, `connectors`, `tool_profile`, `provider`, `composable` (see [Complementary providers](#complementary-providers)). A `provider` block says that the skill needs a vendor: `provider: {name: acme, products: [{name: kafka, version: "3.7"}], tools: [kafka-admin]}`. `name` is a slug; at most 16 products and 16 tools. A skill without it is portable. The block is text only: it grants no connector, shell or network access. The catalogue and `scf skills` show it (see [Skill catalogue](#skill-catalogue)). The eleven built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `nodejs`, `rest-openapi`, `kafka`, `ibm-mq`, `cassandra`, `oracle`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
 4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
 5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
 6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
@@ -4844,6 +4844,23 @@ skills:
 - **Project pins** are in `.claude-factory/skill-pins.yaml` on the default branch of the repository, never on a work branch. A pin settles a tie for its capability. Check the pins with `scf skills project-pins check`, and the overrides with `scf skills overrides check`.
 - **Empty list.** With `exclusive: []` no check runs and the run behaves as it did before.
 - **Record.** The decision is saved in `run.json` as `summary.skillSelection`: for each capability, the outcome, the winner (`id@version`), who decided it, up to 5 rejected skills with their codes and levels, and a count of the rest. It holds ids, versions and codes only, no text.
+
+### Complementary providers
+
+Two skills of one exclusive capability can work together, for example a database skill and a skill for its migrations. A skill says so with `composable` in `skill.yaml`: a list of its exclusive capabilities, each one also in `capabilities` (at most 32 slugs, no duplicates, default `[]`).
+
+```yaml
+id: postgres-migrations
+version: 1.0.0
+capabilities: [postgresql, postgresql-migrations]
+composable: [postgresql]
+```
+
+- **When both load.** A provider ranked after the winner of an exclusive capability loads with it only when both list that capability in `composable`. A provider without `composable` is never loaded with the winner. A provider that loses another exclusive capability it also provides stays out, and so does one whose capability is not composable for both. The canonical selection marks it `overlap`.
+- **Order.** The winner loads first, then the companions in rank order. Each loaded section has its own `foundry-skill id/version/digest` attribution.
+- **Budget.** Companions are offered and requested like any other skill, but they come after every other requested skill. A companion that does not fit is left out with `over-budget` (the resolver) or `omitted` (the payload). It never displaces the winner.
+- **Record.** The run record lists `companions` (`id@version`) for each capability, next to the winner.
+- **Older versions.** Foundry versions before this change refuse a `skill.yaml` with `composable`, because the manifest is strict. Upgrade them before you publish such a skill. Built-in skills do not use `composable`, and their digests and pins do not change.
 
 ### Skill modes in a flow
 

@@ -16,6 +16,7 @@ import { canonicalRecord, checkCanonical, choicesUnchecked, needsAny, startChoic
 // A catalogue stops a step only through `blocked`, and only with the `canonical` dependency.
 // Skills with the same description and instructions (mirrors) are offered once: the best tier, then id, then version. With the
 // `canonical` dependency, copies with the same safety profile are merged before the selection; every package keeps its own gate check.
+// Complementary providers that both declare the capability composable are offered after the winner, and only while the budget allows it.
 
 export const SKILL_CATALOGUE_TAG = "foundry-skill-catalogue";
 /** The step whose output is the issue text in the shipped flows. */
@@ -125,6 +126,7 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
     // skill a run could load is judged, and a skill that needs a left-out one is left out too.
     let canonical: CanonicalResult | undefined;
     let canonicalRec: CanonicalSelectionRecord[] | undefined;
+    let later: string[] = [];
     let notCanonical = 0;
     let applied: AppliedChoice[] = [];
     if (deps.canonical) {
@@ -133,6 +135,7 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
       const check = checkCanonical({ reg, judged: withDependencies(reg, [...pool, ...mandatoryRoots]), mandatory: opts.include ?? [], deps: deps.canonical, start });
       canonical = check.canonical;
       applied = check.applied;
+      later = check.companions;
       if (check.blocked) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: check.blocked };
       const before = pool.length;
       pool = pool.filter((s) => !check.left.has(s.id) && needsAny(reg, s, check.left) === undefined);
@@ -149,7 +152,7 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
     pool = pool.filter((s) => !dropped.has(s));
     const include = [...new Set(skills.catalogue.include.map((id) => toKept.get(id) ?? id))];
     // Several skills may be requested together: keep only those the resolver admits as one set (conflicts, dependency and count budgets).
-    const together = resolveSkills(reg, pool.map((s) => s.id), opts);
+    const together = resolveSkills(reg, pool.map((s) => s.id), later.length ? { ...opts, later } : opts);
     const admitted = new Set(together.decisions.filter((d) => d.outcome === "selected").map((d) => d.id));
     const cat = buildSkillCatalogue({ skills: pool.filter((s) => admitted.has(s.id)) }, { profile, task: i.task, ...catalogueOptionsFrom(skills), ...(mirrorCount ? { include } : {}) });
     const body = [renderSkillCatalogue(cat)];

@@ -70,6 +70,11 @@ export interface ResolveOptions {
   exclude?: readonly string[];
   /** Not a whole number: the default. Otherwise clamped to RESOLVE_RANGE. */
   limits?: { maxSkills?: number; maxSkillTokens?: number; maxTokens?: number };
+  /**
+   * Companions of an exclusive capability, admitted after every other requested id, in this order.
+   * A requested id that needs one of them (also one that is not requested itself) comes just before them. Mandatory ids are ignored.
+   */
+  later?: readonly string[];
 }
 
 function clampLimit(v: number | undefined, def: number, [lo, hi]: readonly [number, number]): number {
@@ -198,7 +203,18 @@ export function resolveSkills(
   const rejected = new Map<string, Fail>();
 
   // Mandatory ids first, then the other requested ids. Each root is admitted together with its fresh dependencies, or not at all.
-  const roots = [...inc.ids, ...req.ids.filter((id) => !mandatory.has(id))];
+  // Ids in `later` (companions) come last, and so does a root that needs one of them: a companion never takes budget before a winner.
+  // A companion that is only loaded as a dependency is not a root, but a root that needs it is still held back.
+  const laterAll = [...new Set(opts.later ?? [])].filter((id) => !mandatory.has(id));
+  const laterSet = new Set(laterAll);
+  const later = laterAll.filter((id) => requestedSet.has(id));
+  const others = req.ids.filter((id) => !mandatory.has(id) && !laterSet.has(id));
+  const needsLater = (id: string) => {
+    if (!laterSet.size) return false;
+    const w = walk(id);
+    return "order" in w && w.order.some((s) => s.id !== id && laterSet.has(s.id));
+  };
+  const roots = [...inc.ids, ...others.filter((id) => !needsLater(id)), ...others.filter(needsLater), ...later];
   for (const id of roots) {
     const w = walk(id);
     if (!("order" in w)) {

@@ -86,6 +86,7 @@ export function canonicalFromCollision(
     compatibility: withSupport(provenance.technologies, facts.evidence),
     ...(c.evaluation !== undefined ? { evaluation: c.evaluation } : {}),
     ...(facts.approvedAt !== undefined ? { approvedAt: facts.approvedAt } : {}),
+    ...(pkg.composable?.length ? { composable: [...pkg.composable] } : {}),
   };
 }
 
@@ -108,5 +109,6 @@ export function canonicalFromRegistered(
     compatibility: withSupport(facts.technologies ?? [], facts.evidence),
     ...(facts.evaluation !== undefined ? { evaluation: facts.evaluation } : {}),
     ...(facts.approvedAt !== undefined ? { approvedAt: facts.approvedAt } : {}),
+    ...(s.pkg.composable?.length ? { composable: [...s.pkg.composable] } : {}),
   };
 }

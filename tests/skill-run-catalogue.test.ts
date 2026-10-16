@@ -241,6 +241,30 @@ describe("runSkillCatalogue with canonical selection", () => {
     expect(r.blocked).toBeUndefined();
   });
 
+  describe("companions", () => {
+    const both = { a: cc("a", { composable: ["cap"], tier: "official-vendor" }), b: cc("b", { composable: ["cap"] }) };
+
+    it("offers the winner and a companion that both declare, and records it", () => {
+      const r = runCanon([sk("a"), sk("b"), sk("free")], both);
+      expect(ids(r.text)).toEqual(["a", "b", "free"]);
+      expect(r.log).not.toContain("not canonical");
+      expect(r.canonical?.companions).toEqual(["a@1.0.0 fp-a"]);
+      expect(r.record?.canonical?.[0]).toMatchObject({ winner: "b@1.0.0", companions: ["a@1.0.0"] });
+    });
+
+    it("offers only the winner when the other does not declare it", () => {
+      const r = runCanon([sk("a"), sk("b")], { ...both, a: cc("a", { tier: "official-vendor" }) });
+      expect(ids(r.text)).toEqual(["b"]);
+      expect(r.log.endsWith("; 1 not canonical (skill selection)")).toBe(true);
+    });
+
+    it("does not offer a companion that does not fit the budget", () => {
+      const big = (id: string) => sk(id, { instructions: "Long instructions. ".repeat(100) });
+      const r = runCanon([big("a"), big("b")], both, {}, cfg({ selection: { max_tokens: 700 } }));
+      expect(ids(r.text)).toEqual(["b"]);
+    });
+  });
+
   it("leaves out a skill that depends on the loser, also through a third skill", () => {
     const skills = [sk("a"), sk("b"), sk("top", { deps: [{ id: "a" }] }), sk("mid", { deps: [{ id: "a" }] }), sk("far", { deps: [{ id: "mid" }] })];
     const r = runCanon(skills, { a: cc("a", { tier: "official-vendor" }), b: cc("b") });
