@@ -172,7 +172,7 @@ describe("generatedSection", () => {
   it("draws one control per described help key, none for the two exceptions", () => {
     const s = make();
     const keys = described.filter((d) => d.key.startsWith("help.")).map((d) => d.key);
-    expect(keys).toHaveLength(10);
+    expect(keys).toHaveLength(11);
     expect(Object.keys(s.inputs())).toEqual(keys);
     expect(keys).not.toContain("help.sensitive_patterns");
     expect(keys).not.toContain("help.disabled_accounts");

@@ -14,7 +14,7 @@ export { CONTEXT_KINDS, type PageContext };
  * changes one takes that account: a conversation of another account is the same as one that does not exist.
  */
 
-export type HelpErrorCode = "bad-question" | "bad-context" | "not-found" | "deleted" | "bad-state" | "busy" | "limit";
+export type HelpErrorCode = "bad-question" | "bad-context" | "not-found" | "deleted" | "bad-state" | "busy" | "limit" | "bad-feedback";
 
 /** A problem with what the caller asked for (not with the file). The message is safe to show. */
 export class HelpError extends Error {
@@ -80,6 +80,21 @@ export const CANCELLED_WORDS = "You stopped this answer. You can ask again.";
 
 const CONTROL_IN_TEXT = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
+/** Why a question is refused before a turn starts. The words are in turn.ts; the statistics count them by this code. */
+export const REFUSAL_CODES = ["off", "paused", "not-allowed", "busy", "queue-full", "limit", "unsafe"] as const;
+
+/** The reasons a person can give for a reply that did not help. Fixed: there is no free text. */
+export const FEEDBACK_REASONS = ["incorrect", "outdated", "not-my-question", "unclear", "missing-sources", "unsafe"] as const;
+export type FeedbackReason = (typeof FEEDBACK_REASONS)[number];
+
+const FeedbackSchema = z
+  .object({ vote: z.enum(["helpful", "not-helpful"]), reasons: z.array(z.enum(FEEDBACK_REASONS)).max(FEEDBACK_REASONS.length), at: z.iso.datetime() })
+  .strict()
+  .superRefine((f, ctx) => {
+    if (new Set(f.reasons).size !== f.reasons.length || (f.vote === "helpful" && f.reasons.length > 0)) ctx.addIssue({ code: "custom", message: "invalid", path: ["reasons"] });
+  });
+export type Feedback = z.infer<typeof FeedbackSchema>;
+
 const FailureSchema = z.object({ code: z.enum(FAILURE_CODES), retry: z.boolean() }).strict();
 
 const MessageSchema = z
@@ -97,6 +112,8 @@ const MessageSchema = z
     /** A reply: the checked, structured output (citations in `evidence`, proposals in `actions`). */
     reply: ReplySchema.optional(),
     failure: FailureSchema.optional(),
+    /** A finished reply: how the owner rated it. Only a vote and fixed reasons, never a text. */
+    feedback: FeedbackSchema.optional(),
     /** A reply: how often the turn was started (1, and one more for every retry). */
     tries: z.number().int().min(1).max(1000).optional(),
     /** A reply: when it last changed (answered, failed, stopped or started again). */
@@ -109,13 +126,14 @@ const MessageSchema = z
     const issue = (path: string) => ctx.addIssue({ code: "custom", message: "invalid", path: [path] });
     if (m.role === "user") {
       if (m.status !== "done") issue("status");
-      for (const k of ["replyTo", "reply", "failure", "tries", "updated"] as const) if (m[k] !== undefined) issue(k);
+      for (const k of ["replyTo", "reply", "failure", "feedback", "tries", "updated"] as const) if (m[k] !== undefined) issue(k);
     } else {
       if (m.replyTo === undefined) issue("replyTo");
       if (m.tries === undefined) issue("tries");
       if (m.context !== undefined) issue("context");
       if ((m.status === "done") !== (m.reply !== undefined)) issue("reply");
       if ((m.status === "failed") !== (m.failure !== undefined)) issue("failure");
+      if (m.feedback !== undefined && m.status !== "done") issue("feedback");
     }
   });
 export type Message = z.infer<typeof MessageSchema>;
@@ -374,7 +392,7 @@ export function retryTurn(owner: string, id: string, opts: StoreOptions = {}): T
     if ((c.state !== "failed" && c.state !== "cancelled") || !last || !question || last.role !== "assistant" || (last.status !== "failed" && last.status !== "cancelled")) {
       throw new HelpError("bad-state", "there is no failed or stopped answer to try again in this conversation");
     }
-    const { failure: _failure, reply: _reply, ...rest } = last;
+    const { failure: _failure, reply: _reply, feedback: _feedback, ...rest } = last;
     const again: Message = { ...rest, status: "pending", text: "", tries: (last.tries ?? 1) + 1, updated: at };
     const next: Conversation = { ...c, state: "active", messages: [...c.messages.slice(0, -1), again], updated: at };
     return { next, value: copy({ conversation: next, question, reply: again }) };
@@ -406,6 +424,55 @@ export function finishTurn(id: string, turn: TurnRef, reply: Reply, opts: StoreO
   const checked = ReplySchema.parse(reply);
   const redacted = SECRET_CATEGORIES.filter((c) => removed.includes(c));
   return endTurn(id, turn, opts, (m, at) => ({ state: "active", message: { ...m, status: "done", reply: checked, text: displayText(checked).slice(0, TEXT_MAX), updated: at, ...(redacted.length ? { redacted } : {}) } }));
+}
+
+/** The reply to rate, the vote (`null` takes it back) and the reasons, as `rateReply` takes them. */
+export interface Rating {
+  message: string;
+  vote: "helpful" | "not-helpful" | null;
+  reasons: FeedbackReason[];
+}
+
+/** Checks the body of a rating. `vote` is `null` (or "none") to take a vote back. Throws `bad-feedback`; free text and unknown keys are refused. */
+export function checkFeedback(input: unknown): Rating {
+  const bad = (m: string) => new HelpError("bad-feedback", m);
+  if (typeof input !== "object" || input === null || Array.isArray(input)) throw bad("send a vote");
+  const body = input as Record<string, unknown>;
+  for (const k of Object.keys(body)) if (k !== "message" && k !== "vote" && k !== "reasons") throw bad("only a vote and reasons from the list are taken");
+  if (typeof body.message !== "string" || !body.message) throw bad("say which answer you rate");
+  const vote = body.vote === null || body.vote === "none" ? null : body.vote;
+  if (vote !== null && vote !== "helpful" && vote !== "not-helpful") throw bad("the vote is helpful or not-helpful");
+  const reasons = body.reasons === undefined ? [] : body.reasons;
+  if (!Array.isArray(reasons) || reasons.some((r) => !(FEEDBACK_REASONS as readonly unknown[]).includes(r))) throw bad("the reasons must be from the list");
+  if (new Set(reasons).size !== reasons.length) throw bad("a reason can be given once");
+  if (reasons.length > 0 && vote !== "not-helpful") throw bad("reasons go with a vote of not-helpful");
+  return { message: body.message, vote, reasons: reasons as FeedbackReason[] };
+}
+
+/**
+ * Stores (or, with a `null` vote, removes) the owner's rating of one finished reply. Returns the conversation and the
+ * rating before and after; nothing is written when they are the same. The time of a vote stays when only its reasons change.
+ */
+export function rateReply(owner: string, id: string, rating: Rating, opts: StoreOptions = {}): { conversation: Conversation; before?: Feedback; after?: Feedback } {
+  let out: { conversation: Conversation; before?: Feedback; after?: Feedback } | undefined;
+  change(owner, id, opts, (c, at) => {
+    const i = c.messages.findIndex((m) => m.id === rating.message);
+    const m = c.messages[i];
+    if (!m || m.role !== "assistant" || m.status !== "done") throw new HelpError("bad-state", "only a finished answer can be rated");
+    const before = m.feedback;
+    let after: Feedback | undefined = rating.vote === null ? undefined : { vote: rating.vote, reasons: [...rating.reasons], at };
+    if (after && before && before.vote === after.vote) after = { ...after, at: before.at };
+    const same = before?.vote === after?.vote && JSON.stringify(before?.reasons ?? []) === JSON.stringify(after?.reasons ?? []);
+    if (same) {
+      out = { conversation: copy(c), ...(before ? { before } : {}), ...(after ? { after } : {}) };
+      return undefined;
+    }
+    const { feedback: _old, ...rest } = m;
+    const next: Conversation = { ...c, messages: c.messages.map((x, j) => (j === i ? { ...rest, ...(after ? { feedback: after } : {}) } : x)) };
+    out = { conversation: copy(next), ...(before ? { before } : {}), ...(after ? { after } : {}) };
+    return { next, value: undefined };
+  });
+  return out!;
 }
 
 /** Marks a turn as failed, with the fixed sentence for its reason. */

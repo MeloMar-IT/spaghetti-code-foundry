@@ -18,6 +18,8 @@ export function askFrame(on, { questionMax, hints = {} }) {
   const suggest = h("div", { class: "ask-suggest" });
   const suggestBox = h("div", { class: "ask-suggest-box" }, h("h3", { id: "ask-suggest-title" }, "Suggested questions"), suggest);
   const status = h("p", { id: "ask-status", class: "ask-status muted", role: "status", "aria-live": "polite" });
+  const paused = h("p", { id: "ask-paused", class: "ask-paused", role: "note" }, hints.paused ?? "");
+  paused.hidden = true;
   const context = h("p", { id: "ask-context", class: "ask-context muted text-sm" });
   const error = h("p", { id: "ask-error", class: "ask-error", role: "alert" });
   const question = h("textarea", { id: "ask-question", rows: "3", maxlength: String(questionMax), "aria-describedby": "ask-context ask-error", "data-focus": "ask-question", onKeydown: (e) => on.key(e) });
@@ -43,13 +45,14 @@ export function askFrame(on, { questionMax, hints = {} }) {
   const drawer = h("aside", { id: "ask-drawer", class: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title", tabindex: "-1" },
     h("div", { class: "ask-head" }, h("h2", { id: "ask-title" }, "Ask SCF"), fresh, historyBtn, close),
     h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. It changes nothing."),
+    paused,
     status,
     talk,
     history);
   drawer.hidden = true;
   const scrim = h("div", { class: "ask-scrim", onMousedown: () => on.close() });
   scrim.hidden = true;
-  return { drawer, scrim, talk, thread, actions, suggest, suggestBox, status, context, error, question, attach, send, close, fresh, historyBtn, history, archivedBtn, list };
+  return { drawer, scrim, talk, paused, thread, actions, suggest, suggestBox, status, context, error, question, attach, send, close, fresh, historyBtn, history, archivedBtn, list };
 }
 
 const sourceLine = (src, { now, onNavigate }) => [
@@ -121,7 +124,34 @@ export function replyNodes(layout, opts = {}) {
   ];
 }
 
-/** One message of the conversation. `opts`: now (ms) for the age of a source, onNavigate() when a link to a page is followed. */
+/**
+ * "Was this answer helpful?": two buttons that say whether they are pressed, and, after Not helpful, the reasons as
+ * checkboxes. Every control has a `data-focus` name, so the drawer can draw again and keep the focus where it was.
+ * `opts`: onRate(message, vote), draftOf(message) the reasons ticked and not saved yet, onDraft(message, reasons),
+ * onReasons(message, reasons) to save them.
+ */
+export function rateNodes(entry, opts) {
+  const id = entry.id;
+  const vote = entry.feedback?.vote ?? null;
+  const vbtn = (v, label) => h("button", { type: "button", class: "small", "aria-pressed": String(vote === v), "data-focus": `ask-rate-${id}-${v}`, onClick: () => opts.onRate(id, v) }, label);
+  const nodes = [h("div", { class: "ask-rate", role: "group", "aria-label": "Was this answer helpful?" }, h("span", { class: "muted" }, "Was this answer helpful? "), vbtn("helpful", "Helpful"), vbtn("not-helpful", "Not helpful"))];
+  if (vote !== "not-helpful") return nodes;
+  const chosen = new Set(opts.draftOf?.(id) ?? entry.feedback.reasons);
+  const boxes = Object.entries(opts.reasonWords ?? {}).map(([reason, words]) => h("label", { class: "check-row" },
+    h("input", { type: "checkbox", checked: chosen.has(reason), "data-focus": `ask-reason-${id}-${reason}`, onChange: (e) => {
+      if (e.target.checked) chosen.add(reason);
+      else chosen.delete(reason);
+      opts.onDraft?.(id, [...chosen]);
+    } }),
+    ` ${words}`));
+  nodes.push(h("fieldset", { class: "ask-reasons" },
+    h("legend", {}, "What was wrong? (optional)"),
+    boxes,
+    h("button", { type: "button", class: "small", "data-focus": `ask-reasons-save-${id}`, onClick: () => opts.onReasons(id, [...chosen]) }, "Save reasons")));
+  return nodes;
+}
+
+/** One message of the conversation. `opts`: now (ms) for the age of a source, onNavigate() when a link to a page is followed. The rating of an answer follows it as its own nodes (`rateNodes`). */
 export function entryNode(entry, opts = {}) {
   return h("div", { class: `ask-entry ask-${entry.kind}`, "data-message": entry.id ?? null },
     h("span", { class: "ask-who" }, entry.who),
@@ -136,7 +166,7 @@ export function suggestionNodes(list, onPick) {
   return list.map((text, i) => h("button", { type: "button", class: "small", "data-focus": `ask-suggest-${i}`, onClick: () => onPick(text) }, text));
 }
 
-const ACTIONS = [["stop", "Stop"], ["retry", "Try again"], ["archive", "Archive"], ["restore", "Take back from the archive"], ["remove", "Delete"]];
+const ACTIONS = [["stop", "Stop"], ["retry", "Try again"], ["solved", "This solved my problem"], ["archive", "Archive"], ["restore", "Take back from the archive"], ["remove", "Delete"]];
 
 /**
  * The controls of the open conversation: only the ones `controls` offers. Each says what it does, as a tooltip and,

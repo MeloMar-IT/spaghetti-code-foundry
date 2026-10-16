@@ -115,8 +115,8 @@ describe("what is described", () => {
     expect(isCovered("sandbox.user_runs")).toBe(true);
     expect(isCovered("monitoring")).toBe(false);
     for (const k of ["ui.redesign", "help.enabled", "default_model", "router.fallback"]) expect(isCovered(k), k).toBe(true);
-    for (const k of ["help.disabled_accounts", "help.sensitive_patterns", "providers", "router.rules"]) expect(isCovered(k), k).toBe(false);
-    expect(described).toHaveLength(111);
+    for (const k of ["help.disabled_accounts", "help.pilot_accounts", "help.sensitive_patterns", "providers", "router.rules"]) expect(isCovered(k), k).toBe(false);
+    expect(described).toHaveLength(112);
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {

@@ -2272,7 +2272,7 @@ not followed; the command says where the server points to and stops.
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
-| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); what a page context is worth (`context`); the usage (admin) |
+| `ask` | Ask SCF: ask a question, try again, stop; rate an answer (`feedback`); your conversations (list, show, complete with `--resolved`, archive, restore, delete); what a page context is worth (`context`); the usage and quality numbers (admin) |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -2462,7 +2462,7 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 
 **Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
-**Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the list of accounts that may not ask Ask SCF (`help.disabled_accounts`), the list of texts Ask SCF keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
+**Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the lists of accounts that may not ask Ask SCF or may ask in the pilot stage (`help.disabled_accounts`, `help.pilot_accounts`), the list of texts Ask SCF keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
 
 **Start-up settings.** The data folder, the port, the repository and the program paths are read only when the server starts, so they are not changed on this page. To change one, stop the server, change it where it is set, and start the server again; the **Set at start-up** card shows the values in use. Two things are set up once, not in settings: the first admin is made on the setup page when the server starts for the first time, and the login service is installed with `scf service install` (see [Upgrading](#11-upgrading-from-claude-factory)).
 
@@ -3263,9 +3263,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
 | `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
-| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask SCF is switched on, and the limits; only your own, for an admin too, and not in a view of a user's display |
+| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask SCF is switched on and whether it is paused (then you can read but not ask), and the limits; only your own, for an admin too, and not in a view of a user's display |
 | `GET /api/help/conversations/:id` | yes | yes | read one of your Ask SCF conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
 | `POST /api/help/conversations/:id/complete` | yes | yes | close one of your Ask SCF conversations: it stays readable and takes no new question |
+| `POST /api/help/conversations/:id/feedback` | yes | yes | rate an answer in one of your Ask SCF conversations: helpful or not helpful, with optional reasons from a fixed list and no free text; vote null (or none) takes it back; only counts are kept in the quality numbers; works while Ask SCF is paused |
 | `POST /api/help/conversations/:id/archive` | yes | yes | move one of your Ask SCF conversations to the archive |
 | `POST /api/help/conversations/:id/restore` | yes | yes | take one of your Ask SCF conversations out of the archive; it gets the state it had |
 | `DELETE /api/help/conversations/:id` | yes | yes | delete one of your Ask SCF conversations: its title and messages are removed at once and cannot be brought back |
@@ -3275,7 +3276,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
 | `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
 | `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
-| `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
+| `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
 
@@ -6113,6 +6114,8 @@ GitHub. Today Ask SCF has no action at all on its list, so it cannot change anyt
 
 When an administrator has switched Ask SCF on, the top bar of every page has an **Ask SCF** button, in
 the admin display and in the user display. While Ask SCF is off (the default), the button is not there.
+While an administrator has paused it, the button stays: you can read, export and delete your conversations,
+but **Send** and **Try again** are off and a line says that Ask SCF is paused.
 
 - **Open it** with the button. A panel opens at the right side, over the page. The page behind it is not
   drawn again: what you typed there, and what was open, stays as it is.
@@ -6178,6 +6181,33 @@ Following a link closes the panel and opens the page.
 The panel works with the keyboard alone: Tab stays inside it while it is open. On a narrow screen it
 takes the whole width. It opens without any movement. A preview of another person's display
 ("View as user") has no Ask SCF button.
+
+### What Ask SCF knows, and how to check an answer
+
+Ask SCF answers from three things, and nothing else:
+
+- **The documentation of this Foundry**: the sections of this guide that fit your question (at most four). An administrator's question may also use the flow guide.
+- **The current state your account can see**: the run, repository, refinement session, queue or server state that your question names or that the page you are on shows. An administrator also sees board issues, monitor findings and the server's health. Each piece says when it was read; a record that is known to be old says so.
+- **What you sent**: your question, the address of the page you were on, and the one thing you selected there, if you sent it.
+
+It does not read logs, transcripts or the output of a step, and it cannot see the work, the repositories or the conversations of another account. A secret that it finds in a text is taken out before anything is kept or sent. It has no tools: it cannot run a command, change anything or look at the internet.
+
+**To check an answer:**
+
+1. Read the line **How sure it is** first (see "Reading an answer"). A "?" or "–" line means there is no source of the kind the question needs: treat the answer as a guess.
+2. Open the **Sources and assumptions** and look at the places named there. A run or a repository page shows its own current state, which is the most recent thing to trust.
+3. Do not act on a "!" line (two sources disagree) until you have looked yourself.
+
+### Rate an answer
+
+Under each finished answer, the drawer asks **Was this answer helpful?** with two buttons, **Helpful** and **Not helpful**. The pressed one is marked. Press it again to take the vote back.
+
+- **Not helpful** opens a short list, **What was wrong?** (optional): it was wrong; it was out of date; it did not answer my question; it was unclear; it named no source I could check; it was unsafe or should not have been said. Tick what fits and press **Save reasons**. There is no box for free text: the reasons are the only words kept.
+- **This solved my problem** is offered under the last answer of an open conversation. It closes the conversation, so you can still read it but cannot ask more in it. Use it only when the answer really solved your problem; closing a conversation in any other way is not counted.
+
+Your rating stays with that answer in your conversation, and you can change it. It is deleted with the conversation. It is not sent to any AI service, and rating an answer does not give consent to use your conversations for training. Only counts go to the quality numbers that administrators see (see "Who may ask, what is kept, and what is logged"). Rating still works while Ask SCF is paused.
+
+**To report a bad answer:** rate it **Not helpful** and tick the reason. For a wrong answer about the product, also tell an administrator of this Foundry, with the question, so the documentation or the setting can be fixed. The quality numbers show how many answers were rated, but not which one.
 
 ### What you can ask
 
@@ -6479,6 +6509,7 @@ you never read the text of the AI service.
 | When | What you read |
 |---|---|
 | Ask SCF is switched off | Ask SCF is switched off on this Foundry. An administrator can switch it on. |
+| An administrator paused Ask SCF | Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations. |
 | You already have a question being answered | Ask SCF is still answering another question of yours. Wait for it, or stop it first. |
 | Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
 | You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
@@ -6525,6 +6556,9 @@ not stored.
 ```yaml
 help:
   enabled: true
+  paused: false                 # true: the emergency stop, see "Pause" below
+  audience: everyone            # or admins, or pilot: administrators and pilot_accounts
+  pilot_accounts: []            # account ids that may ask in the pilot stage, besides the administrators
   model: haiku                  # a model spec; without it, default_model
   timeout_seconds: 60           # a turn that takes longer is stopped
   max_parallel: 1               # turns answered at the same time, over all accounts
@@ -6540,6 +6574,20 @@ help:
 pattern that is not a regular expression, or that matches the empty text, is refused when the
 settings are read.
 
+**Pause (the emergency stop).** Set **Pause Ask SCF** on the Ask SCF card (`help.paused: true`) to stop
+new work at once, without switching Ask SCF off. Nobody can ask a question, try again or check a page
+context: each gets 503 with the sentence "Ask SCF is paused by an administrator for now." A question
+that already waits in the queue fails as "not set up" without a call to the model, and an answer that
+is being written is finished. Reading, exporting, deleting, archiving, restoring and closing
+conversations, and rating answers, keep working, and the button stays in the top bar. Use it when an
+answer is wrong in a way that matters, or when a provider or a setting needs to be fixed. `enabled: false`
+is different: it is "never set up" and shows no button. Pausing counts as a refusal, `paused`, in the
+quality numbers.
+
+**Who may ask: pilot stage.** `audience: pilot` lets the administrators and the accounts listed in
+`pilot_accounts` ask; everyone else gets the same 403 as for `admins`. The list is in `config.yaml`
+only (up to 1,000 account ids). `disabled_accounts` still wins over both.
+
 The two money limits are not applied with `cost_limits: false` or for a model without a price
 (a local model, a subscription login). Help turns are not runs: their cost is counted here, not
 in the daily budget of runs.
@@ -6553,8 +6601,9 @@ model can answer; with a Codex model every turn ends with "Ask SCF is not set up
 A model on a local provider that Claude Code can reach (for example `ollama:<model>`) works.
 
 **Provider and usage.** `GET /api/help/usage` (`scf ask usage`) shows whether Ask SCF is on, which
-provider and model answer (or why none can), the limits, how many turns run and wait, and per
-account and day the turns, failures, cost and tokens. It holds no question and no answer. Users
+provider and model answer (or why none can), the rollout stage, the limits, how many turns run and wait, per
+account and day the turns, failures, cost and tokens, and the quality numbers (see "Ratings and quality
+numbers" below). It holds no question and no answer. Users
 get 403 for it, and their own conversations never show a model, a provider, a cost or a token
 count; the name of the configured model and provider is also taken out of the text of their
 replies. Usage is kept for 90 days. An administrator still cannot read another account's
@@ -6563,14 +6612,51 @@ conversations. The server log gets one line in fixed words for a failed turn, fo
 says which kinds, for example `help: secrets were taken out of a question (token)`, and never the
 value.
 
+### Rolling out Ask SCF
+
+Turn Ask SCF on in steps. Go to the next step only when the checks of the step before are done and their
+evidence is kept with your change record. `scf ask usage` shows the stage you are in (`stage`: off, paused,
+admins, pilot or everyone).
+
+| Stage | Settings | Who may ask |
+|---|---|---|
+| 1. Administrators | `enabled: true`, `audience: admins` | administrators |
+| 2. Pilot | `audience: pilot`, `pilot_accounts: [account ids]` | administrators and the pilot accounts |
+| 3. Everyone | `audience` not set, or `everyone` | every account, except those in `disabled_accounts` |
+
+Before you move to the next stage, have evidence for each of these:
+
+1. **Evaluation.** `scf eval help` passes its fixed scenarios with no release blocked (see "Checking Ask
+   SCF before you switch it on"). Keep its report. Then read the quality numbers of the last 7 days with
+   `scf ask usage`: the answers that were rated, the share of helpful ones, and the failures and refusals.
+   Stop and look at the answers when most ratings are "not helpful" or the failures grow.
+2. **Permission.** From an account that is not allowed, a question gets 403 and nothing is stored. Check
+   one account of the stage and one that is not in it. `scf api routes help` shows who may call each route.
+3. **Accessibility.** Use the drawer with the keyboard alone (open it, ask, rate, close with Escape), and
+   once with a screen reader. Account → Accessibility states what is checked and the known limits.
+4. **Recovery.** Pause Ask SCF (`paused: true`). Check that a question gets the paused sentence and that
+   your conversations can still be read, exported and deleted. Take the pause off and check that a new
+   question works without a reload. Restart the server during an answer and check that the answer is
+   marked as interrupted, and that the conversations are still there.
+
+**If something goes wrong,** pause Ask SCF first, then find the cause. A 503 with any other sentence
+(switched off, or the secret check failed) is not a pause; only the paused sentence pauses the drawer.
+Switching it off with `enabled: false` also stops new questions, but it hides the button, so users cannot
+read their history until you switch it on again.
+
+**Going back to an older build.** An older build refuses `help.json` once a rating is stored, and it
+refuses the `help` keys `paused` and `pilot_accounts` and `audience: pilot`. Before you go back, export the
+conversations you want to keep, delete the rated ones, and take those keys out of `config.yaml`.
+
 ### Who may ask, what is kept, and what is logged
 
 **Who may ask.** When Ask SCF is on, these settings of `help` decide (on the Ask SCF card, except
-`disabled_accounts`, which is only in `config.yaml`), and the account is read again at every question:
+`disabled_accounts` and `pilot_accounts`, which are only in `config.yaml`), and the account is read again at every question:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `audience` | not set: everyone | `admins`: only administrators may ask |
+| `audience` | not set: everyone | `admins`: only administrators may ask; `pilot`: administrators and `pilot_accounts` |
+| `pilot_accounts` | none | account ids that may ask in the pilot stage, besides the administrators |
 | `disabled_accounts` | none | account ids that may not ask, whatever their role |
 | `turns_per_user_per_day` | 30 | questions one account may start per day |
 | `keep_days` | 90 | days an untouched conversation is kept |
@@ -6587,6 +6673,18 @@ characters: these two are fixed.
 their messages as one JSON document, also the archived ones, not the deleted ones. It is your
 own only, for an administrator too. Secrets were taken out before anything was stored, so the
 export holds none.
+
+**Ratings and quality numbers.** A rating (helpful or not, and the reasons) is kept with its answer in
+your conversation, and goes with the conversation when it is deleted. Nothing is sent to an AI service
+with it, and it gives no consent to use conversations for training. The quality numbers are a separate
+file, `help-stats.json` in the data folder: one row per day (UTC) with counts only. They count turns,
+retries, answers, sources offered and cited, limited answers, stopped and abandoned turns, conversations
+closed as solved, ratings and their reasons, failures and refusals by code, and how long answers took, in
+six buckets (under 5, 15, 30, 60 and 120 seconds, and longer). A row holds no account, conversation,
+question or answer, and a strict schema refuses any other field. Rows are kept 90 days. The file stays on
+this install and is never sent out. A failure to write it is logged in fixed words and never stops an
+answer or a request. Deleting an account removes its conversations and ratings; the counts stay, because
+they name no account.
 
 **Deletion and retention.** You delete a conversation yourself (its texts are gone at once). A
 conversation that is not changed for `keep_days` days is deleted the same way; a lower number

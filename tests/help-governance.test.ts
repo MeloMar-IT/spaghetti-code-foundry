@@ -5,9 +5,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AuditEntrySchema, auditPath } from "../src/auth/audit.js";
 import { setUserLimits } from "../src/auth/limits.js";
 import { ConfigSchema } from "../src/config.js";
-import { KEEP_MS, addUsage, listConversations, readUsage, retentionMs, setRetentionDays, usageToday } from "../src/help/store.js";
+import { readStats, statsPath, sumStats } from "../src/help/telemetry.js";
+import { KEEP_MS, addQuestion, addUsage, failTurn, listConversations, readUsage, retentionMs, setRetentionDays, usageToday } from "../src/help/store.js";
 import { REFUSAL_WORDS } from "../src/help/turn.js";
-import { helpAllowed, helpTurnsOf } from "../src/server/api-help.js";
+import { helpAllowed, helpTurnsOf, rolloutStage } from "../src/server/api-help.js";
 import { RULES } from "../src/server/permissions.js";
 import { startServer } from "../src/server/server.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -153,6 +154,119 @@ describe("who may ask", () => {
     expect(helpAllowed(started.ctx, { id: ann.user.id, role: "user" })).toBeUndefined();
     expect(helpAllowed(started.ctx, { id: "99999999-9999-4999-8999-999999999999", role: "admin" })).toBe("not-allowed");
     setUserLimits(bob.user.id, null, { by: admin.user.id });
+  });
+});
+
+describe("staged rollout, the emergency pause and the quality numbers", () => {
+  const today = () => {
+    const rows = readStats();
+    return sumStats(rows, "all");
+  };
+
+  it("the pilot audience lets administrators and the listed accounts ask; a disabled account never", async () => {
+    help().audience = "pilot";
+    help().pilot_accounts = [ann.user.id, bob.user.id];
+    help().disabled_accounts = [bob.user.id];
+    try {
+      expect((await ask(admin)).status).toBe(202);
+      expect((await ask(ann)).status).toBe(202);
+      const r = await ask(bob);
+      expect(r.status).toBe(403);
+      expect(r.json().error).toBe(REFUSAL_WORDS["not-allowed"]);
+      help().pilot_accounts = [ann.user.id];
+      delete help().disabled_accounts;
+      expect((await ask(bob)).status).toBe(403);
+      expect(helpAllowed(started.ctx, { id: ann.user.id, role: "user" })).toBeUndefined();
+      expect(rolloutStage(help())).toBe("pilot");
+    } finally {
+      delete help().audience;
+      delete help().pilot_accounts;
+      delete help().disabled_accounts;
+    }
+    expect((await ask(bob)).status).toBe(202);
+  });
+
+  it("paused: no new question, retry or context check; history stays readable; unpausing restores asking", async () => {
+    const mine = (await ask(ann)).json().id as string;
+    const before = today().refused.paused ?? 0;
+    help().paused = true;
+    try {
+      for (const [method, path, body] of [["POST", "/api/help/conversations", { question: "Again?" }], ["POST", `/api/help/conversations/${mine}/messages`, { question: "And?" }], ["POST", `/api/help/conversations/${mine}/retry`, {}], ["POST", "/api/help/context", { page: "#/runs" }]] as const) {
+        const r = await call(ann, method, path, body);
+        expect(r.status, path).toBe(503);
+        expect(r.json().error, path).toBe(REFUSAL_WORDS.paused);
+      }
+      // the turn-level refusals are counted (the context check is not a turn)
+      expect(today().refused.paused ?? 0).toBe(before + 3);
+      const list = await call(ann, "GET", "/api/help/conversations");
+      expect(list.json()).toMatchObject({ enabled: true, paused: true });
+      expect(list.json().conversations.length).toBeGreaterThan(0);
+      expect((await call(ann, "GET", `/api/help/conversations/${mine}`)).status).toBe(200);
+      expect((await call(ann, "GET", "/api/help/export")).status).toBe(200);
+      expect((await call(ann, "POST", `/api/help/conversations/${mine}/archive`, {})).status).toBe(200);
+      expect((await call(ann, "POST", `/api/help/conversations/${mine}/restore`, {})).status).toBe(200);
+      expect((await call(admin, "GET", "/api/help/usage")).json().rollout).toMatchObject({ stage: "paused", paused: true });
+    } finally {
+      help().paused = false;
+    }
+    expect((await call(ann, "GET", "/api/help/conversations")).json().paused).toBe(false);
+    expect((await ask(ann)).status).toBe(202);
+    expect((await call(ann, "DELETE", `/api/help/conversations/${mine}`)).status).toBe(200);
+  });
+
+  it("an answer is rated by its owner; the numbers hold counts and no text", async () => {
+    const c = (await ask(ann)).json().id as string;
+    const done = (await call(ann, "GET", `/api/help/conversations/${c}`)).json() as { messages: { id: string; role: string; status: string }[] };
+    const reply = done.messages.find((m) => m.role === "assistant")!;
+    expect(reply.status).toBe("done");
+    const was = today();
+    const url = `/api/help/conversations/${c}/feedback`;
+    expect((await call(ann, "POST", url, { message: reply.id, vote: "helpful" })).status).toBe(200);
+    expect((await call(ann, "POST", url, { message: reply.id, vote: "not-helpful", reasons: ["outdated", "unclear"] })).json().messages[1].feedback).toMatchObject({ vote: "not-helpful", reasons: ["outdated", "unclear"] });
+    let now = today();
+    expect([now.helpful - was.helpful, now.notHelpful - was.notHelpful, now.reasons.outdated ?? 0, now.reasons.unclear ?? 0]).toEqual([0, 1, (was.reasons.outdated ?? 0) + 1, (was.reasons.unclear ?? 0) + 1]);
+    expect((await call(ann, "POST", url, { message: reply.id, vote: null })).status).toBe(200);
+    now = today();
+    expect([now.helpful - was.helpful, now.notHelpful - was.notHelpful]).toEqual([0, 0]);
+    // free text, other accounts, a question message and a deleted conversation
+    expect((await call(ann, "POST", url, { message: reply.id, vote: "helpful", comment: "zebra-feedback-text" })).status).toBe(400);
+    expect((await call(bob, "POST", url, { message: reply.id, vote: "helpful" })).status).toBe(404);
+    expect((await call(ann, "POST", url, { message: done.messages[0]!.id, vote: "helpful" })).status).toBe(409);
+    expect((await call(ann, "POST", url, { message: reply.id, vote: "helpful" })).status).toBe(200);
+    expect((await call(ann, "DELETE", `/api/help/conversations/${c}`)).status).toBe(200);
+    expect((await call(ann, "POST", url, { message: reply.id, vote: "helpful" })).status).toBe(410);
+    // a vote stays counted after its conversation is gone
+    expect(today().helpful - was.helpful).toBe(1);
+    const usage = await call(admin, "GET", "/api/help/usage");
+    expect(usage.json()).toMatchObject({ rollout: { stage: "everyone", paused: false }, quality: { last7: { helpful: expect.any(Number) } } });
+    expect((await call(ann, "GET", "/api/help/usage")).status).toBe(403);
+    for (const text of ["zebra-question-text", "zebra-feedback-text", ann.user.id, "A run is one"]) {
+      expect(JSON.stringify(usage.json().quality), text).not.toContain(text);
+      if (text !== ann.user.id) expect(usage.text, text).not.toContain(text);
+      expect(readFileSync(statsPath(), "utf8"), text).not.toContain(text);
+    }
+    expect(readFileSync(join(process.env.FACTORY_HOME!, "help.json"), "utf8")).toContain("zebra-question-text");
+  });
+
+  it("counts a deleted waiting answer as abandoned, and a conversation as resolved only when the person says so", async () => {
+    const was = today();
+    const waiting = addQuestion(ann.user.id, { question: "Left waiting?" });
+    expect((await call(ann, "DELETE", `/api/help/conversations/${waiting.conversation.id}`)).status).toBe(200);
+    expect(today().abandoned - was.abandoned).toBe(1);
+
+    const c = (await ask(ann)).json().id as string;
+    // closing is not an outcome
+    expect((await call(ann, "POST", `/api/help/conversations/${c}/complete`, {})).status).toBe(200);
+    expect(today().resolved - was.resolved).toBe(0);
+    const d = (await ask(ann)).json().id as string;
+    expect((await call(ann, "POST", `/api/help/conversations/${d}/complete`, { resolved: true })).json().state).toBe("completed");
+    expect(today().resolved - was.resolved).toBe(1);
+    // the same conversation again, and one that never got an answer, add nothing
+    expect((await call(ann, "POST", `/api/help/conversations/${d}/complete`, { resolved: true })).status).toBe(200);
+    const failed = addQuestion(ann.user.id, { question: "No answer?" });
+    failTurn(failed.conversation.id, { message: failed.reply.id, tries: 1 }, { code: "provider", retry: true });
+    expect((await call(ann, "POST", `/api/help/conversations/${failed.conversation.id}/complete`, { resolved: true })).json().state).toBe("completed");
+    expect(today().resolved - was.resolved).toBe(1);
   });
 });
 

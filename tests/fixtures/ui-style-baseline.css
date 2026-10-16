@@ -938,6 +938,11 @@ select, textarea, summary, input:not([type="checkbox"]):not([type="radio"]), .si
 .ask-row-meta { font-size: var(--text-meta); }
 .ask-status:empty, .ask-error:empty { display: none; }
 .ask-error { color: var(--fail); }
+.ask-paused { border: 1px solid var(--border); border-left: 4px solid var(--accent); padding: var(--space-md); margin: 0; }
+.ask-rate { display: flex; flex-wrap: wrap; gap: var(--space-sm); align-items: center; margin-top: var(--space-sm); }
+.ask-rate button[aria-pressed="true"] { border-color: var(--accent); font-weight: 600; }
+.ask-reasons { display: grid; gap: var(--space-xs); margin-top: var(--space-sm); border: 1px solid var(--border); padding: var(--space-md); }
+.ask-reasons button { justify-self: start; }
 @media (max-width: 767px) {
   .ask-drawer { width: 100vw; border-left: none; padding: var(--space-lg); }
 }
