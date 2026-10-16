@@ -1,8 +1,10 @@
-import { readdirSync } from "node:fs";
+import { createPrivateKey, verify, type KeyObject } from "node:crypto";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from "node:fs";
 import { join } from "node:path";
 import { readSkillLock } from "./lock.js";
 import { matchRelease, type ApprovedRelease } from "./release.js";
 import { readReleaseRequests } from "./release-requests.js";
+import { approvalText, decodeBase64Exact, ed25519PublicKey, rawPublicKey, releaseSignatureToken, signApproval, type ReleaseKey } from "./release-signature.js";
 import { listStoredReleases } from "./release-store.js";
 import { readRunSkillLock } from "./run-lock.js";
 import { verifyRelease } from "./release-verify.js";
@@ -21,12 +23,83 @@ export function releaseOperandsProblem(operands: string[]): string | undefined {
   if (operands[0] === "publish" && operands.length === 2) {
     return parseReleaseTarget(operands[1]!) ? undefined : "scf skills release publish: the operand must be <catalogue>@<version>";
   }
+  if (operands[0] === "sign" && operands.length === 2) {
+    return parseReleaseTarget(operands[1]!) ? undefined : "scf skills release sign: the operand must be <catalogue>@<version>";
+  }
   if (operands[0] === "list" && operands.length === 1) return undefined;
-  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, "publish" and <catalogue>@<version>, or "list"';
+  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, "publish" or "sign" and <catalogue>@<version>, or "list"';
+}
+
+const MAX_KEY_FILE_BYTES = 16384;
+
+/** Reads an Ed25519 PEM private key. Returns the key or a fixed problem text; never a path, message or content. */
+export function readSigningKey(path: string): KeyObject | string {
+  let st;
+  try {
+    st = lstatSync(path);
+  } catch {
+    return "the key file cannot be read";
+  }
+  if (st.isSymbolicLink()) return "the key file is a symbolic link";
+  if (!st.isFile()) return "the key file is not a regular file";
+  if (st.mode & 0o077) return "the key file can be read by group or others; run chmod 600";
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ELOOP" ? "the key file is a symbolic link" : "the key file cannot be read";
+  }
+  let buf: Buffer | undefined;
+  try {
+    const f = fstatSync(fd);
+    if (!f.isFile()) return "the key file is not a regular file";
+    if (f.dev !== st.dev || f.ino !== st.ino) return "the key file changed while it was read";
+    if (f.mode & 0o077) return "the key file can be read by group or others; run chmod 600";
+    if (f.size > MAX_KEY_FILE_BYTES) return "the key file is too large";
+    buf = Buffer.alloc(f.size);
+    let off = 0;
+    while (off < buf.length) {
+      const n = readSync(fd, buf, off, buf.length - off, off);
+      if (n === 0) break;
+      off += n;
+    }
+    const key = createPrivateKey({ key: buf.subarray(0, off), format: "pem" });
+    return key.asymmetricKeyType === "ed25519" ? key : "the key is not an Ed25519 private key";
+  } catch {
+    return "the key file is not a readable unencrypted Ed25519 PEM private key";
+  } finally {
+    closeSync(fd);
+    buf?.fill(0);
+  }
+}
+
+/** `scf skills release sign <catalogue>@<version> --key <file>`: signs a stored release. Prints the approved entry, never key material. */
+export function releaseSign(target: { catalogue: string; version: string }, out: (line: string) => void, opts: { keyFile: string; home: string; keys: readonly ReleaseKey[] }): number {
+  const problem = (why: string) => {
+    out(`PROBLEM ${why}`);
+    return 1;
+  };
+  const priv = readSigningKey(opts.keyFile);
+  if (typeof priv === "string") return problem(priv);
+  const pub = rawPublicKey(priv);
+  const entry = opts.keys.find((k) => k.ed25519 === pub);
+  if (!entry) return problem("the key is not listed in skills.releases.keys");
+  const name = `${target.catalogue}@${target.version}`;
+  const stored = listStoredReleases(opts.home).releases.find((r) => r.catalogue === target.catalogue && r.version === target.version);
+  if (!stored) return problem(`${name} is not in the release store`);
+  const v = verifyRelease(stored.dir);
+  if (!v.ok) return problem(v.reason);
+  if (v.manifest.catalogue !== target.catalogue || v.manifest.version !== target.version) return problem(`the release folder does not hold ${name}`);
+  const id = { catalogue: target.catalogue, version: target.version, digest: v.digest };
+  const signature = signApproval(id, priv);
+  const raw = decodeBase64Exact(entry.ed25519, 32);
+  if (!raw || !verify(null, Buffer.from(approvalText(id), "utf8"), ed25519PublicKey(raw), Buffer.from(signature, "base64"))) return problem("the new signature does not verify");
+  out(`APPROVE ${id.catalogue} ${id.version} ${id.digest} key ${entry.id} signature ${signature}`);
+  return 0;
 }
 
 /** `scf skills release list`: every stored release with its approval state and the run locks that use it. Reads only. */
-export function releaseList(out: (line: string) => void, opts: { home: string; runsDir: string; approved: readonly ApprovedRelease[] }): number {
+export function releaseList(out: (line: string) => void, opts: { home: string; runsDir: string; approved: readonly ApprovedRelease[]; keys?: readonly ReleaseKey[] }): number {
   // `id@version digest` → names of the runs whose lock holds it
   const locked = new Map<string, Set<string>>();
   try {
@@ -60,11 +133,12 @@ export function releaseList(out: (line: string) => void, opts: { home: string; r
       out(`RELEASE ${name} invalid: the release folder does not hold ${name}`);
       continue;
     }
-    const state = matchRelease({ state: "ok", manifest: m, digest: v.digest }, opts.approved).state;
+    const state = matchRelease({ state: "ok", manifest: m, digest: v.digest }, opts.approved, opts.keys).state;
+    const token = releaseSignatureToken({ catalogue: m.catalogue, version: m.version, digest: v.digest }, opts.approved, opts.keys ?? []);
     const runs = new Set<string>();
     for (const s of m.skills) for (const n of locked.get(`${s.id}@${s.version} ${s.digest}`) ?? []) runs.add(n);
     const n = m.skills.length;
-    out(`RELEASE ${name} ${v.digest} ${state} ${n} skill${n === 1 ? "" : "s"}, ${runs.size ? `locked by ${runs.size} run${runs.size === 1 ? "" : "s"}` : "not locked by any run"}`);
+    out(`RELEASE ${name} ${v.digest} ${state}${token ? ` ${token}` : ""} ${n} skill${n === 1 ? "" : "s"}, ${runs.size ? `locked by ${runs.size} run${runs.size === 1 ? "" : "s"}` : "not locked by any run"}`);
     if (state !== "approved" || !lock.ok) continue;
     for (const s of m.skills) {
       if (!s.revoked && !lock.pins[`${s.id}@${s.version}`]) out(`PIN scf skills pin ${s.id}@${s.version} ${s.digest}`);
@@ -80,7 +154,7 @@ export function releaseList(out: (line: string) => void, opts: { home: string; r
 }
 
 /** `scf skills release verify <dir>`: offline; prints checked fields only. Exit 0 when the release is intact, whether or not it is approved. */
-export function releaseVerify(dir: string, out: (line: string) => void, approved: readonly ApprovedRelease[]): number {
+export function releaseVerify(dir: string, out: (line: string) => void, approved: readonly ApprovedRelease[], keys: readonly ReleaseKey[] = []): number {
   const v = verifyRelease(dir);
   if (!v.ok) {
     out(`PROBLEM ${v.reason}`);
@@ -91,7 +165,8 @@ export function releaseVerify(dir: string, out: (line: string) => void, approved
     out(`SKILL ${s.id}@${s.version} ${s.digest} evaluation ${s.evaluation.verdict}${s.revoked ? ` REVOKED ${s.revoked.on}: ${s.revoked.reason}` : ""}`);
   }
   out(`VERIFIED ${m.catalogue}@${m.version} ${v.digest} ${m.skills.length} skill${m.skills.length === 1 ? "" : "s"}`);
-  out(matchRelease({ state: "ok", manifest: m, digest: v.digest }, approved).state === "approved" ? "APPROVED" : "NOT-APPROVED");
+  const token = releaseSignatureToken({ catalogue: m.catalogue, version: m.version, digest: v.digest }, approved, keys);
+  out(`${matchRelease({ state: "ok", manifest: m, digest: v.digest }, approved, keys).state === "approved" ? "APPROVED" : "NOT-APPROVED"}${token ? ` ${token}` : ""}`);
   return 0;
 }
 

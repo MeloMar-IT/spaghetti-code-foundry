@@ -11,6 +11,7 @@ import { FACTORY_HOME } from "./flow/load.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
+import { decodeBase64Exact, MAX_RELEASE_KEYS } from "./skills/release-signature.js";
 import { REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
 
 const watcherShape = {
@@ -437,14 +438,28 @@ export const ConfigSchema = z
                     catalogue: SkillIdSchema,
                     version: SkillVersionSchema,
                     digest: z.string().regex(SKILL_DIGEST_RE, "must be sha256: and 64 hex digits"),
+                    key: SkillIdSchema.optional(),
+                    signature: z.string().refine((s) => !!decodeBase64Exact(s, 64), "must be base64 of 64 bytes").optional(),
                   })
                   .strict(),
               )
               .max(50)
               .default([]),
+            /** Trusted Ed25519 public keys. Once set, every approved release must be signed by one of them. */
+            keys: z.array(z.object({ id: SkillIdSchema, ed25519: z.string() }).strict()).max(MAX_RELEASE_KEYS).default([]),
           })
           .strict()
           .superRefine((r, ctx) => {
+            const ids = new Set<string>();
+            r.keys.forEach((k, i) => {
+              if (!decodeBase64Exact(k.ed25519, 32)) ctx.addIssue({ code: "custom", path: ["keys", i, "ed25519"], message: "must be base64 of a 32-byte Ed25519 public key" });
+              if (ids.has(k.id)) ctx.addIssue({ code: "custom", path: ["keys", i, "id"], message: `"${k.id}" is listed twice` });
+              ids.add(k.id);
+            });
+            r.approved.forEach((a, i) => {
+              if ((a.key === undefined) !== (a.signature === undefined)) ctx.addIssue({ code: "custom", path: ["approved", i], message: "needs both key and signature" });
+              else if (a.key !== undefined && !ids.has(a.key)) ctx.addIssue({ code: "custom", path: ["approved", i, "key"], message: `"${a.key}" is not in skills.releases.keys` });
+            });
             const seen = new Set<string>();
             r.approved.forEach((a, i) => {
               const k = `${a.catalogue}@${a.version}`;

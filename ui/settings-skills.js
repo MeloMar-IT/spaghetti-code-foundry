@@ -25,7 +25,7 @@ export function issueText(path, key, message, description) {
 
 /** Groups of the card. A pattern ending in "." is a prefix; any other pattern is an exact key. */
 export const SKILL_GROUPS = [
-  { title: "Where skills come from", keys: ["skills.builtin", "skills.roots", "skills.repository", "skills.releases.allow_unreleased", "skills.releases.approved"] },
+  { title: "Where skills come from", keys: ["skills.builtin", "skills.roots", "skills.repository", "skills.releases.allow_unreleased", "skills.releases.approved", "skills.releases.keys"] },
   { title: "Catalogue for the planner", keys: ["skills.catalogue."] },
   { title: "Selection", keys: ["skills.selection."] },
   { title: "Review checks", keys: ["skills.review."] },

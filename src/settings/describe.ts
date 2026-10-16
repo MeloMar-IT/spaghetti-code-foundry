@@ -209,6 +209,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "skills.roots": N("Skill folders", "Extra folders, managed by an administrator, where skill packages are read from."),
   "skills.repository": N("Repository skills", "Also read the skills in the repository's own skills folder; off means repository skills are never loaded."),
   "skills.releases.allow_unreleased": N("Allow unreleased skills", "For development only: folders that are not an approved release are loaded too."),
+  "skills.releases.keys": N("Trusted release keys", "Ed25519 public keys of the publishers you trust; once set, every approved release must be signed by one of them."),
   "skills.releases.approved": N("Approved releases", "The catalogue releases this installation accepts, each with its catalogue id, version and digest."),
   "skills.catalogue.max_candidates": N("Catalogue: most skills", "The most skills a planner's catalogue lists."),
   "skills.catalogue.max_tokens": N("Catalogue: size limit", "The size limit of the catalogue a planner gets, in tokens."),
