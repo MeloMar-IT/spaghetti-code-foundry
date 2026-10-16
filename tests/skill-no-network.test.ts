@@ -150,12 +150,12 @@ describe("skill code does not reach the network", () => {
       });
       expect(users.filter((f) => !own.has(f))).toEqual([]);
     });
-    it("only src/cli.ts imports from src/skill-import/", () => {
+    it("only src/cli.ts and the skill source sweeper import from src/skill-import/", () => {
       const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
       const files = walk("src");
       expect(files.length).toBeGreaterThan(50);
       const importers = files.filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /skill-import\//.test(m)));
-      expect(importers.filter((f) => !f.startsWith("src/skill-import/"))).toEqual(["src/cli.ts"]);
+      expect(importers.filter((f) => !f.startsWith("src/skill-import/"))).toEqual(["src/cli.ts", "src/server/skill-update-sweep.ts"]); // the sweeper runs `skills update --due` in the server (#559)
       for (const f of walk("src/skill-import")) {
         for (const m of modulesOf(readFileSync(f, "utf8"))) if (m.endsWith(".js") && m.startsWith(".")) expect(m, `${f} imports ${m}`).toMatch(/^\.\.?\//);
         expect(modulesOf(readFileSync(f, "utf8")).filter((m) => /skill-import\//.test(m)), f).toEqual([]);
