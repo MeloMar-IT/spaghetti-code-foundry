@@ -351,7 +351,17 @@ describe("the connector modules run nothing", () => {
     expect(modulesOf(text).sort()).toEqual(["./release.js", "node:crypto"]);
     expect(codeLines(text).filter((l) => /Sync\s*\(|readFile|writeFile|\bfs\b/.test(l))).toEqual([]);
   });
-  for (const f of ["release-verify.ts", "release-cli.ts", "release-signature.ts"]) {
+  it("only the release store, publish and CLI modules call publishRelease; the engine and registry never import them", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const files = walk("src");
+    expect(files.filter((f) => codeLines(readFileSync(f, "utf8")).some((l) => /publishRelease\(/.test(l))).sort()).toEqual(
+      [join(SKILLS, "release-cli.ts"), join(SKILLS, "release-publish.ts"), join(SKILLS, "release-store.ts")].sort(),
+    );
+    for (const f of [...files.filter((x) => x.startsWith(join("src", "engine"))), join(SKILLS, "registry.ts"), join(SKILLS, "run-lock.ts")]) {
+      expect(modulesOf(readFileSync(f, "utf8")).filter((m) => /release-(?:cli|publish)\.js$/.test(m)), f).toEqual([]);
+    }
+  });
+  for (const f of ["release-verify.ts", "release-cli.ts", "release-signature.ts", "release-store.ts", "schema.ts"]) {
     it(`${f} starts no process, opens no connection and does not read the process`, () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);

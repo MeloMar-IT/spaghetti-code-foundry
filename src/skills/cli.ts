@@ -7,7 +7,8 @@ import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
-import { parseReleaseTarget, releaseList, releaseOperandsProblem, releaseSign, releasesCheck, releaseVerify } from "./release-cli.js";
+import { homedir } from "node:os";
+import { parseReleaseTarget, releaseAdopt, releaseList, releaseOperandsProblem, releaseSign, releasesCheck, releaseVerify } from "./release-cli.js";
 import { releasePublish } from "./release-publish.js";
 import { RELEASES_FILE } from "./release-requests.js";
 import { applyConnector, connectorFor } from "./connector.js";
@@ -71,7 +72,8 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills release verify <dir>                           Check a catalogue release folder offline (files, digests, approval); reads only
        scf skills release sign <catalogue>@<version> --key <file>  Sign a stored release with a PEM Ed25519 private key (chmod 600); prints the approved entry to paste into the config
-       scf skills release list                                 List the published releases, their approval and the runs that lock them; reads only
+       scf skills release adopt [<catalogue>@<version>]        Copy signed approved releases from their local artifact into skill-releases/ after checking them; offline
+      scf skills release list                               List the published releases, their approval and the runs that lock them; reads only
       scf skills release publish <catalogue>@<version>         Publish a catalogue release from ${RELEASES_FILE} (reviewed, promotable, evaluation passed); writes only skill-releases/
        scf skills releases check [<file>]                       Check the release requests offline (default: ${RELEASES_FILE}); reads only
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
@@ -537,6 +539,15 @@ export async function skillsCommand(
       return releasePublish(parseReleaseTarget(operands[1]!)!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
     }
     const rel = (opts.skills ?? loadConfig().skills).releases;
+    if (operands[0] === "adopt") {
+      return releaseAdopt(operands[1] ? parseReleaseTarget(operands[1])! : undefined, out, {
+        home: opts.home ?? dataHome(),
+        approved: rel.approved,
+        keys: rel.keys,
+        env: opts.env ?? process.env,
+        userHome: opts.userHome ?? homedir(),
+      });
+    }
     if (operands[0] === "list") {
       const home = opts.home ?? dataHome();
       return releaseList(out, { home, runsDir: join(home, "runs"), approved: rel.approved, keys: rel.keys });

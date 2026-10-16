@@ -9,7 +9,7 @@ import { credentialProblem } from "./credential-scan.js";
 import { quarantinePath } from "./import-stage.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
 import { matchRelease, readRelease, releaseContentProblem, releaseProblemText, type ReleaseCheck, type ReleaseRead } from "./release.js";
-import { listStoredReleases, releaseStorePath, storeSources, type StoreListing } from "./release-store.js";
+import { listStoredReleases, releaseStorePath, storeSources, unstoredApproved, type StoreListing } from "./release-store.js";
 import { verifyRelease } from "./release-verify.js";
 import { SkillIntegrityError, SkillPinError, SkillSelectError, type SkillPinErrorCode, type SkillSelectCode } from "./registry-errors.js";
 import { code, cut, packageBytes, personalAgentPath } from "./registry-util.js";
@@ -392,6 +392,9 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       s.shadowedBy = w.key;
       notes.push({ kind: "shadowed", label: s.label, package: s.id, text: `${s.key} (${s.label}) is shadowed by ${w.key} (${w.label}).` });
     }
+  }
+  for (const u of unstoredApproved(listing, skills.releases.approved)) {
+    problems.push({ kind: "root-missing", source: "admin", label: "release store", root: u.root, reason: u.text });
   }
   const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   // Map order is discovery order: the precedence of the source, then the folder name.
