@@ -8,6 +8,8 @@ import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, t
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
+import { liveCanonicalDeps } from "../skills/run-canonical.js";
+import { dataHome } from "../auth/store.js";
 import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skills/payload.js";
 import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant, type SessionTools, type ToolCheck } from "../skills/tool-policy.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
@@ -370,9 +372,16 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   let models = 0;
   const tries = () => (blips || models ? { retried: { blips, models } } : {});
   // Built once: one log line and the same bytes for every try, retries and fallbacks included.
+  const canon =
+    step.skills === "catalog"
+      ? liveCanonicalDeps({ config, workdir: engine.summary.workdir, home: dataHome(), repository: engine.summary.vars?.github_repo || undefined })
+      : undefined;
   const catalogue =
     step.skills === "catalog"
-      ? runSkillCatalogue({ workdir: engine.summary.workdir, config, task: catalogueTaskText(scope.ctx.task as string | undefined, String(scope.ctx.steps?.[CATALOGUE_ISSUE_STEP]?.output ?? "")) })
+      ? runSkillCatalogue(
+          { workdir: engine.summary.workdir, config, task: catalogueTaskText(scope.ctx.task as string | undefined, String(scope.ctx.steps?.[CATALOGUE_ISSUE_STEP]?.output ?? "")) },
+          canon ? { canonical: canon } : {},
+        )
       : undefined;
   if (catalogue) engine.log(`    · ${catalogue.log}`);
   if (catalogue?.blocked) {

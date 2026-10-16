@@ -10,6 +10,7 @@ import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
+import { CANONICAL_LIMITS } from "./skills/canonical-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
 import { decodeBase64Exact, MAX_RELEASE_KEYS } from "./skills/release-signature.js";
 import { artifactPathProblem, relativePathProblem, REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
@@ -535,10 +536,12 @@ export const ConfigSchema = z
             include: z.array(SkillIdSchema).max(RESOLVE_RANGE.include).default([]),
             /** Skill ids that are never selected. */
             exclude: z.array(SkillIdSchema).max(RESOLVE_RANGE.exclude).default([]),
+            /** Capabilities only one skill may provide in a run. A run offers, locks and loads only the canonical provider. */
+            exclusive: z.array(SkillIdSchema).max(CANONICAL_LIMITS.exclusive).default([]),
           })
           .strict()
           .superRefine((c, ctx) => {
-            for (const key of ["include", "exclude"] as const)
+            for (const key of ["include", "exclude", "exclusive"] as const)
               c[key].forEach((id, i) => {
                 if (c[key].indexOf(id) !== i) ctx.addIssue({ code: "custom", path: [key, i], message: `duplicate "${id}"` });
               });

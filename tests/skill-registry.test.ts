@@ -363,7 +363,7 @@ describe("cache and config", () => {
   it("an old config gets the defaults; an unknown key is rejected", () => {
     expect(ConfigSchema.parse({}).skills).toEqual({
       builtin: true, roots: [], repository: false, releases: { allow_unreleased: false, approved: [], keys: [] }, catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] },
-      selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [] },
+      selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [], exclusive: [] },
       review: { max_tokens: 3000, max_skill_tokens: 1000 },
       unresolved: {
         unknown: "stop", missing: "stop", untrusted: "stop", conflict: "stop", oversized: "stop",

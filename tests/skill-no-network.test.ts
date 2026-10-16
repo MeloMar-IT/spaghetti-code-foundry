@@ -89,6 +89,14 @@ describe("skill code does not reach the network", () => {
       expect(modulesOf(cli).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
       expect(codeLines(cli).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
     });
+    it("run-canonical.ts reads files only through project-pins.js and starts no process and no network", () => {
+      const text = readFileSync("src/skills/run-canonical.ts", "utf8");
+      const mods = modulesOf(text);
+      expect(mods.filter((m) => NETWORK_MODULES.test(`"${m}"`) || /^(?:node:)?fs(?:\/promises)?$/.test(m))).toEqual([]);
+      expect(mods.filter((m) => m.startsWith("node:") || BUILTIN.has(m))).toEqual(["node:path"]);
+      expect(mods).toContain("./project-pins.js");
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l) || /\beval\s*\(|new Function|\bprocess\./.test(l))).toEqual([]);
+    });
     it("ls-remote.ts starts one detached `git ls-remote` and nothing else", () => {
       const text = readFileSync("src/skill-import/ls-remote.ts", "utf8");
       const code = codeLines(text);

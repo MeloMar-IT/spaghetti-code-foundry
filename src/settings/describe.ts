@@ -222,6 +222,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "skills.selection.max_tokens": N("Selection: size limit", "The size limit of all selected skills together, in tokens."),
   "skills.selection.include": N("Selection: always select", "Skill ids that are always selected; this is not an approval, they still need a pin."),
   "skills.selection.exclude": N("Selection: never select", "Skill ids that are never selected."),
+  "skills.selection.exclusive": N("Selection: one skill per capability", "Capabilities only one skill may provide in a run; a run offers, locks and loads only the canonical provider, and stops on a tie it cannot settle."),
   "skills.review.max_tokens": N("Review checks: size limit", "The size limit of the review checks a reviewer session gets, in tokens."),
   "skills.review.max_skill_tokens": N("Review checks: size of one skill", "The size limit of the review checks of one skill, in tokens."),
   "skills.unresolved.unknown": N("Unknown skill", "What to do with a requested skill that does not exist."),
