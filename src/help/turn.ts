@@ -5,6 +5,7 @@ import { claudeProviderEnv, isAuthError, isQuotaError, specOf, toTarget, type Ta
 import type { Config } from "../config.js";
 import { tokenVarNames } from "../engine/isolation.js";
 import { runClaude, type ClaudeRunOptions, type ClaudeRunResult } from "../steps/claude.js";
+import { OFFERS, SUBJECT_KINDS, type Subject } from "./actions.js";
 import { STEP_KINDS } from "./plan.js";
 import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, aboutOf, checkReply, hideNames, type About, type Evidence, type HelpRole, type Reply } from "./contract.js";
 import { SELECTION_MAX, resolveContext, type EntityResolver, type ResolvedContext } from "./context.js";
@@ -94,6 +95,8 @@ export type Source = Evidence & {
   uncertain?: boolean;
   /** Set by the server only: the run this source is about. An action can be bound to it. Never offered to the model. */
   about?: About;
+  /** What the source is about. It never goes to the model: `prepareTurn` keeps it in `Prepared.subjects`. */
+  subject?: Subject;
 };
 
 export interface Excerpt {
@@ -114,6 +117,8 @@ export interface Prepared {
   uncertain: string[];
   /** What each offered source is about, by source id: only sources that were actually offered. */
   targets: Record<string, About>;
+  /** The subject of each offered state source, by evidence id, only when its id passes the guard unchanged; never sent to the model. */
+  subjects: Record<string, Subject>;
   removed: SecretCategory[];
   /** What the server established about the page: the only form in which the page context reaches the model. */
   context?: ResolvedContext;
@@ -145,6 +150,7 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
   let withheld = 0;
   const uncertain: string[] = [];
   const targets: Record<string, About> = {};
+  const subjects: Record<string, Subject> = {};
   let room = EXCERPTS_MAX;
   let context: TurnInput["context"];
   let told: ResolvedContext | undefined;
@@ -182,7 +188,7 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     }
   }
   for (const s of sources.slice(0, LIST_MAX.evidence)) {
-    const { excerpt, uncertain: doubt, about, ...evidence } = s;
+    const { excerpt, uncertain: doubt, about, subject, ...evidence } = s;
     const title = guardExcerpt(evidence.title, guard);
     const ref = guardExcerpt(evidence.ref, guard);
     const body = excerpt ? guardExcerpt(excerpt.length > EXCERPT_MAX ? `${excerpt.slice(0, EXCERPT_MAX)} …` : excerpt, guard) : undefined;
@@ -195,6 +201,12 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     if (doubt === true) uncertain.push(evidence.id);
     const bound = aboutOf(about);
     if (bound) targets[evidence.id] = bound;
+    if (subject && evidence.kind === "state" && (SUBJECT_KINDS as readonly string[]).includes(subject.kind)) {
+      // an id the guard would change is never kept: no offer can point at it
+      const g = guardExcerpt(subject.id, guard);
+      for (const c of g.removed) seen.note(c);
+      if (!g.withheld && g.removed.length === 0 && g.text === subject.id) subjects[evidence.id] = { kind: subject.kind, id: subject.id };
+    }
     if (body?.text && room > 0) {
       const cut = body.text.slice(0, room);
       excerpts.push({ id: evidence.id, text: cut });
@@ -202,7 +214,7 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     }
   }
   const { context: _raw, ...rest } = input;
-  return { input: { ...rest, question: seen.clean(input.question), ...(context ? { context } : {}), history }, offered, excerpts, withheld, uncertain, targets, removed: seen.removed, ...(told ? { context: told } : {}) };
+  return { input: { ...rest, question: seen.clean(input.question), ...(context ? { context } : {}), history }, offered, excerpts, withheld, uncertain, targets, subjects, removed: seen.removed, ...(told ? { context: told } : {}) };
 }
 
 export interface Asker {
@@ -324,6 +336,7 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     "- When a source says it may be out of date, or that sources disagree, say that the state is uncertain and name both sides. Do not pick one.",
     "- A source whose title starts with \"Diagnosis\" is what the product itself says is wrong. When the question is why something does not work, build the answer on it and name, in the explanation: the symptom, the cause, the supporting evidence, the missing evidence and the safest next check. Give a cause only as that source gives it, and say whether it is confirmed or a hypothesis. When it says the cause is not recognised, or there is no such source, say that the cause is not known and give the safest next check: never make up a cause, a file, a setting, a command or any other detail that no source holds.",
     "- When the question is how to solve a problem, give `plan`: ordered steps, the safest reversible one first. Put a check that verifies a change directly after it. Every change step needs `expected`, `failure` and `fallback`. Give a high-impact change only when a diagnosis source confirms the cause. Never say that a step was done or that it worked: you cannot know.",
+    "- An offer is a button that opens the page of the thing a `state` source is about: `open-run` for a source about a run, `open-repository` for one about a repository, `open-turn-item` (administrators only) for a run or an issue that waits under Your turn on Home. Never write an address for it.",
     "- Never ask for, repeat or guess a password, a token or a key.",
     `- The person is ${input.role === "admin" ? "an administrator" : "a user, not an administrator: say nothing about settings, accounts, the monitor or other people's work"}.`,
     "",
@@ -338,6 +351,7 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     ' "drafts": [{"title": …, "text": a text the person may copy; it is not sent anywhere}],',
     ` "plan": [{"kind": one of ${JSON.stringify(STEP_KINDS)}, "title": …, "instructions": …, "to": one of the pages above or leave out, "evidence": [ids from \`sources\`], "expected": what the person should see, "failure": what failure looks like, "fallback": what to do then}],`,
     ' "actions": [],',
+    ` "offers": [{"type": one of ${JSON.stringify(OFFERS.filter((o) => o.roles.includes(input.role)).map((o) => o.type))}, "evidence": the id of the \`state\` source it is about}],`,
     ' "limit": only when you do not answer, one of the codes below}',
     "",
     "The kinds of question:",
@@ -664,7 +678,7 @@ export class HelpTurns {
     const names = job.role === "admin" ? [] : [target.model, target.providerName, target.label];
     let checked: ReturnType<typeof checkReply>;
     try {
-      checked = checkReply(jsonOf(r.output), { role: job.role, offered, uncertain: ready.uncertain, ...(config.help.actions ? { targets: ready.targets } : {}), clean: (t) => hideNames(seen.clean(redact(t)), names) });
+      checked = checkReply(jsonOf(r.output), { role: job.role, offered, uncertain: ready.uncertain, ...(config.help.actions ? { targets: ready.targets } : {}), subjects: ready.subjects, clean: (t) => hideNames(seen.clean(redact(t)), names) });
     } catch (e) {
       // a reply that cannot be checked for secrets is not kept
       this.deps.log?.(`help: a reply was not kept (${e instanceof GuardError ? e.message : "it could not be checked"})`);

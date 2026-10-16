@@ -1467,6 +1467,52 @@ snapshot already holds), or nothing.
 
 Tests: `tests/help-diagnosis.test.ts`.
 
+### Ask SCF: offers
+
+`src/help/actions.ts` (#565, part 1 of 2 of #239) is the registry of the offers of a reply: buttons
+that open a page. It is pure data and functions and imports only types from the contract, so the
+contract can import its values without a cycle.
+
+- **Registry.** `OFFERS` has one row per type (`open-run`, `open-repository`, `open-turn-item`):
+  its roles, the subject kinds it fits, its effect (`navigation`), the call whose permission rule is
+  checked at the click (`call`, with `:id` for the subject) and `to`, the address it gives back.
+  `offerDef(role, type)` finds a row for a role. A later read-only check adds a row with another
+  effect; `EFFECT_KINDS` and `OFFER_TYPES` are the lists the contract and the browser check.
+- **Addresses.** `subjectPage(kind, id)` is the only place that builds a page address. It always
+  starts with `#/`, encodes the id, and maps `repository`, `run` and the other kinds to their pages.
+  `LINKS` in `help-evidence.ts` moved here. The browser checks the address again with `pageLink`.
+- **Subjects.** `sourceOf` (`help-evidence.ts`) gives each state source `subject: {kind, id}`, the
+  kind in `SUBJECT_KINDS` (equal to `SNAPSHOT_KINDS`, tested). The name is `subject`, not `target`,
+  because `target` is an admin-only key. `prepareTurn` keeps the subject out of what the model sees
+  (`EvidenceSchema` is strict) and returns it as `Prepared.targets`, and `checkReply` gets it as
+  `targets`.
+- **Checked reply.** `checkReply` keeps an offer (`OfferSchema`, strict) only when its type is in the
+  registry for the role, its evidence is a state source offered in that turn, and the subject kind
+  fits the type. Every other field from the model is dropped; the title is the server's own. A reply
+  without `offers` still parses. At most `OFFER_MAX` (3) are kept.
+- **Clicks** (`runOffer`, `help-evidence.ts`; route `POST /api/help/conversations/:id/actions`). In
+  order: the account (`currentAccount`); the conversation (`offerConversation`), where a deleted one
+  answers 410 before any message is read, so ownership is still checked first (the `{question}` test
+  of `help-governance` keeps passing); the strict body `{message, offer}`; the message and the offer;
+  `offerDef` for the role now; `findRule` and `authorize` for the call, where a 404 is "stale" and
+  any other refusal is "denied"; then the subject is read again through `helpSnapshot`, or through
+  `turnFor` for `open-turn-item`. The answer is `{type, to}`. Fixed words (`OFFER_WORDS`) are the
+  only texts a refusal carries.
+- **Nothing is stored.** A click writes no conversation change, so it works in every state except
+  deleted. The route is audited as `help-action` (ok with the type, or failed with `refused: denied`
+  or `refused: stale`).
+- **Your turn.** `open-turn-item` opens `#/home` only for an item in `data.groups[].items` or
+  `data.continuing`. `buildTurn` (`src/your-turn.ts`) keeps a grouped release item's `members`
+  (`{runId?, repo, issue?}`) on the server side; `publicItem` strips them, as it strips `stamp`. A
+  dismissed item is not in those lists, so it is stale.
+- **Browser.** `ui/ask.js` `runOffer` closes the drawer and then sets `location.hash`, through an
+  injected `go`. `OFFER_EFFECTS` in `ui/ask-model.js` equals the server's effects (tested). The card
+  (`offerNode` in `ui/ask-view.js`) only asks; it opens nothing itself.
+
+Tests: `tests/help-actions.test.ts` (the registry, `subjectPage`, `OfferSchema`) and
+`tests/help-offers-api.test.ts` (each type: allowed, role denied, rule denied, stale, another
+account's target; the route refusals).
+
 ### Ask SCF: authorization, retention, audit and limits
 
 #243 adds no second mechanism; it uses the permission table, the audit log, the account limits,
@@ -1484,7 +1530,7 @@ the store's retention and the usage ledger.
   removes the conversations and the usage rows of the account (`removeHelpLocked`); the audit
   lines stay.
 - **Audit**: `help-ask` (ok with `turn <reply id>; try n`, or failed with `refused: <code>`),
-  `help-delete`, `help-export`. Written with `writeAudit` without waiting for the lock; a line
+  `help-delete`, `help-export`, `help-action` (an offer followed; see "Ask SCF: offers"). Written with `writeAudit` without waiting for the lock; a line
   that cannot be written is named in the server log and does not fail the call. The turn id is
   the correlation id: it is the id of the reply message in the conversation. No text of a
   conversation is in a line. `ui/audit.js` lists the three names for the filter.

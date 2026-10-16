@@ -31,7 +31,7 @@ const FIX = {
 describe("a snapshot as a source", () => {
   it("run that waits: source type, id, deep link, time, facts, and what is not available", () => {
     expect(sourceOf(FIX.runWaiting)).toEqual({
-      id: stateId("run", "run-7"), kind: "state", title: "A run of the flow deliver", ref: "run run-7 · #/runs/run-7", observedAt: AT,
+      id: stateId("run", "run-7"), kind: "state", title: "A run of the flow deliver", ref: "run run-7 · #/runs/run-7", observedAt: AT, subject: { kind: "run", id: "run-7" },
       excerpt: ["Observed by the server at 2026-03-01T10:00:00.000Z. These are facts as recorded, not conclusions.", "flow: deliver", "status: waiting", "waitingAt: approve_plan", "nextStatus: waiting for you — approval", "nextWho: You", "nextWhy: The plan needs your approval.", "Not available now: finishedAt"].join("\n"),
     });
   });
@@ -48,7 +48,8 @@ describe("a snapshot as a source", () => {
   it("every source fits the contract and the limits of a turn", () => {
     const big = snap("run", "run-big", "a run", Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`f${i}`, "x".repeat(90)])));
     for (const s of [...Object.values(FIX), big]) {
-      const { excerpt, uncertain: _u, ...e } = sourceOf(s);
+      const { excerpt, uncertain: _u, subject, ...e } = sourceOf(s);
+      expect(subject).toEqual({ kind: s.kind, id: s.id });
       expect(EvidenceSchema.safeParse(e).success, s.id).toBe(true);
       expect(excerpt!.length).toBeLessThanOrEqual(STATE_EXCERPT_MAX);
       expect(STATE_EXCERPT_MAX).toBeLessThanOrEqual(EXCERPT_MAX);

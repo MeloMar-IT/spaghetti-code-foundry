@@ -379,6 +379,32 @@ export function cardsOf(reply, role) {
   return cards;
 }
 
+/** What each offer of a reply does (OFFERS in src/help/actions.ts; a test keeps them equal). */
+export const OFFER_EFFECTS = { "open-run": "navigation", "open-repository": "navigation", "open-turn-item": "navigation" };
+
+const OFFER_NOTE = "Opens a page. The server checks again that you may see it.";
+
+/** The offers of a reply as cards with a button. `index` is the place in `reply.offers`: it is what a click sends. */
+export function offersOf(reply) {
+  if (!reply || reply.limit) return [];
+  return list(reply.offers).flatMap((o, index) => {
+    if (!o || !Object.hasOwn(OFFER_EFFECTS, o.type) || !str(o.title)) return [];
+    const source = list(reply.evidence).find((e) => e?.id === o.evidence);
+    return [{ index, type: o.type, effect: OFFER_EFFECTS[o.type], title: str(o.title), text: str(source?.title), note: OFFER_NOTE }];
+  });
+}
+
+/** The page an offer opens, or null when it is not a page of this role. The address comes from the server and is checked here again. */
+export const offerTarget = (role, to) => pageLink(role, to);
+
+/** A failed offer in plain words; the 403 and the 404 each have their own fixed sentence. */
+export function explainOfferError(e) {
+  const status = Number(e?.status) || 0;
+  if (status === 403) return "You are not allowed to open this now. Your permissions were checked again when you clicked.";
+  if (status === 404 || status === 410) return "This is not there any more, or you can no longer see it.";
+  return explainAskError(e);
+}
+
 /**
  * A checked reply as the drawer lays it out: the short answer first, how sure it is, the proposals as cards, and the
  * sources and assumptions to unfold. Null when there is no reply to lay out. `basis`: the sources of the kind the
@@ -395,6 +421,7 @@ export function replyLayout(reply, role = "user", done = []) {
     trust,
     basis: { needs, sources: sources.filter((s) => s.kind === needs) },
     cards: cardsOf(reply, role),
+    offers: offersOf(reply),
     plan: planOf(reply, role, done),
     sources,
     assumptions: assumptionsOf(reply, sources, trust),

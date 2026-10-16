@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { OFFERS } from "../src/help/actions.js";
 import { CERTAINTY_WORDS, NAV_PAGES, PART_RULES, QUESTION_RULES, checkReply, navPage, type HelpRole } from "../src/help/contract.js";
 import { FEEDBACK_REASONS, QUESTION_MAX as SERVER_MAX, checkContext } from "../src/help/store.js";
 import { REFUSAL_WORDS } from "../src/help/turn.js";
@@ -562,5 +563,42 @@ describe("a plan", () => {
     const msg = { id: "a1", role: "assistant", status: "done", text: "", reply: planned([step(), step()]) };
     expect(m.entryOf(msg, { planDone: (id: string) => (id === "a1" ? [0] : []) }).layout.plan.steps.map((s: any) => s.done)).toEqual([true, false]);
     expect(m.entryOf(msg).layout.plan.steps.map((s: any) => s.done)).toEqual([false, false]);
+  });
+});
+
+describe("offers of a reply", () => {
+  const offer = (type: string, evidence = "state-1") => ({ type, title: "T", evidence, subject: { kind: "run", id: "r1" } });
+  const reply = (offers: any[], over: any = {}) => ({ summary: "s", evidence: [{ id: "state-1", kind: "state", title: "Run r1", ref: "#/runs/r1" }], offers, ...over });
+
+  it("knows the effects of the server's registry", () => {
+    expect(m.OFFER_EFFECTS).toEqual(Object.fromEntries(OFFERS.map((o) => [o.type, o.effect])));
+  });
+
+  it("keeps the original index, skips unknown types, and gives none for a limit reply", () => {
+    const got = m.offersOf(reply([offer("open-anything"), offer("open-run"), offer("open-repository")]));
+    expect(got.map((o: any) => [o.index, o.type, o.effect, o.text])).toEqual([[1, "open-run", "navigation", "Run r1"], [2, "open-repository", "navigation", "Run r1"]]);
+    expect(got[0].note).toContain("checks again");
+    expect(m.offersOf(reply([offer("open-run")], { limit: { code: "secret" } }))).toEqual([]);
+    expect(m.offersOf(undefined)).toEqual([]);
+    expect(m.replyLayout(reply([offer("open-run")])).offers).toHaveLength(1);
+    expect(m.replyLayout(reply([offer("open-run")], { limit: { code: "secret" } })).offers).toEqual([]);
+  });
+
+  it("opens only a page of the role", () => {
+    for (const to of ["https://evil.example", "javascript:alert(1)", "#/runs/x?y", undefined]) expect(m.offerTarget("admin", to), String(to)).toBeNull();
+    expect(m.offerTarget("user", "#/board")).toBeNull();
+    expect(m.offerTarget("user", "#/runs/r1")).toMatchObject({ href: "#/runs/r1" });
+    expect(m.offerTarget("admin", "#/home")).toMatchObject({ href: "#/home" });
+  });
+
+  it("says a fixed sentence for each way a click fails", () => {
+    const e = (status: number, message = "") => m.explainOfferError({ status, message });
+    expect(e(0)).toContain("could not be reached");
+    expect(e(401)).toBe("Your session has ended. Sign in again.");
+    expect(e(403)).toContain("You are not allowed to open this now.");
+    expect(e(404)).toBe("This is not there any more, or you can no longer see it.");
+    expect(e(410)).toBe(e(404));
+    expect(e(503, "Ask SCF is switched off on this Foundry.")).toBe("Ask SCF is switched off on this Foundry.");
+    expect(e(500)).toBe("Ask SCF is not working now. Try again later.");
   });
 });

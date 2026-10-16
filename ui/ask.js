@@ -1,8 +1,8 @@
 import { api as realApi } from "./api.js";
 import { confirmDialog, mount, tabStops, trapTarget } from "./dom.js";
 import {
-  CONSEQUENCES, MAX_READ_FAILURES, PAUSED_WORDS, QUESTION_MAX, REASON_WORDS, announce, closesOn, contextFor, controlsFor, explainAskError, feedbackPlan, historyRows, isPausedError, isWaiting, lastOf,
-  planKey, pollDelay, restorePick, sendPlan, solveOffered, staleGuard, suggestionsFor, threadOf, voteNote, waitNote, whereOf,
+  CONSEQUENCES, MAX_READ_FAILURES, PAUSED_WORDS, QUESTION_MAX, REASON_WORDS, announce, closesOn, contextFor, controlsFor, explainAskError, explainOfferError, feedbackPlan, historyRows, isPausedError, isWaiting, lastOf,
+  offerTarget, planKey, pollDelay, restorePick, sendPlan, solveOffered, staleGuard, suggestionsFor, threadOf, voteNote, waitNote, whereOf,
 } from "./ask-model.js";
 import { actionNodes, askButton, askFrame, entryNode, historyNodes, rateNodes, suggestionNodes } from "./ask-view.js";
 
@@ -57,6 +57,7 @@ export function tabProgress() {
  */
 export function createAsk(role, {
   slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], paused = false, store = tabStore(), progress = tabProgress(), now = () => Date.now(),
+  go = (to) => { if (win.location) win.location.hash = to; },
   confirmer = confirmDialog, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
 } = {}) {
   // `restore`: the conversation to read when the drawer opens for the first time after a reload.
@@ -110,6 +111,7 @@ export function createAsk(role, {
     // a link to a page closes the drawer, so the page it opens is seen; the address changes by the link itself
     const view = {
       now: now(),
+      onOffer: (id, i) => void runOffer(id, i),
       onNavigate: () => close({ back: false }),
       onToggle: (id, i) => toggleStep(id, i),
       reasonWords: REASON_WORDS,
@@ -208,7 +210,7 @@ export function createAsk(role, {
   }
 
   /** One call that changes something. A second one while it runs does nothing, so no press is counted twice. */
-  async function act(call, after) {
+  async function act(call, after, explain = explainAskError) {
     if (st.busy) return false;
     const current = guard.ticket();
     st.busy = true;
@@ -225,7 +227,7 @@ export function createAsk(role, {
       st.busy = false;
       // only the exact sentence of a paused Ask SCF pauses the drawer: another 503 (switched off, secret check) does not
       if (isPausedError(e)) st.paused = true;
-      if (current()) ui.error.textContent = explainAskError(e);
+      if (current()) ui.error.textContent = explain(e);
       draw();
       return false;
     }
@@ -240,6 +242,18 @@ export function createAsk(role, {
       /* keep what is known */
     }
     draw();
+  }
+
+  /** The person presses Open on an offer: the server checks again and gives the address; the drawer closes, then the page opens. */
+  function runOffer(message, offer) {
+    const id = mine();
+    if (!id) return false;
+    return act(() => api.helpOffer(id, { message, offer }), (r) => {
+      const link = offerTarget(role, r?.to);
+      if (!link) { ui.error.textContent = "This page cannot be opened here."; draw(); return; }
+      close({ back: false });
+      go(link.href);
+    }, explainOfferError);
   }
 
   async function send() {
@@ -438,7 +452,7 @@ export function createAsk(role, {
     ui.drawer.remove?.();
     if (slot) { slot.replaceChildren(); slot.hidden = true; }
   }
-  return { open, close, send, stop, stopAnswer, retry, rate, solve, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
+  return { open, close, send, runOffer, stop, stopAnswer, retry, rate, solve, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
 }
 
 /**

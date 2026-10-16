@@ -2719,6 +2719,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
 | `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
 | `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
+| `help-action` | An account followed an offer of an Ask SCF reply (opened a page). Refused when the thing is gone (404), not allowed now (403) or the conversation is deleted (410) | `conversation <id>` | `<type>` (for example `open-run`), or `refused: denied` or `refused: stale` |
 | `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action under **Needs you** on Home (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
 
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
@@ -3274,6 +3275,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
+| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask SCF reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`; nothing is stored; 404 when the thing is gone or you can no longer see it, 403 when you may not open it now, 410 for a deleted conversation, 503 while Ask SCF is switched off |
 | `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
 | `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
@@ -6244,6 +6246,20 @@ Every change step says what you should see, what a failure looks like and what t
 step always shows a danger label and is never folded away. Ask SCF does not run a step:
 you do it yourself, or follow the plan by hand. "I did this" only ticks the step in this browser tab
 (it is kept for the tab's session, not on the server); Ask SCF has not checked the result.
+
+An offer is a navigation part shown as a card with an **Open** button. It opens one of these pages:
+
+- a run, if you may open it (both roles);
+- a repository, if you may open it (both roles);
+- your item under **Your turn** on Home (administrators only). It opens Home only while the run or
+  issue is still on Home, in a group or under "Done — continuing". An item you dismissed counts as gone.
+
+The address comes from the Foundry, never from the text of the answer. When you press **Open**, the
+server checks again that you may open the page as it is now. Then the drawer closes and the page opens.
+If the thing is gone or you can no longer see it, the card says "This is not there any more, or you
+can no longer see it." If your permissions no longer allow it, it says "You are not allowed to open
+this now." Opening a page stores nothing and changes nothing, so an offer also works in a finished or
+archived conversation, but not in a deleted one.
 
 An action runs only when all of this holds:
 
