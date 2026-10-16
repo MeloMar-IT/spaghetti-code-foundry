@@ -326,7 +326,7 @@ describe("skills.selection config", () => {
   const parse = (skills: unknown) => ConfigSchema.safeParse({ skills });
   it("has defaults and an old config parses", () => {
     const c = ConfigSchema.parse({});
-    expect(c.skills.selection).toEqual({ max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [] });
+    expect(c.skills.selection).toEqual({ max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [], exclusive: [] });
   });
   it.each([
     ["max_skills 0", { selection: { max_skills: 0 } }],

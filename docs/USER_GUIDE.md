@@ -3311,7 +3311,7 @@ skills:
   roots: []
   repository: false
   catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] }
-  selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [] }
+  selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [], exclusive: [] }
   review: { max_tokens: 3000, max_skill_tokens: 1000 }
   unresolved:
     unknown: stop
@@ -4807,6 +4807,7 @@ skills:
     max_tokens: 15000      # total for the set (100–100000, default 15000)
     include: []            # skill ids that are always selected (mandatory)
     exclude: []            # skill ids that are never selected; catalogue.exclude applies too
+    exclusive: []          # capabilities with one winner per run (at most 200, see "Exclusive capabilities")
 ```
 
 - **Exact versions:** each id resolves to its active version, which must pass the pin check (see [Pinned versions and integrity](#pinned-versions-and-integrity)). Repository skills are never selected.
@@ -4826,6 +4827,23 @@ When a run has a plan that is ready to code, the first agent step resolves the p
 - **Lifecycle.** A locked skill whose version is `deprecated` or `retired` goes on, with a `skill lifecycle:` note in the run log. A `quarantined` version stops the run unless an administrator allowed this run (`scf skills allow-run`). A `revoked` version always stops it. See "Skill lifecycle" in "Trust".
 - **A mandatory skill that cannot be used** stops the step with `skill selection is blocked:`; pin it or change `skills.selection.include`.
 - **Older runs** without a lock stay readable and nothing is checked for them. The agent cannot write the lock file.
+
+### Exclusive capabilities
+
+Some capabilities should have one provider in a run, for example one database access skill. List them in `skills.selection.exclusive`:
+
+```yaml
+skills:
+  selection:
+    exclusive: [cosmos-db-access]   # at most 200 slugs, no duplicates; default []
+```
+
+- **What a run does.** For each listed capability, a run offers, locks and loads only the canonical provider: the skill that the canonical rules pick (the same rules as [Canonical skill per capability](#canonical-skill-per-capability)). A requested skill that loses is left out, and the lock log says `skill lock: <id> left out: not-canonical`. Two providers of an exclusive capability are never in one lock.
+- **What stops a step.** A tie that the rules cannot settle, a mandatory skill (`skills.selection.include`) or a dependency that is not the canonical provider, and an owner choice that is invalid or expired all stop the step before the agent starts. The text starts with `skills not resolved:` (the catalogue) or `skill selection is blocked:` (the lock). Pin the skill, or change the choice or the list, then run again. A tie on a high-risk capability (`skills.unresolved.high_risk`) always stops.
+- **Owner overrides** are in `skill-overrides.yaml` in the data folder. They apply to all repositories, or to a list of them. An override can be given an expiry date; after it, the override is no longer used and the step stops.
+- **Project pins** are in `.claude-factory/skill-pins.yaml` on the default branch of the repository, never on a work branch. A pin settles a tie for its capability. Check the pins with `scf skills project-pins check`, and the overrides with `scf skills overrides check`.
+- **Empty list.** With `exclusive: []` no check runs and the run behaves as it did before.
+- **Record.** The decision is saved in `run.json` as `summary.skillSelection`: for each capability, the outcome, the winner (`id@version`), who decided it, up to 5 rejected skills with their codes and levels, and a count of the rest. It holds ids, versions and codes only, no text.
 
 ### Skill modes in a flow
 

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -94,6 +95,48 @@ describe("a skills: catalog step", () => {
     expect(s.history[0]!.skillCatalogue).toBeUndefined();
     expect(logOf(s)).toContain("skill catalogue: none (the catalogue could not be built)");
     expect(lineCount(s)).toBe(1);
+  });
+
+  describe("with an exclusive capability", () => {
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { cwd: repo, stdio: "ignore" });
+    const addSkill = (id: string) => {
+      const d = join(low, id);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "SKILL.md"), `---\nname: ${id}\ndescription: Skill ${id} for tests.\n---\n\nDo ${id}.\n`);
+      writeFileSync(join(d, "skill.yaml"), `id: ${id}\nversion: 1.0.0\ncapabilities: [demo-cap]\n`);
+      addSkillPins([{ key: `${id}@1.0.0`, digest: loadSkillPackage(d).digest }]);
+    };
+    beforeEach(() => {
+      addSkill("one");
+      addSkill("two");
+      git("init", "-q");
+      git("commit", "-q", "--allow-empty", "-m", "start");
+      git("update-ref", "refs/remotes/origin/main", "HEAD");
+      git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
+      config = ConfigSchema.parse({ skills: { releases: { allow_unreleased: true }, roots: [low], selection: { exclusive: ["demo-cap"] } } });
+    });
+
+    afterEach(() => rmSync(join(process.env.FACTORY_HOME!, "skill-overrides.yaml"), { force: true }));
+
+    it("offers only the canonical provider and records the choice", async () => {
+      const s = await run(planner(""));
+      expect(s.status).toBe("succeeded");
+      const out = s.history[0]!.output;
+      expect(out).toContain('"id":"demo"');
+      expect(["one", "two"].filter((id) => out.includes(`"id":"${id}"`))).toHaveLength(1);
+      expect(s.history[0]!.skillCatalogue?.canonical?.[0]).toMatchObject({ capability: "demo-cap", winner: expect.stringMatching(/^(one|two)@1\.0\.0$/) });
+      expect(logOf(s)).toContain("1 not canonical");
+    });
+
+    it("stops the step on an expired owner override", async () => {
+      writeFileSync(
+        join(process.env.FACTORY_HOME!, "skill-overrides.yaml"),
+        "schema: 1\noverrides:\n  - capability: demo-cap\n    target: one@1.0.0\n    by: \"@owner\"\n    reason: test\n    from: 2020-01-01T00:00:00Z\n    expires: 2021-01-01T00:00:00Z\n    scope: all\n",
+      );
+      const s = await run(planner(""));
+      expect(s.status).not.toBe("succeeded");
+      expect(logOf(s)).toContain("has expired");
+    });
   });
 
   it("does not resume a session that may hold a skill block", async () => {
