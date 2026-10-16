@@ -392,8 +392,9 @@ describe("slow step", () => {
 describe("descriptions", () => {
   it("every detector has a unique name and a description of two sentences, at most 240 characters", () => {
     const info = detectorInfo();
-    expect(info).toHaveLength(15); // 14 and the self-update detector
-    expect(new Set(info.map((d) => d.name)).size).toBe(15);
+    expect(info).toHaveLength(16); // 14, the self-update detector and the skill source check
+    expect(new Set(info.map((d) => d.name)).size).toBe(16);
+    expect(info.map((d) => d.name)).toContain("skill-source-check");
     expect(info.map((d) => d.name)).toContain("detector-failed");
     for (const d of info) {
       expect(d.description.length, d.name).toBeLessThanOrEqual(240);
