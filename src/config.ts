@@ -12,7 +12,7 @@ import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
 import { decodeBase64Exact, MAX_RELEASE_KEYS } from "./skills/release-signature.js";
-import { REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
+import { artifactPathProblem, REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -440,6 +440,14 @@ export const ConfigSchema = z
                     digest: z.string().regex(SKILL_DIGEST_RE, "must be sha256: and 64 hex digits"),
                     key: SkillIdSchema.optional(),
                     signature: z.string().refine((s) => !!decodeBase64Exact(s, 64), "must be base64 of 64 bytes").optional(),
+                    /** Absolute local folder of this release (schema 2); `scf skills release adopt` copies it into the release store. */
+                    artifact: z
+                      .string()
+                      .superRefine((p, ctx) => {
+                        const m = artifactPathProblem(p);
+                        if (m) ctx.addIssue({ code: "custom", message: m });
+                      })
+                      .optional(),
                   })
                   .strict(),
               )

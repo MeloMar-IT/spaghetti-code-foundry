@@ -202,7 +202,9 @@ describe("skillsCommand", () => {
       const r = await sk([], {}, strict([{ catalogue: m.catalogue, version: m.version, digest }]));
       expect(r.out).toContain(`RELEASE skills.roots[0] acme-skills@1.0.0 ${digest} approved`);
       expect(r.out).not.toContain("NOTE");
-      expect(r.code).toBe(0);
+      // the release loads from skills.roots, but it is not in the store: scf skills says to adopt it
+      expect(r.out).toContain("scf skills release adopt acme-skills@1.0.0");
+      expect(r.code).toBe(1);
     });
 
     it("prints the digest of an unapproved release and exits 1", async () => {

@@ -70,6 +70,7 @@ Usage:
   scf skills release verify <dir>                Check a catalogue release folder offline (files, digests, approval)
   scf skills release publish <catalogue>@<version>  Publish a catalogue release from skill-releases.yaml (reviewed, promotable, evaluation passed)
   scf skills release sign <catalogue>@<version> --key <private-key-file>  Sign a stored release with an Ed25519 key; prints the approved entry
+  scf skills release adopt [<catalogue>@<version>]  Copy signed approved releases from their local artifact into skill-releases/ after checking them; offline
   scf skills releases check [<file>]           Check the release requests (default: skill-releases.yaml)
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition

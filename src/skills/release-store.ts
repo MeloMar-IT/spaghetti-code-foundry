@@ -4,6 +4,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { dataHome } from "../auth/store.js";
 import { claimHomeWrite } from "../home.js";
 import { credentialProblem } from "./credential-scan.js";
+import { readRegular } from "./package.js";
 import { ATTRIBUTION_DIR, verifyRelease } from "./release-verify.js";
 import { MAX_RELEASE_V2_BYTES, RELEASE_FILE, ReleaseManifestSchema, releaseDigest, type ApprovedRelease, type ReleaseManifestV2 } from "./release.js";
 import { compareSkillVersions, SKILL_ID_RE, SKILL_VERSION_RE } from "./schema.js";
@@ -283,6 +284,62 @@ export function listStoredReleases(home = dataHome()): StoreListing {
     for (const v of shown.sort((a, b) => compareSkillVersions(b, a) || cmp(a, b))) out.releases.push({ catalogue: cat, version: v, dir: join(root, cat, v) });
   }
   return out;
+}
+
+/**
+ * The content of a release folder that verifyRelease accepted, for publishRelease. `realRoot` is a resolved path. Before each read the
+ * parent folder must still resolve to itself (no link in between); the file is read without following a link. A string is the refusal.
+ * publishRelease checks the staged copy against the digest again, so only the approved bytes can be published.
+ */
+export function readReleaseContent(realRoot: string, m: ReleaseManifestV2): ReleaseContent | string {
+  const changed = "the artifact changed while it was read";
+  const packages = new Map<string, ReleaseFile[]>();
+  const attribution = new Map<string, ReleaseFile[]>();
+  try {
+    const readAll = (base: string, entries: { path: string; bytes: number }[]): ReleaseFile[] | string => {
+      const files: ReleaseFile[] = [];
+      for (const f of entries) {
+        const full = join(base, ...f.path.split("/"));
+        if (realpathSync(dirname(full)) !== dirname(full)) return changed;
+        const bytes = readRegular(full, f.bytes);
+        if (!(bytes instanceof Uint8Array) || bytes.length !== f.bytes) return changed;
+        files.push({ path: f.path, content: bytes });
+      }
+      return files;
+    };
+    for (const s of m.skills) {
+      const pkg = readAll(join(realRoot, s.id), s.files);
+      if (typeof pkg === "string") return pkg;
+      packages.set(s.id, pkg);
+      if (s.attribution.length) {
+        const att = readAll(join(realRoot, ATTRIBUTION_DIR, s.id), s.attribution);
+        if (typeof att === "string") return att;
+        attribution.set(s.id, att);
+      }
+    }
+  } catch {
+    return "the artifact cannot be read";
+  }
+  return { manifest: m, packages, attribution };
+}
+
+/** Approved releases that are not in the store, wherever else they may load from. Nothing when the store listing is incomplete: that is reported elsewhere. */
+export function unstoredApproved(listing: StoreListing, approved: readonly ApprovedRelease[]):{ catalogue: string; version: string; root: string; text: string }[] {
+  if (listing.refused || listing.unreadable) return [];
+  const stored = new Set(listing.releases.map((r) => `${r.catalogue}@${r.version}`));
+  return approved
+    .filter((a) => !stored.has(`${a.catalogue}@${a.version}`))
+    .map((a) => {
+      // A name that looks like a credential is never shown.
+      const shown = !credentialProblem(a.catalogue) && !credentialProblem(a.version);
+      const name = shown ? ` ${a.catalogue}@${a.version}` : "";
+      return {
+        catalogue: a.catalogue,
+        version: a.version,
+        root: shown ? `skill-releases/${a.catalogue}/${a.version}` : "skill-releases",
+        text: `approved release${name} is not in the release store; run "scf skills release adopt${name}"${a.artifact ? "" : " after you set its artifact in skills.releases.approved"}`,
+      };
+    });
 }
 
 /** By catalogue and version only: a digest mismatch is for the registry's checks to refuse. */

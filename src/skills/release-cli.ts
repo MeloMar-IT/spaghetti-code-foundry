@@ -1,13 +1,14 @@
 import { createPrivateKey, verify, type KeyObject } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { matchRelease, type ApprovedRelease } from "./release.js";
 import { readReleaseRequests } from "./release-requests.js";
-import { approvalText, decodeBase64Exact, ed25519PublicKey, rawPublicKey, releaseSignatureToken, signApproval, type ReleaseKey } from "./release-signature.js";
-import { listStoredReleases } from "./release-store.js";
+import { personalAgentPath } from "./registry-util.js";
+import { approvalSignatureState, approvalText, decodeBase64Exact, ed25519PublicKey, rawPublicKey, releaseSignatureToken, signApproval, type ReleaseKey } from "./release-signature.js";
+import { listStoredReleases, publishRelease, readReleaseContent, ReleaseStoreError, releaseStorePath } from "./release-store.js";
 import { readRunSkillLock } from "./run-lock.js";
 import { verifyRelease } from "./release-verify.js";
-import { SKILL_ID_RE, SKILL_VERSION_RE } from "./schema.js";
+import { artifactPathProblem, SKILL_ID_RE, SKILL_VERSION_RE } from "./schema.js";
 
 /** `<catalogue>@<version>` with exactly one `@`; undefined for anything else. */
 export function parseReleaseTarget(s: string): { catalogue: string; version: string } | undefined {
@@ -25,8 +26,11 @@ export function releaseOperandsProblem(operands: string[]): string | undefined {
   if (operands[0] === "sign" && operands.length === 2) {
     return parseReleaseTarget(operands[1]!) ? undefined : "scf skills release sign: the operand must be <catalogue>@<version>";
   }
+  if (operands[0] === "adopt" && operands.length <= 2) {
+    return operands.length === 1 || parseReleaseTarget(operands[1]!) ? undefined : "scf skills release adopt: the operand must be <catalogue>@<version>";
+  }
   if (operands[0] === "list" && operands.length === 1) return undefined;
-  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, "publish" or "sign" and <catalogue>@<version>, or "list"';
+  return operands[0] === "verify" && operands.length === 2 ? undefined : 'scf skills release: expects "verify" and one folder, "publish", "sign" or "adopt" and <catalogue>@<version>, or "list"';
 }
 
 const MAX_KEY_FILE_BYTES = 16384;
@@ -95,6 +99,121 @@ export function releaseSign(target: { catalogue: string; version: string }, out:
   if (!raw || !verify(null, Buffer.from(approvalText(id), "utf8"), ed25519PublicKey(raw), Buffer.from(signature, "base64"))) return problem("the new signature does not verify");
   out(`APPROVE ${id.catalogue} ${id.version} ${id.digest} key ${entry.id} signature ${signature}`);
   return 0;
+}
+
+export interface ReleaseAdoptOptions {
+  home: string;
+  approved: readonly ApprovedRelease[];
+  keys: readonly ReleaseKey[];
+  env: NodeJS.ProcessEnv;
+  userHome: string;
+}
+
+/**
+ * `scf skills release adopt [<catalogue>@<version>]`: copies each approved release that is missing from the store from its local
+ * artifact, after verify, identity and signature checks. Offline. Output never shows a path. Exit 1 on any REFUSED, a store that
+ * cannot be read, or a named entry with MISSING-ARTIFACT.
+ */
+export function releaseAdopt(target: { catalogue: string; version: string } | undefined, out: (line: string) => void, opts: ReleaseAdoptOptions): number {
+  const { home } = opts;
+  let refused = false;
+  let missing = false;
+  const refuse = (name: string, why: string) => {
+    refused = true;
+    out(`REFUSED ${name}: ${why}`);
+  };
+  const entries = target ? opts.approved.filter((a) => a.catalogue === target.catalogue && a.version === target.version) : [...opts.approved];
+  if (target && !entries.length) {
+    refuse(`${target.catalogue}@${target.version}`, "not in skills.releases.approved");
+    return 1;
+  }
+  if (!entries.length) {
+    out("No releases are approved");
+    return 0;
+  }
+  const listing = listStoredReleases(home);
+  if (listing.refused || listing.unreadable) {
+    out("PROBLEM the release store cannot be read completely; nothing was adopted");
+    return 1;
+  }
+  for (const a of entries) {
+    const name = `${a.catalogue}@${a.version}`;
+    const other = `the release store holds ${name} with another digest`;
+    const stored = listing.releases.find((r) => r.catalogue === a.catalogue && r.version === a.version);
+    if (stored) {
+      const v = verifyRelease(stored.dir);
+      if (!v.ok) refuse(name, `the release store holds ${name}, but it does not verify`);
+      else if (v.digest !== a.digest || v.manifest.catalogue !== a.catalogue || v.manifest.version !== a.version) refuse(name, other);
+      else out(`PRESENT ${name}`);
+      continue;
+    }
+    if (a.artifact === undefined) {
+      missing = true;
+      out(`MISSING-ARTIFACT ${name}: no artifact is set in skills.releases.approved`);
+      continue;
+    }
+    const pathProblem = artifactPathProblem(a.artifact);
+    if (pathProblem) {
+      refuse(name, `the artifact ${pathProblem}`);
+      continue;
+    }
+    try {
+      lstatSync(a.artifact);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        missing = true;
+        out(`MISSING-ARTIFACT ${name}: the artifact folder does not exist`);
+      } else refuse(name, "the artifact cannot be read");
+      continue;
+    }
+    let real: string;
+    try {
+      real = realpathSync(a.artifact);
+    } catch {
+      refuse(name, "the artifact cannot be read");
+      continue;
+    }
+    if (personalAgentPath(real, opts.env, opts.userHome)) {
+      refuse(name, "the artifact is in a personal agent folder");
+      continue;
+    }
+    if (releaseStorePath(real, home)) {
+      refuse(name, "the artifact is inside the release store");
+      continue;
+    }
+    const sig = approvalSignatureState(a, opts.keys);
+    if (sig.state !== "signed") {
+      refuse(name, !opts.keys.length ? "no skills.releases.keys are set; adopt needs a signed approval" : sig.state === "unsigned" ? "is not signed by a trusted key" : "signature does not verify");
+      continue;
+    }
+    const v = verifyRelease(real);
+    if (!v.ok) {
+      refuse(name, v.reason);
+      continue;
+    }
+    const m = v.manifest;
+    if (m.catalogue !== a.catalogue || m.version !== a.version) {
+      refuse(name, `the artifact holds ${m.catalogue}@${m.version}`);
+      continue;
+    }
+    if (v.digest !== a.digest) {
+      refuse(name, `the artifact has digest ${v.digest}, not the approved one`);
+      continue;
+    }
+    const content = readReleaseContent(real, m);
+    if (typeof content === "string") {
+      refuse(name, content);
+      continue;
+    }
+    try {
+      const r = publishRelease(content, { home });
+      if (r.state === "refused") refuse(name, r.why === "other-digest" ? other : `the release store holds ${name} that does not verify`);
+      else out(r.state === "published" ? `ADOPTED ${name} ${r.digest}` : `PRESENT ${name}`);
+    } catch (e) {
+      refuse(name, `${e instanceof ReleaseStoreError ? e.message : "the release cannot be written"}; nothing was adopted`);
+    }
+  }
+  return refused || (target && missing) ? 1 : 0;
 }
 
 /** `scf skills release list`: every stored release with its approval state and the run locks that use it. Reads only. */

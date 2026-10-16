@@ -62,6 +62,7 @@ export interface ApprovedRelease {
   digest: string;
   key?: string;
   signature?: string;
+  artifact?: string;
 }
 export type { ReleaseKey };
 

@@ -90,7 +90,7 @@ describe("reading the schema", () => {
     expect(leaf("sandbox.user_read")).toMatchObject({ kind: "list", maxItems: 50 });
     expect(leaf("sandbox.user_read").fields).toBeUndefined();
     expect(leaf("monitor.report_to").kind).toBe("text");
-    expect(leaf("skills.releases.approved")).toMatchObject({ kind: "list", maxItems: 50, fields: [{ key: "catalogue", kind: "text" }, { key: "version", kind: "text" }, { key: "digest", kind: "text" }, { key: "key", kind: "text" }, { key: "signature", kind: "text" }] });
+    expect(leaf("skills.releases.approved")).toMatchObject({ kind: "list", maxItems: 50, fields: [{ key: "catalogue", kind: "text" }, { key: "version", kind: "text" }, { key: "digest", kind: "text" }, { key: "key", kind: "text" }, { key: "signature", kind: "text" }, { key: "artifact", kind: "text" }] });
     expect(leaf("daily_budget_usd")).toMatchObject({ exclusiveMin: 0 });
     expect(leaf("daily_budget_usd").min).toBeUndefined();
     for (const l of schemaLeaves()) for (const n of [l.min, l.max, l.exclusiveMin]) expect(Math.abs(n ?? 0)).not.toBe(Number.MAX_SAFE_INTEGER);
@@ -232,7 +232,7 @@ describe("defaults and texts", () => {
   });
   it("approved releases: help names the catalogue id, version and digest, and every skills setting has a generated control", () => {
     const d = described.find((x) => x.key === "skills.releases.approved")!;
-    expect(d.help).toBe("The catalogue releases this installation accepts, each with its catalogue id, version and digest.");
+    expect(d.help).toBe("The catalogue releases this installation accepts, each with its catalogue id, version and digest, and optionally the local folder (artifact) that `scf skills release adopt` copies it from.");
     expect(d.help).not.toMatch(/one per line/i);
     const skills = described.filter((x) => x.key.startsWith("skills."));
     expect(skills.length).toBeGreaterThan(10);
