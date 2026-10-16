@@ -281,6 +281,7 @@ describe("data folder", () => {
     const file = join(home, "skill-releases.yaml");
     writeFileSync(file, "schema: 1\nrepository: github.com/acme/scf-skills\nreleases:\n  - catalogue: acme\n    version: 1.0.0\n    skills:\n      - source: s\n        id: k\n");
     expect(scf(["--help"], home).stdout).toContain("scf skills releases check [<file>]");
+    expect(scf(["--help"], home).stdout).toContain("scf skills release publish <catalogue>@<version>");
     const r = scf(["skills", "releases", "check", file], home);
     expect(r.status).toBe(0);
     expect(r.stdout).toContain("OK 1 releases for");

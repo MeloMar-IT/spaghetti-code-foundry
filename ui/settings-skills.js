@@ -25,12 +25,13 @@ export function issueText(path, key, message, description) {
 
 /** Groups of the card. A pattern ending in "." is a prefix; any other pattern is an exact key. */
 export const SKILL_GROUPS = [
-  { title: "Where skills come from", keys: ["skills.builtin", "skills.roots", "skills.repository", "skills.releases.allow_unreleased", "skills.releases.approved"] },
+  { title: "Where skills come from", keys: ["skills.builtin", "skills.roots", "skills.repository", "skills.releases.allow_unreleased", "skills.releases.approved", "skills.releases.keys", "skills.releases.deployment.repository", "skills.releases.deployment.file"] },
   { title: "Catalogue for the planner", keys: ["skills.catalogue."] },
   { title: "Selection", keys: ["skills.selection."] },
   { title: "Review checks", keys: ["skills.review."] },
   { title: "Skills that cannot be used", keys: ["skills.unresolved."] },
   { title: "Tools a skill may ask for", keys: ["skills.tools."] },
+  { title: "Skill source checks", keys: ["skills.update_check."] },
 ];
 
 const matches = (key, p) => (p.endsWith(".") ? key.startsWith(p) : key === p);
@@ -94,6 +95,15 @@ export const RISKS = [
     key: "tools.missing",
     sentences: (before, after) => (valueAt(after, "tools.missing") === "degrade" && valueAt(before, "tools.missing") !== "degrade"
       ? ["A skill whose tool is not available no longer stops the run; it runs without that tool."] : []),
+  },
+  {
+    key: "update_check.folder",
+    sentences: (before, after) => {
+      const now = valueAt(after, "update_check.folder");
+      return typeof now === "string" && now !== "" && now !== valueAt(before, "update_check.folder")
+        ? ["The server checks the skill sources in this catalogue clone by itself: it commits, pushes branches and opens pull requests there with its own git and gh sign-in. It never merges or approves."]
+        : [];
+    },
   },
 ];
 

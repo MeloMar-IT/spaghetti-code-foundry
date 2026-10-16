@@ -1,11 +1,20 @@
 import { createHash } from "node:crypto";
+import type { User } from "../auth/users.js";
+import { OFFER_WORDS, OfferCallSchema, offerCall, offerDef, subjectPage, type OfferType } from "../help/actions.js";
+import { aboutOf } from "../help/contract.js";
 import { ENTITY_LIMIT, pageOf, type Asker } from "../help/context.js";
-import type { GuardOptions } from "../help/guard.js";
+import type { HelpRole } from "../help/contract.js";
+import { guardExcerpt, type GuardOptions } from "../help/guard.js";
+import { getConversation, type Conversation } from "../help/store.js";
 import type { Source, TurnInput } from "../help/turn.js";
+import { onHome } from "../your-turn.js";
 import { runsListFor } from "./api-runs.js";
-import { currentAccount, helpSnapshot, type Snapshot, type SnapshotKind } from "./help-context.js";
+import { currentAccount, helpSnapshot, type Snapshot } from "./help-context.js";
 import { diagnosisSources } from "./help-diagnosis.js";
+import { HttpError } from "./http.js";
+import { authorize, findRule } from "./permissions.js";
 import type { ApiContext } from "./server.js";
+import { turnFor } from "./your-turn.js";
 
 /**
  * The live evidence of Ask SCF: what the server knows now about the work a question is about, as sources a reply may
@@ -21,17 +30,6 @@ export const STATE_EXCERPT_MAX = 800;
 /** The id of the source that says the other sources disagree. */
 export const CONFLICT_ID = "state-conflict";
 
-const LINKS: Record<SnapshotKind, (id: string) => string> = {
-  run: (id) => `#/runs/${encodeURIComponent(id)}`,
-  repository: (id) => `#/repos/${encodeURIComponent(id)}`,
-  refinement: (id) => `#/refinement/${encodeURIComponent(id)}`,
-  problem: (id) => `#/problems/${encodeURIComponent(id)}`,
-  queue: () => "#/runs",
-  issue: () => "#/board",
-  next: () => "#/home",
-  health: () => "#/operations",
-};
-
 /** The id under which a snapshot is offered: the same for the same thing. */
 export const stateId = (kind: string, id: string): string => `state-${kind}-${createHash("sha256").update(`${kind}\n${id}`).digest("hex").slice(0, 10)}`;
 
@@ -40,9 +38,10 @@ export const stateId = (kind: string, id: string): string => `state-${kind}-${cr
  * facts as plain lines. What is not available and what is known to be old is said in the text; a source with an old
  * fact is marked `uncertain`.
  */
-export function sourceOf(s: Snapshot): Source {
-  const link = LINKS[s.kind](s.id);
+export function sourceOf(s: Snapshot, about = false): Source {
+  const link = subjectPage(s.kind, s.id);
   const old = s.stale.length > 0;
+  const bound = about && s.kind === "run" && !old ? aboutOf({ kind: "run", id: s.id }) : undefined;
   const lines = [
     `Observed by the server at ${s.observedAt}. These are facts as recorded, not conclusions.`,
     ...Object.entries(s.fields).map(([k, v]) => `${k}: ${String(v)}`),
@@ -55,9 +54,16 @@ export function sourceOf(s: Snapshot): Source {
     title: `${s.label.charAt(0).toUpperCase()}${s.label.slice(1)}${old ? " (may be out of date)" : ""}`,
     ref: `${s.kind === s.id ? s.kind : `${s.kind} ${s.id}`} · ${link}`,
     observedAt: s.observedAt,
+    subject: { kind: s.kind, id: s.id },
     excerpt: lines.length > STATE_EXCERPT_MAX ? `${lines.slice(0, STATE_EXCERPT_MAX - 2)} …` : lines,
     ...(old ? { uncertain: true } : {}),
+    ...(bound ? { about: bound } : {}),
   };
+}
+
+/** The state sources of the shown snapshots. A run carries what it is about only when the asker owns it and no source disagrees; sourceOf adds "not stale". */
+export function stateSources(shown: readonly Snapshot[], mine: (runId: string) => boolean, conflict: boolean): Source[] {
+  return shown.map((s) => sourceOf(s, !conflict && s.kind === "run" && mine(s.id)));
 }
 
 const FINISHED = new Set(["succeeded", "failed", "cancelled", "stopped"]);
@@ -139,11 +145,69 @@ export function liveEvidence(ctx: ApiContext, input: TurnInput, guard: GuardOpti
   try {
     const { shown, all } = liveSnapshots(ctx, { id: input.owner, role: input.role }, input, guard);
     const conflict = conflictSource(conflictsOf(all), new Date().toISOString());
-    const states = shown.map(sourceOf);
+    const states = stateSources(shown, (id) => ctx.scheduler.ownerOf(id) === input.owner, !!conflict);
     // what the product itself says is wrong with these things (#237): after the facts, and uncertain when the facts disagree
     const diagnoses = diagnosisSources(ctx, { id: input.owner, role: input.role }, shown, (s) => sourceOf(s).ref, guard, !!conflict);
     return [...(conflict ? [conflict] : []), ...states, ...diagnoses];
   } catch {
     return [];
   }
+}
+
+/**
+ * The account now and its conversation, before any body is read: 403 when the account is gone, HelpError not-found
+ * (404) for another account's or an unknown conversation, 410 for a deleted one.
+ */
+export function offerConversation(ctx: ApiContext, asker: Asker, conversation: string): { user: User; role: HelpRole; conversation: Conversation } {
+  void ctx;
+  const user = currentAccount(asker);
+  if (!user) throw new HttpError(403, OFFER_WORDS.denied);
+  const found = getConversation(user.id, conversation);
+  if (found.state === "deleted") throw new HttpError(410, "this conversation was deleted");
+  return { user, role: user.role === "admin" ? "admin" : "user", conversation: found };
+}
+
+const stale = () => new HttpError(404, OFFER_WORDS.stale);
+const denied = () => new HttpError(403, OFFER_WORDS.denied);
+
+/**
+ * Runs an offer of a stored reply for the account as it is now: checks the role, the permission rule of the call the
+ * offer names, and that the thing is still there and visible, then gives back the address the server builds.
+ * Throws HttpError (or HelpError from the store); stores nothing.
+ */
+export function runOffer(ctx: ApiContext, asker: Asker, conversation: string, body: unknown, guard: GuardOptions = {}): { type: OfferType; to: string } {
+  // again: the conversation can change while the body is read
+  const { user, role, conversation: found } = offerConversation(ctx, asker, conversation);
+  const call = OfferCallSchema.safeParse(body);
+  if (!call.success) throw new HttpError(400, OFFER_WORDS.badBody);
+  const message = found.messages.find((m) => m.id === call.data.message && m.role === "assistant" && m.status === "done");
+  const offer = message?.reply?.offers?.[call.data.offer];
+  if (!offer) throw stale();
+  const def = offerDef(role, offer.type);
+  if (!def) throw denied();
+  if (!def.subjects.includes(offer.subject.kind)) throw stale();
+  // the patterns can change after the reply was stored: an id the guard changes now is not followed
+  const g = guardExcerpt(offer.subject.id, guard);
+  if (g.withheld || g.removed.length > 0 || g.text !== offer.subject.id) throw stale();
+  const seg = offerCall(def, offer.subject);
+  const rule = findRule(def.call.method, seg);
+  if (!rule) throw denied();
+  try {
+    authorize(ctx, user, rule, seg);
+  } catch (e) {
+    throw e instanceof HttpError && e.status === 404 ? stale() : denied();
+  }
+  const who = { id: user.id, role };
+  let there: boolean;
+  if (def.type === "open-turn-item") {
+    if (offer.subject.kind === "run") there = onHome(turnFor(ctx), { runId: offer.subject.id });
+    else {
+      const s = helpSnapshot(ctx, who, offer.subject, guard);
+      there = !!s && onHome(turnFor(ctx), { repo: String(s.fields.repository), issue: Number(s.fields.issue) });
+    }
+  } else {
+    there = !!helpSnapshot(ctx, who, offer.subject, guard);
+  }
+  if (!there) throw stale();
+  return { type: def.type, to: def.to(offer.subject) };
 }

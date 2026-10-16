@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadRun } from "../src/engine/state.js";
 import { listFlows, parseFlow } from "../src/flow/load.js";
-import { loadSkillPackage, parseSkillPackage, SKILL_DIGEST_HEADER, SkillPackageError, skillDigest, splitFrontmatter, type SkillEntry } from "../src/skills/package.js";
+import { foundryPackageFiles, loadSkillPackage, parseSkillPackage, SKILL_DIGEST_HEADER, SkillPackageError, skillDigest, splitFrontmatter, type SkillEntry } from "../src/skills/package.js";
 import { SKILL_DIGEST_RE, SKILL_LIMITS } from "../src/skills/schema.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -48,6 +48,7 @@ describe("parseSkillPackage: success", () => {
       version: "0.1.0",
       category: "general",
       capabilities: [],
+      composable: [],
       detectors: [],
       roles: [],
       dependencies: [],
@@ -60,6 +61,21 @@ describe("parseSkillPackage: success", () => {
       digest: skillDigest(base().map((e) => ({ path: e.path, content: e.content! }))),
       files: emptyFiles,
     });
+  });
+
+  it("sorts composable and refuses an entry that is not a capability", () => {
+    const yaml = (extra: string) => replace("skill.yaml", `${YAML}${extra}`);
+    expect(parseSkillPackage(yaml("capabilities: [a, b, c]\ncomposable: [c, a]\n")).composable).toEqual(["a", "c"]);
+    has(issues(yaml("capabilities: [a]\ncomposable: [b]\n")), "skill.yaml: composable.0", "is not one of the capabilities");
+  });
+
+  it("writes composable only when it is not empty, so existing packages keep their bytes", () => {
+    const plain = foundryPackageFiles(parseSkillPackage(replace("skill.yaml", `${YAML}capabilities: [a]\n`)));
+    expect(new TextDecoder().decode(plain.find((f) => f.path === "skill.yaml")!.content)).not.toContain("composable");
+    const files = foundryPackageFiles(parseSkillPackage(replace("skill.yaml", `${YAML}capabilities: [a, b]\ncomposable: [b]\n`)));
+    const text = new TextDecoder().decode(files.find((f) => f.path === "skill.yaml")!.content);
+    expect(text).toContain("composable");
+    expect(parseSkillPackage(files.map((f) => ({ path: f.path, content: f.content }))).composable).toEqual(["b"]);
   });
 
   it("normalizes a full package and keeps file bytes", () => {

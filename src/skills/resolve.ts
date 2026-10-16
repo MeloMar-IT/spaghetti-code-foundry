@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { SkillsConfig } from "../config.js";
 import { estimateTokens } from "./catalogue.js";
+import { INELIGIBLE_STATES } from "./lifecycle.js";
+import { instructionKey } from "./mirrors.js";
 import { findSkill, selectSkill, SkillSelectError, type RegisteredSkill, type SkillRegistry } from "./registry.js";
 import { SKILL_REQUEST_LIMITS } from "./request.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE, RESOLVE_REASONS, RESOLVE_REJECT_CODES } from "./resolve-rules.js";
@@ -68,6 +70,11 @@ export interface ResolveOptions {
   exclude?: readonly string[];
   /** Not a whole number: the default. Otherwise clamped to RESOLVE_RANGE. */
   limits?: { maxSkills?: number; maxSkillTokens?: number; maxTokens?: number };
+  /**
+   * Companions of an exclusive capability, admitted after every other requested id, in this order.
+   * A requested id that needs one of them (also one that is not requested itself) comes just before them. Mandatory ids are ignored.
+   */
+  later?: readonly string[];
 }
 
 function clampLimit(v: number | undefined, def: number, [lo, hi]: readonly [number, number]): number {
@@ -82,7 +89,7 @@ export function skillContextTokens(pkg: Pick<SkillPackage, "description" | "inst
 }
 
 type Fail = { code: (typeof RESOLVE_REJECT_CODES)[number]; via?: string; version?: string; cause?: (typeof RESOLVE_REJECT_CODES)[number] };
-type Checked = { ok: true; skill: RegisteredSkill; tokens: number } | ({ ok: false } & Fail);
+type Checked = { ok: true; skill: RegisteredSkill; tokens: number; key: string } | ({ ok: false } & Fail);
 
 /** Valid, unique, sorted ids; bad ones are counted. */
 function cleanIds(list: readonly string[] | undefined, max: number): { ids: string[]; invalid: number; dropped: number } {
@@ -132,6 +139,11 @@ export function resolveSkills(
     if (excluded.has(id)) return { ok: false, code: "excluded" };
     const active = findSkill(registry, id);
     if (!active) return { ok: false, code: "unknown" };
+    // A quarantined, retired or revoked version is never selected, and there is no fallback to another version.
+    // An unreadable lifecycle record makes every approved or built-in skill ineligible.
+    if (active.trust !== "unapproved" && (registry.problems.some((p) => p.kind === "lifecycle") || (active.lifecycle && INELIGIBLE_STATES.has(active.lifecycle.state)))) {
+      return { ok: false, code: "ineligible", version: active.version };
+    }
     let skill: RegisteredSkill;
     try {
       skill = selectSkill(registry, active.id, active.version);
@@ -143,7 +155,7 @@ export function resolveSkills(
     if (roles.length && !roles.includes(role)) return { ok: false, code: "role", version: skill.version };
     const tokens = skillContextTokens(skill.pkg);
     if (tokens > limits.maxSkillTokens) return { ok: false, code: "too-large", version: skill.version };
-    return { ok: true, skill, tokens };
+    return { ok: true, skill, tokens, key: instructionKey(skill.pkg) };
   };
 
   // Depth-first walk: dependencies sorted by id, listed before the skill that needs them.
@@ -185,10 +197,24 @@ export function resolveSkills(
 
   const selected = new Map<string, RegisteredSkill>(); // insertion order = load order
   let total = 0;
+  // Instruction keys already paid for: a skill with the same text as an admitted one costs nothing (the text reaches the model once).
+  const admittedKeys = new Set<string>();
+  const charged = new Map<string, number>();
   const rejected = new Map<string, Fail>();
 
   // Mandatory ids first, then the other requested ids. Each root is admitted together with its fresh dependencies, or not at all.
-  const roots = [...inc.ids, ...req.ids.filter((id) => !mandatory.has(id))];
+  // Ids in `later` (companions) come last, and so does a root that needs one of them: a companion never takes budget before a winner.
+  // A companion that is only loaded as a dependency is not a root, but a root that needs it is still held back.
+  const laterAll = [...new Set(opts.later ?? [])].filter((id) => !mandatory.has(id));
+  const laterSet = new Set(laterAll);
+  const later = laterAll.filter((id) => requestedSet.has(id));
+  const others = req.ids.filter((id) => !mandatory.has(id) && !laterSet.has(id));
+  const needsLater = (id: string) => {
+    if (!laterSet.size) return false;
+    const w = walk(id);
+    return "order" in w && w.order.some((s) => s.id !== id && laterSet.has(s.id));
+  };
+  const roots = [...inc.ids, ...others.filter((id) => !needsLater(id)), ...others.filter(needsLater), ...later];
   for (const id of roots) {
     const w = walk(id);
     if (!("order" in w)) {
@@ -217,14 +243,27 @@ export function resolveSkills(
       inner.delete(id);
       if (inner.size) fail = { code: "conflict", via: [...inner].sort(cmp)[0] };
     }
-    const freshTokens = fresh.reduce((n, s) => n + (tokensOf(s.id) ?? 0), 0);
+    const unitKeys = new Set<string>();
+    const unitCharge = new Map<string, number>();
+    for (const f of fresh) {
+      const c = check(f.id);
+      const key = c.ok ? c.key : f.id;
+      unitCharge.set(f.id, admittedKeys.has(key) || unitKeys.has(key) ? 0 : (tokensOf(f.id) ?? 0));
+      unitKeys.add(key);
+    }
+    const freshTokens = [...unitCharge.values()].reduce((n, t) => n + t, 0);
     if (!fail && selected.size + fresh.length > limits.maxSkills) fail = { code: "over-count" };
     if (!fail && total + freshTokens > limits.maxTokens) fail = { code: "over-budget" };
     if (fail) {
       rejected.set(id, { ...fail, version: versionOf(id) });
       continue;
     }
-    for (const f of fresh) selected.set(f.id, f);
+    for (const f of fresh) {
+      selected.set(f.id, f);
+      const c = check(f.id);
+      if (c.ok) admittedKeys.add(c.key);
+      charged.set(f.id, unitCharge.get(f.id) ?? 0);
+    }
     total += freshTokens;
   }
 
@@ -237,7 +276,7 @@ export function resolveSkills(
     const isMandatory = mandatory.has(id);
     const s = selected.get(id);
     if (s && !blocked) {
-      decisions.push({ id, version: s.version, outcome: "selected", code: reasonOf(id), mandatory: isMandatory, estimatedTokens: tokensOf(id) });
+      decisions.push({ id, version: s.version, outcome: "selected", code: reasonOf(id), mandatory: isMandatory, estimatedTokens: charged.get(id) ?? tokensOf(id) });
       return;
     }
     const r = rejected.get(id);
@@ -269,7 +308,7 @@ export function resolveSkills(
         digest: s.digest,
         reason: reasonOf(s.id),
         requiredBy: [...selected.values()].filter((o) => (o.pkg.dependencies ?? []).some((d) => d.id === s.id)).map((o) => o.id).sort(cmp),
-        estimatedTokens: tokensOf(s.id) ?? 0,
+        estimatedTokens: charged.get(s.id) ?? tokensOf(s.id) ?? 0,
       }));
 
   return SkillResolutionSchema.parse({

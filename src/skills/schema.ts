@@ -1,5 +1,19 @@
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { UNRESOLVED_ACTIONS, UNRESOLVED_HIGH_RISK_DEFAULT, UNRESOLVED_LIMITS } from "./resolve-rules.js";
+
+export const MAX_ARTIFACT_PATH = 4096;
+
+/** Why `p` cannot be the artifact folder of an approved release; undefined for an absolute local path. Pure: touches no file. */
+export function artifactPathProblem(p: string): string | undefined {
+  if (p.length > MAX_ARTIFACT_PATH) return `must be at most ${MAX_ARTIFACT_PATH} characters`;
+  if (/[\u0000-\u001f\u007f]/.test(p)) return "holds a control character";
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(p) && !/^[A-Za-z]:[\\/]/.test(p)) return "must be a local folder, not a URL";
+  if (p.startsWith("//") || p.startsWith("\\\\")) return "must be a local folder, not a network path";
+  if (!isAbsolute(p)) return "must be an absolute path";
+  if (p.split(/[\\/]/).some((s) => s === ".claude" || s === ".codex")) return "personal agent folders are never read";
+  return undefined;
+}
 
 /** Skill id: lower-case slug, 1–64 chars, letters/digits with single hyphens between. Stable format. */
 export const SKILL_ID_RE = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -123,6 +137,8 @@ export const SkillManifestSchema = z
     version: SkillVersionSchema,
     category: slug.default("general"),
     capabilities: z.array(slug).max(32).default([]),
+    /** Exclusive capabilities this skill may be loaded with another provider for. Each one is also in `capabilities`. */
+    composable: z.array(slug).max(32).default([]),
     detectors: z.array(SkillDetectorSchema).max(32).default([]),
     roles: z.array(z.enum(SKILL_ROLES)).max(SKILL_ROLES.length).default([]),
     dependencies: z.array(dependency).max(32).default([]),
@@ -135,6 +151,10 @@ export const SkillManifestSchema = z
   .strict()
   .superRefine((m, ctx) => {
     duplicates(ctx, "capabilities", m.capabilities);
+    duplicates(ctx, "composable", m.composable);
+    m.composable.forEach((c, i) => {
+      if (!m.capabilities.includes(c)) ctx.addIssue({ code: "custom", path: ["composable", i], message: "is not one of the capabilities" });
+    });
     duplicates(ctx, "roles", m.roles);
     duplicates(ctx, "conflicts", m.conflicts);
     duplicates(ctx, "connectors", m.connectors);

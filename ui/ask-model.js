@@ -66,12 +66,19 @@ export function isWaiting(conversation) {
   return !!last && last.role === "assistant" && last.status === "pending";
 }
 
+/** The sentence of the server for a paused Ask SCF (REFUSAL_WORDS.paused in src/help/turn.ts; a test keeps them equal). */
+export const PAUSED_WORDS = "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.";
+
+/** True when an error of a send or a retry is the answer of a paused Ask SCF, and not another 503 (switched off, secret check). */
+export const isPausedError = (e) => Number(e?.status) === 503 && String(e?.message ?? "").trim() === PAUSED_WORDS;
+
 /**
  * Whether a question can be sent now, and what is sent: `{ ok: true, to, body }` (`to`: the conversation it goes to,
  * null for a new one) or `{ ok: false, reason }`. Nothing is sent while a request is on its way (`busy`) or while a
  * reply is being written, so a second Send never starts a second turn.
  */
-export function sendPlan({ draft, busy = false, conversation = null, where = null, attach = true } = {}) {
+export function sendPlan({ draft, busy = false, conversation = null, where = null, attach = true, paused = false } = {}) {
+  if (paused) return { ok: false, reason: PAUSED_WORDS };
   if (busy) return { ok: false, reason: "Your question is being sent." };
   if (isWaiting(conversation)) return { ok: false, reason: "Ask SCF is still answering. Wait for the answer first." };
   const question = String(draft ?? "").replace(/\r\n/g, "\n").trim();
@@ -112,7 +119,7 @@ export function triesNote(message) {
  * What the drawer shows for one message: `kind` is question, waiting, answer, failed, limit or stopped. Text stays
  * text. `limit`: a failure that trying again now cannot solve (a limit, a budget, the setup).
  */
-export function entryOf(message, { elapsedMs = 0, role = "user" } = {}) {
+export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () => [] } = {}) {
   const text = typeof message?.text === "string" ? message.text : "";
   if (message?.role === "user") return { id: message.id, kind: "question", who: "You", text, note: "" };
   const note = triesNote(message);
@@ -120,8 +127,38 @@ export function entryOf(message, { elapsedMs = 0, role = "user" } = {}) {
   if (message?.status === "failed") return { id: message.id, kind: message.failure?.retry === false ? "limit" : "failed", who: "Ask SCF", text: text || "Ask SCF could not answer.", note };
   if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: text || "You stopped this answer.", note };
   // a reply with its checked parts is laid out by them; the text is what is left when there are none
-  const layout = replyLayout(message?.reply, role);
-  return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : text, note, ...(layout ? { layout } : {}) };
+  const layout = replyLayout(message?.reply, role, planDone(message?.id));
+  const vote = message?.feedback?.vote === "helpful" || message?.feedback?.vote === "not-helpful" ? message.feedback.vote : null;
+  const reasons = vote === "not-helpful" ? list(message.feedback.reasons).filter((r) => r in REASON_WORDS) : [];
+  return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : text, note, rateable: true, feedback: { vote, reasons }, ...(layout ? { layout } : {}) };
+}
+
+// ---- rating an answer -------------------------------------------------------------------------------
+
+/** The reasons for a vote of not-helpful, with their words (FEEDBACK_REASONS in src/help/store.ts; a test keeps the keys equal). */
+export const REASON_WORDS = {
+  incorrect: "It was wrong",
+  outdated: "It was out of date",
+  "not-my-question": "It did not answer my question",
+  unclear: "It was unclear",
+  "missing-sources": "It named no source I could check",
+  unsafe: "It was unsafe or should not have been said",
+};
+
+/**
+ * The body of a rating. Pressing the vote that is already set takes it back (`vote: null`). Reasons go only with
+ * not-helpful, and only the known ones, each once. No free text exists.
+ */
+export function feedbackPlan(message, vote, reasons = [], current = null) {
+  const next = vote === "helpful" || vote === "not-helpful" ? vote : null;
+  const toggled = next !== null && next === current ? null : next;
+  const kept = toggled === "not-helpful" ? [...new Set(list(reasons))].filter((r) => r in REASON_WORDS) : [];
+  return { message, vote: toggled, reasons: kept };
+}
+
+/** What the status line says after a rating was saved. */
+export function voteNote(vote) {
+  return vote === "helpful" ? "Saved: this answer helped." : vote === "not-helpful" ? "Saved: this answer did not help." : "Your vote was taken back.";
 }
 
 /** The messages of a conversation as the drawer shows them, oldest first. */
@@ -164,7 +201,7 @@ export function closesOn(event, { dialogOnTop = false } = {}) {
  * Try again or Stop sends nothing. Try again is offered only where it can help; it uses the same question and the
  * same reply, so nothing is shown twice.
  */
-export function controlsFor(conversation, { busy = false } = {}) {
+export function controlsFor(conversation, { busy = false, paused = false } = {}) {
   const none = { stop: false, retry: false, archive: false, restore: false, remove: false };
   if (!conversation || conversation.state === "deleted") return none;
   const last = lastOf(conversation);
@@ -173,12 +210,22 @@ export function controlsFor(conversation, { busy = false } = {}) {
   const ended = !archived && !!last && last.role === "assistant" && ((last.status === "failed" && last.failure?.retry !== false) || last.status === "cancelled");
   return {
     stop: waiting && !busy,
-    retry: ended && !busy,
+    // a paused Ask SCF starts no turn, so there is nothing to try again
+    retry: ended && !busy && !paused,
     // the server archives no conversation whose reply is still being written
     archive: !archived && !waiting && !busy,
     restore: archived && !busy,
     remove: !busy,
   };
+}
+
+/**
+ * Whether "This solved my problem" is offered: an open conversation whose last message is a finished answer. It closes
+ * the conversation and says so to the server; closing in any other way (by the API) is not counted as solved.
+ */
+export function solveOffered(conversation, { busy = false } = {}) {
+  const last = lastOf(conversation);
+  return !busy && conversation?.state === "active" && last?.role === "assistant" && last.status === "done";
 }
 
 /** What each control does, said before it is pressed. */
@@ -188,6 +235,7 @@ export const CONSEQUENCES = {
   archive: "Moves this conversation out of your list. You can take it back from the archived ones.",
   restore: "Takes this conversation back into your list.",
   remove: "Removes the questions and answers of this conversation at once. They cannot be brought back.",
+  solved: "Closes this conversation and tells the Foundry that the answers solved your problem. Only a number is counted; you can still read it.",
   fresh: "Starts an empty conversation. This one stays in your list.",
 };
 
@@ -331,12 +379,38 @@ export function cardsOf(reply, role) {
   return cards;
 }
 
+/** What each offer of a reply does (OFFERS in src/help/actions.ts; a test keeps them equal). */
+export const OFFER_EFFECTS = { "open-run": "navigation", "open-repository": "navigation", "open-turn-item": "navigation" };
+
+const OFFER_NOTE = "Opens a page. The server checks again that you may see it.";
+
+/** The offers of a reply as cards with a button. `index` is the place in `reply.offers`: it is what a click sends. */
+export function offersOf(reply) {
+  if (!reply || reply.limit) return [];
+  return list(reply.offers).flatMap((o, index) => {
+    if (!o || !Object.hasOwn(OFFER_EFFECTS, o.type) || !str(o.title)) return [];
+    const source = list(reply.evidence).find((e) => e?.id === o.evidence);
+    return [{ index, type: o.type, effect: OFFER_EFFECTS[o.type], title: str(o.title), text: str(source?.title), note: OFFER_NOTE }];
+  });
+}
+
+/** The page an offer opens, or null when it is not a page of this role. The address comes from the server and is checked here again. */
+export const offerTarget = (role, to) => pageLink(role, to);
+
+/** A failed offer in plain words; the 403 and the 404 each have their own fixed sentence. */
+export function explainOfferError(e) {
+  const status = Number(e?.status) || 0;
+  if (status === 403) return "You are not allowed to open this now. Your permissions were checked again when you clicked.";
+  if (status === 404 || status === 410) return "This is not there any more, or you can no longer see it.";
+  return explainAskError(e);
+}
+
 /**
  * A checked reply as the drawer lays it out: the short answer first, how sure it is, the proposals as cards, and the
  * sources and assumptions to unfold. Null when there is no reply to lay out. `basis`: the sources of the kind the
  * question needs, shown next to the answer, so a statement about the current state can be traced to what was read.
  */
-export function replyLayout(reply, role = "user") {
+export function replyLayout(reply, role = "user", done = []) {
   if (!reply || typeof reply !== "object" || !str(reply.summary)) return null;
   const sources = reply.limit ? [] : sourcesOf(reply, role);
   const trust = trustOf(reply, sources);
@@ -347,7 +421,68 @@ export function replyLayout(reply, role = "user") {
     trust,
     basis: { needs, sources: sources.filter((s) => s.kind === needs) },
     cards: cardsOf(reply, role),
+    offers: offersOf(reply),
+    plan: planOf(reply, role, done),
     sources,
     assumptions: assumptionsOf(reply, sources, trust),
+  };
+}
+
+// ---- a plan: ordered steps that the person follows; nothing in it runs ------------------------------
+
+/** The labels of the six kinds of step (STEP_RULES in src/help/plan.ts; a test keeps them equal). */
+export const STEP_WORDS = {
+  explanation: "Explanation",
+  navigation: "Open a page",
+  check: "Read-only check",
+  input: "Your input",
+  reversible: "Reversible change",
+  "high-impact": "High-impact change",
+};
+
+/** The one sentence under a step the person marked: Ask SCF never checks the result of a step. */
+export const stepNote = (done) => (done ? "You marked this. Ask SCF has not checked the result." : "");
+
+/** Where this tab keeps which steps of a reply were marked. Only indices, never a text. */
+export const planKey = (messageId) => `scf-ask-plan-${String(messageId ?? "").replace(/[^A-Za-z0-9-]/g, "")}`;
+
+/**
+ * The plan of a reply as steps for the drawer, or null when there is none (or the reply is a limit). `done`: the
+ * indices the person marked in this tab. The first step not marked is the current one. A step never says that it
+ * worked: `note` is only what the person marked.
+ */
+export function planOf(reply, role = "user", done = []) {
+  const steps = list(reply?.plan);
+  if (reply?.limit || !steps.length) return null;
+  const marked = new Set(list(done).filter((n) => Number.isInteger(n)));
+  const current = steps.findIndex((_, i) => !marked.has(i));
+  const rows = steps.map((s, i) => {
+    const kind = Object.hasOwn(STEP_WORDS, s?.kind) ? s.kind : "explanation";
+    const wouldBe = s?.wouldBe === "high-impact" || s?.wouldBe === "reversible" ? s.wouldBe : "";
+    return {
+      n: i + 1,
+      kind,
+      label: STEP_WORDS[kind],
+      danger: kind === "high-impact" || wouldBe === "high-impact",
+      title: str(s?.title),
+      instructions: str(s?.instructions),
+      link: pageLink(role, str(s?.to), { fixed: true }),
+      expected: str(s?.expected),
+      failure: str(s?.failure),
+      fallback: str(s?.fallback),
+      wouldBe,
+      wouldBeLabel: wouldBe === "high-impact" ? "Would be a high-impact change" : wouldBe ? "Would be a change" : "",
+      proposal: str(s?.proposal),
+      done: marked.has(i),
+      current: i === current,
+      note: stepNote(marked.has(i)),
+    };
+  });
+  const high = rows.filter((r) => r.danger).length;
+  return {
+    steps: rows,
+    highImpact: high,
+    header: `${rows.length === 1 ? "1 step" : `${rows.length} steps`}${high ? `, ${high === 1 ? "1 is a high-impact change" : `${high} are high-impact changes`}` : ""}. Nothing is done until you do it.`,
+    manual: true,
   };
 }

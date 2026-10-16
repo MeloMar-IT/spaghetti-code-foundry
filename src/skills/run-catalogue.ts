@@ -1,19 +1,22 @@
 import type { Config, SkillsConfig } from "../config.js";
 import { buildSkillCatalogue, catalogueOptionsFrom, estimateTokens, renderSkillCatalogue } from "./catalogue.js";
 import { CATALOGUE_SCORING } from "./catalogue-rules.js";
-import { CANONICAL_STOP_PREFIX } from "./canonical-rules.js";
-import { canonicalKey, canonicalStop, selectCanonicalSkills, type CanonicalCandidate, type CanonicalPolicy, type CanonicalResult } from "./canonical.js";
+import type { CanonicalResult } from "./canonical.js";
 import { CHOICE_LIMITS } from "./choice-rules.js";
-import { checkSkillChoices, choiceStop, planSkillChoices, type AppliedChoice, type ChoicePlan, type ChoiceProblem, type SkillOverride } from "./choices.js";
+import type { AppliedChoice } from "./choices.js";
 import { dedupeOffered, type CollisionCandidate } from "./collisions.js";
-import type { ProjectPinsRead } from "./project-pins.js";
 import { discoverSkills, findSkill, type RegisteredSkill, type SkillRegistry } from "./registry.js";
 import { buildRepoProfile, type RepoProfile } from "./repo-profile.js";
+import { collapseMirrors, instructionKey, MIRROR_LIMITS, registryRank } from "./mirrors.js";
 import { resolveOptionsFrom, resolveSkills } from "./resolve.js";
+import { canonicalRecord, checkCanonical, choicesUnchecked, needsAny, startChoices, usableFor, withDependencies, type CanonicalDeps, type CanonicalSelectionRecord } from "./run-canonical.js";
 
 // The skill catalogue a planner step (`skills: catalog`) gets before its prompt. Synchronous; never throws.
 // A skill is offered only when the resolver would select it on its own for the coder, so a pick cannot stop an unattended run.
 // A catalogue stops a step only through `blocked`, and only with the `canonical` dependency.
+// Skills with the same description and instructions (mirrors) are offered once: the best tier, then id, then version. With the
+// `canonical` dependency, copies with the same safety profile are merged before the selection; every package keeps its own gate check.
+// Complementary providers that both declare the capability composable are offered after the winner, and only while the budget allows it.
 
 export const SKILL_CATALOGUE_TAG = "foundry-skill-catalogue";
 /** The step whose output is the issue text in the shipped flows. */
@@ -24,10 +27,15 @@ export interface RunCatalogueRecord {
   omitted: number;
   estimatedTokens: number;
   hidden?: number;
+  /** Skills with the same text, offered once (`id@version` only; at most MIRROR_LIMITS.recorded collapsed ids). Absent without copies. */
+  mirrors?: { kept: string; collapsed: string[] }[];
+  mirrorsOmitted?: number;
   /** Owner overrides and project pins in scope, without free text (the digest leads back to the reviewed entry). */
   choices?: AppliedChoice[];
   choicesOmitted?: number;
   choicesSource?: { pins: { commit: string; blob: string } };
+  /** The canonical choice per exclusive capability: ids, versions and codes only. Absent without canonical dependencies or a decision. */
+  canonical?: CanonicalSelectionRecord[];
 }
 export interface RunCatalogue {
   /** "" when no block is attached. */
@@ -51,21 +59,8 @@ export interface RunCatalogueDeps {
    * depends on a held-back one. A skill that returns undefined is offered as it is. No run supplies this yet.
    */
   candidate?: (skill: RegisteredSkill) => CollisionCandidate | undefined;
-  /** Default: none. Picks one skill per exclusive capability (canonical.ts). No run supplies this yet. */
-  canonical?: {
-    policy: Omit<CanonicalPolicy, "mandatory">;
-    candidate: (skill: RegisteredSkill) => CanonicalCandidate | undefined;
-    /**
-     * Default: none. A skill whose candidate this returns true for is left out even when it provides no exclusive capability
-     * (a failed safety gate must not depend on what else the skill offers). A mandatory skill that is withheld stops the step.
-     */
-    withhold?: (candidate: CanonicalCandidate) => boolean;
-    /**
-     * Owner overrides and project pins, already read by the caller. With this field the choices replace policy.pins and
-     * policy.overrides, and every failure to read or check them stops the step. No run supplies this yet.
-     */
-    choices?: { overrides?: readonly SkillOverride[]; pins?: ProjectPinsRead; repository?: string; now?: Date };
-  };
+  /** Default: none. Picks one skill per exclusive capability (canonical.ts). Runs supply it through liveCanonicalDeps when skills.selection.exclusive is set. */
+  canonical?: CanonicalDeps;
 }
 
 /** The task text and the issue text, joined by a line break and cut to the scoring limit. Used for ranking only. */
@@ -84,30 +79,10 @@ function pinnedCopy(reg: Registry): Registry {
 export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "skills">; task: string }, deps: RunCatalogueDeps = {}): RunCatalogue {
   // Owner choices are planned first: with any in effect, no exit may fall back to an unblocked catalogue.
   const ch = deps.canonical?.choices;
-  let plan: ChoicePlan | undefined;
-  const known: ChoiceProblem[] = [];
-  if (ch) {
-    const pins = ch.pins;
-    if (pins?.state === "invalid") known.push({ code: "invalid", level: "project-pin" });
-    else if (pins?.state === "unreadable") known.push({ code: pins.why === "no-default-branch" ? "no-default-branch" : "unreadable", level: "project-pin" });
-    try {
-      plan = planSkillChoices({
-        ...(ch.overrides ? { overrides: ch.overrides } : {}),
-        ...(pins?.state === "ok" ? { pins: pins.items } : {}),
-        ...(ch.repository !== undefined ? { repository: ch.repository } : {}),
-        now: ch.now ?? new Date(),
-        exclusive: deps.canonical!.policy.exclusive,
-      });
-    } catch {
-      known.push({ code: "unchecked" });
-    }
-  }
-  const inEffect = known.length > 0 || (plan !== undefined && (plan.planned.length > 0 || plan.problems.length > 0));
+  const start = startChoices(deps.canonical);
   const fail = (why: string): RunCatalogue => {
-    if (!inEffect) return none(why);
-    const problems: ChoiceProblem[] = [...known, ...(plan?.problems ?? [])];
-    if (!known.some((p) => p.code === "unchecked")) problems.push({ code: "unchecked" });
-    return { text: "", log: "skill catalogue: none (skill selection stopped)", blocked: choiceStop(problems)! };
+    const blocked = choicesUnchecked(start);
+    return blocked === undefined ? none(why) : { text: "", log: "skill catalogue: none (skill selection stopped)", blocked };
   };
   let profile: RepoProfile;
   try {
@@ -120,32 +95,17 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
     const { skills } = i.config;
     const reg = (deps.discover ?? discoverSkills)(skills);
     const opts = { role: "coder" as const, ...resolveOptionsFrom(skills) };
-    const usable = (r: Registry, s: RegisteredSkill) => {
-      const res = resolveSkills(r, [s.id], opts);
-      return res.ok && res.decisions.some((d) => d.id === s.id && d.outcome === "selected");
-    };
+    const usable = usableFor(reg, opts);
     const hypo = pinnedCopy(reg);
+    const usableHypo = usableFor(hypo, opts);
     const offered: RegisteredSkill[] = [];
     let hidden = 0;
     for (const s of reg.skills) {
       if (!s.active || s.trust === "unapproved") continue;
-      if (usable(reg, s)) offered.push(s);
-      else if (usable(hypo, hypo.byKey.get(s.key)!)) hidden++;
+      if (usable(s)) offered.push(s);
+      else if (usableHypo(hypo.byKey.get(s.key)!)) hidden++;
     }
-    /** The first of `ids` that `root` depends on, directly or through other registry skills. */
-    const needs = (root: RegisteredSkill, ids: ReadonlySet<string>): string | undefined => {
-      const seen = new Set<string>();
-      const todo = [root];
-      for (let cur = todo.pop(); cur; cur = todo.pop())
-        for (const dep of cur.pkg.dependencies ?? []) {
-          if (seen.has(dep.id)) continue;
-          seen.add(dep.id);
-          if (ids.has(dep.id)) return dep.id;
-          const next = findSkill(reg, dep.id);
-          if (next) todo.push(next);
-        }
-      return undefined;
-    };
+    const needs = (root: RegisteredSkill, ids: ReadonlySet<string>) => needsAny(reg, root, ids);
     // Skill collisions. A mandatory id is never taken out. A dependency on a mirror that was left out stays as it is in the registry:
     // the resolver loads it as a dependency and counts it in the budgets, so the offer still matches what a run would load.
     let pool = offered;
@@ -165,79 +125,36 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
     // Canonical selection. The resolver loads dependencies and mandatory ids from the registry whatever the offer says, so every
     // skill a run could load is judged, and a skill that needs a left-out one is left out too.
     let canonical: CanonicalResult | undefined;
+    let canonicalRec: CanonicalSelectionRecord[] | undefined;
+    let later: string[] = [];
     let notCanonical = 0;
     let applied: AppliedChoice[] = [];
     if (deps.canonical) {
-      const judged = new Map<string, RegisteredSkill>();
       // The resolver always loads the mandatory ids too, so they and their dependencies are judged as well.
       const mandatoryRoots = (opts.include ?? []).flatMap((id) => { const m = findSkill(reg, id); return m ? [m] : []; });
-      for (const root of [...pool, ...mandatoryRoots]) {
-        judged.set(root.key, root);
-        const seen = new Set<string>();
-        const todo = [root];
-        for (let cur = todo.pop(); cur; cur = todo.pop())
-          for (const dep of cur.pkg.dependencies ?? []) {
-            if (seen.has(dep.id)) continue;
-            seen.add(dep.id);
-            const next = findSkill(reg, dep.id);
-            if (!next) continue;
-            judged.set(next.key, next);
-            todo.push(next);
-          }
-      }
-      const byKey = new Map<string, RegisteredSkill>();
-      const candidates: CanonicalCandidate[] = [];
-      for (const s of judged.values()) {
-        const c = deps.canonical.candidate(s);
-        if (!c) continue;
-        byKey.set(canonicalKey(c), s);
-        candidates.push(c);
-      }
-      canonical = selectCanonicalSkills(candidates, {
-        ...deps.canonical.policy,
-        ...(plan ? { pins: plan.pins, overrides: plan.overrides } : {}),
-        mandatory: opts.include ?? [],
-      });
-      if (ch) {
-        // `plan` is set here: a planning failure is in `known`, and the check below stops on it.
-        const checked = plan
-          ? checkSkillChoices(plan, canonical, (target) => {
-              const s = reg.byKey.get(target);
-              return !s ? "missing" : !s.active ? "not-active" : s.trust === "unapproved" ? "unapproved" : "not-usable";
-            })
-          : { problems: [], applied: [] };
-        applied = checked.applied;
-        const choiceBlock = choiceStop([...known, ...checked.problems]);
-        if (choiceBlock) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: choiceBlock };
-      }
-      const leftIds = new Set(canonical.left.flatMap((k) => (byKey.has(k) ? [byKey.get(k)!.id] : [])));
-      const withhold = deps.canonical.withhold;
-      if (withhold) {
-        const chosen = new Set(canonical.selected);
-        for (const c of candidates) {
-          const s = byKey.get(canonicalKey(c));
-          if (s && !chosen.has(canonicalKey(c)) && withhold(c)) leftIds.add(s.id);
-        }
-        const held = mandatoryRoots.find((m) => leftIds.has(m.id) && candidates.some((c) => byKey.get(canonicalKey(c))?.id === m.id && withhold(c)));
-        if (held) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: `${CANONICAL_STOP_PREFIX}"${held.id}" is always loaded (skills.selection.include) but it fails a safety gate. Take it off the include list or fix the gate, then run again.` };
-      }
+      const check = checkCanonical({ reg, judged: withDependencies(reg, [...pool, ...mandatoryRoots]), mandatory: opts.include ?? [], deps: deps.canonical, start });
+      canonical = check.canonical;
+      applied = check.applied;
+      later = check.companions;
+      if (check.blocked) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: check.blocked };
       const before = pool.length;
-      pool = pool.filter((s) => !leftIds.has(s.id) && needs(s, leftIds) === undefined);
+      pool = pool.filter((s) => !check.left.has(s.id) && needsAny(reg, s, check.left) === undefined);
       notCanonical = before - pool.length;
-      const mandatoryIds = new Set(mandatoryRoots.map((m) => m.id));
-      const broken = [...new Set([...canonical.selected.flatMap((k) => (byKey.has(k) ? [byKey.get(k)!] : [])), ...mandatoryRoots])]
-        .filter((s) => !leftIds.has(s.id) || mandatoryIds.has(s.id))
-        .flatMap((s) => {
-          const n = needs(s, leftIds);
-          return n !== undefined ? [{ id: s.id, needs: n }] : [];
-        });
-      const stop = canonicalStop(canonical, broken);
-      if (stop) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: stop };
+      const rec = canonicalRecord(canonical);
+      if (rec.length) canonicalRec = rec;
     }
+    // Mirrors: skills with the same text are offered once. An excluded id takes no part, so it cannot knock out an allowed twin.
+    const excludedIds = new Set(skills.catalogue.exclude);
+    const mirrors = collapseMirrors(pool.filter((s) => !excludedIds.has(s.id)), (s) => instructionKey(s.pkg), registryRank);
+    const dropped = new Set(mirrors.groups.flatMap((g) => g.collapsed));
+    const toKept = new Map(mirrors.groups.flatMap((g) => g.collapsed.map((c) => [c.id, g.kept.id] as const)));
+    const mirrorCount = dropped.size;
+    pool = pool.filter((s) => !dropped.has(s));
+    const include = [...new Set(skills.catalogue.include.map((id) => toKept.get(id) ?? id))];
     // Several skills may be requested together: keep only those the resolver admits as one set (conflicts, dependency and count budgets).
-    const together = resolveSkills(reg, pool.map((s) => s.id), opts);
+    const together = resolveSkills(reg, pool.map((s) => s.id), later.length ? { ...opts, later } : opts);
     const admitted = new Set(together.decisions.filter((d) => d.outcome === "selected").map((d) => d.id));
-    const cat = buildSkillCatalogue({ skills: pool.filter((s) => admitted.has(s.id)) }, { profile, task: i.task, ...catalogueOptionsFrom(skills) });
+    const cat = buildSkillCatalogue({ skills: pool.filter((s) => admitted.has(s.id)) }, { profile, task: i.task, ...catalogueOptionsFrom(skills), ...(mirrorCount ? { include } : {}) });
     const body = [renderSkillCatalogue(cat)];
     if (cat.entries.length) body.push(`Request at most ${skills.selection.max_skills} skills, and only ids listed above.`);
     const text = `<${SKILL_CATALOGUE_TAG}>\n${body.join("\n")}\n</${SKILL_CATALOGUE_TAG}>`;
@@ -256,10 +173,25 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
       if (applied.length > CHOICE_LIMITS.recorded) record.choicesOmitted = applied.length - CHOICE_LIMITS.recorded;
       if (ch?.pins?.state === "ok") record.choicesSource = { pins: ch.pins.source };
     }
+    if (canonicalRec) record.canonical = canonicalRec;
+    if (mirrorCount) {
+      let room: number = MIRROR_LIMITS.recorded;
+      const recorded: { kept: string; collapsed: string[] }[] = [];
+      for (const g of mirrors.groups) {
+        if (room <= 0) break;
+        const ids = g.collapsed.slice(0, room).map((c) => `${c.id}@${c.version}`);
+        room -= ids.length;
+        recorded.push({ kept: `${g.kept.id}@${g.kept.version}`, collapsed: ids });
+      }
+      record.mirrors = recorded;
+      const rest = mirrorCount - (MIRROR_LIMITS.recorded - room);
+      if (rest > 0) record.mirrorsOmitted = rest;
+    }
+    const mirrorNote = mirrorCount ? `; ${mirrorCount} mirror${mirrorCount === 1 ? "" : "s"} collapsed` : "";
     const picked = notCanonical ? `; ${notCanonical} not canonical (skill selection)` : "";
     return {
       text,
-      log: `${base}${hidden ? `; ${hidden} hidden (not pinned)` : ""}${notes ? `; ${notes} (skill collisions)` : ""}${picked}${choiceNote}`,
+      log: `${base}${hidden ? `; ${hidden} hidden (not pinned)` : ""}${notes ? `; ${notes} (skill collisions)` : ""}${mirrorNote}${picked}${choiceNote}`,
       record,
       ...(canonical ? { canonical } : {}),
     };

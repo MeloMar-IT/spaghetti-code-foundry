@@ -142,7 +142,7 @@ export function unsupportedSettings(): string[] {
 /** Whether the key is one of the described settings. The prefixes end in a dot: `monitoring` is not covered. */
 export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
-  if (key === "help.disabled_accounts" || key === "help.sensitive_patterns") return false;
+  if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns") return false;
   if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan"].includes(key)) return true;
   return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help."].some((p) => key.startsWith(p));
 }
@@ -163,7 +163,9 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "router.fallback": A("Fallback models", "Models tried in order when an agent step hits a rate or usage limit, or a budget for free targets.", "new-runs", "models.js"),
   "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
-  "help.audience": G("Who may ask", "Every account, or administrators only; not set means every account."),
+  "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
+  "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),
+  "help.actions": G("Ask SCF may propose actions", "Lets Ask SCF propose to resume or cancel a person's own run, and later carry it out after they confirm; off, it only explains."),
   "help.keep_days": G("Keep conversations (days)", "A conversation nobody changed for this many days is deleted; not set means 90."),
   "help.model": G("Ask SCF model", "The model that answers, a Claude Code target; not set means the default model."),
   "help.timeout_seconds": G("Time for one answer (seconds)", "A turn that takes longer is stopped."),
@@ -209,7 +211,10 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "skills.roots": N("Skill folders", "Extra folders, managed by an administrator, where skill packages are read from."),
   "skills.repository": N("Repository skills", "Also read the skills in the repository's own skills folder; off means repository skills are never loaded."),
   "skills.releases.allow_unreleased": N("Allow unreleased skills", "For development only: folders that are not an approved release are loaded too."),
-  "skills.releases.approved": N("Approved releases", "The catalogue releases this installation accepts, each with its catalogue id, version and digest."),
+  "skills.releases.keys": N("Trusted release keys", "Ed25519 public keys of the publishers you trust; once set, every approved release must be signed by one of them."),
+  "skills.releases.deployment.repository": N("Deployment repository", "The GitHub repository (owner/name or host/owner/name) that holds your deployed config, where `scf skills release propose` opens its pull request."),
+  "skills.releases.deployment.file": N("Deployment config file", "The YAML config file in the deployment repository, relative to its top, whose skills.releases.approved list the pull request extends."),
+  "skills.releases.approved": N("Approved releases", "The catalogue releases this installation accepts, each with its catalogue id, version and digest, and optionally the local folder (artifact) that `scf skills release adopt` copies it from."),
   "skills.catalogue.max_candidates": N("Catalogue: most skills", "The most skills a planner's catalogue lists."),
   "skills.catalogue.max_tokens": N("Catalogue: size limit", "The size limit of the catalogue a planner gets, in tokens."),
   "skills.catalogue.include": N("Catalogue: always include", "Skill ids that are always in the catalogue."),
@@ -219,6 +224,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "skills.selection.max_tokens": N("Selection: size limit", "The size limit of all selected skills together, in tokens."),
   "skills.selection.include": N("Selection: always select", "Skill ids that are always selected; this is not an approval, they still need a pin."),
   "skills.selection.exclude": N("Selection: never select", "Skill ids that are never selected."),
+  "skills.selection.exclusive": N("Selection: one skill per capability", "Capabilities only one skill may provide in a run; a run offers, locks and loads only the canonical provider, and stops on a tie it cannot settle."),
   "skills.review.max_tokens": N("Review checks: size limit", "The size limit of the review checks a reviewer session gets, in tokens."),
   "skills.review.max_skill_tokens": N("Review checks: size of one skill", "The size limit of the review checks of one skill, in tokens."),
   "skills.unresolved.unknown": N("Unknown skill", "What to do with a requested skill that does not exist."),
@@ -231,6 +237,8 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "skills.tools.network": N("Skills may ask for the network", "Whether a skill may ask for network access."),
   "skills.tools.filesystem": N("Skills file access", "The most file access a skill may ask for."),
   "skills.tools.missing": N("Skill tool not available", "What to do when a tool a skill asks for is not available."),
+  "skills.update_check.folder": G("Catalogue clone for source checks", "Absolute path of a clone of the catalogue repository; the server checks its due skill sources there and opens pull requests with its own git and gh sign-in; not set means off."),
+  "skills.update_check.every": G("Look for due source checks every", "How often the server looks for due sources, like 30m or 6h, from 5m to 24h; each source keeps its own update cadence."),
   isolate_agents: A("Isolate agents", "Run agent steps without your personal setup: no MCP servers, plugins, skills, hooks or user settings.", "new-runs", "admin-sections.js"),
   cost_limits: A("Enforce cost limits", "Stop runs at the run, step and daily budgets; off still records costs but never stops a run because of money.", "new-runs"),
   daily_budget_usd: A("Daily budget ($)", "When today's spending reaches this, runs pause and resume the next day.", "new-runs"),

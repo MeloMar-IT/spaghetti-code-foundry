@@ -2,6 +2,8 @@ import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse, stringify } from "yaml";
+import { breakEffect, writeEffect, type EffectKind } from "./helpers/effect-records.js";
 import { skillsCommand, SKILLS_USAGE } from "../src/skills/cli.js";
 import { addLicenceEvidence } from "../src/skills/import-evidence.js";
 import { prepareLicenceEvidence } from "../src/skills/import-licence.js";
@@ -80,10 +82,30 @@ const stage = (files: Record<string, string>, links: string[] = []) => {
 };
 // an import staged before licence files were kept: no licence.json, no retrievedAt
 const stageOld = (files: Record<string, string>) => publishImport(prepareImport(source(), tree(files)), { home });
-async function check(operands: string[] = ["lib"], values: Record<string, unknown> = {}) {
+async function run(operands: string[], values: Record<string, unknown>) {
   const lines: string[] = [];
   const code = await skillsCommand({ positionals: ["promote", "check", ...operands], values }, (l) => void lines.push(l), { cwd, home, today: TODAY });
   return { code, lines, text: lines.join("\n") };
+}
+const DECIDED = { owner: "@octocat", reviewed: "2026-10-01", note: "not measured yet" };
+/** Records an owner decision for every skill whose effect line says `verdict`; keeps the other keys of skill-evaluations.yaml. */
+async function decide(verdict: "not-measured" | "no-effect", operands: string[] = ["lib"]) {
+  const file = join(cwd, "skill-evaluations.yaml");
+  let doc: Record<string, unknown> = { schema: 1, evaluations: [] };
+  try {
+    doc = parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    // no file yet
+  }
+  if (doc.schema !== 1) return;
+  const found = (await run(operands, {})).lines.filter((l) => l.startsWith("EFFECT ") && l.includes(`: ${verdict} (`));
+  const decisions = found.map((l) => ({ skill: l.split(" ")[1], digest: l.split(" ")[2]!.slice(0, -1), accept: verdict, ...DECIDED }));
+  writeFileSync(file, stringify({ ...doc, effect_decisions: decisions }));
+}
+// Every skill needs an effect verdict or an owner decision: unless a test says otherwise, never-measured skills are accepted first.
+async function check(operands: string[] = ["lib"], values: Record<string, unknown> = {}, opts: { accept?: boolean } = {}) {
+  if (opts.accept !== false) await decide("not-measured", operands);
+  return run(operands, values);
 }
 const idOf = (name: string) => sourceQualifiedId({ source: "lib", repositoryKey: KEY }, name);
 const snapshot = (dir: string): string[] =>
@@ -125,6 +147,32 @@ describe("scf skills promote check", () => {
     expect(r.code).toBe(1);
     expect(r.lines[0]).toMatch(/^REFUSED skills\/a: review \(/);
     expect(r.lines[1]).toMatch(/^REFUSED skills\/b: rejected \(/);
+  });
+
+  it("lists web addresses after the decision lines, without blocking", async () => {
+    stage({ ...BENIGN, LICENSE: MIT, "skills/a/evals/evals.json": '{"prompt":"open https://react.dev/learn"}' });
+    const r = await check();
+    expect(r.code).toBe(0);
+    const at = r.lines.findIndex((l) => l.startsWith(`ADDRESS ${idOf("a")} mentioned evals/evals.json: https://react.dev/learn`));
+    expect(at).toBeGreaterThan(r.lines.indexOf(`PROMOTABLE ${idOf("a")} skills/a MIT`));
+    expect(r.lines[at]).toContain("(under evals/, which the agent only reads)");
+  });
+
+  it("lists a frontmatter address and hides user and password", async () => {
+    const skillMd = "---\nname: a\ndescription: A skill called a.\nhomepage: https://vercel.com\n---\n\nBody.\n";
+    stage({ ...BENIGN, LICENSE: MIT, "skills/a/SKILL.md": skillMd, "skills/a/references/x.md": "see https://u" + ":p@h.io/x" });
+    const r = await check();
+    expect(r.code).toBe(0);
+    expect(r.lines.some((l) => l.startsWith(`ADDRESS ${idOf("a")} mentioned SKILL.md: https://vercel.com `))).toBe(true);
+    expect(r.text).toContain("https://(hidden)@h.io/x");
+    expect(r.text).not.toContain("u" + ":p@");
+  });
+
+  it("hides a credential in the query of a web address", async () => {
+    stage({ ...BENIGN, LICENSE: MIT, "skills/a/references/x.md": "see https://h.io/?api_" + "key=A1b2C3d4E5f6 now" });
+    const r = await check();
+    expect(r.text).toContain("https://h.io/?api_key=(hidden)");
+    expect(r.text).not.toContain("A1b2C3d4E5f6");
   });
 
   it("refuses an unrecognised licence as ambiguous", async () => {
@@ -252,9 +300,114 @@ describe("scf skills promote check", () => {
 
   it("writes nothing", async () => {
     stage({ ...BENIGN, LICENSE: MIT });
+    await decide("not-measured");
     const before = [...snapshot(home), ...snapshot(cwd)];
-    await check();
+    await run(["lib"], {});
     expect([...snapshot(home), ...snapshot(cwd)]).toEqual(before);
+  });
+});
+
+describe("scf skills promote check, effect", () => {
+  /** The staged skills as { id, digest } from the EFFECT lines. */
+  const skills = async () =>
+    (await run(["lib"], {})).lines.filter((l) => l.startsWith("EFFECT ")).map((l) => ({ id: l.split(" ")[1]!, version: "1.0.0", digest: l.split(" ")[2]!.slice(0, -1) }));
+  const measure = async (kind: EffectKind | "invalid", only?: string) => {
+    for (const s of await skills()) {
+      if (only && s.id !== only) continue;
+      writeEffect(home, s, kind === "invalid" ? "helps" : kind);
+      if (kind === "invalid") breakEffect(home, s.id, s.digest);
+    }
+  };
+
+  it("prints an EFFECT line per skill and refuses a skill that was never measured", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    const r = await check(["lib"], {}, { accept: false });
+    expect(r.code).toBe(1);
+    for (const n of ["a", "b"]) {
+      expect(r.lines.filter((l) => l.startsWith(`EFFECT ${idOf(n)} `))).toEqual([expect.stringMatching(/^EFFECT \S+ sha256:[0-9a-f]{64}: not-measured \(effect-not-measured\)$/)]);
+    }
+    expect(r.lines).toContain("REFUSED skills/a: effect (effect-not-measured)");
+    expect(r.lines).toContain("REFUSED skills/b: effect (effect-not-measured)");
+    expect(r.text).not.toContain("PROMOTABLE");
+    expect(r.lines.at(-2)).toMatch(/^LICENCES /);
+  });
+
+  it("lets an owner decision accept a skill that was never measured", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    const r = await check();
+    expect(r.code).toBe(0);
+    expect(r.lines.filter((l) => l.startsWith("EFFECT "))).toHaveLength(2);
+    expect(r.text).toMatch(/not-measured \(accepted by @octocat on 2026-10-01\)/);
+    expect(r.text).toContain("PROMOTABLE");
+  });
+
+  it("does not take a decision of another kind or of another digest", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    await measure("no-effect");
+    await decide("not-measured");
+    const wrongKind = parse(readFileSync(join(cwd, "skill-evaluations.yaml"), "utf8")) as { effect_decisions: unknown[] };
+    expect(wrongKind.effect_decisions).toHaveLength(0);
+    writeFileSync(
+      join(cwd, "skill-evaluations.yaml"),
+      stringify({ schema: 1, evaluations: [], effect_decisions: [{ skill: idOf("a"), digest: "sha256:" + "0".repeat(64), accept: "no-effect", ...DECIDED }] }),
+    );
+    const r = await run(["lib"], {});
+    expect(r.lines).toContain("REFUSED skills/a: effect (effect-no-effect)");
+    expect(r.lines).toContain("REFUSED skills/b: effect (effect-no-effect)");
+  });
+
+  it("promotes a skill with no measurable effect only with a decision for it", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    await measure("no-effect");
+    const without = await run(["lib"], {});
+    expect(without.code).toBe(1);
+    expect(without.lines).toContain("REFUSED skills/a: effect (effect-no-effect)");
+    expect(without.text).toMatch(/EFFECT \S+ sha256:[0-9a-f]{64}: no-effect \(effect-no-effect\)/);
+    await decide("no-effect");
+    const r = await run(["lib"], {});
+    expect(r.code).toBe(0);
+    expect(r.text).toMatch(/no-effect \(accepted by @octocat on 2026-10-01\)/);
+  });
+
+  it("never promotes a skill that harms, whatever the decisions say", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    await measure("harms", idOf("a"));
+    await decide("not-measured");
+    const file = join(cwd, "skill-evaluations.yaml");
+    const doc = parse(readFileSync(file, "utf8")) as { effect_decisions: object[] };
+    const a = (await skills()).find((s) => s.id === idOf("a"))!;
+    for (const accept of ["no-effect", "not-measured"]) doc.effect_decisions.push({ skill: a.id, digest: a.digest, accept, ...DECIDED });
+    writeFileSync(file, stringify(doc));
+    const r = await run(["lib"], {});
+    expect(r.code).toBe(1);
+    expect(r.lines).toContain("REFUSED skills/a: effect (effect-harms)");
+    expect(r.text).toContain(`EFFECT ${a.id} ${a.digest}: harms (effect-harms)`);
+    expect(r.lines).toContain(`PROMOTABLE ${idOf("b")} skills/b MIT`);
+  });
+
+  it("adds nothing for a skill that helps", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    await measure("helps");
+    const r = await run(["lib"], {});
+    expect(r.code).toBe(0);
+    expect(r.lines.filter((l) => l.startsWith("EFFECT ")).every((l) => l.endsWith(": helps"))).toBe(true);
+  });
+
+  it("refuses an unreadable effect record, even with decisions", async () => {
+    stage({ ...BENIGN, LICENSE: MIT });
+    await measure("invalid");
+    await decide("not-measured");
+    const r = await run(["lib"], {});
+    expect(r.code).toBe(1);
+    expect(r.lines).toContain("REFUSED skills/a: effect (effect-invalid)");
+    expect(r.text).toMatch(/: invalid \(effect-invalid: /);
+  });
+
+  it("lets a licence refusal win over the effect", async () => {
+    stage(BENIGN);
+    const r = await check(["lib"], {}, { accept: false });
+    expect(r.lines[0]).toMatch(/^REFUSED skills\/a: missing \(/);
+    expect(r.text).not.toContain("effect (effect-");
   });
 });
 

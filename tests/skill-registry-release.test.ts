@@ -72,7 +72,7 @@ describe("administrator folders as releases", () => {
     pkg(e.root(0), "a");
     const ap = release(e.root(0));
     const reg = run(e, cfg([e.root(0)], [ap]));
-    expect(reg.problems).toEqual([]);
+    expect(reg.problems.filter((p) => !p.reason.includes("scf skills release adopt"))).toEqual([]);
     expect(reg.skills.map((s) => s.key)).toEqual(["a@1.0.0"]);
     expect(reg.sources[1]).toMatchObject({ status: "ok", packages: 1, release: { state: "approved", digest: ap.digest } });
   });
@@ -102,7 +102,7 @@ describe("administrator folders as releases", () => {
     mkdirSync(join(e.home, "skills"));
     mkdirSync(e.root(0));
     const reg = run(e, cfg([e.root(0)]));
-    expect(reg.problems).toEqual([]);
+    expect(reg.problems.filter((p) => !p.reason.includes("scf skills release adopt"))).toEqual([]);
   });
 
   it("refuses a manifest that is not approved and names catalogue, version and digest", () => {
@@ -182,7 +182,7 @@ describe("administrator folders as releases", () => {
     const ap = release(e.root(1));
     const reg = run(e, cfg([e.root(0), e.root(1)], [ap]));
     expect(reg.skills.map((s) => s.label)).toEqual(["skills.roots[1]"]);
-    expect(kinds(reg)).toEqual(["root-refused"]);
+    expect(kinds(reg)).toEqual(["root-refused", "root-missing"]);
   });
 
   it("allow_unreleased loads folders as before and names them", () => {
@@ -191,7 +191,7 @@ describe("administrator folders as releases", () => {
     pkg(e.root(1), "b");
     release(e.root(1));
     const reg = run(e, cfg([e.root(0), e.root(1)], [], {}, true));
-    expect(reg.problems).toEqual([]);
+    expect(reg.problems.filter((p) => !p.reason.includes("scf skills release adopt"))).toEqual([]);
     expect(reg.skills.map((s) => s.key)).toEqual(["a@1.0.0", "b@1.0.0"]);
     expect(unreleasedSources(reg).map((s) => s.label)).toEqual(["skills.roots[0]", "skills.roots[1]"]);
   });
@@ -264,7 +264,7 @@ describe("schema-2 releases in the registry", () => {
     const e = setup();
     const ap = v2(e);
     const reg = run(e, cfg([e.root(0)], [ap]));
-    expect(reg.problems).toEqual([]);
+    expect(reg.problems.filter((p) => !p.reason.includes("scf skills release adopt"))).toEqual([]);
     expect(keys(reg)).toEqual(["a@1.0.0", "b@1.0.0"]);
     expect(reg.sources[1]!.release!.state).toBe("approved");
   });
@@ -282,7 +282,8 @@ describe("schema-2 releases in the registry", () => {
     const ap = v2(e);
     mutate(e.root(0));
     const reg = run(e, cfg([e.root(0)], [ap]));
-    expect(kinds(reg)).toEqual(["root-refused"]);
+    // the refused root does not serve the approved release, so it is also reported as not adopted
+    expect(kinds(reg)).toEqual(["root-refused", "root-missing"]);
     expect(reg.sources[1]).toMatchObject({ status: "refused", packages: 0 });
     expect(reg.skills).toEqual([]);
     expect(JSON.stringify(reg.problems)).not.toContain(e.root(0));
@@ -294,7 +295,7 @@ describe("schema-2 releases in the registry", () => {
     appendFileSync(join(e.root(0), ".attribution", "a", "LICENSE"), "x");
     for (const approved of [[ap], []]) {
       const reg = run(e, cfg([e.root(0)], approved, {}, true));
-      expect(kinds(reg)).toEqual(["root-refused"]);
+      expect(kinds(reg)).toEqual(approved.length ? ["root-refused", "root-missing"] : ["root-refused"]);
       expect(reg.skills).toEqual([]);
     }
   });
@@ -335,7 +336,7 @@ describe("schema-2 releases in the registry", () => {
       const e = setup();
       const ap = v2(e, { revoked });
       const reg = run(e, cfg([e.root(0)], [ap]));
-      expect(reg.problems).toEqual([]);
+      expect(reg.problems.filter((p) => !p.reason.includes("scf skills release adopt"))).toEqual([]);
       expect(keys(reg)).toEqual(["a@1.0.0"]);
       expect(reg.notes.filter((n) => n.kind === "revoked").map((n) => n.text)).toEqual(["b@1.0.0 is revoked by acme-skills@1.0.0 (2026-03-04) and is not loaded."]);
     });
@@ -349,7 +350,7 @@ describe("schema-2 releases in the registry", () => {
       expect(keys(reg)).toEqual(["a@1.0.0"]);
       appendFileSync(join(e.root(0), "b", "SKILL.md"), "x");
       const bad = run(e, cfg([e.root(0)], [ap]));
-      expect(kinds(bad)).toEqual(["root-refused"]);
+      expect(kinds(bad)).toEqual(["root-refused", "root-missing"]);
     });
 
     it("stops a run that locked the revoked skill", () => {
@@ -358,8 +359,20 @@ describe("schema-2 releases in the registry", () => {
       const reg = run(e, cfg([e.root(0)], [ap]));
       const lock = { version: 1, skills: [{ id: "b", version: "1.0.0", digest: "sha256:" + "1".repeat(64) }] } as unknown as RunSkillLock;
       const problems = verifyRunSkillLock(lock, reg);
-      expect(problems.map((p) => p.code)).toEqual(["missing"]);
-      expect(integrityReason(problems[0]!)).toMatch(/^skill integrity: b@1\.0\.0 is missing/);
+      expect(problems.map((p) => p.code)).toEqual(["revoked"]);
+      expect(integrityReason(problems[0]!)).toMatch(/^skill integrity: b@1\.0\.0 is revoked by release acme-skills@1\.0\.0\./);
+      expect(reg.revoked?.get("b@1.0.0")).toMatchObject({ by: "acme-skills@1.0.0" });
+    });
+
+    it("keeps the release revocation as data, and a local state of the same key stays in lifecycle", () => {
+      const e = setup();
+      const ap = v2(e, { revoked });
+      const line = { type: "transition", seq: 1, key: "b@1.0.0", from: "active", to: "quarantined", at: "2026-01-01T00:00:00.000Z", by: "cli", reason: "local" };
+      writeFileSync(join(e.home, "skill-lifecycle.jsonl"), JSON.stringify(line) + "\n");
+      const reg = run(e, cfg([e.root(0)], [ap]));
+      expect(reg.revoked?.get("b@1.0.0")).toEqual({ by: "acme-skills@1.0.0", on: "2026-03-04", reason: "unsafe advice" });
+      expect(reg.byKey.has("b@1.0.0")).toBe(false);
+      expect(reg.lifecycle?.get("b@1.0.0")).toMatchObject({ state: "quarantined", reason: "local" });
     });
 
     it("ignores a revocation in a release that is not approved", () => {

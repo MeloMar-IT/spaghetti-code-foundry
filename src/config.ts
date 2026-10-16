@@ -10,8 +10,10 @@ import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
+import { CANONICAL_LIMITS } from "./skills/canonical-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
-import { REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
+import { decodeBase64Exact, MAX_RELEASE_KEYS } from "./skills/release-signature.js";
+import { artifactPathProblem, relativePathProblem, REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -264,6 +266,18 @@ export const STEP_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*(_\*)?$/;
 export const STEP_ENV_REFUSED = /^(FACTORY_|SCF_|GH_|GITHUB_|GIT_|SSH_)/;
 const stepEnvName = z.string().refine((n) => STEP_ENV_NAME.test(n) && !STEP_ENV_REFUSED.test(n), "not a variable name the steps of a user's run may get");
 
+/** The interval of `skills.update_check.every` in ms: `<n>m` or `<n>h` from 5m to 24h; undefined for anything else. */
+export function updateEveryMs(text: unknown): number | undefined {
+  if (typeof text !== "string") return undefined;
+  const m = /^([1-9]\d{0,3})(m|h)$/.exec(text);
+  if (!m) return undefined;
+  const ms = Number(m[1]) * (m[2] === "h" ? 3_600_000 : 60_000);
+  return ms >= 300_000 && ms <= 86_400_000 ? ms : undefined;
+}
+
+/** `owner/name` or `host/owner/name`. */
+export const DEPLOYMENT_REPOSITORY_RE = /^(?:[A-Za-z0-9.-]+\/)?[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -333,8 +347,17 @@ export const ConfigSchema = z
     help: z
       .object({
         enabled: z.boolean().default(false),
-        /** Who may ask when Ask SCF is on: every account (also without the setting), or administrators only. */
-        audience: z.enum(["everyone", "admins"]).optional(),
+        /** Lets Ask SCF propose a resume or cancel of a person's own run (and, after #568, carry it out once they confirm). Off: every proposed action is dropped. */
+        actions: z.boolean().default(false),
+        /**
+         * Emergency stop: nobody can ask, try again or check a page; turns that already run finish and every account keeps
+         * reading, exporting and deleting its conversations. `enabled: false` is "never set up" and shows no button.
+         */
+        paused: z.boolean().default(false),
+        /** Who may ask when Ask SCF is on: every account (also without the setting), administrators only, or administrators and `pilot_accounts`. */
+        audience: z.enum(["everyone", "admins", "pilot"]).optional(),
+        /** With `audience: "pilot"`: the accounts (by id) that may ask besides the administrators. */
+        pilot_accounts: z.array(z.uuid()).max(1000).optional(),
         /** Accounts (by id) that may not ask, whatever their role. They keep reading, exporting and deleting their conversations. */
         disabled_accounts: z.array(z.uuid()).max(1000).optional(),
         /** A conversation that is not changed for this many days is deleted; without it 90. A lower number deletes older ones at once. */
@@ -437,14 +460,50 @@ export const ConfigSchema = z
                     catalogue: SkillIdSchema,
                     version: SkillVersionSchema,
                     digest: z.string().regex(SKILL_DIGEST_RE, "must be sha256: and 64 hex digits"),
+                    key: SkillIdSchema.optional(),
+                    signature: z.string().refine((s) => !!decodeBase64Exact(s, 64), "must be base64 of 64 bytes").optional(),
+                    /** Absolute local folder of this release (schema 2); `scf skills release adopt` copies it into the release store. */
+                    artifact: z
+                      .string()
+                      .superRefine((p, ctx) => {
+                        const m = artifactPathProblem(p);
+                        if (m) ctx.addIssue({ code: "custom", message: m });
+                      })
+                      .optional(),
                   })
                   .strict(),
               )
               .max(50)
               .default([]),
+            /** Trusted Ed25519 public keys. Once set, every approved release must be signed by one of them. */
+            keys: z.array(z.object({ id: SkillIdSchema, ed25519: z.string() }).strict()).max(MAX_RELEASE_KEYS).default([]),
+            /** The deployment repository `scf skills release propose` opens its pull request in, and the config file in it. */
+            deployment: z
+              .object({
+                repository: z.string().regex(DEPLOYMENT_REPOSITORY_RE, "must be owner/name or host/owner/name"),
+                file: z
+                  .string()
+                  .max(300)
+                  .superRefine((p, ctx) => {
+                    const m = relativePathProblem(p) ?? (/[\u0000-\u001f\u007f]/.test(p) ? "path has a control character" : /\.ya?ml$/.test(p) ? undefined : "must end in .yaml or .yml");
+                    if (m) ctx.addIssue({ code: "custom", message: m });
+                  }),
+              })
+              .strict()
+              .optional(),
           })
           .strict()
           .superRefine((r, ctx) => {
+            const ids = new Set<string>();
+            r.keys.forEach((k, i) => {
+              if (!decodeBase64Exact(k.ed25519, 32)) ctx.addIssue({ code: "custom", path: ["keys", i, "ed25519"], message: "must be base64 of a 32-byte Ed25519 public key" });
+              if (ids.has(k.id)) ctx.addIssue({ code: "custom", path: ["keys", i, "id"], message: `"${k.id}" is listed twice` });
+              ids.add(k.id);
+            });
+            r.approved.forEach((a, i) => {
+              if ((a.key === undefined) !== (a.signature === undefined)) ctx.addIssue({ code: "custom", path: ["approved", i], message: "needs both key and signature" });
+              else if (a.key !== undefined && !ids.has(a.key)) ctx.addIssue({ code: "custom", path: ["approved", i, "key"], message: `"${a.key}" is not in skills.releases.keys` });
+            });
             const seen = new Set<string>();
             r.approved.forEach((a, i) => {
               const k = `${a.catalogue}@${a.version}`;
@@ -486,10 +545,12 @@ export const ConfigSchema = z
             include: z.array(SkillIdSchema).max(RESOLVE_RANGE.include).default([]),
             /** Skill ids that are never selected. */
             exclude: z.array(SkillIdSchema).max(RESOLVE_RANGE.exclude).default([]),
+            /** Capabilities only one skill may provide in a run. A run offers, locks and loads only the canonical provider. */
+            exclusive: z.array(SkillIdSchema).max(CANONICAL_LIMITS.exclusive).default([]),
           })
           .strict()
           .superRefine((c, ctx) => {
-            for (const key of ["include", "exclude"] as const)
+            for (const key of ["include", "exclude", "exclusive"] as const)
               c[key].forEach((id, i) => {
                 if (c[key].indexOf(id) !== i) ctx.addIssue({ code: "custom", path: [key, i], message: `duplicate "${id}"` });
               });
@@ -511,6 +572,18 @@ export const ConfigSchema = z
         unresolved: UnresolvedPolicySchema,
         /** Which tools a skill may ask for. Decides whether a run may go past the plan gate with a skill; it never limits a session. */
         tools: ToolPolicySchema,
+        /** The server runs the due skill-source checks from this catalogue clone, every `every`. No folder: off. */
+        update_check: z
+          .object({
+            folder: z
+              .string()
+              .refine((p) => isAbsolute(p), "must be an absolute path")
+              .refine((p) => !p.split(/[\\/]/).some((s) => /^\.(?:claude|codex)$/i.test(s)), "personal agent folders (.claude, .codex) cannot be used")
+              .optional(),
+            every: z.string().default("1h").refine((s) => updateEveryMs(s) !== undefined, "an interval like 30m or 6h, from 5m to 24h"),
+          })
+          .strict()
+          .prefault({}),
       })
       .strict()
       .superRefine((s, ctx) => {

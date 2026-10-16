@@ -309,6 +309,7 @@ export function parseSkillPackage(entries: readonly SkillEntry[], source = PACKA
   const pkg: SkillPackage = {
     ...manifest,
     capabilities: [...manifest.capabilities].sort(),
+    composable: [...manifest.composable].sort(),
     roles: [...manifest.roles].sort(),
     conflicts: [...manifest.conflicts].sort(),
     connectors: [...manifest.connectors].sort(),
@@ -370,6 +371,7 @@ export function foundryPackageFiles(pkg: SkillPackage): { path: string; content:
     version: pkg.version,
     category: pkg.category,
     capabilities: pkg.capabilities,
+    ...(pkg.composable?.length ? { composable: pkg.composable } : {}),
     ...(pkg.detectors.length ? { detectors: pkg.detectors } : {}),
     ...(pkg.roles.length ? { roles: pkg.roles } : {}),
     dependencies: pkg.dependencies,

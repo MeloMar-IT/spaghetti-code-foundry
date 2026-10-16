@@ -12,6 +12,8 @@ import { readOnlyStep } from "../src/flow/schema.js";
 import { parseSkillPackage, SkillPackageError, type SkillEntry } from "../src/skills/package.js";
 import { renderReviewPayload, renderSkillPayload, type ReviewSkill } from "../src/skills/payload.js";
 import type { RegisteredSkill } from "../src/skills/registry.js";
+import { canonicalFromRegistered } from "../src/skills/canonical-facts.js";
+import type { CanonicalDeps } from "../src/skills/run-canonical.js";
 import { draftSkillRequest, SkillRequestError } from "../src/skills/request.js";
 
 const dirs: string[] = [];
@@ -167,10 +169,10 @@ describe("draftSkillRequest", () => {
 // ---- skillSession for a reviewer
 
 const digestOf = (c: string) => `sha256:${c.repeat(64)}`;
-function sk(id: string, o: { roles?: string[]; review?: string; digest?: string; instructions?: string } = {}): RegisteredSkill {
+function sk(id: string, o: { roles?: string[]; review?: string; digest?: string; instructions?: string; caps?: string[]; source?: string } = {}): RegisteredSkill {
   return {
-    key: `${id}@1.0.0`, id, version: "1.0.0", source: "admin", label: "data folder", dir: "/d", active: true, trust: "approved", pin: "pinned", digest: o.digest ?? digestOf("a"),
-    pkg: { id, version: "1.0.0", description: `About ${id}.`, instructions: o.instructions ?? "Do it. ".repeat(60), roles: o.roles ?? [], dependencies: [], conflicts: [], digest: o.digest ?? digestOf("a"), ...(o.review ? { review: o.review } : {}) },
+    key: `${id}@1.0.0`, id, version: "1.0.0", source: o.source ?? "admin", label: "data folder", dir: "/d", active: true, trust: "approved", pin: "pinned", digest: o.digest ?? digestOf("a"),
+    pkg: { id, version: "1.0.0", description: `About ${id}.`, instructions: o.instructions ?? "Do it. ".repeat(60), roles: o.roles ?? [], dependencies: [], conflicts: [], digest: o.digest ?? digestOf("a"), ...(o.review ? { review: o.review } : {}), ...(o.caps ? { capabilities: o.caps, category: "general", risk: "low" } : {}) },
   } as unknown as RegisteredSkill;
 }
 const reg = (...skills: RegisteredSkill[]) => ({ skills, byKey: new Map(skills.map((s) => [s.key, s])), problems: [] });
@@ -280,6 +282,28 @@ describe("skillSession for a reviewer", () => {
     expect(skillSession(unpinned.engine, d, "reviewer")).toEqual({});
     expect(unpinned.logs.some((l) => l.includes("review context: raw left out"))).toBe(true);
     expect(skillSession(setup([rec("plan", { output: line(["kafka"]), ok: false })]).engine, d, "reviewer")).toEqual({});
+  });
+
+  describe("plan review with exclusive capabilities", () => {
+    const canon = (highRisk: string[] = []): CanonicalDeps => ({ policy: { exclusive: ["cap"], highRisk }, candidate: (s) => canonicalFromRegistered(s) });
+    const two = (second: string) => () => reg(sk("a", { review: KAFKA, caps: ["cap"] }), sk("b", { review: PG, caps: ["cap"], source: second }));
+
+    it("loads only the canonical provider of a draft", () => {
+      const t = setup([rec("plan", { output: `${line(["a", "b"])}\nPLAN_STATUS: READY` })]);
+      const s = skillSession(t.engine, { discover: two("builtin"), canonical: canon() }, "reviewer");
+      expect(s).toMatchObject({ draft: true });
+      expect(payloadOf(s)!.loaded).toEqual(["a@1.0.0"]);
+      expect(payloadOf(s)!.text).not.toContain(PG);
+      expect(t.logs).toContain("    · review context: b left out: not-canonical");
+    });
+
+    it("refuses on a high-risk tie instead of loading both review blocks", () => {
+      const t = setup([rec("plan", { output: `${line(["a", "b"])}\nPLAN_STATUS: READY` })]);
+      const s = skillSession(t.engine, { discover: two("admin"), canonical: canon(["cap"]) }, "reviewer");
+      expect(s).toHaveProperty("refused");
+      expect((s as { refused: string }).refused).toMatch(/^skill selection is blocked: .*Pin one of them/);
+      expect(t.save).not.toHaveBeenCalled();
+    });
   });
 
   it("a changed digest refuses the reviewer on both agents", () => {

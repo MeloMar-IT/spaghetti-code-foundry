@@ -410,7 +410,7 @@ describe("a turn from question to answer", () => {
     expect(d.ui.suggestBox.hidden).toBe(true);
     await vi.advanceTimersByTimeAsync(1500);
     expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask SCFBecause."]);
-    expect(actions(d)).toEqual(["Archive", "Delete"]);
+    expect(actions(d)).toEqual(["This solved my problem", "Archive", "Delete"]);
     d.ui.question.value = "And then?";
     await d.send();
     expect(api.askHelp).toHaveBeenLastCalledWith("c1", { question: "And then?", context: { page: "#/runs" } });
@@ -545,7 +545,7 @@ describe("archive and deletion", () => {
     await d.restore();
     expect(api.restoreHelp).toHaveBeenCalledWith("c1");
     expect(d.ui.status.textContent).toBe("The conversation is back in your list.");
-    expect(actions(d)).toEqual(["Archive", "Delete"]);
+    expect(actions(d)).toEqual(["This solved my problem", "Archive", "Delete"]);
   });
 
   it("deletion: asks first with the consequence, and does nothing on Cancel", async () => {
@@ -924,5 +924,328 @@ describe("narrow screens and reduced motion (ui/css/pages/ask.css)", () => {
     expect(decl(".ask-scrim")).toContain("z-index: var(--layer-menu)");
     expect(decl(".ask-drawer")).toContain("z-index: calc(var(--layer-menu) + 1)");
     for (const r of rules) expect(r.selector, r.selector).toMatch(/^\.ask-/);
+  });
+});
+
+describe("a plan in the drawer", () => {
+  const SEEN = "2026-10-12T10:00:00.000Z";
+  const state = { id: "s1", kind: "state", title: "Run r-1 failed", ref: "#/runs/r-1", observedAt: SEEN };
+  const signals = { expected: "You see a copy.", failure: "It is empty.", fallback: "Stop." };
+  const plan = [
+    { kind: "reversible", title: "Save a copy of the log", evidence: ["s1"], ...signals },
+    { kind: "check", title: "Check first. Change nothing yet.", instructions: "Look at the page.", to: "#/runs", evidence: [], wouldBe: "high-impact", proposal: "Delete the run", ...signals },
+    { kind: "input", title: "Pick a branch", evidence: [] },
+  ];
+  const reply = { type: "guided-resolution", summary: "Steps.", explanation: "", certainty: "confirmed", evidence: [state], recommendations: [], links: [], drafts: [], actions: [], plan };
+  const memory = () => { const m = new Map<string, number[]>(); return { get: (id: string) => m.get(id) ?? [], set: (id: string, v: number[]) => void m.set(id, v) }; };
+  async function shown(over: any = {}) {
+    const made = make({ ...over, api: { helpConversation: vi.fn(async () => conv([q("How?"), a("done", { reply })])) } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    return made;
+  }
+  const cards =(d: any) => walk(d.ui.thread).filter((e) => e.classList.contains("ask-step"));
+  const buttons = (d: any) => walk(d.ui.thread).filter((e) => e.attrs["data-step"] !== undefined);
+
+  it("is an ordered list with one card per step, a danger pill on a step that would be high impact, and the proposal", async () => {
+    const { d } = await shown({ deps: { progress: memory() } });
+    const list = walk(d.ui.thread).find((e) => e.classList.contains("ask-plan"))!;
+    expect(list.tag).toBe("ol");
+    expect(cards(d)).toHaveLength(3);
+    const second = cards(d)[1]!;
+    const pills = walk(second).filter((e) => e.classList.contains("pill")).map((e) => `${e.attrs.class}: ${e.textContent}`);
+    expect(pills).toEqual(["pill sem-neutral: Read-only check", "pill sem-danger: Would be a high-impact change"]);
+    expect(second.classList.contains("ask-step-danger")).toBe(true);
+    expect(second.textContent).toContain("Proposed, not confirmed: Delete the run");
+    expect(second.textContent).toContain("What you should see");
+    expect(second.textContent).toContain("If it fails");
+    expect(cards(d)[0]!.attrs["aria-current"]).toBe("step");
+    expect(walk(d.ui.thread).find((e) => e.classList.contains("ask-plan-head"))!.textContent).toContain("1 is a high-impact change");
+  });
+
+  it("marks a step as done by the person's click, moves the current step, and says nothing was checked", async () => {
+    const progress = memory();
+    const { d } = await shown({ deps: { progress } });
+    buttons(d)[0]!.click();
+    expect(progress.get("a1")).toEqual([0]);
+    expect(buttons(d)[0]!.attrs["aria-pressed"]).toBe("true");
+    expect(cards(d)[0]!.attrs["aria-current"]).toBeUndefined();
+    expect(cards(d)[1]!.attrs["aria-current"]).toBe("step");
+    expect(cards(d)[0]!.textContent).toContain("You marked this. Ask SCF has not checked the result.");
+    expect(d.ui.thread.textContent).not.toMatch(/succeeded|worked/i);
+    buttons(d)[0]!.click();
+    expect(progress.get("a1")).toEqual([]);
+  });
+
+  it("reads the marks back after a redraw", async () => {
+    const progress = memory();
+    progress.set("a1", [1]);
+    const { d } = await shown({ deps: { progress } });
+    expect(buttons(d).map((b) => b.attrs["aria-pressed"])).toEqual(["false", "true", "false"]);
+    expect(cards(d)[0]!.attrs["aria-current"]).toBe("step");
+  });
+
+  it("keeps the marks in the tab and does not break when the tab has no storage", async () => {
+    const tab = new Map<string, string>();
+    (globalThis as any).sessionStorage = { getItem: (k: string) => tab.get(k) ?? null, setItem: (k: string, v: string) => void tab.set(k, v), removeItem: (k: string) => void tab.delete(k) };
+    try {
+      const { d } = await shown();
+      buttons(d)[2]!.click();
+      expect([...tab.entries()].filter(([k]) => k.startsWith("scf-ask-plan-"))).toEqual([["scf-ask-plan-a1", "[2]"]]);
+      (globalThis as any).sessionStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+      buttons(d)[0]!.click();
+      expect(buttons(d)[0]!.attrs["aria-pressed"]).toBe("true");
+    } finally {
+      delete (globalThis as any).sessionStorage;
+    }
+  });
+
+  it("shows a reply without a plan as before", async () => {
+    const made = make({ api: { helpConversation: vi.fn(async () => conv([q("How?"), a("done", { reply: { ...reply, plan: undefined } })])) } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    expect(cards(made.d)).toEqual([]);
+  });
+});
+
+describe("rating an answer", () => {
+  const A1 = "a1";
+  const rated = (feedback?: any) => conv([q("Why?"), a("done", { id: A1, text: "Because.", ...(feedback ? { feedback } : {}) })]);
+  const buttons = (d: any) => walk(d.ui.thread).filter((e) => e.tag === "button");
+  const byFocus = (d: any, name: string) => walk(d.ui.thread).find((e) => e.attrs["data-focus"] === name)!;
+  const rateApi = (current: () => any) => vi.fn(async (_id: any, body: any) => {
+    const next = body.vote === null ? rated() : rated({ vote: body.vote, reasons: body.reasons, at: "2026-03-01T10:00:00.000Z" });
+    current();
+    return next;
+  });
+
+  async function opened(feedback?: any, over: any = {}) {
+    const made = make({ ...over, api: { helpConversation: vi.fn(async () => rated(feedback)), rateHelp: rateApi(() => {}), ...over.api } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    return made;
+  }
+
+  it("offers two buttons that say whether they are pressed, and saves a vote", async () => {
+    const { d, api } = await opened();
+    const group = walk(d.ui.thread).find((e) => e.attrs.role === "group" && e.attrs["aria-label"] === "Was this answer helpful?")!;
+    expect(group).toBeTruthy();
+    expect(buttons(d).map((b) => [b.textContent, b.attrs["aria-pressed"]])).toEqual([["Helpful", "false"], ["Not helpful", "false"]]);
+    byFocus(d, "ask-rate-a1-helpful").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.rateHelp).toHaveBeenCalledWith("c1", { message: A1, vote: "helpful", reasons: [] });
+    expect(d.ui.status.textContent).toBe("Saved: this answer helped.");
+    expect(buttons(d).map((b) => b.attrs["aria-pressed"])).toEqual(["true", "false"]);
+    // pressing it again takes the vote back
+    byFocus(d, "ask-rate-a1-helpful").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.rateHelp).toHaveBeenLastCalledWith("c1", { message: A1, vote: null, reasons: [] });
+    expect(d.ui.status.textContent).toBe("Your vote was taken back.");
+  });
+
+  it("has no rating on a question, a waiting reply or a failed one", async () => {
+    const { d } = await asked();
+    expect(buttons(d).filter((b) => b.attrs["data-focus"]?.startsWith("ask-rate"))).toEqual([]);
+    const f = make({ api: { helpConversation: vi.fn(async () => failed("provider", true, PROVIDER)) } });
+    f.d.open();
+    await f.d.openConversation("c1");
+    expect(walk(f.d.ui.thread).filter((e) => e.attrs["data-focus"]?.startsWith("ask-rate"))).toEqual([]);
+  });
+
+  it("asks for reasons after Not helpful, from a fixed list, and saves the ones ticked", async () => {
+    const { d, api } = await opened({ vote: "not-helpful", reasons: [], at: "2026-03-01T10:00:00.000Z" });
+    const fieldset = walk(d.ui.thread).find((e) => e.tag === "fieldset")!;
+    expect(walk(fieldset).find((e) => e.tag === "legend")!.textContent).toContain("What was wrong?");
+    const boxes = walk(fieldset).filter((e) => e.tag === "input");
+    expect(boxes.map((b) => b.attrs.type)).toEqual(Array(6).fill("checkbox"));
+    expect(walk(fieldset).filter((e) => e.tag === "textarea")).toEqual([]);
+    for (const reason of ["outdated", "unclear"]) {
+      const box = byFocus(d, `ask-reason-a1-${reason}`);
+      box.checked = true;
+      box.fire("change", { target: box });
+    }
+    byFocus(d, "ask-reasons-save-a1").click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.rateHelp).toHaveBeenCalledWith("c1", { message: A1, vote: "not-helpful", reasons: ["outdated", "unclear"] });
+  });
+
+  it("keeps the focus and the ticked reasons when the drawer is drawn again", async () => {
+    const { d, setHash } = await opened({ vote: "not-helpful", reasons: [], at: "2026-03-01T10:00:00.000Z" });
+    const box = byFocus(d, "ask-reason-a1-incorrect");
+    box.checked = true;
+    box.fire("change", { target: box });
+    box.focus();
+    setHash("#/repos");
+    const again = byFocus(d, "ask-reason-a1-incorrect");
+    expect(again).not.toBe(box);
+    expect(again.checked).toBe(true);
+    expect(byFocus(d, "ask-reason-a1-unclear").checked).toBe(false);
+    expect(doc().activeElement).toBe(again);
+    // pressing a vote with the keyboard keeps the focus on that button after the call
+    const vote = byFocus(d, "ask-rate-a1-not-helpful");
+    vote.focus();
+    vote.click();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(doc().activeElement?.attrs["data-focus"]).toBe("ask-rate-a1-not-helpful");
+    expect(walk(d.ui.thread)).toContain(doc().activeElement);
+  });
+
+  it("keeps ticked reasons while a later answer is waited for", async () => {
+    const first = [q("Why?"), a("done", { id: A1, text: "Because.", feedback: { vote: "not-helpful", reasons: [], at: "2026-03-01T10:00:00.000Z" } })];
+    const waiting = conv([...first, q("And?", "q2"), a("pending", { id: "a2", replyTo: "q2" })]);
+    const { d, api } = make({ api: { helpConversation: vi.fn(async () => waiting) } });
+    d.open();
+    await d.openConversation("c1");
+    const box = byFocus(d, "ask-reason-a1-unclear");
+    box.checked = true;
+    box.fire("change", { target: box });
+    box.focus();
+    api.helpConversation.mockClear();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(api.helpConversation).toHaveBeenCalled();
+    const again = byFocus(d, "ask-reason-a1-unclear");
+    expect(again.checked).toBe(true);
+    expect(doc().activeElement).toBe(again);
+  });
+
+  it("closes a conversation as solved only through its own button", async () => {
+    const closed = { ...rated(), state: "completed" };
+    const solveHelp = vi.fn(async () => closed);
+    const { d } = await opened(undefined, { api: { solveHelp } });
+    press(d, "This solved my problem");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(solveHelp).toHaveBeenCalledWith("c1");
+    expect(d.state.conversation.state).toBe("completed");
+    expect(actions(d)).not.toContain("This solved my problem");
+  });
+});
+
+describe("the pause", () => {
+  const PAUSED = "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.";
+  const refuse = (message: string) => vi.fn(async () => { throw Object.assign(new Error(message), { status: 503 }); });
+
+  it("shows a notice, refuses Send and Try again, and still reads the history", async () => {
+    const { d, api } = make({ deps: { paused: true }, api: { helpConversation: vi.fn(async () => failed("provider", true, PROVIDER)), helpConversations: vi.fn(async () => ({ enabled: true, paused: true, conversations: [] })) } });
+    d.open();
+    expect(d.ui.paused.hidden).toBe(false);
+    expect(d.ui.paused.textContent).toBe(PAUSED);
+    expect(d.ui.send.attrs["aria-disabled"]).toBe("true");
+    await d.openConversation("c1");
+    expect(texts(d.ui.thread, "ask-failed")).toEqual([`Ask SCF${PROVIDER}`]);
+    expect(actions(d)).toEqual(["Archive", "Delete"]);
+    expect(await d.retry()).toBe(false);
+    d.ui.question.value = "Why?";
+    expect(await d.send()).toBe(false);
+    expect(d.ui.error.textContent).toBe(PAUSED);
+    expect(api.askHelp).not.toHaveBeenCalled();
+    expect(api.retryHelp).toBeUndefined();
+  });
+
+  it("learns of a pause from the server's sentence, and not from another 503", async () => {
+    const off = "Ask SCF cannot check your question for secrets right now, so it does not keep it. Ask an administrator of this Foundry.";
+    const { d } = make({ api: { askHelp: refuse(off) } });
+    d.open();
+    d.ui.question.value = "Why?";
+    await d.send();
+    expect(d.state.paused).toBe(false);
+    expect(d.ui.paused.hidden).toBe(true);
+    expect(d.ui.send.attrs["aria-disabled"]).toBeUndefined();
+    expect(d.ui.error.textContent).toBe(off);
+
+    const paused = make({ api: { askHelp: refuse(PAUSED) } });
+    paused.d.open();
+    paused.d.ui.question.value = "Why?";
+    await paused.d.send();
+    expect(paused.d.state.paused).toBe(true);
+    expect(paused.d.ui.paused.hidden).toBe(false);
+    expect(paused.d.ui.send.attrs["aria-disabled"]).toBe("true");
+  });
+
+  it("asks the server again when it was paused, so an unpaused Ask SCF works without a reload", async () => {
+    const { d, api } = make({ deps: { paused: true }, api: { helpConversations: vi.fn(async () => ({ enabled: true, paused: false, conversations: [] })) } });
+    d.open();
+    d.ui.question.value = "Why?";
+    await d.send();
+    expect(api.helpConversations).toHaveBeenCalledTimes(1);
+    expect(api.askHelp).toHaveBeenCalledTimes(1);
+    expect(d.state.paused).toBe(false);
+    expect(d.ui.paused.hidden).toBe(true);
+  });
+
+  it("is taken from the list of conversations", async () => {
+    const { d } = make({ api: { helpConversations: vi.fn(async () => ({ enabled: true, paused: true, conversations: [] })) } });
+    d.open();
+    await d.showHistory();
+    expect(d.state.paused).toBe(true);
+    expect(d.ui.paused.hidden).toBe(false);
+  });
+
+  it("is passed on by the start of the drawer", async () => {
+    const d = await ask.initAsk("user", { api: { helpConversations: async () => ({ enabled: true, paused: true, conversations: [] }) }, host: new FakeElement("body"), win: {} });
+    expect(d.state.paused).toBe(true);
+    d.stop();
+  });
+});
+
+describe("offers in the drawer", () => {
+  const state = { id: "state-run-1", kind: "state", title: "Run r1 waits", ref: "#/runs/r1", observedAt: "2026-10-12T10:00:00.000Z" };
+  const reply = { type: "status", summary: "It waits.", explanation: "", certainty: "confirmed", evidence: [state], recommendations: [], links: [], drafts: [], actions: [], offers: [{ type: "open-run", title: "Open this run", evidence: "state-run-1", subject: { kind: "run", id: "r1" } }] };
+  async function shown(helpOffer: any, deps: any = {}) {
+    const go = vi.fn();
+    const made = make({ api: { helpConversation: vi.fn(async () => conv([q("Why?"), a("done", { reply })])), helpOffer }, deps: { go, ...deps } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    return { ...made, go };
+  }
+  const openButtons = (d: any) => walk(d.ui.thread).filter((e) => e.attrs["data-offer"] !== undefined);
+  const refused = (status: number) => vi.fn(async () => { throw Object.assign(new Error("x"), { status }); });
+
+  it("shows a card with an Open button", async () => {
+    const { d } = await shown(vi.fn());
+    const card = walk(d.ui.thread).find((e) => e.classList.contains("ask-card-offer"))!;
+    expect(card.textContent).toContain("Open this run");
+    expect(card.textContent).toContain("Opens a page");
+    expect(openButtons(d).map((b) => b.textContent)).toEqual(["Open"]);
+  });
+
+  it("asks the server, closes the drawer, and then goes to the address the server gave", async () => {
+    const helpOffer = vi.fn(async () => ({ type: "open-run", to: "#/runs/r1" }));
+    const { d, go } = await shown(helpOffer);
+    go.mockImplementation(() => expect(d.state.open).toBe(false));
+    openButtons(d)[0]!.click();
+    await vi.waitFor(() => expect(go).toHaveBeenCalledWith("#/runs/r1"));
+    expect(helpOffer).toHaveBeenCalledWith("c1", { message: "a1", offer: 0 });
+    expect(d.state.open).toBe(false);
+  });
+
+  it("says its own sentence for 403 and for 404, and does not go anywhere", async () => {
+    for (const [status, text] of [[403, "You are not allowed to open this now."], [404, "This is not there any more, or you can no longer see it."], [410, "This is not there any more, or you can no longer see it."]] as const) {
+      const { d, go } = await shown(refused(status));
+      await d.runOffer("a1", 0);
+      expect(d.ui.error.textContent, String(status)).toContain(text);
+      expect(go).not.toHaveBeenCalled();
+      expect(d.state.open).toBe(true);
+    }
+  });
+
+  it("does not open an address that is not a page of this interface", async () => {
+    for (const to of ["https://evil.example", "javascript:alert(1)", "#/board", undefined]) {
+      const { d, go } = await shown(vi.fn(async () => ({ type: "open-run", to })));
+      await d.runOffer("a1", 0);
+      expect(d.ui.error.textContent, String(to)).toBe("This page cannot be opened here.");
+      expect(go).not.toHaveBeenCalled();
+    }
+  });
+
+  it("sends one call for two clicks while it is on its way", async () => {
+    let release: (v: any) => void = () => {};
+    const helpOffer = vi.fn(() => new Promise((r) => { release = r; }));
+    const { d, go } = await shown(helpOffer);
+    const first = d.runOffer("a1", 0);
+    expect(await d.runOffer("a1", 0)).toBe(false);
+    release({ type: "open-run", to: "#/runs/r1" });
+    await first;
+    expect(helpOffer).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledTimes(1);
   });
 });

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { CANONICAL_STOP_PREFIX } from "./canonical-rules.js";
 import type { CanonicalResult } from "./canonical.js";
-import { CHOICE_LIMITS, CHOICE_PROBLEM_TEXT, PINS_FILE, type CHOICE_LEVELS, type CHOICE_PROBLEMS } from "./choice-rules.js";
+import { CHOICE_LIMITS, CHOICE_PROBLEM_TEXT, OVERRIDES_FILE, PINS_FILE, type CHOICE_LEVELS, type CHOICE_PROBLEMS } from "./choice-rules.js";
 import { credentialProblem } from "./credential-scan.js";
 import { byteCmp } from "./import-plan.js";
 import { parseSkillKey } from "./lock.js";
@@ -207,6 +207,8 @@ export function checkSkillChoices(
 const FILE_CODES: readonly ChoiceCode[] = ["invalid", "no-default-branch", "unreadable", "unchecked"];
 
 function problemMessage(p: ChoiceProblem): string {
+  if (p.code === "invalid" && p.level === "owner-override")
+    return `The owner overrides file (${OVERRIDES_FILE} in the data folder) is not valid. Run "scf skills overrides check <data folder>/${OVERRIDES_FILE}", fix it, then run again.`;
   if (p.code === "invalid") return `The project pins file (${PINS_FILE} on the default branch) is not valid. Run "scf skills project-pins check", fix it, then run again.`;
   if (p.code === "no-default-branch")
     return 'The project pins cannot be read: the default branch of this repository is not known (origin/HEAD is not set). Run "git remote set-head origin -a" in the repository, then run again.';

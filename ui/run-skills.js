@@ -6,13 +6,13 @@ export const REQUESTED_LABELS = { selected: "Selected", missing: "Missing", conf
 export const CONTEXT_LABELS = { loaded: "Loaded", reloaded: "Reloaded", reused: "Reused", omitted: "Left out (over budget)" };
 export const INTEGRITY_LABELS = {
   verified: "Verified", changed: "Changed", missing: "Missing", unpinned: "No longer pinned", unapproved: "Not approved",
-  unverified: "Cannot be verified", "not-checked": "Not checked", "not-locked": "Not locked yet",
+  unverified: "Cannot be verified", quarantined: "Quarantined", revoked: "Revoked", "not-checked": "Not checked", "not-locked": "Not locked yet",
 };
 
 const DASH = "—";
 const label = (labels, v) => (typeof v === "string" ? labels[v] ?? v : DASH);
 const REQUESTED_FAIL = new Set(["missing", "conflicting", "not-approved", "too-large"]);
-const INTEGRITY_FAIL = new Set(["changed", "missing", "unpinned", "unapproved"]);
+const INTEGRITY_FAIL = new Set(["changed", "missing", "unpinned", "unapproved", "quarantined", "revoked"]);
 const requestedClass = (state) => (state === "selected" ? "ok" : REQUESTED_FAIL.has(state) ? "fail" : "");
 const integrityClass = (state) => (state === "verified" ? "ok" : INTEGRITY_FAIL.has(state) ? "fail" : "locked");
 
@@ -92,8 +92,77 @@ function resolvedRow(r, admin, repo) {
     h("td", {}, typeof r.estimatedTokens === "number" ? `about ${r.estimatedTokens} tokens` : DASH),
     h("td", {}, h("span", { class: `pill ${integrityClass(r.integrity)}` }, label(INTEGRITY_LABELS, r.integrity))),
     h("td", {}, session(r)),
-    admin ? h("td", {}, r.source === "builtin" ? "built-in" : r.source === "admin" ? "administrator folder" : DASH) : null,
+    admin ? h("td", {}, r.source === "builtin" ? "built-in" : r.source === "admin" ? "administrator folder" : r.source === "catalogue" ? "approved catalogue" : DASH) : null,
     admin ? h("td", typeof r.digest === "string" ? { class: "mono", title: r.digest } : {}, typeof r.digest === "string" ? r.digest.slice(0, 19) : DASH) : null);
+}
+
+export const DECIDED_BY_LABELS = {
+  "project-pin": "project pin", "owner-override": "owner override", "trust-tier": "trust tier", compatibility: "compatibility",
+  evaluation: "evaluation", specificity: "specificity", freshness: "freshness", lexical: "name order", "only-candidate": "only candidate",
+};
+const str = (v) => (typeof v === "string" && v.length > 0 ? v : null);
+const arr = (v) => (Array.isArray(v) ? v : []);
+const tick = (v) => `\`${v}\``;
+
+function capabilityLine(c) {
+  const cap = str(c?.capability);
+  if (!cap) return null;
+  const winner = str(c.winner);
+  const decided = typeof c.decidedBy === "string" ? label(DECIDED_BY_LABELS, c.decidedBy) : null;
+  let out = winner ? `${tick(cap)}: ${tick(winner)}${decided ? ` (${decided})` : ""}` : `${tick(cap)}: no skill chosen (${c.outcome === "conflict" ? "conflict" : "none"})`;
+  for (const k of arr(c.companions)) if (str(k)) out += `; also ${tick(k)} (composable)`;
+  for (const r of arr(c.rejected)) {
+    if (!str(r?.skill) || !str(r.code)) continue;
+    const lv = typeof r.level === "string" ? `: ${label(DECIDED_BY_LABELS, r.level)}` : "";
+    out += `; not ${tick(r.skill)} (${r.code}${lv})`;
+  }
+  if (typeof c.more === "number" && c.more > 0) out += `; and ${c.more} more`;
+  return out;
+}
+
+function choiceLine(c, admin) {
+  const cap = str(c?.capability);
+  const target = str(c?.target);
+  if (!cap || !target || (c.level !== "project-pin" && c.level !== "owner-override")) return null;
+  const effect = c.effect === "selected" ? "applied" : c.effect === "superseded" ? "superseded" : null;
+  if (!effect) return null;
+  let out = `${c.level === "project-pin" ? "Project pin" : "Owner override"} for ${tick(cap)}: ${tick(target)} ${effect}${c.reviewDue === true ? " (due for review)" : ""}`;
+  if (admin && str(c.by)) out += ` by ${c.by}`;
+  if (admin && str(c.digest)) out += ` (${c.digest.slice(0, 19)})`;
+  return out;
+}
+
+/** The lines of "Why these skills" as plain strings; an administrator also gets authors, digests and the pins commit. */
+export function selectionLines(sel, admin = false) {
+  if (!sel || typeof sel !== "object" || Array.isArray(sel)) return [];
+  const caps = arr(sel.capabilities);
+  const groups = arr(sel.mirrors);
+  const choices = arr(sel.choices);
+  const counts = sel.counts && typeof sel.counts === "object" ? sel.counts : {};
+  const lines = caps.map(capabilityLine).filter(Boolean);
+  if (typeof counts.capabilities === "number" && counts.capabilities > caps.length) lines.push(`And ${counts.capabilities - caps.length} more capabilities.`);
+  let shown = 0;
+  for (const g of groups) {
+    const kept = str(g?.kept);
+    const gone = arr(g?.collapsed).filter(str);
+    if (!kept || !gone.length) continue;
+    shown += gone.length;
+    lines.push(`Same text: kept ${tick(kept)}, not offered ${gone.map(tick).join(", ")}`);
+  }
+  if (typeof counts.mirrorGroups === "number" && counts.mirrorGroups > groups.length) lines.push(`And ${counts.mirrorGroups - groups.length} more groups of copies.`);
+  if (typeof counts.collapsed === "number" && counts.collapsed > shown) lines.push(`And ${counts.collapsed - shown} more copies not offered.`);
+  lines.push(...choices.map((c) => choiceLine(c, admin)).filter(Boolean));
+  if (typeof counts.choices === "number" && counts.choices > choices.length) lines.push(`And ${counts.choices - choices.length} more pins or overrides.`);
+  const commit = sel.choicesSource?.pins?.commit;
+  if (admin && typeof commit === "string" && lines.length) lines.push(`Project pins from commit ${commit.slice(0, 12)}.`);
+  return lines;
+}
+
+/** The "Why these skills" heading and list, or null when there is nothing to explain. */
+export function selectionSection(sel, admin = false) {
+  const lines = selectionLines(sel, admin);
+  if (!lines.length) return null;
+  return [h("h3", {}, "Why these skills"), h("ul", { class: "holds" }, lines.map((t) => h("li", {}, t)))];
 }
 
 /** The Skills card of a run page, or null when the run has no skill information. */
@@ -118,5 +187,6 @@ export function skillsCard(view, { admin = false, repo = "" } = {}) {
       ? h("div", { class: "table-box" }, h("table", { class: "table" },
           h("thead", {}, h("tr", {}, heads.map((t) => h("th", {}, t)))),
           h("tbody", {}, resolved.map((r) => resolvedRow(r, admin, repo)))))
-      : h("p", { class: "muted" }, "No skills are used."));
+      : h("p", { class: "muted" }, "No skills are used."),
+    selectionSection(view.selection, admin));
 }

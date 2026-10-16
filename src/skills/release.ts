@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { credentialProblem } from "./credential-scan.js";
 import { readRegular } from "./package.js";
+import { approvalSignatureProblem, type ReleaseKey } from "./release-signature.js";
 import { relativePathProblem, SKILL_DIGEST_RE, SKILL_LIMITS, SkillIdSchema, SkillVersionSchema } from "./schema.js";
 import { hasUnsafeChar, OWNER_RE, SOURCE_TRUST_TIERS, sourcePathProblem } from "./sources.js";
 
@@ -59,7 +60,11 @@ export interface ApprovedRelease {
   catalogue: string;
   version: string;
   digest: string;
+  key?: string;
+  signature?: string;
+  artifact?: string;
 }
+export type { ReleaseKey };
 
 export const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/;
 const CREATED_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
@@ -261,7 +266,7 @@ export function readRelease(root: string, maxBytes = MAX_RELEASE_BYTES): Release
   return { state: "ok", manifest, digest: releaseDigest(manifest) };
 }
 
-export type ReleaseState = "none" | "invalid" | "unapproved" | "mismatch" | "approved";
+export type ReleaseState = "none" | "invalid" | "unapproved" | "mismatch" | "unsigned" | "approved";
 export interface ReleaseCheck {
   state: ReleaseState;
   catalogue?: string;
@@ -271,14 +276,17 @@ export interface ReleaseCheck {
 }
 
 /** Identity only: is this manifest one of the approved releases? */
-export function matchRelease(read: ReleaseRead, approved: readonly ApprovedRelease[]): ReleaseCheck {
+export function matchRelease(read: ReleaseRead, approved: readonly ApprovedRelease[], keys: readonly ReleaseKey[] = []): ReleaseCheck {
   if (read.state === "none") return { state: "none" };
   if (read.state === "invalid") return { state: "invalid", reason: read.reason };
   const { catalogue, version } = read.manifest;
   const id = { catalogue, version, digest: read.digest };
   const same = approved.filter((a) => a.catalogue === catalogue && a.version === version);
   if (!same.length) return { state: "unapproved", ...id };
-  if (!same.some((a) => a.digest === read.digest)) return { state: "mismatch", ...id, reason: "has another digest than the approved one" };
+  const entry = same.find((a) => a.digest === read.digest);
+  if (!entry) return { state: "mismatch", ...id, reason: "has another digest than the approved one" };
+  const reason = approvalSignatureProblem(entry, keys);
+  if (reason) return { state: "unsigned", ...id, reason };
   return { state: "approved", ...id };
 }
 

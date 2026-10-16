@@ -166,6 +166,7 @@ Skills reach an agent in a fixed order. Each stage has its own module:
 - **Licence review** (`licence-review.ts`): the digest covers the whole licence evidence that can apply to the staged folders (every licence and notice file above or inside them, with its hash or problem), not only the attribution of the promoted skills. A change to a root `LICENSE` therefore needs a new review even when every skill keeps its own licence. Promotion reads it through `licenceReviewProblem`.
 - **Provider assumptions** (`provider-assumptions.ts`): a pure, declarative scan of a skill's declared tools, `compatibility` and instructions for Claude, MCP and Anthropic API references. It is recorded in `SkillProvenance.provider` and never grants a tool or blocks a skill.
 - **Source profiles** (`src/skills/source-profiles.ts`): pure parser and safe reader of `skill-source-profiles.yaml`, read only by `scf skills profiles check`; no run reads it yet.
+- **Skill lifecycle** (`lifecycle.ts`, commands in `lifecycle-cli.ts`): the record `skill-lifecycle.jsonl` in the data folder is append-only JSON lines, one transition or run allowance each, with `seq` counting from 1. The reader replays every line through the same rules as the writer (`lifecycleTransitionProblem`: no same-state change, nothing leaves `revoked`; an allowance only for a quarantined key). A line that is invalid, has an unknown field, has a `seq` gap or a `from` that does not match, a symbolic link, or a file over 4 MiB makes the read fail closed; the reason never holds the file content or the path. Writes take the data-folder lock (`openAppendLocked`) and check the size under it, so a write that would pass 4 MiB is refused with `full` and nothing is written. `effectiveLifecycle` merges the local status with the revocations of approved release manifests: a release revocation wins, and it carries no allowances. The registry (`registry.ts`) keeps the non-active statuses (`lifecycle`) and the release revocations (`revoked`) separately from `byKey`. A registry with an unreadable record has a `lifecycle` problem, and then every id is refused with `ineligible`. Selection (`resolve.ts`) refuses quarantined, retired and revoked versions with reason code `ineligible`, with no fallback to another version of the same id. Run locks (`run-lock.ts`) apply the policy to versions that are already locked: revoked always stops, quarantined stops unless the run is allowed, and the other states only add notes (`runSkillLockNotes`, written by `src/engine/skill-lock.ts`). The admin routes in `api-skills.ts` call the same apply functions as the command line, with `waitMs: 0`, and clear the registry cache after a write.
 - **Evaluation gate** (`evaluation.ts`, thresholds in `evaluation-rules.ts`): pure verdict of a candidate from its evaluation record; see "Evaluation gate" below. No run calls it yet.
 - **Import review** (`import-review.ts`, rules in `import-review-rules.ts`, command in `review-cli.ts`): pure report of a staged import against the registered skills (licence, attribution, scan, collisions, category); reads only, promotes nothing.
 - **Request:** `src/skills/request.ts`; the gates are `risk_gate` and `post_plan`, and the check is the tool `tools/skill-request`.
@@ -207,6 +208,22 @@ The gate reads no clock, file, process or network, and gives the same answer for
 - **Stop and cleanup.** Each job has a deadline: fixture 120 s, work `timeout_sec`, check 300 s. On SIGINT, SIGTERM or an error, every job is cancelled and awaited before the folders are removed and the environment restored. Then the run prints `PROBLEM the evaluation was interrupted` and writes no record, so a record is never written from a partly run arm.
 - **Refusals first.** Before anything is made, a run is refused when the sandbox is missing or switched off, the suite has no `instructions`, the agent is not Claude, the model key is missing, or a fixture's hash differs from the suite digest's (`evaluationSuiteDigest` covers profile findings only, so instruction fixtures get their own content hash).
 - **Shared code.** `scoreImport` in `src/skills/evaluate-cli.ts` is split into `prepareScoring` and `writeScores`, so the offline and agent paths write the same record. `skillsCommand` gets the runner as `agentScore`, so `src/skills/cli.ts` starts no process; a guard test forbids a dynamic `import()` there.
+
+#### Skill effect (#456)
+
+`scf skills effect` (`src/skills/effect.ts` for the pure logic, `src/skill-eval/effect.ts` for the run, store in `evaluation-store.ts`) asks whether a skill changes an agent's result on the sample tasks. It reuses the runner of #536: each offered `instructions` scenario runs `repeat` times with the skill and `repeat` times without it, on the same model, in the same sandbox. The user guide says how to run it ([Measure the effect of a skill](USER_GUIDE.md)).
+
+- **Measurement.** The outcome is the pass rate of the scenario check, counted per run. Tokens and time are recorded and reported, and they do not enter the verdict.
+- **Why not review findings.** A reviewer session per run would double the cost. The reviewer is itself a model that can be swayed by the skill it reviews, and there is no fixed scale to compare runs on.
+- **Why not fix rounds.** The evaluation flow has one work step. Fix rounds exist only in full flows, and they are capped, so they would mostly measure the reviewer.
+- **Rule.** A two-sided Fisher exact test on the pass counts of the two arms (`EFFECT_RULE`: p ≤ 0.05 and |difference| ≥ 0.2). The result is `helps` or `harms` when both hold, otherwise `no-measurable-effect`. A skill that is not offered in any scenario, or is never loaded in the with arm, is `never-selected`. The test is exact rather than a normal approximation, and each arm is capped at 200 runs (`EFFECT_LIMITS`), which bounds the computation.
+- **Sample size.** With fewer than 4 runs per arm no result can be significant: 3/3 against 0/3 gives p = 0.1. The recommended size is 5 scenarios × `repeat` 4 = 20 runs per arm, which detects 0.9 against 0.5 (18/20 against 10/20, p ≈ 0.014) but not 0.8 against 0.5 (16/20 against 10/20, p ≈ 0.096).
+- **Cost.** `sessions ≈ offered × repeat × 2`, and tokens ≈ sessions × T, where T is the tokens of one session. *Estimate:* T ≈ 40k, so about 1.6 M tokens per skill at the recommended size. This is an estimate, not a measured value.
+- **Both arms always run.** When any scenario is offered, both arms run in full, even if the with arm never loads the skill. The arms therefore always have equal repetitions; the only run-free case is that no scenario is offered.
+- **Records.** One file per run of the command: `skill-effects/<id>/<digest hex>/effect--<sequence>.json`, `schema: 1`. The writer uses the store's shared publish step, so a file is written once and is never replaced. The reader `readNewestEffect` checks the newest file with the full record parser, which recomputes the verdict, enforces the run limits and scans the text for credentials. It never falls back to an older file. `effectState` maps the newest record of a skill and digest to `helps`, `no-effect`, `harms`, `not-measured` or `invalid`; the list (`scf skills`) shows it.
+- **Promotion (#543).** `effectPromotion(read, decisions, id, digest)` in `src/skills/effect.ts` is the one rule of `scf skills gate` and `scf skills promote check`. It returns `{ verdict, code?, decision? }`: `harms` (`effect-harms`) and an invalid record (`effect-invalid`) always fail; `no-effect` (`effect-no-effect`) and no record (`effect-not-measured`) fail unless an owner decision matches the skill, the digest and the kind. The decisions are the `effect_decisions` list of `skill-evaluations.yaml`, parsed with the same owner, date and note checks as the evaluations (`src/skills/suite-records.ts`). The codes are not evaluation reason codes, so `judgeItems`, `release publish` and the evaluation records do not change. Known gap: `release publish` does not apply the rule yet.
+- **Sample tasks.** The owner-written `instructions` section of the suite. The example set is in `evals/skill-effect/kafka/`. Files shipped inside upstream skills are not used as tasks.
+- **What `scf eval` lacks.** `scf eval` already supports `repeat` (up to 20) and runs the repetitions, so this is not missing. What it does not have: an automatic comparison with and without a skill, the statistical verdict, loading a staged candidate (it runs flows × models only), and storage against a skill digest.
 
 ### Evidence formats
 
@@ -905,7 +922,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
 | Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |
-| The help assistant is talked into doing something | A help turn has no tools, no MCP servers and no token; the server keeps only checked text and fixed pages from its answer, and the list of actions is empty |
+| The help assistant is talked into doing something | A help turn has no tools, no MCP servers and no token; the server keeps only checked text and fixed pages from its answer, and the only actions are the server's two, and each is bound to a run the asker owns |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 
@@ -924,6 +941,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
 | `help.json` | The Ask SCF conversations of every account (mode 0600) |
+| `help-stats.json` | The Ask SCF quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `issue-lists/` | One file per watched repository: the last full issue list read by the watchers (number, title, state, labels, links, dependencies; no issue text), with `readAt` and `cut`. Written atomically; removed when no watcher is left for the repository |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |
@@ -1200,15 +1218,15 @@ model can never widen what a reply holds.
   or `state` (what the asker may see now, with `observedAt`).
 - **Parts of a reply.** Five kinds (`PART_KINDS`, `PART_RULES`): answer, recommendation, navigation,
   draft and action. Only an action has `changesState` and `needsConfirmation`. `ACTIONS` is the
-  server's list of actions and it is empty: the assistant is read-only, and `ACTION_RULES` names the
-  five conditions (server list, preview, confirmation, a second permission check, read-back) a later
-  story must meet before it adds one.
-- **`checkReply(raw, { role, offered, clean })`** turns what a model answered into the `Reply` the
-  server keeps (`ReplySchema`). Nothing is trusted: evidence must be one of `offered` (the model
-  names ids only), a link must be a page in `NAV_PAGES` that the role has and gets the page's own
-  title, an action must be in `ACTIONS`, texts are cut and cleaned, and `dropped` lists what was
-  left out in fixed words. `displayText(reply)` writes the text a person reads from the checked
-  parts; it is never the model's own text.
+  server's list of actions (`resume-run` and `cancel-run`, see "confirmed actions" below). Nothing
+  is carried out yet, and `ACTION_RULES` names the five conditions (server list, preview,
+  confirmation, a second permission check, read-back) that a later story must meet before one runs.
+- **`checkReply(raw, { role, offered, uncertain, targets, clean })`** turns what a model answered into
+  the `Reply` the server keeps (`ReplySchema`). Nothing is trusted: evidence must be one of `offered`
+  (the model names ids only), a link must be a page in `NAV_PAGES` that the role has and gets the
+  page's own title, an action must be in `ACTIONS` and bound to an offered source (see below), texts
+  are cut and cleaned, and `dropped` lists what was left out in fixed words. `displayText(reply)`
+  writes the text a person reads from the checked parts; it is never the model's own text.
 - **Uncertainty.** `certaintyOf` lowers the level to `unverified` when no evidence of the needed
   kind is left; the model may be less sure, never more. The sentences are `CERTAINTY_WORDS`.
 - **Requests that are not served.** A model answers them with a code only (`LIMIT_CODES`);
@@ -1221,6 +1239,30 @@ model can never widen what a reply holds.
 
 `tests/help-contract.test.ts` checks each rule, that `NAV_PAGES` matches `ui/ia.js`, and that
 chapter 14 of the user guide holds the same sentences as the code.
+
+### Ask SCF: confirmed actions
+
+Part 1 of 2 of #567 (#569), behind `help.actions`, off by default. It only binds a proposal to the
+run the server knows about; nothing is carried out yet (#568 and part 2 do that).
+
+- **The list.** `ACTIONS` has `resume-run` (`reversible`, `undoable: true`) and `cancel-run` (`high`,
+  `undoable: false`), both for `admin` and `user`. Each has a fixed `effect` text written by the
+  server. A kept action stores `def.effect` as its `impact`; the model's text is never shown.
+- **The binding.** A source may carry `about` (`AboutSchema`: kind `run` and an id). Only the server
+  sets it. `liveEvidence` sets it on a run snapshot that is fresh, whose run the asker owns
+  (`scheduler.ownerOf(id) === owner`), and only when no conflict source is present. An admin gets no
+  exception. `prepareTurn` takes `about` off what is offered (`EvidenceSchema` stays strict) and
+  returns it as `Prepared.targets`, only for sources that were offered.
+- **The check.** `checkReply` keeps an action only when its source is cited, offered, of kind `state`,
+  not in `uncertain`, and has a run target in `targets`, and when its impact text claims no result
+  (`claimsAction`: `claimsResult`, plus "was/is/has been … resumed, cancelled, stopped …" and the like).
+  The claim check reads the model's whole raw text, so nothing cut or marked as removed can hide a
+  claim. Duplicates on `id` and `about.id` are kept once. The three drop words are `ACTION_DROPPED`.
+- **The switch.** `HelpTurns.run` passes `targets` to `checkReply` only while `config.help.actions` is
+  on. Off, every proposed action is dropped. The prompt still says `"actions": []`.
+- **Outside check.** `actionProblems(reply, ready, role)` in `src/server/help-evals.ts` re-checks each
+  kept action against the prepared turn, and `scf eval help` reports each problem as `unsafe-action`,
+  which blocks a release. The scenarios are in the `action` group.
 
 ### Ask SCF: stored conversations
 
@@ -1425,14 +1467,62 @@ snapshot already holds), or nothing.
 
 Tests: `tests/help-diagnosis.test.ts`.
 
+### Ask SCF: offers
+
+`src/help/actions.ts` (#565, part 1 of 2 of #239) is the registry of the offers of a reply: buttons
+that open a page. It is pure data and functions and imports only types from the contract, so the
+contract can import its values without a cycle.
+
+- **Registry.** `OFFERS` has one row per type (`open-run`, `open-repository`, `open-turn-item`):
+  its roles, the subject kinds it fits, its effect (`navigation`), the call whose permission rule is
+  checked at the click (`call`, with `:id` for the subject) and `to`, the address it gives back.
+  `offerDef(role, type)` finds a row for a role. A later read-only check adds a row with another
+  effect; `EFFECT_KINDS` and `OFFER_TYPES` are the lists the contract and the browser check.
+- **Addresses.** `subjectPage(kind, id)` is the only place that builds a page address. It always
+  starts with `#/`, encodes the id, and maps `repository`, `run` and the other kinds to their pages.
+  `LINKS` in `help-evidence.ts` moved here. The browser checks the address again with `pageLink`.
+- **Subjects.** `sourceOf` (`help-evidence.ts`) gives each state source `subject: {kind, id}`, the
+  kind in `SUBJECT_KINDS` (equal to `SNAPSHOT_KINDS`, tested). The name is `subject`, not `target`,
+  because `target` is an admin-only key. `prepareTurn` keeps the subject out of what the model sees
+  (`EvidenceSchema` is strict) and returns it as `Prepared.targets`, and `checkReply` gets it as
+  `targets`.
+- **Checked reply.** `checkReply` keeps an offer (`OfferSchema`, strict) only when its type is in the
+  registry for the role, its evidence is a state source offered in that turn, and the subject kind
+  fits the type. Every other field from the model is dropped; the title is the server's own. A reply
+  without `offers` still parses. At most `OFFER_MAX` (3) are kept.
+- **Clicks** (`runOffer`, `help-evidence.ts`; route `POST /api/help/conversations/:id/actions`). In
+  order: the account (`currentAccount`); the conversation (`offerConversation`), where a deleted one
+  answers 410 before any message is read, so ownership is still checked first (the `{question}` test
+  of `help-governance` keeps passing); the strict body `{message, offer}`; the message and the offer;
+  `offerDef` for the role now; `findRule` and `authorize` for the call, where a 404 is "stale" and
+  any other refusal is "denied"; then the subject is read again through `helpSnapshot`, or through
+  `turnFor` for `open-turn-item`. The answer is `{type, to}`. Fixed words (`OFFER_WORDS`) are the
+  only texts a refusal carries.
+- **Nothing is stored.** A click writes no conversation change, so it works in every state except
+  deleted. The route is audited as `help-action` (ok with the type, or failed with `refused: denied`
+  or `refused: stale`).
+- **Your turn.** `open-turn-item` opens `#/home` only for an item in `data.groups[].items` or
+  `data.continuing`. `buildTurn` (`src/your-turn.ts`) keeps a grouped release item's `members`
+  (`{runId?, repo, issue?}`) on the server side; `publicItem` strips them, as it strips `stamp`. A
+  dismissed item is not in those lists, so it is stale.
+- **Browser.** `ui/ask.js` `runOffer` closes the drawer and then sets `location.hash`, through an
+  injected `go`. `OFFER_EFFECTS` in `ui/ask-model.js` equals the server's effects (tested). The card
+  (`offerNode` in `ui/ask-view.js`) only asks; it opens nothing itself.
+
+Tests: `tests/help-actions.test.ts` (the registry, `subjectPage`, `OfferSchema`) and
+`tests/help-offers-api.test.ts` (each type: allowed, role denied, rule denied, stale, another
+account's target; the route refusals).
+
 ### Ask SCF: authorization, retention, audit and limits
 
 #243 adds no second mechanism; it uses the permission table, the audit log, the account limits,
 the store's retention and the usage ledger.
 
 - **Admission** (`helpAllowed` in `api-help.ts`, passed to `HelpTurns` as `allow`): after the
-  off switch and before anything is stored, the account is read again (`currentAccount`), then
-  `help.audience`, `help.disabled_accounts`, and the account's `dailyBudgetUsd` of `limits.json`
+  off switch and the pause (`help.paused`, `helpPaused`; `HelpTurns.admit` refuses `paused` and
+  `POST /api/help/context` answers 503 with the same sentence) and before anything is stored, the account is read again (`currentAccount`), then
+  `help.audience` (`pilot` admits `help.pilot_accounts` besides the administrators),
+  `help.disabled_accounts`, and the account's `dailyBudgetUsd` of `limits.json`
   against the cost of its help turns today (`usageToday`). The refusal code `not-allowed` is 403;
   `limit` is 429. A check that throws refuses. `POST /api/help/context` uses the same check.
 - **Retention** (`setRetentionDays`, `retentionMs` in `store.ts`): `help.keep_days` replaces the
@@ -1440,11 +1530,39 @@ the store's retention and the usage ledger.
   removes the conversations and the usage rows of the account (`removeHelpLocked`); the audit
   lines stay.
 - **Audit**: `help-ask` (ok with `turn <reply id>; try n`, or failed with `refused: <code>`),
-  `help-delete`, `help-export`. Written with `writeAudit` without waiting for the lock; a line
+  `help-delete`, `help-export`, `help-action` (an offer followed; see "Ask SCF: offers"). Written with `writeAudit` without waiting for the lock; a line
   that cannot be written is named in the server log and does not fail the call. The turn id is
   the correlation id: it is the id of the reply message in the conversation. No text of a
   conversation is in a line. `ui/audit.js` lists the three names for the filter.
 - **Export**: `GET /api/help/export`, own conversations only, through `conversationView`.
+
+### Ask SCF: feedback and quality numbers
+
+#245 adds no second access rule. A rating is a field of its reply, so the conversation's owner check and
+retention apply to it. The quality numbers are a separate file that names no account.
+
+- **Rating.** `rateReply` (`store.ts`) sets or clears `feedback` on a finished assistant message under the
+  data-folder lock. `checkFeedback` takes only `message`, `vote` and `reasons`; the reasons are the fixed
+  `FEEDBACK_REASONS` and come only with `not-helpful`. The schema is strict, so an older build refuses
+  `help.json` once a message has `feedback`. The route checks ownership before it reads the body: another
+  account's id answers 404 and the body is not parsed.
+- **Resolved.** `complete` counts `resolved` only when the body says `resolved: true` and the conversation
+  was active with a finished answer. The count is taken in the route, because the store does not see the body.
+- **Numbers.** `src/help/telemetry.ts` keeps `help-stats.json` (`version: 1`, `days`). A row is strict: fixed
+  counter names, failure, refusal and reason codes, and six latency buckets. `addStats` runs under
+  `withAuthLock`, adds to the row of today (or of the day a vote was given, `opts.day`), and ignores a day
+  older than the keep time. A number that is not finite counts as 0 and no count goes below 0. `sweepStats`
+  removes rows older than 90 days; the hourly sweeper calls it. A failed write is logged in fixed words by
+  the caller (`HelpTurns.count`, `countQuietly`) and never fails a turn or a request.
+- **Where counted.** `HelpTurns`: refusals by code (`refused`, including the limits of the store), turns and
+  retries at `start`, stops at `cancel`, failures with their latency at `fail`, answers with their latency,
+  sources, limits and actions offered at `finish`. The routes count `abandoned` (a pending turn of a deleted
+  conversation), `resolved` and the ratings. `helpSweeper` counts the turns a restart interrupted on the first
+  sweep only.
+- **Stages.** `rolloutStage` (`api-help.ts`) derives off, paused, administrators, pilot or everyone from the
+  settings alone. A queued turn checks the pause again in `run` and fails as `setup`, before any model call.
+- **Actions.** `actionsOffered`, `actionsRun` and `actionsFailed` are in the schema now. The last two stay 0
+  until #239 and #240 record them.
 
 ### Ask SCF: the guard
 
@@ -1470,7 +1588,7 @@ issue text, logs, and the model's answer.
   question, the page, the earlier turns and the list of sources. A text inside a JSON value has no
   line break of its own, so it cannot start or end a part.
 - **`checkReply` is still the only way out.** The guard adds nothing to a reply. An answer that
-  obeyed an injected order still loses every action that is not on the server's list (all), every
+  obeyed an injected order still loses every action that is not on the server's list or not bound to an offered run, every
   link that is not a fixed page of the role, and every source that was not offered.
 - **Fail closed.** `scrub` throws `GuardError` when the credential store cannot be read
   (`BLOCKED`), when a stored credential is still found after its removal, when a configured

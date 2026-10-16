@@ -18,6 +18,8 @@ export function askFrame(on, { questionMax, hints = {} }) {
   const suggest = h("div", { class: "ask-suggest" });
   const suggestBox = h("div", { class: "ask-suggest-box" }, h("h3", { id: "ask-suggest-title" }, "Suggested questions"), suggest);
   const status = h("p", { id: "ask-status", class: "ask-status muted", role: "status", "aria-live": "polite" });
+  const paused = h("p", { id: "ask-paused", class: "ask-paused", role: "note" }, hints.paused ?? "");
+  paused.hidden = true;
   const context = h("p", { id: "ask-context", class: "ask-context muted text-sm" });
   const error = h("p", { id: "ask-error", class: "ask-error", role: "alert" });
   const question = h("textarea", { id: "ask-question", rows: "3", maxlength: String(questionMax), "aria-describedby": "ask-context ask-error", "data-focus": "ask-question", onKeydown: (e) => on.key(e) });
@@ -43,13 +45,14 @@ export function askFrame(on, { questionMax, hints = {} }) {
   const drawer = h("aside", { id: "ask-drawer", class: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title", tabindex: "-1" },
     h("div", { class: "ask-head" }, h("h2", { id: "ask-title" }, "Ask SCF"), fresh, historyBtn, close),
     h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. It changes nothing."),
+    paused,
     status,
     talk,
     history);
   drawer.hidden = true;
   const scrim = h("div", { class: "ask-scrim", onMousedown: () => on.close() });
   scrim.hidden = true;
-  return { drawer, scrim, talk, thread, actions, suggest, suggestBox, status, context, error, question, attach, send, close, fresh, historyBtn, history, archivedBtn, list };
+  return { drawer, scrim, talk, paused, thread, actions, suggest, suggestBox, status, context, error, question, attach, send, close, fresh, historyBtn, history, archivedBtn, list };
 }
 
 const sourceLine = (src, { now, onNavigate }) => [
@@ -73,6 +76,45 @@ export function cardNode(card, { onNavigate } = {}) {
     h("p", { class: "ask-card-note muted" }, card.note));
 }
 
+/** An offer of a reply as a card with a button. The button asks the server; the card itself opens nothing. `onOffer(index)`. */
+export function offerNode(offer, { onOffer } = {}) {
+  return h("div", { class: "ask-card ask-card-offer", role: "group", "aria-label": `${offer.title}. Opens a page` },
+    h("div", { class: "ask-card-head" },
+      h("strong", {}, offer.title),
+      h("span", { class: "pill sem-neutral" }, "Opens a page")),
+    offer.text ? h("p", { class: "ask-card-text" }, offer.text) : null,
+    h("button", { type: "button", class: "small", "data-offer": String(offer.index), onClick: () => onOffer?.(offer.index) }, "Open"),
+    h("p", { class: "ask-card-note muted" }, offer.note));
+}
+
+const pillClass = (s) => (s.kind === "high-impact" ? "sem-danger" : s.kind === "reversible" ? "sem-warning" : "sem-neutral");
+
+/**
+ * A plan as an ordered list of cards, one per step, each with its kind. A high-impact step (or one that would be) always
+ * shows its danger pill and is never folded away. The person follows it by hand or presses "I did this"; the mark is theirs
+ * and nothing here runs a step or says that it worked. `onToggle(index)`, `onNavigate()`.
+ */
+export function planNodes(plan, { onToggle, onNavigate } = {}) {
+  const total = plan.steps.length;
+  return h("div", { class: "ask-plan-box" },
+    h("p", { class: "ask-plan-head" }, h("strong", {}, "Plan: "), plan.header),
+    h("ol", { class: "ask-plan" }, plan.steps.map((s, i) => h("li", { class: `ask-step${s.current ? " ask-step-current" : ""}${s.danger ? " ask-step-danger" : ""}`, "aria-current": s.current ? "step" : null },
+      h("div", { class: "ask-card-head" },
+        h("span", { class: "ask-step-n" }, `Step ${s.n} of ${total}`),
+        h("span", { class: `pill ${pillClass(s)}` }, s.label),
+        s.wouldBeLabel ? h("span", { class: `pill ${s.danger ? "sem-danger" : "sem-warning"}` }, s.wouldBeLabel) : null),
+      h("strong", {}, s.title),
+      s.proposal ? h("p", { class: "ask-step-proposal muted" }, `Proposed, not confirmed: ${s.proposal}`) : null,
+      s.link ? h("a", { href: s.link.href, onClick: () => onNavigate?.() }, s.link.title) : null,
+      s.instructions ? h("p", { class: "ask-card-text" }, s.instructions) : null,
+      s.expected || s.failure || s.fallback ? h("dl", { class: "ask-step-signals" },
+        s.expected ? [h("dt", {}, "What you should see"), h("dd", {}, s.expected)] : null,
+        s.failure ? [h("dt", {}, "If it fails"), h("dd", {}, s.failure)] : null,
+        s.fallback ? [h("dt", {}, "Then"), h("dd", {}, s.fallback)] : null) : null,
+      h("button", { type: "button", class: "small", "data-step": String(i), "aria-pressed": String(s.done), onClick: () => onToggle?.(i) }, s.done ? "Not done yet" : "I did this"),
+      s.note ? h("p", { class: "ask-card-note muted" }, s.note) : null))));
+}
+
 /** A reply by its parts: the short answer, how sure it is and what it rests on, the proposals, and the sources and assumptions to unfold. */
 export function replyNodes(layout, opts = {}) {
   const { trust, basis, sources, assumptions } = layout;
@@ -80,9 +122,11 @@ export function replyNodes(layout, opts = {}) {
     h("p", { class: "ask-summary" }, layout.summary),
     layout.explanation ? h("p", { class: "ask-explain" }, layout.explanation) : null,
     h("p", { class: `ask-trust ask-trust-${trust.state}` }, glyph(trust.glyph), " ", h("strong", {}, trust.label), ". ", trust.text),
+    layout.plan ? planNodes(layout.plan, opts) : null,
     basis.sources.length ? h("ul", { class: "ask-basis", "aria-label": basis.needs === "state" ? "The current state this answer rests on" : "The documentation this answer rests on" },
       basis.sources.map((src) => h("li", {}, sourceLine(src, opts)))) : null,
     layout.cards.length ? h("div", { class: "ask-cards" }, layout.cards.map((c) => cardNode(c, opts))) : null,
+    layout.offers?.length ? h("div", { class: "ask-cards", "aria-label": "Pages you can open" }, layout.offers.map((o) => offerNode(o, opts))) : null,
     trust.state === "limit" ? null : h("details", { class: "ask-sources" },
       h("summary", {}, `Sources and assumptions (${sources.length === 1 ? "1 source" : `${sources.length} sources`})`),
       h("h4", {}, "Sources"),
@@ -92,13 +136,40 @@ export function replyNodes(layout, opts = {}) {
   ];
 }
 
-/** One message of the conversation. `opts`: now (ms) for the age of a source, onNavigate() when a link to a page is followed. */
+/**
+ * "Was this answer helpful?": two buttons that say whether they are pressed, and, after Not helpful, the reasons as
+ * checkboxes. Every control has a `data-focus` name, so the drawer can draw again and keep the focus where it was.
+ * `opts`: onRate(message, vote), draftOf(message) the reasons ticked and not saved yet, onDraft(message, reasons),
+ * onReasons(message, reasons) to save them.
+ */
+export function rateNodes(entry, opts) {
+  const id = entry.id;
+  const vote = entry.feedback?.vote ?? null;
+  const vbtn = (v, label) => h("button", { type: "button", class: "small", "aria-pressed": String(vote === v), "data-focus": `ask-rate-${id}-${v}`, onClick: () => opts.onRate(id, v) }, label);
+  const nodes = [h("div", { class: "ask-rate", role: "group", "aria-label": "Was this answer helpful?" }, h("span", { class: "muted" }, "Was this answer helpful? "), vbtn("helpful", "Helpful"), vbtn("not-helpful", "Not helpful"))];
+  if (vote !== "not-helpful") return nodes;
+  const chosen = new Set(opts.draftOf?.(id) ?? entry.feedback.reasons);
+  const boxes = Object.entries(opts.reasonWords ?? {}).map(([reason, words]) => h("label", { class: "check-row" },
+    h("input", { type: "checkbox", checked: chosen.has(reason), "data-focus": `ask-reason-${id}-${reason}`, onChange: (e) => {
+      if (e.target.checked) chosen.add(reason);
+      else chosen.delete(reason);
+      opts.onDraft?.(id, [...chosen]);
+    } }),
+    ` ${words}`));
+  nodes.push(h("fieldset", { class: "ask-reasons" },
+    h("legend", {}, "What was wrong? (optional)"),
+    boxes,
+    h("button", { type: "button", class: "small", "data-focus": `ask-reasons-save-${id}`, onClick: () => opts.onReasons(id, [...chosen]) }, "Save reasons")));
+  return nodes;
+}
+
+/** One message of the conversation. `opts`: now (ms) for the age of a source, onNavigate() when a link to a page is followed. The rating of an answer follows it as its own nodes (`rateNodes`). */
 export function entryNode(entry, opts = {}) {
-  return h("div", { class: `ask-entry ask-${entry.kind}` },
+  return h("div", { class: `ask-entry ask-${entry.kind}`, "data-message": entry.id ?? null },
     h("span", { class: "ask-who" }, entry.who),
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
-    entry.layout ? replyNodes(entry.layout, opts) : entry.text,
+    entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i) }) : entry.text,
     entry.note ? h("span", { class: "ask-note" }, entry.note) : null);
 }
 
@@ -107,7 +178,7 @@ export function suggestionNodes(list, onPick) {
   return list.map((text, i) => h("button", { type: "button", class: "small", "data-focus": `ask-suggest-${i}`, onClick: () => onPick(text) }, text));
 }
 
-const ACTIONS = [["stop", "Stop"], ["retry", "Try again"], ["archive", "Archive"], ["restore", "Take back from the archive"], ["remove", "Delete"]];
+const ACTIONS = [["stop", "Stop"], ["retry", "Try again"], ["solved", "This solved my problem"], ["archive", "Archive"], ["restore", "Take back from the archive"], ["remove", "Delete"]];
 
 /**
  * The controls of the open conversation: only the ones `controls` offers. Each says what it does, as a tooltip and,

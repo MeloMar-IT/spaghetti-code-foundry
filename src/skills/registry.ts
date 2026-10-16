@@ -1,18 +1,22 @@
-import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
 import { addSkillPins, parseSkillKey, readSkillLock, SkillLockError, type SkillPin } from "./lock.js";
 import { credentialProblem } from "./credential-scan.js";
+import { effectiveLifecycle, readSkillLifecycle, type EffectiveLifecycle, type SkillLifecycleStatus, type SkillReleaseRevocation } from "./lifecycle.js";
 import { quarantinePath } from "./import-stage.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
 import { matchRelease, readRelease, releaseContentProblem, releaseProblemText, type ReleaseCheck, type ReleaseRead } from "./release.js";
+import { listStoredReleases, releaseStorePath, storeSources, unstoredApproved, type StoreListing } from "./release-store.js";
 import { verifyRelease } from "./release-verify.js";
+import { SkillIntegrityError, SkillPinError, SkillSelectError, type SkillPinErrorCode, type SkillSelectCode } from "./registry-errors.js";
+import { code, cut, packageBytes, personalAgentPath } from "./registry-util.js";
 import { SKILL_DIGEST_RE, type SkillPackage } from "./schema.js";
 
-export type SkillSourceKind = "admin" | "builtin" | "repository";
+export type SkillSourceKind = "admin" | "builtin" | "catalogue" | "repository";
 export interface SkillSource {
   kind: SkillSourceKind;
   /** `built-in`, `data folder`, `skills.roots[1]` or `repository`. Never a path. */
@@ -20,6 +24,8 @@ export interface SkillSource {
   root: string;
   /** A missing folder is not a problem. */
   optional: boolean;
+  /** Set for an approved folder of the release store: its manifest must hold exactly this catalogue and version. */
+  stored?: { catalogue: string; version: string };
 }
 export interface SkillSourceReport extends SkillSource {
   status: "ok" | "missing" | "unreadable" | "refused" | "disabled";
@@ -27,7 +33,7 @@ export interface SkillSourceReport extends SkillSource {
   /** For administrator folders that could be listed. */
   release?: ReleaseCheck;
 }
-/** `approved`: administrator folders. `builtin`: ships with the release. `unapproved`: the repository, never selectable. */
+/** `approved`: administrator folders and verified approved releases.`builtin`: ships with the release. `unapproved`: the repository, never selectable. */
 export type SkillTrust = "approved" | "builtin" | "unapproved";
 /** `unverified`: the lock cannot be read. */
 export type SkillPinState = "pinned" | "unpinned" | "mismatch" | "unverified";
@@ -52,9 +58,11 @@ export interface RegisteredSkill {
   pin: SkillPinState;
   digest: string;
   pkg: SkillPackage;
+  /** Set only on a non-active approved or built-in entry: the local state, or the release revocation that wins over it. */
+  lifecycle?: EffectiveLifecycle;
 }
 export interface SkillProblem {
-  kind: "root-missing" | "root-unreadable" | "root-refused" | "invalid-package" | "duplicate" | "too-many" | "integrity" | "lock";
+  kind: "root-missing" | "root-unreadable" | "root-refused" | "invalid-package" | "duplicate" | "too-many" | "integrity" | "lock" | "lifecycle";
   source: SkillSourceKind;
   label: string;
   root: string;
@@ -64,7 +72,7 @@ export interface SkillProblem {
   integrity?: SkillIntegrityFailure;
 }
 export interface SkillNote {
-  kind: "shadowed" | "repository-disabled" | "revoked";
+  kind: "shadowed" | "repository-disabled" | "revoked" | "unapproved-release" | "store-root" | "release-store";
   label: string;
   package?: string;
   text: string;
@@ -77,6 +85,10 @@ export interface SkillRegistry {
   problems: SkillProblem[];
   notes: SkillNote[];
   sources: SkillSourceReport[];
+  /** Local lifecycle states other than active, by `id@version`. Independent of `byKey`. */
+  lifecycle?: ReadonlyMap<string, SkillLifecycleStatus>;
+  /** Keys revoked by an approved schema-2 release. */
+  revoked?: ReadonlyMap<string, SkillReleaseRevocation>;
 }
 export interface DiscoverOptions {
   repo?: string;
@@ -95,58 +107,38 @@ export const MAX_SKILLS_PER_ROOT = 500;
 export const MAX_SKILLS_TOTAL = 1000;
 export const MAX_SKILL_BYTES_TOTAL = 64 * 1024 * 1024;
 
-const PERSONAL = new Set([".claude", ".codex"]);
+export { personalAgentPath };
 
-const inside = (p: string, base: string) => p === base || p.startsWith(base.endsWith(sep) ? base : base + sep);
-const real = (p: string): string | undefined => {
-  try {
-    return realpathSync(p);
-  } catch {
-    return undefined;
-  }
-};
-
-/** The personal agent folders: the defaults and the ones the environment names, as written and as resolved. */
-function personalRoots(env: NodeJS.ProcessEnv, userHome: string): string[] {
-  const list = [join(userHome, ".claude"), join(userHome, ".codex")];
-  if (env.CLAUDE_CONFIG_DIR) list.push(resolve(env.CLAUDE_CONFIG_DIR));
-  if (env.CODEX_HOME) list.push(resolve(env.CODEX_HOME));
-  return [...new Set(list.flatMap((p) => [p, real(p)].filter((x): x is string => !!x)))];
-}
-
-/** True for a path in a personal Claude or Codex folder: a `.claude`/`.codex` segment, or inside CLAUDE_CONFIG_DIR, CODEX_HOME or the default folders. Lexical, and also on the resolved path when it exists. */
-export function personalAgentPath(p: string, env: NodeJS.ProcessEnv = process.env, userHome = homedir()): boolean {
-  const abs = resolve(p);
-  const forms = [abs, real(abs)].filter((x): x is string => !!x);
-  const roots = personalRoots(env, userHome);
-  return forms.some((f) => f.split(/[\\/]/).some((s) => PERSONAL.has(s)) || roots.some((r) => inside(f, r)));
-}
-
-export function skillSources(skills: Config["skills"], opts: DiscoverOptions = {}): SkillSource[] {
-  const list: SkillSource[] = [{ kind: "admin", label: "data folder", root: join(opts.home ?? dataHome(), "skills"), optional: true }];
-  skills.roots.forEach((root, i) => list.push({ kind: "admin", label: `skills.roots[${i}]`, root, optional: false }));
+/** Order: data folder, approved store releases (newest version first), skills.roots, built-in, repository. Store paths in skills.roots are skipped. */
+function buildSources(skills: Config["skills"], opts: DiscoverOptions, listing: StoreListing): SkillSource[] {
+  const home = opts.home ?? dataHome();
+  const list: SkillSource[] = [{ kind: "admin", label: "data folder", root: join(home, "skills"), optional: true }];
+  for (const s of storeSources(listing, skills.releases.approved).sources) list.push({ kind: "catalogue", optional: false, ...s });
+  skills.roots.forEach((root, i) => {
+    if (!releaseStorePath(root, home)) list.push({ kind: "admin", label: `skills.roots[${i}]`, root, optional: false });
+  });
   if (skills.builtin) list.push({ kind: "builtin", label: "built-in", root: opts.builtinRoot ?? BUILTIN_SKILLS, optional: false });
   if (opts.repo) list.push({ kind: "repository", label: "repository", root: join(opts.repo, ".claude-factory", "skills"), optional: true });
   return list;
 }
 
-const TRUST: Record<SkillSourceKind, SkillTrust> = { admin: "approved", builtin: "builtin", repository: "unapproved" };
+export function skillSources(skills: Config["skills"], opts: DiscoverOptions = {}): SkillSource[] {
+  return buildSources(skills, opts, listStoredReleases(opts.home ?? dataHome()));
+}
+
+const TRUST: Record<SkillSourceKind, SkillTrust> = { admin: "approved", catalogue: "approved", builtin: "builtin", repository: "unapproved" };
 
 const refusal = (rel: ReleaseCheck) =>
-  releaseProblemText(rel) + (rel.state === "none" ? ". Approve a release, or set skills.releases.allow_unreleased on a development install" : "");
+  releaseProblemText(rel) +
+  (rel.state === "none"
+    ? ". Approve a release, or set skills.releases.allow_unreleased on a development install"
+    : rel.state === "unsigned"
+      ? '. Sign it with "scf skills release sign" and put key and signature in its skills.releases.approved entry'
+      : "");
 
 /** Administrator folders that are loaded without an approved release (development only). */
 export function unreleasedSources(reg: Pick<SkillRegistry, "sources">): (SkillSourceReport & { release: ReleaseCheck })[] {
   return reg.sources.filter((r): r is SkillSourceReport & { release: ReleaseCheck } => r.kind === "admin" && !!r.release && r.release.state !== "approved" && r.packages > 0);
-}
-
-const code = (e: unknown) => String((e as NodeJS.ErrnoException)?.code ?? "unknown error");
-const cut = (s: string) => (s.length > 300 ? s.slice(0, 299) + "…" : s);
-
-function packageBytes(p: SkillPackage): number {
-  let n = p.instructions.length;
-  for (const list of Object.values(p.files)) for (const f of list) n += f.content.byteLength;
-  return n;
 }
 
 /** Reads every source and builds the registry. Never throws for a file system problem: it becomes a problem entry. Not cached. */
@@ -159,11 +151,21 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
   const reports: SkillSourceReport[] = [];
   const found: RegisteredSkill[] = [];
   /** `id@version` revoked by an approved schema-2 release, in any root: the security fix wins over every other copy. */
-  const revokedKeys = new Map<string, string>();
-  let bytes = 0;
-  let stopped = false;
+  const revokedKeys = new Map<string, SkillReleaseRevocation>();
+  // Approved store releases are not held to the registry-wide limits (an old lock must stay valid, and they do not use up the room of the other roots). They are bounded by the approved list, MAX_SKILLS_PER_ROOT and verifyRelease.
+  const budgets = { main: { n: 0, bytes: 0, stopped: false }, store: { n: 0, bytes: 0, stopped: false } };
+  /** key + digest of packages already kept from an earlier store release: a later identical copy is not a duplicate. */
+  const storeSeen = new Set<string>();
 
-  for (const src of skillSources(skills, opts)) {
+  const listing = listStoredReleases(home);
+  const store = storeSources(listing, skills.releases.approved);
+  for (const n of store.notes) notes.push({ kind: n.kind, label: "release store", text: n.text });
+  skills.roots.forEach((root, i) => {
+    if (releaseStorePath(root, home)) notes.push({ kind: "store-root", label: `skills.roots[${i}]`, text: `skills.roots[${i}] is inside the release store; published releases load through skills.releases.approved, so this entry is ignored. Remove it from skills.roots.` });
+  });
+  if (store.refused) problems.push({ kind: "root-refused", source: "catalogue", label: "release store", root: "release store", reason: store.refused });
+
+  for (const src of buildSources(skills, opts, listing)) {
     const report: SkillSourceReport = { ...src, status: "ok", packages: 0 };
     reports.push(report);
     const base = { source: src.kind, label: src.label, root: src.label };
@@ -222,13 +224,30 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     // Step 1 for an administrator folder: identity, before any package is read.
     let read: ReleaseRead | undefined;
     let rel: ReleaseCheck | undefined;
-    const allow = skills.releases.allow_unreleased;
+    const allow = skills.releases.allow_unreleased && !src.stored;
     const revokedIds = new Set<string>();
-    if (src.kind === "admin") {
+    if (src.kind === "admin" || src.kind === "catalogue") {
       read = readRelease(src.root);
-      rel = report.release = matchRelease(read, skills.releases.approved);
+      rel = report.release = matchRelease(read, skills.releases.approved, skills.releases.keys);
+      // A store folder must hold exactly the schema-2 release its folder name says.
+      if (src.stored) {
+        const m = read.state === "ok" ? read.manifest : undefined;
+        if (!m) {
+          fail("root-refused", "refused", refusal(rel));
+          continue;
+        }
+        if (m.schema !== 2 || m.catalogue !== src.stored.catalogue || m.version !== src.stored.version) {
+          fail("root-refused", "refused", `the release folder does not hold ${src.stored.catalogue}@${src.stored.version}`);
+          continue;
+        }
+      }
       // A broken schema-2 manifest is refused whatever allow_unreleased says.
       if (read.state === "invalid" && read.v2) {
+        fail("root-refused", "refused", refusal(rel));
+        continue;
+      }
+      // An approved release without a trusted signature is refused whatever allow_unreleased says.
+      if (rel.state === "unsigned") {
         fail("root-refused", "refused", refusal(rel));
         continue;
       }
@@ -242,11 +261,12 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
         for (const s of read.manifest.skills) {
           if (!s.revoked) continue;
           revokedIds.add(s.id);
-          revokedKeys.set(`${s.id}@${s.version}`, `${read.manifest.catalogue}@${read.manifest.version} (${s.revoked.on})`);
+          revokedKeys.set(`${s.id}@${s.version}`, { by: `${read.manifest.catalogue}@${read.manifest.version}`, on: s.revoked.on, reason: s.revoked.reason });
         }
       }
     }
-    const mark: { found: number; bytes: number; stopped: boolean } = { found: found.length, bytes, stopped };
+    const b = src.stored ? budgets.store : budgets.main;
+    const mark = { found: found.length, ...b };
     let invalid = 0;
     let incomplete = false;
 
@@ -268,12 +288,12 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
         continue;
       }
       if (revokedIds.has(name)) continue;
-      if (stopped) {
+      if (b.stopped) {
         incomplete = true;
         continue;
       }
-      if (found.length >= (opts.limits?.skills ?? MAX_SKILLS_TOTAL) || bytes >= (opts.limits?.bytes ?? MAX_SKILL_BYTES_TOTAL)) {
-        stopped = true;
+      if (!src.stored && b.n >= (opts.limits?.skills ?? MAX_SKILLS_TOTAL) || b.bytes >= (opts.limits?.bytes ?? MAX_SKILL_BYTES_TOTAL)) {
+        b.stopped = true;
         incomplete = true;
         problems.push({ kind: "too-many", ...base, reason: `the registry limit (${MAX_SKILLS_TOTAL} packages or ${MAX_SKILL_BYTES_TOTAL / 1048576} MiB) is reached; the rest are not read` });
         continue;
@@ -284,7 +304,10 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       }
       try {
         const pkg = loadSkillPackage(dir);
-        bytes += packageBytes(pkg);
+        if (!(src.stored && storeSeen.has(`${pkg.id}@${pkg.version}\0${pkg.digest}`))) {
+          b.bytes += packageBytes(pkg);
+          b.n++;
+        }
         found.push({ key: `${pkg.id}@${pkg.version}`, id: pkg.id, version: pkg.version, source: src.kind, label: src.label, dir, active: false, trust: TRUST[src.kind], pin: "unpinned", digest: pkg.digest, pkg });
         report.packages++;
       } catch (e) {
@@ -310,11 +333,19 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
         rel = report.release = { ...rel, state: "mismatch", reason };
         if (!allow || v2) {
           found.length = mark.found;
-          bytes = mark.bytes;
-          stopped = mark.stopped;
+          Object.assign(b, { n: mark.n, bytes: mark.bytes, stopped: mark.stopped });
           report.packages = 0;
           fail("root-refused", "refused", refusal(rel));
         }
+      }
+    }
+    // An unchanged package that an earlier (newer) store release already provides is expected, not a duplicate; another digest stays one.
+    if (src.stored) {
+      for (const s of found.splice(mark.found)) {
+        const k = `${s.key}\0${s.digest}`;
+        if (storeSeen.has(k)) continue;
+        storeSeen.add(k);
+        found.push(s);
       }
     }
   }
@@ -331,7 +362,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     }
     byKey.set(s.key, s);
   }
-  for (const [key, by] of revokedKeys) notes.push({ kind: "revoked", label: "release", package: key.slice(0, key.lastIndexOf("@")), text: `${key} is revoked by ${by} and is not loaded.` });
+  for (const [key, r] of revokedKeys) notes.push({ kind: "revoked", label: "release", package: key.slice(0, key.lastIndexOf("@")), text: `${key} is revoked by ${r.by} (${r.on}) and is not loaded.` });
   // Pins are looked up by key alone: the source does not matter, only the bytes.
   const lock = readSkillLock(home);
   if (!lock.ok) problems.push({ kind: "lock", source: "admin", label: "skill lock", root: "skill lock", reason: `the skill lock ${lock.reason}; approved and built-in skills cannot be verified` });
@@ -342,7 +373,11 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       continue;
     }
     const pin: SkillPin | undefined = lock.pins[s.key];
-    if (!pin) continue;
+    // The approved, verified release lists this digest (store sources never load under allow_unreleased); a hand pin with another digest stays a mismatch.
+    if (!pin) {
+      if (s.source === "catalogue") s.pin = "pinned";
+      continue;
+    }
     if (pin.digest === s.digest) {
       s.pin = "pinned";
       continue;
@@ -359,6 +394,19 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       integrity,
     });
   }
+  // The local lifecycle record. When it cannot be read, nothing approved or built-in can be selected (see resolveSkills).
+  const life = readSkillLifecycle(home);
+  const lifecycle = new Map<string, SkillLifecycleStatus>();
+  if (!life.ok) {
+    problems.push({ kind: "lifecycle", source: "admin", label: "skill lifecycle", root: "skill lifecycle", reason: `the skill lifecycle record ${life.reason}; approved and built-in skills cannot be selected` });
+  } else {
+    for (const [k, st] of life.statuses) if (st.state !== "active") lifecycle.set(k, st);
+    for (const s of byKey.values()) {
+      if (s.trust === "unapproved") continue;
+      const e = effectiveLifecycle({ lifecycle, revoked: revokedKeys }, s.key);
+      if (e) s.lifecycle = e;
+    }
+  }
   const winner = new Map<string, RegisteredSkill>();
   for (const s of byKey.values()) if (!winner.has(s.id)) winner.set(s.id, s);
   for (const s of byKey.values()) {
@@ -369,10 +417,13 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       notes.push({ kind: "shadowed", label: s.label, package: s.id, text: `${s.key} (${s.label}) is shadowed by ${w.key} (${w.label}).` });
     }
   }
+  for (const u of unstoredApproved(listing, skills.releases.approved)) {
+    problems.push({ kind: "root-missing", source: "admin", label: "release store", root: u.root, reason: u.text });
+  }
   const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   // Map order is discovery order: the precedence of the source, then the folder name.
   const skillsList = [...byKey.values()].map((s, i) => ({ s, i })).sort((a, b) => cmp(a.s.id, b.s.id) || a.i - b.i).map((x) => x.s);
-  return { byKey, skills: skillsList, problems, notes, sources: reports };
+  return { byKey, skills: skillsList, problems, notes, sources: reports, lifecycle, revoked: revokedKeys };
 }
 
 /** The active entry of an id, or the exact `id@version`. */
@@ -381,22 +432,8 @@ export function findSkill(reg: Pick<SkillRegistry, "skills" | "byKey">, id: stri
   return reg.skills.find((s) => s.id === id && s.active);
 }
 
-export type SkillSelectCode = "unknown" | "unapproved" | "unverified" | "unpinned" | "mismatch";
-export class SkillSelectError extends Error {
-  constructor(
-    public code: SkillSelectCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "SkillSelectError";
-  }
-}
-export class SkillIntegrityError extends SkillSelectError {
-  constructor(public failure: SkillIntegrityFailure) {
-    super("mismatch", `${failure.id}@${failure.version} does not match its pin (pinned ${failure.expected}, actual ${failure.actual})`);
-    this.name = "SkillIntegrityError";
-  }
-}
+export { SkillIntegrityError, SkillPinError, SkillSelectError };
+export type { SkillPinErrorCode, SkillSelectCode };
 
 /**
  * The gate for a run: the entry for this exact `id@version` if it is approved or built-in and its bytes match the pin.
@@ -413,17 +450,6 @@ export function selectSkill(reg: Pick<SkillRegistry, "byKey" | "problems">, id: 
   }
   if (s.pin === "unpinned") throw new SkillSelectError("unpinned", `${s.key} is not pinned; run "scf skills pin ${s.key} ${s.digest}"`);
   return s;
-}
-
-export type SkillPinErrorCode = "bad-key" | "bad-digest" | "unknown" | "unapproved" | "digest-mismatch" | "already-pinned";
-export class SkillPinError extends Error {
-  constructor(
-    public code: SkillPinErrorCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "SkillPinError";
-  }
 }
 
 export interface PinOptions {

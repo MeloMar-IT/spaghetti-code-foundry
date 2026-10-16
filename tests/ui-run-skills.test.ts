@@ -87,7 +87,7 @@ describe("the resolved table", () => {
     expect(text(r![5]!)).toBe("—");
   });
   it.each([
-    ["verified", "ok"], ["changed", "fail"], ["missing", "fail"], ["unpinned", "fail"], ["unapproved", "fail"],
+    ["verified", "ok"], ["changed", "fail"], ["missing", "fail"], ["unpinned", "fail"], ["unapproved", "fail"], ["quarantined", "fail"], ["revoked", "fail"],
     ["unverified", "locked"], ["not-checked", "locked"], ["not-locked", "locked"],
   ])("draws the integrity %s as a %s pill", (integrity, cls) => {
     const [r] = cells(card(view({ resolved: [row({ integrity })] })));
@@ -114,6 +114,7 @@ describe("the resolved table", () => {
     const rows = cells(c);
     expect(text(rows[0]![6]!)).toBe("built-in");
     expect(text(rows[1]![6]!)).toBe("administrator folder");
+    expect(text(cells(card(view({ resolved: [row({ source: "catalogue" })] }), { admin: true }))[0]![6]!)).toBe("approved catalogue");
     const digest = rows[0]![7]!;
     expect(text(digest)).toBe(`sha256:${"a".repeat(12)}`);
     expect(digest.attrs.title).toBe(`sha256:${"a".repeat(64)}`);
@@ -199,5 +200,56 @@ describe("planRecordNote", () => {
     expect(note({ outcome: "toString" })).toBeNull();
     expect(ui.planRecordNote({})).toBeNull();
     expect(text(card(view({ planRecord: { outcome: "none" } })))).toContain("No plan record was found");
+  });
+});
+
+describe("Why these skills", () => {
+  const sel = (over: any = {}) => ({
+    capabilities: [{ capability: "x", outcome: "selected", winner: "a@1.0.0", decidedBy: "trust-tier", companions: ["b@2.0.0"], rejected: [{ skill: "c@1.0.0", code: "outranked", level: "evaluation" }] }],
+    mirrors: [{ kept: "a@1.0.0", collapsed: ["d@1.0.0"] }],
+    choices: [{ level: "project-pin", capability: "x", target: "a@1.0.0", effect: "selected", by: "@octocat", digest: `sha256:${"d".repeat(64)}` }],
+    choicesSource: { pins: { commit: "e".repeat(40), blob: "f".repeat(40) } },
+    counts: { capabilities: 1, mirrorGroups: 1, collapsed: 1, choices: 1 },
+    ...over,
+  });
+  const empty = { capabilities: [], mirrors: [], choices: [], counts: { capabilities: 0, mirrorGroups: 0, collapsed: 0, choices: 0 } };
+  const lis = (el: FakeElement) => el.all("li").map((l) => l.textContent);
+
+  it("draws one line per capability, mirror group and choice", () => {
+    const c = card(view({ selection: sel() }));
+    expect(headings(c, "h3")).toEqual(["Requested", "Resolved", "Why these skills"]);
+    const l = lis(c);
+    expect(l).toContain("`x`: `a@1.0.0` (trust tier); also `b@2.0.0` (composable); not `c@1.0.0` (outranked: evaluation)");
+    expect(l).toContain("Same text: kept `a@1.0.0`, not offered `d@1.0.0`");
+    expect(l).toContain("Project pin for `x`: `a@1.0.0` applied");
+  });
+
+  it("is hidden when there is nothing to explain", () => {
+    for (const s of [undefined, empty, "x", [], 5]) expect(headings(card(view({ selection: s })), "h3")).toEqual(["Requested", "Resolved"]);
+  });
+
+  it("says how much is left out", () => {
+    const l = ui.selectionLines(sel({ counts: { capabilities: 25, mirrorGroups: 22, collapsed: 9, choices: 3 } }));
+    expect(l).toContain("And 24 more capabilities.");
+    expect(l).toContain("And 21 more groups of copies.");
+    expect(l).toContain("And 8 more copies not offered.");
+    expect(l).toContain("And 2 more pins or overrides.");
+  });
+
+  it("shows author, digest and source only to an administrator", () => {
+    const u = ui.selectionLines(sel(), false).join("\n");
+    expect(u).not.toMatch(/octocat|sha256|commit/);
+    const a = ui.selectionLines(sel(), true).join("\n");
+    expect(a).toContain("by @octocat");
+    expect(a).toContain(`sha256:${"d".repeat(12)}`);
+    expect(a).toContain(`Project pins from commit ${"e".repeat(12)}.`);
+  });
+
+  it("draws text, not HTML, and survives garbage", () => {
+    const c = card(view({ selection: sel({ capabilities: [{ capability: "<b>", winner: "a@1.0.0" }] }) }));
+    expect(lis(c)[0]).toBe("`<b>`: `a@1.0.0`");
+    expect(c.all("b")).toHaveLength(0);
+    expect(() => ui.selectionLines({ capabilities: [{ capability: "x", winner: 5, rejected: "x", companions: 3 }, null, 7], mirrors: "x", choices: [{}], counts: 4 })).not.toThrow();
+    expect(ui.selectionLines({ capabilities: [{ capability: "x", winner: 5, rejected: "x" }] })).toEqual(["`x`: no skill chosen (none)"]);
   });
 });

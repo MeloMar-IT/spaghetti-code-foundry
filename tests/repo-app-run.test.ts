@@ -184,8 +184,8 @@ describe("a refused or expired app token", { timeout: 60_000 }, () => {
   it("says the token ran out when a step ran past its end", async () => {
     appRepo(user);
     const token = `ghs_${"ab".repeat(18)}`;
-    fake.force.token = { raw: JSON.stringify({ token, expires_at: new Date(Date.now() + 1500).toISOString() }) };
-    const slow = await go(mini(one("marked", "sleep 2; echo 'HTTP 401: Bad credentials' >&2; exit 1")));
+    fake.force.token = { raw: JSON.stringify({ token, expires_at: new Date(Date.now() + 5000).toISOString() }) };
+    const slow = await go(mini(one("marked", "sleep 6; echo 'HTTP 401: Bad credentials' >&2; exit 1")));
     expect(slow.reason).toBe(`step "marked" failed: ${APP_TOKEN_EXPIRED}`);
     fake.force.token = { raw: JSON.stringify({ token, expires_at: new Date(Date.now() + 600_000).toISOString() }) };
     const quick = await go(mini(one("marked", "echo 'HTTP 401: Bad credentials' >&2; exit 1")));

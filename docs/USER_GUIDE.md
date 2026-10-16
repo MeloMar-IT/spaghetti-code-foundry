@@ -2272,7 +2272,7 @@ not followed; the command says where the server points to and stops.
 | `board`, `find` | The board, the next steps, what changed since a time; search |
 | `repos` | Your repositories: add, sign-in method, test the connection, remove |
 | `refine` | Refinement sessions: story drafts, suggestions, reviews, the publish plan, publishing |
-| `ask` | Ask SCF: ask a question, try again, stop; your conversations (list, show, complete, archive, restore, delete); what a page context is worth (`context`); the usage (admin) |
+| `ask` | Ask SCF: ask a question, try again, stop; rate an answer (`feedback`); your conversations (list, show, complete with `--resolved`, archive, restore, delete); what a page context is worth (`context`); the usage and quality numbers (admin) |
 | `flows`, `blocks` | List, show, check, save and remove flows and blocks |
 | `settings`, `providers` | The settings file; the AI tools and model providers |
 | `monitor` | The self-monitor: findings, mutes, bug stories |
@@ -2462,7 +2462,7 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 
 **Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
-**Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the list of accounts that may not ask Ask SCF (`help.disabled_accounts`), the list of texts Ask SCF keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
+**Every setting has a control.** Each setting that you can change in the interface has a control here, with its default, its help and when it takes effect. The few settings without one stay in `config.yaml`: the lists of accounts that may not ask Ask SCF or may ask in the pilot stage (`help.disabled_accounts`, `help.pilot_accounts`), the list of texts Ask SCF keeps out (`help.sensitive_patterns`), and the prices of a provider that reports tokens but no cost.
 
 **Start-up settings.** The data folder, the port, the repository and the program paths are read only when the server starts, so they are not changed on this page. To change one, stop the server, change it where it is set, and start the server again; the **Set at start-up** card shows the values in use. Two things are set up once, not in settings: the first admin is made on the setup page when the server starts for the first time, and the login service is installed with `scf service install` (see [Upgrading](#11-upgrading-from-claude-factory)).
 
@@ -2504,7 +2504,7 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 - **Approval steps** in flows let you decide before anything irreversible happens (the risk gate
   and the split approval are approval steps).
 
-**Skills** — the Skills card (after **Safety**) changes the skill folders, the sources and the limits without editing `config.yaml`. It has one control for each `skills.*` setting: the sources, the catalogue, the selection, the review checks, the skills that cannot be used, and the group **Tools a skill may ask for** (shell, network, file access, and what to do when a tool is not available). **Approved releases** (`skills.releases.approved`) is a row editor: each row has a catalogue, a version and a digest; **Remove** deletes a row and **Add a row** adds one (at most 50). Empty rows and fields are left out, and a row problem from the server is shown at its row, for example "Row 1, digest: …". Each control's hint gives the default; changes take effect when a run starts or resumes. Before a save, a change that lowers safety asks first in a dialog that names each risk, and **Cancel** saves nothing. The risky changes are: turning on **repository** skills or **unreleased** releases, adding a folder to **roots**, setting an unresolved case to `warn` (a skill that is unknown, not installed, not from an approved release, in conflict or too large no longer stops a run), removing a term from the high-risk list, turning on **network** access for skills, and setting a missing tool to `degrade` (a run continues without a tool a skill asked for). Turning a risky value back off, or removing a folder, asks nothing. The dialog exists because those settings let skills the approved catalogue does not vouch for reach the agents, or let a run continue past a skill it should stop for. If the server cannot describe the skills settings, the card says so and a save keeps them unchanged. When the server refuses a save, each skills problem is shown under the control it belongs to (for a list, at its line, for example "Line 2: …"); a problem outside the skills settings stays in the banner at the top. A successful save clears all of these messages. Stored as `skills` in `config.yaml`.
+**Skills** — the Skills card (after **Safety**) changes the skill folders, the sources and the limits without editing `config.yaml`. It has one control for each `skills.*` setting: the sources, the catalogue, the selection, the review checks, the skills that cannot be used, and the group **Tools a skill may ask for** (shell, network, file access, and what to do when a tool is not available), and the group **Skill source checks** (the catalogue clone for the scheduled checks and how often the server looks; see [Let the server run it](#let-the-server-run-it)). **Approved releases** (`skills.releases.approved`) is a row editor: each row has a catalogue, a version and a digest; **Remove** deletes a row and **Add a row** adds one (at most 50). Empty rows and fields are left out, and a row problem from the server is shown at its row, for example "Row 1, digest: …". Each control's hint gives the default; changes take effect when a run starts or resumes. Before a save, a change that lowers safety asks first in a dialog that names each risk, and **Cancel** saves nothing. The risky changes are: turning on **repository** skills or **unreleased** releases, adding a folder to **roots**, setting an unresolved case to `warn` (a skill that is unknown, not installed, not from an approved release, in conflict or too large no longer stops a run), removing a term from the high-risk list, turning on **network** access for skills, setting a missing tool to `degrade` (a run continues without a tool a skill asked for), and setting or changing the folder of **Catalogue clone for source checks** (the server then commits, pushes branches and opens pull requests there). Turning a risky value back off, or removing a folder, asks nothing. The dialog exists because those settings let skills the approved catalogue does not vouch for reach the agents, or let a run continue past a skill it should stop for. If the server cannot describe the skills settings, the card says so and a save keeps them unchanged. When the server refuses a save, each skills problem is shown under the control it belongs to (for a list, at its line, for example "Line 2: …"); a problem outside the skills settings stays in the banner at the top. A successful save clears all of these messages. Stored as `skills` in `config.yaml`.
 
 **Notifications** — macOS notifications and a Slack webhook tell you only when something new
 lands under **Needs you** on Home (a question, a risky plan or split, a release pull request, a failure, a
@@ -2719,6 +2719,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
 | `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
 | `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
+| `help-action` | An account followed an offer of an Ask SCF reply (opened a page). Refused when the thing is gone (404), not allowed now (403) or the conversation is deleted (410) | `conversation <id>` | `<type>` (for example `open-run`), or `refused: denied` or `refused: stale` |
 | `turn-answer`, `turn-approve`, `turn-reject`, `turn-retry` | An action under **Needs you** on Home (`defaults` and `answer` are `turn-answer`; `retry` and a retry with a hint are `turn-retry`) | `owner/repo#issue` | |
 
 A line is written when the change is made. A call that is refused or fails before any change writes no line, and neither does a
@@ -3201,6 +3202,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
 | `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
 | `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask SCF conversations and stored credentials |
+| `GET /api/skills/lifecycle` | yes | no | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
+| `POST /api/skills/lifecycle` | yes | no | set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409) |
+| `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); 409 for a revoked version or a run that does not lock it; resume the run afterwards |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories |
@@ -3260,9 +3264,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/drafts/:did/suggestions/:sid/reject` | yes | yes | reject a suggestion for a story draft of your refinement session, with an optional reason; it is removed |
 | `PUT /api/refinement/:id/epic` | yes | yes | set or clear the Epic of your refinement session |
 | `GET /api/refinement/:id/publish` | yes | yes | read the publish plan of your refinement session: the issues that would be created, their order, labels and dependencies (a split original is not listed: its parts are, and a draft that depended on the original depends on each part; `leftBehind: [{ draft, title, criteria }]` names split originals that still hold criteria, and is left out when there are none); an item with `updates: N` replaces issue #N of the session's source and is in `willUpdate`, not in `willCreate`, and `notChanged: N` says no draft stands for that issue, `replaces: { issue, parts, ready, cut?, staysOpen?, dependants }` says the issue was split and a publish will replace it by its parts, with the open issues that depend on it (`before` and `after` of their Depends on text, or `byHand`); `staysOpen` says the issue gets the comment but is not closed, and `changedOnGithub` is set when the issue it would update changed on GitHub; it reads the labels, the issue and the open issues from GitHub with the repository's sign-in and creates nothing (an admin who is not the owner: 403) |
-| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask SCF is switched on, and the limits; only your own, for an admin too, and not in a view of a user's display |
+| `GET /api/help/conversations` | yes | yes | your Ask SCF conversations, last changed first, without their messages (`?archived=1`: the archived ones), whether Ask SCF is switched on and whether it is paused (then you can read but not ask), and the limits; only your own, for an admin too, and not in a view of a user's display |
 | `GET /api/help/conversations/:id` | yes | yes | read one of your Ask SCF conversations with its messages; a conversation of another account answers 404 like an unknown one, a deleted one 410 |
 | `POST /api/help/conversations/:id/complete` | yes | yes | close one of your Ask SCF conversations: it stays readable and takes no new question |
+| `POST /api/help/conversations/:id/feedback` | yes | yes | rate an answer in one of your Ask SCF conversations: helpful or not helpful, with optional reasons from a fixed list and no free text; vote null (or none) takes it back; only counts are kept in the quality numbers; works while Ask SCF is paused |
 | `POST /api/help/conversations/:id/archive` | yes | yes | move one of your Ask SCF conversations to the archive |
 | `POST /api/help/conversations/:id/restore` | yes | yes | take one of your Ask SCF conversations out of the archive; it gets the state it had |
 | `DELETE /api/help/conversations/:id` | yes | yes | delete one of your Ask SCF conversations: its title and messages are removed at once and cannot be brought back |
@@ -3270,9 +3275,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
+| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask SCF reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`; nothing is stored; 404 when the thing is gone or you can no longer see it, 403 when you may not open it now, 410 for a deleted conversation, 503 while Ask SCF is switched off |
 | `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
 | `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
-| `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, what runs and waits now, and turns, failures, cost and tokens per account and day; no question and no answer |
+| `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
 
 **What comes later.** Pages for users (starting runs).
 
@@ -3308,7 +3314,7 @@ skills:
   roots: []
   repository: false
   catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] }
-  selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [] }
+  selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [], exclusive: [] }
   review: { max_tokens: 3000, max_skill_tokens: 1000 }
   unresolved:
     unknown: stop
@@ -3340,7 +3346,7 @@ skills:
    risk: low
    ```
 
-   More fields: `detectors`, `connectors`, `tool_profile`, `provider`. A `provider` block says that the skill needs a vendor: `provider: {name: acme, products: [{name: kafka, version: "3.7"}], tools: [kafka-admin]}`. `name` is a slug; at most 16 products and 16 tools. A skill without it is portable. The block is text only: it grants no connector, shell or network access. The catalogue and `scf skills` show it (see [Skill catalogue](#skill-catalogue)). The eleven built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `nodejs`, `rest-openapi`, `kafka`, `ibm-mq`, `cassandra`, `oracle`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
+   More fields: `detectors`, `connectors`, `tool_profile`, `provider`, `composable` (see [Complementary providers](#complementary-providers)). A `provider` block says that the skill needs a vendor: `provider: {name: acme, products: [{name: kafka, version: "3.7"}], tools: [kafka-admin]}`. `name` is a slug; at most 16 products and 16 tools. A skill without it is portable. The block is text only: it grants no connector, shell or network access. The catalogue and `scf skills` show it (see [Skill catalogue](#skill-catalogue)). The eleven built-in packages in `skills/` (`typescript`, `java`, `spring-boot`, `nodejs`, `rest-openapi`, `kafka`, `ibm-mq`, `cassandra`, `oracle`, `integration-testing`, `small-changes`) are examples; `spring-boot` shows a dependency (on `java`).
 4. Optional: `REVIEW.md`, a few short checks for a reviewer, at most 8 KiB. The package needs the `reviewer` role or no roles.
 5. Versions are `MAJOR.MINOR.PATCH`. Any change to a pinned package needs a new version, or `pin --replace`.
 6. Pin it: run `scf skills`, check the package, copy the digest, then run `scf skills pin <id@version> <digest>`.
@@ -3358,20 +3364,56 @@ skills:
 
 The estimate counts the description and `SKILL.md`, not reference files. A resumed session costs one reminder line; a new session gets the block once.
 
+#### Same skill twice
+
+Two installed skills with the same description and instructions are the same text to the model. The Foundry sends that text once: the first copy in load order keeps the section, and its `also="…"` attribute names the other copies. The other copies still count as loaded in the run, and their lock entries stay, but they cost no tokens. A copy is never reported as omitted, and it never blocks a mandatory skill. The same applies to review blocks, where the key is the description and `REVIEW.md`. In the catalogue, one entry is offered per text: the best tier wins, then the lowest id, then the lowest version. The run log says `n mirror(s) collapsed`. Skills whose text differs by even one character are not merged.
+
 #### Trust
 
-- **Sources** come in this order: the data folder, `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned.
+- **Sources** come in this order: the data folder, the approved releases in `skill-releases/` (see "Retained releases" below), `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned.
 - **Releases.** A folder in the data folder or in `skills.roots` is a catalogue release: it holds `catalogue-release.json` (`schema: 1`, `catalogue`, `version`, `createdAt`, `source` with `repository` and a full `commit`, and `skills` with `id`, `version` and `digest`). It loads only if its catalogue, version and digest are listed in `skills.releases.approved`, and its packages match the manifest exactly. Otherwise the whole folder is refused (`root-refused`) and none of its packages load. `scf skills` shows a `RELEASE` line for each. Skills are never fetched from the network during a run or a resume.
+- **Retained releases.** Every release folder `skill-releases/<catalogue>/<version>/` that is listed in `skills.releases.approved` is loaded, as the source `release <catalogue>@<version>`. Within one catalogue the newest version is read first, so its packages are the active ones. An older approved version stays loaded for exact lookups: a run locked to `id@version` and digest still resumes after a newer version is published and approved, and `scf skills release verify` and the resolver find it. A retained package that a newer one shadows is never offered to a catalogue or chosen for a new plan. A folder in the store that is not approved is not loaded, and `scf skills` prints a `NOTE` for it (not a problem). Publish and discovery never delete a release, so every approved version is kept. A `skills.roots` entry that points inside `skill-releases/` is ignored with a `NOTE`; list the release in `skills.releases.approved` instead.
+  - **Approval is the pin.** An approved, verified release lists the digest of each package, so its packages are selectable with those digests (source `catalogue`, trust `approved`, pin `pinned`). They need no entry in `skills.lock.json` and no `scf skills pin`. A hand pin for the same `id@version` with another digest is still a `mismatch`, and the stricter rule wins. Data folder and `skills.roots` packages still need their own pin. A run locked to an older approved release keeps its exact `id@version` and digest, so it still resumes after a newer release is approved. A run lock written before this change, with source `admin` for the same package, still verifies.
+  - **List.** `scf skills release list` reads only. It prints `RELEASE <catalogue>@<version> <digest> <state> <n> skills, locked by <k> runs` (or `not locked by any run`) for each stored release, where the state is `approved`, `unapproved`, `mismatch` or `invalid`. An approved release line ends with ` (source catalogue)`. It prints no `PIN` lines. It ends with `OK <n> releases` or `No releases are published`, and exits 1 when the store cannot be read in full.
 - **Release manifest 2.** `catalogue-release.json` may also say `schema: 2`. Each skill then lists every file of its package (`files`: `path`, `sha256`, `bytes`), its `provenance` (`source`, `repositoryKey`, `commit`, `path`, `trust` and an optional `review`), its `licences`, its `attribution` files (kept in `<folder>/.attribution/<id>/`), its `evaluation` (`suite`, `record`, and `verdict` `passed`, `failed` or `not-run`) and an optional `revoked` (`on`, `reason`). The release digest covers all of these fields. A schema-1 manifest works as before.
   - **Integrity.** Each discovery checks a schema-2 folder file by file: every listed file must be there with its size and SHA-256, every package digest must recompute, and no other file may be in a package or in `.attribution/` (only `catalogue-release.json` and `.DS_Store` are allowed besides). A link is refused. Any failure refuses the whole folder (`root-refused`), whatever `allow_unreleased` says.
-  - **Revoked skills.** A skill with `revoked` in an approved schema-2 release is never loaded, from any root. A locked run that uses it stops with the usual "skill integrity: … is missing" reason. A revocation changes the release digest, so the owner approves the new digest in `skills.releases.approved`, and the old one stops matching.
+  - **Revoked skills.** A skill with `revoked` in an approved schema-2 release is never loaded, from any root. A locked run that uses it stops with `skill integrity: … is revoked by release <catalogue>@<version>` and the plan-again hint; it no longer says "is missing". A revocation changes the release digest, so the owner approves the new digest in `skills.releases.approved`, and the old one stops matching. A revocation in a release always wins over a local lifecycle state (see "Skill lifecycle" below).
   - **Evaluation verdict.** Loading does not depend on the verdict. `scf skills release verify` shows it for each skill.
   - **Offline check.** `scf skills release verify <dir>` checks one release folder with the same rules and opens no network connection. It prints `VERIFIED <catalogue>@<version> <digest> <n> skills` (exit 0), or `PROBLEM …` (exit 1). It then prints `APPROVED` or `NOT-APPROVED` against `skills.releases.approved`. The reason never shows a path or file content.
+- **Signed approvals.** Set `skills.releases.keys` to require a trusted signature: up to 10 entries `{id, ed25519}`, where `ed25519` is the base64 of the 32-byte raw Ed25519 public key. Once the list is not empty, every `skills.releases.approved` entry must also have `key` (an `id` from `keys`) and `signature` (base64 of 64 bytes). The signature covers the text `scf-skill-catalogue-approval-v1`, then the catalogue, version and digest, one per line. A release with the approved digest that is unsigned, or whose signature does not verify, is refused (`root-refused`: "is not signed by a trusted key" or "signature does not verify"). None of its packages load, even with `allow_unreleased`. With no keys, nothing changes. The config is refused for an unknown key, a key id listed twice, a key that is not 32 bytes, or `key` without `signature` (or the reverse).
+  - **Before you add keys**, sign every approved entry, including the entries that locked runs use. Once keys are set, an unsigned approved entry is refused, so a run locked to it cannot resume. Sign the old entries first, or finish those runs before you add keys.
+  - **Sign.** The publisher runs `scf skills release sign <catalogue>@<version> --key <private-key-file>` on a stored release. The key file is a PEM Ed25519 private key. The command refuses a link, and a file that group or others can read (use `chmod 600`). It prints `APPROVE <catalogue> <version> <digest> key <id> signature <b64>`; paste the `key` and `signature` into the entry. It never prints key material. It signs only releases in the store, because the signature covers the catalogue, version and digest.
+  - **Status.** Once keys are set, `scf skills release verify` and `scf skills release list` print `SIGNED <key>`, `UNSIGNED` or `BAD-SIGNATURE` for each release.
+- **Adopt a release.** An administrator can name the local artifact of an approved release in `skills.releases.approved[].artifact`: an absolute path to a schema-2 release folder. A URL, a relative path, a network path, or a path inside `.claude` or `.codex` is refused when the config is read. `scf skills release adopt [<catalogue>@<version>]` copies each approved release that is missing from `skill-releases/` (or only the one you name). It checks the folder with the same rules as `verify`, requires a valid signature from `skills.releases.keys`, and requires the catalogue, version and digest to match the entry. Then it writes the release once. It prints one line per entry: `ADOPTED <catalogue>@<version> <digest>`, `PRESENT`, `REFUSED <catalogue>@<version>: <reason>` or `MISSING-ARTIFACT`. A refusal writes nothing, and the exit code is 1 on any refusal (or on a named entry with `MISSING-ARTIFACT`). The command opens no network connection.
+  - **Missing release.** An approved release that is not in `skill-releases/` is a `scf skills` problem (`root-missing`) that says to run `scf skills release adopt`. A run never fetches it. A `skills.roots` folder that holds the exact approved release (same digest, state `approved`) does not trigger the problem.
 - **Local development.** To try an unpublished catalogue, set `skills.releases.allow_unreleased: true`. Folders without an approved release then load, and `scf skills` prints a `NOTE` for each. Keep it `false` (the default) in production. Existing folders are refused after an update until they are an approved release or this is set.
 - **Pins** tie a version to its digest. A mismatch blocks the skill until you pin it again or give it a new version.
 - **Repository skills** are `unapproved`: they are listed only with `skills.repository: true`, never pinned and never selected.
 - **Isolation.** A Claude session that gets a skill block, or that is a reviewer, runs without your personal Claude setup, even with `isolate_agents` off. Steps with `skills: off` or `skills: catalog` get no skill block, so they do not turn it on by themselves. Codex reviewers ignore your Codex user config.
 - **No grants.** A skill cannot give a tool, a permission or network access. The Foundry's rules and the task win.
+
+##### Skill lifecycle
+
+An administrator can change the state of one approved or built-in skill version. The record is `skill-lifecycle.jsonl` in the data folder: one JSON line per change, only ever added to. A missing file means every version is `active`, so an install without changes behaves as before.
+
+| State | New plans | Locked runs (a run that already has a skill lock) |
+|---|---|---|
+| `active` | selected | selected |
+| `deprecated` | selected | goes on; the run log has a `skill lifecycle:` note |
+| `quarantined` | not selected (`ineligible`) | stops with `skill integrity:` unless `allow-run` was given for that run |
+| `retired` | not selected (`ineligible`) | goes on; the run log names the replacement |
+| `revoked` | not selected (`ineligible`) | always stops with `skill integrity: … is revoked` |
+
+- **Commands.** `scf skills lifecycle` lists the skills that are not active, with their state and replacement. `scf skills lifecycle <id@version>` prints the history of one skill: one `#seq` line per change, and a `release` line when a release revokes it. `scf skills lifecycle <id@version> <state> --reason <text> [--replacement <id@version>]` sets a state. It prints the transition (`kafka@1.0.0: active → quarantined (#3)`), one `RUN <id> locks kafka@1.0.0: <effect>` line per run whose skill lock holds the version, then `OK`. `scf skills allow-run <run-id> <id@version> --reason <text>` lets one run go on with a quarantined version; it prints `ALLOWED <run-id> <id@version> (#5). Resume the run to go on.` Use `--runs-dir <dir>` to point at another runs folder. Without it, the runs folder of the data folder is searched.
+- **Who.** Only administrators may change the record or allow a run. The admin API has the same actions: `GET /api/skills/lifecycle`, `POST /api/skills/lifecycle` and `POST /api/skills/lifecycle/allow-run` (see the permissions table in section 7).
+- **What can change.** Only approved and built-in versions have a lifecycle. A repository skill, or a version that is not installed, is refused. A state cannot be set again to the state it already has, and a `revoked` version never changes again.
+- **Replacement.** Optional for `deprecated`, `quarantined`, `retired` and `revoked`. It must be an installed, approved version that is not quarantined, retired or revoked. Retiring the active version of an id, with no replacement installed and pinned, blocks that id for new plans. There is no fallback to another version of the same id; the message names the replacement.
+- **Reason.** One to 200 characters, no control characters, no spaces at the ends, and not a credential-looking token. The reason is shown in the listing, the history and the run log. Stop reasons do not repeat it.
+- **Allowances.** An allowance belongs to one run and one quarantine. A new quarantine starts with none. An allowance does not help when the version is revoked by a release, and `allow-run` is refused for such a key.
+- **Releases win.** A `revoked` skill in an approved release (see "Revoked skills" above) overrides any local state. The listing says `by release <catalogue>@<version>`. A release can only revoke: it cannot restore a version, and it cannot carry other states.
+- **Fail closed.** A record that cannot be read stops every new plan that selects a skill and every locked run with skills. `scf skills` prints `PROBLEM the skill lifecycle record …` with the line number, and never the content. This applies when the file has a line that is not valid JSON, a field that is not known, a gap in `seq`, a `from` that does not match the state, a change the rules refuse (for example a hand-written `revoked → active`), a same-state change, a symbolic link, or a file over 4 MiB. Repair the file from a copy, then plan again.
+- **Size limit.** The record may hold 4 MiB. A change that would go over the limit is refused before anything is written, and the file stays as it was. Do not delete or shorten the file: without it every version counts as `active` again. Archiving is a manual step for an administrator, and nothing rotates the file.
+- **Delay.** The run page reads the registry with a cache of up to one minute. The admin API clears the cache after each change; a change made with the command line can take up to a minute to show there. The engine always reads the record fresh.
 
 #### The two pipelines and skills
 
@@ -3402,6 +3444,7 @@ Look here, in this order:
 |---|---|
 | `planning failed: the skill request of the plan is not valid` | start the run again so the issue is planned again |
 | `skill integrity:` (a skill changed, is missing, is no longer pinned, now comes from the repository or cannot be verified; or the lock of the run is missing or changed) | restore the exact locked package and its pin (run `scf skills` to see them), then resume the run; or plan again to lock the current skills |
+| `skill integrity: … is quarantined` | an administrator may run `scf skills allow-run <run-id> <id@version> --reason <text>` (the command is in the reason), then resume the run; or plan again. A `… is revoked` reason (by a release or locally) cannot be allowed: plan the issue again |
 | `skill selection is blocked: … does not fit the skill context budget` | raise skills.selection.max_tokens, then resume the run |
 | `skill selection is blocked:` | pin the skill or change skills.selection.include, then resume the run |
 | `skills not resolved: N skill(s) cannot be used — id [code]: …` | see the table of codes below |
@@ -3429,6 +3472,7 @@ The reason code of each skill, the kind of policy that decides it, and what to d
 | `dependency-version` | missing | Install a newer version of the dependency and pin it, then resume the run |
 | `dependency-cycle` | missing | Remove the cycle from the skill packages, then resume the run |
 | `conflict` | conflict | Put one of them on `skills.selection.exclude` |
+| `ineligible` | untrusted | The version is quarantined, retired or revoked (or the lifecycle record cannot be read). Use the replacement or another skill, then plan again |
 | `blocked` | conflict | A mandatory skill was refused or the include/exclude lists are not valid. Fix that first |
 
 A kind set to `warn` lets low-risk work go on. Medium and high risk, and mandatory skills, always stop; see [Missing and conflicting skills](#missing-and-conflicting-skills).
@@ -3479,6 +3523,7 @@ A pin ties one skill version to the exact content you looked at. If the content 
   | Source | Trust | Can be pinned |
   |---|---|---|
   | Data folder, `skills.roots` | approved | yes, by you with `scf skills pin` |
+  | Approved release in `skill-releases/` | approved (source `catalogue`) | not needed: the release lists the digest |
   | Built-in | builtin | yes, pinned for you when the server starts |
   | Repository | unapproved | never |
 
@@ -3516,7 +3561,7 @@ sources:
       licence: MIT
 ```
 
-- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `licence.reviewed` (optional; the licence review digest, see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
+- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `licence.reviewed` (optional; the licence review digest, see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `update.reviewer` (optional; a GitHub user or team, as `owner`; see below), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
 - **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
 - **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
 - **Review of a community source.** `review` records who checked the maintainer and the licence, and when. It has four fields: `by` (a GitHub user or team, as `owner`), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id, equal to `ref.approved`) and `licence` (one of `licence.allow`). An enabled `trust: community` source is refused without `review`, and when `review.commit` is not `ref.approved`. A new commit needs a new review, so changing one word cannot raise the trust.
@@ -3534,6 +3579,7 @@ sources:
 
   Every other upstream capability becomes `confluent-<capability>`, so a vendor skill cannot take over a portable capability by accident. A skill with a vendor capability gets the provider block. A source without `profile` is unchanged. `scf skills sources check` prints `provider confluent (1 portable)` for the source. It refuses a mapping to an invalid slug, a duplicate key and a `profile` without `provider`. A slug longer than 64 characters, or two upstream names that land on the same slug, is a problem that names the skill and the capability; nothing is dropped silently. The profile is not applied during import or scan yet.
 - **Owner and policy.** Every source has an owner and an update cadence.
+- **Reviewer for unattended updates.** `update.reviewer` names the GitHub user or team that reviews a new commit of an enabled `trust: community` source when `scf skills update --due` runs without a person. The tool never invents a reviewer. Without it, such a source prints `PROBLEM … needs update.reviewer` and no pull request is opened. The field is part of this file, so it is set by a reviewed pull request. `scf skills sources check` validates it; an existing file without it stays valid.
 - **Add a source by pull request.** Add an entry, run `scf skills sources check`, and let the owner and a reviewer approve the change.
 - **Connectors.** A connector is a reviewed definition of one repository. An entry whose repository is a connector's repository must follow the connector's rules, whatever its `id` is and however the address is spelled. `scf skills connectors` lists them offline; it reads no files. The connectors are `awesome-copilot` (`https://github.com/github/awesome-copilot`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: community`, and `licence.allow` only `MIT`; and `anthropic-skills` (`https://github.com/anthropics/skills`): `paths` must be `skills` or a folder below it, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `Apache-2.0`, with a matching `licence.reviewed` (see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)); and `vercel-agent-skills` (`https://github.com/vercel-labs/agent-skills`): `paths` must be `skills` or `agent-skills` or a folder below one of them, `adapter: agent-skills`, `trust: verified`, and `licence.allow` only `MIT` (see [Vercel agent skills](#vercel-agent-skills)). Any other value is a `PROBLEM` and exits 1. A connector ships without a commit, so `ref.approved` is still needed on each enabled entry.
 - **Check.** `scf skills sources check [<file>]` reads `skill-sources.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It lists each source and then `OK <n> sources, <m> enabled`, and exits 0. A reviewed source is listed with `reviewed by <by> on <on>`. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. Credential-like values are never printed.
@@ -3761,17 +3807,21 @@ scf skills scan example-skills
 ```
 
 ```
-FINDING <16 hex digits> high open <skill> <path>: <evidence>
+FINDING <16 hex digits> high open <skill> <path>[:<line>]: <evidence>
 BLOCKED <skill>: 1 high finding
+ADDRESS <skill> mentioned references/pom.xml: https://repo.maven.apache.org/maven2 (under references/, which the agent only reads)
 EXCLUDED <skill>: needs network access
 SCANNED 2 skills from github.com/example/skills@0123456789ab sha256:…: 2 blocked
 ```
 
 - **What it checks first.** The staged files must match `import.json` exactly: a changed file, a link or an extra file is refused with a `PROBLEM` line and nothing is scanned. Then every skill is scanned with the static scanner (#472), and the exceptions are applied.
-- **Lines.** One `FINDING` line per finding: its stable id, severity, disposition (`open`, `accepted`, `expired` or `review-required`), the skill, the path and a short bounded evidence text. A credential is never printed; it shows as `(hidden)`. Then one line per skill: `OK <skill>: <n> findings, none blocks`, or `BLOCKED <skill>: <n> high findings`. Each `REJECTED` line of the import is repeated, with credential-like text shown as `(hidden)`.
+- **Lines.** One `FINDING` line per finding: its stable id, severity, disposition (`open`, `accepted`, `expired` or `review-required`), the skill, the path (with `:<line>` when the line is known) and a short bounded evidence text. A credential is never printed; it shows as `(hidden)`. Then one line per skill: `OK <skill>: <n> findings, none blocks`, or `BLOCKED <skill>: <n> high findings`. Each `REJECTED` line of the import is repeated, with credential-like text shown as `(hidden)`.
 - **Not normalized.** A skill that the normalization step rejects (for example a credential or bad metadata) has no package id. Its findings are still printed, with the folder as its name, and it prints `BLOCKED <folder>: not normalized (<reasons>)`.
 - **What blocks.** A high finding that is not accepted blocks its skill. Medium and low findings never block. An accepted finding does not block; a secret finding can never be accepted.
-- **Excluded skills.** A skill that needs a live integration (a connector or MCP tool), needs network access, uses a network command or call, ships plugin or MCP configuration (`.mcp.json`, `plugin.json`, a `.plugin/` folder) or declares `mcp_tools` prints `EXCLUDED <skill>: <reasons>` instead of `OK`. It counts as blocked. Exclusions are not lifted by the exception file.
+- **Quoted examples.** A prompt-injection phrase in quotation marks is a `low` finding `prompt-injection.quoted-example` and never blocks, when a word such as "e.g.", "such as", "ignore", "refuse", "detect", "watch for" or "treat as data" introduces it in the same sentence. The word may be on the same line or the line before. There must be no "not" or "never" before it, and no instruction such as "follow", "execute" or "say" in the sentence before the quote (unless it is negated, as in "do not follow"). The `FINDING` line gives the path and line. Anything else (an instruction, no quotes, no cue, a cue in another sentence) stays `high`. Credential, policy and network rules have no such exception.
+- **Web addresses.** One `ADDRESS <skill> <mentioned|called> <path>: <address> (<why>)` line per web address (`http://` or `https://`) in the instructions and in the files of the skill. `mentioned` means the agent only reads the file: Markdown, data, `metadata.json`, anything under `references/` or `evals/`. `called` means the file is code: anything under `scripts/`, a file with a code extension (`.sh`, `.py`, `.js`, `.ts`, `.html`, `.ps1` and similar), a file without an extension, or a file that starts with `#!`. A `mentioned` address never blocks. A `called` address blocks the skill as `holds a web address in code`. Addresses are shown with the user name, password and credential-like query values hidden (`(hidden)`), and cut at 80 characters followed by a short hash, so two long addresses stay apart. `scf skills promote check` prints the same lines.
+- **Excluded skills.** A skill that needs a live integration (a connector or MCP tool), needs network access, uses a network command, makes a web call from code, holds a web address in code (see above), ships plugin or MCP configuration (`.mcp.json`, `plugin.json`, a `.plugin/` folder) or declares `mcp_tools` prints `EXCLUDED <skill>: <reasons>` instead of `OK`. It counts as blocked. Exclusions are not lifted by the exception file.
+- **Credential files in shell tests.** A shell file test such as `[[ -f .env ]]`, `[ -d .ssh ]` or `test -f .env` is not an upload and raises no finding. A real upload of a credential-like file is still `high`: `curl -F "f=@.env"`, `curl -T .env`, `curl --data-binary @.env`, `scp .env …` or `nc … < .env`.
 - **Exit codes.** 0 when no skill is blocked. 1 when a skill is blocked or excluded, or a `PROBLEM` is printed. A `PROBLEM` names the file or field and never shows a credential-like value.
 - **Problems.** A missing import (`no staged import … run "scf skills import"`), an unknown source, a source without `ref.approved`, an invalid source list, an invalid exception file, or a named exception file that does not exist. A missing default exception file means "no exceptions".
 - **Connector report.** A source with a reviewed connector profile (today: `github.com/prisma/skills`) also gets one line per mapped skill: `CONNECTOR <connector> <skill>: specific=… general=… orm=… engines=… runtime=… needs=… risk=… evaluations=… reviewed=yes|no`. `CONNECTOR … unmapped` names a skill the profile does not know or whose companion skill is missing; `CONNECTOR … absent` names a profile skill that is not in the import. The report reads nothing else and runs nothing. `reviewed=no` means the skill's commit is not one the profile was checked against, so the skill fails the safety gate and is not offered.
@@ -3951,9 +4001,10 @@ CHECKED 2 skills from github.com/example/skills@0123456789ab sha256:…: 1 promo
 ```
 
 - **What it checks.** The staged import is read and checked as in [Scan an import](#scan-an-import). Then, per skill path: the licence and notice evidence of the commit is checked against the source's licence allow list, the skill is normalized, the scanner runs with the exceptions, and the provenance is recorded.
-- **Lines.** `PROMOTABLE <id> <path> <licences>` for a path that may be promoted, with its licence names. `REFUSED <path>: <status> (<reasons>)` for every other path. The status is the licence status (for example `missing`, `ambiguous`, `review` or `rejected`), `blocked` when a high finding is not accepted, or `not-normalized` when the normalization step rejects the skill, or `evaluation (<suite>: <codes>)` when a suite of `skill-evaluations.yaml` is not passed for the digest ([Confluent skills](#confluent-skills)). An `EVALUATION` line per suite follows the other lines. Then one `CHECKED` line with the counts.
-- **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, with an open high finding, or with a suite that is not passed for its digest. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
+- **Lines.** `PROMOTABLE <id> <path> <licences>` for a path that may be promoted, with its licence names. `REFUSED <path>: <status> (<reasons>)` for every other path. The status is the licence status (for example `missing`, `ambiguous`, `review` or `rejected`), `blocked` when a high finding is not accepted, or `not-normalized` when the normalization step rejects the skill, or `evaluation (<suite>: <codes>)` when a suite of `skill-evaluations.yaml` is not passed for the digest ([Confluent skills](#confluent-skills)). An `EVALUATION` line per suite follows the other lines. An `EFFECT <id> <digest>: <verdict>` line per skill follows, with the effect code in brackets when the rule refuses it, or with `accepted by <owner> on <date>` when a decision was used. A path whose effect is refused prints `REFUSED <path>: effect (<code>)`, with the codes of [Score and gate an import](#score-and-gate-an-import). The `ADDRESS` lines of [Scan an import](#scan-an-import) follow them, then one `CHECKED` line with the counts.
+- **What never is promotable.** A path with a missing, ambiguous, review or rejected licence, with an open high finding, or with a suite that is not passed for its digest, or with an effect that the rule of [Score and gate an import](#score-and-gate-an-import) does not accept. An import without licence evidence refuses every path with `missing`, so an import written before #511 cannot pass this check.
 - **Reasons.** Reasons never show credential-like text; it shows as `(hidden)`. Licence texts are never printed.
+- **How a licence is recognised.** The text is compared word for word, without case, punctuation, indentation or line breaks, so a re-indented or re-wrapped text, or a text on one line, is the same text. MIT, ISC, 0BSD, BSD-2/3-Clause and Unlicense must match the complete text; owner notices (`Copyright (c) 2024 Example Person`, up to 7 words, however wrapped) and a title line may differ. Apache 2.0 must match the published text, with or without the appendix, with the placeholder `Copyright {yyyy} {name of copyright owner}` or `Copyright [yyyy] [name of copyright owner]` or a filled-in owner, and with `http` or `https` addresses. A notice that adds a restriction, and any other changed word, gives `ambiguous … the licence is not recognised`.
 - **Exit codes.** 0 when every path is promotable. 1 when a path is refused or a `PROBLEM` is printed (for example a missing import, an unknown source, a source that is not enabled, an invalid exception file, or an invalid `skill-evaluations.yaml`).
 - **Manifest fields.** The promotion manifest (schema 1) lists the provenance of each promoted package. Two optional fields record who vouches for it: `trust` is the trust tier of the source (for example `community`) and is always set; `review` holds `by`, `on` and `commit` of the source's review and is set only when the source has one. The review never holds the licence. Manifests written before these fields stay valid, and `attributionProblem` works on them as before.
 
@@ -4054,20 +4105,106 @@ scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer
 - **Reviewer.** An enabled community source needs `--reviewer <@user>` for a new commit: the entry gets a `review` (`by`, `on` today, `commit` and `licence`). `--licence <id>` names the licence when `licence.allow` has more than one and there is no earlier review. A run that prints `UNCHANGED` needs no reviewer.
 - **Where the change goes.** The branch is `skill-update/<source-id>-<commit>` (12 characters of the commit). Only `ref.approved` and `review` of that entry change, or one new entry at the end of `sources:`. Every other byte of the file stays. The edited file must pass the same rules as `scf skills sources check`, or nothing is pushed.
 - **Pull request.** The title is `Skill source <id>: update to <commit>` (or `first import at <commit>`). The body holds the old and the new commit, the tracked ref, the selected paths, the verdict and the review report: licence, attribution, collisions and scan. It holds no text of the upstream skills.
-- **Output.** One line per outcome:
+- **Changes since the approved commit.** For an update, the body has a `### Changes since <old commit>` section between the header and the review report:
+  - Each skill root is `added`, `removed`, `changed` (its digest differs) or `unchanged`. Per changed skill: the paths added, removed and changed (by SHA-256), the name, version, category and capabilities as old → new, the licence status and licence ids, the scan `blocked` flag and the high and total finding counts, and the evaluation.
+  - **Evaluation.** The verdict of the newest record for the old digest is shown, and whether a record exists for the new digest. Otherwise the line says `needs a new record`. A changed digest never inherits the old verdict.
+  - **Canonical skills.** For the capabilities of added or changed skills, the current canonical winners of the catalogue are listed (the same selection as `scf skills overlap`). A row that adds a `CONFLICT` is marked `(new conflict)`.
+  - **Verdict.** The verdict line reads `needs attention: <parts>` when security, licence, evaluation or review fails, and says that nothing is promoted until the gates pass.
+  - **Old commit not comparable.** When the old commit is not in quarantine, it is staged first with the checks of `scf skills import`. If that fails, the section says the old commit could not be compared, and the pull request is still opened. A first import has no section.
+  - Lists lengthen only up to a fixed number, then show `… and N more`. The section has its own byte budget inside the pull request limit.
+- **Supersedes.** Open pull requests of the same source for older commits are listed in the body under `Supersedes (these stay open and are not changed)`. The run never closes, merges, edits or approves them. Only the pull request of this commit is updated on a re-run.
+- **Re-run.** While the pull request of a commit is open, a re-run rebuilds its title and body from the proposal on its branch and edits the pull request with `gh pr edit`, only when the text differs. It never opens a second pull request and never pushes the branch again. A re-run whose `skill-sources.yaml` differs from origin, or whose branch no longer holds this proposal, is refused or left as it is (see Output).
+- **Output.** One line per outcome. A `CHANGES since <old commit>: <n> changed, <n> added, <n> removed, <n> unchanged` line comes before the `REVIEWED` line when the old commit was compared, or `CHANGES the old commit <commit> could not be compared`:
   - `UNCHANGED <id> is at <commit> (ref.approved); nothing to propose`: the upstream commit is already approved. Nothing is opened.
-  - `OPEN <url> for <id>@<commit>; no second pull request was opened`: a pull request for this source and commit is open already.
+  - `UPDATED <url> for <id>@<commit>; nothing is approved until it is merged`: the pull request of this commit is open and its title or body was rebuilt and edited.
+  - `OPEN <url> for <id>@<commit>; no second pull request was opened`: the pull request of this commit is open and its text is already current. A branch that does not hold this proposal also gives `OPEN`, and the text is not changed.
   - `OK opened <url> for <id>@<commit>; nothing is approved until it is merged`: the new pull request.
-  - `PROBLEM <sentence>` and exit 1: an unreachable upstream, a failed push or `gh` call, a refused source or option. The sentence is fixed text; git's and gh's own messages are never printed. A failed run leaves no branch behind on `origin`. When the branch cannot be removed, the `PROBLEM` names it: delete it by hand.
+  - `PROBLEM <sentence>` and exit 1: an unreachable upstream, a failed push or `gh` call, a refused source or option. The sentence is fixed text; git's and gh's own messages are never printed. A failed run leaves no branch behind on `origin`. When the branch cannot be removed, the `PROBLEM` names it: delete it by hand. A failed `gh pr edit` prints `PROBLEM` and leaves the pull request as it was.
 - **Ctrl-C.** The update stops and, as far as it has pushed, removes its own branch. Nothing is proposed.
 - **Merging.** Merging the pull request is the approval. Until then the working copy's `skill-sources.yaml` on the default branch does not change.
 
 Walk-through for the awesome-copilot connector:
 
 1. **Propose.** `scf skills update awesome-copilot --owner @maintainer --reviewer @reviewer`. The first run prints the pull request address and the `REVIEWED` line of the report.
-2. **Review.** Read the pull request: the licence (`MIT` for this connector), the attribution, the collisions and the scan in the body. Check that the reviewer named is the one who checked them.
+2. **Review.** Read the pull request: the changes since the approved commit, the licence (`MIT` for this connector), the attribution, the collisions and the scan in the body. Check that the reviewer named is the one who checked them.
 3. **Merge.** The source is then pinned by the merged file. `scf skills import awesome-copilot` fetches that commit, and `scf skills review awesome-copilot` shows the report again.
 4. **Next update.** When upstream moves, run `scf skills update awesome-copilot --reviewer @reviewer` again. While upstream is unchanged it prints `UNCHANGED`.
+
+#### Check every due source
+
+`scf skills update --due [--all]` checks every enabled source whose update cadence is due, one after the other, and gives each the same outcome as `scf skills update <source-id>`. Use it on a schedule, so no one has to remember each library.
+
+```
+scf skills update --due
+scf skills update --due --all
+```
+
+- **Which sources.** `--due` takes the enabled sources whose `update.cadence` is not `manual` and is due. A source is due when it was never checked, when its last check ended with `PROBLEM` (it is retried on the next run), or when its last check is at least 1 day (`daily`), 7 days (`weekly`) or 30 days (`monthly`) old. `--all` checks every enabled source and ignores the cadence. `manual` sources are never due by `--due`; they are checked only by `scf skills update <source-id>`. `--due` cannot be used with a source id, and takes no `--owner`, `--reviewer` or `--licence`: a community source names its reviewer in `update.reviewer`.
+- **The list.** The sources are read from `skill-sources.yaml` on `origin/<default branch>`, not from the working copy. A clone that is behind origin needs no `git pull`. A file that is not on origin, or that does not pass `scf skills sources check`, stops the run with one `PROBLEM` line per error.
+- **Community sources.** For a new commit of an enabled community source, the pull request names `update.reviewer` as the reviewer. The reviewer is asked on GitHub after the pull request is opened. The pull request says that the review has not been done yet; do not merge before it is. A licence that is not clear from `licence.allow` still needs a person: the source prints `PROBLEM … needs --licence` and nothing is opened.
+- **One source fails, the others go on.** Each source prints its lines prefixed with its id, for example `awesome-copilot: OPEN <url> for awesome-copilot@<commit>; no second pull request was opened`. An unchanged source produces no branch and no pull request, and a second run over the same revision produces no second pull request.
+- **Summary and exit code.** The last line counts the outcomes: `CHECKED <n> sources: <n> UNCHANGED, <n> OPEN, <n> UPDATED, <n> OK, <n> PROBLEM`, with `not due` and `manual` counts when some sources were skipped. The run exits 1 when any source printed `PROBLEM`, and also when it was interrupted (Ctrl-C).
+- **Record of checks.** After the check of each source ends, its time and outcome are written to `skill-update-checks.json` in the data folder (schema 1, written atomically). A missing or unreadable file means every source counts as never checked; the run prints one `NOTE` for it and goes on. The file is not in the repository and holds no secrets.
+
+Schedule it with cron, run from the clone of the catalogue repository (the folder that holds `skill-sources.yaml`). Give `scf` by its full path, and check the log:
+
+```
+# crontab -e: every day at 06:00
+0 6 * * * cd /Users/you/catalogue && /usr/local/bin/scf skills update --due >> /Users/you/Library/Logs/scf-skill-update.log 2>&1
+```
+
+On macOS, launchd runs it the same way. Save this as `~/Library/LaunchAgents/com.example.scf-skill-update.plist` and load it with `launchctl load`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.example.scf-skill-update</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>cd /Users/you/catalogue &amp;&amp; /usr/local/bin/scf skills update --due</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>6</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/you/Library/Logs/scf-skill-update.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/you/Library/Logs/scf-skill-update.log</string>
+</dict>
+</plist>
+```
+
+`gh` must be installed and signed in for the user that runs the job, the same as for a single source.
+
+##### Let the server run it
+
+The Foundry server can run the due checks itself, so no cron job or launchd job is needed. Name the catalogue clone and how often the server looks in `config.yaml`, or on the Skills card of Settings:
+
+```yaml
+skills:
+  update_check:
+    folder: /Users/you/catalogue   # absolute path of the clone; leave it out to turn the checks off
+    every: 1h                      # how often the server looks: 5m to 24h, default 1h
+```
+
+- **Off by default.** Without `folder` the server runs no check. Existing configurations need no change.
+- **The folder.** It must be an absolute path to a clone of the catalogue repository, the folder that holds `skill-sources.yaml`. It must not be inside a `.claude` or `.codex` folder (the personal agent folders). A folder that does not exist, is not a folder or is not in a git work tree is reported as a problem, and nothing is checked.
+- **`every`.** The server looks at the folder once a minute and starts a check when `every` has passed since the last one. It accepts `<n>m` or `<n>h` from `5m` to `24h`, for example `30m` or `6h`. Each source keeps its own cadence (see **Which sources** above): a source is checked only when it is due, as with `--due`. The first look comes about a minute after the server starts.
+- **Log.** Each line of the check goes to the server log with the prefix `skill-sources: `, for example `skill-sources: awesome-copilot: OPEN <url> …`. Secrets are removed from the lines.
+- **Problems.** A `PROBLEM` outcome becomes a finding of the detector `skill-source-check` on the [Problems page](#the-problems-page), named after its source (or **Skill source checks** for a problem of the whole catalogue). A later check that no longer reports it marks it as gone. Turning the checks off, or changing the folder, marks all of them as gone.
+- **Changes.** Changing or clearing the key takes effect at the next tick, without a restart. A check that is running when the folder is cleared or changed stops before its next git or gh step. A new folder is checked at the next free tick.
+- **Who may change it.** Only an administrator can save these fields, in Settings (the Skills card) or in `config.yaml`.
+- **Git and gh.** The server commits, pushes branches and opens pull requests in that clone with its own git and gh sign-in, the account that runs the server. It never merges or approves. Merging the pull request is still the approval. `gh` must be installed and signed in for that account.
+- **Do not also run cron on the same clone.** A cron job or launchd job and this setting would both check the same clone. Remove the cron or launchd job when you set `folder`.
 
 #### Score and gate an import
 
@@ -4088,8 +4225,32 @@ GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…:
 - **The suite.** Both commands read the suite file you name, or `skill-evaluation.yaml` in the current folder. The gate checks each record against the suite it reads, so a record made with another suite is `FAILED` (`suite-mismatch`). A missing or invalid suite is a `PROBLEM`. Run `score` again after you change the suite.
 - **Records.** Each run adds one record per skill under `<data folder>/skill-evaluations/<source>/<commit>/`. Earlier records are kept. Files are written atomically with mode `0600` in `0700` folders. The newest record is the one written last.
 - **Mode.** The gate picks the mode by itself: `new` (no approved skill with the same id or a shared capability), `upgrade` (compared with the approved skill of the same id or the canonical winner of a shared capability), or `duplicate` (another staged skill shares a capability). A skill can have more than one mode; it passes only when every comparison passes.
-- **Lines.** `PASSED <id>@<version> <mode>` for a skill that may be promoted. `FAILED <id>@<version> <mode>: <reason codes>` for one that may not. Reason codes name the cause, for example `record-invalid`, `digest-mismatch`, `suite-mismatch`, `safety-blocked`, `licence-not-allowed`, `below-threshold`, `baseline-missing` or `regression`; a dimension name follows the code where it applies. `PROBLEM` names the file or field that stops the command. `GATED` gives the counts.
+- **Lines.** `PASSED <id>@<version> <mode>` for a skill that may be promoted. `FAILED <id>@<version> <mode>: <reason codes>` for one that may not. Reason codes name the cause, for example `record-invalid`, `digest-mismatch`, `suite-mismatch`, `safety-blocked`, `licence-not-allowed`, `below-threshold`, `baseline-missing`, `regression` or an effect code (see **Effect** below); a dimension name follows the code where it applies. `PROBLEM` names the file or field that stops the command. `GATED` gives the counts.
 - **Missing or unreadable records.** A skill with no record, or a record that cannot be read, has the wrong mode or digest, or belongs to another skill, source or commit, is `FAILED`. It is never passed. Run `scf skills score <source-id>` to make the record.
+- **Effect.** `gate` also reads the newest effect record of each skill, for its id and its package digest (see [Measure the effect of a skill](#measure-the-effect-of-a-skill)). `scf skills promote check` applies the same rule. Each verdict is:
+  - `helps`: nothing is added.
+  - `harms`: always `FAILED` with `effect-harms`. A decision cannot override it.
+  - `no-measurable-effect`: `FAILED` with `effect-no-effect`, unless a decision with `accept: no-effect` exists for the digest.
+  - No record: `FAILED` with `effect-not-measured`, unless a decision with `accept: not-measured` exists for the digest.
+  - A record that cannot be read or is invalid: always `FAILED` with `effect-invalid`.
+
+  A decision is your recorded answer to a skill whose effect is not measurable or was never measured. Put it in `skill-evaluations.yaml`, in the top-level `effect_decisions` list (the file may omit the list):
+
+  ```yaml
+  schema: 1
+  evaluations: []
+  effect_decisions:
+    - skill: kafka-consumer
+      digest: sha256:<the package digest of the skill>
+      accept: not-measured   # or no-effect
+      owner: "@octocat"      # a GitHub user or team
+      reviewed: 2026-10-13   # a date, not in the future
+      note: Read the sample tasks; the skill has no measurable effect on them.   # required, 1 to 200 characters
+  ```
+
+  - **Rules.** Each entry needs all six fields. A duplicate (same skill, digest and `accept`), a bad value or an unknown key is a `PROBLEM` line. A decision applies to one digest only, so a changed package needs a new decision.
+  - **Output.** A decision that was used prints `DECISION <id>@<version> effect <accept> accepted by <owner> on <reviewed>` after the skill's `PASSED` or `FAILED` line. An invalid `skill-evaluations.yaml` prints `PROBLEM` lines and exits 1.
+  - **Codes.** The effect codes are added to the reason codes of a skill. They are not evaluation reason codes, and the evaluation records do not change.
 - **Exit codes.** `score` exits 1 when a `PROBLEM` is printed. `gate` exits 0 only when every skill passes and no `PROBLEM` is printed.
 - **Limits.** A record is at most 2 MiB and a folder holds at most 5,000 files. A source that is not enabled is a `PROBLEM` for `gate`.
 - **Not done.** The gate prints the verdict only. No run or promotion reads it yet.
@@ -4148,6 +4309,37 @@ PASSED kafka-consumer@1.2.0 new
 - **Deadlines.** The fixture step has 120 seconds, the work step has the scenario's `timeout_sec`, and the check has 300 seconds. A deadline that passes ends that run.
 - **Interruption.** On Ctrl-C or SIGTERM, or on an error, every running job is cancelled and waited for, the temporary folders are removed and your environment is restored. It prints `PROBLEM the evaluation was interrupted` and writes no record. Run it again to get a record.
 - **`evaluate` and `score`.** `scf skills evaluate … --agent` is refused with a message that points to `score --agent`. Plain `scf skills score` and `scf skills gate` are unchanged.
+
+##### Measure the effect of a skill
+
+`scf skills effect` answers one question: does a skill change what an agent does on the sample tasks? It runs the skill's `instructions` scenarios twice on the same model, once with the skill and once without it, and stores the verdict. It runs in the CLI process only, like `score --agent`, and it needs the same requirements: the macOS sandbox (`sandbox-exec`) and a Claude model key.
+
+```
+scf skills effect example-skills kafka-consumer
+scf skills effect kafka-x@1.0.0
+```
+
+The first form is for a staged skill of an import. The second is for an approved, pinned skill of the registry. A skill that is not staged, not approved, not active or not pinned is refused with a `PROBLEM` line, and nothing runs.
+
+- **What runs.** Only the scenarios where the skill is offered: the skill catalogue, built from the scenario's fixture and task, lists the skill with evidence. This is the same choice the agent would see in a normal session. A scenario where the skill is not offered prints `SKIPPED <key> <scenario>: not offered; not run`. Each offered scenario runs `repeat` times in each arm (the `instructions.repeat` of the suite). The without arm runs the same tasks with skills off.
+- **Verdict.** The pass rates of the two arms are compared with a two-sided Fisher exact test. The verdict is:
+  - `helps` when p ≤ 0.05 and the with-arm pass rate is at least 0.2 higher (`pass-rate-higher`);
+  - `harms` when p ≤ 0.05 and it is at least 0.2 lower (`pass-rate-lower`);
+  - `no-measurable-effect` otherwise (`not-significant`).
+
+  If no scenario is offered, nothing runs and the verdict is `no-measurable-effect` (`never-selected`). If scenarios are offered but the skill never loads in the with arm, both arms still run, and the verdict is `never-selected` as well.
+- **Tokens and time.** They are reported only. They do not change the verdict.
+- **Output.** One `RUN` line per run, one `SKIPPED` line per scenario that is not offered, then one `EFFECT` line. Illustrative output (the numbers are made up):
+
+  ```
+  EFFECT example-skills@1.2.0 helps (pass-rate-higher): with 18/20, without 10/20, difference +0.40, p 0.0138; tokens 412000 vs 355000; time 610 s vs 540 s
+  STORED skill-effects/kafka-consumer/3f9a…/effect--0000000001.json
+  ```
+
+  A refusal or an interrupt prints `PROBLEM …` (and `INTERRUPTED` on Ctrl-C, SIGTERM or an error), exits 1 and writes nothing.
+- **Where records go.** `<data folder>/skill-effects/<id>/<digest>/effect--<sequence>.json`. Each record holds the suite, the runs, the verdict and the runtime (Foundry and Node versions, agent and model). Records are only added, never replaced. The newest record of each skill and digest is read by [`scf skills gate`](#score-and-gate-an-import), [`scf skills promote check`](#check-a-promotion) and the `effect` column of `scf skills`. A `helps` verdict passes. `harms` always blocks promotion. `no-measurable-effect` and a missing record need an owner decision (`effect_decisions` in `skill-evaluations.yaml`), which is described under [Score and gate an import](#score-and-gate-an-import).
+- **Cost.** The number of agent sessions is offered scenarios × `repeat` × 2. The tokens are about that number times the tokens of one session. For the example suite in `evals/skill-effect/kafka/`, all 5 scenarios are offered, so 5 × 4 × 2 = 40 sessions.
+- **Example set.** `evals/skill-effect/kafka/suite.yaml` has five Kafka tasks (idempotent producer, commit after processing, key by order, dead letter, retry with backoff) on the `fixtures/orders` project. It has no network and no credentials. Its checks are offline behaviour tests with stubbed clients.
 
 #### Skill identity and content fingerprint
 
@@ -4483,6 +4675,92 @@ OK 1 releases for github.com/acme/scf-skills
 
 Reviewed entries print `reviewed by @octocat on 2026-10-13` in place of `NOT REVIEWED`. The last line says `OK <n> releases for <repository>` and the command exits 0. A problem prints one `PROBLEM <where>: <message>` line per error and exits 1. The message never repeats file content. A missing file prints `PROBLEM the release request file does not exist` and exits 1.
 
+`scf skills release publish <catalogue>@<version>` publishes one of these entries. Run it in the catalogue repository, in the folder that holds `skill-releases.yaml` and `skill-sources.yaml`. It writes the release to `skill-releases/<catalogue>/<version>` in that folder, and changes nothing else: not the config, the pins or `skills.lock.json`.
+
+```
+scf skills release publish scf-skills@0.1.0
+```
+
+Publishing refuses, prints `PROBLEM <c>@<v>: nothing was published` and exits 1, and writes nothing when any of these holds:
+
+- the file is missing or invalid, or the entry has no `review`;
+- the folder has no git commit, or `skill-releases.yaml` or `skill-sources.yaml` is not committed or differs from HEAD;
+- a listed source is unknown or not enabled, or has no staged import at its `ref.approved`;
+- a listed skill is not staged or not normalized, or it is not promotable under the same checks as `scf skills promote check`;
+- the newest evaluation record of a listed skill does not pass the same gate as `scf skills gate`;
+- a revoked skill names another version than the built skill;
+- the manifest or its credentials fail the release checks.
+
+Every listed skill is checked, and each failure prints its own `PROBLEM <source>/<id>: <reason>` line. The two files must be committed and equal to HEAD, because the release records HEAD as its commit. Commit your edits first, then publish.
+
+A revoked skill (an entry in `revoked`) skips the promotion and evaluation gates. It must still have a package that loads, an identified licence and a readable newest evaluation record, if there is one. Its verdict is what the record says (`passed`, `failed`), or `not-run` when there is no record. This lets you revoke a skill that is broken or that failed evaluation.
+
+A successful run prints one `SKILL` line for each skill, then:
+
+```
+SKILL example-skill@0.1.0 sha256:… from openhands-extensions evaluation passed
+PUBLISHED scf-skills@0.1.0 sha256:… 1 skills to skill-releases/scf-skills/0.1.0
+APPROVE scf-skills 0.1.0 sha256:…
+```
+
+The same inputs always give the same digest, so publishing again with the same content prints `UNCHANGED … already published` and the `APPROVE` line again. A version can never be published with other content. A new evaluation record or a changed skill gives a different digest, and the command prints `REFUSED <c>@<v>: already published with another digest` (exit 1). Nothing changes. A folder that exists at that version but is not a valid release prints `REFUSED … and the folder does not verify`. A write that fails prints `PROBLEM …; nothing was published` and leaves no release folder.
+
+To use the release, copy the `APPROVE` line into `skills.releases.approved` (catalogue, version and digest). The folder in `skill-releases/` is loaded from there; you do not add it to `skills.roots`. Until you approve it, its skills do not load, unless `skills.releases.allow_unreleased` is on. Its packages are selectable at once, with the digests it lists; no pin is needed (see "Approval is the pin" in "Trust"). `scf skills release list` shows which releases are approved and which runs lock them. To require signatures, sign the release with `scf skills release sign` (see "Signed approvals" in "Trust").
+
+Before you approve a newer release, see what it changes:
+
+```
+scf skills release diff scf-skills@0.1.0 scf-skills@0.2.0
+```
+
+It reads both releases from `skill-releases/` and prints one line per change, with no network and no writes:
+
+- `ADDED <id>@<version> <digest>` and `REMOVED <id>@<version> <digest>`: a skill that is only in the new or only in the old release.
+- `CHANGED <id> <old version> <old digest> -> <new version> <new digest>`: the same skill with another version or digest.
+- `DEPRECATED <id>@<version> <digest> revoked <day>: <reason>`: a skill revoked in the new release, also when it was already revoked before (`(already revoked)`).
+- `CANONICAL <capability> <old> -> <new>`: a capability that several skills provide and whose canonical winner changed. A side is `<id>@<version>`, `conflict:<code>` or `none`.
+
+The last line is `DIFF … : <n> changes`, or `no changes`. Both releases must belong to the same catalogue. A release that is missing or does not verify prints `PROBLEM …` and the command exits 1. The output is the same for the same input.
+
+**Propose the release to the deployment repository.** Your deployed config lists the releases it accepts in `skills.releases.approved`. `scf skills release propose` adds the new one to that list in a pull request, so the change is reviewed before it reaches the deployment. Name the repository and the config file in your local config first:
+
+```yaml
+skills:
+  releases:
+    deployment:
+      repository: owner/name   # or host/owner/name
+      file: config.yaml        # relative path to the YAML file that holds skills.releases.approved
+```
+
+Run it in a clone of that repository, where `origin` is the same repository:
+
+```
+scf skills release propose scf-skills@0.2.0
+```
+
+The command reads the release from `skill-releases/`. For a release you did not publish, give `--artifact <absolute folder>`: the folder is checked the same way as `scf skills release adopt`, and nothing is written to the store. Then it:
+
+- reads the file from `origin/<default branch>` and appends one entry (catalogue, version, digest) to the end of `skills.releases.approved`. Every other byte stays, and the older entries stay, so locked runs keep resolving;
+- checks the edit: only the new entry is added, the file is valid YAML and the whole config passes the config schema;
+- pushes the branch `skill-catalogue/<catalogue>-<version>` and opens a pull request. Its body is the change report against the newest approved version of that catalogue: added, removed, changed, deprecated and canonical selection. That older release must be in `skill-releases/`, or named by `artifact` on its entry in your local config; otherwise the command stops before it pushes.
+
+If `skills.releases.keys` is set, give `--key <key-id> --signature <base64>` with the values from `scf skills release sign`. The signature is checked against the digest before anything is pushed.
+
+Output: a `CHANGES` line, then one of these:
+
+- `OK opened <url> …`: the pull request is open;
+- `OPEN <url> …`: a pull request for that branch is already open, so no second one is opened;
+- `UNCHANGED … is already in <file>`: nothing to propose;
+- `PROBLEM …` (exit 1): nothing was proposed. If the command had pushed the branch, it deletes it again, as long as the branch still holds its commit.
+
+The release must be newer than the newest approved version of that catalogue. The command never changes your local config, the data folder or the release store. Merging the pull request changes only the deployment file; this installation uses the release once its own config names it. It is not run on a schedule: run it by hand. A file the command cannot edit byte for byte (for example one with a layout it does not know) gives `PROBLEM`, and you add the entry by hand.
+
+Known limits:
+
+- The release digest is the digest of the Foundry-format package of each skill, not the import digest that records the name.
+- With `core.autocrlf` set, git can show a committed file as changed, and publishing then refuses it. Turn the setting off for the catalogue repository, or commit the files with the line endings they have on disk.
+- A crash during the write can leave a `skill-releases/.tmp-*` folder. It is not a release and is never loaded. Delete it, then publish again.
+
 ### Skill catalogue
 
 The catalogue is the short list of skills a planner may choose from. It holds only the most likely skills, not the whole library. For each skill it shows the id, version, a short description, the capabilities and up to two lines of evidence (for example "typescript: high confidence, 12 findings"). A skill with a `provider` block has its `needs provider: …` line first (see below). It never contains the SKILL.md text. The planner steps (`plan` and `revise_plan`) of `issue-gitflow` and `issue-plan` get it before their prompt, as a block marked as data. It lists only skills that are approved or built in, **pinned**, and that the resolver would select for a coder; skills that are not pinned are left out. The run log has one line per planner step, for example `skill catalogue: 2 of 3 skills, 1 left out, about 180 tokens; 1 hidden (not pinned)`; the number hidden counts skills that would be offered if they were pinned. The step record has `skillCatalogue` with counts only, never the text. A failure to build the catalogue never stops planning: the log says `skill catalogue: none (…)` and the planner runs without it.
@@ -4532,6 +4810,7 @@ skills:
     max_tokens: 15000      # total for the set (100–100000, default 15000)
     include: []            # skill ids that are always selected (mandatory)
     exclude: []            # skill ids that are never selected; catalogue.exclude applies too
+    exclusive: []          # capabilities with one winner per run (at most 200, see "Exclusive capabilities")
 ```
 
 - **Exact versions:** each id resolves to its active version, which must pass the pin check (see [Pinned versions and integrity](#pinned-versions-and-integrity)). Repository skills are never selected.
@@ -4546,9 +4825,45 @@ skills:
 When a run has a plan that is ready to code, the first agent step resolves the plan's skill request and saves the result as `skill-lock.json` in the run folder. It names each skill by `id@version` and digest, with its source kind (`admin` or `builtin`), reason and evidence, and holds the plan hash and the repository commit. It holds no credentials, no paths and no issue text. `run.json` keeps a short copy (`skillLock`).
 
 - **Resume:** a resumed run uses the locked versions, not the newest ones. The lock is made once per plan; if the run plans again, a new lock is made.
-- **Checked before every agent session:** each locked skill must still exist at that version, be approved and pinned, and have the same digest. If not, the step stops before the agent starts, with a reason that begins `skill integrity:`. A missing, changed or invalid `skill-lock.json` stops it the same way. To go on, restore the exact package and pin, or plan again, then resume.
+- **Newer releases do not break it.** When a newer catalogue version is published and approved, the older approved release stays in `skill-releases/` and in `skills.releases.approved`. A run locked to its packages still resumes: the old packages are found by exact `id@version` and digest, and they are not chosen for new plans, where the newest approved packages are active. Removing the old release from `skills.releases.approved` makes the lock fail with `skill integrity: … is missing`.
+- **Checked before every agent session:** each locked skill must still exist at that version, be approved and pinned, and have the same digest. If not, the step stops before the agent starts, with a reason that begins `skill integrity:`. A missing, changed or invalid `skill-lock.json` stops it the same way. To go on, restore the exact package and pin, or plan again, then resume. `scf skills release list` shows which runs lock a stored release, so you can see who depends on it before you change `skills.releases.approved`.
+- **Lifecycle.** A locked skill whose version is `deprecated` or `retired` goes on, with a `skill lifecycle:` note in the run log. A `quarantined` version stops the run unless an administrator allowed this run (`scf skills allow-run`). A `revoked` version always stops it. See "Skill lifecycle" in "Trust".
 - **A mandatory skill that cannot be used** stops the step with `skill selection is blocked:`; pin it or change `skills.selection.include`.
 - **Older runs** without a lock stay readable and nothing is checked for them. The agent cannot write the lock file.
+
+### Exclusive capabilities
+
+Some capabilities should have one provider in a run, for example one database access skill. List them in `skills.selection.exclusive`:
+
+```yaml
+skills:
+  selection:
+    exclusive: [cosmos-db-access]   # at most 200 slugs, no duplicates; default []
+```
+
+- **What a run does.** For each listed capability, a run offers, locks and loads only the canonical provider: the skill that the canonical rules pick (the same rules as [Canonical skill per capability](#canonical-skill-per-capability)). A requested skill that loses is left out, and the lock log says `skill lock: <id> left out: not-canonical`. Two providers of an exclusive capability are never in one lock.
+- **What stops a step.** A tie that the rules cannot settle, a mandatory skill (`skills.selection.include`) or a dependency that is not the canonical provider, and an owner choice that is invalid or expired all stop the step before the agent starts. The text starts with `skills not resolved:` (the catalogue) or `skill selection is blocked:` (the lock). Pin the skill, or change the choice or the list, then run again. A tie on a high-risk capability (`skills.unresolved.high_risk`) always stops.
+- **Owner overrides** are in `skill-overrides.yaml` in the data folder. They apply to all repositories, or to a list of them. An override can be given an expiry date; after it, the override is no longer used and the step stops.
+- **Project pins** are in `.claude-factory/skill-pins.yaml` on the default branch of the repository, never on a work branch. A pin settles a tie for its capability. Check the pins with `scf skills project-pins check`, and the overrides with `scf skills overrides check`.
+- **Empty list.** With `exclusive: []` no check runs and the run behaves as it did before.
+- **Record.** The decision is saved in `run.json` as `summary.skillSelection`: for each capability, the outcome, the winner (`id@version`), who decided it, up to 5 rejected skills with their codes and levels, and a count of the rest. It holds ids, versions and codes only, no text.
+
+### Complementary providers
+
+Two skills of one exclusive capability can work together, for example a database skill and a skill for its migrations. A skill says so with `composable` in `skill.yaml`: a list of its exclusive capabilities, each one also in `capabilities` (at most 32 slugs, no duplicates, default `[]`).
+
+```yaml
+id: postgres-migrations
+version: 1.0.0
+capabilities: [postgresql, postgresql-migrations]
+composable: [postgresql]
+```
+
+- **When both load.** A provider ranked after the winner of an exclusive capability loads with it only when both list that capability in `composable`. A provider without `composable` is never loaded with the winner. A provider that loses another exclusive capability it also provides stays out, and so does one whose capability is not composable for both. The canonical selection marks it `overlap`.
+- **Order.** The winner loads first, then the companions in rank order. Each loaded section has its own `foundry-skill id/version/digest` attribution.
+- **Budget.** Companions are offered and requested like any other skill, but they come after every other requested skill. A companion that does not fit is left out with `over-budget` (the resolver) or `omitted` (the payload). It never displaces the winner.
+- **Record.** The run record lists `companions` (`id@version`) for each capability, next to the winner.
+- **Older versions.** Foundry versions before this change refuse a `skill.yaml` with `composable`, because the manifest is strict. Upgrade them before you publish such a skill. Built-in skills do not use `composable`, and their digests and pins do not change.
 
 ### Skill modes in a flow
 
@@ -4668,8 +4983,9 @@ Integrity words: *Verified* (the package matches the lock), *Changed*, *Missing*
 - **Up to a minute old.** Integrity and category come from the skill list the server keeps for one minute.
 - **Evidence.** A path is shown as text. An issue is a link when the repository is `owner/name`.
 - **Status line.** The card says when the lock is missing or was changed, when the run planned again (new skills are locked at the next agent step), when the run stopped because a skill cannot be used, and the context estimate.
-- **Admins** also see the source (built-in or administrator folder) and the digest. Users never see digests, sources, commits or folder paths.
-- **Older runs** without skill information show no card.
+- **Why these skills.** A short list at the end of the card says why each skill was chosen. It has one line per capability the run involves: the winner and the reason it won (for example `trust tier`), the companions that load with it (`composable`), and up to 5 rejected skills with their reason (for example `not ... (outranked: evaluation)`). Each group of identical copies names the copy that was kept and the copies that were not offered. Project pins and owner overrides that the run applied are listed with their target. The list is capped at 20 capabilities and 20 groups of copies, and it says how many more there are. It only names skills the run involves, so the full catalogue is never shown. The list is hidden when there is nothing to explain.
+- **Admins** also see the source (built-in or administrator folder), the digest, who set a pin or override, and the commit of the project pins. Users never see digests, sources, authors (`by`), commits or folder paths.
+- **Older runs** without skill information show no card. Older runs without the "Why these skills" data show the card without that list.
 
 The same data is the `skillView` field of `GET /api/runs/:id` and of the `update` events of the run stream. The run list does not carry it.
 
@@ -4984,10 +5300,12 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
-| `scf skills [--repo dir]` | List skill packages with trust, pin state and digest, plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
+| `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
 | `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
+| `scf skills lifecycle [<id@version> [<state> --reason <text> [--replacement <id@version>]]] [--runs-dir <dir>]` | List the skills that are not active, print the history of one, or set `deprecated`, `quarantined`, `retired`, `revoked` or `active` (see [Skill lifecycle](#skill-lifecycle)); a state change also lists the runs that lock the version |
+| `scf skills allow-run <run-id> <id@version> --reason <text> [--runs-dir <dir>]` | Let one run go on with a quarantined version; then resume the run |
 | `scf skills overrides check [<file>]` | Check the owner overrides (`skill-overrides.yaml`); prints each entry with its digest; exits 1 on a problem or an expired entry |
 | `scf skills connectors` | List the reviewed skill source connectors (id, repository, roots, trust, licences); offline; reads no files |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |
@@ -4997,12 +5315,14 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills evaluate <source-id> [<technology>@<version> ... \| --repo <dir>]` | Report compatibility, tools, access, licence and overlap of an enabled source; `--repo` reads the versions from the `package.json` files of a folder (sources with a reviewed profile only); writes nothing; exits 1 on a refusal, a block, a conflict, a missing selected folder or a `PROBLEM` ([Evaluate a source](#evaluate-a-source)) |
 | `scf skills scan <source-id> [<exceptions-file>]` | Print the security report of a staged import (`FINDING`, `BLOCKED`, `OK` lines) and, for a known source, the connector report (`CONNECTOR` lines); offline and read-only; exits 1 when a skill is blocked or a `PROBLEM` is printed ([Scan an import](#scan-an-import)) |
 | `scf skills profiles evaluate <source-id>` | Print `PASS` or `BLOCKED` per staged skill of a profiled source, with the gate reasons, `NEEDS` and `MISSING` lines, and the `CANONICAL`, `CONFLICT`, `NONE` and `REJECTED` lines per exclusive capability; offline and read-only; exits 1 when a skill is blocked, a `PROBLEM` is printed or a `CONFLICT` is found ([Evaluate the profile gates](#evaluate-the-profile-gates), [Canonical skill per capability](#canonical-skill-per-capability)) |
-| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance, findings and evaluations allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `EVALUATION`, `CHECKED` lines); reads `skill-evaluations.yaml` and `skill-selections.yaml`; offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion), [Confluent skills](#confluent-skills)) |
+| `scf skills promote check <source-id> [<exceptions-file>]` | Print per skill path whether licence, provenance, findings, evaluations and effect allow promotion (`PROMOTABLE`, `REFUSED`, `LICENCES`, `ASSUMES`, `EVALUATION`, `EFFECT`, `CHECKED` lines); reads `skill-evaluations.yaml` (evaluations and effect decisions), `skill-selections.yaml` and the effect records; offline and read-only; exits 1 when a path is refused or a `PROBLEM` is printed ([Check a promotion](#check-a-promotion), [Confluent skills](#confluent-skills)) |
 | `scf skills overlap <source-id>` | Compare a staged import with the registered skills: `CANONICAL`, `REJECTED`, `CONFLICT`, `NONE`, `NEW`, `VERSIONS`, `PROBLEM` and `OVERLAP` lines; reads `skill-selections.yaml`; offline and read-only; exits 1 for a conflict or a `PROBLEM` ([Overlap with the catalogue](#overlap-with-the-catalogue)) |
-| `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it (`UNCHANGED`, `OPEN` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
+| `scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]` | Stage the upstream commit of a source and open a pull request that proposes it, or refresh the open one (`UNCHANGED`, `OPEN`, `UPDATED` or `OK` line); approves nothing ([Update a source](#update-a-source)) |
+| `scf skills update --due [--all]` | Check every enabled source whose update cadence is due (`--all`: every enabled source), one line per outcome per source and a `CHECKED` summary; exits 1 on any `PROBLEM` ([Check every due source](#check-every-due-source)) |
 | `scf skills review <source-id> [--markdown]` | Print the licence, attribution, scan and collision report of a staged import, grouped by category (`REVIEW`, `SKILL`, `COLLISION`, `REVIEWED` lines); offline and read-only; `--markdown` for a pull-request body; exits 1 when a skill is blocked, a licence is not `allowed`, a blocking collision exists or a `PROBLEM` is printed ([Review an import](#review-an-import)) |
 | `scf skills score <source-id> [<suite-file>] [--agent]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline, except `--agent`, which also runs the instructions scenarios in the macOS sandbox ([Run the scenarios in the sandbox](#run-the-scenarios-in-the-sandbox)); exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
-| `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes) or `PROBLEM` per staged skill from its newest record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
+| `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes, including the effect codes), `DECISION` or `PROBLEM` per staged skill from its newest evaluation record and its newest effect record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
+| `scf skills effect <source-id> <skill-id> [<suite-file>]` or `scf skills effect <id@version> [<suite-file>]` | Run the skill's sample tasks with and without the skill in the macOS sandbox and store the verdict (`helps`, `no-measurable-effect` or `harms`) under `skill-effects/`; prints `RUN`, `SKIPPED`, `EFFECT`, `STORED` lines; exits 1 on a `PROBLEM` or an interrupt ([Measure the effect of a skill](#measure-the-effect-of-a-skill)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
@@ -5796,6 +6116,8 @@ GitHub. Today Ask SCF has no action at all on its list, so it cannot change anyt
 
 When an administrator has switched Ask SCF on, the top bar of every page has an **Ask SCF** button, in
 the admin display and in the user display. While Ask SCF is off (the default), the button is not there.
+While an administrator has paused it, the button stays: you can read, export and delete your conversations,
+but **Send** and **Try again** are off and a line says that Ask SCF is paused.
 
 - **Open it** with the button. A panel opens at the right side, over the page. The page behind it is not
   drawn again: what you typed there, and what was open, stays as it is.
@@ -5862,6 +6184,33 @@ The panel works with the keyboard alone: Tab stays inside it while it is open. O
 takes the whole width. It opens without any movement. A preview of another person's display
 ("View as user") has no Ask SCF button.
 
+### What Ask SCF knows, and how to check an answer
+
+Ask SCF answers from three things, and nothing else:
+
+- **The documentation of this Foundry**: the sections of this guide that fit your question (at most four). An administrator's question may also use the flow guide.
+- **The current state your account can see**: the run, repository, refinement session, queue or server state that your question names or that the page you are on shows. An administrator also sees board issues, monitor findings and the server's health. Each piece says when it was read; a record that is known to be old says so.
+- **What you sent**: your question, the address of the page you were on, and the one thing you selected there, if you sent it.
+
+It does not read logs, transcripts or the output of a step, and it cannot see the work, the repositories or the conversations of another account. A secret that it finds in a text is taken out before anything is kept or sent. It has no tools: it cannot run a command, change anything or look at the internet.
+
+**To check an answer:**
+
+1. Read the line **How sure it is** first (see "Reading an answer"). A "?" or "–" line means there is no source of the kind the question needs: treat the answer as a guess.
+2. Open the **Sources and assumptions** and look at the places named there. A run or a repository page shows its own current state, which is the most recent thing to trust.
+3. Do not act on a "!" line (two sources disagree) until you have looked yourself.
+
+### Rate an answer
+
+Under each finished answer, the drawer asks **Was this answer helpful?** with two buttons, **Helpful** and **Not helpful**. The pressed one is marked. Press it again to take the vote back.
+
+- **Not helpful** opens a short list, **What was wrong?** (optional): it was wrong; it was out of date; it did not answer my question; it was unclear; it named no source I could check; it was unsafe or should not have been said. Tick what fits and press **Save reasons**. There is no box for free text: the reasons are the only words kept.
+- **This solved my problem** is offered under the last answer of an open conversation. It closes the conversation, so you can still read it but cannot ask more in it. Use it only when the answer really solved your problem; closing a conversation in any other way is not counted.
+
+Your rating stays with that answer in your conversation, and you can change it. It is deleted with the conversation. It is not sent to any AI service, and rating an answer does not give consent to use your conversations for training. Only counts go to the quality numbers that administrators see (see "Who may ask, what is kept, and what is logged"). Rating still works while Ask SCF is paused.
+
+**To report a bad answer:** rate it **Not helpful** and tick the reason. For a wrong answer about the product, also tell an administrator of this Foundry, with the question, so the documentation or the setting can be fixed. The quality numbers show how many answers were rated, but not which one.
+
 ### What you can ask
 
 | You ask | What it is |
@@ -5879,7 +6228,7 @@ Ask SCF does three kinds of work only by sending you to the place that already d
 
 ### What a reply can hold
 
-A reply has up to five kinds of parts. They look different, so you always know what is only text
+A reply has up to six kinds of parts. They look different, so you always know what is only text
 and what would change something.
 
 | Part | What it is | Changes something |
@@ -5887,8 +6236,30 @@ and what would change something.
 | Answer | What is true, as far as Ask SCF can see. Nothing happens. | no |
 | Recommendation | What you could do. You decide and you do it; nothing happens by itself. | no |
 | Navigation | A link to a page of the Foundry that you may open. Opening it is your click. | no |
+| Plan | Ordered steps to solve a problem. Nothing happens until you do a step yourself. | no |
 | Draft | A text for you to copy or change. It is not sent, saved or posted anywhere. | no |
 | Action | A change to the Foundry or to GitHub. Never done without your explicit approval. | yes, after your approval |
+
+A plan is a short list of steps, safest first. Each step says what kind it is: an explanation, a page
+to open, a read-only check, something only you can decide, a reversible change or a high-impact change.
+Every change step says what you should see, what a failure looks like and what to do then. A high-impact
+step always shows a danger label and is never folded away. Ask SCF does not run a step:
+you do it yourself, or follow the plan by hand. "I did this" only ticks the step in this browser tab
+(it is kept for the tab's session, not on the server); Ask SCF has not checked the result.
+
+An offer is a navigation part shown as a card with an **Open** button. It opens one of these pages:
+
+- a run, if you may open it (both roles);
+- a repository, if you may open it (both roles);
+- your item under **Your turn** on Home (administrators only). It opens Home only while the run or
+  issue is still on Home, in a group or under "Done — continuing". An item you dismissed counts as gone.
+
+The address comes from the Foundry, never from the text of the answer. When you press **Open**, the
+server checks again that you may open the page as it is now. Then the drawer closes and the page opens.
+If the thing is gone or you can no longer see it, the card says "This is not there any more, or you
+can no longer see it." If your permissions no longer allow it, it says "You are not allowed to open
+this now." Opening a page stores nothing and changes nothing, so an offer also works in a finished or
+archived conversation, but not in a deleted one.
 
 An action runs only when all of this holds:
 
@@ -6154,6 +6525,7 @@ you never read the text of the AI service.
 | When | What you read |
 |---|---|
 | Ask SCF is switched off | Ask SCF is switched off on this Foundry. An administrator can switch it on. |
+| An administrator paused Ask SCF | Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations. |
 | You already have a question being answered | Ask SCF is still answering another question of yours. Wait for it, or stop it first. |
 | Too many questions wait | Ask SCF is busy with the questions of other people. Try again in a moment. |
 | You used your questions of today | You have used all your questions to Ask SCF for today. Try again tomorrow, or ask an administrator. |
@@ -6200,6 +6572,10 @@ not stored.
 ```yaml
 help:
   enabled: true
+  paused: false                 # true: the emergency stop, see "Pause" below
+  actions: false                # Ask SCF may propose a resume or cancel of a person's own run (below); default false
+  audience: everyone            # or admins, or pilot: administrators and pilot_accounts
+  pilot_accounts: []            # account ids that may ask in the pilot stage, besides the administrators
   model: haiku                  # a model spec; without it, default_model
   timeout_seconds: 60           # a turn that takes longer is stopped
   max_parallel: 1               # turns answered at the same time, over all accounts
@@ -6215,9 +6591,31 @@ help:
 pattern that is not a regular expression, or that matches the empty text, is refused when the
 settings are read.
 
+**Pause (the emergency stop).** Set **Pause Ask SCF** on the Ask SCF card (`help.paused: true`) to stop
+new work at once, without switching Ask SCF off. Nobody can ask a question, try again or check a page
+context: each gets 503 with the sentence "Ask SCF is paused by an administrator for now." A question
+that already waits in the queue fails as "not set up" without a call to the model, and an answer that
+is being written is finished. Reading, exporting, deleting, archiving, restoring and closing
+conversations, and rating answers, keep working, and the button stays in the top bar. Use it when an
+answer is wrong in a way that matters, or when a provider or a setting needs to be fixed. `enabled: false`
+is different: it is "never set up" and shows no button. Pausing counts as a refusal, `paused`, in the
+quality numbers.
+
+**Who may ask: pilot stage.** `audience: pilot` lets the administrators and the accounts listed in
+`pilot_accounts` ask; everyone else gets the same 403 as for `admins`. The list is in `config.yaml`
+only (up to 1,000 account ids). `disabled_accounts` still wins over both.
+
 The two money limits are not applied with `cost_limits: false` or for a model without a price
 (a local model, a subscription login). Help turns are not runs: their cost is counted here, not
 in the daily budget of runs.
+
+**Proposed actions (`help.actions`).** Off by default. On, Ask SCF may propose to **resume** or **cancel** a run, but only one of
+your own runs, for administrators and users alike: an administrator gets no exception for another
+account's run. The proposal shows a fixed text of what would happen, written by the server, and it is
+kept only when the run is current and the evidence agrees (a run that is out of date, or that the
+Foundry's own pages disagree about, is not offered). **Nothing is carried out yet:** a proposal
+changes nothing, and Ask SCF cannot confirm a result. An older build refuses this key in
+`config.yaml`, so take it out before you go back.
 
 **What a turn can reach.** A turn is one call of Claude Code with no tools at all, no MCP servers,
 no permissions, none of your personal setup and no GitHub token, in an empty temporary folder that
@@ -6228,8 +6626,9 @@ model can answer; with a Codex model every turn ends with "Ask SCF is not set up
 A model on a local provider that Claude Code can reach (for example `ollama:<model>`) works.
 
 **Provider and usage.** `GET /api/help/usage` (`scf ask usage`) shows whether Ask SCF is on, which
-provider and model answer (or why none can), the limits, how many turns run and wait, and per
-account and day the turns, failures, cost and tokens. It holds no question and no answer. Users
+provider and model answer (or why none can), the rollout stage, the limits, how many turns run and wait, per
+account and day the turns, failures, cost and tokens, and the quality numbers (see "Ratings and quality
+numbers" below). It holds no question and no answer. Users
 get 403 for it, and their own conversations never show a model, a provider, a cost or a token
 count; the name of the configured model and provider is also taken out of the text of their
 replies. Usage is kept for 90 days. An administrator still cannot read another account's
@@ -6238,14 +6637,51 @@ conversations. The server log gets one line in fixed words for a failed turn, fo
 says which kinds, for example `help: secrets were taken out of a question (token)`, and never the
 value.
 
+### Rolling out Ask SCF
+
+Turn Ask SCF on in steps. Go to the next step only when the checks of the step before are done and their
+evidence is kept with your change record. `scf ask usage` shows the stage you are in (`stage`: off, paused,
+admins, pilot or everyone).
+
+| Stage | Settings | Who may ask |
+|---|---|---|
+| 1. Administrators | `enabled: true`, `audience: admins` | administrators |
+| 2. Pilot | `audience: pilot`, `pilot_accounts: [account ids]` | administrators and the pilot accounts |
+| 3. Everyone | `audience` not set, or `everyone` | every account, except those in `disabled_accounts` |
+
+Before you move to the next stage, have evidence for each of these:
+
+1. **Evaluation.** `scf eval help` passes its fixed scenarios with no release blocked (see "Checking Ask
+   SCF before you switch it on"). Keep its report. Then read the quality numbers of the last 7 days with
+   `scf ask usage`: the answers that were rated, the share of helpful ones, and the failures and refusals.
+   Stop and look at the answers when most ratings are "not helpful" or the failures grow.
+2. **Permission.** From an account that is not allowed, a question gets 403 and nothing is stored. Check
+   one account of the stage and one that is not in it. `scf api routes help` shows who may call each route.
+3. **Accessibility.** Use the drawer with the keyboard alone (open it, ask, rate, close with Escape), and
+   once with a screen reader. Account → Accessibility states what is checked and the known limits.
+4. **Recovery.** Pause Ask SCF (`paused: true`). Check that a question gets the paused sentence and that
+   your conversations can still be read, exported and deleted. Take the pause off and check that a new
+   question works without a reload. Restart the server during an answer and check that the answer is
+   marked as interrupted, and that the conversations are still there.
+
+**If something goes wrong,** pause Ask SCF first, then find the cause. A 503 with any other sentence
+(switched off, or the secret check failed) is not a pause; only the paused sentence pauses the drawer.
+Switching it off with `enabled: false` also stops new questions, but it hides the button, so users cannot
+read their history until you switch it on again.
+
+**Going back to an older build.** An older build refuses `help.json` once a rating is stored, and it
+refuses the `help` keys `paused` and `pilot_accounts` and `audience: pilot`. Before you go back, export the
+conversations you want to keep, delete the rated ones, and take those keys out of `config.yaml`.
+
 ### Who may ask, what is kept, and what is logged
 
 **Who may ask.** When Ask SCF is on, these settings of `help` decide (on the Ask SCF card, except
-`disabled_accounts`, which is only in `config.yaml`), and the account is read again at every question:
+`disabled_accounts` and `pilot_accounts`, which are only in `config.yaml`), and the account is read again at every question:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `audience` | not set: everyone | `admins`: only administrators may ask |
+| `audience` | not set: everyone | `admins`: only administrators may ask; `pilot`: administrators and `pilot_accounts` |
+| `pilot_accounts` | none | account ids that may ask in the pilot stage, besides the administrators |
 | `disabled_accounts` | none | account ids that may not ask, whatever their role |
 | `turns_per_user_per_day` | 30 | questions one account may start per day |
 | `keep_days` | 90 | days an untouched conversation is kept |
@@ -6262,6 +6698,18 @@ characters: these two are fixed.
 their messages as one JSON document, also the archived ones, not the deleted ones. It is your
 own only, for an administrator too. Secrets were taken out before anything was stored, so the
 export holds none.
+
+**Ratings and quality numbers.** A rating (helpful or not, and the reasons) is kept with its answer in
+your conversation, and goes with the conversation when it is deleted. Nothing is sent to an AI service
+with it, and it gives no consent to use conversations for training. The quality numbers are a separate
+file, `help-stats.json` in the data folder: one row per day (UTC) with counts only. They count turns,
+retries, answers, sources offered and cited, limited answers, stopped and abandoned turns, conversations
+closed as solved, ratings and their reasons, failures and refusals by code, and how long answers took, in
+six buckets (under 5, 15, 30, 60 and 120 seconds, and longer). A row holds no account, conversation,
+question or answer, and a strict schema refuses any other field. Rows are kept 90 days. The file stays on
+this install and is never sent out. A failure to write it is logged in fixed words and never stops an
+answer or a request. Deleting an account removes its conversations and ratings; the counts stay, because
+they name no account.
 
 **Deletion and retention.** You delete a conversation yourself (its texts are gone at once). A
 conversation that is not changed for `keep_days` days is deleted the same way; a lower number

@@ -5,7 +5,9 @@ import { claudeProviderEnv, isAuthError, isQuotaError, specOf, toTarget, type Ta
 import type { Config } from "../config.js";
 import { tokenVarNames } from "../engine/isolation.js";
 import { runClaude, type ClaudeRunOptions, type ClaudeRunResult } from "../steps/claude.js";
-import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, checkReply, hideNames, type Evidence, type HelpRole, type Reply } from "./contract.js";
+import { OFFERS, SUBJECT_KINDS, type Subject } from "./actions.js";
+import { STEP_KINDS } from "./plan.js";
+import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, aboutOf, checkReply, hideNames, type About, type Evidence, type HelpRole, type Reply } from "./contract.js";
 import { SELECTION_MAX, resolveContext, type EntityResolver, type ResolvedContext } from "./context.js";
 import { GuardError, Removals, guardExcerpt, type GuardOptions, type SecretCategory } from "./guard.js";
 import {
@@ -21,6 +23,7 @@ import {
   checkContext,
   checkQuestion,
   HelpError,
+  REFUSAL_CODES,
   QUESTION_MAX,
   addUsage,
   cancelTurn,
@@ -30,6 +33,7 @@ import {
   spentToday,
   usageToday,
 } from "./store.js";
+import { addStats, type StatsDelta } from "./telemetry.js";
 
 /**
  * The help-turn service of Ask SCF: one question in, one checked reply out. It is its own small runner, apart from
@@ -38,7 +42,13 @@ import {
  * contract decides what of it is kept. Turns wait in a queue, one per account at a time.
  */
 
-export type RefusalCode = "off" | "not-allowed" | "busy" | "queue-full" | "limit" | "unsafe";
+export type RefusalCode = (typeof REFUSAL_CODES)[number];
+
+/**
+ * Whether the emergency stop is on (`help.paused`). Everything that would start a turn or, later, run an action
+ * must check it: nothing new starts, and reading, exporting and deleting stay open.
+ */
+export const helpPaused = (config: Config): boolean => config.help.paused === true;
 
 /** A turn that is not started. Nothing is stored for it. The message is safe to show. */
 export class TurnRefused extends Error {
@@ -53,6 +63,7 @@ export class TurnRefused extends Error {
 
 export const REFUSAL_WORDS: Record<RefusalCode, string> = {
   off: "Ask SCF is switched off on this Foundry. An administrator can switch it on.",
+  paused: "Ask SCF is paused by an administrator for now. You can still read, export and delete your conversations.",
   "not-allowed": "Ask SCF is not switched on for your account. Ask an administrator of this Foundry.",
   busy: "Ask SCF is still answering another question of yours. Wait for it, or stop it first.",
   "queue-full": "Ask SCF is busy with the questions of other people. Try again in a moment.",
@@ -82,6 +93,10 @@ export type Source = Evidence & {
   excerpt?: string;
   /** The server knows this source is old, or that it disagrees with another one: a reply that rests on it is never "confirmed". */
   uncertain?: boolean;
+  /** Set by the server only: the run this source is about. An action can be bound to it. Never offered to the model. */
+  about?: About;
+  /** What the source is about. It never goes to the model: `prepareTurn` keeps it in `Prepared.subjects`. */
+  subject?: Subject;
 };
 
 export interface Excerpt {
@@ -100,6 +115,10 @@ export interface Prepared {
   withheld: number;
   /** The ids of the offered sources the server marked as uncertain (old, or in disagreement). */
   uncertain: string[];
+  /** What each offered source is about, by source id: only sources that were actually offered. */
+  targets: Record<string, About>;
+  /** The subject of each offered state source, by evidence id, only when its id passes the guard unchanged; never sent to the model. */
+  subjects: Record<string, Subject>;
   removed: SecretCategory[];
   /** What the server established about the page: the only form in which the page context reaches the model. */
   context?: ResolvedContext;
@@ -130,6 +149,8 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
   const excerpts: Excerpt[] = [];
   let withheld = 0;
   const uncertain: string[] = [];
+  const targets: Record<string, About> = {};
+  const subjects: Record<string, Subject> = {};
   let room = EXCERPTS_MAX;
   let context: TurnInput["context"];
   let told: ResolvedContext | undefined;
@@ -167,7 +188,7 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     }
   }
   for (const s of sources.slice(0, LIST_MAX.evidence)) {
-    const { excerpt, uncertain: doubt, ...evidence } = s;
+    const { excerpt, uncertain: doubt, about, subject, ...evidence } = s;
     const title = guardExcerpt(evidence.title, guard);
     const ref = guardExcerpt(evidence.ref, guard);
     const body = excerpt ? guardExcerpt(excerpt.length > EXCERPT_MAX ? `${excerpt.slice(0, EXCERPT_MAX)} …` : excerpt, guard) : undefined;
@@ -178,6 +199,14 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     }
     offered.push({ ...evidence, title: title.text.slice(0, TEXT_MAX.item), ref: ref.text.slice(0, TEXT_MAX.ref) });
     if (doubt === true) uncertain.push(evidence.id);
+    const bound = aboutOf(about);
+    if (bound) targets[evidence.id] = bound;
+    if (subject && evidence.kind === "state" && (SUBJECT_KINDS as readonly string[]).includes(subject.kind)) {
+      // an id the guard would change is never kept: no offer can point at it
+      const g = guardExcerpt(subject.id, guard);
+      for (const c of g.removed) seen.note(c);
+      if (!g.withheld && g.removed.length === 0 && g.text === subject.id) subjects[evidence.id] = { kind: subject.kind, id: subject.id };
+    }
     if (body?.text && room > 0) {
       const cut = body.text.slice(0, room);
       excerpts.push({ id: evidence.id, text: cut });
@@ -185,7 +214,7 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     }
   }
   const { context: _raw, ...rest } = input;
-  return { input: { ...rest, question: seen.clean(input.question), ...(context ? { context } : {}), history }, offered, excerpts, withheld, uncertain, removed: seen.removed, ...(told ? { context: told } : {}) };
+  return { input: { ...rest, question: seen.clean(input.question), ...(context ? { context } : {}), history }, offered, excerpts, withheld, uncertain, targets, subjects, removed: seen.removed, ...(told ? { context: told } : {}) };
 }
 
 export interface Asker {
@@ -306,6 +335,8 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     "- A source of the kind `state` is what the server observed at the time in `observedAt`. In the explanation keep three things apart, in this order and with these words: \"Observed:\" what a source shows, \"So:\" what you conclude from it, \"You could:\" what you suggest.",
     "- When a source says it may be out of date, or that sources disagree, say that the state is uncertain and name both sides. Do not pick one.",
     "- A source whose title starts with \"Diagnosis\" is what the product itself says is wrong. When the question is why something does not work, build the answer on it and name, in the explanation: the symptom, the cause, the supporting evidence, the missing evidence and the safest next check. Give a cause only as that source gives it, and say whether it is confirmed or a hypothesis. When it says the cause is not recognised, or there is no such source, say that the cause is not known and give the safest next check: never make up a cause, a file, a setting, a command or any other detail that no source holds.",
+    "- When the question is how to solve a problem, give `plan`: ordered steps, the safest reversible one first. Put a check that verifies a change directly after it. Every change step needs `expected`, `failure` and `fallback`. Give a high-impact change only when a diagnosis source confirms the cause. Never say that a step was done or that it worked: you cannot know.",
+    "- An offer is a button that opens the page of the thing a `state` source is about: `open-run` for a source about a run, `open-repository` for one about a repository, `open-turn-item` (administrators only) for a run or an issue that waits under Your turn on Home. Never write an address for it.",
     "- Never ask for, repeat or guess a password, a token or a key.",
     `- The person is ${input.role === "admin" ? "an administrator" : "a user, not an administrator: say nothing about settings, accounts, the monitor or other people's work"}.`,
     "",
@@ -318,7 +349,9 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     ' "recommendations": [things the person could do themselves, one sentence each],',
     ` "links": [{"to": one of ${JSON.stringify(NAV_PAGES.filter((p) => p.roles.includes(input.role)).map((p) => p.to))}}],`,
     ' "drafts": [{"title": …, "text": a text the person may copy; it is not sent anywhere}],',
+    ` "plan": [{"kind": one of ${JSON.stringify(STEP_KINDS)}, "title": …, "instructions": …, "to": one of the pages above or leave out, "evidence": [ids from \`sources\`], "expected": what the person should see, "failure": what failure looks like, "fallback": what to do then}],`,
     ' "actions": [],',
+    ` "offers": [{"type": one of ${JSON.stringify(OFFERS.filter((o) => o.roles.includes(input.role)).map((o) => o.type))}, "evidence": the id of the \`state\` source it is about}],`,
     ' "limit": only when you do not answer, one of the codes below}',
     "",
     "The kinds of question:",
@@ -352,6 +385,8 @@ interface Job {
   ref: TurnRef;
   input: TurnInput;
   stop: AbortController;
+  /** When the turn was started (ms), for the latency in the statistics. */
+  since: number;
 }
 
 /** The running and waiting turns of one server. In memory only: a restart ends them, and the store then marks them as interrupted. */
@@ -394,6 +429,7 @@ export class HelpTurns {
   private admit(asker: Asker): void {
     const help = this.deps.config().help;
     if (!help.enabled || this.stopped) throw new TurnRefused("off", REFUSAL_WORDS.off);
+    if (help.paused === true) throw new TurnRefused("paused", REFUSAL_WORDS.paused);
     let no: RefusalCode | undefined;
     try {
       no = this.deps.allow?.(asker);
@@ -407,7 +443,27 @@ export class HelpTurns {
     if (usageToday(asker.id, this.opts).turns >= help.turns_per_user_per_day) throw new TurnRefused("limit", REFUSAL_WORDS.limit);
   }
 
-  private start(asker: Asker, turn: Turn): Turn {
+  private nowMs(): number {
+    return (this.deps.now ?? (() => new Date()))().getTime();
+  }
+
+  /** Adds to the quality numbers. A failure to store them is logged in fixed words and never fails a turn or a request. */
+  private count(delta: StatsDelta): void {
+    try {
+      addStats(delta, this.opts);
+    } catch {
+      this.deps.log?.("help: the statistics of a turn could not be stored");
+    }
+  }
+
+  /** Counts a question that was refused before a turn started, once, by its code. */
+  private refused(e: unknown): void {
+    if (e instanceof TurnRefused) this.count({ refused: { [e.code]: 1 } });
+    // the limits of the store: too many conversations or messages, or the last reply is still waited for
+    else if (e instanceof HelpError && (e.code === "limit" || e.code === "busy")) this.count({ refused: { [e.code]: 1 } });
+  }
+
+  private start(asker: Asker, turn: Turn, again = false): Turn {
     const ref: TurnRef = { message: turn.reply.id, tries: turn.reply.tries ?? 1 };
     try {
       addUsage(asker.id, { turns: 1 }, this.opts);
@@ -420,8 +476,10 @@ export class HelpTurns {
       }
       throw e;
     }
+    this.count({ counts: { turns: 1, ...(again ? { retries: 1 } : {}) } });
     const at = turn.conversation.messages.findIndex((m) => m.id === turn.question.id);
     this.queue.push({
+      since: this.nowMs(),
       owner: asker.id,
       role: asker.role,
       conversation: turn.conversation.id,
@@ -443,6 +501,15 @@ export class HelpTurns {
    * check itself fails nothing is kept (`unsafe`).
    */
   ask(asker: Asker, input: NewQuestion): Turn {
+    try {
+      return this.accept(asker, input);
+    } catch (e) {
+      this.refused(e);
+      throw e;
+    }
+  }
+
+  private accept(asker: Asker, input: NewQuestion): Turn {
     this.admit(asker);
     const question = checkQuestion(input.question);
     let context = checkContext(input.context);
@@ -466,13 +533,19 @@ export class HelpTurns {
 
   /** Starts the failed or stopped last turn of a conversation again, in the same messages. It counts as a turn of today. */
   retry(asker: Asker, conversation: string): Turn {
-    this.admit(asker);
-    return this.start(asker, retryTurn(asker.id, conversation, this.opts));
+    try {
+      this.admit(asker);
+      return this.start(asker, retryTurn(asker.id, conversation, this.opts), true);
+    } catch (e) {
+      this.refused(e);
+      throw e;
+    }
   }
 
   /** The owner stops the reply that is waited for: the stored reply says so at once, and the model call is ended. */
   cancel(asker: Asker, conversation: string): Conversation {
     const r = cancelTurn(asker.id, conversation, this.opts);
+    this.count({ counts: { stopped: 1 } });
     this.drop(r.message);
     return r.conversation;
   }
@@ -518,7 +591,10 @@ export class HelpTurns {
     if (job.stop.signal.aborted) return;
     this.deps.log?.(`help: a turn failed (${code})`);
     try {
-      if (failTurn(job.conversation, job.ref, { code, retry: RETRY[code] }, this.opts)) addUsage(job.owner, { failed: 1 }, this.opts);
+      if (failTurn(job.conversation, job.ref, { code, retry: RETRY[code] }, this.opts)) {
+        addUsage(job.owner, { failed: 1 }, this.opts);
+        this.count({ failed: { [code]: 1 }, latencyMs: this.nowMs() - job.since });
+      }
     } catch {
       this.deps.log?.("help: the result of a turn could not be stored");
     }
@@ -526,6 +602,8 @@ export class HelpTurns {
 
   private async run(job: Job): Promise<void> {
     const config = this.deps.config();
+    // a turn that waited in the queue when the pause came does not start
+    if (helpPaused(config)) return this.fail(job, "setup");
     const found = helpTarget(config);
     if ("problem" in found) return this.fail(job, "setup");
     const { target } = found;
@@ -555,6 +633,7 @@ export class HelpTurns {
       return this.fail(job, "setup");
     }
     const offered = ready.offered;
+    this.count({ counts: offered.length ? { evidenceOffered: 1 } : { evidenceNone: 1 } });
     if (ready.removed.length) this.deps.log?.(`help: secrets were taken out of what a turn sends (${ready.removed.join(", ")})`);
     if (ready.withheld) this.deps.log?.(`help: ${ready.withheld} source(s) were held back from a turn`);
 
@@ -599,7 +678,7 @@ export class HelpTurns {
     const names = job.role === "admin" ? [] : [target.model, target.providerName, target.label];
     let checked: ReturnType<typeof checkReply>;
     try {
-      checked = checkReply(jsonOf(r.output), { role: job.role, offered, clean: (t) => hideNames(seen.clean(redact(t)), names) });
+      checked = checkReply(jsonOf(r.output), { role: job.role, offered, uncertain: ready.uncertain, ...(config.help.actions ? { targets: ready.targets } : {}), subjects: ready.subjects, clean: (t) => hideNames(seen.clean(redact(t)), names) });
     } catch (e) {
       // a reply that cannot be checked for secrets is not kept
       this.deps.log?.(`help: a reply was not kept (${e instanceof GuardError ? e.message : "it could not be checked"})`);
@@ -611,7 +690,12 @@ export class HelpTurns {
     // a reply that rests on a source the server marked as old or in disagreement is not "confirmed", whatever the model said
     const reply = doubted(checked.reply, ready.uncertain);
     try {
-      finishTurn(job.conversation, job.ref, reply, this.opts, seen.removed);
+      if (finishTurn(job.conversation, job.ref, reply, this.opts, seen.removed)) {
+        this.count({
+          counts: { answered: 1, ...(reply.evidence.length ? { cited: 1 } : {}), ...(reply.limit ? { limited: 1 } : {}), ...(reply.actions.length ? { actionsOffered: reply.actions.length } : {}) },
+          latencyMs: this.nowMs() - job.since,
+        });
+      }
     } catch {
       this.deps.log?.("help: the result of a turn could not be stored");
     }

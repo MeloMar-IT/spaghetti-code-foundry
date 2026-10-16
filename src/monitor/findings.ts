@@ -170,6 +170,9 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
     if (f.gone) {
       // A story that is made or owed is never pruned: it must survive a long outage of GitHub.
       if (age <= PRUNE_AFTER_MS || f.report || f.due || f.needsYou) out.push(f);
+    } else if (f.detector === "skill-source-check") {
+      // Not a detector of the monitor: the skill source sweeper opens, refreshes and clears these findings itself.
+      out.push(f);
     } else if (age >= GONE_AFTER_MS) {
       const g = { ...f, gone: true, streak: 0, ...(f.report ? { missedAt: at } : {}) };
       gone.push(g);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { nextStep, type NextKind, type NextStep } from "../src/next-step.js";
 import { REFINEMENT_SOURCE } from "../src/auth/run-owner.js";
-import { actsFor, buildTurn, emptyText, needsUser, runOrigin, soonestAt, type TurnSource } from "../src/your-turn.js";
+import { actsFor, buildTurn, emptyText, needsUser, onHome, runOrigin, soonestAt, type TurnSource } from "../src/your-turn.js";
 
 const rec = (kind: NextKind, base: { repo?: string; issue?: number; title?: string; runId?: string } = {}, data = {}) =>
   nextStep(kind, { repo: "o/a", ...base }, { watched: true, issueUrl: base.issue ? `https://github.com/o/a/issues/${base.issue}` : undefined, ...data });
@@ -184,5 +184,42 @@ describe("soonestAt", () => {
     // 12:00 in New York is in 2 hours; 17:00 in Amsterdam is in 1 hour; 16:30 Amsterdam is in 30 minutes.
     expect(soonestAt([t("17:00", "Europe/Amsterdam"), t("12:00", "America/New_York")], now)).toBe("17:00");
     expect(soonestAt([t("11:00", "America/New_York"), t("19:00", "Europe/Amsterdam")], now)).toBe("11:00");
+  });
+});
+
+describe("onHome", () => {
+  const pr = { number: 9, url: "https://github.com/o/a/pull/9" };
+  const failed = (issue: number, runId: string) => src(rec("failed", { issue, runId }));
+  const release = (issue: number, runId: string) => src(rec("release", { issue, runId }, { pr }));
+
+  it("holds the members of a grouped release item on the server only", () => {
+    const t = buildTurn([release(1, "run-r1"), release(2, "run-r2")]);
+    expect(t.all).toHaveLength(1);
+    expect(t.all[0]!.members).toEqual([{ runId: "run-r1", repo: "o/a", issue: 1 }, { runId: "run-r2", repo: "o/a", issue: 2 }]);
+    expect(JSON.stringify(t.data)).not.toContain("members");
+    expect(JSON.stringify(t.data)).not.toContain("run-r1");
+  });
+
+  it("is true for a shown item, an acted item and a member of a release item", () => {
+    const sources = [failed(5, "run-5"), failed(6, "run-6"), release(1, "run-r1"), release(2, "run-r2")];
+    const acted = Object.fromEntries(sources.filter((s) => s.next.issue === 6).map((s) => [s.key, { since: s.stamp }]));
+    const t = buildTurn(sources, { acted });
+    expect(t.data.continuing).toHaveLength(1);
+    expect(onHome(t, { runId: "run-5" })).toBe(true);
+    expect(onHome(t, { repo: "O/A", issue: 5 })).toBe(true);
+    expect(onHome(t, { runId: "run-6" })).toBe(true);
+    expect(onHome(t, { runId: "run-r2" })).toBe(true);
+    expect(onHome(t, { repo: "o/a", issue: 1 })).toBe(true);
+  });
+
+  it("is false for a dismissed item and for a thing that is not there", () => {
+    const sources = [failed(5, "run-5"), failed(6, "run-6")];
+    const dismissed = { [sources[0]!.key]: { since: sources[0]!.stamp } };
+    const t = buildTurn(sources, { dismissed });
+    expect(onHome(t, { runId: "run-5" })).toBe(false);
+    expect(onHome(t, { repo: "o/a", issue: 5 })).toBe(false);
+    expect(onHome(t, { runId: "run-6" })).toBe(true);
+    expect(onHome(t, { runId: "run-none" })).toBe(false);
+    expect(onHome(t, { repo: "o/other", issue: 6 })).toBe(false);
   });
 });

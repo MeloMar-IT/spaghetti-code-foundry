@@ -1,5 +1,6 @@
 import { isMap, isScalar, isSeq, parse as parseYaml, parseDocument, stringify, type Node, type Pair, type Scalar, type YAMLMap, type YAMLSeq } from "yaml";
-import { reviewFailed, reviewMarkdown, type ImportReview } from "./import-review.js";
+import { reviewMarkdown, type ImportReview } from "./import-review.js";
+import { notComparedMarkdown, SOURCE_CHANGE_LIMITS, sourceChangeMarkdown, type SourceChange } from "./source-change.js";
 import type { RejectedSkill } from "./import-plan.js";
 import { OWNER_RE, parseSources, shownFull, type SkillLibrarySource, type SourceReview } from "./sources.js";
 
@@ -12,9 +13,11 @@ const PATHS_BYTES = 24_000;
 const REJECTED_BYTES = 12_000;
 
 /** The branch of one update. */
-export const updateBranch = (id: string, commit: string): string => `skill-update/${id}-${commit.slice(0, 12)}`;
+export const updateBranchPrefix = (id: string): string => `skill-update/${id}-`;
+export const updateBranch = (id: string, commit: string): string => `${updateBranchPrefix(id)}${commit.slice(0, 12)}`;
+const SUPERSEDES_BYTES = 4_000;
 
-type Problem = { problem: string };
+type Problem = { problem: string; missing?: "reviewer" | "licence" };
 
 /**
  * The review record an enabled community entry needs for the new commit (parseSources demands review.commit = ref.approved).
@@ -31,7 +34,7 @@ export function communityReview(
     return {};
   }
   if (o.reviewer === undefined) {
-    return { problem: "an enabled community source needs a review; give --reviewer <@user> (the person who checked the maintainer and the licence)" };
+    return { problem: "an enabled community source needs a review; give --reviewer <@user> (the person who checked the maintainer and the licence)", missing: "reviewer" };
   }
   if (!OWNER_RE.test(o.reviewer)) return { problem: "--reviewer must be a GitHub user or team like @octocat or @acme/skills" };
   const allow = entry.licence.allow;
@@ -40,7 +43,7 @@ export function communityReview(
     if (!allow.includes(licence)) return { problem: `--licence ${shownFull(licence)} is not in licence.allow` };
   } else if (entry.review && allow.includes(entry.review.licence)) licence = entry.review.licence;
   else if (allow.length === 1) licence = allow[0];
-  if (licence === undefined) return { problem: "give --licence <id>: the licence that was reviewed; licence.allow lists more than one" };
+  if (licence === undefined) return { problem: "give --licence <id>: the licence that was reviewed; licence.allow lists more than one", missing: "licence" };
   return { review: { by: o.reviewer, on: o.today, commit: o.commit, licence } };
 }
 
@@ -79,6 +82,9 @@ function contentEnd(node: unknown): number | undefined {
   }
   return rangeOf(node)?.[1];
 }
+// The splice helpers are shared with the release deployment edit (release-deployment.ts).
+export { apply as applySplices, pairOf, rangeOf, lineStart, lineEnd, contentEnd };
+export type { Splice };
 const CANNOT ="skill-sources.yaml has a form this command cannot edit byte for byte";
 
 function parse(text: string) {
@@ -146,7 +152,7 @@ function plainEntry(e: SkillLibrarySource): Record<string, unknown> {
     adapter: e.adapter,
     trust: e.trust,
     licence: { allow: [...e.licence.allow] },
-    update: { cadence: e.update.cadence },
+    update: { cadence: e.update.cadence, ...(e.update.reviewer ? { reviewer: e.update.reviewer } : {}) },
     owner: e.owner,
     ...(e.review ? { review: { by: e.review.by, on: e.review.on, commit: e.review.commit, licence: e.review.licence } } : {}),
   };
@@ -233,7 +239,7 @@ export function repoFromUrl(url: string): string | undefined {
 const code = (s: string): string => "`" + shownFull(s).replace(/<!--/g, "<!- -").replace(/`/g, "'") + "`";
 
 /** Lines of a list while they fit in `budget` bytes; the rest is one "… and N more" line. Each shown item is whole. */
-function boundedList(items: readonly string[], budget: number): string[] {
+export function boundedList(items: readonly string[], budget: number): string[] {
   const out: string[] = [];
   let bytes = 0;
   for (let i = 0; i < items.length; i++) {
@@ -248,8 +254,35 @@ function boundedList(items: readonly string[], budget: number): string[] {
   return out;
 }
 
-/** The title and the Markdown body of the pull request: values and the review report only, never upstream skill text. */
-export function updatePullRequest(o: {
+/** The gates of the new import that the review report does not hold. A `SourceChange` carries them too. */
+export interface ImportGates {
+  /** An allowed licence still needs a matching `licence.reviewed`. */
+  licenceUnreviewed: boolean;
+  /** Skills without a passing evaluation record for their digest. */
+  evaluationOpen: number;
+}
+
+export type AttentionPart ="security" | "licence" | "evaluation" | "review";
+
+/**
+ * The parts of the verdict that fail. `security`: a blocked scan or a blocking collision. `licence`: a licence that is not
+ * allowed, or evidence that `licence.reviewed` does not cover. `evaluation`: an added or changed skill without a passing record
+ * for its new digest. `review`: problems of the report. `reviewFailed` holds exactly when security, licence or review is named.
+ */
+export function attentionParts(report: ImportReview, gates?: ImportGates): AttentionPart[] {
+  const skills = report.categories.flatMap((c) => c.skills);
+  const parts: AttentionPart[] = [];
+  if (skills.some((s) => s.scan.blocked) || report.collisions.some((c) => c.blocking)) parts.push("security");
+  if (skills.some((s) => s.licence.status !== "allowed") || gates?.licenceUnreviewed) parts.push("licence");
+  if (gates !== undefined && gates.evaluationOpen > 0) parts.push("evaluation");
+  if (report.problems.length > 0) parts.push("review");
+  return parts;
+}
+
+/** The first words of the note an unattended run adds to the pull request; a refresh looks for it. */
+export const REVIEW_PENDING_NOTE = "This pull request was opened by an unattended run (`scf skills update --due`).";
+
+export interface UpdatePullRequestInput {
   source: Pick<SkillLibrarySource, "id" | "repositoryKey" | "paths" | "trust" | "status">;
   oldCommit?: string;
   commit: string;
@@ -257,9 +290,21 @@ export function updatePullRequest(o: {
   review?: SourceReview;
   rejected: readonly RejectedSkill[];
   report: ImportReview;
-}): { title: string; body: string } {
+  /** What changed since `oldCommit`, or that it could not be compared. Ignored for a first import. */
+  change?: SourceChange | "not-compared";
+  /** The gates of the new import, used when the change is not known (the old commit could not be compared). */
+  gates?: ImportGates;
+  /** Open pull requests of older revisions of this source. They are only listed. */
+  supersedes?: readonly { url: string; branch: string }[];
+  /** An unattended run named the reviewer; the review has not happened yet. Adds a note after the merge line. */
+  reviewPending?: boolean;
+}
+
+/** The title and the Markdown body of the pull request: values and the review report only, never upstream skill text. */
+export function updatePullRequest(o: UpdatePullRequestInput): { title: string; body: string } {
   const { source, oldCommit, commit } = o;
   const c12 = commit.slice(0, 12);
+  const parts = attentionParts(o.report, oldCommit ? (typeof o.change === "object" ? o.change : o.gates) : undefined);
   const title = oldCommit ? `Skill source ${source.id}: update to ${c12}` : `Skill source ${source.id}: first import at ${c12}`;
   const head: string[] = [
     `## Skill source ${oldCommit ? "update" : "first import"}: ${code(source.id)}`,
@@ -268,7 +313,7 @@ export function updatePullRequest(o: {
     `- Tracked ref: ${o.track !== undefined ? code(o.track) : "`HEAD`"}`,
     `- Old commit: ${oldCommit ? code(oldCommit) : "none (first import)"}`,
     `- New commit: ${code(commit)}`,
-    `- Verdict: ${reviewFailed(o.report) ? "needs attention (see the report below)" : "no blocking finding"}`,
+    `- Verdict: ${parts.length > 0 ? `needs attention: ${parts.join(", ")} (see below)` : "no blocking finding"}. Nothing is promoted until the gates pass.`,
     "",
     "Selected paths:",
     "",
@@ -281,11 +326,26 @@ export function updatePullRequest(o: {
       "",
       `Merging records that ${code(o.review.by)} reviewed the maintainer and licence ${code(o.review.licence)} of ${code(commit.slice(0, 12))} on ${o.review.on}. Do not merge unless that is true.`,
     );
+    if (o.reviewPending) {
+      head.push("", `${REVIEW_PENDING_NOTE} ${code(o.review.by)} (from \`update.reviewer\`) is named as the reviewer and has not reviewed it yet. Do not merge before that review is done.`);
+    }
+  }
+  if (o.supersedes !== undefined && o.supersedes.length > 0) {
+    head.push("", "Supersedes (these stay open and are not changed):", "", ...boundedList(o.supersedes.map((p) => `- ${p.url} (${code(p.branch)})`), SUPERSEDES_BYTES));
   }
   if (o.rejected.length > 0) {
     head.push("", "Rejected skill roots (not staged):", "", ...boundedList(o.rejected.map((r) => `- ${code(r.root)}: ${r.reasons.map(code).join("; ")}`), REJECTED_BYTES));
   }
   const header = head.join("\n") + "\n\n";
-  const report = reviewMarkdown(o.report, { bytes: Math.max(1000, PULL_REQUEST_BYTES - Buffer.byteLength(header)) });
-  return { title, body: header + report };
+  const headerBytes = Buffer.byteLength(header);
+  let changes = "";
+  if (oldCommit && o.change !== undefined) {
+    changes =
+      o.change === "not-compared"
+        ? notComparedMarkdown(oldCommit)
+        : sourceChangeMarkdown(o.change, { bytes: Math.max(1000, Math.min(SOURCE_CHANGE_LIMITS.bytes, PULL_REQUEST_BYTES - headerBytes - 1000)) });
+    changes += "\n";
+  }
+  const report = reviewMarkdown(o.report, { bytes: Math.max(1000, PULL_REQUEST_BYTES - headerBytes - Buffer.byteLength(changes)) });
+  return { title, body: header + changes + report };
 }

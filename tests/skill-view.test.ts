@@ -298,6 +298,25 @@ describe("runSkillView: integrity and category", () => {
   it("changed for another digest", () => expect(integrityOf(withRegistry(reg(sk("a", { digest: digestOf("d") }))))).toBe("changed"));
   it("missing when the package is gone", () => expect(integrityOf(withRegistry(reg()))).toBe("missing"));
   it("unpinned when the pin is gone", () => expect(integrityOf(withRegistry(reg(sk("a", { pin: "unpinned" }))))).toBe("unpinned"));
+  it("quarantined and revoked from the lifecycle, and unverified when the lifecycle record cannot be read", () => {
+    const status = (state: string) => ({ state, seq: 1, since: "2026-01-01T00:00:00.000Z", by: "cli", reason: "r", allowedRuns: [] });
+    const withLife = (state: string) => withRegistry({ ...reg(sk("a")), lifecycle: new Map([["a@1.0.0", status(state)]]), revoked: new Map() });
+    expect(integrityOf(withLife("quarantined"))).toBe("quarantined");
+    expect(integrityOf(withLife("revoked"))).toBe("revoked");
+    expect(integrityOf(withLife("retired"))).toBe("verified");
+    const revoked = withRegistry({ ...reg(), revoked: new Map([["a@1.0.0", { by: "acme@1.0.0", on: "2026-03-04", reason: "x" }]]) });
+    expect(integrityOf(revoked)).toBe("revoked");
+    const broken = withRegistry({ ...reg(sk("a")), problems: [{ kind: "lifecycle" }] });
+    expect(integrityOf(broken)).toBe("unverified");
+  });
+  it("shows every locked skill as unverified when the lifecycle record cannot be read", () => {
+    const two = request({ id: "a" }, { id: "b" });
+    const both = reg(sk("a"), sk("b"));
+    const l = lockOf(both, two);
+    const registry = withRegistry({ ...both, problems: [{ kind: "lifecycle" }] });
+    const v = view(runOf(two, { skillLock: summaryOf(l) }), { readLock: () => read(l), registry })!;
+    expect(v.resolved.map((r) => r.integrity)).toEqual(["unverified", "unverified"]);
+  });
   it("not checked when the registry throws or is absent, and then has no time", () => {
     const v = view(run(), { readLock: () => read(lock), registry: () => { throw new Error("x"); } })!;
     expect(v.resolved[0]!.integrity).toBe("not-checked");
@@ -361,6 +380,12 @@ describe("runSkillView: what is left out", () => {
     const admin = view(run(), { admin: true, readLock: () => read(lock), registry: withRegistry(r) })!;
     expect(admin.resolved[0]).toMatchObject({ digest: digestOf("a"), source: "admin" });
     expect(admin.commit).toBe("f".repeat(40));
+  });
+  it("passes the catalogue source of a lock entry to an administrator", () => {
+    const cat = JSON.parse(JSON.stringify(lock)) as RunSkillLock;
+    cat.skills[0]!.source = "catalogue";
+    const admin = view(runOf(req, { skillLock: summaryOf(cat), skillPlan: planOf(r, req) }), { admin: true, readLock: () => read(cat), registry: withRegistry(r) })!;
+    expect(admin.resolved[0]).toMatchObject({ source: "catalogue" });
   });
   it("shows no digest from the summary or the plan to a user", () => {
     const user = view(run(), { readLock: () => ({ ok: false, reason: "invalid" }) });
@@ -533,5 +558,57 @@ describe("runSkillView: a coding run with a plan record", () => {
     const v = view(run, { readLock: missing })!;
     expect(v.planRecord).toBeUndefined();
     expect(v.requested.map((x) => x.id)).toEqual(["a"]);
+  });
+});
+
+describe("runSkillView: why these skills", () => {
+  const req = request({ id: "a" });
+  const r = reg(sk("a"));
+  const CAT = {
+    entries: 3, omitted: 0, estimatedTokens: 9,
+    canonical: [{ capability: "x", outcome: "selected", winner: "a@1.0.0", decidedBy: "trust-tier", rejected: [{ skill: "c@1.0.0", code: "outranked", level: "evaluation" }] }],
+    mirrors: [{ kept: "a@1.0.0", collapsed: ["b@1.0.0"] }],
+    choices: [{ level: "project-pin", capability: "x", target: "a@1.0.0", by: "@octocat", scope: "all", from: "abc", reviewDue: false, digest: `sha256:${"d".repeat(64)}`, effect: "selected" }],
+    choicesSource: { pins: { commit: "e".repeat(40), blob: "f".repeat(40) } },
+  };
+  const hist = () => [rec("risk_gate", { output: gateOutput(req), skillCatalogue: CAT })];
+
+  it("explains the choice; the digest and the pins source only for an administrator", () => {
+    const lock = lockOf(r, req);
+    const run = runOf(req, { skillLock: summaryOf(lock), history: hist() });
+    const readLock = () => read(lock);
+    const a = view(run, { readLock, admin: true })!;
+    expect(a.selection!.capabilities[0]).toMatchObject({ capability: "x", winner: "a@1.0.0", decidedBy: "trust-tier" });
+    expect(a.selection!.choices[0]!.digest).toBe(`sha256:${"d".repeat(64)}`);
+    expect(a.selection!.choicesSource).toBeDefined();
+    const u = view(run, { readLock })!;
+    expect(u.selection!.choices).toHaveLength(1);
+    const k = keys(u.selection);
+    for (const bad of ["digest", "by", "choicesSource", "commit", "blob"]) expect(k.has(bad)).toBe(false);
+  });
+
+  it("keeps the catalogue reasons next to the lock decision of the same winner", () => {
+    const lock = lockOf(r, req);
+    const sel = { planHash: lock.planHash, canonical: [{ capability: "x", outcome: "selected", winner: "a@1.0.0", decidedBy: "only-candidate", rejected: [] }] };
+    const run = runOf(req, { skillLock: summaryOf(lock), skillSelection: sel, history: hist() });
+    const v = view(run, { readLock: () => read(lock) })!;
+    expect(v.selection!.capabilities[0]).toMatchObject({ decidedBy: "trust-tier", rejected: [{ skill: "c@1.0.0", code: "outranked", level: "evaluation" }] });
+  });
+
+  it("leaves out the catalogue after the run planned again and of a sub-flow", () => {
+    const lock = lockOf(r, req, { planHash: planHashOf(gateOutput(request({ id: "zz" }))) });
+    const run = runOf(req, { skillLock: summaryOf(lock), history: hist() });
+    const v = view(run, { readLock: () => read(lock) })!;
+    expect(v.lock).toBe("ok");
+    expect(v.planChanged).toBe(true);
+    expect(v.selection).toBeUndefined();
+    const sub = runOf(req, { history: [rec("risk_gate", { output: gateOutput(req) }), rec("plan", { parent: "sub", skillCatalogue: CAT })] });
+    expect(view(sub, { readLock: missing })!.selection).toBeUndefined();
+  });
+
+  it("gives the same view for an old run file and no card for a catalogue alone", () => {
+    expect(view(runOf(req), { readLock: missing })).not.toHaveProperty("selection");
+    const only = { runId: "run-1", runDir: "/x", flowDef: { name: "f", steps: [] }, history: [rec("plan", { skillCatalogue: CAT })] } as unknown as RunSummary;
+    expect(view(only, { readLock: missing })).toBeUndefined();
   });
 });

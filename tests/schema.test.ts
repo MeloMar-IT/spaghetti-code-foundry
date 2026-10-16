@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ConfigSchema, loadConfig, saveConfig } from "../src/config.js";
+import { ConfigSchema, loadConfig, saveConfig, updateEveryMs } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
 import { varValueProblem } from "../src/flow/schema.js";
 import { outputEnvName, render } from "../src/engine/template.js";
@@ -263,6 +263,67 @@ describe("config: audit.retention_days", () => {
       expect(readFileSync(path, "utf8")).toBe("concurrency: 3\n");
       saveConfig({ audit: { retention_days: 30 } }, path);
       expect(loadConfig(path).audit.retention_days).toBe(30);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("config: skills.update_check", () => {
+  const parse = (u: unknown) => ConfigSchema.safeParse({ skills: { update_check: u } });
+  const msgs = (u: unknown) => {
+    const r = parse(u);
+    return r.success ? [] : r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`);
+  };
+
+  it("is off by default, every 1h", () => {
+    for (const c of [{}, { skills: {} }, { skills: { update_check: {} } }]) {
+      const u = ConfigSchema.parse(c).skills.update_check;
+      expect(u).toEqual({ every: "1h" });
+      expect(u.folder).toBeUndefined();
+    }
+  });
+
+  it("accepts a folder and the intervals", () => {
+    for (const every of ["5m", "30m", "1h", "24h", "1440m"]) expect(parse({ folder: "/srv/catalogue", every }).success, every).toBe(true);
+    expect(parse({ folder: "/a/.claudex" }).success).toBe(true);
+  });
+
+  it("refuses a relative folder", () => {
+    for (const folder of ["catalogue", "./x"]) expect(msgs({ folder })).toEqual(["skills.update_check.folder: must be an absolute path"]);
+  });
+
+  it("refuses .claude and .codex parts, in any case", () => {
+    for (const folder of ["/Users/a/.claude/x", "/Users/a/.codex", "/a/.Claude/b"])
+      expect(msgs({ folder }), folder).toEqual(["skills.update_check.folder: personal agent folders (.claude, .codex) cannot be used"]);
+  });
+
+  it("refuses a bad interval", () => {
+    for (const every of ["1m", "4m", "25h", "1d", "abc", "0m", "05m", "1441m", "", " 1h", "30s"])
+      expect(msgs({ every }), every).toEqual(["skills.update_check.every: an interval like 30m or 6h, from 5m to 24h"]);
+  });
+
+  it("refuses unknown keys", () => {
+    expect(parse({ folder: "/x", extra: 1 }).success).toBe(false);
+  });
+
+  it("bounds of updateEveryMs", () => {
+    expect(updateEveryMs("5m")).toBe(300_000);
+    expect(updateEveryMs("24h")).toBe(86_400_000);
+    expect(updateEveryMs("1440m")).toBe(86_400_000);
+    expect(updateEveryMs("1h")).toBe(3_600_000);
+    for (const bad of ["4m", "1441m", "25h", "9999h", "10000m", "0h", "1d", "1.5h", undefined, 5, null]) expect(updateEveryMs(bad), String(bad)).toBeUndefined();
+  });
+
+  it("loads a config.yaml without the key unchanged, and saves and loads the key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cfg-"));
+    try {
+      const path = join(dir, "config.yaml");
+      writeFileSync(path, "concurrency: 3\n");
+      expect(loadConfig(path).skills.update_check).toEqual({ every: "1h" });
+      expect(readFileSync(path, "utf8")).toBe("concurrency: 3\n");
+      saveConfig({ skills: { update_check: { folder: "/srv/catalogue", every: "6h" } } }, path);
+      expect(loadConfig(path).skills.update_check).toEqual({ folder: "/srv/catalogue", every: "6h" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

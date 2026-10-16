@@ -5,20 +5,26 @@ import { OVERRIDES_FILE, PINS_FILE } from "./choice-rules.js";
 import { choiceDigest, type SkillChoice, type SkillOverride } from "./choices.js";
 import { readChoiceFile } from "./project-pins.js";
 import { parseSkillKey, removeSkillPin, skillLockPath } from "./lock.js";
+import { LIFECYCLE_STATES, RUN_ID_RE, skillLifecyclePath } from "./lifecycle.js";
+import { allowRunCommand, lifecycleCommand } from "./lifecycle-cli.js";
 import { discoverSkills, pinBuiltinSkills, pinSkill, unreleasedSources, type DiscoverOptions } from "./registry.js";
 import { releaseProblemText } from "./release.js";
-import { releaseOperandsProblem, releasesCheck, releaseVerify } from "./release-cli.js";
+import { homedir } from "node:os";
+import { parseReleaseTarget, releaseAdopt, releaseDiff, releaseList, releaseOperandsProblem, releaseSign, releasesCheck, releaseVerify } from "./release-cli.js";
+import { releasePublish } from "./release-publish.js";
 import { RELEASES_FILE } from "./release-requests.js";
 import { applyConnector, connectorFor } from "./connector.js";
 import { compareStaged } from "./compare-cli.js";
-import { exclusionReasons, importExclusions } from "./import-exclusions.js";
+import { addressLines, exclusionReasons, importExclusions, webAddresses } from "./import-exclusions.js";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { flowDir, parseFlow } from "../flow/load.js";
 import { SkillImportError } from "./import-plan.js";
-import { hidden, plural, filesOf, loadExceptions, stagedImport } from "./staged-import.js";
+import { hidden, plural, filesOf, loadExceptions, reviewedFiles, stagedImport } from "./staged-import.js";
 import { reviewCommand } from "./review-cli.js";
 import { EVALUATION_SUITE_DEFAULT } from "./evaluation-rules.js";
+import { effectCheckLine, effectPromotion, effectState, parseEffectOperands, type EffectOperands, type EffectPromotion } from "./effect.js";
+import { readNewestEffect } from "./evaluation-store.js";
 import { evaluateOperandsProblem, gateImport, scoreImport, type EvaluateCliOptions } from "./evaluate-cli.js";
 import { evaluateLicence } from "./licence.js";
 import { normalizeImport } from "./normalize.js";
@@ -27,16 +33,17 @@ import { licenceReviewRequired, NO_EVIDENCE_TIME, promoteImport } from "./promot
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, type ScanException } from "./scan-exceptions.js";
-import { scanStaged } from "./scan-staged.js";
+import { scanStaged, stagedSkillMd } from "./scan-staged.js";
 import { profilesEvaluate } from "./profile-evaluate-cli.js";
 import { SOURCE_CONNECTORS } from "./connectors.js";
 import { overlapLines, overlapReport, versionLines } from "./overlap.js";
+import { catalogueProblems, overlapStagedSkills } from "./overlap-staged.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors, type SkillSelection } from "./selections.js";
 import { PROFILES_FILE, readSourceProfiles } from "./source-profiles.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
 import { selectionsEvaluate } from "./selections-evaluate-cli.js";
 import { suiteLines, suiteRefusal, suiteVerdicts } from "./suite-checks.js";
-import { EVALUATIONS_FILE, readSuiteRecords } from "./suite-records.js";
+import { EVALUATIONS_FILE, readSuiteRecords, type EffectDecision } from "./suite-records.js";
 import type { SuiteRecord } from "./suite-rules.js";
 import { flowSkillSteps } from "./tool-policy.js";
 import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow.js";
@@ -62,12 +69,21 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills overlap <source-id>                            Compare a staged import with the registered skills: canonical skill or conflict per shared capability; uses skill-selections.yaml; reads only
        scf skills review <source-id> [--markdown]                Print the licence, attribution and collision report of a staged import; reads only
        scf skills score <source-id> [<suite-file>] [--agent]     Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT}); --agent also runs the instructions scenarios in the OS sandbox
+       scf skills effect <source-id> <skill-id> [<suite-file>]   Run the skill's sample tasks with and without a staged skill and store the verdict
+       scf skills effect <id@version> [<suite-file>]            The same for an approved, pinned skill
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills release verify <dir>                           Check a catalogue release folder offline (files, digests, approval); reads only
-       scf skills releases check [<file>]                        Check the release requests offline (default: ${RELEASES_FILE}); reads only
+       scf skills release sign <catalogue>@<version> --key <file>  Sign a stored release with a PEM Ed25519 private key (chmod 600); prints the approved entry to paste into the config
+       scf skills release adopt [<catalogue>@<version>]        Copy signed approved releases from their local artifact into skill-releases/ after checking them; offline
+       scf skills release diff <catalogue>@<old> <catalogue>@<new>  Show what a newer stored release changes (added, removed, changed, deprecated, canonical); reads only
+       scf skills release list                                 List the published releases, their approval and the runs that lock them; reads only
+      scf skills release publish <catalogue>@<version>         Publish a catalogue release from ${RELEASES_FILE} (reviewed, promotable, evaluation passed); writes only skill-releases/
+       scf skills releases check [<file>]                       Check the release requests offline (default: ${RELEASES_FILE}); reads only
+       scf skills lifecycle [<id@version> [<state> --reason <text> [--replacement <id@version>]]] [--runs-dir <dir>]  List the skills that are not active, show the history of one, or set deprecated, quarantined, retired, revoked or active
+       scf skills allow-run <run-id> <id@version> --reason <text> [--runs-dir <dir>]  Let one run go on with a quarantined version (then resume the run)
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], gate: [], release: [], releases: [] };
+const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], effect: [], gate: [], release: ["key"], releases: [], lifecycle: ["reason", "replacement", "runs-dir"], "allow-run": ["reason", "runs-dir"] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -79,6 +95,8 @@ export interface SkillsCommandOptions extends DiscoverOptions {
   today?: string;
   /** `score --agent`: runs the instructions scenarios in the sandbox. Given by the program's entry point, so this file starts no process. */
   agentScore?: (id: string, suiteFile: string | undefined, out: (line: string) => void, opts: EvaluateCliOptions) => Promise<number>;
+  /** `effect`: runs the sample tasks with and without a skill in the sandbox. Given by the program's entry point, like `agentScore`. */
+  agentEffect?: (ops: EffectOperands, out: (line: string) => void, opts: EvaluateCliOptions) => Promise<number>;
 }
 
 /** `scf skills overrides check` and `scf skills project-pins check`: offline; prints checked fields and the entry digest only. */
@@ -174,23 +192,6 @@ function selectionsCheck(file: string, out: (line: string) => void, today: strin
   return 0;
 }
 
-/** The reviewed files `promote check` and `overlap` read; prints a PROBLEM and returns undefined when one cannot be used. A missing file is empty. */
-function reviewedFiles(out: (line: string) => void, opts: { cwd: string; today: string }, records: boolean): { selections: SkillSelection[]; records: SuiteRecord[] } | undefined {
-  const fail = (file: string, problems: { where: string; message: string }[]) => {
-    for (const p of problems) out(`PROBLEM ${file} ${p.where}: ${p.message}`);
-    return undefined;
-  };
-  const sel = readSkillSelections(resolve(opts.cwd, SELECTIONS_FILE), opts.today);
-  if (sel.state === "invalid") return fail(SELECTIONS_FILE, sel.problems);
-  let recs: SuiteRecord[] = [];
-  if (records) {
-    const r = readSuiteRecords(resolve(opts.cwd, EVALUATIONS_FILE), opts.today);
-    if (r.state === "invalid") return fail(EVALUATIONS_FILE, r.problems);
-    if (r.state === "ok") recs = r.manifest.evaluations;
-  }
-  return { selections: sel.state === "ok" ? sel.manifest.selections : [], records: recs };
-}
-
 /**
  * `scf skills scan`: offline and read-only. Reads the staged import of a source, proves it matches import.json, then
  * scans every skill and prints the report. Returns 1 when a skill is blocked or a PROBLEM was printed.
@@ -207,9 +208,10 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
 
   const { normalized, skills: scanned } = scanStaged({ record, files }, exceptions, opts.today);
   let blocked = 0;
-  for (const { entry, report: scan, skill: pkg, decided, blockers, exclusions: excluded, quarantine } of scanned) {
+  for (const { entry, report: scan, skill: pkg, decided, blockers, exclusions: excluded, addresses, quarantine } of scanned) {
     if (pkg && decided) {
-      for (const d of decided.findings) out(`FINDING ${d.finding.id} ${d.finding.severity} ${d.disposition} ${pkg.package.id} ${d.finding.path}: ${d.finding.evidence}`);
+      for (const d of decided.findings) out(`FINDING ${d.finding.id} ${d.finding.severity} ${d.disposition} ${pkg.package.id} ${d.finding.path}${d.finding.line !== undefined ? `:${d.finding.line}` : ""}: ${d.finding.evidence}`);
+      for (const l of addressLines(pkg.package.id, addresses)) out(l);
       const n = blockers.length;
       if (n > 0 || excluded.length > 0) blocked++;
       if (n > 0) out(`BLOCKED ${pkg.package.id}: ${n} high ${n === 1 ? "finding" : "findings"}`);
@@ -219,7 +221,7 @@ function scanImport(id: string, exceptionsFile: string | undefined, out: (line: 
       }
     } else {
       const label = shownValue(entry.root);
-      for (const f of scan.findings) out(`FINDING ${f.id} ${f.severity} open ${label} ${f.path}: ${f.evidence}`);
+      for (const f of scan.findings) out(`FINDING ${f.id} ${f.severity} open ${label} ${f.path}${f.line !== undefined ? `:${f.line}` : ""}: ${f.evidence}`);
       blocked++;
       out(`BLOCKED ${label}: not normalized (${quarantine.map(hidden).join("; ")})`);
     }
@@ -319,7 +321,7 @@ function assessImport(id: string, out: (line: string) => void, opts: { cwd: stri
  */
 function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line: string) => void, opts: { cwd: string; home?: string; today: string }): number {
   let exceptions: ScanException[] = [];
-  let reviewed: { selections: SkillSelection[]; records: SuiteRecord[] } = { selections: [], records: [] };
+  let reviewed: { selections: SkillSelection[]; records: SuiteRecord[]; decisions: EffectDecision[] } = { selections: [], records: [], decisions: [] };
   const staged = stagedImport(
     id,
     out,
@@ -354,6 +356,8 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
   let refused = 0;
   const lines: string[] = [];
   const evaluations: string[] = [];
+  const effects: string[] = [];
+  const addresses: string[] = [];
   const decoder = new TextDecoder();
   for (const entry of record.skills) {
     const path = shownValue(entry.root);
@@ -364,7 +368,9 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     let normReasons: string[] = [];
     let n = 0;
     let ok: { id: string; licences: string[] } | undefined;
+    let effect: EffectPromotion | undefined;
     if (skill) {
+      addresses.push(...addressLines(skill.package.id, webAddresses(skill, stagedSkillMd(entry.root, files))));
       let result;
       try {
         result = promoteImport({ source, record, skills: [skill], evidence, retrievedAt, review });
@@ -390,6 +396,9 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
       const verdicts = suiteVerdicts({ source, skill, selections: reviewed.selections, records: reviewed.records, texts });
       refusal = suiteRefusal(verdicts);
       evaluations.push(...suiteLines(source.id, skill, verdicts));
+      const read = readNewestEffect(skill.package.id, skill.package.digest, { home: opts.home });
+      effect = effectPromotion(read, reviewed.decisions, skill.package.id, skill.package.digest);
+      effects.push(effectCheckLine(skill.package.id, skill.package.digest, effect, read.state === "invalid" ? hidden(read.problem) : undefined));
     } else {
       const verdict = evaluateLicence({ root: entry.root, allow: source.licence.allow, evidence });
       status = verdict.status;
@@ -414,14 +423,19 @@ function promoteCheck(id: string, exceptionsFile: string | undefined, out: (line
     } else if (refusal !== undefined) {
       lines.push(`REFUSED ${path}: evaluation (${refusal})`);
       refused++;
+    } else if (effect?.code) {
+      lines.push(`REFUSED ${path}: effect (${effect.code})`);
+      refused++;
     } else {
       lines.push(`PROMOTABLE ${ok!.id} ${path} ${ok!.licences.join(",")}`);
       promotable++;
     }
   }
   for (const l of lines) out(l);
+  for (const l of addresses) out(l);
   for (const s of normalized) if (s.provenance.assumes) out(`ASSUMES ${hidden(s.package.id)}: ${s.provenance.assumes.join(", ")}`);
   for (const l of evaluations) out(l);
+  for (const l of effects) out(l);
   const c = review.classification;
   const problem = licenceReviewProblem(source.licence.reviewed, c);
   const state = !licenceReviewRequired(source)
@@ -459,25 +473,11 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
   );
   if (!staged) return 1;
   const { source, commit, record, files } = staged;
-  const review = reviewImport({
-    allow: source.licence.allow,
-    prep: { record: { ...record, rejected: [] }, files },
-    evidence: staged.licence ?? { repositoryKey: record.repositoryKey, commit: record.commit, files: [] },
-  });
-  // The same gate as promotion: an allowed licence still needs the matching licence.reviewed.
-  const unreviewed = licenceReviewRequired(source) && licenceReviewProblem(source.licence.reviewed, review.classification) !== undefined;
-  const verdicts = new Map(review.classification.paths.map((p) => [p.root, p.status] as const));
-  const normalized = review.normalized.skills;
-  const entries = normalized.map((skill) => {
-    const root = skill.provenance.root;
-    const status = verdicts.get(root) ?? "missing";
-    const blockers = promotionBlockers(applyExceptions(skill.package.id, scanSkill({ root, files: filesOf(root, files) }), exceptions, opts.today));
-    return { skill, licence: status === "allowed" && unreviewed ? ("review" as const) : status, safe: blockers.length === 0 };
-  });
+  const { skills: entries, notNormalized } = overlapStagedSkills({ source, record, files, licence: staged.licence }, exceptions, opts.today, selections);
 
   const reg = discoverSkills(opts.skills, opts.discover);
   // A catalogue that could not be read in full would show skills as new that are not.
-  const catalogue = [...new Set(reg.problems.filter((p) => p.source !== "repository").map((p) => `PROBLEM catalogue ${p.source} ${p.kind}`))].sort();
+  const catalogue = catalogueProblems(reg);
 
   let report;
   try {
@@ -490,7 +490,6 @@ function overlapImport(id: string, out: (line: string) => void, opts: { cwd: str
   for (const line of catalogue) out(line);
   for (const line of overlapLines(report)) out(line);
   for (const line of versionLines(report)) out(line);
-  const notNormalized = record.skills.length - normalized.length;
   if (notNormalized > 0) out(`PROBLEM ${plural(notNormalized, "staged skill")} could not be normalized; see "scf skills scan ${source.id}"`);
   out(`OVERLAP ${plural(record.skills.length, "skill")} from ${source.repositoryKey}@${commit.slice(0, 12)} ${record.digest}: ${report.shared} shared, ${report.new} new, ${report.vendorOnly} vendor-only, ${report.conflicts} conflicts`);
   return report.ok && notNormalized === 0 && catalogue.length === 0 ? 0 : 1;
@@ -529,10 +528,59 @@ export async function skillsCommand(
     if (operands.length !== 1) throw syntax("scf skills unpin: expects one skill (id@version)");
     if (!parseSkillKey(operands[0]!)) throw syntax(`scf skills unpin: ${operands[0]} is not a skill key (id@version)`);
   }
+  if (sub === "lifecycle") {
+    if (operands.length > 2) throw syntax("scf skills lifecycle: expects at most a skill (id@version) and a state");
+    const [key, state] = operands;
+    if (key !== undefined && !parseSkillKey(key)) throw syntax(`scf skills lifecycle: ${key} is not a skill key (id@version)`);
+    if (state !== undefined && !(LIFECYCLE_STATES as readonly string[]).includes(state)) throw syntax(`scf skills lifecycle: the state must be one of ${LIFECYCLE_STATES.join(", ")}`);
+    const reason = args.values.reason;
+    const replacement = args.values.replacement;
+    if (state === undefined && (reason !== undefined || replacement !== undefined)) throw syntax("scf skills lifecycle: --reason and --replacement go with a state");
+    if (state !== undefined && (typeof reason !== "string" || !reason)) throw syntax("scf skills lifecycle: setting a state needs --reason <text>");
+    if (replacement !== undefined) {
+      if (state === "active") throw syntax("scf skills lifecycle: --replacement goes with a state other than active");
+      if (typeof replacement !== "string" || !parseSkillKey(replacement)) throw syntax("scf skills lifecycle: --replacement must be a skill key (id@version)");
+    }
+  }
+  if (sub === "allow-run") {
+    if (operands.length !== 2) throw syntax("scf skills allow-run: expects a run id and a skill (id@version)");
+    if (!RUN_ID_RE.test(operands[0]!)) throw syntax("scf skills allow-run: the first operand must be a run id");
+    if (!parseSkillKey(operands[1]!)) throw syntax(`scf skills allow-run: ${operands[1]} is not a skill key (id@version)`);
+    if (typeof args.values.reason !== "string" || !args.values.reason) throw syntax("scf skills allow-run: needs --reason <text>");
+  }
   if (sub === "release") {
     const problem = releaseOperandsProblem(operands);
     if (problem) throw syntax(problem);
-    return releaseVerify(resolve(opts.cwd ?? process.cwd(), operands[1]!), out, (opts.skills ?? loadConfig().skills).releases.approved);
+    const keyFile = args.values.key;
+    if (keyFile !== undefined && operands[0] !== "sign") throw syntax("scf skills release: unexpected option --key");
+    if (operands[0] === "sign") {
+      if (typeof keyFile !== "string" || !keyFile) throw syntax("scf skills release sign: needs --key <private-key-file>");
+      const cfg = (opts.skills ?? loadConfig().skills).releases;
+      return releaseSign(parseReleaseTarget(operands[1]!)!, out, { keyFile: resolve(opts.cwd ?? process.cwd(), keyFile), home: opts.home ?? dataHome(), keys: cfg.keys });
+    }
+    if (operands[0] === "publish") {
+      const today = opts.today ?? new Date().toISOString().slice(0, 10);
+      const { skills, cwd: _cwd, now: _now, today: _today, agentScore: _agent, ...discover } = opts;
+      return releasePublish(parseReleaseTarget(operands[1]!)!, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
+    }
+    const rel = (opts.skills ?? loadConfig().skills).releases;
+    if (operands[0] === "adopt") {
+      return releaseAdopt(operands[1] ? parseReleaseTarget(operands[1])! : undefined, out, {
+        home: opts.home ?? dataHome(),
+        approved: rel.approved,
+        keys: rel.keys,
+        env: opts.env ?? process.env,
+        userHome: opts.userHome ?? homedir(),
+      });
+    }
+    if (operands[0] === "diff") {
+      return releaseDiff(parseReleaseTarget(operands[1]!)!, parseReleaseTarget(operands[2]!)!, out, { home: opts.home ?? dataHome(), highRisk: (opts.skills ?? loadConfig().skills).unresolved.high_risk });
+    }
+    if (operands[0] === "list") {
+      const home = opts.home ?? dataHome();
+      return releaseList(out, { home, runsDir: join(home, "runs"), approved: rel.approved, keys: rel.keys });
+    }
+    return releaseVerify(resolve(opts.cwd ?? process.cwd(), operands[1]!), out, rel.approved, rel.keys);
   }
   if (sub === "releases") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills releases: expects "check" and at most one file');
@@ -547,7 +595,7 @@ export async function skillsCommand(
     if (operands[0] === "evaluate") {
       if (operands.length !== 2) throw syntax("scf skills profiles evaluate: expects one source id");
       if (!SKILL_ID_RE.test(operands[1]!)) throw syntax("scf skills profiles evaluate: the operand must be a source id");
-      const { skills, cwd: _c, now: _n, today: _t, agentScore: _a, ...discover } = opts;
+      const { skills, cwd: _c, now: _n, today: _t, agentScore: _a, agentEffect: _e, ...discover } = opts;
       return profilesEvaluate(operands[1]!, out, {
         cwd: opts.cwd ?? process.cwd(),
         home: opts.home,
@@ -623,7 +671,7 @@ export async function skillsCommand(
     return reviewCommand(operands[0]!, out, { cwd: cwd ?? process.cwd(), home: opts.home, markdown: args.values.markdown === true, skills, discover: rest });
   }
 
-  const { skills, cwd: _cwd, now: _now, today: _today, agentScore, ...discover } = opts;
+  const { skills, cwd: _cwd, now: _now, today: _today, agentScore, agentEffect, ...discover } = opts;
   if (sub === "overlap") {
     if (operands.length !== 1) throw syntax("scf skills overlap: expects one source id");
     if (!SKILL_ID_RE.test(operands[0]!)) throw syntax("scf skills overlap: the operand must be a source id");
@@ -642,6 +690,13 @@ export async function skillsCommand(
     }
     return run(operands[0]!, operands[1], out, evalOpts);
   }
+  if (sub === "effect") {
+    const ops = parseEffectOperands(operands);
+    if ("problem" in ops) throw syntax(ops.problem);
+    if (!agentEffect) throw syntax("scf skills effect: not available here");
+    const today = opts.today ?? new Date().toISOString().slice(0, 10);
+    return agentEffect(ops, out, { cwd: opts.cwd ?? process.cwd(), home: opts.home, today, now: opts.now ?? new Date(), skills, discover });
+  }
   if (sub === "unpin") {
     const key = operands[0]!;
     if (removeSkillPin(key)) {
@@ -653,6 +708,13 @@ export async function skillsCommand(
   }
 
   const reg = discoverSkills(skills ?? loadConfig().skills, discover);
+  if (sub === "lifecycle" || sub === "allow-run") {
+    const home = opts.home ?? dataHome();
+    const runsDir = resolve(typeof args.values["runs-dir"] === "string" ? (args.values["runs-dir"] as string) : join(home, "runs"));
+    const o = { reg, runsDir, home };
+    const v = { reason: args.values.reason as string | undefined, replacement: args.values.replacement as string | undefined };
+    return sub === "lifecycle" ? lifecycleCommand(operands, v, out, o) : allowRunCommand(operands, v, out, o);
+  }
   if (sub === "pin") {
     if (builtin) {
       const r = pinBuiltinSkills(reg);
@@ -670,7 +732,7 @@ export async function skillsCommand(
   }
 
   for (const s of reg.skills) {
-    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.trust} ${s.pin} ${s.digest}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}`);
+    out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.source} ${s.trust} ${s.pin} ${s.digest} effect ${effectState(readNewestEffect(s.id, s.digest, { home: discover.home }))}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}${s.lifecycle ? ` lifecycle ${s.lifecycle.state}${s.lifecycle.replacement ? ` → ${s.lifecycle.replacement}` : ""}` : ""}`);
   }
   for (const r of reg.sources) {
     const rel = r.release;
@@ -681,8 +743,9 @@ export async function skillsCommand(
   }
   for (const n of reg.notes) out(`NOTE ${n.text}`);
   const lockPath = skillLockPath(discover.home ?? dataHome());
+  const lifecyclePath = skillLifecyclePath(discover.home ?? dataHome());
   for (const p of reg.problems) {
-    const root = p.kind === "lock" ? lockPath : (reg.sources.find((r) => r.label === p.label)?.root ?? p.root);
+    const root = p.kind === "lock" ? lockPath : p.kind === "lifecycle" ? lifecyclePath : (reg.sources.find((r) => r.label === p.label)?.root ?? p.root);
     out(`PROBLEM ${p.label} ${root}${p.package && p.kind !== "integrity" ? "/" + p.package : ""}: ${p.reason}`);
   }
   return reg.problems.length ? 1 : 0;

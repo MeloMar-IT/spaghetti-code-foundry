@@ -99,6 +99,8 @@ describe("collisions: control and classes", () => {
   describe("mirror.settings-differ", () => {
     const cases: [string, string, string][] = [
       ["capabilities", "capabilities: [one]\n", "capabilities: [two]\n"],
+      ["composable", "capabilities: [one, two]\ncomposable: [one]\n", "capabilities: [one, two]\ncomposable: [two]\n"],
+      ["composable against none", "capabilities: [one]\ncomposable: [one]\n", "capabilities: [one]\n"],
       ["dependencies", "dependencies: [x-dep]\n", "dependencies: [y-dep]\n"],
       ["tool profile", "tool_profile: { shell: true, network: false, filesystem: read }\n", "tool_profile: { shell: false, network: false, filesystem: read }\n"],
       ["technologies", "technologies: [node]\n", "technologies: [bun]\n"],

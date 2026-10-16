@@ -3,7 +3,8 @@ import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, type Config } from "../config.js";
+import { loadConfig, updateEveryMs, type Config } from "../config.js";
+import { SKILL_UPDATE_TICK_MS, skillUpdateSweeper } from "./skill-update-sweep.js";
 import { hideKeyVars, redactText } from "../credentials/redact.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { TOKEN_MIN } from "../credentials/store.js";
@@ -15,6 +16,7 @@ import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
 import { SESSION_RECHECK_MS, authRoutes, passwordRoutes, requireSession, sessionAlive } from "./api-auth.js";
 import { adminRoutes } from "./api-admin.js";
+import { skillRoutes } from "./api-skills.js";
 import { credentialRoutes } from "./api-credentials.js";
 import { monitorRoutes } from "./api-monitor.js";
 import { flowRoutes } from "./api-flows.js";
@@ -61,6 +63,8 @@ const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../ui");
 const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("yaml/package.json")), "browser");
 
 export interface ServerOptions {
+  /** How often the scheduled skill-source check looks whether a check is due, in ms (default 60000). */
+  skillUpdateTickMs?: number;
   repo: string;
   runsDir: string;
   /** 0: a free port picked by the system (tests); the result's `port` is the real one. */
@@ -124,7 +128,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes];
+const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
@@ -257,6 +261,15 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   helpSweep();
   const auditSweep = auditSweeper(() => ctx.config().audit.retention_days, ctx.diagLog);
   auditSweep();
+  // Scheduled skill-source checks (skills.update_check): no folder means off; a Settings change applies at the next tick.
+  const skillSweep = skillUpdateSweeper({
+    config: () => {
+      const u = ctx.config().skills.update_check;
+      return { folder: u.folder, everyMs: updateEveryMs(u.every)! };
+    },
+    log,
+    findingsIdle: (fn) => watchers.monitorIdle(fn),
+  });
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string) {
     const method = req.method ?? "GET";
@@ -360,6 +373,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   helpTimer.unref();
   const auditTimer = setInterval(auditSweep, opts.auditSweepMs ?? AUDIT_SWEEP_MS);
   auditTimer.unref();
+  const skillTimer = setInterval(() => void skillSweep.tick(), opts.skillUpdateTickMs ?? SKILL_UPDATE_TICK_MS);
+  skillTimer.unref();
   if (opts.watchers !== false) watchers.sync();
   let notifier: TurnNotifier | undefined;
   if (process.env.FACTORY_NO_NOTIFY !== "1") {
@@ -381,6 +396,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       clearInterval(helpTimer);
       helpTurnsOf(ctx).stopAll();
       clearInterval(auditTimer);
+      clearInterval(skillTimer);
+      skillSweep.stop();
       clearTimeout(retryTimer);
       notifier?.stop();
       watchers.stopAll();

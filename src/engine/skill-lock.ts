@@ -6,9 +6,12 @@ import type { StepSkillRole } from "../skills/schema.js";
 import { flowSkillSource } from "../skills/run-plan.js";
 import { assessSkills } from "../skills/unresolved.js";
 import { draftSkillRequest, planGateRecord, planSkillRequest } from "../skills/request.js";
-import { resolveOptionsFrom, resolveSkills } from "../skills/resolve.js";
+import { resolveOptionsFrom, resolveSkills, type SkillResolution } from "../skills/resolve.js";
+import { CANONICAL_STOP_PREFIX } from "../skills/canonical-rules.js";
+import { canonicalResolve, liveCanonicalDeps, type CanonicalDeps, type CanonicalSelectionRecord } from "../skills/run-canonical.js";
+import { dataHome } from "../auth/store.js";
 import {
-  buildRunSkillLock, integrityReason, planHashOf, readRunSkillLock, runSkillLockSummary, verifyRunSkillLock, writeRunSkillLock,
+  buildRunSkillLock, integrityReason, planHashOf, readRunSkillLock, runSkillLockNotes, runSkillLockReasons, runSkillLockSummary, verifyRunSkillLock, writeRunSkillLock,
   type RunSkillLock,
 } from "../skills/run-lock.js";
 import { checkSkillTools, type SessionTools, type SkillToolNeed, type ToolCheck } from "../skills/tool-policy.js";
@@ -23,7 +26,7 @@ export const SKILL_BLOCKED_PREFIX = "skill selection is blocked: ";
 export const SKILL_LOCK_CHANGED = "skill integrity: the skill lock of this run is missing or was changed";
 const NOT_WRITTEN = "skill integrity: the skill lock of this run could not be written";
 
-type Discover = (skills: SkillsConfig) => Pick<SkillRegistry, "skills" | "byKey" | "problems">;
+type Discover = (skills: SkillsConfig) => Pick<SkillRegistry, "skills" | "byKey" | "problems" | "lifecycle" | "revoked">;
 /** What `ensure` hands back besides the verdict: the lock of the current plan and the registry it was checked against. */
 interface EnsureOut {
   lock?: RunSkillLock;
@@ -34,6 +37,28 @@ export interface SkillLockDeps {
   now?: Date;
   /** The commit of the workspace; default `git rev-parse HEAD` there. */
   commitOf?: (workdir: string) => string | undefined;
+  /** Used instead of the live canonical dependencies (tests). */
+  canonical?: CanonicalDeps;
+}
+
+/** The refusal for a resolution that is not ok. */
+function notOk(resolution: SkillResolution): string {
+  const bad = resolution.decisions.find((d) => d.mandatory && d.outcome === "rejected" && d.code !== "blocked") ?? resolution.decisions.find((d) => d.mandatory && d.outcome === "rejected");
+  return resolution.policyErrors > 0 || !bad
+    ? `${SKILL_BLOCKED_PREFIX}the skills.selection lists are not valid`
+    : `${SKILL_BLOCKED_PREFIX}${bad.id} (${bad.code})`;
+}
+
+/** The refusal for a canonical stop text; its own prefix is not repeated. */
+function blockedText(stop: string): string {
+  return SKILL_BLOCKED_PREFIX + (stop.startsWith(CANONICAL_STOP_PREFIX) ? stop.slice(CANONICAL_STOP_PREFIX.length) : stop);
+}
+
+function canonicalDepsOf(engine: Pick<Engine, "summary" | "config">, deps: SkillLockDeps): CanonicalDeps | undefined {
+  return (
+    deps.canonical ??
+    liveCanonicalDeps({ config: engine.config, workdir: engine.summary.workdir, home: dataHome(), repository: engine.summary.vars?.github_repo || undefined, now: deps.now })
+  );
 }
 
 export function headCommit(workdir: string): string | undefined {
@@ -62,7 +87,12 @@ function verifyLock(engine: Pick<Engine, "config" | "log">, lock: RunSkillLock, 
   const reg = discover(engine.config.skills);
   const problems = verifyRunSkillLock(lock, reg);
   for (const p of problems) engine.log(`    ! ${integrityReason(p)}`);
-  if (problems.length) return integrityReason(problems[0]!);
+  if (problems.length) {
+    // The reason text of the administrator goes to the log only, never into the stop reason.
+    for (const n of runSkillLockReasons(lock, reg)) engine.log(`    ! ${n}`);
+    return integrityReason(problems[0]!);
+  }
+  for (const n of runSkillLockNotes(lock, reg)) engine.log(`    ! ${n}`);
   if (out) {
     out.lock = lock;
     out.reg = reg;
@@ -98,9 +128,14 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
     if (read.lock.runId !== s.runId) return SKILL_LOCK_CHANGED;
     if (kept && kept.planHash === planHash && kept.lockDigest !== read.lockDigest) return SKILL_LOCK_CHANGED;
     const want = runSkillLockSummary(read.lock, read.lockDigest);
+    // A decision of an older plan is removed; it is never ranked again.
+    const stale = s.skillSelection !== undefined && s.skillSelection.planHash !== planHash;
+    if (stale) delete s.skillSelection;
     if (JSON.stringify(kept) !== JSON.stringify(want)) {
       if (kept) engine.log("    · skill lock: the summary in run.json was of an older plan; it was made again from the lock file");
       s.skillLock = want;
+      engine.save();
+    } else if (stale) {
       engine.save();
     }
     return verifyLock(engine, read.lock, discover, out);
@@ -119,13 +154,23 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
     const request = src.mode === "explicit" ? src.request : gate ? planSkillRequest({ history: s.history, flowDef: s.flowDef }) : carry!.request;
     if (!request) return undefined;
     const reg = discover(engine.config.skills);
-    const resolution = resolveSkills(reg, request.skills.map((i) => i.id), { role: "coder", ...resolveOptionsFrom(engine.config.skills) });
-    if (!resolution.ok) {
-      const bad = resolution.decisions.find((d) => d.mandatory && d.outcome === "rejected" && d.code !== "blocked") ?? resolution.decisions.find((d) => d.mandatory && d.outcome === "rejected");
-      return resolution.policyErrors > 0 || !bad
-        ? `${SKILL_BLOCKED_PREFIX}the skills.selection lists are not valid`
-        : `${SKILL_BLOCKED_PREFIX}${bad.id} (${bad.code})`;
+    const opts = { role: "coder" as const, ...resolveOptionsFrom(engine.config.skills) };
+    const ids = request.skills.map((i) => i.id);
+    let resolution: SkillResolution;
+    let record: CanonicalSelectionRecord[] | undefined;
+    const canon = canonicalDepsOf(engine, deps);
+    if (canon) {
+      // Exclusive capabilities: only the canonical provider is locked. A tie or a bad owner choice refuses.
+      const r = canonicalResolve({ reg, ids, opts, deps: canon });
+      if ("blocked" in r) return blockedText(r.blocked);
+      if ("notOk" in r) return notOk(r.notOk);
+      for (const id of r.dropped) engine.log(`    · skill lock: ${id} left out: not-canonical`);
+      resolution = r.resolution;
+      if (r.record.length) record = r.record;
+    } else {
+      resolution = resolveSkills(reg, ids, opts);
     }
+    if (!resolution.ok) return notOk(resolution);
     // An explicit flow was checked at its start (and a carry at plan_check) under skills.unresolved; what the registry gives now must pass that policy again.
     if ((src.mode === "explicit" || !!carry) && resolution.decisions.some((d) => d.outcome === "rejected")) {
       const plan = assessSkills(resolution, reg, engine.config.skills.unresolved);
@@ -137,12 +182,21 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
       runId: s.runId,
       resolution,
       request,
-      sourceOf: (id, version) => (reg.byKey.get(`${id}@${version}`)?.source === "builtin" ? "builtin" : "admin"),
+      sourceOf: (id, version) => {
+        const k = reg.byKey.get(`${id}@${version}`)?.source;
+        return k === "builtin" || k === "catalogue" ? k : "admin";
+      },
       categoryOf: (id, version) => reg.byKey.get(`${id}@${version}`)?.pkg.category,
       planHash,
       commit: s.workdir ? commit : undefined,
       now: deps.now,
     });
+    // The decision is saved before the lock file and keyed by the plan: a crash between the writes leaves a decision that is
+    // either of this plan (kept) or of an older one (removed when the lock is repaired from the file).
+    const hadSelection = s.skillSelection !== undefined;
+    if (record) s.skillSelection = { planHash, canonical: record };
+    else delete s.skillSelection;
+    if (record || hadSelection) engine.save();
     const { lockDigest } = writeRunSkillLock(s.runDir, built);
     s.skillLock = runSkillLockSummary(built, lockDigest);
     engine.save();
@@ -151,6 +205,7 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
         ? "    · skill lock: no skills"
         : `    · skill lock: ${built.skills.map((k) => `${k.id}@${k.version}`).join(", ")} (about ${built.estimatedTokens} tokens)`,
     );
+    for (const n of runSkillLockNotes(built, reg)) engine.log(`    ! ${n}`);
     if (out) {
       out.lock = built;
       out.reg = reg;
@@ -181,12 +236,25 @@ function lockList(lock: RunSkillLock, reg: EnsureOut["reg"]): PayloadSkill[] | {
 }
 
 /** Plan review, before any lock: the skills the draft plan asks for, if they resolve. Never throws; undefined when the line cannot be used. */
-function draftList(engine: SessionEngine, reg: ReturnType<Discover>): PayloadSkill[] | undefined {
+function draftList(engine: SessionEngine, reg: ReturnType<Discover>, deps: SkillLockDeps): PayloadSkill[] | { refused: string } | undefined {
   const none = (why: string) => (engine.log(`    · review context: none (${why})`), undefined);
   try {
     const request = draftSkillRequest({ history: engine.summary.history ?? [] });
     if (!request || request.skills.length === 0) return undefined;
-    const resolution = resolveSkills(reg, request.skills.map((i) => i.id), { role: "coder", ...resolveOptionsFrom(engine.config.skills) });
+    const opts = { role: "coder" as const, ...resolveOptionsFrom(engine.config.skills) };
+    const ids = request.skills.map((i) => i.id);
+    let resolution: SkillResolution;
+    const canon = canonicalDepsOf(engine, deps);
+    if (canon) {
+      // The same canonical check as the lock: a tie or a bad owner choice refuses, a requested loser is left out.
+      const r = canonicalResolve({ reg, ids, opts, deps: canon });
+      if ("blocked" in r) return { refused: blockedText(r.blocked) };
+      if ("notOk" in r) return none("the draft skill request cannot be used");
+      for (const id of r.dropped) engine.log(`    · review context: ${id} left out: not-canonical`);
+      resolution = r.resolution;
+    } else {
+      resolution = resolveSkills(reg, ids, opts);
+    }
     if (!resolution.ok) return none("the draft skill request cannot be used");
     for (const d of resolution.decisions) if (d.outcome === "rejected") engine.log(`    · review context: ${d.id} left out: ${d.code}`);
     const list: PayloadSkill[] = [];
@@ -219,6 +287,7 @@ function reviewSession(engine: SessionEngine, list: PayloadSkill[], reg: ReturnT
     below: coding.estimatedTokens,
   });
   for (const k of payload.omitted) engine.log(`    ! review context: ${k} left out: over budget`);
+  for (const c of payload.collapsed ?? []) engine.log(`    · review context: ${c.key} has the same text as ${c.into}; loaded once`);
   if (payload.loaded.length) engine.log(`    · review context: ${payload.loaded.join(", ")} (${payload.bytes} bytes, about ${payload.estimatedTokens} tokens)`);
   return payload.loaded.length || payload.omitted.length ? { payload } : {};
 }
@@ -247,7 +316,7 @@ export function skillSession(engine: SessionEngine, deps: SkillLockDeps = {}, ro
       if (out.lock) list = lockList(out.lock, out.reg);
       else if (!planGateRecord({ history: engine.summary.history ?? [], flowDef: engine.summary.flowDef })) {
         reg = (deps.discover ?? ((skills) => discoverSkills(skills)))(engine.config.skills);
-        list = draftList(engine, reg);
+        list = draftList(engine, reg, deps);
         draft = true;
       }
       if (!list || !reg) return {};
@@ -282,6 +351,7 @@ export function skillSession(engine: SessionEngine, deps: SkillLockDeps = {}, ro
     const payload = renderSkillPayload(usable, { maxTokens: engine.config.skills.selection.max_tokens });
     if (payload.blocked) return { refused: `${SKILL_BLOCKED_PREFIX}${payload.blocked} does not fit the skill context budget (skills.selection.max_tokens)` };
     for (const k of payload.omitted) engine.log(`    ! skill context: ${k} left out: over budget`);
+    for (const c of payload.collapsed ?? []) engine.log(`    · skill context: ${c.key} has the same text as ${c.into}; loaded once`);
     return check ? { payload, tools: check } : { payload };
   } catch {
     return { refused: NOT_WRITTEN };

@@ -6,6 +6,7 @@ import { PLAN_CHECK_STEP, planGateRecord, planSkillRequest, SKILL_REQUEST_GATES,
 import { RESOLVE_REASONS, RESOLVE_REJECT_CODES, UNRESOLVED_ACTIONS, UNRESOLVED_KINDS } from "../skills/resolve-rules.js";
 import { planHashOf, readRunSkillLock, safeText, verifyRunSkillLock, type RunSkillLock, type RunSkillLockRead } from "../skills/run-lock.js";
 import { relativePathProblem, SkillIdSchema, SkillVersionSchema } from "../skills/schema.js";
+import { skillSelectionView, type SkillSelectionView } from "./skill-selection-view.js";
 import { hidePaths } from "./user-view.js";
 
 // What a run page shows of the skills of a run: what the plan asked for ("requested") and what the run locked
@@ -14,7 +15,7 @@ import { hidePaths } from "./user-view.js";
 
 export type RequestedState = "selected" | "missing" | "conflicting" | "not-approved" | "too-large" | "not-checked";
 export type ContextState = "loaded" | "reloaded" | "reused" | "omitted";
-export type IntegrityState = "verified" | "changed" | "missing" | "unpinned" | "unapproved" | "unverified" | "not-checked" | "not-locked";
+export type IntegrityState = "verified" | "changed" | "missing" | "unpinned" | "unapproved" | "unverified" | "quarantined" | "revoked" | "not-checked" | "not-locked";
 export interface EvidenceView { kind: "catalogue" | "issue" | "path"; text: string }
 
 export interface RequestedSkill {
@@ -44,7 +45,7 @@ export interface ResolvedSkill {
   review?: true;
   /** Administrator only. */
   digest?: string;
-  source?: "admin" | "builtin";
+  source?: "admin" | "builtin" | "catalogue";
 }
 export interface RunSkillView {
   /** ok: a valid lock. none: not locked yet. missing: the file is gone. changed: unreadable, invalid or not the one the run wrote. */
@@ -60,6 +61,8 @@ export interface RunSkillView {
   checkedAt?: string;
   /** Administrator only. */
   commit?: string;
+  /** Why the skills were chosen; absent when there is nothing to explain. */
+  selection?: SkillSelectionView;
   requested: RequestedSkill[];
   resolved: ResolvedSkill[];
 }
@@ -189,7 +192,7 @@ function contextOf(history: unknown[], planHash: string | undefined, carryHash?:
   return out;
 }
 
-const INTEGRITY_OF: Record<string, IntegrityState> = { changed: "changed", missing: "missing", unpinned: "unpinned", unapproved: "unapproved" };
+const INTEGRITY_OF: Record<string, IntegrityState> = { changed: "changed", missing: "missing", unpinned: "unpinned", unapproved: "unapproved", quarantined: "quarantined", revoked: "revoked" };
 
 /** The skills of a run for its page; undefined when the run has none to show. Never throws. */
 export function runSkillView(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined {
@@ -326,6 +329,13 @@ function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined 
   if (!rows.length && !requested.length && !failed && !noted && lock !== "missing" && lock !== "changed") return undefined;
 
   const tokens = locked ? locked.estimatedTokens : rows.some((r) => r.estimatedTokens !== undefined) ? rows.reduce((n, r) => n + (r.estimatedTokens ?? 0), 0) : tokensOf(kept?.estimatedTokens);
+  const selection = (() => {
+    try {
+      return skillSelectionView(s, { admin: opts.admin, catalogueCurrent: !planChanged, lockPlanHash: locked?.planHash ?? (typeof kept?.planHash === "string" ? kept.planHash : undefined) });
+    } catch {
+      return undefined;
+    }
+  })();
   const view: RunSkillView = {
     lock,
     ...(planChanged ? { planChanged: true as const } : {}),
@@ -334,6 +344,7 @@ function build(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined 
     ...(tokens !== undefined && rows.length ? { estimatedTokens: tokens } : {}),
     ...(checkedAt ? { checkedAt } : {}),
     ...(opts.admin && locked?.commit ? { commit: locked.commit } : {}),
+    ...(selection ? { selection } : {}),
     requested,
     resolved: rows,
   };

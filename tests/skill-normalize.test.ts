@@ -255,6 +255,17 @@ describe("capabilities, category and dependencies", () => {
     const many = Array.from({ length: 33 }, (_, i) => `t${i}`).join(", ");
     expect(reasons({ "SKILL.md": md("a", `tags: "${many}"\n`) })).toEqual(["capabilities: more than 32 entries"]);
   });
+  it("reads composable as a sorted list of capabilities and does not keep it as provenance", () => {
+    const s = good(yamlOf("a", "", "capabilities: [one, two]\ncomposable: [Two, one, two]\n"));
+    expect(s.package.composable).toEqual(["one", "two"]);
+    expect(JSON.stringify(s.provenance.upstream)).not.toContain("composable");
+    expect(good({ "SKILL.md": md("a", 'tags: "one, two"\n') }).package.composable).toEqual([]);
+  });
+  it("quarantines a composable entry that is not a capability, or not a list", () => {
+    expect(reasons(yamlOf("a", "", "capabilities: [one]\ncomposable: [three]\n"))).toEqual(['composable: "three" is not one of the capabilities']);
+    expect(reasons(yamlOf("a", "", "capabilities: [one]\ncomposable: 5\n"))).toEqual(["composable: must be a list of text"]);
+    expect(reasons(yamlOf("a", "", "composable: ['!!!']\n"))).toEqual(["composable: an entry cannot be made a lower-case slug of 1–64 characters"]);
+  });
   it("qualifies dependencies", () => {
     const s = good({ "SKILL.md": md("a", "dependencies: ['other@1.0']\n") });
     expect(s.package.dependencies).toEqual([{ id: sourceQualifiedId(ORIGIN, "other"), min_version: "1.0.0" }]);

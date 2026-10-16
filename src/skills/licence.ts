@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { boundReasons, byteCmp, SkillImportError, type SourceTree, type TreeEntry } from "./import-plan.js";
 import {
   COPYRIGHT_LINE_RE, LICENCE_FILE_RE, LICENCE_FINGERPRINTS, LICENCE_FULL_TEXTS, LICENCE_LIMITS, LICENCE_POLICY, LICENCE_TEMPLATES,
-  LICENCE_TITLES, NOTICE_FILE_RE, OWNER_DENY_WORDS, OWNER_LINE_RE, OWNER_MAX_WORDS, OWNER_PLACEHOLDER_RE, REFERENCE_PREFIXES, REFERENCE_SUFFIXES, REJECT_MARKERS, normalizeLicenceText,
+  LICENCE_TITLES, NOTICE_FILE_RE, OWNER_DENY_WORDS, OWNER_LINE_RE, OWNER_MAX_WORDS, OWNER_PARAGRAPH_MAX_LINES, REFERENCE_PREFIXES, REFERENCE_SUFFIXES, REJECT_MARKERS, normalizeLicenceText,
 } from "./licence-rules.js";
 import { relativePathProblem } from "./schema.js";
 import { hasUnsafeChar, shownValue } from "./sources.js";
@@ -84,7 +84,62 @@ function isOwnerLine(line: string): boolean {
   return words.length <= OWNER_MAX_WORDS && !words.some((w) => OWNER_DENY_WORDS.includes(w));
 }
 const lines = (text: string) => text.split(/\r\n|\r|\n/);
-const withoutOwnerLines = (text: string, extra?: RegExp) => lines(text).filter((l) => !isOwnerLine(l) && !(extra && extra.test(l))).join("\n");
+/** Owner notices are left out: a short paragraph of its own as a whole (it may be wrapped), any other line by itself. */
+function withoutOwnerLines(text: string): string {
+  return text
+    .split(/(\r?\n[ \t]*\r?\n)/)
+    .map((part, i) => {
+      if (i % 2 === 1) return part;
+      const ls = lines(part);
+      if (ls.length <= OWNER_PARAGRAPH_MAX_LINES && isOwnerLine(ls.map((l) => l.trim()).join(" "))) return "";
+      return ls.filter((l) => !isOwnerLine(l)).join("\n");
+    })
+    .join("");
+}
+
+const NOTICE_START = /(?:copyright\s*(?:\(c\)|©)|\(c\)|©|copyright(?=\s+\d{4}))\s*(?:\d{4}(?:\s*[-–,]\s*\d{4})*\s*[,.]?\s*)?/giu;
+const MAX_NOTICES = 3;
+
+/**
+ * True when `test` accepts the text with its owner notices left out. A notice is `Copyright (c) <year>` and up to
+ * OWNER_MAX_WORDS words that pass `isOwnerLine`, wherever the line breaks fall. Bounded: at most MAX_NOTICES notices,
+ * each tried with 0 to OWNER_MAX_WORDS words; more notices than that are never accepted.
+ */
+function acceptsWithoutOwners(text: string, test: (stripped: string) => boolean): boolean {
+  if (test(withoutOwnerLines(text))) return true;
+  const starts = [...text.matchAll(NOTICE_START)].map((m) => ({ start: m.index, end: m.index + m[0].length }));
+  if (starts.length === 0 || starts.length > MAX_NOTICES) return false;
+  const rec = (i: number, cuts: readonly (readonly [number, number])[], lastEnd: number): boolean => {
+    if (i === starts.length) {
+      let out = "";
+      let at = 0;
+      for (const [a, b] of cuts) {
+        out += text.slice(at, a) + " ";
+        at = b;
+      }
+      return test(withoutOwnerLines(out + text.slice(at)));
+    }
+    if (rec(i + 1, cuts, lastEnd)) return true;
+    const s = starts[i]!;
+    if (s.start < lastEnd) return false;
+    const word = /\s*\S+/y;
+    let end = s.end;
+    for (let k = 1; k <= OWNER_MAX_WORDS; k++) {
+      word.lastIndex = end;
+      const m = word.exec(text);
+      if (!m) break;
+      end += m[0].length;
+      if (isOwnerLine(text.slice(s.start, end).replace(/\s+/g, " ")) && rec(i + 1, [...cuts, [s.start, end]], end)) return true;
+    }
+    return false;
+  };
+  return rec(0, [], 0);
+}
+
+/** Replaces a whole-word phrase of a normalised text. */
+function replacePhrase(norm: string, from: string, to: string): string {
+  return (" " + norm + " ").split(" " + from + " ").join(" " + to + " ").replace(/ {2,}/g, " ").trim();
+}
 
 /** The long licences: the head up to the cut and the rest (owner lines left out) must be the known texts. */
 function fullTextId(text: string): string | undefined {
@@ -92,9 +147,26 @@ function fullTextId(text: string): string | undefined {
     const m = f.cut.exec(text);
     if (!m) continue;
     const cut = m.index + m[0].length;
-    const head = sha256Text(normalizeLicenceText(text.slice(0, cut)));
-    const tail = sha256Text(normalizeLicenceText(withoutOwnerLines(text.slice(cut), OWNER_PLACEHOLDER_RE)));
-    if (f.heads.includes(head) && f.tails.includes(tail)) return f.id;
+    const forms = (n: string) => (f.wordForms ?? []).reduce((acc, [from, to]) => replacePhrase(acc, from, to), n);
+    const head = sha256Text(forms(normalizeLicenceText(text.slice(0, cut))));
+    if (!f.heads.includes(head)) continue;
+    const tailOk = (rest: string) => {
+      let tailNorm = normalizeLicenceText(rest);
+      if (f.placeholder) tailNorm = replacePhrase(tailNorm, f.placeholder, "");
+      return f.tails.includes(sha256Text(forms(tailNorm)));
+    };
+    if (acceptsWithoutOwners(text.slice(cut), tailOk)) return f.id;
+  }
+  return undefined;
+}
+
+/** The short licence whose complete text the normalised text is (a title line aside). */
+function templateId(body: string): string | undefined {
+  let bare = body;
+  for (const t of LICENCE_TITLES) if (bare.startsWith(t + " ")) bare = bare.slice(t.length + 1);
+  for (const t of TEMPLATES) {
+    const stripped = t.tail && bare.endsWith(" " + t.tail) ? bare.slice(0, -t.tail.length - 1) : bare;
+    if (t.re.test(stripped)) return t.id;
   }
   return undefined;
 }
@@ -110,12 +182,9 @@ export function identifyLicence(content: Uint8Array): { id?: string; markers: st
   const full = fullTextId(text);
   if (full !== undefined) return { id: full, markers: [] };
   const body = normalizeLicenceText(withoutOwnerLines(text));
-  let bare = body;
-  for (const t of LICENCE_TITLES) if (bare.startsWith(t + " ")) bare = bare.slice(t.length + 1);
-  for (const t of TEMPLATES) {
-    const stripped = t.tail && bare.endsWith(" " + t.tail) ? bare.slice(0, -t.tail.length - 1) : bare;
-    if (t.re.test(stripped)) return { id: t.id, markers: [] };
-  }
+  const found: { id?: string } = {};
+  acceptsWithoutOwners(text, (rest) => (found.id = templateId(normalizeLicenceText(rest))) !== undefined);
+  if (found.id !== undefined) return { id: found.id, markers: [] };
   const markers = REJECT_MARKERS.filter((m) => (" " + whole + " ").includes(" " + m + " "));
   // A short licence written into the text as well means the file holds more than one licence.
   if (TEMPLATE_HEADS.some((h) => body.includes(h))) return { markers };

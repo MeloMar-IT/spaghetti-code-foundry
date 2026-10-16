@@ -141,7 +141,19 @@ export async function update(w: World, positionals: string[], values: Record<str
   return { rc, lines, text: lines.join("\n") };
 }
 export const ghCalls = (w: World) => (existsSync(w.log) ? readFileSync(w.log, "utf8").split("\n").filter((l) => l.startsWith("gh ")) : []);
-export const branches = (w: World) => git(w.bare, "for-each-ref", "--format=%(refname)", "refs/heads/skill-update/").split("\n").filter(Boolean);
+/** The title and body of every pull request the fake gh holds, by address. */
+export const bodies = (w: World): Record<string, { title: string; body: string }> => (existsSync(`${w.log}.bodies.json`) ? JSON.parse(readFileSync(`${w.log}.bodies.json`, "utf8")) : {});
+export const setBody = (w: World, url: string, patch: Partial<{ title: string; body: string }>) => {
+  const all = bodies(w);
+  all[url] = { ...all[url]!, ...patch };
+  writeFileSync(`${w.log}.bodies.json`, JSON.stringify(all));
+};
+/** Open pull requests of the fake gh: written before a run, they are what `gh pr list` answers. */
+export const setOpenPullRequests = (w: World, list: { url: string; headRefName: string; state?: string; createdAt?: string }[]) =>
+  writeFileSync(`${w.log}.prs.json`, JSON.stringify(list.map((p) => ({ state: "OPEN", ...p }))));
+/** The gh calls that would merge, review, close or approve. There must never be one. */
+export const forbiddenCalls = (w: World) => ghCalls(w).filter((c) => /^gh pr (?:merge|review|close)\b/.test(c) || c.includes("--approve"));
+export const branches =(w: World) => git(w.bare, "for-each-ref", "--format=%(refname)", "refs/heads/skill-update/").split("\n").filter(Boolean);
 export const branchOf = (id: string, commit: string) => `skill-update/${id}-${commit.slice(0, 12)}`;
 export const snapshot = (w: World) => ({
   file: readFileSync(join(w.clone, "skill-sources.yaml"), "utf8"),

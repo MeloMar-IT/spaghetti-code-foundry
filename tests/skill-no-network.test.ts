@@ -89,6 +89,14 @@ describe("skill code does not reach the network", () => {
       expect(modulesOf(cli).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);
       expect(codeLines(cli).filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
     });
+    it("run-canonical.ts reads files only through project-pins.js and starts no process and no network", () => {
+      const text = readFileSync("src/skills/run-canonical.ts", "utf8");
+      const mods = modulesOf(text);
+      expect(mods.filter((m) => NETWORK_MODULES.test(`"${m}"`) || /^(?:node:)?fs(?:\/promises)?$/.test(m))).toEqual([]);
+      expect(mods.filter((m) => m.startsWith("node:") || BUILTIN.has(m))).toEqual(["node:path"]);
+      expect(mods).toContain("./project-pins.js");
+      expect(codeLines(text).filter((l) => NETWORK_GLOBALS.test(l) || /\beval\s*\(|new Function|\bprocess\./.test(l))).toEqual([]);
+    });
     it("ls-remote.ts starts one detached `git ls-remote` and nothing else", () => {
       const text = readFileSync("src/skill-import/ls-remote.ts", "utf8");
       const code = codeLines(text);
@@ -112,6 +120,8 @@ describe("skill code does not reach the network", () => {
       expect(code.filter((l) => /(?<![.\w])exec\s*\(|execSync|execFile|\bfork\s*\(|\bshell\b|\bspawn\s*\(/.test(l))).toEqual([]);
       expect(code.filter((l) => NETWORK_GLOBALS.test(l))).toEqual([]);
       expect(modulesOf(text).filter((x) => NETWORK_MODULES.test(`"${x}"`))).toEqual(["node:child_process"]);
+      // the tool never merges, approves, closes or readies a pull request: no such gh word is in the code
+      expect(code.filter((l) => /"(?:merge|close|review|--approve|ready)"/.test(l))).toEqual([]);
     });
     it("update-cli.ts uses no process and no network", () => {
       const text = readFileSync("src/skill-import/update-cli.ts", "utf8");
@@ -148,12 +158,12 @@ describe("skill code does not reach the network", () => {
       });
       expect(users.filter((f) => !own.has(f))).toEqual([]);
     });
-    it("only src/cli.ts imports from src/skill-import/", () => {
+    it("only src/cli.ts and the skill source sweeper import from src/skill-import/", () => {
       const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
       const files = walk("src");
       expect(files.length).toBeGreaterThan(50);
       const importers = files.filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /skill-import\//.test(m)));
-      expect(importers.filter((f) => !f.startsWith("src/skill-import/"))).toEqual(["src/cli.ts"]);
+      expect(importers.filter((f) => !f.startsWith("src/skill-import/"))).toEqual(["src/cli.ts", "src/server/skill-update-sweep.ts"]); // the sweeper runs `skills update --due` in the server (#559)
       for (const f of walk("src/skill-import")) {
         for (const m of modulesOf(readFileSync(f, "utf8"))) if (m.endsWith(".js") && m.startsWith(".")) expect(m, `${f} imports ${m}`).toMatch(/^\.\.?\//);
         expect(modulesOf(readFileSync(f, "utf8")).filter((m) => /skill-import\//.test(m)), f).toEqual([]);
@@ -239,7 +249,7 @@ describe("scf skills scan is offline and read-only", () => {
   it("only the CLI and the pure evaluation import selections.js, so no run reads the file", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)selections\.js$/.test(m)));
-    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "selections-evaluate-cli.ts"), join("src", "skills", "source-skill-evaluation.ts")]);
+    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "selections-evaluate-cli.ts"), join("src", "skills", "source-skill-evaluation.ts"), join("src", "skills", "staged-import.ts")]);
   });
   it("only src/skills/cli.ts imports selections-evaluate-cli.js", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
@@ -346,7 +356,22 @@ describe("the connector modules run nothing", () => {
   it("connector-rules.ts has no imports", () => {
     expect(modulesOf(readFileSync(join(SKILLS, "connector-rules.ts"), "utf8"))).toEqual([]);
   });
-  for (const f of ["release-verify.ts", "release-cli.ts"]) {
+  it("release-signature.ts imports only node:crypto and ./release.js, and calls no file API", () => {
+    const text = readFileSync(join(SKILLS, "release-signature.ts"), "utf8");
+    expect(modulesOf(text).sort()).toEqual(["./release.js", "node:crypto"]);
+    expect(codeLines(text).filter((l) => /Sync\s*\(|readFile|writeFile|\bfs\b/.test(l))).toEqual([]);
+  });
+  it("only the release store, publish and CLI modules call publishRelease; the engine and registry never import them", () => {
+    const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
+    const files = walk("src");
+    expect(files.filter((f) => codeLines(readFileSync(f, "utf8")).some((l) => /publishRelease\(/.test(l))).sort()).toEqual(
+      [join(SKILLS, "release-cli.ts"), join(SKILLS, "release-publish.ts"), join(SKILLS, "release-store.ts")].sort(),
+    );
+    for (const f of [...files.filter((x) => x.startsWith(join("src", "engine"))), join(SKILLS, "registry.ts"), join(SKILLS, "run-lock.ts")]) {
+      expect(modulesOf(readFileSync(f, "utf8")).filter((m) => /release-(?:cli|publish)\.js$/.test(m)), f).toEqual([]);
+    }
+  });
+  for (const f of ["release-verify.ts", "release-cli.ts", "release-signature.ts", "release-store.ts", "schema.ts"]) {
     it(`${f} starts no process, opens no connection and does not read the process`, () => {
       const text = readFileSync(join(SKILLS, f), "utf8");
       expect(modulesOf(text).filter((m) => NETWORK_MODULES.test(`"${m}"`))).toEqual([]);

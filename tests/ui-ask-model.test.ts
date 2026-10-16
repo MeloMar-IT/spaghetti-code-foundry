@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { OFFERS } from "../src/help/actions.js";
 import { CERTAINTY_WORDS, NAV_PAGES, PART_RULES, QUESTION_RULES, checkReply, navPage, type HelpRole } from "../src/help/contract.js";
-import { QUESTION_MAX as SERVER_MAX, checkContext } from "../src/help/store.js";
+import { FEEDBACK_REASONS, QUESTION_MAX as SERVER_MAX, checkContext } from "../src/help/store.js";
+import { REFUSAL_WORDS } from "../src/help/turn.js";
 import { installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -225,7 +227,7 @@ describe("the controls of a conversation", () => {
   });
 
   it("says what each control does", () => {
-    expect(Object.keys(m.CONSEQUENCES).sort()).toEqual(["archive", "fresh", "remove", "restore", "retry", "stop"]);
+    expect(Object.keys(m.CONSEQUENCES).sort()).toEqual(["archive", "fresh", "remove", "restore", "retry", "solved", "stop"]);
     expect(m.CONSEQUENCES.remove).toContain("cannot be brought back");
     expect(m.CONSEQUENCES.retry).toContain("counts as one of your questions of today");
     for (const t of Object.values(m.CONSEQUENCES) as string[]) expect(t).toMatch(/^[A-Z].*\.$/);
@@ -461,6 +463,142 @@ describe("a reply as the server checked it", () => {
     // the message carries the layout; its plain text is not shown a second time
     const entry = m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", reply: checked, tries: 1 }, { role: "user" });
     expect(entry).toMatchObject({ kind: "answer", text: "", layout: { summary: layout.summary } });
-    expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", tries: 1 })).toEqual({ id: "a1", kind: "answer", who: "Ask SCF", text: "plain", note: "" });
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "plain", tries: 1 })).toEqual({ id: "a1", kind: "answer", who: "Ask SCF", text: "plain", note: "", rateable: true, feedback: { vote: null, reasons: [] } });
+  });
+});
+
+describe("rating an answer and the pause", () => {
+  it("has the reasons and the pause sentence of the server", () => {
+    expect(Object.keys(m.REASON_WORDS).sort()).toEqual([...FEEDBACK_REASONS].sort());
+    expect(m.PAUSED_WORDS).toBe(REFUSAL_WORDS.paused);
+  });
+
+  it("shows the vote and the reasons of a finished reply, and nothing else", () => {
+    const done = (feedback: any) => m.entryOf(a("done", { text: "ok", feedback }));
+    expect(done(undefined)).toMatchObject({ rateable: true, feedback: { vote: null, reasons: [] } });
+    expect(done({ vote: "helpful", reasons: [] }).feedback).toEqual({ vote: "helpful", reasons: [] });
+    expect(done({ vote: "not-helpful", reasons: ["unclear", "made-up"] }).feedback).toEqual({ vote: "not-helpful", reasons: ["unclear"] });
+    expect(done({ vote: "loved", reasons: [] }).feedback.vote).toBeNull();
+    for (const status of ["pending", "failed", "cancelled"]) expect(m.entryOf(a(status)).rateable).toBeUndefined();
+    expect(m.entryOf(q()).rateable).toBeUndefined();
+  });
+
+  it("toggles a vote, and sends reasons only with not-helpful", () => {
+    expect(m.feedbackPlan("a1", "helpful", ["unclear"])).toEqual({ message: "a1", vote: "helpful", reasons: [] });
+    expect(m.feedbackPlan("a1", "helpful", [], "helpful")).toEqual({ message: "a1", vote: null, reasons: [] });
+    expect(m.feedbackPlan("a1", "not-helpful", ["unclear", "unclear", "x"], null)).toEqual({ message: "a1", vote: "not-helpful", reasons: ["unclear"] });
+    expect(m.feedbackPlan("a1", "not-helpful", ["unclear"], "not-helpful")).toEqual({ message: "a1", vote: null, reasons: [] });
+    expect(m.feedbackPlan("a1", "bogus")).toEqual({ message: "a1", vote: null, reasons: [] });
+    expect(m.voteNote("helpful")).toContain("helped");
+    expect(m.voteNote("not-helpful")).toContain("did not help");
+    expect(m.voteNote(null)).toContain("taken back");
+  });
+
+  it("takes no question and no retry while paused", () => {
+    expect(m.sendPlan({ draft: "Why?", paused: true })).toEqual({ ok: false, reason: m.PAUSED_WORDS });
+    expect(m.sendPlan({ draft: "Why?", paused: false }).ok).toBe(true);
+    const failed = conv([q(), a("failed", { failure: { code: "provider", retry: true } })], "failed");
+    expect(m.controlsFor(failed, { busy: false, paused: false }).retry).toBe(true);
+    expect(m.controlsFor(failed, { busy: false, paused: true })).toMatchObject({ retry: false, archive: true, remove: true });
+  });
+
+  it("knows a paused refusal from another 503", () => {
+    expect(m.isPausedError({ status: 503, message: REFUSAL_WORDS.paused })).toBe(true);
+    for (const e of [{ status: 503, message: REFUSAL_WORDS.off }, { status: 503, message: REFUSAL_WORDS.unsafe }, { status: 409, message: REFUSAL_WORDS.paused }, null, {}]) expect(m.isPausedError(e)).toBe(false);
+  });
+
+  it("offers 'This solved my problem' for an open conversation with a finished answer only", () => {
+    expect(m.solveOffered(conv([q(), a("done")]))).toBe(true);
+    expect(m.solveOffered(conv([q(), a("done")]), { busy: true })).toBe(false);
+    for (const state of ["completed", "archived", "failed", "cancelled"]) expect(m.solveOffered(conv([q(), a("done")], state)), state).toBe(false);
+    expect(m.solveOffered(conv([q(), a("pending")]))).toBe(false);
+    expect(m.solveOffered(null)).toBe(false);
+  });
+});
+
+describe("a plan", () => {
+  const step = (over: any = {}) => ({ kind: "reversible", title: "Make a copy", evidence: [], expected: "A copy.", failure: "Empty.", fallback: "Stop.", ...over });
+  const planned = (plan: any[], over: any = {}) => reply({ type: "guided-resolution", plan, ...over });
+
+  it("has the labels of the server's six kinds of step", async () => {
+    const { STEP_RULES } = await import("../src/help/plan.js");
+    expect(Object.fromEntries(Object.entries(STEP_RULES).map(([k, v]) => [k, v.label]))).toEqual(m.STEP_WORDS);
+  });
+
+  it("is null without steps and for a limit reply", () => {
+    expect(m.planOf(reply(), "user")).toBeNull();
+    expect(m.planOf(planned([step()], { limit: { code: "changes-state" } }), "user")).toBeNull();
+    expect(m.replyLayout(reply(), "user").plan).toBeNull();
+    expect(m.replyLayout(planned([step()]), "user").plan.steps).toHaveLength(1);
+  });
+
+  it("marks danger for a high-impact step and for one that would be, and counts them", () => {
+    const p = m.planOf(planned([step(), step({ kind: "high-impact" }), { kind: "check", title: "Check first", wouldBe: "high-impact", proposal: "Delete it" }, { kind: "check", title: "Check first", wouldBe: "reversible", proposal: "Copy it" }]), "user");
+    expect(p.steps.map((s: any) => s.danger)).toEqual([false, true, true, false]);
+    expect(p.highImpact).toBe(2);
+    expect(p.header).toBe("4 steps, 2 are high-impact changes. Nothing is done until you do it.");
+    expect(p.steps[2]).toMatchObject({ wouldBeLabel: "Would be a high-impact change", proposal: "Delete it" });
+    expect(p.steps[3]).toMatchObject({ wouldBeLabel: "Would be a change" });
+    expect(p.steps[0].label).toBe("Reversible change");
+  });
+
+  it("makes the first step that is not marked the current one, and says that a mark is not a check", () => {
+    const p = m.planOf(planned([step(), step(), step()]), "user", [0, 2]);
+    expect(p.steps.map((s: any) => s.current)).toEqual([false, true, false]);
+    expect(p.steps.map((s: any) => s.note)).toEqual(["You marked this. Ask SCF has not checked the result.", "", "You marked this. Ask SCF has not checked the result."]);
+    expect(m.planOf(planned([step()]), "user", [0]).steps[0].current).toBe(false);
+  });
+
+  it("links only to a page of the role", () => {
+    const p = m.planOf(planned([step({ to: "#/runs" }), step({ to: "#/settings" }), step({ to: "https://evil.example" })]), "user");
+    expect(p.steps.map((s: any) => s.link?.href ?? null)).toEqual(["#/runs", null, null]);
+  });
+
+  it("keeps the marks of a message under a key that holds only its id", () => {
+    expect(m.planKey("a1")).toBe("scf-ask-plan-a1");
+    expect(m.planKey("a/../1")).toBe("scf-ask-plan-a1");
+  });
+
+  it("passes the marks of each message on to its layout", () => {
+    const msg = { id: "a1", role: "assistant", status: "done", text: "", reply: planned([step(), step()]) };
+    expect(m.entryOf(msg, { planDone: (id: string) => (id === "a1" ? [0] : []) }).layout.plan.steps.map((s: any) => s.done)).toEqual([true, false]);
+    expect(m.entryOf(msg).layout.plan.steps.map((s: any) => s.done)).toEqual([false, false]);
+  });
+});
+
+describe("offers of a reply", () => {
+  const offer = (type: string, evidence = "state-1") => ({ type, title: "T", evidence, subject: { kind: "run", id: "r1" } });
+  const reply = (offers: any[], over: any = {}) => ({ summary: "s", evidence: [{ id: "state-1", kind: "state", title: "Run r1", ref: "#/runs/r1" }], offers, ...over });
+
+  it("knows the effects of the server's registry", () => {
+    expect(m.OFFER_EFFECTS).toEqual(Object.fromEntries(OFFERS.map((o) => [o.type, o.effect])));
+  });
+
+  it("keeps the original index, skips unknown types, and gives none for a limit reply", () => {
+    const got = m.offersOf(reply([offer("open-anything"), offer("open-run"), offer("open-repository")]));
+    expect(got.map((o: any) => [o.index, o.type, o.effect, o.text])).toEqual([[1, "open-run", "navigation", "Run r1"], [2, "open-repository", "navigation", "Run r1"]]);
+    expect(got[0].note).toContain("checks again");
+    expect(m.offersOf(reply([offer("open-run")], { limit: { code: "secret" } }))).toEqual([]);
+    expect(m.offersOf(undefined)).toEqual([]);
+    expect(m.replyLayout(reply([offer("open-run")])).offers).toHaveLength(1);
+    expect(m.replyLayout(reply([offer("open-run")], { limit: { code: "secret" } })).offers).toEqual([]);
+  });
+
+  it("opens only a page of the role", () => {
+    for (const to of ["https://evil.example", "javascript:alert(1)", "#/runs/x?y", undefined]) expect(m.offerTarget("admin", to), String(to)).toBeNull();
+    expect(m.offerTarget("user", "#/board")).toBeNull();
+    expect(m.offerTarget("user", "#/runs/r1")).toMatchObject({ href: "#/runs/r1" });
+    expect(m.offerTarget("admin", "#/home")).toMatchObject({ href: "#/home" });
+  });
+
+  it("says a fixed sentence for each way a click fails", () => {
+    const e = (status: number, message = "") => m.explainOfferError({ status, message });
+    expect(e(0)).toContain("could not be reached");
+    expect(e(401)).toBe("Your session has ended. Sign in again.");
+    expect(e(403)).toContain("You are not allowed to open this now.");
+    expect(e(404)).toBe("This is not there any more, or you can no longer see it.");
+    expect(e(410)).toBe(e(404));
+    expect(e(503, "Ask SCF is switched off on this Foundry.")).toBe("Ask SCF is switched off on this Foundry.");
+    expect(e(500)).toBe("Ask SCF is not working now. Try again later.");
   });
 });

@@ -2,8 +2,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { UPDATE_USAGE } from "../src/skill-import/update-cli.js";
+import { GitTreeError, openGitTree } from "../src/skill-import/git-tree.js";
 import { LsRemoteError, type LsRemoteErrorCode } from "../src/skill-import/ls-remote.js";
-import { branches, branchOf, catalogueYaml, ghCalls, git, GOOD_REVIEW, SENTINEL, sigCounts, snapshot, update, useWorlds, W, world } from "./helpers/skill-update-world.js";
+import { bodies, branches, branchOf, catalogueYaml, forbiddenCalls, ghCalls, git, GOOD_REVIEW, SENTINEL, setBody, setOpenPullRequests, sigCounts, snapshot, update, useWorlds, W, world } from "./helpers/skill-update-world.js";
 
 // `scf skills update` against local git and the fake gh (see tests/helpers/skill-update-world.ts). The failure and interrupt
 // cases are in skill-update-failures.test.ts.
@@ -39,13 +40,15 @@ describe("a community entry, end to end", () => {
 
     // every gh call names the catalogue repository, whatever GH_REPO and the other remotes say
     const calls = ghCalls(w);
-    expect(calls.length).toBe(2);
+    expect(calls.length).toBe(3);
     for (const c of calls) expect(c).toContain("--repo acme/catalogue");
     expect(calls[0]).toContain("pr list");
-    expect(calls[1]).toContain("pr create");
-    expect(calls[1]).toContain(`--head ${branch}`);
-    expect(calls[1]).toContain("--base main");
-    expect(calls[1]).toContain("--body-file -");
+    expect(calls[0]).toContain(`--head ${branch}`);
+    expect(calls[1]).toContain("pr list");
+    expect(calls[2]).toContain("pr create");
+    expect(calls[2]).toContain(`--head ${branch}`);
+    expect(calls[2]).toContain("--base main");
+    expect(calls[2]).toContain("--body-file -");
 
     // the body: old and new commit, paths, review claim, report; no upstream skill text
     const body = readFileSync(w.log, "utf8").split("--- pr body:\n")[1]!;
@@ -58,11 +61,59 @@ describe("a community entry, end to end", () => {
     for (const f of ["skills.lock", "skill-lock.json", "skill-releases", "skill-catalogue"]) expect(existsSync(join(w.home, f))).toBe(false);
 
     // a second run for the same commit prints OPEN and opens nothing
+    const head = git(w.bare, "rev-parse", branch);
+    const callsBefore = ghCalls(w).length;
     const again = await update(w, ["lib"]); // an open pull request needs no --reviewer
     expect(again.rc).toBe(0);
-    expect(again.lines).toEqual([`OPEN https://github.com/owner/repo/pull/99 for lib@${c2.slice(0, 12)}; no second pull request was opened`]);
+    expect(again.lines.at(-1)).toBe(`OPEN https://github.com/owner/repo/pull/99 for lib@${c2.slice(0, 12)}; no second pull request was opened`);
+    const since = ghCalls(w).slice(callsBefore);
+    expect(since.some((c) => c.includes("pr view"))).toBe(true);
+    expect(since.some((c) => c.includes("pr edit"))).toBe(false);
     expect(ghCalls(w).filter((c) => c.includes("pr create"))).toHaveLength(1);
     expect(branches(w)).toHaveLength(1);
+    expect(git(w.bare, "rev-parse", branch)).toBe(head);
+    expect(forbiddenCalls(w)).toEqual([]);
+  });
+
+  it("shows what changed since the approved commit, staging the old commit first", async () => {
+    const { c1, c2 } = W;
+    const w = world();
+    expect(existsSync(join(w.home, "skill-quarantine", "lib", c1))).toBe(false);
+    const r = await update(w, ["lib"], GOOD_REVIEW);
+    expect(r.rc).toBe(0);
+    expect(existsSync(join(w.home, "skill-quarantine", "lib", c1, "import.json"))).toBe(true);
+    // the old commit is staged silently
+    expect(r.lines.filter((l) => l.startsWith("OK ") && l.includes("staged"))).toHaveLength(1);
+    expect(r.lines.at(-3)).toBe(`CHANGES since ${c1.slice(0, 12)}: 0 changed, 1 added, 0 removed, 1 unchanged; 1 needs a new evaluation record`);
+    expect(r.lines.at(-2)).toMatch(/^REVIEWED /);
+
+    const body = readFileSync(w.log, "utf8").split("--- pr body:\n")[1]!;
+    expect(body).toContain(`### Changes since \`${c1.slice(0, 12)}\``);
+    expect(body).toContain("| `skills/b` | added |");
+    expect(body).toContain("Unchanged (1): `skills/a`");
+    expect(body).toContain("new digest: needs a new record");
+    expect(body).toMatch(/- Verdict: needs attention: [a-z, ]*evaluation[a-z, ]* \(see below\)\. Nothing is promoted until the gates pass\./);
+    expect(body.indexOf("### Changes since")).toBeLessThan(body.indexOf("## Skill import review"));
+    expect(body).not.toContain(SENTINEL);
+    expect(Buffer.byteLength(body)).toBeLessThanOrEqual(64_100);
+  });
+
+  it("opens the pull request when the old commit cannot be staged, and says it could not be compared", async () => {
+    const { c1, c2 } = W;
+    const w = world();
+    const open: NonNullable<Parameters<typeof update>[4]>["open"] = async (source, commit, o) => {
+      if (commit === c1) throw new GitTreeError("no-commit");
+      return openGitTree(source, commit, o);
+    };
+    const r = await update(w, ["lib"], GOOD_REVIEW, { open });
+    expect(r.rc).toBe(0);
+    expect(r.lines.at(-3)).toBe(`CHANGES the old commit ${c1.slice(0, 12)} could not be compared`);
+    expect(r.lines.at(-1)).toBe(`OK opened https://github.com/owner/repo/pull/99 for lib@${c2.slice(0, 12)}; nothing is approved until it is merged`);
+    expect(existsSync(join(w.home, "skill-quarantine", "lib", c1))).toBe(false);
+    const body = readFileSync(w.log, "utf8").split("--- pr body:\n")[1]!;
+    expect(body).toContain("could not be staged or read, so it could not be compared");
+    // the gates of the new import hold without the comparison: no evaluation record exists
+    expect(body).toMatch(/- Verdict: needs attention: [a-z, ]*evaluation[a-z, ]* \(see below\)\./);
   });
 
   it("prints UNCHANGED, with no gh call, when the upstream is at ref.approved", async () => {
@@ -73,6 +124,125 @@ describe("a community entry, end to end", () => {
     expect(ghCalls(w)).toEqual([]);
     expect(branches(w)).toEqual([]);
     expect(existsSync(w.home)).toBe(false);
+  });
+});
+
+describe("a re-run refreshes the open pull request", () => {
+  const URL99 = "https://github.com/owner/repo/pull/99";
+  const edits = (w: Parameters<typeof ghCalls>[0]) => ghCalls(w).filter((c) => c.includes("pr edit"));
+
+  it("edits the pull request when its text differs, and only then", async () => {
+    const { c2 } = W;
+    const w = world();
+    const first = await update(w, ["lib"], GOOD_REVIEW);
+    expect(first.rc).toBe(0);
+    const branch = branchOf("lib", c2);
+    const head = git(w.bare, "rev-parse", branch);
+    const made = bodies(w)[URL99]!;
+    expect(made.body).toContain("Merging records that `@rev`");
+    setBody(w, URL99, { body: "old summary" });
+
+    const r = await update(w, ["lib"]); // the review comes from the branch
+    expect(r.rc).toBe(0);
+    expect(r.lines.at(-1)).toBe(`UPDATED ${URL99} for lib@${c2.slice(0, 12)}; nothing is approved until it is merged`);
+    expect(edits(w)).toHaveLength(1);
+    expect(edits(w)[0]).toContain(`pr edit ${URL99} `);
+    expect(edits(w)[0]).toContain("--repo acme/catalogue");
+    expect(edits(w)[0]).toContain("--body-file -");
+    expect(bodies(w)[URL99]).toEqual(made);
+    expect(ghCalls(w).filter((c) => c.includes("pr create"))).toHaveLength(1);
+    expect(git(w.bare, "rev-parse", branch)).toBe(head);
+    expect(branches(w)).toHaveLength(1);
+
+    const third = await update(w, ["lib"]);
+    expect(third.lines.at(-1)).toBe(`OPEN ${URL99} for lib@${c2.slice(0, 12)}; no second pull request was opened`);
+    expect(edits(w)).toHaveLength(1);
+
+    setBody(w, URL99, { title: "another title" });
+    expect((await update(w, ["lib"])).lines.at(-1)).toMatch(/^UPDATED /);
+    expect(bodies(w)[URL99]!.title).toBe(made.title);
+    expect(forbiddenCalls(w)).toEqual([]);
+  });
+
+  it("builds the text from the branch, not from the options of the re-run", async () => {
+    const w = world();
+    await update(w, ["lib"], GOOD_REVIEW);
+    setBody(w, URL99, { body: "old" });
+    const r = await update(w, ["lib"], { reviewer: "@other" });
+    expect(r.lines.at(-1)).toMatch(/^UPDATED /);
+    expect(bodies(w)[URL99]!.body).toContain("`@rev`");
+    expect(bodies(w)[URL99]!.body).not.toContain("@other");
+  });
+
+  it("makes no review claim for a verified source that keeps an older review", async () => {
+    const { c1 } = W;
+    const plain = catalogueYaml();
+    const yaml = plain.replace("    owner: '@octocat'\n  - id: gone", `    owner: '@octocat'\n    review: {by: '@octocat', on: '2026-01-01', commit: ${c1}, licence: MIT}\n  - id: gone`);
+    expect(yaml).not.toBe(plain);
+    const w = world(yaml);
+    const first = await update(w, ["ver"]);
+    expect(first.rc).toBe(0);
+    const url = first.lines.at(-1)!.split(" ")[2]!;
+    expect(bodies(w)[url]!.body).not.toContain("Merging records");
+    const again = await update(w, ["ver"]);
+    expect(again.lines.at(-1)).toMatch(/^OPEN /);
+    expect(edits(w)).toEqual([]);
+  });
+
+  it("does not describe a local change of the file: it must be the file on origin", async () => {
+    const w = world();
+    await update(w, ["lib"], GOOD_REVIEW);
+    setBody(w, URL99, { body: "old" });
+    writeFileSync(join(w.clone, "skill-sources.yaml"), w.yaml.replace("owner: '@octocat'\n    review", "owner: '@someone'\n    review"));
+    const r = await update(w, ["lib"]);
+    expect(r.rc).toBe(1);
+    expect(r.text).toContain("PROBLEM skill-sources.yaml in this folder differs from skill-sources.yaml on origin/main");
+    expect(edits(w)).toEqual([]);
+    expect(bodies(w)[URL99]!.body).toBe("old");
+  });
+
+  it("on a refresh, supersedes only the pull requests opened before it", async () => {
+    const w = world();
+    const acme = (n: number) => `https://github.com/acme/catalogue/pull/${n}`;
+    setOpenPullRequests(w, [
+      { url: acme(7), headRefName: "skill-update/lib-aaaaaaaaaaaa", createdAt: "2026-01-01T00:00:00Z" },
+      { url: acme(8), headRefName: "skill-update/lib-bbbbbbbbbbbb", createdAt: "2027-01-01T00:00:00Z" },
+    ]);
+    const first = await update(w, ["lib"], GOOD_REVIEW);
+    const url = first.lines.at(-1)!.split(" ")[2]!;
+    expect(bodies(w)[url]!.body).toContain(acme(7));
+    expect(bodies(w)[url]!.body).toContain(acme(8));
+    setBody(w, url, { body: "old" });
+    const r = await update(w, ["lib"]);
+    expect(r.lines.at(-1)).toMatch(/^UPDATED /);
+    expect(bodies(w)[url]!.body).toContain(acme(7));
+    expect(bodies(w)[url]!.body).not.toContain(acme(8));
+  });
+
+  it("lists the open pull requests of older revisions of the source, and leaves them alone", async () => {
+    const w = world();
+    const acme = (n: number) => `https://github.com/acme/catalogue/pull/${n}`;
+    // more than 100 unrelated pull requests come first: the older update must still be found
+    const noise = Array.from({ length: 150 }, (_, i) => ({ url: acme(1000 + i), headRefName: `feature/x${i}` }));
+    setOpenPullRequests(w, [
+      ...noise,
+      { url: acme(7), headRefName: "skill-update/lib-aaaaaaaaaaaa" },
+      { url: acme(8), headRefName: "skill-update/lib-extra-aaaaaaaaaaaa" },
+      { url: acme(9), headRefName: "skill-update/ver-bbbbbbbbbbbb" },
+      { url: acme(10), headRefName: "skill-update/lib-cccccccccccc", state: "CLOSED" },
+      { url: "https://x/a/b/pull/11)<!--", headRefName: "skill-update/lib-dddddddddddd" },
+    ]);
+    const r = await update(w, ["lib"], GOOD_REVIEW);
+    expect(r.rc).toBe(0);
+    const body = readFileSync(w.log, "utf8").split("--- pr body:\n")[1]!;
+    expect(body).toContain("Supersedes (these stay open and are not changed):");
+    expect(body).toContain(`- ${acme(7)} (\`skill-update/lib-aaaaaaaaaaaa\`)`);
+    for (const n of [8, 9, 10]) expect(body).not.toContain(`/pull/${n}\n`);
+    expect(body).not.toContain("pull/11");
+    expect(body.indexOf("Supersedes")).toBeLessThan(body.indexOf("## Skill import review"));
+    for (const c of ghCalls(w)) if (/pull\/(7|8|9|10|11)\b/.test(c)) throw new Error(`touched: ${c}`);
+    expect(ghCalls(w).filter((c) => /pr (edit|close|merge|comment)/.test(c))).toEqual([]);
+    expect(forbiddenCalls(w)).toEqual([]);
   });
 });
 
@@ -112,6 +282,8 @@ describe("other entries and first imports", () => {
     expect(git(w.bare, "diff", "--name-only", "main", branch)).toBe("skill-sources.yaml");
     const log = readFileSync(w.log, "utf8");
     expect(log).toContain("none (first import)");
+    expect(log).not.toContain("Changes since");
+    expect(r.text).not.toContain("CHANGES");
     expect(log).toContain(`Skill source awesome-copilot: first import at ${c2.slice(0, 12)}`);
   });
 

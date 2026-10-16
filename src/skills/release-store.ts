@@ -1,10 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { closeSync, fchmodSync, fsyncSync, lstatSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { closeSync, fchmodSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 import { dataHome } from "../auth/store.js";
 import { claimHomeWrite } from "../home.js";
+import { credentialProblem } from "./credential-scan.js";
+import { readRegular } from "./package.js";
 import { ATTRIBUTION_DIR, verifyRelease } from "./release-verify.js";
-import { MAX_RELEASE_V2_BYTES, RELEASE_FILE, ReleaseManifestSchema, releaseDigest, type ReleaseManifestV2 } from "./release.js";
+import { MAX_RELEASE_V2_BYTES, RELEASE_FILE, ReleaseManifestSchema, releaseDigest, type ApprovedRelease, type ReleaseManifestV2 } from "./release.js";
+import { compareSkillVersions, SKILL_ID_RE, SKILL_VERSION_RE } from "./schema.js";
 
 // The published catalogue releases: <data folder>/skill-releases/<catalogue>/<version>/ (a schema-2 release folder, see release-verify.ts).
 // A release is built in a private skill-releases/.tmp-<random> folder (0700 folders, 0600 files, written with "wx" and synced), checked with
@@ -216,4 +219,177 @@ export function publishRelease(content: ReleaseContent, opts: { home?: string } 
     throw new ReleaseStoreError(`the release cannot be written (${codeOf(e)})`);
   }
   return result!;
+}
+
+export interface StoredRelease {
+  catalogue: string;
+  version: string;
+  dir: string;
+}
+export interface StoreListing {
+  releases: StoredRelease[];
+  /** Folders whose name looks like a credential. They are counted, never listed. */
+  hidden: number;
+  /** Catalogue folders that could not be listed. Their releases are missing from `releases`. */
+  unreadable: number;
+  /** Set when the store itself is a link or not a folder; nothing is listed then. */
+  refused?: string;
+}
+
+const MAX_NOTES = 20;
+
+/**
+ * <home>/skill-releases/<catalogue>/<version>/, read only. A link or a non-folder (also the store root) is not followed.
+ * Skips dot names (publish's .tmp- folders) and names that are not a skill id or version. No count limit.
+ * Order: catalogue in byte order, then version newest first. Never throws.
+ */
+export function listStoredReleases(home = dataHome()): StoreListing {
+  const root = releasesDir(home);
+  const out: StoreListing = { releases: [], hidden: 0, unreadable: 0 };
+  /** Undefined when the folder cannot be listed: that is reported, never taken for an empty folder. */
+  const folders = (dir: string): string[] | undefined => {
+    try {
+      return readdirSync(dir, { withFileTypes: true })
+        .filter((d) => d.isDirectory() && !d.name.startsWith("."))
+        .map((d) => d.name);
+    } catch {
+      return undefined;
+    }
+  };
+  try {
+    const st = lstatSync(root);
+    if (st.isSymbolicLink() || !st.isDirectory()) return { ...out, refused: "not a plain folder, not scanned" };
+  } catch (e) {
+    if (code(e) === "ENOENT") return out;
+    return { ...out, refused: "not readable, not scanned" };
+  }
+  const cats = folders(root);
+  if (!cats) return { ...out, refused: "not readable, not scanned" };
+  for (const cat of cats.sort(cmp)) {
+    if (credentialProblem(cat)) {
+      out.hidden++;
+      continue;
+    }
+    if (!SKILL_ID_RE.test(cat)) continue;
+    const shown: string[] = [];
+    const versions = folders(join(root, cat));
+    if (!versions) {
+      out.unreadable++;
+      continue;
+    }
+    for (const v of versions) {
+      if (credentialProblem(v)) out.hidden++;
+      else if (SKILL_VERSION_RE.test(v)) shown.push(v);
+    }
+    for (const v of shown.sort((a, b) => compareSkillVersions(b, a) || cmp(a, b))) out.releases.push({ catalogue: cat, version: v, dir: join(root, cat, v) });
+  }
+  return out;
+}
+
+/**
+ * The content of a release folder that verifyRelease accepted, for publishRelease. `realRoot` is a resolved path. Before each read the
+ * parent folder must still resolve to itself (no link in between); the file is read without following a link. A string is the refusal.
+ * publishRelease checks the staged copy against the digest again, so only the approved bytes can be published.
+ */
+export function readReleaseContent(realRoot: string, m: ReleaseManifestV2): ReleaseContent | string {
+  const changed = "the artifact changed while it was read";
+  const packages = new Map<string, ReleaseFile[]>();
+  const attribution = new Map<string, ReleaseFile[]>();
+  try {
+    const readAll = (base: string, entries: { path: string; bytes: number }[]): ReleaseFile[] | string => {
+      const files: ReleaseFile[] = [];
+      for (const f of entries) {
+        const full = join(base, ...f.path.split("/"));
+        if (realpathSync(dirname(full)) !== dirname(full)) return changed;
+        const bytes = readRegular(full, f.bytes);
+        if (!(bytes instanceof Uint8Array) || bytes.length !== f.bytes) return changed;
+        files.push({ path: f.path, content: bytes });
+      }
+      return files;
+    };
+    for (const s of m.skills) {
+      const pkg = readAll(join(realRoot, s.id), s.files);
+      if (typeof pkg === "string") return pkg;
+      packages.set(s.id, pkg);
+      if (s.attribution.length) {
+        const att = readAll(join(realRoot, ATTRIBUTION_DIR, s.id), s.attribution);
+        if (typeof att === "string") return att;
+        attribution.set(s.id, att);
+      }
+    }
+  } catch {
+    return "the artifact cannot be read";
+  }
+  return { manifest: m, packages, attribution };
+}
+
+/** Approved releases that are not in the store, wherever else they may load from. Nothing when the store listing is incomplete: that is reported elsewhere. */
+export function unstoredApproved(listing: StoreListing, approved: readonly ApprovedRelease[]):{ catalogue: string; version: string; root: string; text: string }[] {
+  if (listing.refused || listing.unreadable) return [];
+  const stored = new Set(listing.releases.map((r) => `${r.catalogue}@${r.version}`));
+  return approved
+    .filter((a) => !stored.has(`${a.catalogue}@${a.version}`))
+    .map((a) => {
+      // A name that looks like a credential is never shown.
+      const shown = !credentialProblem(a.catalogue) && !credentialProblem(a.version);
+      const name = shown ? ` ${a.catalogue}@${a.version}` : "";
+      return {
+        catalogue: a.catalogue,
+        version: a.version,
+        root: shown ? `skill-releases/${a.catalogue}/${a.version}` : "skill-releases",
+        text: `approved release${name} is not in the release store; run "scf skills release adopt${name}"${a.artifact ? "" : " after you set its artifact in skills.releases.approved"}`,
+      };
+    });
+}
+
+/** By catalogue and version only: a digest mismatch is for the registry's checks to refuse. */
+export const isApprovedRelease = (r: { catalogue: string; version: string }, approved: readonly ApprovedRelease[]): boolean =>
+  approved.some((a) => a.catalogue === r.catalogue && a.version === r.version);
+
+const realOf = (p: string): string | undefined => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return undefined;
+  }
+};
+
+/** True for a path in <home>/skill-releases, as written or resolved (like quarantinePath). */
+export function releaseStorePath(p: string, home = dataHome()): boolean {
+  const mine = [resolve(p), realOf(p)].filter((x): x is string => x !== undefined).map((x) => x.toLowerCase());
+  const q = join(resolve(home), RELEASES_DIR);
+  const rh = realOf(home);
+  const forms = [q, realOf(q), rh === undefined ? undefined : join(rh, RELEASES_DIR)].filter((x): x is string => x !== undefined).map((x) => x.toLowerCase());
+  return mine.some((m) => forms.some((f) => m === f || m.startsWith(f + sep)));
+}
+
+export interface StoreNote {
+  kind: "unapproved-release" | "release-store";
+  text: string;
+}
+export interface StoreSource {
+  label: string;
+  root: string;
+  stored: { catalogue: string; version: string };
+}
+
+/** The sources for the approved releases (in listing order), and the notes for the rest. `refused` is for the caller to report as a problem. */
+export function storeSources(listing: StoreListing, approved: readonly ApprovedRelease[]): { sources: StoreSource[]; notes: StoreNote[]; refused?: string } {
+  const sources: StoreSource[] = [];
+  const notes: StoreNote[] = [];
+  let unapproved = 0;
+  for (const r of listing.releases) {
+    if (isApprovedRelease(r, approved)) {
+      sources.push({ label: `release ${r.catalogue}@${r.version}`, root: r.dir, stored: { catalogue: r.catalogue, version: r.version } });
+      continue;
+    }
+    if (++unapproved <= MAX_NOTES) {
+      notes.push({ kind: "unapproved-release", text: `release ${r.catalogue}@${r.version} is published but not in skills.releases.approved, so it is not loaded; see "scf skills release list".` });
+    }
+  }
+  if (unapproved > MAX_NOTES) notes.push({ kind: "unapproved-release", text: `… and ${unapproved - MAX_NOTES} more unapproved releases` });
+  if (listing.hidden) notes.push({ kind: "release-store", text: "A folder in the release store has a name that looks like a credential; it is not loaded." });
+  const why = listing.refused ?? (listing.unreadable ? `${listing.unreadable} catalogue folder${listing.unreadable === 1 ? "" : "s"} cannot be read, so their releases are not loaded` : undefined);
+  if (why && !approved.length) notes.push({ kind: "release-store", text: `skill-releases: ${why}.` });
+  return { sources, notes, ...(why && approved.length ? { refused: why } : {}) };
 }

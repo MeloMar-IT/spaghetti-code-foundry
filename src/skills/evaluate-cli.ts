@@ -4,12 +4,14 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../config.js";
 import { selectCanonicalSkills } from "./canonical.js";
 import { canonicalFromRegistered } from "./canonical-facts.js";
+import { decisionText, effectPromotion } from "./effect.js";
+import { EVALUATIONS_FILE, readSuiteRecords } from "./suite-records.js";
 import { filesOf, hidden, loadExceptions, plural, stagedImport, type StagedImport } from "./staged-import.js";
 import { collisionCandidate, type CollisionCandidate } from "./collisions.js";
 import { evaluationGate, parseEvaluationRecord, type EvaluationGateInput, type EvaluationReason, type EvaluationRecord, type EvaluationSubject } from "./evaluation.js";
 import { EVALUATION_LIMITS, EVALUATION_REASON_CODES, EVALUATION_SUITE_DEFAULT, type EvaluationDimension, type EvaluationMode } from "./evaluation-rules.js";
 import { scoreEvaluation, type ComparedSkill, type EvaluationScore } from "./evaluation-score.js";
-import { EvaluationStoreError, findNewestRecordOf, readNewestRecord, writeEvaluationRecord, type StoredRecordRead } from "./evaluation-store.js";
+import { EvaluationStoreError, findNewestRecordOf, readNewestEffect, readNewestRecord, writeEvaluationRecord, type StoredRecordRead } from "./evaluation-store.js";
 import { instructionsPolicy, type EvaluationAgent } from "./evaluation-instructions.js";
 import { readEvaluationSuite, type EvaluationSuiteRead } from "./evaluation-suite.js";
 import { byteCmp } from "./import-plan.js";
@@ -19,7 +21,7 @@ import { discoverSkills, type DiscoverOptions, type RegisteredSkill, type SkillR
 import { SKILL_ID_RE } from "./schema.js";
 import { scanSkill } from "./scan.js";
 import { applyExceptions, promotionBlockers, type DecidedReport, type ScanException } from "./scan-exceptions.js";
-import { shownValue } from "./sources.js";
+import { shownValue, type SourcesManifest } from "./sources.js";
 
 // `scf skills score` and `scf skills gate`: offline. `score` scores every staged skill with the suite and stores one record each
 // (evaluation-store.ts); `gate` reads the newest records and prints PASSED, FAILED or PROBLEM. All decisions come from the pure
@@ -33,6 +35,8 @@ export interface EvaluateCliOptions {
   now: Date;
   skills?: Config["skills"];
   discover: DiscoverOptions;
+  /** The parsed skill-sources.yaml to use instead of reading the file. */
+  sources?: SourcesManifest;
 }
 export type Out = (line: string) => void;
 
@@ -97,7 +101,7 @@ export function gateChecks(candidate: NormalizedSkill, peers: readonly Normalize
   return { rivals, upgrade: relevant.length > 0, baselines, unresolved, ...(baselines[0] ? { baseline: baselines[0] } : {}), unverified };
 }
 
-const foundryVersion = (): string => {
+export const foundryVersion =(): string => {
   try {
     const dir = dirname(fileURLToPath(import.meta.url));
     const v = (JSON.parse(readFileSync(join(dir, "../../package.json"), "utf8")) as { version?: unknown }).version;
@@ -126,7 +130,7 @@ export interface Prepared {
 }
 
 /** What both commands need. Prints PROBLEM lines; returns undefined when nothing can be judged. */
-function prepare(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions, tail: string): Prepared | undefined {
+export function prepareEvaluation(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions, tail: string): Prepared | undefined {
   let exceptions: ScanException[] = [];
   let suite: Extract<EvaluationSuiteRead, { state: "ok" }> | undefined;
   const staged = stagedImport(
@@ -230,7 +234,7 @@ function comparedFor(p: Prepared, it: Item): { approved: ComparedSkill[]; baseli
 
 /** The offline part of `scf skills score`: prepares the import and scores every staged skill. Writes nothing. */
 export function prepareScoring(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions): ScoringPlan | undefined {
-  const p = prepare(id, suiteFile, out, opts, "no record");
+  const p = prepareEvaluation(id, suiteFile, out, opts, "no record");
   if (!p) return undefined;
   const { suite } = p;
   const scored: ScoredItem[] = [];
@@ -311,27 +315,29 @@ export function scoreImport(id: string, suiteFile: string | undefined, out: Out,
 type Subject = { record: unknown; problem?: string };
 const subjectOf = (r: StoredRecordRead): Subject => (r.state === "ok" ? { record: r.raw } : { record: undefined, problem: r.state === "invalid" ? r.problem : undefined });
 
-/** `scf skills gate`: judges the newest record of every staged skill. Returns 1 when a skill fails or a PROBLEM was printed. */
-export function gateImport(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions): number {
-  const p = prepare(id, suiteFile, out, opts, "it cannot be promoted");
-  if (!p) return 1;
+export interface JudgedItem {
+  item: Item;
+  passed: boolean;
+  modes: EvaluationMode[];
+  codes: string[];
+  notes: string[];
+  record: StoredRecordRead;
+}
+
+/** Judges the newest record of every item: the decision of `scf skills gate`, kept in one place. */
+export function judgeItems(p: Prepared, opts: { home?: string }): JudgedItem[] {
   const { staged, suite, items } = p;
-  if (staged.source.status !== "enabled") {
-    out(`PROBLEM the source ${staged.source.id} is ${staged.source.status}; only an enabled source can be promoted`);
-    return 1;
-  }
-  let problems = p.problems;
   const home = opts.home;
   const policy = instructionsPolicy(suite.suite, suite.digest);
-  const subjectFor = (it: Item): EvaluationSubject & { problem?: string } => {
-    const s = subjectOf(readNewestRecord(staged.source.id, staged.commit, it.id, { home }));
+  const subjectFor = (it: Item, r: StoredRecordRead): EvaluationSubject & { problem?: string } => {
+    const s = subjectOf(r);
     return { record: s.record, digest: it.skill.package.digest, safety: it.safety, licence: it.licence, ...(s.problem ? { problem: s.problem } : {}) };
   };
-  let passed = 0;
-  let failed = 0;
+  const judged: JudgedItem[] = [];
   for (const it of items) {
     const { checks } = it;
-    const me = subjectFor(it);
+    const record = readNewestRecord(staged.source.id, staged.commit, it.id, { home });
+    const me = subjectFor(it, record);
     const modes: EvaluationMode[] = [];
     const reasons: EvaluationReason[] = [];
     const notes: string[] = [];
@@ -369,7 +375,7 @@ export function gateImport(id: string, suiteFile: string | undefined, out: Out, 
           reasons.push({ code: "record-invalid" });
           continue;
         }
-        take({ mode: "duplicate", policy, candidates: [me, subjectFor(other)] }, own);
+        take({ mode: "duplicate", policy, candidates: [me, subjectFor(other, readNewestRecord(staged.source.id, staged.commit, other.id, { home }))] }, own);
       }
     }
     if (modes.length === 0) {
@@ -381,14 +387,48 @@ export function gateImport(id: string, suiteFile: string | undefined, out: Out, 
     const codes = [...new Map(reasons.map((r) => [`${r.code}:${r.dimension ?? r.finding ?? r.licence ?? ""}`, r])).values()]
       .sort((a, b) => EVALUATION_REASON_CODES.indexOf(a.code) - EVALUATION_REASON_CODES.indexOf(b.code) || byteCmp(a.dimension ?? "", b.dimension ?? ""))
       .map((r) => (r.dimension ?? r.finding ?? r.licence ? `${r.code}:${r.dimension ?? r.finding ?? r.licence}` : r.code));
+    judged.push({ item: it, passed: ok && codes.length === 0, modes, codes, notes, record });
+  }
+  return judged;
+}
+
+/** `scf skills gate`: judges the newest record of every staged skill. Returns 1 when a skill fails or a PROBLEM was printed. */
+export function gateImport(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions): number {
+  const p = prepareEvaluation(id, suiteFile, out, opts, "it cannot be promoted");
+  if (!p) return 1;
+  const { staged } = p;
+  if (staged.source.status !== "enabled") {
+    out(`PROBLEM the source ${staged.source.id} is ${staged.source.status}; only an enabled source can be promoted`);
+    return 1;
+  }
+  // The effect rule lives here and not in judgeItems: release publish shares judgeItems and the evaluation records stay as they are.
+  const decided = readSuiteRecords(resolve(opts.cwd, EVALUATIONS_FILE), opts.today);
+  if (decided.state === "invalid") {
+    for (const d of decided.problems) out(`PROBLEM ${EVALUATIONS_FILE} ${d.where}: ${d.message}`);
+    return 1;
+  }
+  const decisions = decided.state === "ok" ? decided.manifest.effect_decisions : [];
+  const problems = p.problems;
+  let passed = 0;
+  let failed = 0;
+  for (const j of judgeItems(p, opts)) {
+    const { item: it, modes } = j;
+    const digest = it.skill.package.digest;
+    const read = readNewestEffect(it.id, digest, { home: opts.home });
+    const e = effectPromotion(read, decisions, it.id, digest);
+    const codes: string[] = [...(j.passed ? [] : j.codes.length ? j.codes : ["record-invalid"]), ...(e.code ? [e.code] : [])];
+    const notes = [...j.notes];
+    if (read.state === "invalid") notes.push(`effect: ${read.problem}`);
+    else if (e.code === "effect-not-measured") notes.push(`no effect record; run "scf skills effect ${p.staged.source.id} ${it.id}"`);
     const head = `${it.id}@${it.version} ${modes.join(",")}`;
-    if (ok && codes.length === 0) {
+    if (codes.length === 0) {
       passed++;
       out(`PASSED ${head}`);
     } else {
       failed++;
-      out(`FAILED ${head}: ${codes.join(", ") || "record-invalid"}${notes.length ? ` (${notes.map(hidden).join("; ")})` : ""}`);
+      out(`FAILED ${head}: ${codes.join(", ")}${notes.length ? ` (${notes.map(hidden).join("; ")})` : ""}`);
     }
+    if (e.decision) out(`DECISION ${it.id}@${it.version} effect ${decisionText(e.decision)}`);
   }
   out(`GATED ${plural(staged.record.skills.length, "skill")} from ${short(p)}: ${passed} passed, ${failed} failed`);
   return failed > 0 || problems > 0 ? 1 : 0;

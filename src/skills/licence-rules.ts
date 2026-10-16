@@ -29,10 +29,10 @@ export const OWNER_MAX_WORDS = 7;
 export const OWNER_DENY_WORDS: readonly string[] = [
   "use", "used", "using", "is", "are", "be", "may", "must", "shall", "not", "only", "permitted", "permission", "allowed", "prohibited",
   "restricted", "purposes", "purpose", "commercial", "license", "licence", "terms", "conditions", "granted", "without", "notice",
-  "software", "above", "holders", "claim", "copies", "this", "for", "any", "no",
+  "software", "above", "holders", "holder", "contributors", "claim", "copies", "this", "for", "any", "no",
 ];
-/** The Apache-2.0 appendix line that is meant to be filled in. */
-export const OWNER_PLACEHOLDER_RE = /^\s*copyright\s*\{yyyy\}\s*\{name of copyright owner\}\s*$/i;
+/** An owner notice may be wrapped over up to this many lines, as a paragraph of its own. */
+export const OWNER_PARAGRAPH_MAX_LINES = 3;
 
 /** Lower case, every run of non-alphanumerics is one space. */
 export function normalizeLicenceText(text: string): string {
@@ -114,11 +114,17 @@ export interface LicenceFullText {
   cut: RegExp;
   heads: readonly string[];
   tails: readonly string[];
+  /** Normalised phrase of the appendix line that is meant to be filled in (`{yyyy}` or `[yyyy]`); removed from the tail. */
+  placeholder?: string;
+  /** Normalised phrases mapped `[from, to]` in head and tail before hashing (`https` addresses to `http`). */
+  wordForms?: readonly (readonly [string, string])[];
 }
 export const LICENCE_FULL_TEXTS: readonly LicenceFullText[] = [
   {
     id: "Apache-2.0",
-    cut: /end of terms and conditions/i,
+    cut: /end\s+of\s+terms\s+and\s+conditions/i,
+    placeholder: "copyright yyyy name of copyright owner",
+    wordForms: [["https www apache org licenses", "http www apache org licenses"]],
     heads: ["f45538b138cf9aea39fa205de037a0bede8305e68281650e7ab809a8b3ebb2f0", "296a35b4f3b6a7e90a68c08362fc50009807cd0dfd4f78f36f4062bd4d202555"],
     tails: ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "50bb8131750d8251aab3e2636df786bcfdcdb256ed4bd6e527fe167814988bed"],
   },

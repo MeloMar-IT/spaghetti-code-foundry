@@ -52,6 +52,16 @@ export interface TurnItem {
   ownerName?: string;
 }
 
+/** A run or an issue behind a grouped release item. Server only: the page never gets it. */
+export interface TurnMember {
+  runId?: string;
+  repo: string;
+  issue?: number;
+}
+
+/** An item as `buildTurn` keeps it: with its stamp, and for a grouped release item its members. */
+export type HomeItem = TurnItem & { stamp: string; members?: TurnMember[] };
+
 export interface YourTurn {
   count: number;
   groups: { repo: string; items: TurnItem[] }[];
@@ -141,7 +151,7 @@ function byImportance(a: TurnItem, b: TurnItem): number {
 }
 
 /** Every current item (also dismissed ones, with their stamp) and the page the user sees. */
-export function buildTurn(sources: TurnSource[], o: TurnOptions = {}): { data: YourTurn; all: (TurnItem & { stamp: string })[] } {
+export function buildTurn(sources: TurnSource[], o: TurnOptions = {}): { data: YourTurn; all: HomeItem[] } {
   // The same key from two places is one thing.
   const byKey = new Map<string, TurnSource>();
   for (const s of sources) {
@@ -152,7 +162,7 @@ export function buildTurn(sources: TurnSource[], o: TurnOptions = {}): { data: Y
   const deps = unique.filter((s) => s.next.kind === "dependency");
   const waiting = unique.filter((s) => needsUser(s.next));
 
-  const all: (TurnItem & { stamp: string })[] = [];
+  const all: HomeItem[] = [];
   const releases = new Map<string, TurnSource[]>();
   for (const s of waiting) {
     if (s.next.kind === "release" && s.next.where.url) {
@@ -180,13 +190,14 @@ export function buildTurn(sources: TurnSource[], o: TurnOptions = {}): { data: Y
       unblocks: unblocksOf(first.next.repo, [...new Set(list.flatMap((s) => (s.next.issue === undefined ? [] : [s.next.issue])))], deps, true),
       dismissable: list.every((s) => s.dismissable), watcher: first.watcher ?? list.find((s) => s.watcher)?.watcher,
       stamp: earliest(list.map((s) => s.stamp)) ?? "", acts: [],
+      members: list.map((s) => ({ ...(s.next.runId ? { runId: s.next.runId } : {}), repo: s.next.repo, ...(s.next.issue !== undefined ? { issue: s.next.issue } : {}) })),
     });
   }
 
   const dismissed = o.dismissed ?? {};
-  const hidden = (i: TurnItem & { stamp: string }) => i.dismissable && dismissed[i.key] !== undefined && dismissed[i.key]!.since === i.stamp;
+  const hidden = (i: HomeItem) => i.dismissable && dismissed[i.key] !== undefined && dismissed[i.key]!.since === i.stamp;
   const acted = o.acted ?? {};
-  const isActed = (i: TurnItem & { stamp: string }) => acted[i.key] !== undefined && acted[i.key]!.since === i.stamp;
+  const isActed = (i: HomeItem) => acted[i.key] !== undefined && acted[i.key]!.since === i.stamp;
   const continuing = all.filter(isActed).sort(byImportance);
   const shown = all.filter((i) => !isActed(i) && !hidden(i)).sort(byImportance);
 
@@ -203,9 +214,25 @@ export function buildTurn(sources: TurnSource[], o: TurnOptions = {}): { data: Y
   return { data, all };
 }
 
-function publicItem(i: TurnItem & { stamp: string }): TurnItem {
-  const { stamp: _stamp, ...item } = i;
+function publicItem(i: HomeItem): TurnItem {
+  const { stamp: _stamp, members: _members, ...item } = i;
   return item;
+}
+
+const sameRepo = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+
+/**
+ * Whether a run or an issue stands on Home now: in a shown group or under "Done — continuing" (by next.runId, by
+ * next.repo + issue, or as a member of a grouped release item). A dismissed item does not count.
+ */
+export function onHome(turn: { data: YourTurn; all: readonly HomeItem[] }, at: { runId: string } | { repo: string; issue: number }): boolean {
+  const visible = new Set([...turn.data.groups.flatMap((g) => g.items), ...(turn.data.continuing ?? [])].map((i) => i.key));
+  return turn.all
+    .filter((i) => visible.has(i.key))
+    .some((i) => {
+      const places: TurnMember[] = [{ ...(i.next.runId ? { runId: i.next.runId } : {}), repo: i.next.repo, ...(i.next.issue !== undefined ? { issue: i.next.issue } : {}) }, ...(i.members ?? [])];
+      return places.some((m) => ("runId" in at ? m.runId === at.runId : m.issue === at.issue && sameRepo(m.repo, at.repo)));
+    });
 }
 
 /** A schedule watcher's daily time ("HH:MM") in its own time zone (default: this machine's). */

@@ -3,7 +3,7 @@ import type { SourceTrustTier } from "./sources.js";
 
 // How one canonical skill is chosen. Data only; canonical.ts and canonical-facts.ts use it.
 
-/** Best first. `local` is an administrator folder, a local owner choice above every catalogue tier. */
+/** Best first. `local` is an administrator folder, a local owner choice above every catalogue tier. An approved catalogue release ranks with built-ins. */
 export const CANONICAL_TIERS = ["local", "scf-curated", "official-vendor", "vetted-community", "discovery-only"] as const;
 export type CanonicalTier = (typeof CANONICAL_TIERS)[number];
 export const CANONICAL_SOURCE_TIER: Record<SourceTrustTier, CanonicalTier> = {
@@ -14,6 +14,7 @@ export const CANONICAL_SOURCE_TIER: Record<SourceTrustTier, CanonicalTier> = {
 export const CANONICAL_REGISTRY_TIER: Record<SkillSourceKind, CanonicalTier> = {
   admin: "local",
   builtin: "scf-curated",
+  catalogue: "scf-curated",
   repository: "discovery-only",
 };
 /** In the order they are applied. */

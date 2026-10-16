@@ -17,6 +17,7 @@ export const SOURCE_STATUSES = ["enabled", "disabled", "quarantined", "retired"]
 export const SOURCE_ADAPTERS = ["agent-skills"] as const;
 export const SOURCE_TRUST_TIERS = ["first-party", "verified", "community"] as const;
 export const SOURCE_CADENCES = ["manual", "daily", "weekly", "monthly"] as const;
+export type SourceCadence = (typeof SOURCE_CADENCES)[number];
 export const SOURCE_SCOPE_LIMITS = { capabilities: 8, technologies: 8 } as const;
 export const SOURCE_PROFILE_LIMITS = { portable: 64, products: SKILL_PROVIDER_LIMITS.products } as const;
 export const SOURCE_LICENCES = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "CC0-1.0", "CC-BY-4.0", "Unlicense"] as const;
@@ -59,7 +60,8 @@ export interface SkillLibrarySource {
   scope?: { capabilities: string[]; technologies: { name: string; version: string }[] };
   /** Which upstream capabilities are portable; every other one belongs to the vendor. Absent: capabilities stay as upstream wrote them. */
   profile?: SourceProfile;
-  update: { cadence: (typeof SOURCE_CADENCES)[number] };
+  /** `reviewer`: who an unattended `scf skills update --due` names as the reviewer of a community source. */
+  update: { cadence: SourceCadence; reviewer?: string };
   owner: string;
   review?: SourceReview;
 }
@@ -270,10 +272,16 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
 
     // update
     let cadence: SkillLibrarySource["update"]["cadence"] | undefined;
+    let updateReviewer: string | undefined;
     const upd = sub(e.update, "update");
     if (upd) {
-      keys(upd, ["cadence"], "update");
+      keys(upd, ["cadence", "reviewer"], "update");
       cadence = known(text(upd.cadence, "update.cadence"), "update.cadence", SOURCE_CADENCES, `must be one of ${list(SOURCE_CADENCES)}`);
+      updateReviewer = text(upd.reviewer, "update.reviewer", false);
+      if (updateReviewer !== undefined && !OWNER_RE.test(updateReviewer)) {
+        err("update.reviewer", "must be a GitHub user or team like @octocat or @acme/skills");
+        updateReviewer = undefined;
+      }
     }
 
     // ref
@@ -532,7 +540,7 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
         licence: { allow, ...(reviewed !== undefined ? { reviewed } : {}) },
         ...(scope ? { scope } : {}),
         ...(profile ? { profile } : {}),
-        update: { cadence },
+        update: { cadence, ...(updateReviewer !== undefined ? { reviewer: updateReviewer } : {}) },
         owner,
         ...(review ? { review } : {}),
       });
@@ -569,6 +577,11 @@ export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES, today?: 
   if (data === "link") return fail("is a symbolic link");
   if (data === "other") return fail("is not a readable regular file");
   if (data === "large") return fail(`is larger than ${maxBytes} bytes`);
+  return sourcesFromBytes(data, today);
+}
+
+/** The YAML and schema part of `readSources`, for a caller that has read the bytes itself (one read, one snapshot). */
+export function sourcesFromBytes(data: Uint8Array, today?: string): SourcesRead {
   let doc: unknown;
   try {
     // logLevel "silent": the library must not print warnings, they repeat the source line (which may hold a credential).
