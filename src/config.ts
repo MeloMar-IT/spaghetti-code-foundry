@@ -265,6 +265,15 @@ export const STEP_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*(_\*)?$/;
 export const STEP_ENV_REFUSED = /^(FACTORY_|SCF_|GH_|GITHUB_|GIT_|SSH_)/;
 const stepEnvName = z.string().refine((n) => STEP_ENV_NAME.test(n) && !STEP_ENV_REFUSED.test(n), "not a variable name the steps of a user's run may get");
 
+/** The interval of `skills.update_check.every` in ms: `<n>m` or `<n>h` from 5m to 24h; undefined for anything else. */
+export function updateEveryMs(text: unknown): number | undefined {
+  if (typeof text !== "string") return undefined;
+  const m = /^([1-9]\d{0,3})(m|h)$/.exec(text);
+  if (!m) return undefined;
+  const ms = Number(m[1]) * (m[2] === "h" ? 3_600_000 : 60_000);
+  return ms >= 300_000 && ms <= 86_400_000 ? ms : undefined;
+}
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -534,6 +543,18 @@ export const ConfigSchema = z
         unresolved: UnresolvedPolicySchema,
         /** Which tools a skill may ask for. Decides whether a run may go past the plan gate with a skill; it never limits a session. */
         tools: ToolPolicySchema,
+        /** The server runs the due skill-source checks from this catalogue clone, every `every`. No folder: off. */
+        update_check: z
+          .object({
+            folder: z
+              .string()
+              .refine((p) => isAbsolute(p), "must be an absolute path")
+              .refine((p) => !p.split(/[\\/]/).some((s) => /^\.(?:claude|codex)$/i.test(s)), "personal agent folders (.claude, .codex) cannot be used")
+              .optional(),
+            every: z.string().default("1h").refine((s) => updateEveryMs(s) !== undefined, "an interval like 30m or 6h, from 5m to 24h"),
+          })
+          .strict()
+          .prefault({}),
       })
       .strict()
       .superRefine((s, ctx) => {

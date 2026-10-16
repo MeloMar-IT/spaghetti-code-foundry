@@ -232,6 +232,8 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "skills.tools.network": N("Skills may ask for the network", "Whether a skill may ask for network access."),
   "skills.tools.filesystem": N("Skills file access", "The most file access a skill may ask for."),
   "skills.tools.missing": N("Skill tool not available", "What to do when a tool a skill asks for is not available."),
+  "skills.update_check.folder": G("Catalogue clone for source checks", "Absolute path of a clone of the catalogue repository; the server checks its due skill sources there and opens pull requests with its own git and gh sign-in; not set means off."),
+  "skills.update_check.every": G("Look for due source checks every", "How often the server looks for due sources, like 30m or 6h, from 5m to 24h; each source keeps its own update cadence."),
   isolate_agents: A("Isolate agents", "Run agent steps without your personal setup: no MCP servers, plugins, skills, hooks or user settings.", "new-runs", "admin-sections.js"),
   cost_limits: A("Enforce cost limits", "Stop runs at the run, step and daily budgets; off still records costs but never stops a run because of money.", "new-runs"),
   daily_budget_usd: A("Daily budget ($)", "When today's spending reaches this, runs pause and resume the next day.", "new-runs"),

@@ -15,7 +15,7 @@ import type { UpdateCheckOutcome } from "../skills/update-schedule.js";
 //
 // The git and gh calls of catalogue-git.ts are `spawnSync` (up to 120 s each). They block the event loop during a check. That
 // is accepted because the check runs in-process, as asked. The sweeper never merges or approves: `updateSource` only opens or
-// edits pull requests. No folder path is put into a sentence, a summary or a log line: findings may reach bug stories.
+// edits pull requests. A cleared or changed folder aborts a running check at the next tick. No folder path is put into a sentence, a summary or a log line: findings may reach bug stories.
 
 export const SKILL_UPDATE_TICK_MS = 60_000;
 export const SWEEP_LOG = "skill-sources: ";
@@ -92,6 +92,8 @@ export function skillUpdateSweeper(deps: SkillUpdateSweeperDeps): SkillUpdateSwe
   let inFlight: Promise<void> | undefined;
   let controller: AbortController | undefined;
   let lastStart: number | undefined;
+  /** The folder of the check in flight. */
+  let runningFolder: string | undefined;
   /** The folder whose findings this process wrote last. */
   let findingsFolder: string | undefined;
   let offCleared = false;
@@ -163,6 +165,16 @@ export function skillUpdateSweeper(deps: SkillUpdateSweeperDeps): SkillUpdateSwe
     await write(checked);
   }
 
+  async function guardedRun(folder: string): Promise<void> {
+    runningFolder = folder;
+    try {
+      await runOnce(folder);
+    } finally {
+      runningFolder = undefined;
+      controller = undefined;
+    }
+  }
+
   async function body(): Promise<void> {
     let cfg: ReturnType<SkillUpdateSweeperDeps["config"]>;
     try {
@@ -175,6 +187,7 @@ export function skillUpdateSweeper(deps: SkillUpdateSweeperDeps): SkillUpdateSwe
       if (!offCleared && (await clear())) {
         offCleared = true;
         findingsFolder = undefined;
+        lastStart = undefined;
       }
       return;
     }
@@ -182,19 +195,30 @@ export function skillUpdateSweeper(deps: SkillUpdateSweeperDeps): SkillUpdateSwe
     if (findingsFolder !== undefined && findingsFolder !== folder) {
       if (!(await clear())) return;
       findingsFolder = undefined;
+      lastStart = undefined;
     }
     if (stopped) return;
     const t = now().getTime();
     if (lastStart !== undefined && t - lastStart < cfg.everyMs) return;
     lastStart = t;
     findingsFolder = folder;
-    await runOnce(folder);
+    await guardedRun(folder);
   }
 
   return {
     tick(): Promise<void> {
       if (stopped) return Promise.resolve();
-      if (inFlight) return Promise.resolve();
+      if (inFlight) {
+        // a cleared or changed folder stops the check in flight before its next git or gh step; the next free tick clears and goes on
+        let folder: string | undefined;
+        try {
+          folder = deps.config().folder || undefined;
+        } catch {
+          return Promise.resolve();
+        }
+        if (runningFolder !== undefined && folder !== runningFolder) controller?.abort();
+        return Promise.resolve();
+      }
       const p: Promise<void> = body()
         .catch(() => {})
         .finally(() => {

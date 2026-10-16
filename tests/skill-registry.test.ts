@@ -370,6 +370,7 @@ describe("cache and config", () => {
         high_risk: ["migration", "migrations", "security", "messaging", "kafka", "rabbitmq", "amqp", "queue", "outbox"],
       },
       tools: { shell: true, network: false, filesystem: "write", missing: "stop" },
+      update_check: { every: "1h" },
     });
     expect(ConfigSchema.safeParse({ skills: { nope: 1 } }).success).toBe(false);
   });
