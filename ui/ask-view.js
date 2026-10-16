@@ -73,6 +73,17 @@ export function cardNode(card, { onNavigate } = {}) {
     h("p", { class: "ask-card-note muted" }, card.note));
 }
 
+/** An offer of a reply as a card with a button. The button asks the server; the card itself opens nothing. `onOffer(index)`. */
+export function offerNode(offer, { onOffer } = {}) {
+  return h("div", { class: "ask-card ask-card-offer", role: "group", "aria-label": `${offer.title}. Opens a page` },
+    h("div", { class: "ask-card-head" },
+      h("strong", {}, offer.title),
+      h("span", { class: "pill sem-neutral" }, "Opens a page")),
+    offer.text ? h("p", { class: "ask-card-text" }, offer.text) : null,
+    h("button", { type: "button", class: "small", "data-offer": String(offer.index), onClick: () => onOffer?.(offer.index) }, "Open"),
+    h("p", { class: "ask-card-note muted" }, offer.note));
+}
+
 const pillClass = (s) => (s.kind === "high-impact" ? "sem-danger" : s.kind === "reversible" ? "sem-warning" : "sem-neutral");
 
 /**
@@ -112,6 +123,7 @@ export function replyNodes(layout, opts = {}) {
     basis.sources.length ? h("ul", { class: "ask-basis", "aria-label": basis.needs === "state" ? "The current state this answer rests on" : "The documentation this answer rests on" },
       basis.sources.map((src) => h("li", {}, sourceLine(src, opts)))) : null,
     layout.cards.length ? h("div", { class: "ask-cards" }, layout.cards.map((c) => cardNode(c, opts))) : null,
+    layout.offers?.length ? h("div", { class: "ask-cards", "aria-label": "Pages you can open" }, layout.offers.map((o) => offerNode(o, opts))) : null,
     trust.state === "limit" ? null : h("details", { class: "ask-sources" },
       h("summary", {}, `Sources and assumptions (${sources.length === 1 ? "1 source" : `${sources.length} sources`})`),
       h("h4", {}, "Sources"),
@@ -127,7 +139,7 @@ export function entryNode(entry, opts = {}) {
     h("span", { class: "ask-who" }, entry.who),
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
-    entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i) }) : entry.text,
+    entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i) }) : entry.text,
     entry.note ? h("span", { class: "ask-note" }, entry.note) : null);
 }
 

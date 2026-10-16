@@ -1007,3 +1007,66 @@ describe("a plan in the drawer", () => {
     expect(cards(made.d)).toEqual([]);
   });
 });
+
+describe("offers in the drawer", () => {
+  const state = { id: "state-run-1", kind: "state", title: "Run r1 waits", ref: "#/runs/r1", observedAt: "2026-10-12T10:00:00.000Z" };
+  const reply = { type: "status", summary: "It waits.", explanation: "", certainty: "confirmed", evidence: [state], recommendations: [], links: [], drafts: [], actions: [], offers: [{ type: "open-run", title: "Open this run", evidence: "state-run-1", subject: { kind: "run", id: "r1" } }] };
+  async function shown(helpOffer: any, deps: any = {}) {
+    const go = vi.fn();
+    const made = make({ api: { helpConversation: vi.fn(async () => conv([q("Why?"), a("done", { reply })])), helpOffer }, deps: { go, ...deps } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    return { ...made, go };
+  }
+  const openButtons = (d: any) => walk(d.ui.thread).filter((e) => e.attrs["data-offer"] !== undefined);
+  const refused = (status: number) => vi.fn(async () => { throw Object.assign(new Error("x"), { status }); });
+
+  it("shows a card with an Open button", async () => {
+    const { d } = await shown(vi.fn());
+    const card = walk(d.ui.thread).find((e) => e.classList.contains("ask-card-offer"))!;
+    expect(card.textContent).toContain("Open this run");
+    expect(card.textContent).toContain("Opens a page");
+    expect(openButtons(d).map((b) => b.textContent)).toEqual(["Open"]);
+  });
+
+  it("asks the server, closes the drawer, and then goes to the address the server gave", async () => {
+    const helpOffer = vi.fn(async () => ({ type: "open-run", to: "#/runs/r1" }));
+    const { d, go } = await shown(helpOffer);
+    go.mockImplementation(() => expect(d.state.open).toBe(false));
+    openButtons(d)[0]!.click();
+    await vi.waitFor(() => expect(go).toHaveBeenCalledWith("#/runs/r1"));
+    expect(helpOffer).toHaveBeenCalledWith("c1", { message: "a1", offer: 0 });
+    expect(d.state.open).toBe(false);
+  });
+
+  it("says its own sentence for 403 and for 404, and does not go anywhere", async () => {
+    for (const [status, text] of [[403, "You are not allowed to open this now."], [404, "This is not there any more, or you can no longer see it."], [410, "This is not there any more, or you can no longer see it."]] as const) {
+      const { d, go } = await shown(refused(status));
+      await d.runOffer("a1", 0);
+      expect(d.ui.error.textContent, String(status)).toContain(text);
+      expect(go).not.toHaveBeenCalled();
+      expect(d.state.open).toBe(true);
+    }
+  });
+
+  it("does not open an address that is not a page of this interface", async () => {
+    for (const to of ["https://evil.example", "javascript:alert(1)", "#/board", undefined]) {
+      const { d, go } = await shown(vi.fn(async () => ({ type: "open-run", to })));
+      await d.runOffer("a1", 0);
+      expect(d.ui.error.textContent, String(to)).toBe("This page cannot be opened here.");
+      expect(go).not.toHaveBeenCalled();
+    }
+  });
+
+  it("sends one call for two clicks while it is on its way", async () => {
+    let release: (v: any) => void = () => {};
+    const helpOffer = vi.fn(() => new Promise((r) => { release = r; }));
+    const { d, go } = await shown(helpOffer);
+    const first = d.runOffer("a1", 0);
+    expect(await d.runOffer("a1", 0)).toBe(false);
+    release({ type: "open-run", to: "#/runs/r1" });
+    await first;
+    expect(helpOffer).toHaveBeenCalledTimes(1);
+    expect(go).toHaveBeenCalledTimes(1);
+  });
+});

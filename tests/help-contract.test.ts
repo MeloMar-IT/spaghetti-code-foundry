@@ -295,3 +295,48 @@ describe("the documentation of the contract", () => {
     for (const fn of ["checkReply", "limitationFor", "certaintyOf", "forRole"]) expect(design, fn).toContain(fn);
   });
 });
+
+describe("offers in a reply", () => {
+  const RUN_SRC: Evidence = { id: "state-run-1", kind: "state", title: "A run", ref: "run r1 · #/runs/r1", observedAt: "2026-01-01T10:00:00.000Z" };
+  const REPO_SRC: Evidence = { id: "state-repo-1", kind: "state", title: "A repository", ref: "repository x · #/repos/x", observedAt: "2026-01-01T10:00:00.000Z" };
+  const targets = { "state-run-1": { kind: "run" as const, id: "r1" }, "state-repo-1": { kind: "repository" as const, id: "x" } };
+  const base = { type: "status", summary: "It waits.", explanation: "", certainty: "confirmed", evidence: ["state-run-1"] };
+  const run = (offers: unknown[], role: "admin" | "user" = "user", over: object = {}) => checkReply({ ...base, offers }, { role, offered: [RUN_SRC, REPO_SRC, DOC], targets, ...over })!;
+
+  it("keeps the server's title and subject, and nothing else the model wrote", () => {
+    const c = run([{ type: "open-run", evidence: "state-run-1", title: "Free money", to: "https://evil.example", url: "https://evil.example", path: "/x", params: { a: 1 } }]);
+    expect(c.reply.offers).toEqual([{ type: "open-run", title: "Open this run", evidence: "state-run-1", subject: { kind: "run", id: "r1" } }]);
+    expect(JSON.stringify(c.reply)).not.toContain("evil");
+    expect(ReplySchema.safeParse(c.reply).success).toBe(true);
+  });
+
+  it("drops what is not on the server's list, with a reason", () => {
+    const reasons = (o: unknown, role: "admin" | "user" = "user", over: object = {}) => run([o], role, over).dropped.filter((d) => d.startsWith("offer"));
+    expect(reasons({ type: "open-anything", evidence: "state-run-1" })).toEqual(["offer: not on the server's list"]);
+    expect(reasons({ type: "open-turn-item", evidence: "state-run-1" })).toEqual(["offer: not on the server's list"]);
+    expect(reasons({ type: "open-run", evidence: "state-nope" })).toEqual(["offer: no state source of the server"]);
+    expect(reasons({ type: "open-run", evidence: "D1" })).toEqual(["offer: no state source of the server"]);
+    expect(reasons({ type: "open-run", evidence: "state-run-1" }, "user", { targets: {} })).toEqual(["offer: no state source of the server"]);
+    expect(reasons({ type: "open-repository", evidence: "state-run-1" })).toEqual(["offer: does not fit its source"]);
+    expect(run([{ type: "open-run", evidence: "state-run-1" }, { type: "open-run" }, "x", null]).reply.offers).toHaveLength(1);
+    expect(run([{ type: "open-turn-item", evidence: "state-run-1" }], "admin").reply.offers?.[0]?.type).toBe("open-turn-item");
+  });
+
+  it("keeps at most three, without duplicates; no offers means no key", () => {
+    const dup = run([{ type: "open-run", evidence: "state-run-1" }, { type: "open-run", evidence: "state-run-1" }, { type: "open-repository", evidence: "state-repo-1" }], "admin");
+    expect(dup.reply.offers).toHaveLength(2);
+    const four = run([{ type: "open-run", evidence: "state-run-1" }, { type: "open-turn-item", evidence: "state-run-1" }, { type: "open-repository", evidence: "state-repo-1" }, { type: "open-turn-item", evidence: "state-run-1" }], "admin");
+    expect(four.reply.offers).toHaveLength(3);
+    expect(Object.hasOwn(run([]).reply, "offers")).toBe(false);
+    expect(Object.hasOwn(checkReply({ ...base, offers: "x" }, { role: "user", offered: [RUN_SRC] })!.reply, "offers")).toBe(false);
+  });
+
+  it("a limit reply has no offers, an older reply parses, and the text lists the titles", () => {
+    expect(checkReply({ limit: "secret", offers: [{ type: "open-run", evidence: "state-run-1" }] }, { role: "user", offered: [RUN_SRC], targets })!.reply.offers).toBeUndefined();
+    const reply = run([{ type: "open-run", evidence: "state-run-1" }]).reply;
+    const { offers: _o, ...older } = reply;
+    expect(ReplySchema.safeParse(older).success).toBe(true);
+    expect(ReplySchema.safeParse({ ...reply, offers: [{ ...reply.offers![0], to: "#/home" }] }).success).toBe(false);
+    expect(displayText(reply)).toContain("You can open:\n- Open this run");
+  });
+});

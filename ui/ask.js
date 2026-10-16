@@ -1,7 +1,7 @@
 import { api as realApi } from "./api.js";
 import { confirmDialog, mount, tabStops, trapTarget } from "./dom.js";
 import {
-  CONSEQUENCES, MAX_READ_FAILURES, QUESTION_MAX, announce, closesOn, contextFor, controlsFor, explainAskError, historyRows, isWaiting, lastOf,
+  CONSEQUENCES, MAX_READ_FAILURES, QUESTION_MAX, announce, closesOn, contextFor, controlsFor, explainAskError, explainOfferError, historyRows, offerTarget, isWaiting, lastOf,
   planKey, pollDelay, restorePick, sendPlan, staleGuard, suggestionsFor, threadOf, waitNote, whereOf,
 } from "./ask-model.js";
 import { actionNodes, askButton, askFrame, entryNode, historyNodes, suggestionNodes } from "./ask-view.js";
@@ -57,6 +57,7 @@ export function tabProgress() {
  */
 export function createAsk(role, {
   slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], store = tabStore(), progress = tabProgress(), now = () => Date.now(),
+  go = (to) => { if (win.location) win.location.hash = to; },
   confirmer = confirmDialog, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
 } = {}) {
   // `restore`: the conversation to read when the drawer opens for the first time after a reload.
@@ -102,7 +103,7 @@ export function createAsk(role, {
       return;
     }
     // a link to a page closes the drawer, so the page it opens is seen; the address changes by the link itself
-    const view = { now: now(), onNavigate: () => close({ back: false }), onToggle: (id, i) => toggleStep(id, i) };
+    const view = { now: now(), onNavigate: () => close({ back: false }), onToggle: (id, i) => toggleStep(id, i), onOffer: (id, i) => void runOffer(id, i) };
     ui.thread.replaceChildren(...threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id) }).map((entry) => entryNode(entry, view)));
     ui.thread.hidden = !st.conversation;
     mount(ui.actions, actionNodes(controlsFor(st.conversation, { busy: st.busy }), CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
@@ -191,7 +192,7 @@ export function createAsk(role, {
   }
 
   /** One call that changes something. A second one while it runs does nothing, so no press is counted twice. */
-  async function act(call, after) {
+  async function act(call, after, explain = explainAskError) {
     if (st.busy) return false;
     const current = guard.ticket();
     st.busy = true;
@@ -206,10 +207,22 @@ export function createAsk(role, {
       return true;
     } catch (e) {
       st.busy = false;
-      if (current()) ui.error.textContent = explainAskError(e);
+      if (current()) ui.error.textContent = explain(e);
       draw();
       return false;
     }
+  }
+
+  /** The person presses Open on an offer: the server checks again and gives the address; the drawer closes, then the page opens. */
+  function runOffer(message, offer) {
+    const id = mine();
+    if (!id) return false;
+    return act(() => api.helpOffer(id, { message, offer }), (r) => {
+      const link = offerTarget(role, r?.to);
+      if (!link) { ui.error.textContent = "This page cannot be opened here."; draw(); return; }
+      close({ back: false });
+      go(link.href);
+    }, explainOfferError);
   }
 
   async function send() {
@@ -385,7 +398,7 @@ export function createAsk(role, {
     ui.drawer.remove?.();
     if (slot) { slot.replaceChildren(); slot.hidden = true; }
   }
-  return { open, close, send, stop, stopAnswer, retry, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
+  return { open, close, send, runOffer, stop, stopAnswer, retry, archive, restore, remove, fresh, showHistory, showTalk, openConversation, state: st, ui, button };
 }
 
 /**

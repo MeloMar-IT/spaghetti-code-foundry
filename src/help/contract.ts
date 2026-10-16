@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { OFFER_MAX, OfferSchema, offerDef, type Subject } from "./actions.js";
 import { PLAN_MAX, PlanStepSchema, STEP_KINDS, STEP_RULES, checkPlan, type Impact } from "./plan.js";
 
 /**
@@ -263,6 +264,7 @@ export const ReplySchema = z
     drafts: z.array(DraftSchema).max(LIST_MAX.drafts),
     actions: z.array(ActionSchema).max(LIST_MAX.actions),
     plan: z.array(PlanStepSchema).max(PLAN_MAX).optional(),
+    offers: z.array(OfferSchema).max(OFFER_MAX).optional(),
     limit: LimitSchema.optional(),
   })
   .strict();
@@ -280,6 +282,7 @@ const RawSchema = z.object({
   drafts: z.array(z.unknown()).catch([]),
   actions: z.array(z.unknown()).catch([]),
   plan: z.array(z.unknown()).catch([]),
+  offers: z.array(z.unknown()).catch([]),
   limit: z.unknown().optional(),
 });
 
@@ -291,6 +294,8 @@ export interface CheckInput {
   clean?: (text: string) => string;
   /** Ids of offered sources the server marked as old or in disagreement: a reply that cites one is "likely" at most. */
   uncertain?: readonly string[];
+  /** The subject of each offered state source, by evidence id (`Prepared.targets`). An offer can point only at one of these. */
+  targets?: Readonly<Record<string, Subject>>;
 }
 
 export interface Checked {
@@ -365,6 +370,20 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
     else if (actions.length < LIST_MAX.actions) actions.push({ id: def.id, title: def.title, impact: clean(obj(a)?.impact, TEXT_MAX.item) || def.title });
   }
 
+  // an offer is only a type and the id of an offered state source; the title and the subject are the server's own
+  const offers: NonNullable<Reply["offers"]> = [];
+  for (const o of r.offers) {
+    const type = obj(o)?.type;
+    const id = typeof obj(o)?.evidence === "string" ? (obj(o)!.evidence as string) : "";
+    const def = offerDef(input.role, type);
+    const source = offered.find((e) => e.id === id && e.kind === "state");
+    const subject = source && Object.hasOwn(input.targets ?? {}, id) ? input.targets![id] : undefined;
+    if (!def) dropped.push("offer: not on the server's list");
+    else if (!source || !subject) dropped.push("offer: no state source of the server");
+    else if (!def.subjects.includes(subject.kind)) dropped.push("offer: does not fit its source");
+    else if (!offers.some((x) => x.type === def.type && x.evidence === id) && offers.length < OFFER_MAX) offers.push({ type: def.type, title: def.title, evidence: id, subject: { kind: subject.kind, id: subject.id } });
+  }
+
   let certainty = certaintyOf(r.type, r.certainty, evidence);
   if (certainty === "confirmed" && evidence.some((e) => (input.uncertain ?? []).includes(e.id))) certainty = "likely";
   const checkedPlan = checkPlan(r.plan, {
@@ -391,6 +410,7 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
     drafts,
     actions,
     ...(checkedPlan.plan.length ? { plan: checkedPlan.plan } : {}),
+    ...(offers.length ? { offers } : {}),
   };
   return { reply, dropped };
 }
@@ -413,6 +433,7 @@ export function displayText(reply: Reply): string {
   }
   if (reply.drafts.length) for (const d of reply.drafts) out.push("", `Draft (not sent): ${d.title}`, d.text);
   if (reply.actions.length) out.push("", "Needs your approval before anything happens:", ...reply.actions.map((a) => `- ${a.title}: ${a.impact}`));
+  if (reply.offers?.length) out.push("", "You can open:", ...reply.offers.map((o) => `- ${o.title}`));
   if (reply.links.length) out.push("", "Pages:", ...reply.links.map((l) => `- ${l.label} (${l.to})`));
   if (!reply.limit) {
     if (reply.evidence.length) out.push("", "Sources:", ...reply.evidence.map((e) => `- ${e.title} (${e.ref}${e.observedAt ? `, seen ${e.observedAt}` : ""})`));

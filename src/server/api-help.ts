@@ -31,7 +31,7 @@ import {
 } from "../help/store.js";
 import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
 import { currentAccount, snapshotResolver } from "./help-context.js";
-import { liveEvidence } from "./help-evidence.js";
+import { liveEvidence, offerConversation, runOffer } from "./help-evidence.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -87,7 +87,7 @@ export function helpAllowed(ctx: ApiContext, asker: Asker): RefusalCode | undefi
 }
 
 /** One audit line of Ask SCF: who, what, which conversation, how it ended, and the id of the turn. Never a text of a question or an answer. */
-function auditHelp(ctx: ApiContext, by: string, action: "help-ask" | "help-delete" | "help-export", result: "ok" | "failed", target: string, detail?: string): void {
+function auditHelp(ctx: ApiContext, by: string, action: "help-ask" | "help-delete" | "help-export" | "help-action", result: "ok" | "failed", target: string, detail?: string): void {
   try {
     writeAudit(by, { action, result, target, ...(detail !== undefined ? { detail } : {}) }, 0);
   } catch (e) {
@@ -275,6 +275,25 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
   if (seg.length === 4 && method === "POST" && seg[3] === "cancel") {
     send(res, 200, conversationView(guardedHelp(ctx, () => turns.cancel(asker, id)), user));
+    return true;
+  }
+  // An offer of a stored reply: checked again for the account as it is now; nothing is stored. The conversation is checked before the body is read.
+  if (seg.length === 4 && method === "POST" && seg[3] === "actions") {
+    if (!ctx.config().help.enabled) throw new HttpError(503, REFUSAL_WORDS.off);
+    try {
+      const no = helpAllowed(ctx, asker);
+      if (no === "not-allowed") throw new HttpError(REFUSED[no], REFUSAL_WORDS[no]);
+      guardedHelp(ctx, () => offerConversation(ctx, asker, id));
+      const body = await readJson(req);
+      const done = guardedHelp(ctx, () => runOffer(ctx, asker, id, body, { patterns: ctx.config().help.sensitive_patterns ?? [] }));
+      auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), done.type);
+      send(res, 200, done);
+    } catch (e) {
+      // a refusal because of who asks (403) or because the conversation or the thing is not there (404, 410) is audited; a bad body is not
+      const why = e instanceof HttpError ? (e.status === 403 ? "denied" : e.status === 404 || e.status === 410 ? "stale" : undefined) : undefined;
+      if (why) auditHelp(ctx, user.id, "help-action", "failed", targetOf(id), `refused: ${why}`);
+      throw e;
+    }
     return true;
   }
   if (seg.length === 2 && method === "GET") {

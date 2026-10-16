@@ -219,6 +219,7 @@ export const api = {
   helpConversation: (id) => req("GET", `/api/help/conversations/${enc(id)}`, undefined, true),
   retryHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/retry`, {}, true),
   cancelHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/cancel`, {}, true),
+  helpOffer: (id, body) => req("POST", `/api/help/conversations/${enc(id)}/actions`, body, true),
   archiveHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/archive`, {}, true),
   restoreHelp: (id) => req("POST", `/api/help/conversations/${enc(id)}/restore`, {}, true),
   deleteHelp: (id) => req("DELETE", `/api/help/conversations/${enc(id)}`, undefined, true),
