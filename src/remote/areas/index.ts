@@ -18,5 +18,8 @@ export const API_ONLY: Record<string, string> = {
   "GET repos/:id/epics": "the data of the Epics view; no command line use yet (a later part of #408 adds the view)",
   "GET repos/:id/epics/:issue": "the data of the epic page; no command line use yet (a later part of #408 adds the view)",
   "GET settings": "the description the Settings page builds its controls from; no command line use",
+  "GET skills/lifecycle": "the skill lifecycle states; the command line reads them with `scf skills lifecycle` on the data folder",
+  "POST skills/lifecycle": "sets a skill lifecycle state; the command line does it with `scf skills lifecycle` on the data folder",
+  "POST skills/lifecycle/allow-run": "lets one run go on with a quarantined skill; the command line does it with `scf skills allow-run` on the data folder",
   "POST settings/reset": "the \"Back to default\" button of the settings pages; no command line use yet",
 };

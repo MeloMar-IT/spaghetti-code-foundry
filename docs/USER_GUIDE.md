@@ -3201,6 +3201,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/users/:id/app-repos` | yes | no | the repositories an account may connect through the GitHub App |
 | `PUT /api/users/:id/app-repos` | yes | no | set the repositories an account may connect through the GitHub App (`owner/name` or `owner/*`); an empty list allows none |
 | `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask SCF conversations and stored credentials |
+| `GET /api/skills/lifecycle` | yes | no | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
+| `POST /api/skills/lifecycle` | yes | no | set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409) |
+| `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); 409 for a revoked version or a run that does not lock it; resume the run afterwards |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories |
@@ -3367,7 +3370,7 @@ The estimate counts the description and `SKILL.md`, not reference files. A resum
   - **List.** `scf skills release list` reads only. It prints `RELEASE <catalogue>@<version> <digest> <state> <n> skills, locked by <k> runs` (or `not locked by any run`) for each stored release, where the state is `approved`, `unapproved`, `mismatch` or `invalid`. An approved release line ends with ` (source catalogue)`. It prints no `PIN` lines. It ends with `OK <n> releases` or `No releases are published`, and exits 1 when the store cannot be read in full.
 - **Release manifest 2.** `catalogue-release.json` may also say `schema: 2`. Each skill then lists every file of its package (`files`: `path`, `sha256`, `bytes`), its `provenance` (`source`, `repositoryKey`, `commit`, `path`, `trust` and an optional `review`), its `licences`, its `attribution` files (kept in `<folder>/.attribution/<id>/`), its `evaluation` (`suite`, `record`, and `verdict` `passed`, `failed` or `not-run`) and an optional `revoked` (`on`, `reason`). The release digest covers all of these fields. A schema-1 manifest works as before.
   - **Integrity.** Each discovery checks a schema-2 folder file by file: every listed file must be there with its size and SHA-256, every package digest must recompute, and no other file may be in a package or in `.attribution/` (only `catalogue-release.json` and `.DS_Store` are allowed besides). A link is refused. Any failure refuses the whole folder (`root-refused`), whatever `allow_unreleased` says.
-  - **Revoked skills.** A skill with `revoked` in an approved schema-2 release is never loaded, from any root. A locked run that uses it stops with the usual "skill integrity: … is missing" reason. A revocation changes the release digest, so the owner approves the new digest in `skills.releases.approved`, and the old one stops matching.
+  - **Revoked skills.** A skill with `revoked` in an approved schema-2 release is never loaded, from any root. A locked run that uses it stops with `skill integrity: … is revoked by release <catalogue>@<version>` and the plan-again hint; it no longer says "is missing". A revocation changes the release digest, so the owner approves the new digest in `skills.releases.approved`, and the old one stops matching. A revocation in a release always wins over a local lifecycle state (see "Skill lifecycle" below).
   - **Evaluation verdict.** Loading does not depend on the verdict. `scf skills release verify` shows it for each skill.
   - **Offline check.** `scf skills release verify <dir>` checks one release folder with the same rules and opens no network connection. It prints `VERIFIED <catalogue>@<version> <digest> <n> skills` (exit 0), or `PROBLEM …` (exit 1). It then prints `APPROVED` or `NOT-APPROVED` against `skills.releases.approved`. The reason never shows a path or file content.
 - **Signed approvals.** Set `skills.releases.keys` to require a trusted signature: up to 10 entries `{id, ed25519}`, where `ed25519` is the base64 of the 32-byte raw Ed25519 public key. Once the list is not empty, every `skills.releases.approved` entry must also have `key` (an `id` from `keys`) and `signature` (base64 of 64 bytes). The signature covers the text `scf-skill-catalogue-approval-v1`, then the catalogue, version and digest, one per line. A release with the approved digest that is unsigned, or whose signature does not verify, is refused (`root-refused`: "is not signed by a trusted key" or "signature does not verify"). None of its packages load, even with `allow_unreleased`. With no keys, nothing changes. The config is refused for an unknown key, a key id listed twice, a key that is not 32 bytes, or `key` without `signature` (or the reverse).
@@ -3381,6 +3384,29 @@ The estimate counts the description and `SKILL.md`, not reference files. A resum
 - **Repository skills** are `unapproved`: they are listed only with `skills.repository: true`, never pinned and never selected.
 - **Isolation.** A Claude session that gets a skill block, or that is a reviewer, runs without your personal Claude setup, even with `isolate_agents` off. Steps with `skills: off` or `skills: catalog` get no skill block, so they do not turn it on by themselves. Codex reviewers ignore your Codex user config.
 - **No grants.** A skill cannot give a tool, a permission or network access. The Foundry's rules and the task win.
+
+##### Skill lifecycle
+
+An administrator can change the state of one approved or built-in skill version. The record is `skill-lifecycle.jsonl` in the data folder: one JSON line per change, only ever added to. A missing file means every version is `active`, so an install without changes behaves as before.
+
+| State | New plans | Locked runs (a run that already has a skill lock) |
+|---|---|---|
+| `active` | selected | selected |
+| `deprecated` | selected | goes on; the run log has a `skill lifecycle:` note |
+| `quarantined` | not selected (`ineligible`) | stops with `skill integrity:` unless `allow-run` was given for that run |
+| `retired` | not selected (`ineligible`) | goes on; the run log names the replacement |
+| `revoked` | not selected (`ineligible`) | always stops with `skill integrity: … is revoked` |
+
+- **Commands.** `scf skills lifecycle` lists the skills that are not active, with their state and replacement. `scf skills lifecycle <id@version>` prints the history of one skill: one `#seq` line per change, and a `release` line when a release revokes it. `scf skills lifecycle <id@version> <state> --reason <text> [--replacement <id@version>]` sets a state. It prints the transition (`kafka@1.0.0: active → quarantined (#3)`), one `RUN <id> locks kafka@1.0.0: <effect>` line per run whose skill lock holds the version, then `OK`. `scf skills allow-run <run-id> <id@version> --reason <text>` lets one run go on with a quarantined version; it prints `ALLOWED <run-id> <id@version> (#5). Resume the run to go on.` Use `--runs-dir <dir>` to point at another runs folder. Without it, the runs folder of the data folder is searched.
+- **Who.** Only administrators may change the record or allow a run. The admin API has the same actions: `GET /api/skills/lifecycle`, `POST /api/skills/lifecycle` and `POST /api/skills/lifecycle/allow-run` (see the permissions table in section 7).
+- **What can change.** Only approved and built-in versions have a lifecycle. A repository skill, or a version that is not installed, is refused. A state cannot be set again to the state it already has, and a `revoked` version never changes again.
+- **Replacement.** Optional for `deprecated`, `quarantined`, `retired` and `revoked`. It must be an installed, approved version that is not quarantined, retired or revoked. Retiring the active version of an id, with no replacement installed and pinned, blocks that id for new plans. There is no fallback to another version of the same id; the message names the replacement.
+- **Reason.** One to 200 characters, no control characters, no spaces at the ends, and not a credential-looking token. The reason is shown in the listing, the history and the run log. Stop reasons do not repeat it.
+- **Allowances.** An allowance belongs to one run and one quarantine. A new quarantine starts with none. An allowance does not help when the version is revoked by a release, and `allow-run` is refused for such a key.
+- **Releases win.** A `revoked` skill in an approved release (see "Revoked skills" above) overrides any local state. The listing says `by release <catalogue>@<version>`. A release can only revoke: it cannot restore a version, and it cannot carry other states.
+- **Fail closed.** A record that cannot be read stops every new plan that selects a skill and every locked run with skills. `scf skills` prints `PROBLEM the skill lifecycle record …` with the line number, and never the content. This applies when the file has a line that is not valid JSON, a field that is not known, a gap in `seq`, a `from` that does not match the state, a change the rules refuse (for example a hand-written `revoked → active`), a same-state change, a symbolic link, or a file over 4 MiB. Repair the file from a copy, then plan again.
+- **Size limit.** The record may hold 4 MiB. A change that would go over the limit is refused before anything is written, and the file stays as it was. Do not delete or shorten the file: without it every version counts as `active` again. Archiving is a manual step for an administrator, and nothing rotates the file.
+- **Delay.** The run page reads the registry with a cache of up to one minute. The admin API clears the cache after each change; a change made with the command line can take up to a minute to show there. The engine always reads the record fresh.
 
 #### The two pipelines and skills
 
@@ -3411,6 +3437,7 @@ Look here, in this order:
 |---|---|
 | `planning failed: the skill request of the plan is not valid` | start the run again so the issue is planned again |
 | `skill integrity:` (a skill changed, is missing, is no longer pinned, now comes from the repository or cannot be verified; or the lock of the run is missing or changed) | restore the exact locked package and its pin (run `scf skills` to see them), then resume the run; or plan again to lock the current skills |
+| `skill integrity: … is quarantined` | an administrator may run `scf skills allow-run <run-id> <id@version> --reason <text>` (the command is in the reason), then resume the run; or plan again. A `… is revoked` reason (by a release or locally) cannot be allowed: plan the issue again |
 | `skill selection is blocked: … does not fit the skill context budget` | raise skills.selection.max_tokens, then resume the run |
 | `skill selection is blocked:` | pin the skill or change skills.selection.include, then resume the run |
 | `skills not resolved: N skill(s) cannot be used — id [code]: …` | see the table of codes below |
@@ -3438,6 +3465,7 @@ The reason code of each skill, the kind of policy that decides it, and what to d
 | `dependency-version` | missing | Install a newer version of the dependency and pin it, then resume the run |
 | `dependency-cycle` | missing | Remove the cycle from the skill packages, then resume the run |
 | `conflict` | conflict | Put one of them on `skills.selection.exclude` |
+| `ineligible` | untrusted | The version is quarantined, retired or revoked (or the lifecycle record cannot be read). Use the replacement or another skill, then plan again |
 | `blocked` | conflict | A mandatory skill was refused or the include/exclude lists are not valid. Fix that first |
 
 A kind set to `warn` lets low-risk work go on. Medium and high risk, and mandatory skills, always stop; see [Missing and conflicting skills](#missing-and-conflicting-skills).
@@ -4791,6 +4819,7 @@ When a run has a plan that is ready to code, the first agent step resolves the p
 - **Resume:** a resumed run uses the locked versions, not the newest ones. The lock is made once per plan; if the run plans again, a new lock is made.
 - **Newer releases do not break it.** When a newer catalogue version is published and approved, the older approved release stays in `skill-releases/` and in `skills.releases.approved`. A run locked to its packages still resumes: the old packages are found by exact `id@version` and digest, and they are not chosen for new plans, where the newest approved packages are active. Removing the old release from `skills.releases.approved` makes the lock fail with `skill integrity: … is missing`.
 - **Checked before every agent session:** each locked skill must still exist at that version, be approved and pinned, and have the same digest. If not, the step stops before the agent starts, with a reason that begins `skill integrity:`. A missing, changed or invalid `skill-lock.json` stops it the same way. To go on, restore the exact package and pin, or plan again, then resume. `scf skills release list` shows which runs lock a stored release, so you can see who depends on it before you change `skills.releases.approved`.
+- **Lifecycle.** A locked skill whose version is `deprecated` or `retired` goes on, with a `skill lifecycle:` note in the run log. A `quarantined` version stops the run unless an administrator allowed this run (`scf skills allow-run`). A `revoked` version always stops it. See "Skill lifecycle" in "Trust".
 - **A mandatory skill that cannot be used** stops the step with `skill selection is blocked:`; pin it or change `skills.selection.include`.
 - **Older runs** without a lock stay readable and nothing is checked for them. The agent cannot write the lock file.
 
@@ -5232,6 +5261,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
 | `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |
+| `scf skills lifecycle [<id@version> [<state> --reason <text> [--replacement <id@version>]]] [--runs-dir <dir>]` | List the skills that are not active, print the history of one, or set `deprecated`, `quarantined`, `retired`, `revoked` or `active` (see [Skill lifecycle](#skill-lifecycle)); a state change also lists the runs that lock the version |
+| `scf skills allow-run <run-id> <id@version> --reason <text> [--runs-dir <dir>]` | Let one run go on with a quarantined version; then resume the run |
 | `scf skills overrides check [<file>]` | Check the owner overrides (`skill-overrides.yaml`); prints each entry with its digest; exits 1 on a problem or an expired entry |
 | `scf skills connectors` | List the reviewed skill source connectors (id, repository, roots, trust, licences); offline; reads no files |
 | `scf skills project-pins check [<file>]` | Check the project pins (`.claude-factory/skill-pins.yaml`); same output and exit codes |

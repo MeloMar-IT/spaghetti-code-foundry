@@ -14,7 +14,7 @@ import { hidePaths } from "./user-view.js";
 
 export type RequestedState = "selected" | "missing" | "conflicting" | "not-approved" | "too-large" | "not-checked";
 export type ContextState = "loaded" | "reloaded" | "reused" | "omitted";
-export type IntegrityState = "verified" | "changed" | "missing" | "unpinned" | "unapproved" | "unverified" | "not-checked" | "not-locked";
+export type IntegrityState = "verified" | "changed" | "missing" | "unpinned" | "unapproved" | "unverified" | "quarantined" | "revoked" | "not-checked" | "not-locked";
 export interface EvidenceView { kind: "catalogue" | "issue" | "path"; text: string }
 
 export interface RequestedSkill {
@@ -189,7 +189,7 @@ function contextOf(history: unknown[], planHash: string | undefined, carryHash?:
   return out;
 }
 
-const INTEGRITY_OF: Record<string, IntegrityState> = { changed: "changed", missing: "missing", unpinned: "unpinned", unapproved: "unapproved" };
+const INTEGRITY_OF: Record<string, IntegrityState> = { changed: "changed", missing: "missing", unpinned: "unpinned", unapproved: "unapproved", quarantined: "quarantined", revoked: "revoked" };
 
 /** The skills of a run for its page; undefined when the run has none to show. Never throws. */
 export function runSkillView(s: RunSummary, opts: SkillViewOptions): RunSkillView | undefined {

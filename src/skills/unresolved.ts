@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SkillLifecycleState } from "./lifecycle.js";
 import { findSkill, type SkillRegistry } from "./registry.js";
 import type { SkillDecision, SkillResolution } from "./resolve.js";
 import {
@@ -56,7 +57,7 @@ export const SkillPlanSchema = z
 
 export type UnresolvedSkill = z.infer<typeof UnresolvedSkillSchema>;
 export type SkillPlan = z.infer<typeof SkillPlanSchema>;
-type Reg = Pick<SkillRegistry, "skills" | "byKey">;
+type Reg = Pick<SkillRegistry, "skills" | "byKey"> & Partial<Pick<SkillRegistry, "problems">>;
 type Risk = (typeof SKILL_RISKS)[number];
 
 /** Do the hyphen-separated words of `term` appear, whole and in order, in `text`? No substring match. */
@@ -109,6 +110,8 @@ interface MessageContext {
   digest?: string;
   limits: SkillResolution["limits"];
   role: SkillRole;
+  /** The lifecycle of the failing skill (state and replacement only, never the reason), or "unreadable" when the record cannot be read. */
+  life?: { state: SkillLifecycleState; replacement?: string } | "unreadable";
 }
 
 const RESUME = "then resume the run";
@@ -129,6 +132,9 @@ function causeText(code: SkillDecision["code"], subject: string, id: string, ctx
       return `${key} changed since it was pinned. Run "scf skills" to see both digests, then pin it with --replace or give it a new version.`;
     case "unverified":
       return `${key} cannot be checked because the skill lock cannot be read. Fix or delete skills.lock.json, pin again, ${RESUME}.`;
+    case "ineligible":
+      if (ctx.life === "unreadable") return `${key} cannot be checked because the skill lifecycle record cannot be read. Fix skill-lifecycle.jsonl, then plan again.`;
+      return `${key} is ${ctx.life?.state ?? "not eligible"}${ctx.life?.replacement ? ` (replaced by ${ctx.life.replacement})` : ""}. Use the replacement or another skill, then plan again.`;
     case "role":
       return `${key} is not allowed for the ${ctx.role} role. Release a version that allows it, or plan without it.`;
     case "too-large":
@@ -191,6 +197,11 @@ export function assessSkills(resolution: SkillResolution, registry: Reg, policy:
     const target = d.code === "dependency-unavailable" && d.via ? findSkill(registry, d.via) : d.version ? findSkill(registry, d.id, d.version) : findSkill(registry, d.id);
     const risk = unitRisk(d.id, d.via, registry, policy.high_risk);
     const kind = kindOf(code, d.cause);
+    const life: MessageContext["life"] = registry.problems?.some((p) => p.kind === "lifecycle")
+      ? "unreadable"
+      : target?.lifecycle
+        ? { state: target.lifecycle.state, ...(target.lifecycle.replacement ? { replacement: target.lifecycle.replacement } : {}) }
+        : undefined;
     let action: UnresolvedSkill["action"] = policy[kind];
     let because: UnresolvedSkill["because"] = "policy";
     if (d.mandatory) because = "mandatory";
@@ -207,7 +218,7 @@ export function assessSkills(resolution: SkillResolution, registry: Reg, policy:
       mandatory: d.mandatory,
       ...(d.via ? { via: d.via } : {}),
       ...(d.cause ? { cause: d.cause } : {}),
-      message: unresolvedMessage(d, { key: target?.key, digest: target?.digest, limits: resolution.limits, role: resolution.role }),
+      message: unresolvedMessage(d, { key: target?.key, digest: target?.digest, limits: resolution.limits, role: resolution.role, life }),
     });
   }
   const warnings = unresolved

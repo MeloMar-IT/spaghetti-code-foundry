@@ -87,7 +87,7 @@ describe("the resolved table", () => {
     expect(text(r![5]!)).toBe("—");
   });
   it.each([
-    ["verified", "ok"], ["changed", "fail"], ["missing", "fail"], ["unpinned", "fail"], ["unapproved", "fail"],
+    ["verified", "ok"], ["changed", "fail"], ["missing", "fail"], ["unpinned", "fail"], ["unapproved", "fail"], ["quarantined", "fail"], ["revoked", "fail"],
     ["unverified", "locked"], ["not-checked", "locked"], ["not-locked", "locked"],
   ])("draws the integrity %s as a %s pill", (integrity, cls) => {
     const [r] = cells(card(view({ resolved: [row({ integrity })] })));

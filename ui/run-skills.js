@@ -6,13 +6,13 @@ export const REQUESTED_LABELS = { selected: "Selected", missing: "Missing", conf
 export const CONTEXT_LABELS = { loaded: "Loaded", reloaded: "Reloaded", reused: "Reused", omitted: "Left out (over budget)" };
 export const INTEGRITY_LABELS = {
   verified: "Verified", changed: "Changed", missing: "Missing", unpinned: "No longer pinned", unapproved: "Not approved",
-  unverified: "Cannot be verified", "not-checked": "Not checked", "not-locked": "Not locked yet",
+  unverified: "Cannot be verified", quarantined: "Quarantined", revoked: "Revoked", "not-checked": "Not checked", "not-locked": "Not locked yet",
 };
 
 const DASH = "—";
 const label = (labels, v) => (typeof v === "string" ? labels[v] ?? v : DASH);
 const REQUESTED_FAIL = new Set(["missing", "conflicting", "not-approved", "too-large"]);
-const INTEGRITY_FAIL = new Set(["changed", "missing", "unpinned", "unapproved"]);
+const INTEGRITY_FAIL = new Set(["changed", "missing", "unpinned", "unapproved", "quarantined", "revoked"]);
 const requestedClass = (state) => (state === "selected" ? "ok" : REQUESTED_FAIL.has(state) ? "fail" : "");
 const integrityClass = (state) => (state === "verified" ? "ok" : INTEGRITY_FAIL.has(state) ? "fail" : "locked");
 

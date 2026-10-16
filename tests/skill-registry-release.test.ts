@@ -359,8 +359,20 @@ describe("schema-2 releases in the registry", () => {
       const reg = run(e, cfg([e.root(0)], [ap]));
       const lock = { version: 1, skills: [{ id: "b", version: "1.0.0", digest: "sha256:" + "1".repeat(64) }] } as unknown as RunSkillLock;
       const problems = verifyRunSkillLock(lock, reg);
-      expect(problems.map((p) => p.code)).toEqual(["missing"]);
-      expect(integrityReason(problems[0]!)).toMatch(/^skill integrity: b@1\.0\.0 is missing/);
+      expect(problems.map((p) => p.code)).toEqual(["revoked"]);
+      expect(integrityReason(problems[0]!)).toMatch(/^skill integrity: b@1\.0\.0 is revoked by release acme-skills@1\.0\.0\./);
+      expect(reg.revoked?.get("b@1.0.0")).toMatchObject({ by: "acme-skills@1.0.0" });
+    });
+
+    it("keeps the release revocation as data, and a local state of the same key stays in lifecycle", () => {
+      const e = setup();
+      const ap = v2(e, { revoked });
+      const line = { type: "transition", seq: 1, key: "b@1.0.0", from: "active", to: "quarantined", at: "2026-01-01T00:00:00.000Z", by: "cli", reason: "local" };
+      writeFileSync(join(e.home, "skill-lifecycle.jsonl"), JSON.stringify(line) + "\n");
+      const reg = run(e, cfg([e.root(0)], [ap]));
+      expect(reg.revoked?.get("b@1.0.0")).toEqual({ by: "acme-skills@1.0.0", on: "2026-03-04", reason: "unsafe advice" });
+      expect(reg.byKey.has("b@1.0.0")).toBe(false);
+      expect(reg.lifecycle?.get("b@1.0.0")).toMatchObject({ state: "quarantined", reason: "local" });
     });
 
     it("ignores a revocation in a release that is not approved", () => {
