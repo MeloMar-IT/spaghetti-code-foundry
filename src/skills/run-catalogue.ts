@@ -9,11 +9,14 @@ import { dedupeOffered, type CollisionCandidate } from "./collisions.js";
 import type { ProjectPinsRead } from "./project-pins.js";
 import { discoverSkills, findSkill, type RegisteredSkill, type SkillRegistry } from "./registry.js";
 import { buildRepoProfile, type RepoProfile } from "./repo-profile.js";
+import { collapseMirrors, instructionKey, MIRROR_LIMITS, registryRank, safetyProfile } from "./mirrors.js";
 import { resolveOptionsFrom, resolveSkills } from "./resolve.js";
 
 // The skill catalogue a planner step (`skills: catalog`) gets before its prompt. Synchronous; never throws.
 // A skill is offered only when the resolver would select it on its own for the coder, so a pick cannot stop an unattended run.
 // A catalogue stops a step only through `blocked`, and only with the `canonical` dependency.
+// Skills with the same description and instructions (mirrors) are offered once: the best tier, then id, then version. With the
+// `canonical` dependency, copies with the same safety profile are merged before the selection; every package keeps its own gate check.
 
 export const SKILL_CATALOGUE_TAG = "foundry-skill-catalogue";
 /** The step whose output is the issue text in the shipped flows. */
@@ -24,6 +27,9 @@ export interface RunCatalogueRecord {
   omitted: number;
   estimatedTokens: number;
   hidden?: number;
+  /** Skills with the same text, offered once (`id@version` only; at most MIRROR_LIMITS.recorded collapsed ids). Absent without copies. */
+  mirrors?: { kept: string; collapsed: string[] }[];
+  mirrorsOmitted?: number;
   /** Owner overrides and project pins in scope, without free text (the digest leads back to the reviewed entry). */
   choices?: AppliedChoice[];
   choicesOmitted?: number;
@@ -186,39 +192,74 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
           }
       }
       const byKey = new Map<string, RegisteredSkill>();
-      const candidates: CanonicalCandidate[] = [];
+      const withhold = deps.canonical.withhold;
+      const all: { s: RegisteredSkill; c: CanonicalCandidate; withheld: boolean; ck: string }[] = [];
       for (const s of judged.values()) {
         const c = deps.canonical.candidate(s);
         if (!c) continue;
-        byKey.set(canonicalKey(c), s);
-        candidates.push(c);
+        const ck = canonicalKey(c);
+        byKey.set(ck, s);
+        all.push({ s, c, withheld: withhold ? withhold(c) : false, ck });
       }
+      // Copies (same text and same safety profile) are merged before the selection: only the representative is a candidate.
+      const grouped = collapseMirrors(all, (e) => `${instructionKey(e.s.pkg)}\n${safetyProfile(e.c, e.withheld)}`, (e) => registryRank(e.s));
+      const repCk = new Map<string, string>(); // copy canonical key -> representative canonical key
+      const members = new Map<string, string[]>(); // representative canonical key -> its copies' ids
+      const repKeyOf = new Map<string, string>(); // copy id@version -> representative id@version
+      for (const g of grouped.groups)
+        for (const m of g.collapsed) {
+          repCk.set(m.ck, g.kept.ck);
+          members.set(g.kept.ck, [...(members.get(g.kept.ck) ?? []), m.s.id]);
+          repKeyOf.set(`${m.s.id}@${m.s.version}`, `${g.kept.s.id}@${g.kept.s.version}`);
+        }
+      // A bare id is remapped only when every judged package with that id is a copy of the same representative.
+      const repIdOf = new Map<string, string>();
+      for (const id of new Set(all.map((e) => e.s.id))) {
+        const reps = new Set(all.filter((e) => e.s.id === id).map((e) => byKey.get(repCk.get(e.ck) ?? e.ck)!.id));
+        if (reps.size === 1 && !reps.has(id)) repIdOf.set(id, [...reps][0]!);
+      }
+      const mapTarget = (t: string): string => (t.includes("@") ? repKeyOf.get(t) : repIdOf.get(t)) ?? t;
+      const mapRecord = (r: Readonly<Record<string, string>> | undefined) => (r ? Object.fromEntries(Object.entries(r).map(([k, v]) => [k, mapTarget(v)])) : undefined);
+      const candidates = grouped.kept.map((e) => e.c);
+      const policyPins = mapRecord(deps.canonical.policy.pins);
+      const policyOverrides = mapRecord(deps.canonical.policy.overrides);
+      const mappedPlan: ChoicePlan | undefined = plan && {
+        ...plan,
+        pins: mapRecord(plan.pins)!,
+        overrides: mapRecord(plan.overrides)!,
+        planned: plan.planned.map((p) => ({ ...p, target: mapTarget(p.target) })),
+      };
       canonical = selectCanonicalSkills(candidates, {
         ...deps.canonical.policy,
-        ...(plan ? { pins: plan.pins, overrides: plan.overrides } : {}),
-        mandatory: opts.include ?? [],
+        ...(policyPins ? { pins: policyPins } : {}),
+        ...(policyOverrides ? { overrides: policyOverrides } : {}),
+        ...(mappedPlan ? { pins: mappedPlan.pins, overrides: mappedPlan.overrides } : {}),
+        mandatory: [...new Set((opts.include ?? []).map((id) => repIdOf.get(id) ?? id))],
       });
       if (ch) {
         // `plan` is set here: a planning failure is in `known`, and the check below stops on it.
-        const checked = plan
-          ? checkSkillChoices(plan, canonical, (target) => {
+        const checked = mappedPlan
+          ? checkSkillChoices(mappedPlan, canonical, (target) => {
               const s = reg.byKey.get(target);
               return !s ? "missing" : !s.active ? "not-active" : s.trust === "unapproved" ? "unapproved" : "not-usable";
             })
           : { problems: [], applied: [] };
-        applied = checked.applied;
+        // The record keeps the target the owner wrote.
+        applied = checked.applied.map((a, n) => ({ ...a, target: plan!.planned[n]!.target }));
         const choiceBlock = choiceStop([...known, ...checked.problems]);
         if (choiceBlock) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: choiceBlock };
       }
-      const leftIds = new Set(canonical.left.flatMap((k) => (byKey.has(k) ? [byKey.get(k)!.id] : [])));
-      const withhold = deps.canonical.withhold;
+      const leftIds = new Set<string>();
+      for (const k of canonical.left) {
+        const s = byKey.get(k);
+        if (!s) continue;
+        leftIds.add(s.id);
+        for (const id of members.get(k) ?? []) leftIds.add(id);
+      }
       if (withhold) {
         const chosen = new Set(canonical.selected);
-        for (const c of candidates) {
-          const s = byKey.get(canonicalKey(c));
-          if (s && !chosen.has(canonicalKey(c)) && withhold(c)) leftIds.add(s.id);
-        }
-        const held = mandatoryRoots.find((m) => leftIds.has(m.id) && candidates.some((c) => byKey.get(canonicalKey(c))?.id === m.id && withhold(c)));
+        for (const e of all) if (!chosen.has(e.ck) && !chosen.has(repCk.get(e.ck) ?? "") && e.withheld) leftIds.add(e.s.id);
+        const held = mandatoryRoots.find((m) => leftIds.has(m.id) && all.some((e) => e.s.id === m.id && e.withheld));
         if (held) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: `${CANONICAL_STOP_PREFIX}"${held.id}" is always loaded (skills.selection.include) but it fails a safety gate. Take it off the include list or fix the gate, then run again.` };
       }
       const before = pool.length;
@@ -234,10 +275,18 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
       const stop = canonicalStop(canonical, broken);
       if (stop) return { text: "", log: "skill catalogue: none (skill selection stopped)", canonical, blocked: stop };
     }
+    // Mirrors: skills with the same text are offered once. An excluded id takes no part, so it cannot knock out an allowed twin.
+    const excludedIds = new Set(skills.catalogue.exclude);
+    const mirrors = collapseMirrors(pool.filter((s) => !excludedIds.has(s.id)), (s) => instructionKey(s.pkg), registryRank);
+    const dropped = new Set(mirrors.groups.flatMap((g) => g.collapsed));
+    const toKept = new Map(mirrors.groups.flatMap((g) => g.collapsed.map((c) => [c.id, g.kept.id] as const)));
+    const mirrorCount = dropped.size;
+    pool = pool.filter((s) => !dropped.has(s));
+    const include = [...new Set(skills.catalogue.include.map((id) => toKept.get(id) ?? id))];
     // Several skills may be requested together: keep only those the resolver admits as one set (conflicts, dependency and count budgets).
     const together = resolveSkills(reg, pool.map((s) => s.id), opts);
     const admitted = new Set(together.decisions.filter((d) => d.outcome === "selected").map((d) => d.id));
-    const cat = buildSkillCatalogue({ skills: pool.filter((s) => admitted.has(s.id)) }, { profile, task: i.task, ...catalogueOptionsFrom(skills) });
+    const cat = buildSkillCatalogue({ skills: pool.filter((s) => admitted.has(s.id)) }, { profile, task: i.task, ...catalogueOptionsFrom(skills), ...(mirrorCount ? { include } : {}) });
     const body = [renderSkillCatalogue(cat)];
     if (cat.entries.length) body.push(`Request at most ${skills.selection.max_skills} skills, and only ids listed above.`);
     const text = `<${SKILL_CATALOGUE_TAG}>\n${body.join("\n")}\n</${SKILL_CATALOGUE_TAG}>`;
@@ -256,10 +305,24 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
       if (applied.length > CHOICE_LIMITS.recorded) record.choicesOmitted = applied.length - CHOICE_LIMITS.recorded;
       if (ch?.pins?.state === "ok") record.choicesSource = { pins: ch.pins.source };
     }
+    if (mirrorCount) {
+      let room: number = MIRROR_LIMITS.recorded;
+      const recorded: { kept: string; collapsed: string[] }[] = [];
+      for (const g of mirrors.groups) {
+        if (room <= 0) break;
+        const ids = g.collapsed.slice(0, room).map((c) => `${c.id}@${c.version}`);
+        room -= ids.length;
+        recorded.push({ kept: `${g.kept.id}@${g.kept.version}`, collapsed: ids });
+      }
+      record.mirrors = recorded;
+      const rest = mirrorCount - (MIRROR_LIMITS.recorded - room);
+      if (rest > 0) record.mirrorsOmitted = rest;
+    }
+    const mirrorNote = mirrorCount ? `; ${mirrorCount} mirror${mirrorCount === 1 ? "" : "s"} collapsed` : "";
     const picked = notCanonical ? `; ${notCanonical} not canonical (skill selection)` : "";
     return {
       text,
-      log: `${base}${hidden ? `; ${hidden} hidden (not pinned)` : ""}${notes ? `; ${notes} (skill collisions)` : ""}${picked}${choiceNote}`,
+      log: `${base}${hidden ? `; ${hidden} hidden (not pinned)` : ""}${notes ? `; ${notes} (skill collisions)` : ""}${mirrorNote}${picked}${choiceNote}`,
       record,
       ...(canonical ? { canonical } : {}),
     };

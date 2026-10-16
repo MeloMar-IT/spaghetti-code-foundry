@@ -335,6 +335,16 @@ describe("skillSession", () => {
     expect(p.text).not.toContain('id="z"');
   });
 
+  it("loads locked copies with the same text once and logs it", () => {
+    const t = setup(gateOutput(["a", "b"]));
+    const same = (id: string, digest: string) => withText(sk(id, { digest }), "Shared advice.", { description: "Shared." });
+    const p = payloadOf(skillSession(t.engine, { discover: () => reg(same("a", digestOf("a")), same("b", digestOf("b"))) }))!;
+    expect(p.loaded).toEqual(["a@1.0.0", "b@1.0.0"]);
+    expect(p.collapsed).toEqual([{ key: "b@1.0.0", into: "a@1.0.0" }]);
+    expect(p.text.match(/Shared advice\./g)).toHaveLength(1);
+    expect(t.logs).toContain("    · skill context: b@1.0.0 has the same text as a@1.0.0; loaded once");
+  });
+
   it("takes only the description and the instructions of a package", () => {
     const t = setup(gateOutput(["a"]));
     const s = withText(sk("a"), "Plain advice.", { allowedTools: "Bash(SENTINEL_TOOL)", tool_profile: "SENTINEL_PROFILE", files: [{ path: "scripts/x.sh", content: "SENTINEL_FILE" }] });

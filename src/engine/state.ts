@@ -40,7 +40,7 @@ export interface StepRecord {
   /** Foundry skills given to this agent session: `id@version` in load order, and the size of the block. `state` and `digest` say whether the session got the block (`loaded`, `reloaded`) or already held it (`reused`); `attached*` is what this step added to the prompt (0 when reused). `role` is set for a reviewer block. Absent without a current skill lock. `grant`: what a Claude coder session was given when the skill tools were checked; an estimate, absent on older runs, Codex and reviewer steps. */
   skills?: { grant?: SessionToolGrant; loaded: string[]; omitted?: string[]; bytes: number; estimatedTokens: number; role?: "reviewer"; state?: "loaded" | "reloaded" | "reused"; digest?: string; attachedBytes?: number; attachedEstimatedTokens?: number };
   /** A skill catalogue was put before this step's prompt: counts only, never the text. `hidden`: skills left out only because they are not pinned. */
-  skillCatalogue?: { entries: number; omitted: number; estimatedTokens: number; hidden?: number; choices?: AppliedChoice[]; choicesOmitted?: number; choicesSource?: { pins: { commit: string; blob: string } } };
+  skillCatalogue?: { entries: number; omitted: number; estimatedTokens: number; hidden?: number; /** Skills with the same text, offered once: `id@version` only. */ mirrors?: { kept: string; collapsed: string[] }[]; mirrorsOmitted?: number; choices?: AppliedChoice[]; choicesOmitted?: number; choicesSource?: { pins: { commit: string; blob: string } } };
   startedAt: string;
   durationMs: number;
   logFile: string;
