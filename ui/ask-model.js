@@ -119,7 +119,7 @@ export function triesNote(message) {
  * What the drawer shows for one message: `kind` is question, waiting, answer, failed, limit or stopped. Text stays
  * text. `limit`: a failure that trying again now cannot solve (a limit, a budget, the setup).
  */
-export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () => [] } = {}) {
+export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () => [], outcomes = () => [] } = {}) {
   const text = typeof message?.text === "string" ? message.text : "";
   if (message?.role === "user") return { id: message.id, kind: "question", who: "You", text, note: "" };
   const note = triesNote(message);
@@ -128,6 +128,7 @@ export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () =
   if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: text || "You stopped this answer.", note };
   // a reply with its checked parts is laid out by them; the text is what is left when there are none
   const layout = replyLayout(message?.reply, role, planDone(message?.id));
+  if (layout) layout.outcomes = outcomesFor(message, outcomes(message?.id));
   const vote = message?.feedback?.vote === "helpful" || message?.feedback?.vote === "not-helpful" ? message.feedback.vote : null;
   const reasons = vote === "not-helpful" ? list(message.feedback.reasons).filter((r) => r in REASON_WORDS) : [];
   return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : text, note, rateable: true, feedback: { vote, reasons }, ...(layout ? { layout } : {}) };
@@ -375,7 +376,12 @@ export function cardsOf(reply, role) {
     else if (to || str(l?.label)) cards.push({ kind: "navigation", effect: "read-only", title: "An address that is not a page here", text: [str(l?.label), to].filter(Boolean).join(": "), note: "This is not a page of the Foundry for your account. It is shown as text and cannot be opened here." });
   }
   for (const d of list(reply?.drafts)) if (str(d?.text)) cards.push({ kind: "draft", effect: "read-only", title: `Draft: ${str(d.title) || "Draft"}`, text: str(d.text), pre: true, note: "This text is not sent, saved or posted. Copy it yourself if you want to use it." });
-  for (const a of list(reply?.actions)) if (str(a?.title)) cards.push({ kind: "action", effect: "changes-state", title: `Suggested change: ${str(a.title)}`, text: str(a.impact), note: "Ask SCF does not do this. Nothing happens here. If you want it, do it yourself on the page where it belongs." });
+  list(reply?.actions).forEach((a, index) => {
+    if (!str(a?.title)) return;
+    const bound = !reply?.limit && Object.hasOwn(ACTION_TITLES, a.id) && a.about?.kind === "run" && str(a.about.id);
+    cards.push({ kind: "action", effect: "changes-state", title: `Suggested change: ${str(a.title)}`, text: str(a.impact),
+      ...(bound ? { act: index, note: ACT_NOTE } : { note: "Ask SCF does not do this. Nothing happens here. If you want it, do it yourself on the page where it belongs." }) });
+  });
   return cards;
 }
 
@@ -485,4 +491,79 @@ export function planOf(reply, role = "user", done = []) {
     header: `${rows.length === 1 ? "1 step" : `${rows.length} steps`}${high ? `, ${high === 1 ? "1 is a high-impact change" : `${high} are high-impact changes`}` : ""}. Nothing is done until you do it.`,
     manual: true,
   };
+}
+
+// ---- reviewing a change: the preview, the confirmation and what was read back ------------------------
+
+/** The title of each action (ACTIONS in src/help/contract.ts; a test keeps them equal). */
+export const ACTION_TITLES = { "resume-run": "Resume the run", "cancel-run": "Cancel the run" };
+export const ACT_NOTE = "Nothing happens until you review the change and confirm it.";
+const UNSAID = "The server did not say.";
+const LEVEL = { high: "High impact", reversible: "Reversible", "read-only": "Read-only" };
+const said = (v) => (typeof v === "string" && v.trim() ? v : UNSAID);
+
+/** The six rows of the review dialog, from the preview the server made. A missing field says so. */
+export function previewRows(preview) {
+  const p = preview && typeof preview === "object" ? preview : {};
+  const title = str(p.title) || ACTION_TITLES[p.action] || "";
+  const run = str(p.about?.id);
+  const action = title ? (run ? `${title} (run ${run})` : title) : UNSAID;
+  return [
+    { label: "Action", text: action },
+    { label: "Now", text: said(p.now) },
+    { label: "What changes", text: said(p.changes) },
+    { label: "Impact", text: `${LEVEL[p.impactLevel] ?? "Impact"}: ${said(p.impact)}` },
+    { label: "Undo", text: `${p.undoable === true ? "Can be undone." : "Cannot be undone."} ${said(p.undo)}` },
+    { label: "Who may do this", text: said(p.who) },
+  ];
+}
+export const previewDanger = (p) => p?.impactLevel === "high";
+/** The words of the dialog. */
+export const REVIEW_TEXT = {
+  title: "Review the change",
+  intro: "This is what the server says the change would do. Nothing has changed yet.",
+  note: "You can confirm this once, within 5 minutes. The server checks everything again when you confirm.",
+  confirm: "Confirm the change",
+};
+export const NOT_STORED_NOTE = "The result could not be saved with the conversation. It is shown here until you leave the conversation.";
+
+/** The word and the pill of each result (OUTCOME_RESULTS in src/help/outcome.ts; a test keeps the keys equal). */
+export const RESULT_WORDS = {
+  done: ["Done", "sem-success"], dequeued: ["Done", "sem-success"], stopped: ["Done", "sem-success"],
+  queued: ["Queued", "sem-info"],
+  stopping: ["Partly done", "sem-warning"], unconfirmed: ["Partly done", "sem-warning"], missing: ["Partly done", "sem-warning"],
+  "start-failed": ["Not done", "sem-danger"], "not-done": ["Not done", "sem-danger"],
+};
+
+/** One outcome the server read back, ready to draw; null when it has no words. An unknown result counts as partly done. */
+export function outcomeOf(o) {
+  if (!o || typeof o !== "object" || typeof o.words !== "string") return null;
+  const [word, pill] = Object.hasOwn(RESULT_WORDS, o.result) ? RESULT_WORDS[o.result] : ["Partly done", "sem-warning"];
+  const action = str(o.action);
+  return { action, title: ACTION_TITLES[action] ?? "A change", run: str(o.about?.id), result: str(o.result), word, pill, words: o.words, recovery: str(o.recovery), at: str(o.at) };
+}
+
+/** The stored outcomes of a message and the ones this tab holds, once each, oldest first, the newest 10. */
+export function outcomesFor(message, local = []) {
+  const seen = new Set();
+  const all = [];
+  for (const o of [...list(message?.outcomes), ...list(local)]) {
+    if (!o || typeof o !== "object") continue;
+    const key = [o.action, o.about?.id, o.result, o.at].join("|");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    all.push(o);
+  }
+  all.sort((a, b) => str(a.at).localeCompare(str(b.at)));
+  return all.slice(-10).map(outcomeOf).filter(Boolean);
+}
+
+/** A failed prepare or confirm in plain words. */
+export function explainActionError(e) {
+  if (e?.preview) return e.message;
+  const status = Number(e?.status) || 0;
+  if (status === 403) return "You may not do this now. Your permissions were checked again.";
+  if (status === 404) return "This run or this answer is not there any more, or you can no longer change it.";
+  if (status === 410) return "This conversation was deleted.";
+  return explainAskError(e);
 }

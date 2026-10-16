@@ -1,4 +1,4 @@
-import { glyph, h, timeAgo } from "./dom.js";
+import { glyph, h, modal, timeAgo } from "./dom.js";
 
 // The nodes of the Ask SCF drawer. No decisions here (those are in ui/ask-model.js) and no calls (ui/ask.js).
 // Every text of a conversation is put in as text: `h` never reads a string as HTML.
@@ -44,7 +44,7 @@ export function askFrame(on, { questionMax, hints = {} }) {
   history.hidden = true;
   const drawer = h("aside", { id: "ask-drawer", class: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title", tabindex: "-1" },
     h("div", { class: "ask-head" }, h("h2", { id: "ask-title" }, "Ask SCF"), fresh, historyBtn, close),
-    h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. It changes nothing."),
+    h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. Nothing changes unless you review and confirm an action."),
     paused,
     status,
     talk,
@@ -66,13 +66,14 @@ const sourceLine = (src, { now, onNavigate }) => [
 ];
 
 /** One proposal of a reply as a card. It says whether it only reads or would change something. It has no control that does anything; a page is a plain link. */
-export function cardNode(card, { onNavigate } = {}) {
+export function cardNode(card, { onNavigate, onReview, focusKey } = {}) {
   return h("div", { class: `ask-card ask-card-${card.kind}`, role: "group", "aria-label": `${card.title}. ${card.effect === "changes-state" ? "Changes state" : "Read-only"}` },
     h("div", { class: "ask-card-head" },
       h("strong", {}, card.title),
       h("span", { class: `pill ${card.effect === "changes-state" ? "sem-warning" : "sem-neutral"}` }, card.effect === "changes-state" ? "Changes state" : "Read-only")),
     card.link ? h("a", { href: card.link.href, onClick: () => onNavigate?.() }, card.link.title) : null,
     card.text ? h(card.pre ? "pre" : "p", { class: "ask-card-text" }, card.text) : null,
+    card.act !== undefined ? h("button", { type: "button", class: "small", "data-act": String(card.act), "data-focus": `ask-review-${focusKey ?? ""}-${card.act}`, onClick: () => onReview?.(card.act) }, "Review the change") : null,
     h("p", { class: "ask-card-note muted" }, card.note));
 }
 
@@ -85,6 +86,33 @@ export function offerNode(offer, { onOffer } = {}) {
     offer.text ? h("p", { class: "ask-card-text" }, offer.text) : null,
     h("button", { type: "button", class: "small", "data-offer": String(offer.index), onClick: () => onOffer?.(offer.index) }, "Open"),
     h("p", { class: "ask-card-note muted" }, offer.note));
+}
+
+/** The dialog that shows the server's preview. Resolves true only for the confirm button; Cancel, Escape, the cross and the backdrop give false. */
+export function reviewDialog({ title, intro, rows, danger, note, confirm }) {
+  let cancelBtn;
+  const done = modal(title, (close) => {
+    cancelBtn = h("button", { type: "button", onClick: () => close(false) }, "Cancel");
+    return h("div", { class: "stack" },
+      h("p", {}, intro),
+      rows.map((r) => h("p", {}, h("strong", {}, `${r.label}: `), r.text)),
+      h("span", { class: `pill ${danger ? "sem-danger" : "sem-warning"}` }, danger ? "High impact" : "Reversible"),
+      h("p", { class: "muted" }, note),
+      h("div", { class: "row" }, h("span", { class: "spacer" }), cancelBtn,
+        h("button", { type: "button", class: danger ? "danger" : "primary", onClick: () => close(true) }, confirm)));
+  });
+  cancelBtn.focus();
+  return done.then((answer) => answer === true);
+}
+
+/** What the server read back after a confirmed change: a word, its words and what to do next. All text. */
+export function outcomeNodes(outcomes) {
+  return h("div", { class: "ask-cards", "aria-label": "What the change did" }, outcomes.map((o) =>
+    h("div", { class: "ask-card ask-card-outcome", role: "group", "aria-label": `${o.title}: ${o.word}` },
+      h("div", { class: "ask-card-head" }, h("strong", {}, o.title), h("span", { class: `pill ${o.pill}` }, o.word)),
+      h("p", { class: "ask-card-text" }, o.words),
+      o.recovery ? h("p", { class: "ask-card-note muted" }, o.recovery) : null,
+      o.at ? h("p", { class: "muted" }, `Read back ${timeAgo(o.at)}`) : null)));
 }
 
 const pillClass = (s) => (s.kind === "high-impact" ? "sem-danger" : s.kind === "reversible" ? "sem-warning" : "sem-neutral");
@@ -126,6 +154,7 @@ export function replyNodes(layout, opts = {}) {
     basis.sources.length ? h("ul", { class: "ask-basis", "aria-label": basis.needs === "state" ? "The current state this answer rests on" : "The documentation this answer rests on" },
       basis.sources.map((src) => h("li", {}, sourceLine(src, opts)))) : null,
     layout.cards.length ? h("div", { class: "ask-cards" }, layout.cards.map((c) => cardNode(c, opts))) : null,
+    layout.outcomes?.length ? outcomeNodes(layout.outcomes) : null,
     layout.offers?.length ? h("div", { class: "ask-cards", "aria-label": "Pages you can open" }, layout.offers.map((o) => offerNode(o, opts))) : null,
     trust.state === "limit" ? null : h("details", { class: "ask-sources" },
       h("summary", {}, `Sources and assumptions (${sources.length === 1 ? "1 source" : `${sources.length} sources`})`),
@@ -169,7 +198,7 @@ export function entryNode(entry, opts = {}) {
     h("span", { class: "ask-who" }, entry.who),
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
-    entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i) }) : entry.text,
+    entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i), onReview: (i) => opts.onReview?.(entry.id, i), focusKey: entry.id }) : entry.text,
     entry.note ? h("span", { class: "ask-note" }, entry.note) : null);
 }
 

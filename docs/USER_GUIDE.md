@@ -6178,7 +6178,7 @@ only the id of that conversation, never a question or an answer.
    | – Not answered | You asked for something Ask SCF does not do. It says what you can do instead. |
 
 3. **What it rests on.** For a statement about your work, the lines of the current state that were read, each with the time it was seen.
-4. **Proposals, as cards.** Each card says **Read-only** or **Changes state**: something you could do, a page you can open, a draft to copy, or a suggested change. A card never does anything. A suggested change is only a suggestion: Ask SCF does not do it, and there is no button for it.
+4. **Proposals, as cards.** Each card says **Read-only** or **Changes state**: something you could do, a page you can open, a draft to copy, or a suggested change. A read-only card never does anything. A suggested change that the server can carry out (see **Approved actions** under "Ask SCF for administrators") has **Review the change** and the note "Nothing happens until you review the change and confirm it."; any other suggested change is only a suggestion, and it has no button.
 5. **Sources and assumptions**, to unfold: every source with its kind (documentation or current state) and place, and what the answer takes for granted.
 
 Text of an answer is always shown as text. An address in it is not a link. A link appears only for a
@@ -6638,8 +6638,30 @@ result back from the run before it answers. The answer is one of these, in fixed
   confirmed.
 
 A result is never shown before it has been read back. The newest 10 results are kept on the answer they
-belong to. The Ask SCF drawer has no confirm button yet; that comes in a later part. Each confirmation
-that runs, and each one that is refused, is written to the audit log (`help-action`).
+belong to. Each confirmation that runs, and each one that is refused, is written to the audit log
+(`help-action`).
+
+**Reviewing a change in the drawer.** On a card that offers an action, press **Review the change**. The
+server prepares its preview, and a dialog shows six rows, in the server's words: **Action**, **Now**,
+**What changes**, **Impact** (High impact or Reversible), **Undo** and **Who may do this**. Nothing has
+changed yet.
+
+- **Confirm the change** carries out the action, as described above. For a high-impact action the button
+  is red. The result is then drawn under the answer with its word and what it means:
+  - **Done**: the run went on, was stopped, or its waiting job was taken out.
+  - **Queued**: the run waits for a free slot.
+  - **Partly done**: the run is still being stopped, or it could not be confirmed. Look at the run.
+  - **Not done**: the run could not be started again, or it ended on its own first. Look at the run.
+
+  Each result has a line on what to do next. When the result could not be saved with the conversation, it
+  still shows here, until you leave the conversation.
+- **Cancel**, **Escape** or closing the dialog changes nothing, and the preview is dropped at once.
+
+The confirmation works once and for 5 minutes. A reply that is no longer current (you asked something else
+meanwhile) is ignored. When the server refuses, the drawer shows the reason in its error line: "You may not
+do this now" (403), "This run or this answer is not there any more, or you can no longer change it" (404),
+"This conversation was deleted." (410), and the server's own sentence for the others, such as a 409 when the
+run changed since the preview. Then review the change again to get a new preview.
 
 **What a turn can reach.** A turn is one call of Claude Code with no tools at all, no MCP servers,
 no permissions, none of your personal setup and no GitHub token, in an empty temporary folder that

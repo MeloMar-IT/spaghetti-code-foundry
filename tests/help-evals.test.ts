@@ -190,6 +190,8 @@ describe("the report file and the explicit live model", () => {
     const o = calls[0]!;
     expect(o).toMatchObject({ noTools: true, noMcp: true, isolated: true, permissionMode: "dontAsk" });
     expect(o.prompt).toContain("You are Ask SCF, the help assistant");
+    // the live evals tell the model about the actions, as a turn does with help.actions on
+    expect(o.prompt).toContain("resume-run");
     expect(existsSync(o.cwd)).toBe(false);
     for (const [name, value] of Object.entries(o.env ?? {})) if (/TOKEN/.test(name)) expect(value, name).toBeUndefined();
     const failing = liveModel(config, { run: async () => ({ ok: false, output: "", error: "provider says: key sk-live-123" }) });
