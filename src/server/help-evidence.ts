@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { aboutOf } from "../help/contract.js";
 import { ENTITY_LIMIT, pageOf, type Asker } from "../help/context.js";
 import type { GuardOptions } from "../help/guard.js";
 import type { Source, TurnInput } from "../help/turn.js";
@@ -40,9 +41,10 @@ export const stateId = (kind: string, id: string): string => `state-${kind}-${cr
  * facts as plain lines. What is not available and what is known to be old is said in the text; a source with an old
  * fact is marked `uncertain`.
  */
-export function sourceOf(s: Snapshot): Source {
+export function sourceOf(s: Snapshot, about = false): Source {
   const link = LINKS[s.kind](s.id);
   const old = s.stale.length > 0;
+  const bound = about && s.kind === "run" && !old ? aboutOf({ kind: "run", id: s.id }) : undefined;
   const lines = [
     `Observed by the server at ${s.observedAt}. These are facts as recorded, not conclusions.`,
     ...Object.entries(s.fields).map(([k, v]) => `${k}: ${String(v)}`),
@@ -57,7 +59,13 @@ export function sourceOf(s: Snapshot): Source {
     observedAt: s.observedAt,
     excerpt: lines.length > STATE_EXCERPT_MAX ? `${lines.slice(0, STATE_EXCERPT_MAX - 2)} …` : lines,
     ...(old ? { uncertain: true } : {}),
+    ...(bound ? { about: bound } : {}),
   };
+}
+
+/** The state sources of the shown snapshots. A run carries what it is about only when the asker owns it and no source disagrees; sourceOf adds "not stale". */
+export function stateSources(shown: readonly Snapshot[], mine: (runId: string) => boolean, conflict: boolean): Source[] {
+  return shown.map((s) => sourceOf(s, !conflict && s.kind === "run" && mine(s.id)));
 }
 
 const FINISHED = new Set(["succeeded", "failed", "cancelled", "stopped"]);
@@ -139,7 +147,7 @@ export function liveEvidence(ctx: ApiContext, input: TurnInput, guard: GuardOpti
   try {
     const { shown, all } = liveSnapshots(ctx, { id: input.owner, role: input.role }, input, guard);
     const conflict = conflictSource(conflictsOf(all), new Date().toISOString());
-    const states = shown.map(sourceOf);
+    const states = stateSources(shown, (id) => ctx.scheduler.ownerOf(id) === input.owner, !!conflict);
     // what the product itself says is wrong with these things (#237): after the facts, and uncertain when the facts disagree
     const diagnoses = diagnosisSources(ctx, { id: input.owner, role: input.role }, shown, (s) => sourceOf(s).ref, guard, !!conflict);
     return [...(conflict ? [conflict] : []), ...states, ...diagnoses];

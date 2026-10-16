@@ -163,6 +163,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "router.fallback": A("Fallback models", "Models tried in order when an agent step hits a rate or usage limit, or a budget for free targets.", "new-runs", "models.js"),
   "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
+  "help.actions": G("Ask SCF may propose actions", "Lets Ask SCF propose to resume or cancel a person's own run, and later carry it out after they confirm; off, it only explains."),
   "help.audience": G("Who may ask", "Every account, or administrators only; not set means every account."),
   "help.keep_days": G("Keep conversations (days)", "A conversation nobody changed for this many days is deleted; not set means 90."),
   "help.model": G("Ask SCF model", "The model that answers, a Claude Code target; not set means the default model."),

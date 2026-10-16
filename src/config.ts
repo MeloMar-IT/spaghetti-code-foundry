@@ -347,6 +347,8 @@ export const ConfigSchema = z
     help: z
       .object({
         enabled: z.boolean().default(false),
+        /** Lets Ask SCF propose a resume or cancel of a person's own run (and, after #568, carry it out once they confirm). Off: every proposed action is dropped. */
+        actions: z.boolean().default(false),
         /** Who may ask when Ask SCF is on: every account (also without the setting), or administrators only. */
         audience: z.enum(["everyone", "admins"]).optional(),
         /** Accounts (by id) that may not ask, whatever their role. They keep reading, exporting and deleting their conversations. */

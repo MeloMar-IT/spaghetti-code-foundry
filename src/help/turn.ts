@@ -6,7 +6,7 @@ import type { Config } from "../config.js";
 import { tokenVarNames } from "../engine/isolation.js";
 import { runClaude, type ClaudeRunOptions, type ClaudeRunResult } from "../steps/claude.js";
 import { STEP_KINDS } from "./plan.js";
-import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, checkReply, hideNames, type Evidence, type HelpRole, type Reply } from "./contract.js";
+import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, aboutOf, checkReply, hideNames, type About, type Evidence, type HelpRole, type Reply } from "./contract.js";
 import { SELECTION_MAX, resolveContext, type EntityResolver, type ResolvedContext } from "./context.js";
 import { GuardError, Removals, guardExcerpt, type GuardOptions, type SecretCategory } from "./guard.js";
 import {
@@ -83,6 +83,8 @@ export type Source = Evidence & {
   excerpt?: string;
   /** The server knows this source is old, or that it disagrees with another one: a reply that rests on it is never "confirmed". */
   uncertain?: boolean;
+  /** Set by the server only: the run this source is about. An action can be bound to it. Never offered to the model. */
+  about?: About;
 };
 
 export interface Excerpt {
@@ -101,6 +103,8 @@ export interface Prepared {
   withheld: number;
   /** The ids of the offered sources the server marked as uncertain (old, or in disagreement). */
   uncertain: string[];
+  /** What each offered source is about, by source id: only sources that were actually offered. */
+  targets: Record<string, About>;
   removed: SecretCategory[];
   /** What the server established about the page: the only form in which the page context reaches the model. */
   context?: ResolvedContext;
@@ -131,6 +135,7 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
   const excerpts: Excerpt[] = [];
   let withheld = 0;
   const uncertain: string[] = [];
+  const targets: Record<string, About> = {};
   let room = EXCERPTS_MAX;
   let context: TurnInput["context"];
   let told: ResolvedContext | undefined;
@@ -168,7 +173,7 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     }
   }
   for (const s of sources.slice(0, LIST_MAX.evidence)) {
-    const { excerpt, uncertain: doubt, ...evidence } = s;
+    const { excerpt, uncertain: doubt, about, ...evidence } = s;
     const title = guardExcerpt(evidence.title, guard);
     const ref = guardExcerpt(evidence.ref, guard);
     const body = excerpt ? guardExcerpt(excerpt.length > EXCERPT_MAX ? `${excerpt.slice(0, EXCERPT_MAX)} …` : excerpt, guard) : undefined;
@@ -179,6 +184,8 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     }
     offered.push({ ...evidence, title: title.text.slice(0, TEXT_MAX.item), ref: ref.text.slice(0, TEXT_MAX.ref) });
     if (doubt === true) uncertain.push(evidence.id);
+    const bound = aboutOf(about);
+    if (bound) targets[evidence.id] = bound;
     if (body?.text && room > 0) {
       const cut = body.text.slice(0, room);
       excerpts.push({ id: evidence.id, text: cut });
@@ -186,7 +193,7 @@ export function prepareTurn(input: TurnInput, sources: readonly Source[], guard:
     }
   }
   const { context: _raw, ...rest } = input;
-  return { input: { ...rest, question: seen.clean(input.question), ...(context ? { context } : {}), history }, offered, excerpts, withheld, uncertain, removed: seen.removed, ...(told ? { context: told } : {}) };
+  return { input: { ...rest, question: seen.clean(input.question), ...(context ? { context } : {}), history }, offered, excerpts, withheld, uncertain, targets, removed: seen.removed, ...(told ? { context: told } : {}) };
 }
 
 export interface Asker {
@@ -602,7 +609,7 @@ export class HelpTurns {
     const names = job.role === "admin" ? [] : [target.model, target.providerName, target.label];
     let checked: ReturnType<typeof checkReply>;
     try {
-      checked = checkReply(jsonOf(r.output), { role: job.role, offered, uncertain: ready.uncertain, clean: (t) => hideNames(seen.clean(redact(t)), names) });
+      checked = checkReply(jsonOf(r.output), { role: job.role, offered, uncertain: ready.uncertain, ...(config.help.actions ? { targets: ready.targets } : {}), clean: (t) => hideNames(seen.clean(redact(t)), names) });
     } catch (e) {
       // a reply that cannot be checked for secrets is not kept
       this.deps.log?.(`help: a reply was not kept (${e instanceof GuardError ? e.message : "it could not be checked"})`);

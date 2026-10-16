@@ -922,7 +922,7 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
 | A run acts with the admin's GitHub login | User runs, and admin runs on a repository with a stored sign-in, get no token, an empty `gh` folder, no machine git settings or ssh, and the bot or owner's commit name; environment only, not an OS sandbox |
 | An admin looks at a user's display unseen, or changes things through it | "View as user": an audit line (`view-as`) per start, written first (no line, no view); `as=` only on `GET`, only with a running view for that user, answered by the user's own rules and cut-down views; views in memory only, 30 minutes, keyed by a hash of the session, never the token |
 | Someone reads another person's Ask SCF conversation | Conversations are read and changed by their owner only; another account's id answers like an unknown one, an admin has no extra access, and "View as user" shows none |
-| The help assistant is talked into doing something | A help turn has no tools, no MCP servers and no token; the server keeps only checked text and fixed pages from its answer, and the list of actions is empty |
+| The help assistant is talked into doing something | A help turn has no tools, no MCP servers and no token; the server keeps only checked text and fixed pages from its answer, and the only actions are the server's two, and each is bound to a run the asker owns |
 | Someone else on the network | Listens on this machine only, unless set otherwise |
 | Private data in a public place | Paths and titles are filtered from what leaves the server unasked |
 
@@ -1217,15 +1217,15 @@ model can never widen what a reply holds.
   or `state` (what the asker may see now, with `observedAt`).
 - **Parts of a reply.** Five kinds (`PART_KINDS`, `PART_RULES`): answer, recommendation, navigation,
   draft and action. Only an action has `changesState` and `needsConfirmation`. `ACTIONS` is the
-  server's list of actions and it is empty: the assistant is read-only, and `ACTION_RULES` names the
-  five conditions (server list, preview, confirmation, a second permission check, read-back) a later
-  story must meet before it adds one.
-- **`checkReply(raw, { role, offered, clean })`** turns what a model answered into the `Reply` the
-  server keeps (`ReplySchema`). Nothing is trusted: evidence must be one of `offered` (the model
-  names ids only), a link must be a page in `NAV_PAGES` that the role has and gets the page's own
-  title, an action must be in `ACTIONS`, texts are cut and cleaned, and `dropped` lists what was
-  left out in fixed words. `displayText(reply)` writes the text a person reads from the checked
-  parts; it is never the model's own text.
+  server's list of actions (`resume-run` and `cancel-run`, see "confirmed actions" below). Nothing
+  is carried out yet, and `ACTION_RULES` names the five conditions (server list, preview,
+  confirmation, a second permission check, read-back) that a later story must meet before one runs.
+- **`checkReply(raw, { role, offered, uncertain, targets, clean })`** turns what a model answered into
+  the `Reply` the server keeps (`ReplySchema`). Nothing is trusted: evidence must be one of `offered`
+  (the model names ids only), a link must be a page in `NAV_PAGES` that the role has and gets the
+  page's own title, an action must be in `ACTIONS` and bound to an offered source (see below), texts
+  are cut and cleaned, and `dropped` lists what was left out in fixed words. `displayText(reply)`
+  writes the text a person reads from the checked parts; it is never the model's own text.
 - **Uncertainty.** `certaintyOf` lowers the level to `unverified` when no evidence of the needed
   kind is left; the model may be less sure, never more. The sentences are `CERTAINTY_WORDS`.
 - **Requests that are not served.** A model answers them with a code only (`LIMIT_CODES`);
@@ -1238,6 +1238,30 @@ model can never widen what a reply holds.
 
 `tests/help-contract.test.ts` checks each rule, that `NAV_PAGES` matches `ui/ia.js`, and that
 chapter 14 of the user guide holds the same sentences as the code.
+
+### Ask SCF: confirmed actions
+
+Part 1 of 2 of #567 (#569), behind `help.actions`, off by default. It only binds a proposal to the
+run the server knows about; nothing is carried out yet (#568 and part 2 do that).
+
+- **The list.** `ACTIONS` has `resume-run` (`reversible`, `undoable: true`) and `cancel-run` (`high`,
+  `undoable: false`), both for `admin` and `user`. Each has a fixed `effect` text written by the
+  server. A kept action stores `def.effect` as its `impact`; the model's text is never shown.
+- **The binding.** A source may carry `about` (`AboutSchema`: kind `run` and an id). Only the server
+  sets it. `liveEvidence` sets it on a run snapshot that is fresh, whose run the asker owns
+  (`scheduler.ownerOf(id) === owner`), and only when no conflict source is present. An admin gets no
+  exception. `prepareTurn` takes `about` off what is offered (`EvidenceSchema` stays strict) and
+  returns it as `Prepared.targets`, only for sources that were offered.
+- **The check.** `checkReply` keeps an action only when its source is cited, offered, of kind `state`,
+  not in `uncertain`, and has a run target in `targets`, and when its impact text claims no result
+  (`claimsAction`: `claimsResult`, plus "was/is/has been … resumed, cancelled, stopped …" and the like).
+  The claim check reads the model's whole raw text, so nothing cut or marked as removed can hide a
+  claim. Duplicates on `id` and `about.id` are kept once. The three drop words are `ACTION_DROPPED`.
+- **The switch.** `HelpTurns.run` passes `targets` to `checkReply` only while `config.help.actions` is
+  on. Off, every proposed action is dropped. The prompt still says `"actions": []`.
+- **Outside check.** `actionProblems(reply, ready, role)` in `src/server/help-evals.ts` re-checks each
+  kept action against the prepared turn, and `scf eval help` reports each problem as `unsafe-action`,
+  which blocks a release. The scenarios are in the `action` group.
 
 ### Ask SCF: stored conversations
 
@@ -1487,7 +1511,7 @@ issue text, logs, and the model's answer.
   question, the page, the earlier turns and the list of sources. A text inside a JSON value has no
   line break of its own, so it cannot start or end a part.
 - **`checkReply` is still the only way out.** The guard adds nothing to a reply. An answer that
-  obeyed an injected order still loses every action that is not on the server's list (all), every
+  obeyed an injected order still loses every action that is not on the server's list or not bound to an offered run, every
   link that is not a fixed page of the role, and every source that was not offered.
 - **Fail closed.** `scrub` throws `GuardError` when the credential store cannot be read
   (`BLOCKED`), when a stored credential is still found after its removal, when a configured
