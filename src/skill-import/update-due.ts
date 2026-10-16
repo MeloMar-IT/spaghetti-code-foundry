@@ -10,9 +10,12 @@ import { Interrupted, NOTHING, catalogueSentence, tickFor } from "./update-commo
 // as `scf skills update <id>`. The list of sources is read from origin/<base>, never from the working copy. One failing source
 // does not stop the others. The time and outcome of each finished check are kept in the data folder.
 
-/** Prints the lines of every due source and a summary. Exit code: 1 when a source gave PROBLEM or the run was interrupted. */
+/**
+ * Prints the lines of every due source and a summary. Exit code: 1 when a source gave PROBLEM or the run was interrupted.
+ * `onChecked` is called after each source's check (before the abort check), for the server's sweeper.
+ */
 export async function updateDue(
-  o: { all: boolean },
+  o: { all: boolean; onChecked?: (id: string, outcome: UpdateCheckOutcome) => void },
   out: (line: string) => void,
   opts: SkillUpdateOptions,
   signal: AbortSignal,
@@ -83,6 +86,7 @@ export async function updateDue(
     }
     checked++;
     counts[outcome]++;
+    o.onChecked?.(s.id, outcome);
     if (signal.aborted) {
       interrupted = true;
       break;

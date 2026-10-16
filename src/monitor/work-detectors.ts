@@ -4,6 +4,7 @@ import { failedIndex } from "../failure.js";
 import type { RunSummary } from "../engine/state.js";
 import { DETECTORS, failure, HOUR, iso, latest, ownerRepo, plural, uniq, when, type Detector } from "./detectors.js";
 import type { FindingInput } from "./findings.js";
+import { SKILL_SOURCE_DETECTOR } from "./skill-source-findings.js";
 
 // Detectors of the slower and quieter problems: work that stands still, steps that keep failing, labels that lie.
 // Plain data in, findings out. They never call an AI or GitHub, and no evidence holds a run id.
@@ -346,6 +347,7 @@ export const ALL_DETECTORS: Detector[] = [...DETECTORS, ...WORK_DETECTORS];
 export function detectorInfo(): { name: string; description: string }[] {
   return [
     ...ALL_DETECTORS.map(({ name, description }) => ({ name, description })),
+    { name: SKILL_SOURCE_DETECTOR, description: "A scheduled check of a skill source of the catalogue ended with PROBLEM. Check the reported problem before continuing with the source update." },
     { name: "detector-failed", description: "A detector of the monitor crashed, so the problems it looks for are not checked. The monitor itself needs a fix." },
   ];
 }

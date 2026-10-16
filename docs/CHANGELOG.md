@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Internal: the sweeper for scheduled skill source checks (`src/server/skill-update-sweep.ts`). It runs the `--due` logic in the server process and shows `PROBLEM` outcomes on the Problems page under the new detector `skill-source-check`. Not switched on yet (#559). Part 1 of 2 of #553.
 - Skill source update: `scf skills update --due [--all]` checks every enabled source whose cadence is due (#552). Part 3 of 4 of #205.
   - **Due.** A source is due when it was never checked, its last check ended with `PROBLEM`, or the last check is at least 1 day (`daily`), 7 days (`weekly`) or 30 days (`monthly`) old. `manual` is never due; `--all` ignores the cadence. `--due` cannot take a source id, `--owner`, `--reviewer` or `--licence`.
   - **Outcomes.** Each source gets the outcome of `scf skills update <id>` (`UNCHANGED`, `OPEN`, `UPDATED`, `OK`, `PROBLEM`), prefixed with its id. One failing source does not stop the others. A `CHECKED` line counts the outcomes. Exit 1 on any `PROBLEM` or an interrupt.
