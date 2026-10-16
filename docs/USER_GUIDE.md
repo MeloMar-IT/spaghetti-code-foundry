@@ -4980,8 +4980,9 @@ Integrity words: *Verified* (the package matches the lock), *Changed*, *Missing*
 - **Up to a minute old.** Integrity and category come from the skill list the server keeps for one minute.
 - **Evidence.** A path is shown as text. An issue is a link when the repository is `owner/name`.
 - **Status line.** The card says when the lock is missing or was changed, when the run planned again (new skills are locked at the next agent step), when the run stopped because a skill cannot be used, and the context estimate.
-- **Admins** also see the source (built-in or administrator folder) and the digest. Users never see digests, sources, commits or folder paths.
-- **Older runs** without skill information show no card.
+- **Why these skills.** A short list at the end of the card says why each skill was chosen. It has one line per capability the run involves: the winner and the reason it won (for example `trust tier`), the companions that load with it (`composable`), and up to 5 rejected skills with their reason (for example `not ... (outranked: evaluation)`). Each group of identical copies names the copy that was kept and the copies that were not offered. Project pins and owner overrides that the run applied are listed with their target. The list is capped at 20 capabilities and 20 groups of copies, and it says how many more there are. It only names skills the run involves, so the full catalogue is never shown. The list is hidden when there is nothing to explain.
+- **Admins** also see the source (built-in or administrator folder), the digest, who set a pin or override, and the commit of the project pins. Users never see digests, sources, authors (`by`), commits or folder paths.
+- **Older runs** without skill information show no card. Older runs without the "Why these skills" data show the card without that list.
 
 The same data is the `skillView` field of `GET /api/runs/:id` and of the `update` events of the run stream. The run list does not carry it.
 
