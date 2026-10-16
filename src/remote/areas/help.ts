@@ -10,7 +10,7 @@ const rows = (d: unknown, path: string): Row[] => {
 /** One conversation: its head, then every message with who wrote it. */
 function showConversation(d: unknown): string {
   const head = fields({ id: pick(d, "id"), title: pick(d, "title"), state: pick(d, "state"), updated: pick(d, "updated") });
-  const messages = rows(d, "messages").map((m) => `${m.role === "user" ? "You" : "Ask SCF"}${m.status === "done" ? "" : ` (${String(m.status)})`}:\n${String(m.text ?? "")}`);
+  const messages = rows(d, "messages").map((m) => `${m.role === "user" ? "You" : m.role === "check" ? "Check" : "Ask SCF"}${m.status === "done" ? "" : ` (${String(m.status)})`}:\n${String(m.text ?? "")}`);
   return [head, ...messages].join("\n\n");
 }
 

@@ -79,13 +79,28 @@ export function cardNode(card, { onNavigate } = {}) {
 
 /** An offer of a reply as a card with a button. The button asks the server; the card itself opens nothing. `onOffer(index)`. */
 export function offerNode(offer, { onOffer } = {}) {
-  return h("div", { class: "ask-card ask-card-offer", role: "group", "aria-label": `${offer.title}. Opens a page` },
+  const check = offer.effect === "check";
+  return h("div", { class: "ask-card ask-card-offer", role: "group", "aria-label": `${offer.title}. ${check ? "Reads only" : "Opens a page"}` },
     h("div", { class: "ask-card-head" },
       h("strong", {}, offer.title),
-      h("span", { class: "pill sem-neutral" }, "Opens a page")),
+      h("span", { class: "pill sem-neutral" }, check ? "Reads only" : "Opens a page")),
     offer.text ? h("p", { class: "ask-card-text" }, offer.text) : null,
-    h("button", { type: "button", class: "small", "data-offer": String(offer.index), onClick: () => onOffer?.(offer.index) }, "Open"),
+    h("button", { type: "button", class: "small", "data-offer": String(offer.index), onClick: () => onOffer?.(offer.index) }, check ? "Run check" : "Open"),
     h("p", { class: "ask-card-note muted" }, offer.note));
+}
+
+/** The stored result of a check: title, outcome pill, the lines the server read, and when. `layout` is `checkLayout`. */
+export function checkNodes(layout, { now } = {}) {
+  if (!layout) return h("p", { class: "ask-card-note muted" }, "This check result cannot be shown.");
+  return h("div", { class: "ask-card ask-card-check", role: "group", "aria-label": `${layout.title}. ${layout.outcome}` },
+    h("div", { class: "ask-card-head" },
+      h("strong", {}, layout.title),
+      h("span", { class: `pill ${layout.pill}` }, layout.outcome)),
+    layout.lines.length ? h("dl", { class: "ask-step-signals" }, layout.lines.map((l) => {
+      const at = l.indexOf(": ");
+      return at > 0 ? [h("dt", {}, l.slice(0, at)), h("dd", {}, l.slice(at + 2))] : [h("dt", {}, "Note"), h("dd", {}, l)];
+    })) : null,
+    h("p", { class: "ask-card-note muted", title: layout.observedAt }, `read ${timeAgo(layout.observedAt, now)}${layout.uncertain ? ". Some of it may be out of date." : ""}`));
 }
 
 const pillClass = (s) => (s.kind === "high-impact" ? "sem-danger" : s.kind === "reversible" ? "sem-warning" : "sem-neutral");
@@ -127,7 +142,7 @@ export function replyNodes(layout, opts = {}) {
     basis.sources.length ? h("ul", { class: "ask-basis", "aria-label": basis.needs === "state" ? "The current state this answer rests on" : "The documentation this answer rests on" },
       basis.sources.map((src) => h("li", {}, sourceLine(src, opts)))) : null,
     layout.cards.length ? h("div", { class: "ask-cards" }, layout.cards.map((c) => cardNode(c, opts))) : null,
-    layout.offers?.length ? h("div", { class: "ask-cards", "aria-label": "Pages you can open" }, layout.offers.map((o) => offerNode(o, opts))) : null,
+    layout.offers?.length ? h("div", { class: "ask-cards", "aria-label": "Pages you can open and checks you can run" }, layout.offers.map((o) => offerNode(o, opts))) : null,
     trust.state === "limit" ? null : h("details", { class: "ask-sources" },
       h("summary", {}, `Sources and assumptions (${sources.length === 1 ? "1 source" : `${sources.length} sources`})`),
       h("h4", {}, "Sources"),
@@ -170,7 +185,7 @@ export function entryNode(entry, opts = {}) {
     h("span", { class: "ask-who" }, entry.who),
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
-    entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i) }) : entry.text,
+    entry.kind === "check" ? checkNodes(entry.check, opts) : entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i) }) : entry.text,
     entry.kind === "answer" && opts.onHandoff ? h("button", { type: "button", class: "small", "data-handoff": entry.id, onClick: () => opts.onHandoff(entry.id) }, "Continue on another page") : null,
     entry.handoffs?.length ? h("ul", { class: "muted small", "aria-label": "Where you took this answer" },
       entry.handoffs.map((r) => h("li", {}, r.href ? h("a", { href: r.href, onClick: () => opts.onNavigate?.() }, r.text) : r.text, r.at ? ` ${timeAgo(r.at, opts.now)}` : ""))) : null,

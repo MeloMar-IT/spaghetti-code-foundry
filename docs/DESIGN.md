@@ -1554,6 +1554,49 @@ Tests: `tests/help-actions.test.ts` (the registry, `subjectPage`, `OfferSchema`)
 `tests/help-offers-api.test.ts` (each type: allowed, role denied, rule denied, stale, another
 account's target; the route refusals).
 
+### Ask SCF: checks
+
+#566 (part 2 of 2 of #239) adds two offers with `effect: "check"`: `refresh-evidence` (every subject
+kind, `call: "read"`, so checked against `READ_CALLS[kind]`) and `test-repository` (repositories, checked
+against `POST repos/:id/test`). They run only on a click and have no confirmation token. Helpers in
+`src/help/actions.ts`: `READ_CALLS`, `callOf`, `CheckSchema`, `checkText` (fixed words), `checkOf`,
+`checkSourceId` and `checkSources`.
+
+- **The record.** A check is a `check` message in `help.json`: `status: "done"`, `replyTo` (an earlier
+  assistant message), and `check` (`CheckSchema`, strict: type, offer index, subject, scope, title,
+  outcome `read`/`passed`/`failed`, at most 30 lines of at most 300 characters, `observedAt`, and
+  `uncertain` when it is stale). It has no `context`, `reply`, `failure`, `tries` or `updated`. The
+  conversation refine checks that `replyTo` is an assistant message. `version` stays 1: the field is
+  optional, and a file without checks loads unchanged.
+- **Bounds.** `checkOf` cuts each value and line with `cutText` (300 characters, the marker ` …`
+  included, which keeps the `help-context.ts` 302-character case inside the limit), cuts the title to 500
+  and keeps 30 lines, with the `unavailable` and `stale` lines and the failed connection lines first. The
+  result passes `CheckSchema.parse` before it is stored, so a snapshot with long values stores a valid check.
+- **Pre-checks** (`runOffer`, `help-evidence.ts`, then `addCheck` in `store.ts`). Before any remote call:
+  the conversation is `active`, no reply is pending, there is room for one more message
+  (`MESSAGE_LIMIT`), and no other check runs in the same conversation (an in-memory set keyed by
+  conversation). Otherwise the click answers 409 with `checkText`, and nothing is contacted.
+- **The wait.** `testRepo` (exported from `api-repos.ts`) awaits the remote and saves the status before it
+  returns. If the conversation then changed (a question, an archive, the limit, a delete), `addCheck`
+  refuses with `changed` (409); a conversation deleted meanwhile answers 410 and nothing is restored.
+  `addCheck` also refuses `not-found` (an unknown message, or an offer whose type or subject does not
+  match). The click answers `CheckNotStored` with `checkText.notStored` (or the 410 sentence), and the audit line is
+  `help-action` `failed` with `test-repository; <outcome>; not stored: <code>`. The test still ran; its
+  result is on the repository page. The race is not prevented; its outcome is reported truthfully. Sharing a
+  capacity reservation with `addQuestion` and archive was rejected: it would touch many store functions.
+- **Refusals.** `testRepo` maps 404 to stale and 403 (including the App allow-list, `needOnAppList`) to
+  denied; 409 and 500 pass through. `runOffer` takes the test function as an optional argument, so the
+  race tests can interleave the wait deterministically.
+- **Later turns.** `checkSources` gives the newest `CHECK_SOURCES` (2) checks as `state` sources. A check
+  of the administrator's view is dropped for a user, and so is a check about a subject the account cannot
+  see now (`visible`). A check older than `CHECK_FRESH_MS` (15 minutes) is marked uncertain. In
+  `api-help.ts` the order is: live sources, check sources, then the documentation.
+- **Audit.** `help-action` `ok` with `<type>; <outcome>`; a refusal stays `failed` with `refused: <code>`.
+- **Tests.** `tests/help-checks-api.test.ts` covers the success paths, the authorization matrix (every
+  refusal asserts that the fake remote and `gh` were not called and that no check was stored), the
+  pre-check 409s, the interleavings, oversized values and the visibility of sources after a demotion.
+  `tests/help-store.test.ts` covers `addCheck`.
+
 ### Ask SCF: authorization, retention, audit and limits
 
 #243 adds no second mechanism; it uses the permission table, the audit log, the account limits,

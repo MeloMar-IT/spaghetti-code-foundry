@@ -3276,7 +3276,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
-| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask SCF reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`; nothing is stored; 404 when the thing is gone or you can no longer see it, 403 when you may not open it now, 410 for a deleted conversation. Or see what an action Ask SCF proposed in one of your answers would do (`message`, `index`): the server describes it in its own words and gives a confirmation token that works once for 5 minutes; nothing changes. 503 while Ask SCF or its actions are switched off |
+| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask SCF reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`, or runs a read-only check (read it again, test the connection) and stores its result as a check message of the conversation, answering `{type, outcome, conversation}`; 404 when the thing is gone or you can no longer see it, 403 when you may not do it now, 409 when the conversation is not open, is waiting, is full, changed while the check ran, or already runs a check, 410 for a deleted conversation. Or see what an action Ask SCF proposed in one of your answers would do (`message`, `index`): the server describes it in its own words and gives a confirmation token that works once for 5 minutes; nothing changes. 503 while Ask SCF or its actions are switched off |
 | `POST /api/help/conversations/:id/actions/confirm` | yes | yes | carry out a previewed action with its token (`token`, `message`, `index`): the server checks the token, that the run did not change since the preview, the settings, your account and the rule of the same button on the run's page (your own runs only, an admin too), then reads the result back from the run and answers `{ outcome, stored }`; 409 for a token that is used, expired or does not fit, or a run that changed; writes an audit line |
 | `POST /api/help/conversations/:id/actions/cancel` | yes | yes | drop the confirmation token of a preview (`token`); nothing changes |
 | `GET /api/help/conversations/:id/handoffs` | yes | yes | the pages you may take one answer of your Ask SCF conversation to (`?message=`), with what each would copy; checked again for your account now; nothing is written |
@@ -6268,6 +6268,32 @@ can no longer see it." If your permissions no longer allow it, it says "You are 
 this now." Opening a page stores nothing and changes nothing, so an offer also works in a finished or
 archived conversation, but not in a deleted one.
 
+A **check** is an offer that only reads; it changes nothing in the Foundry and needs no new permission.
+It runs only when you click it, never while the answer is being written. Two checks are offered:
+
+- **Read it again** reads the thing of the reply once more, as it is now.
+- **Test the connection** tests the connection of a repository, as on its page, and then reads the
+  repository again. The result is also saved on the repository page.
+
+The result is kept in the conversation as a check: a title, an outcome (**Read again**, **Connection
+works** or **Connection failed**) and up to 30 short lines, with the time it was read ("read 3 minutes
+ago"). A later answer in the same conversation may use the two newest checks, but only about things
+your account can see now; a check older than 15 minutes is marked as possibly out of date. Each check
+is refused, and nothing is contacted, when the conversation is not open (its last answer is not
+finished, it is full, or another check runs in it). The sentences are:
+
+- "A check can run only in an open conversation whose last answer is finished."
+- "Ask SCF is still answering in this conversation. Wait for the answer, then run the check."
+- "This conversation is full. Start a new conversation to run a check."
+- "A check is already running in this conversation. Wait for it to finish."
+
+If the conversation changes while **Test the connection** waits (you ask a question, archive it or
+delete it), the test still ran, so its result is saved on the repository page only. The card says:
+"The connection test ran, and its result is saved on the repository page. It is not saved in this
+conversation, because the conversation changed while the test ran." A deleted conversation answers as
+deleted, and nothing is restored. The audit log records that click as `failed`, with the reason
+(`help-action`).
+
 An action runs only when all of this holds:
 
 1. The action is on the server's own list. Text from a model never names a command, a route or a tool.
@@ -6320,7 +6346,8 @@ command line (`scf ask`) has them too.
 and its messages: your questions and the replies. A question keeps the page you asked it on and, at
 most, the kind and id of the one thing selected there (a run, an issue, a repository, a queue item, a
 refinement session or a problem). Nothing else of the page is stored. A reply keeps its checked parts
-(sources, recommendations, links, drafts) and, apart from them, the text you read. Limits: 100
+(sources, recommendations, links, drafts) and, apart from them, the text you read. A check (see "What a reply can hold") is kept as its own
+message with its result: the title, the outcome, the lines and the time it was read. Limits: 100
 conversations per account, 100 messages per conversation, 4,000 characters per question.
 
 **States.**
@@ -6353,7 +6380,8 @@ removed with it.
 - A reply that arrives after its conversation was deleted, or after you stopped it, is not stored.
 
 **Where it is kept.** In `help.json` in the data folder (mode 0600), written under the lock of the
-data folder. It survives a restart and is copied unchanged when the data folder moves. If the file
+data folder. A check is a message with the role `check`, written by the server only; a file from an
+older version has none and loads as before. It survives a restart and is copied unchanged when the data folder moves. If the file
 cannot be read (broken, or written by a newer version), the calls answer "Ask SCF is not working;
 see the server log", the file is left as it is, and an account cannot be deleted until it is
 repaired. Calls: `GET /api/help/conversations` and the calls under it in the table of chapter 7.

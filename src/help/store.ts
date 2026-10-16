@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
+import { CheckSchema, checkText, type Check } from "./actions.js";
 import { ReplySchema, displayText, type Reply } from "./contract.js";
 import { OUTCOMES_KEPT, OutcomeSchema, type Outcome } from "./outcome.js";
 import { CONTEXT_KINDS, ContextError, ContextSchema, checkEnvelope, type PageContext } from "./context.js";
@@ -16,7 +17,7 @@ export { CONTEXT_KINDS, type PageContext };
  * changes one takes that account: a conversation of another account is the same as one that does not exist.
  */
 
-export type HelpErrorCode = "bad-question" | "bad-context" | "not-found" | "deleted" | "bad-state" | "busy" | "limit" | "bad-feedback";
+export type HelpErrorCode = "bad-question" | "bad-context" | "not-found" | "deleted" | "bad-state" | "busy" | "limit" | "bad-feedback" | "changed";
 
 /** A problem with what the caller asked for (not with the file). The message is safe to show. */
 export class HelpError extends Error {
@@ -102,7 +103,7 @@ const FailureSchema = z.object({ code: z.enum(FAILURE_CODES), retry: z.boolean()
 const MessageSchema = z
   .object({
     id: z.uuid(),
-    role: z.enum(["user", "assistant"]),
+    role: z.enum(["user", "assistant", "check"]),
     at: z.iso.datetime(),
     status: z.enum(MESSAGE_STATUS),
     /** What a person reads. For a reply the server wrote it from `reply`; it is never parsed back. */
@@ -124,14 +125,22 @@ const MessageSchema = z
     updated: z.iso.datetime().optional(),
     /** The kinds of secret the server took out of this text before it was stored. Never a value. */
     redacted: z.array(z.enum(SECRET_CATEGORIES)).min(1).max(SECRET_CATEGORIES.length).optional(),
+    /** A check message: the server-written result of a read-only check the person asked for. */
+    check: CheckSchema.optional(),
   })
   .strict()
   .superRefine((m, ctx) => {
     const issue = (path: string) => ctx.addIssue({ code: "custom", message: "invalid", path: [path] });
     if (m.role === "user") {
       if (m.status !== "done") issue("status");
-      for (const k of ["replyTo", "reply", "failure", "feedback", "outcomes", "tries", "updated"] as const) if (m[k] !== undefined) issue(k);
+      for (const k of ["replyTo", "reply", "failure", "feedback", "outcomes", "tries", "updated", "check"] as const) if (m[k] !== undefined) issue(k);
+    } else if (m.role === "check") {
+      if (m.status !== "done") issue("status");
+      if (m.replyTo === undefined) issue("replyTo");
+      if (m.check === undefined) issue("check");
+      for (const k of ["context", "reply", "failure", "tries", "updated", "feedback", "outcomes"] as const) if (m[k] !== undefined) issue(k);
     } else {
+      if (m.check !== undefined) issue("check");
       if (m.replyTo === undefined) issue("replyTo");
       if (m.tries === undefined) issue("tries");
       if (m.context !== undefined) issue("context");
@@ -179,6 +188,8 @@ const ConversationSchema = z
       ids.add(m.id);
       // a reply comes right after its question, and only the last reply can be unfinished
       if (m.role === "assistant" && c.messages[i - 1]?.id !== m.replyTo) ctx.addIssue({ code: "custom", message: "invalid", path: ["messages", i, "replyTo"] });
+      // a check answers an earlier reply of the assistant
+      if (m.role === "check" && !c.messages.slice(0, i).some((x) => x.role === "assistant" && x.id === m.replyTo)) ctx.addIssue({ code: "custom", message: "invalid", path: ["messages", i, "replyTo"] });
       if (m.status === "pending" && i !== c.messages.length - 1) ctx.addIssue({ code: "custom", message: "invalid", path: ["messages", i, "status"] });
     });
   });
@@ -570,6 +581,42 @@ export function deleteConversation(owner: string, id: string, opts: StoreOptions
     const next = wiped(c, at, "owner");
     const pending = pendingOf(c)?.id;
     return { next, value: { conversation: copy(next), ...(pending !== undefined ? { pending } : {}) } };
+  })!;
+}
+
+// ---- checks ----------------------------------------------------------------------------------------
+
+/** A fingerprint of the conversation as a check starts. Every turn and state change moves `updated`; a rating does not. */
+export function revisionOf(c: Conversation): string {
+  const last = c.messages[c.messages.length - 1];
+  return [c.updated, c.state, c.messages.length, last?.id ?? "", last?.status ?? ""].join("|");
+}
+
+/** Why a check cannot run in this conversation now, before anything is contacted. */
+export function checkBlocked(c: Conversation): "busy" | "bad-state" | "limit" | undefined {
+  if (pendingOf(c)) return "busy";
+  if (c.state !== "active") return "bad-state";
+  if (c.messages.length + 1 > MESSAGE_LIMIT) return "limit";
+  return undefined;
+}
+
+/**
+ * Stores the result of a check as a `check` message after the reply it came from. Refused when a reply is pending
+ * (`busy`), the conversation is not active (`bad-state`), it is not the one `expect` (the fingerprint taken before the
+ * check ran) any more (`changed`), the reply or its offer is not as the check says (`not-found`), or it is full (`limit`).
+ */
+export function addCheck(owner: string, id: string, replyTo: string, check: Check, expect: string, opts: StoreOptions = {}): Conversation {
+  const checked = CheckSchema.parse(check);
+  return change(owner, id, opts, (c, at) => {
+    const blocked = checkBlocked(c);
+    if (blocked === "busy" || blocked === "bad-state") throw new HelpError(blocked, checkText[blocked]);
+    if (revisionOf(c) !== expect) throw new HelpError("changed", checkText.changed);
+    const offer = c.messages.find((m) => m.id === replyTo && m.role === "assistant" && m.status === "done")?.reply?.offers?.[checked.offer];
+    if (!offer || offer.type !== checked.type || offer.subject.kind !== checked.subject.kind || offer.subject.id !== checked.subject.id) throw new HelpError("not-found", "no such offer in this conversation");
+    if (blocked === "limit") throw new HelpError("limit", checkText.limit);
+    const message: Message = { id: randomUUID(), role: "check", at, status: "done", text: `${checked.title}: ${checkText.outcome[checked.outcome]}`.slice(0, TEXT_MAX), replyTo, check: checked };
+    const next: Conversation = { ...c, messages: [...c.messages, message], updated: at };
+    return { next, value: copy(next) };
   })!;
 }
 

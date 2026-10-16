@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { OFFERS } from "../src/help/actions.js";
+import { OFFERS, checkText } from "../src/help/actions.js";
 import { CERTAINTY_WORDS, NAV_PAGES, PART_RULES, QUESTION_RULES, checkReply, navPage, type HelpRole } from "../src/help/contract.js";
 import { FEEDBACK_REASONS, QUESTION_MAX as SERVER_MAX, checkContext } from "../src/help/store.js";
 import { REFUSAL_WORDS } from "../src/help/turn.js";
@@ -584,6 +584,28 @@ describe("offers of a reply", () => {
     expect(m.replyLayout(reply([offer("open-run")], { limit: { code: "secret" } })).offers).toEqual([]);
   });
 
+  it("lays out a check message and the check offers", () => {
+    expect(m.CHECK_OUTCOME_WORDS).toEqual(checkText.outcome);
+    const got = m.offersOf(reply([offer("refresh-evidence"), offer("test-repository")]));
+    expect(got.map((o: any) => [o.type, o.effect])).toEqual([["refresh-evidence", "check"], ["test-repository", "check"]]);
+    expect(got[0].note).toContain("saved in this conversation");
+    const check = { type: "test-repository", title: "A repository", outcome: "failed", lines: ["status: x", "Failed: clone: no"], observedAt: "2026-10-12T10:00:00.000Z" };
+    expect(m.checkLayout(check)).toMatchObject({ title: "A repository", outcome: "Connection failed", pill: "sem-danger", lines: ["status: x", "Failed: clone: no"] });
+    expect(m.checkLayout({ ...check, outcome: "passed" }).pill).toBe("sem-success");
+    expect(m.checkLayout({ ...check, outcome: "read" }).pill).toBe("sem-neutral");
+    expect(m.checkLayout({ ...check, outcome: "weird" })).toBeNull();
+    expect(m.checkLayout(undefined)).toBeNull();
+    const entry = m.entryOf({ id: "k1", role: "check", status: "done", text: "A repository: Connection failed", at: "2026-10-12T10:00:00.000Z", check });
+    expect(entry).toMatchObject({ id: "k1", kind: "check", who: "Check" });
+    expect(entry.check.pill).toBe("sem-danger");
+  });
+
+  it("still offers 'solved' after an answer followed by a check", () => {
+    const messages = [{ role: "user", status: "done" }, { role: "assistant", status: "done" }, { role: "check", status: "done" }];
+    expect(m.solveOffered({ state: "active", messages })).toBe(true);
+    expect(m.solveOffered({ state: "active", messages: [{ role: "user", status: "done" }, { role: "assistant", status: "pending" }] })).toBe(false);
+  });
+
   it("opens only a page of the role", () => {
     for (const to of ["https://evil.example", "javascript:alert(1)", "#/runs/x?y", undefined]) expect(m.offerTarget("admin", to), String(to)).toBeNull();
     expect(m.offerTarget("user", "#/board")).toBeNull();
@@ -598,6 +620,8 @@ describe("offers of a reply", () => {
     expect(e(403)).toContain("You are not allowed to open this now.");
     expect(e(404)).toBe("This is not there any more, or you can no longer see it.");
     expect(e(410)).toBe(e(404));
+    expect(e(409, checkText.changed)).toBe(checkText.changed);
+    expect(e(409, checkText.notStored)).toBe(checkText.notStored);
     expect(e(503, "Ask SCF is switched off on this Foundry.")).toBe("Ask SCF is switched off on this Foundry.");
     expect(e(500)).toBe("Ask SCF is not working now. Try again later.");
   });

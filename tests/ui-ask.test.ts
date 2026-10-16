@@ -1238,6 +1238,34 @@ describe("offers in the drawer", () => {
     }
   });
 
+  it("shows a Run check button for a check offer, draws the stored result and says it is done, without going anywhere", async () => {
+    const checkReply = { ...reply, offers: [{ type: "refresh-evidence", title: "Read it again", evidence: "state-run-1", subject: { kind: "run", id: "r1" } }] };
+    const check = { type: "refresh-evidence", offer: 0, subject: { kind: "run", id: "r1" }, scope: "user", title: "Run r1 waits", outcome: "read", lines: ["status: waiting"], observedAt: new Date().toISOString() };
+    const stored = { id: "k1", role: "check", status: "done", text: "Run r1 waits: Read again", at: check.observedAt, replyTo: "a1", check };
+    const helpOffer = vi.fn(async () => ({ type: "refresh-evidence", outcome: "read", conversation: conv([q("Why?"), a("done", { reply: checkReply }), stored]) }));
+    const go = vi.fn();
+    const made = make({ api: { helpConversation: vi.fn(async () => conv([q("Why?"), a("done", { reply: checkReply })])), helpOffer }, deps: { go } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    const button = openButtons(made.d)[0]!;
+    expect(button.textContent).toBe("Run check");
+    button.click();
+    await vi.waitFor(() => expect(made.d.ui.status.textContent).toBe("The check is done. Its result is below the answer."));
+    const card = walk(made.d.ui.thread).find((e) => e.classList.contains("ask-card-check"))!;
+    expect(card.textContent).toContain("Run r1 waits");
+    expect(card.textContent).toContain("Read again");
+    expect(card.textContent).toContain("status");
+    expect(go).not.toHaveBeenCalled();
+    expect(made.d.state.open).toBe(true);
+  });
+
+  it("shows the server's sentence for a 409 of a check", async () => {
+    const sentence = "This conversation changed while the check ran. Run the check again.";
+    const { d } = await shown(vi.fn(async () => { throw Object.assign(new Error(sentence), { status: 409 }); }));
+    await d.runOffer("a1", 0);
+    expect(d.ui.error.textContent).toBe(sentence);
+  });
+
   it("sends one call for two clicks while it is on its way", async () => {
     let release: (v: any) => void = () => {};
     const helpOffer = vi.fn(() => new Promise((r) => { release = r; }));

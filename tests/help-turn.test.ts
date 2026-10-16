@@ -642,6 +642,23 @@ describe("offers of a turn", () => {
     expect(last(ANN.id, turn.conversation.id).reply?.offers).toEqual([{ type: "open-run", title: "Open this run", evidence: "state-run-1", subject: { kind: "run", id: RUN_ID } }]);
     expect(calls[0]!.prompt).not.toContain("\"subject\"");
   });
+
+  it("describes both checks in the prompt: they run only on a click, and their results may come back as Check sources", () => {
+    const prompt = turnPrompt(input, []);
+    expect(prompt).toContain("refresh-evidence");
+    expect(prompt).toContain("test-repository");
+    expect(prompt).toContain("never runs by itself");
+    expect(prompt).toContain("starts with \"Check\"");
+    expect(turnPrompt({ ...input, role: "admin" }, [])).toContain("test-repository");
+  });
+
+  it("stores a check offer about a repository source and drops one about a run source", async () => {
+    const REPO_SRC: Source = { id: "state-repo-1", kind: "state", title: "A repository", ref: "repository r · #/repos/r", observedAt: STATE_SRC.observedAt, subject: { kind: "repository", id: "r" } };
+    const s = svc(answer({ ...offerAnswer, evidence: ["state-run-1", "state-repo-1"], offers: [{ type: "refresh-evidence", evidence: "state-run-1" }, { type: "test-repository", evidence: "state-repo-1" }, { type: "test-repository", evidence: "state-run-1" }] }), { evidence: () => [STATE_SRC, REPO_SRC] });
+    const turn = s.ask(ANN, { question: "Why does it wait?" });
+    await s.idle();
+    expect(last(ANN.id, turn.conversation.id).reply?.offers?.map((o) => [o.type, o.subject.kind])).toEqual([["refresh-evidence", "run"], ["test-repository", "repository"]]);
+  });
 });
 
 describe("the documentation of help turns", () => {
