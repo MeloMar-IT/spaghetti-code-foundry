@@ -249,6 +249,8 @@ export function createAsk(role, {
     const id = mine();
     if (!id) return false;
     return act(() => api.helpOffer(id, { message, offer }), (r) => {
+      // a check has no address: its result is a new message of the conversation
+      if (r && !r.to && r.conversation) { take(r.conversation); say("The check is done. Its result is below the answer."); return; }
       const link = offerTarget(role, r?.to);
       if (!link) { ui.error.textContent = "This page cannot be opened here."; draw(); return; }
       close({ back: false });

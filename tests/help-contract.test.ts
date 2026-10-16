@@ -427,6 +427,12 @@ describe("offers in a reply", () => {
     expect(run([{ type: "open-turn-item", evidence: "state-run-1" }], "admin").reply.offers?.[0]?.type).toBe("open-turn-item");
   });
 
+  it("keeps a check offer that fits its source and drops one that does not", () => {
+    const kept = run([{ type: "refresh-evidence", evidence: "state-run-1" }, { type: "test-repository", evidence: "state-repo-1" }]).reply.offers;
+    expect(kept?.map((o) => [o.type, o.title, o.subject.kind])).toEqual([["refresh-evidence", "Read it again", "run"], ["test-repository", "Test the connection", "repository"]]);
+    expect(run([{ type: "test-repository", evidence: "state-run-1" }]).dropped).toContain("offer: does not fit its source");
+  });
+
   it("keeps at most three, without duplicates; no offers means no key", () => {
     const dup = run([{ type: "open-run", evidence: "state-run-1" }, { type: "open-run", evidence: "state-run-1" }, { type: "open-repository", evidence: "state-repo-1" }], "admin");
     expect(dup.reply.offers).toHaveLength(2);

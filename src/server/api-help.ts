@@ -3,6 +3,7 @@ import { writeAudit } from "../auth/audit.js";
 import { effectiveLimits } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
+import { checkSources } from "../help/actions.js";
 import { CONTEXT_MAX, CONTEXT_PRIORITY, ENTITY_LIMIT, FILTER_LIMIT, SELECTION_MAX, contextSize, type EntityResolver } from "../help/context.js";
 import { forRole } from "../help/contract.js";
 import { HelpDocs } from "../help/docs.js";
@@ -34,8 +35,8 @@ import {
 import { addStats, readStats, sumStats, sweepStats } from "../help/telemetry.js";
 import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpPaused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
 import type { Config } from "../config.js";
-import { currentAccount, snapshotResolver } from "./help-context.js";
-import { liveEvidence, offerConversation, runOffer } from "./help-evidence.js";
+import { currentAccount, helpSnapshot, snapshotResolver } from "./help-context.js";
+import { CheckNotStored, liveEvidence, offerConversation, runOffer } from "./help-evidence.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -44,7 +45,7 @@ import { asParam } from "./view-as.js";
 const INTERNAL = "Ask SCF is not working; see the server log";
 /** The answer to a help call made through "View as user": conversations are the owner's alone. */
 export const NOT_IN_PREVIEW = "Ask SCF conversations are not shown in a preview";
-const STATUS: Record<HelpErrorCode, number> = { "bad-question": 400, "bad-context": 400, "not-found": 404, deleted: 410, "bad-state": 409, busy: 409, limit: 409, "bad-feedback": 400 };
+const STATUS: Record<HelpErrorCode, number> = { "bad-question": 400, "bad-context": 400, "not-found": 404, deleted: 410, "bad-state": 409, busy: 409, limit: 409, "bad-feedback": 400, changed: 409 };
 
 /** How often the server applies the retention policy to the stored conversations, in ms. */
 export const HELP_SWEEP_MS = 60 * 60 * 1000;
@@ -109,7 +110,21 @@ export function helpTurnsOf(ctx: ApiContext): HelpTurns {
   if (!s) {
     const docs = helpDocsOf(ctx);
     // the evidence of a turn: what the server observes now for this account, then the fitting sections of the installed documentation
-    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx), allow: (asker) => helpAllowed(ctx, asker), evidence: (input) => [...liveEvidence(ctx, input, { patterns: ctx.config().help.sensitive_patterns ?? [] }), ...docs.sources(input.question, input.role)] });
+    s = new HelpTurns({
+      config: ctx.config,
+      claudeBin: ctx.opts.claudeBin,
+      log: ctx.diagLog,
+      resolve: helpResolver(ctx),
+      allow: (asker) => helpAllowed(ctx, asker),
+      evidence: (input) => {
+        const guard = { patterns: ctx.config().help.sensitive_patterns ?? [] };
+        const who = currentAccount({ id: input.owner, role: input.role });
+        const role = who?.role === "admin" ? "admin" : "user";
+        // the stored checks of this conversation, only about what the account can see now
+        const checks = who ? checkSources(input.history, role, (subject) => !!helpSnapshot(ctx, { id: who.id, role }, subject, guard)) : [];
+        return [...liveEvidence(ctx, input, guard), ...checks, ...docs.sources(input.question, input.role)];
+      },
+    });
     services.set(ctx, s);
   }
   return s;
@@ -129,6 +144,15 @@ function mapped(ctx: ApiContext, e: unknown): HttpError {
 export function guardedHelp<T>(ctx: ApiContext, fn: () => T): T {
   try {
     return fn();
+  } catch (e) {
+    throw mapped(ctx, e);
+  }
+}
+
+/** The same for an async function. */
+export async function guardedHelpAsync<T>(ctx: ApiContext, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
   } catch (e) {
     throw mapped(ctx, e);
   }
@@ -336,10 +360,19 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
       if (no === "not-allowed") throw new HttpError(REFUSED[no], REFUSAL_WORDS[no]);
       guardedHelp(ctx, () => offerConversation(ctx, asker, id));
       const body = await readJson(req);
-      const done = guardedHelp(ctx, () => runOffer(ctx, asker, id, body, { patterns: ctx.config().help.sensitive_patterns ?? [] }));
-      auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), done.type);
-      send(res, 200, done);
+      const done = await guardedHelpAsync(ctx, () => runOffer(ctx, asker, id, body, { patterns: ctx.config().help.sensitive_patterns ?? [] }));
+      if ("outcome" in done) {
+        auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), `${done.type}; ${done.outcome}`);
+        send(res, 200, { type: done.type, outcome: done.outcome, conversation: conversationView(done.conversation, user) });
+      } else {
+        auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), done.type);
+        send(res, 200, done);
+      }
     } catch (e) {
+      if (e instanceof CheckNotStored) {
+        auditHelp(ctx, user.id, "help-action", "failed", targetOf(id), e.detail);
+        throw e;
+      }
       // a refusal because of who asks (403) or because the conversation or the thing is not there (404, 410) is audited; a bad body is not
       const why = e instanceof HttpError ? (e.status === 403 ? "denied" : e.status === 404 || e.status === 410 ? "stale" : undefined) : undefined;
       if (why) auditHelp(ctx, user.id, "help-action", "failed", targetOf(id), `refused: ${why}`);

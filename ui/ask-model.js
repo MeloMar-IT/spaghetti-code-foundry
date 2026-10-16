@@ -122,6 +122,7 @@ export function triesNote(message) {
 export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () => [] } = {}) {
   const text = typeof message?.text === "string" ? message.text : "";
   if (message?.role === "user") return { id: message.id, kind: "question", who: "You", text, note: "" };
+  if (message?.role === "check") return { id: message.id, kind: "check", who: "Check", text, note: "", check: checkLayout(message.check, message.at) };
   const note = triesNote(message);
   if (message?.status === "pending") return { id: message?.id, kind: "waiting", who: "Ask SCF", text: waitNote(elapsedMs).text, note };
   if (message?.status === "failed") return { id: message.id, kind: message.failure?.retry === false ? "limit" : "failed", who: "Ask SCF", text: text || "Ask SCF could not answer.", note };
@@ -224,7 +225,8 @@ export function controlsFor(conversation, { busy = false, paused = false } = {})
  * the conversation and says so to the server; closing in any other way (by the API) is not counted as solved.
  */
 export function solveOffered(conversation, { busy = false } = {}) {
-  const last = lastOf(conversation);
+  // a stored check result after the answer does not change that the answer is the last thing said
+  const last = [...(conversation?.messages ?? [])].reverse().find((m) => m?.role !== "check") ?? null;
   return !busy && conversation?.state === "active" && last?.role === "assistant" && last.status === "done";
 }
 
@@ -380,9 +382,23 @@ export function cardsOf(reply, role) {
 }
 
 /** What each offer of a reply does (OFFERS in src/help/actions.ts; a test keeps them equal). */
-export const OFFER_EFFECTS = { "open-run": "navigation", "open-repository": "navigation", "open-turn-item": "navigation" };
+export const OFFER_EFFECTS = { "open-run": "navigation", "open-repository": "navigation", "open-turn-item": "navigation", "refresh-evidence": "check", "test-repository": "check" };
 
 const OFFER_NOTE = "Opens a page. The server checks again that you may see it.";
+const CHECK_NOTES = {
+  "refresh-evidence": "Reads it again. Nothing is changed. The result is saved in this conversation.",
+  "test-repository": "Tests the connection with the stored sign-in. Nothing is changed. The result is saved here and on the repository page.",
+};
+
+/** The words for the outcome of a check (checkText.outcome in src/help/actions.ts; a test keeps them equal). */
+export const CHECK_OUTCOME_WORDS = { read: "Read again", passed: "Connection works", failed: "Connection failed" };
+const CHECK_PILLS = { read: "sem-neutral", passed: "sem-success", failed: "sem-danger" };
+
+/** A stored check message as the drawer shows it: title, outcome pill, lines and the time it was read. Null when it is malformed. */
+export function checkLayout(check, at = "") {
+  if (!check || typeof check !== "object" || !str(check.title) || !Object.hasOwn(CHECK_PILLS, check.outcome)) return null;
+  return { title: str(check.title), outcome: CHECK_OUTCOME_WORDS[check.outcome], pill: CHECK_PILLS[check.outcome], lines: list(check.lines).map(str).filter(Boolean), observedAt: str(check.observedAt) || str(at), uncertain: check.uncertain === true };
+}
 
 /** The offers of a reply as cards with a button. `index` is the place in `reply.offers`: it is what a click sends. */
 export function offersOf(reply) {
@@ -390,7 +406,7 @@ export function offersOf(reply) {
   return list(reply.offers).flatMap((o, index) => {
     if (!o || !Object.hasOwn(OFFER_EFFECTS, o.type) || !str(o.title)) return [];
     const source = list(reply.evidence).find((e) => e?.id === o.evidence);
-    return [{ index, type: o.type, effect: OFFER_EFFECTS[o.type], title: str(o.title), text: str(source?.title), note: OFFER_NOTE }];
+    return [{ index, type: o.type, effect: OFFER_EFFECTS[o.type], title: str(o.title), text: str(source?.title), note: CHECK_NOTES[o.type] ?? OFFER_NOTE }];
   });
 }
 
