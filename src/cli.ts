@@ -54,6 +54,7 @@ Usage:
   scf skills connectors                          List the reviewed skill source connectors
   scf skills import <source-id> [<file>]         Fetch the approved commit of a skill source into quarantine
   scf skills update <source-id> [--owner <@user>] [--reviewer <@user>] [--licence <id>]  Open a pull request that proposes the new upstream commit (never approves)
+  scf skills update --due [--all]                Check every enabled source whose cadence is due; open or refresh its pull request
   scf skills scan <source-id> [<exceptions-file>]  Print the security report of a staged import
   scf skills assess <source-id>                    Print the workflow report of a staged import
   scf skills compare <source-id>                   Compare a staged import with the built-in java and spring-boot skills
@@ -239,6 +240,8 @@ async function main(argv: string[]): Promise<number> {
       owner: { type: "string" },
       reviewer: { type: "string" },
       licence: { type: "string" },
+      due: { type: "boolean" },
+      all: { type: "boolean" },
       email: { type: "string" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },

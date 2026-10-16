@@ -3,6 +3,8 @@
 # State lives next to the log: $FAKE_GH_LOG.pr (PR url once created), $FAKE_GH_LOG.checks (CI call count), $FAKE_GH_LOG.prs.json (open PRs;
 # "pr list" honours --head and --limit on it), $FAKE_GH_LOG.bodies.json ({url: {title, body}}: set by "pr create" and "pr edit --body-file -",
 # read by "pr view --json title,body").
+# "pr edit --add-reviewer <handle>" only records the handle in $FAKE_GH_LOG.reviewers.json ({url: [handles]}); "pr view --json reviewRequests,reviews"
+# answers from it ($FAKE_GH_REVIEWERS_FAIL=1 makes that view fail).
 # $FAKE_GH_AUTH_LOG=<file>: every call appends one line, tab separated: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN (each "-" when unset),
 # "host" when GH_CONFIG_DIR is unset (else the number of entries in that folder), and the arguments.
 if [ -n "$FAKE_GH_AUTH_LOG" ]; then
@@ -212,7 +214,9 @@ case "$1 $2" in
       *) if grep -qxF -- "$name" "$FAKE_GH_LOG.labels" 2>/dev/null; then echo "label with name \"$name\" already exists; use --force to update its color and description" >&2; exit 1; fi
          echo "$name" >> "$FAKE_GH_LOG.labels" ;;
     esac ;;
-  "pr edit")     echo "--- pr edit: $*" >> "$FAKE_GH_LOG"; cat > "$FAKE_GH_LOG.lastbody"; cat "$FAKE_GH_LOG.lastbody" >> "$FAKE_GH_LOG"; printf '\n--- end pr edit\n' >> "$FAKE_GH_LOG"
+  "pr edit")     case "$*" in *--add-reviewer*) rv=""; prev=""; for a in "$@"; do [ "$prev" = "--add-reviewer" ] && rv="$a"; prev="$a"; done
+                   node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const u=process.argv[2];m[u]=[...new Set([...(m[u]||[]),process.argv[3]])];fs.writeFileSync(f,JSON.stringify(m))' "$FAKE_GH_LOG.reviewers.json" "$3" "$rv"; exit 0 ;; esac
+                 echo "--- pr edit: $*" >> "$FAKE_GH_LOG"; cat > "$FAKE_GH_LOG.lastbody"; cat "$FAKE_GH_LOG.lastbody" >> "$FAKE_GH_LOG"; printf '\n--- end pr edit\n' >> "$FAKE_GH_LOG"
                  # "--body-file -" stores the new title (--title, else the old one) and body of the PR in $FAKE_GH_LOG.bodies.json.
                  case "$*" in *"--body-file -"*) title=""; prev=""; for a in "$@"; do [ "$prev" = "--title" ] && title="$a"; prev="$a"; done
                    node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const u=process.argv[2];const old=m[u]||{title:""};m[u]={title:process.argv[3]||old.title,body:fs.readFileSync(process.argv[4],"utf8")};fs.writeFileSync(f,JSON.stringify(m))' "$FAKE_GH_LOG.bodies.json" "$3" "$title" "$FAKE_GH_LOG.lastbody" ;; esac ;;
@@ -226,6 +230,8 @@ case "$1 $2" in
                  node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const n=99+l.length;l.push({number:n,headRefName:process.argv[2],state:"OPEN",createdAt:new Date(Date.UTC(2026,5,1)+n*60000).toISOString(),url:"https://github.com/owner/repo/pull/"+n});fs.writeFileSync(f,JSON.stringify(l));const b=process.argv[5];const m=fs.existsSync(b)?JSON.parse(fs.readFileSync(b,"utf8")):{};m[l.at(-1).url]={title:process.argv[3],body:fs.readFileSync(process.argv[4],"utf8")};fs.writeFileSync(b,JSON.stringify(m));console.log(l.at(-1).url)' "$FAKE_GH_LOG.prs.json" "$head" "$title" "$FAKE_GH_LOG.lastbody" "$FAKE_GH_LOG.bodies.json" | tee "$FAKE_GH_LOG.pr" ;;
   "pr view")
     case "$*" in
+      *reviewRequests,reviews*) [ -n "$FAKE_GH_REVIEWERS_FAIL" ] && { echo boom >&2; exit 1; }
+        node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};console.log(JSON.stringify({reviewRequests:(m[process.argv[2]]||[]).map(login=>({__typename:"User",login})),reviews:[]}))' "$FAKE_GH_LOG.reviewers.json" "$3" ;;
       *"--json title,body"*) node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const v=m[process.argv[2]];if(!v)process.exit(1);console.log(JSON.stringify(v))' "$FAKE_GH_LOG.bodies.json" "$3" || exit 1 ;;
       *reviewDecision*) echo "${FAKE_GH_REVIEW_DECISION:-}" ;;
       *comments,reviews,commits*) printf '%s' "${FAKE_GH_PR_VIEW:-{\"comments\":[],\"reviews\":[],\"commits\":[]\}}" ;;

@@ -1,4 +1,3 @@
-import { lstatSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { SOURCE_CONNECTORS, connectorSource } from "../skills/connectors.js";
 import { reviewLines } from "../skills/import-review.js";
@@ -7,8 +6,12 @@ import { reviewStaged } from "../skills/review-cli.js";
 import { sourceChangeLine, type SourceChange } from "../skills/source-change.js";
 import type { ImportGates } from "../skills/source-update.js";
 import { changesSince, newImportGates } from "./update-changes.js";
+import { isDeepStrictEqual } from "node:util";
 import { SKILL_ID_RE } from "../skills/schema.js";
-import { addConnectorEntry, changeApproved, checkEdit, communityReview, updateBranch, updateBranchPrefix, updatePullRequest } from "../skills/source-update.js";
+import { addConnectorEntry, changeApproved, checkEdit, communityReview, REVIEW_PENDING_NOTE, updateBranch, updateBranchPrefix, updatePullRequest, type UpdatePullRequestInput } from "../skills/source-update.js";
+import type { UpdateCheckOutcome } from "../skills/update-schedule.js";
+import { updateDue } from "./update-due.js";
+import { askReviewer, catalogueSentence, INTERRUPTED, Interrupted, NOTHING, resolverSentence, reviewerConfirmed, sameBytes, tickFor, withSignal, workingFile } from "./update-common.js";
 import { OWNER_RE, readSources, shownValue, sourcesFromBytes, SOURCES_FILE, type SkillLibrarySource, type SourceReview } from "../skills/sources.js";
 import {
   CatalogueError,
@@ -21,13 +24,13 @@ import {
   openPullRequest,
   openSourcePullRequests,
   originRepo,
+  pullRequestReviewers,
   pullRequestText,
   pushNewBranch,
   readBlob,
   showPrefix,
   type Blob,
   type CatalogueContext,
-  type CatalogueErrorCode,
 } from "./catalogue-git.js";
 import { stageSource, type SkillImportOptions } from "./cli.js";
 import { LsRemoteError, resolveHead, resolveTrack, type TrackResult } from "./ls-remote.js";
@@ -46,69 +49,16 @@ export interface SkillUpdateOptions extends Omit<SkillImportOptions, "cwd"> {
 }
 
 const syntax = (why: string) => new Error(`${why}\n${UPDATE_USAGE}`);
-const NOTHING = "nothing was proposed";
-const INTERRUPTED = `PROBLEM the update was interrupted; ${NOTHING}`;
+export const UPDATE_DUE_USAGE = "usage: scf skills update --due [--all]";
 
-class Interrupted extends Error {}
+/** The input of a due run: the entries of skill-sources.yaml as they are on origin/<base>. */
+export interface DueInput {
+  sources: readonly SkillLibrarySource[];
+}
 
 const defaultResolve: NonNullable<SkillUpdateOptions["resolve"]> = async (repository, track, o) =>
   track === undefined ? { commit: await resolveHead(repository, o) } : resolveTrack(repository, track, o);
 
-function resolverSentence(code: LsRemoteError["code"], key: string): string {
-  switch (code) {
-    case "no-git":
-      return "git was not found; install git and try again";
-    case "unreachable":
-      return `the upstream repository ${key} could not be reached; ${NOTHING}`;
-    case "timeout":
-      return `git did not answer in 20 seconds; ${NOTHING}`;
-    case "interrupted":
-      return `the update was interrupted; ${NOTHING}`;
-    case "bad-answer":
-      return `the answer of the upstream repository could not be read; ${NOTHING}`;
-  }
-}
-
-function catalogueSentence(code: CatalogueErrorCode, gh: "list" | "create" = "list"): string {
-  switch (code) {
-    case "no-git":
-      return "git was not found; install git and try again";
-    case "not-a-repository":
-      return "this folder is not in a git work tree; run the command in a clone of the catalogue repository";
-    case "no-origin":
-      return "this clone has no remote named origin";
-    case "no-default-branch":
-      return "the default branch of origin is not known; run: git remote set-head origin --auto";
-    case "fetch-failed":
-      return `the default branch could not be fetched from origin; ${NOTHING}`;
-    case "read-failed":
-      return `skill-sources.yaml could not be read from origin; ${NOTHING}`;
-    case "commit-failed":
-      return `the commit of the proposal could not be made; ${NOTHING}`;
-    case "push-failed":
-      return "the branch could not be pushed to origin; no pull request was opened";
-    case "delete-failed":
-      return "the branch on origin could not be checked";
-    case "no-gh":
-      return "gh was not found; install the GitHub CLI and try again";
-    case "gh-failed":
-      return gh === "list" ? `the open pull requests could not be listed with gh; ${NOTHING}` : "gh could not open the pull request";
-    case "timeout":
-      return "git or gh did not finish in 120 seconds";
-  }
-}
-
-const sameBytes = (a: Buffer | undefined, b: Buffer | undefined) => (a === undefined || b === undefined ? a === b : a.equals(b));
-
-/** The bytes of the file in the working copy, undefined when there is none; a link or another kind of file is "unreadable". */
-function workingFile(path: string): Buffer | undefined | "unreadable" {
-  try {
-    const st = lstatSync(path);
-    return st.isFile() ? readFileSync(path) : "unreadable";
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === "ENOENT" ? undefined : "unreadable";
-  }
-}
 
 /** `scf skills update`. `positionals` are the operands after "update"; the syntax is checked before anything is read. */
 export async function skillUpdateCommand(
@@ -116,9 +66,21 @@ export async function skillUpdateCommand(
   out: (line: string) => void,
   opts: SkillUpdateOptions = {},
 ): Promise<number> {
-  const { owner, reviewer, licence, ...rest } = args.values;
+  const { owner, reviewer, licence, due, all, ...rest } = args.values;
   for (const [k, v] of Object.entries(rest)) if (v !== undefined) throw syntax(`scf skills update: unexpected option --${k}`);
+  for (const [name, v] of [["due", due], ["all", all]] as const) {
+    if (v !== undefined && v !== true) throw syntax(`scf skills update: --${name} takes no value`);
+  }
+  if (due === true || all === true) {
+    const dueSyntax = (why: string) => new Error(`${why}\n${UPDATE_DUE_USAGE}`);
+    if (due !== true) throw dueSyntax("scf skills update: --all needs --due");
+    if (args.positionals.length > 0) throw dueSyntax("scf skills update: --due cannot be used with a source id");
+    if (owner !== undefined || reviewer !== undefined || licence !== undefined) {
+      throw dueSyntax("scf skills update: --due takes no --owner, --reviewer or --licence; a community source names its reviewer in update.reviewer");
+    }
+  }
   const [id] = args.positionals;
+  if (due === true) return withSignal((signal) => updateDue({ all: all === true }, out, opts, signal, updateSource));
   if (args.positionals.length !== 1 || id === undefined) throw syntax("scf skills update: expects one source id");
   if (!SKILL_ID_RE.test(id)) throw syntax("scf skills update: the source id must be a lower-case slug");
   for (const [name, v] of [["owner", owner], ["reviewer", reviewer], ["licence", licence]] as const) {
@@ -127,25 +89,31 @@ export async function skillUpdateCommand(
   if (typeof owner === "string" && !OWNER_RE.test(owner)) throw syntax("scf skills update: --owner must be a GitHub user or team like @octocat or @acme/skills");
   if (typeof reviewer === "string" && !OWNER_RE.test(reviewer)) throw syntax("scf skills update: --reviewer must be a GitHub user or team like @octocat or @acme/skills");
 
-  const aborter = new AbortController();
-  const onSignal = () => aborter.abort();
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
+  const given = { owner, reviewer, licence } as { owner?: string; reviewer?: string; licence?: string };
+  return withSignal(async (signal) => (await updateSource(id, given, out, opts, signal)) === "PROBLEM" ? 1 : 0);
+}
+
+/** One source: the outcome of `run`, with an interrupt and a git or gh failure turned into PROBLEM (the line is printed). */
+export async function updateSource(
+  id: string,
+  given: { owner?: string; reviewer?: string; licence?: string },
+  out: (line: string) => void,
+  opts: SkillUpdateOptions,
+  signal: AbortSignal,
+  due?: DueInput,
+): Promise<UpdateCheckOutcome> {
   try {
-    return await run(id, { owner, reviewer, licence } as { owner?: string; reviewer?: string; licence?: string }, out, opts, aborter.signal);
+    return await run(id, given, out, opts, signal, due);
   } catch (e) {
     if (e instanceof Interrupted) {
       out(INTERRUPTED);
-      return 1;
+      return "PROBLEM";
     }
     if (e instanceof CatalogueError) {
       out(`PROBLEM ${catalogueSentence(e.code)}`);
-      return 1;
+      return "PROBLEM";
     }
     throw e;
-  } finally {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
   }
 }
 
@@ -164,6 +132,8 @@ interface UpdateRun {
   opts: SkillUpdateOptions;
   signal: AbortSignal;
   tick: () => Promise<void>;
+  /** An unattended `--due` run: the reviewer comes from update.reviewer and is asked after the pull request is opened. */
+  due: boolean;
 }
 
 const openLine = (url: string, id: string, c12: string) => `OPEN ${url} for ${id}@${c12}; no second pull request was opened`;
@@ -171,7 +141,7 @@ const openLine = (url: string, id: string, c12: string) => `OPEN ${url} for ${id
 /** Fetches the default branch and checks that skill-sources.yaml here is the one on origin. A string is the problem sentence. */
 async function baseState(
   ctx: CatalogueContext,
-  file: string,
+  file: string | undefined,
   path: string,
   tick: () => Promise<void>,
 ): Promise<string | { base: string; baseCommit: string; blob: Blob | undefined }> {
@@ -181,6 +151,7 @@ async function baseState(
   await tick();
   const blob = readBlob(ctx, baseCommit, path);
   await tick();
+  if (file === undefined) return { base, baseCommit, blob };
   const working = workingFile(file);
   if (working === "unreadable" || !sameBytes(blob?.content, working)) {
     return `${SOURCES_FILE} in this folder differs from ${SOURCES_FILE} on origin/${base}; commit, restore or pull it and try again; ${NOTHING}`;
@@ -188,16 +159,16 @@ async function baseState(
   return { base, baseCommit, blob };
 }
 
-/** Stages the commit, reviews it and builds the title and body. A number is an exit code: the run ends there. */
-async function proposalText(r: UpdateRun, candidate: SkillLibrarySource, review: SourceReview | undefined): Promise<{ title: string; body: string } | number> {
+/** Stages the commit, reviews it and builds the input of the title and body. "PROBLEM": the run ends there (the line is printed). */
+async function proposalInput(r: UpdateRun, candidate: SkillLibrarySource, review: SourceReview | undefined): Promise<UpdatePullRequestInput | "PROBLEM"> {
   const { id, commit, out, opts, signal, tick, cwd, today, existing } = r;
   const oldCommit = existing?.ref.approved;
   const staged = await stageSource(candidate, commit, out, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal });
-  if (staged.code !== 0 || !staged.done) return staged.code === 0 ? 1 : staged.code;
+  if (staged.code !== 0 || !staged.done) return "PROBLEM";
   const read2 = readStagedImport(id, commit, { home: opts.home });
   if (read2.state !== "ok") {
     out(`PROBLEM the staged import could not be read back; ${NOTHING}`);
-    return 1;
+    return "PROBLEM";
   }
   const report = reviewStaged({ source: candidate, commit, record: read2.record, files: read2.files, licence: read2.licence }, { home: opts.home });
   await tick();
@@ -234,18 +205,18 @@ async function proposalText(r: UpdateRun, candidate: SkillLibrarySource, review:
   const own = open.find((p) => p.branch === r.branch);
   const supersedes = open.filter((p) => p !== own && (own === undefined || (p.createdAt !== undefined && own.createdAt !== undefined && p.createdAt < own.createdAt)));
   await tick();
-  return updatePullRequest({ source: candidate, oldCommit, commit, track: r.track, review, rejected: read2.record.rejected, report, change, gates, supersedes });
+  return { source: candidate, oldCommit, commit, track: r.track, review, rejected: read2.record.rejected, report, change, gates, supersedes };
 }
 
 /**
  * The pull request of this branch is open: rebuild its text from the proposal the branch holds and edit it when the text differs.
  * The branch is never pushed again. A branch that does not hold this proposal is only reported.
  */
-async function refresh(r: UpdateRun, url: string, path: string): Promise<number> {
+async function refresh(r: UpdateRun, url: string, path: string): Promise<UpdateCheckOutcome> {
   const { id, commit, c12, branch, out, tick } = r;
-  const problem = (text: string): number => {
+  const problem = (text: string): "PROBLEM" => {
     out(`PROBLEM ${text}`);
-    return 1;
+    return "PROBLEM";
   };
   const was = "it was left as it was";
   let blob: Blob | undefined;
@@ -263,12 +234,12 @@ async function refresh(r: UpdateRun, url: string, path: string): Promise<number>
   const entry = blob && proposedEntry(blob.content, id, commit, r.today);
   if (!entry) {
     out(openLine(url, id, c12));
-    return 0;
+    return "OPEN";
   }
   // The review claim is the one the creation path makes: only an enabled community entry carries it.
   const review = entry.status === "enabled" && entry.trust === "community" ? entry.review : undefined;
-  const text = await proposalText({ ...r, track: entry.ref.track }, entry, review);
-  if (typeof text === "number") return text;
+  const input = await proposalInput({ ...r, track: entry.ref.track }, entry, review);
+  if (input === "PROBLEM") return input;
 
   let current: { title: string; body: string };
   try {
@@ -278,9 +249,30 @@ async function refresh(r: UpdateRun, url: string, path: string): Promise<number>
     throw e;
   }
   await tick();
+  // The note of an unattended run stays as it is, so edits never flip it on and off.
+  const pending = review !== undefined && current.body.includes(REVIEW_PENDING_NOTE);
+  if (r.due && pending && review) {
+    // The claim in the pull request must be the configured reviewer; after update.reviewer was corrected it no longer is.
+    const configured = r.existing?.update.reviewer;
+    if (configured !== review.by) {
+      return problem(
+        `the pull request ${url} names ${review.by} as the reviewer, but update.reviewer is ${configured ?? "not set"}; close the pull request and delete its branch ${branch}, then the next --due run opens one that names the right reviewer`,
+      );
+    }
+    // The reviewer is named; check that GitHub holds the request, and ask again when it does not.
+    let asked = false;
+    try {
+      asked = reviewerConfirmed(pullRequestReviewers(r.ctx, r.repo, url), review.by) || askReviewer(r.ctx, r.repo, url, review.by);
+    } catch (e) {
+      if (!(e instanceof CatalogueError)) throw e;
+    }
+    if (!asked) return problem(`the pull request ${url} is open, but gh could not confirm or ask ${review.by} to review it; ${was}; the next --due run tries again`);
+    await tick();
+  }
+  const text = updatePullRequest({ ...input, reviewPending: pending });
   if (current.title === text.title && Buffer.from(current.body).equals(Buffer.from(text.body))) {
     out(openLine(url, id, c12));
-    return 0;
+    return "OPEN";
   }
   try {
     editPullRequest(r.ctx, { repo: r.repo, url, title: text.title, body: text.body });
@@ -289,7 +281,7 @@ async function refresh(r: UpdateRun, url: string, path: string): Promise<number>
     throw e;
   }
   out(`UPDATED ${url} for ${id}@${c12}; nothing is approved until it is merged`);
-  return 0;
+  return "UPDATED";
 }
 
 /** The enabled entry `id` of the branch file when it proposes `commit`. */
@@ -302,21 +294,19 @@ function proposedEntry(content: Buffer, id: string, commit: string, today: strin
 
 async function run(
   id: string,
-  given: { owner?: string; reviewer?: string; licence?: string },
+  given0: { owner?: string; reviewer?: string; licence?: string },
   out: (line: string) => void,
   opts: SkillUpdateOptions,
   signal: AbortSignal,
-): Promise<number> {
-  const problem = (text: string): number => {
+  dueInput?: DueInput,
+): Promise<UpdateCheckOutcome> {
+  const problem = (text: string): "PROBLEM" => {
     out(`PROBLEM ${text}`);
-    return 1;
+    return "PROBLEM";
   };
-  // A signal that came in while a synchronous call ran is delivered by the next event-loop turns.
-  const tick = async () => {
-    await new Promise<void>((r) => setImmediate(r));
-    await new Promise<void>((r) => setImmediate(r));
-    if (signal.aborted) throw new Interrupted();
-  };
+  let given = given0;
+  const tick = tickFor(signal);
+  const due = dueInput !== undefined;
   const cwd = resolve(opts.cwd ?? process.cwd());
   const ctx: CatalogueContext = { cwd, env: opts.env ?? process.env };
   const today = (opts.now ?? new Date()).toISOString().slice(0, 10);
@@ -328,12 +318,19 @@ async function run(
   if (repo === undefined) return problem("the address of origin is not a GitHub repository address; the pull request needs it");
 
   const file = resolve(cwd, SOURCES_FILE);
-  const read = readSources(file, undefined, today);
-  if (read.state === "invalid") {
-    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
-    return 1;
+  let sources: readonly SkillLibrarySource[];
+  if (dueInput) sources = dueInput.sources;
+  else {
+    const read = readSources(file, undefined, today);
+    if (read.state === "invalid") {
+      for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+      return "PROBLEM";
+    }
+    sources = read.state === "ok" ? read.manifest.sources : [];
   }
-  const sources = read.state === "ok" ? read.manifest.sources : [];
+  // An unattended run takes the reviewer from update.reviewer, and only for an enabled community entry.
+  const listed = sources.find((s) => s.id === id);
+  if (due && listed && listed.status === "enabled" && listed.trust === "community") given = { ...given, reviewer: listed.update.reviewer };
   const existing = sources.find((s) => s.id === id);
   const connector = existing ? undefined : SOURCE_CONNECTORS.find((c) => c.id === id);
 
@@ -351,9 +348,12 @@ async function run(
   // The shape of the entry as it will be, with a stand-in commit. Option mistakes end here, before any network call. A missing
   // --reviewer waits: UNCHANGED and an open pull request need no review, only a new proposal does.
   const shape: SkillLibrarySource = existing ?? connectorSource(connector!, { commit: "0".repeat(40), owner: given.owner! });
-  const early = communityReview(shape, { commit: "0".repeat(40), reviewer: given.reviewer, licence: given.licence, today });
-  const needsReview = shape.status === "enabled" && shape.trust === "community";
-  if ("problem" in early && (!needsReview || given.reviewer !== undefined)) return problem(early.problem);
+  // An unattended run has no options to check: its values come from a validated file.
+  if (!due) {
+    const early = communityReview(shape, { commit: "0".repeat(40), reviewer: given.reviewer, licence: given.licence, today });
+    const needsReview = shape.status === "enabled" && shape.trust === "community";
+    if ("problem" in early && (!needsReview || given.reviewer !== undefined)) return problem(early.problem);
+  }
 
   const repository = shape.repository;
   const track = existing ? existing.ref.track : connector!.track;
@@ -378,7 +378,7 @@ async function run(
   const oldCommit = existing?.ref.approved;
   if (oldCommit === commit) {
     out(`UNCHANGED ${id} is at ${c12} (ref.approved); nothing to propose`);
-    return 0;
+    return "UNCHANGED";
   }
 
   const branch = updateBranch(id, commit);
@@ -386,16 +386,31 @@ async function run(
   await tick();
 
   const path = prefix + SOURCES_FILE;
-  const state = await baseState(ctx, file, path, tick);
+  const state = await baseState(ctx, due ? undefined : file, path, tick);
   if (typeof state === "string") return problem(state);
   const { base, baseCommit, blob } = state;
-  const r: UpdateRun = { id, commit, c12, branch, repo, ctx, cwd, today, track, existing, out, opts, signal, tick };
+  if (due && existing) {
+    // The list was read before; the entry must still be the one on origin now.
+    const again = blob && sourcesFromBytes(blob.content, today);
+    const now = again && again.state === "ok" ? again.manifest.sources.find((s) => s.id === id) : undefined;
+    if (!isDeepStrictEqual(now, existing)) return problem(`the entry changed on origin/${base} while it was checked; ${NOTHING}`);
+  }
+  const r: UpdateRun = { id, commit, c12, branch, repo, ctx, cwd, today, track, existing, out, opts, signal, tick, due };
   if (already !== undefined) return refresh(r, already, path);
   const beforeText = blob?.content.toString("utf8");
 
   // The review record, when the entry is an enabled community entry: stated by a person, confirmed by the merge.
   const decided = communityReview(shape, { commit, reviewer: given.reviewer, licence: given.licence, today });
-  if ("problem" in decided) return problem(decided.problem);
+  if ("problem" in decided) {
+    if (!due) return problem(decided.problem);
+    return problem(
+      decided.missing === "reviewer"
+        ? `needs update.reviewer: an enabled community source needs a reviewer; name a GitHub user or team in update.reviewer of ${SOURCES_FILE}; ${NOTHING}`
+        : decided.missing === "licence"
+          ? `needs --licence: the licence that was reviewed is not clear; licence.allow lists more than one; ${NOTHING}`
+          : `${decided.problem}; ${NOTHING}`,
+    );
+  }
   const review: SourceReview | undefined = decided.review;
 
   const edited =
@@ -407,8 +422,9 @@ async function run(
   if ("problem" in checked) return problem(`${checked.problem}; ${NOTHING}`);
   const candidate = checked.entry;
 
-  const pr = await proposalText(r, candidate, review);
-  if (typeof pr === "number") return pr;
+  const input = await proposalInput(r, candidate, review);
+  if (input === "PROBLEM") return input;
+  const pr = updatePullRequest({ ...input, reviewPending: due && review !== undefined });
   const proposal = commitFile(ctx, baseCommit, path, Buffer.from(edited.text, "utf8"), blob?.mode ?? "100644", `Skill source ${id}: propose ${c12}`);
   await tick();
 
@@ -428,7 +444,7 @@ async function run(
     }
     if (competing !== undefined) {
       out(openLine(competing, id, c12));
-      return 0;
+      return "OPEN";
     }
     const sentence = catalogueSentence(e.code);
     return cleaned ? problem(sentence) : leftover(sentence);
@@ -438,7 +454,7 @@ async function run(
   } catch (e) {
     if (!(e instanceof Interrupted)) throw e;
     out(cleanup() ? INTERRUPTED : `PROBLEM the update was interrupted; the branch ${branch} may still be on origin: delete it by hand`);
-    return 1;
+    return "PROBLEM";
   }
 
   let url: string | undefined;
@@ -462,6 +478,8 @@ async function run(
     const sentence = catalogueSentence(failure?.code ?? "gh-failed", "create");
     return cleaned ? problem(sentence) : leftover(sentence);
   }
+  // An unattended run asks the named reviewer after the pull request exists; the pull request stays when gh cannot.
+  const asked = !due || review === undefined || askReviewer(ctx, repo, url, review.by);
   let interrupted = false;
   try {
     await tick();
@@ -469,6 +487,9 @@ async function run(
     if (!(e instanceof Interrupted)) throw e;
     interrupted = true;
   }
+  if (!asked) {
+    return problem(`opened ${url} for ${id}@${c12}, but gh could not ask ${review!.by} to review it; ask them on GitHub or fix update.reviewer; the next --due run tries again`);
+  }
   out(`OK opened ${url} for ${id}@${c12}; nothing is approved until it is merged${interrupted ? " (interrupted after the pull request was opened)" : ""}`);
-  return 0;
+  return "OK";
 }

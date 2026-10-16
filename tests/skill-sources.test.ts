@@ -627,3 +627,19 @@ describe("source profile", () => {
     expect(r.lines[0]).toMatch(/^PROBLEM sources\[0\] \(example-skills\) profile\.provider: /);
   });
 });
+
+describe("update.reviewer", () => {
+  it("accepts a user or a team and keeps it", () => {
+    for (const reviewer of ["@rev", "@acme/team"]) {
+      const r = parseSources(file(valid({ update: { cadence: "weekly", reviewer } })));
+      expect(r.problems).toEqual([]);
+      expect(r.manifest?.sources[0]!.update).toEqual({ cadence: "weekly", reviewer });
+    }
+  });
+  it("refuses a bad value, and a file without it has no key", () => {
+    for (const reviewer of ["rev", 7, "@a\u001b[2Jb"]) expect(text(check(valid({ update: { cadence: "weekly", reviewer } })))).toContain("update.reviewer");
+    expect(text(check(valid({ update: { cadence: "weekly", reviewer: "rev" } })))).toContain("must be a GitHub user or team");
+    expect(parseSources(file(valid())).manifest?.sources[0]!.update).toEqual({ cadence: "weekly" });
+    expect(text(check(valid({ update: { cadence: "weekly", nope: 1 } })))).toContain('unknown key "nope"');
+  });
+});

@@ -17,7 +17,7 @@ export const updateBranchPrefix = (id: string): string => `skill-update/${id}-`;
 export const updateBranch = (id: string, commit: string): string => `${updateBranchPrefix(id)}${commit.slice(0, 12)}`;
 const SUPERSEDES_BYTES = 4_000;
 
-type Problem = { problem: string };
+type Problem = { problem: string; missing?: "reviewer" | "licence" };
 
 /**
  * The review record an enabled community entry needs for the new commit (parseSources demands review.commit = ref.approved).
@@ -34,7 +34,7 @@ export function communityReview(
     return {};
   }
   if (o.reviewer === undefined) {
-    return { problem: "an enabled community source needs a review; give --reviewer <@user> (the person who checked the maintainer and the licence)" };
+    return { problem: "an enabled community source needs a review; give --reviewer <@user> (the person who checked the maintainer and the licence)", missing: "reviewer" };
   }
   if (!OWNER_RE.test(o.reviewer)) return { problem: "--reviewer must be a GitHub user or team like @octocat or @acme/skills" };
   const allow = entry.licence.allow;
@@ -43,7 +43,7 @@ export function communityReview(
     if (!allow.includes(licence)) return { problem: `--licence ${shownFull(licence)} is not in licence.allow` };
   } else if (entry.review && allow.includes(entry.review.licence)) licence = entry.review.licence;
   else if (allow.length === 1) licence = allow[0];
-  if (licence === undefined) return { problem: "give --licence <id>: the licence that was reviewed; licence.allow lists more than one" };
+  if (licence === undefined) return { problem: "give --licence <id>: the licence that was reviewed; licence.allow lists more than one", missing: "licence" };
   return { review: { by: o.reviewer, on: o.today, commit: o.commit, licence } };
 }
 
@@ -149,7 +149,7 @@ function plainEntry(e: SkillLibrarySource): Record<string, unknown> {
     adapter: e.adapter,
     trust: e.trust,
     licence: { allow: [...e.licence.allow] },
-    update: { cadence: e.update.cadence },
+    update: { cadence: e.update.cadence, ...(e.update.reviewer ? { reviewer: e.update.reviewer } : {}) },
     owner: e.owner,
     ...(e.review ? { review: { by: e.review.by, on: e.review.on, commit: e.review.commit, licence: e.review.licence } } : {}),
   };
@@ -276,8 +276,10 @@ export function attentionParts(report: ImportReview, gates?: ImportGates): Atten
   return parts;
 }
 
-/** The title and the Markdown body of the pull request: values and the review report only, never upstream skill text. */
-export function updatePullRequest(o: {
+/** The first words of the note an unattended run adds to the pull request; a refresh looks for it. */
+export const REVIEW_PENDING_NOTE = "This pull request was opened by an unattended run (`scf skills update --due`).";
+
+export interface UpdatePullRequestInput {
   source: Pick<SkillLibrarySource, "id" | "repositoryKey" | "paths" | "trust" | "status">;
   oldCommit?: string;
   commit: string;
@@ -291,7 +293,12 @@ export function updatePullRequest(o: {
   gates?: ImportGates;
   /** Open pull requests of older revisions of this source. They are only listed. */
   supersedes?: readonly { url: string; branch: string }[];
-}): { title: string; body: string } {
+  /** An unattended run named the reviewer; the review has not happened yet. Adds a note after the merge line. */
+  reviewPending?: boolean;
+}
+
+/** The title and the Markdown body of the pull request: values and the review report only, never upstream skill text. */
+export function updatePullRequest(o: UpdatePullRequestInput): { title: string; body: string } {
   const { source, oldCommit, commit } = o;
   const c12 = commit.slice(0, 12);
   const parts = attentionParts(o.report, oldCommit ? (typeof o.change === "object" ? o.change : o.gates) : undefined);
@@ -316,6 +323,9 @@ export function updatePullRequest(o: {
       "",
       `Merging records that ${code(o.review.by)} reviewed the maintainer and licence ${code(o.review.licence)} of ${code(commit.slice(0, 12))} on ${o.review.on}. Do not merge unless that is true.`,
     );
+    if (o.reviewPending) {
+      head.push("", `${REVIEW_PENDING_NOTE} ${code(o.review.by)} (from \`update.reviewer\`) is named as the reviewer and has not reviewed it yet. Do not merge before that review is done.`);
+    }
   }
   if (o.supersedes !== undefined && o.supersedes.length > 0) {
     head.push("", "Supersedes (these stay open and are not changed):", "", ...boundedList(o.supersedes.map((p) => `- ${p.url} (${code(p.branch)})`), SUPERSEDES_BYTES));

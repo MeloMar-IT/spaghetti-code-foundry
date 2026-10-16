@@ -3,7 +3,8 @@ import { parse } from "yaml";
 import { connectorFor, connectorSource } from "../src/skills/connectors.js";
 import { reviewFailed, type ImportReview, type ReviewedSkill } from "../src/skills/import-review.js";
 import { SOURCE_CHANGE_LIMITS, type SourceChange } from "../src/skills/source-change.js";
-import { addConnectorEntry, attentionParts, changeApproved, checkEdit, communityReview, PULL_REQUEST_BYTES, repoFromUrl, scalarText, updateBranch, updateBranchPrefix, updatePullRequest } from "../src/skills/source-update.js";
+import { addConnectorEntry, attentionParts, changeApproved, checkEdit, communityReview, PULL_REQUEST_BYTES, repoFromUrl, REVIEW_PENDING_NOTE, scalarText, updateBranch, updateBranchPrefix, updatePullRequest } from "../src/skills/source-update.js";
+import { reviewerConfirmed } from "../src/skill-import/update-common.js";
 import { parseSources, type SkillLibrarySource } from "../src/skills/sources.js";
 
 const TODAY = "2026-10-15";
@@ -197,13 +198,13 @@ describe("checkEdit", () => {
 describe("communityReview", () => {
   const community = { status: "enabled" as const, trust: "community" as const, licence: { allow: ["MIT"] }, review: undefined };
   it("needs a reviewer for an enabled community entry", () => {
-    expect(communityReview(community, { commit: NEW, today: TODAY })).toEqual({ problem: expect.stringContaining("--reviewer") });
+    expect(communityReview(community, { commit: NEW, today: TODAY })).toEqual({ problem: expect.stringContaining("--reviewer"), missing: "reviewer" });
     expect(communityReview(community, { commit: NEW, reviewer: "x", today: TODAY })).toEqual({ problem: expect.stringContaining("@octocat") });
     expect(communityReview(community, { commit: NEW, reviewer: "@r", today: TODAY })).toEqual({ review: { by: "@r", on: TODAY, commit: NEW, licence: "MIT" } });
   });
   it("takes the old licence while it is allowed, else asks", () => {
     const two = { ...community, licence: { allow: ["MIT", "ISC"] } };
-    expect(communityReview(two, { commit: NEW, reviewer: "@r", today: TODAY })).toEqual({ problem: expect.stringContaining("--licence") });
+    expect(communityReview(two, { commit: NEW, reviewer: "@r", today: TODAY })).toEqual({ problem: expect.stringContaining("--licence"), missing: "licence" });
     const old = { ...two, review: { by: "@a", on: "2026-01-01", commit: OLD, licence: "ISC" } };
     expect(communityReview(old, { commit: NEW, reviewer: "@r", today: TODAY })).toEqual({ review: { by: "@r", on: TODAY, commit: NEW, licence: "ISC" } });
     expect(communityReview(old, { commit: NEW, reviewer: "@r", licence: "MIT", today: TODAY })).toEqual({ review: { by: "@r", on: TODAY, commit: NEW, licence: "MIT" } });
@@ -360,5 +361,47 @@ describe("updatePullRequest", () => {
     expect(Buffer.byteLength(body)).toBeLessThanOrEqual(PULL_REQUEST_BYTES);
     expect(body).toContain("… and ");
     for (const line of body.split("\n").filter((l) => l.startsWith("- `skills/0"))) expect(line).toMatch(/^- `skills\/\d{4}\/p{150}`$/);
+  });
+});
+
+describe("the note of an unattended run", () => {
+  const source = { id: "awesome-copilot", repositoryKey: "github.com/github/awesome-copilot", paths: ["skills"], trust: "community" as const, status: "enabled" as const };
+  const review = { by: "@rev", on: TODAY, commit: NEW, licence: "MIT" };
+  const report: ImportReview = { schema: 1, source: "awesome-copilot", repositoryKey: "github.com/github/awesome-copilot", commit: NEW, digest: "sha256:" + "a".repeat(64), categories: [], collisions: [], compared: { imported: 0, existing: 0 }, problems: [] };
+  const base = { source, commit: NEW, rejected: [], report };
+
+  it("names the reviewer as not having reviewed yet; without the flag the body is the same as before", () => {
+    const plain = updatePullRequest({ ...base, review }).body;
+    const pending = updatePullRequest({ ...base, review, reviewPending: true }).body;
+    expect(plain).not.toContain(REVIEW_PENDING_NOTE);
+    expect(pending).toContain(REVIEW_PENDING_NOTE);
+    expect(pending).toContain("`@rev` (from `update.reviewer`) is named as the reviewer and has not reviewed it yet");
+    expect(updatePullRequest({ ...base, review, reviewPending: false }).body).toBe(plain);
+    expect(updatePullRequest({ ...base, reviewPending: true }).body).not.toContain(REVIEW_PENDING_NOTE);
+  });
+});
+
+describe("reviewerConfirmed", () => {
+  it("matches a user by login in any case, and a team only by an open request (slug or org/slug)", () => {
+    expect(reviewerConfirmed({ requested: ["Rev"], reviewed: [] }, "@rev")).toBe(true);
+    expect(reviewerConfirmed({ requested: [], reviewed: ["REV"] }, "@rev")).toBe(true);
+    expect(reviewerConfirmed({ requested: ["other"], reviewed: ["other"] }, "@rev")).toBe(false);
+    expect(reviewerConfirmed({ requested: ["skills"], reviewed: [] }, "@acme/skills")).toBe(true);
+    expect(reviewerConfirmed({ requested: ["acme/skills"], reviewed: [] }, "@acme/skills")).toBe(true);
+    expect(reviewerConfirmed({ requested: [], reviewed: ["someone"] }, "@acme/skills")).toBe(false);
+    expect(reviewerConfirmed({ requested: [], reviewed: [] }, "@acme/skills")).toBe(false);
+  });
+});
+
+describe("update.reviewer in a source entry", () => {
+  const entry = (reviewer?: string): SkillLibrarySource => ({ ...connectorSource(connectorFor("github.com/github/awesome-copilot")!, { commit: NEW, owner: "@o" }), update: { cadence: "weekly", ...(reviewer ? { reviewer } : {}) } });
+  const updateOf = (e: SkillLibrarySource) => {
+    const r = addConnectorEntry("schema: 1\nsources: []\n", e);
+    if ("problem" in r) throw new Error(r.problem);
+    return parse(r.text).sources[0].update;
+  };
+  it("is kept when an entry is written, and absent otherwise", () => {
+    expect(updateOf(entry("@rev"))).toEqual({ cadence: "weekly", reviewer: "@rev" });
+    expect(updateOf(entry())).toEqual({ cadence: "weekly" });
   });
 });
