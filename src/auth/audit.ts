@@ -45,6 +45,7 @@ export const EVENT_ACTIONS = [
   "turn-reject",
   "turn-retry",
   "view-as",
+  "help-action",
   "help-ask",
   "help-delete",
   "help-export",

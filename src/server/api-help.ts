@@ -36,6 +36,7 @@ import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpPaused, helpTarget, type Ask
 import type { Config } from "../config.js";
 import { currentAccount, snapshotResolver } from "./help-context.js";
 import { liveEvidence, offerConversation, runOffer } from "./help-evidence.js";
+import { ActionRefused, cancelAction, confirmAction, prepareAction, type ActionDeps } from "./help-actions.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -301,6 +302,18 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
   if (seg[1] !== "conversations") return false;
   const id = seg[2] ?? "";
+  // Approved actions: the confirmation, and dropping the token. Before the generic POST block. (The preview shares its path with the offer click below.)
+  const deps: ActionDeps = { allow: (a) => helpAllowed(ctx, a) };
+  if (method === "POST" && seg[3] === "actions" && seg.length === 5 && (seg[4] === "confirm" || seg[4] === "cancel")) {
+    try {
+      if (seg[4] === "cancel") send(res, 200, cancelAction(ctx, user, id, await readJson(req), deps));
+      else send(res, 200, await confirmAction(ctx, user, id, () => readJson(req), deps));
+    } catch (e) {
+      if (e instanceof ActionRefused) throw new HttpError(e.status, e.message);
+      throw mapped(ctx, e);
+    }
+    return true;
+  }
   /** Takes a turn and writes its audit line: started (with the id of the turn) or refused (with the code). A question that is not valid writes none. */
   const audited = (conversation: string | undefined, how: "ask" | "retry", fn: () => Turn): Turn => {
     try {
@@ -328,14 +341,25 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     send(res, 200, conversationView(guardedHelp(ctx, () => turns.cancel(asker, id)), user));
     return true;
   }
-  // An offer of a stored reply: checked again for the account as it is now; nothing is stored. The conversation is checked before the body is read.
+  // One path, two calls: `{ message, index }` previews an approved action with a token; `{ message, offer }` follows an offer.
   if (seg.length === 4 && method === "POST" && seg[3] === "actions") {
+    const first = await readJson(req);
+    if (!(first && typeof first === "object" && "offer" in first)) {
+      try {
+        send(res, 200, prepareAction(ctx, user, id, first, deps));
+      } catch (e) {
+        if (e instanceof ActionRefused) throw new HttpError(e.status, e.message);
+        throw mapped(ctx, e);
+      }
+      return true;
+    }
+    // An offer of a stored reply: checked again for the account as it is now; nothing is stored.
     if (!ctx.config().help.enabled) throw new HttpError(503, REFUSAL_WORDS.off);
     try {
       const no = helpAllowed(ctx, asker);
       if (no === "not-allowed") throw new HttpError(REFUSED[no], REFUSAL_WORDS[no]);
       guardedHelp(ctx, () => offerConversation(ctx, asker, id));
-      const body = await readJson(req);
+      const body = first;
       const done = guardedHelp(ctx, () => runOffer(ctx, asker, id, body, { patterns: ctx.config().help.sensitive_patterns ?? [] }));
       auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), done.type);
       send(res, 200, done);

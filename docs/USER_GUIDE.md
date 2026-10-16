@@ -2699,7 +2699,7 @@ use neither. A sign-in line that cannot be written (for example while another `s
 sign-in; the server log says `auth: audit.jsonl cannot-write`.
 
 What people do in the web interface is also logged, with `result` `ok`, `by` set to the account that made the call, and a `target`
-(and sometimes a `detail`):
+(and sometimes a `detail`). An Ask SCF line never holds a question, an answer, a confirmation token or the text of a model:
 
 | `action` | When | `target` | `detail` |
 |---|---|---|---|
@@ -2716,6 +2716,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
 | `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no story is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
+| `help-action` | An approved action of Ask SCF ran (`ok`) or was refused (`failed`). A token, request text and model text are never logged | `conversation <id>` | `<action>; run <id>; <result>`, or `refused: <code>` |
 | `help-ask` | A question to Ask SCF was taken, or a failed answer was tried again (result `ok`), or it was refused: switched off, not for this account, busy, the queue is full, a limit (result `failed`). The question and the answer are never logged | `conversation <id>` (`conversation` when a refused question had none yet) | `ask` or `retry`; then `turn <id>; try <n>`, or `refused: <code>` |
 | `help-delete` | An account deleted one of its Ask SCF conversations | `conversation <id>` | |
 | `help-export` | An account exported its Ask SCF conversations | `conversations` | how many |
@@ -3275,7 +3276,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/help/conversations/:id/messages` | yes | yes | ask the next question in one of your Ask SCF conversations; the same answers as for a new one |
 | `POST /api/help/conversations/:id/retry` | yes | yes | try the failed or stopped last answer of one of your Ask SCF conversations again; no message is added, and it counts as a turn of today |
 | `POST /api/help/conversations/:id/cancel` | yes | yes | stop the answer that is being written in one of your Ask SCF conversations |
-| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask SCF reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`; nothing is stored; 404 when the thing is gone or you can no longer see it, 403 when you may not open it now, 410 for a deleted conversation, 503 while Ask SCF is switched off |
+| `POST /api/help/conversations/:id/actions` | yes | yes | follow an offer of an Ask SCF reply (`message`, `offer`): the server checks again that you may open its page and answers `{type, to}`; nothing is stored; 404 when the thing is gone or you can no longer see it, 403 when you may not open it now, 410 for a deleted conversation. Or see what an action Ask SCF proposed in one of your answers would do (`message`, `index`): the server describes it in its own words and gives a confirmation token that works once for 5 minutes; nothing changes. 503 while Ask SCF or its actions are switched off |
+| `POST /api/help/conversations/:id/actions/confirm` | yes | yes | carry out a previewed action with its token (`token`, `message`, `index`): the server checks the token, that the run did not change since the preview, the settings, your account and the rule of the same button on the run's page (your own runs only, an admin too), then reads the result back from the run and answers `{ outcome, stored }`; 409 for a token that is used, expired or does not fit, or a run that changed; writes an audit line |
+| `POST /api/help/conversations/:id/actions/cancel` | yes | yes | drop the confirmation token of a preview (`token`); nothing changes |
 | `POST /api/help/context` | yes | yes | what Ask SCF would take from a page context, before you send it with a question: the envelope as it would be kept (the page, the selected things, the filters, the marked text; what is too much is cut and named), its size and the limits, the page it is for your role, and the things on it that the server finds for your account; a thing that does not exist and one you may not see are only counted together; nothing is stored and no model is called; 400 for a context that holds anything else, 503 while Ask SCF is switched off |
 | `GET /api/help/export` | yes | yes | all your Ask SCF conversations with their messages, as one JSON document to keep (also the archived ones; not the deleted ones); only your own, for an admin too; writes an audit line without any text of a conversation |
 | `GET /api/help/usage` | yes | no | Ask SCF for administrators: whether it is on, the provider and model that answer (or why none can), the limits, the rollout stage (off, paused, administrators, pilot, everyone), what runs and waits now, turns, failures, cost and tokens per account and day, and the quality numbers (daily counts of answers, failures, limits, sources, votes and latency buckets, with no account); no question and no answer |
@@ -6109,8 +6112,10 @@ the monitor off nothing is created.
 how the Foundry works, what your work is doing, and how to solve a problem. It is being built in
 steps. This chapter holds its rules. They are fixed first, and every later part keeps to them.
 
-**It reads and explains. It does not act.** Nothing you ask changes the Foundry, a repository or
-GitHub. Today Ask SCF has no action at all on its list, so it cannot change anything.
+**It reads and explains. It acts only when you confirm.** Nothing you ask changes the Foundry, a
+repository or GitHub. A reply can only propose an action from the server's own list. A proposal changes
+nothing, and an action runs only after you confirm it yourself (see **Approved actions** under
+"Ask SCF for administrators").
 
 ### Where you ask: the Ask SCF drawer
 
@@ -6613,9 +6618,28 @@ in the daily budget of runs.
 your own runs, for administrators and users alike: an administrator gets no exception for another
 account's run. The proposal shows a fixed text of what would happen, written by the server, and it is
 kept only when the run is current and the evidence agrees (a run that is out of date, or that the
-Foundry's own pages disagree about, is not offered). **Nothing is carried out yet:** a proposal
-changes nothing, and Ask SCF cannot confirm a result. An older build refuses this key in
-`config.yaml`, so take it out before you go back.
+Foundry's own pages disagree about, is not offered). A proposal changes nothing. An older build refuses
+this key in `config.yaml`, so take it out before you go back.
+
+**Approved actions.** With `help.actions` on, a proposed resume or cancel can be carried out through the
+API (the rows of Ask SCF in the permissions table in section 7). The server first makes a preview: the
+action, the run, what is now, what would change, the effect and whether it can be undone, and who may do
+it. It gives a confirmation that works once, for 5 minutes. Confirming checks again, at that moment: that
+Ask SCF, the action and your account are still allowed, that the run has not changed since the preview,
+that the action still fits the run, and the rule of the same button on the run's page (your own runs
+only, for administrators too). A confirmation that is used, expired or does not fit, or a run that
+changed, is refused and nothing happens. Only then is the action carried out, and the server reads the
+result back from the run before it answers. The answer is one of these, in fixed words:
+
+- **Resume:** done (the run went on), queued (it waits for a free slot), could not be started again (the
+  run is as it was), the run is gone, or could not be confirmed.
+- **Cancel:** the waiting job was taken out, the run was stopped and is marked cancelled, the run is still
+  being stopped, the run ended on its own before the stop took effect, the run is gone, or could not be
+  confirmed.
+
+A result is never shown before it has been read back. The newest 10 results are kept on the answer they
+belong to. The Ask SCF drawer has no confirm button yet; that comes in a later part. Each confirmation
+that runs, and each one that is refused, is written to the audit log (`help-action`).
 
 **What a turn can reach.** A turn is one call of Claude Code with no tools at all, no MCP servers,
 no permissions, none of your personal setup and no GitHub token, in an empty temporary folder that
