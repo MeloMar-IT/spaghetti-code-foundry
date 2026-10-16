@@ -52,6 +52,31 @@ describe("groups", () => {
     expect(m.groupOf("skills.tools.shell")).toBe("Tools a skill may ask for");
     expect(m.groupOf("skills.tools.missing")).toBe("Tools a skill may ask for");
     expect(m.groupOf("skills.unresolved.high_risk")).toBe("Skills that cannot be used");
+    expect(m.groupOf("skills.update_check.folder")).toBe("Skill source checks");
+    expect(m.groupOf("skills.update_check.every")).toBe("Skill source checks");
+  });
+});
+
+describe("update_check", () => {
+  const sentence = "The server checks the skill sources in this catalogue clone by itself: it commits, pushes branches and opens pull requests there with its own git and gh sign-in. It never merges or approves.";
+  const texts = (a: unknown, b: unknown) => m.riskyChanges(a, b).map((r: any) => r.text);
+  const at = (folder: unknown, every = "1h") => ({ ...skills(), update_check: folder === undefined ? { every } : { folder, every } });
+  it("warns when the folder is set or changed", () => {
+    expect(texts(at(undefined), at("/srv/cat"))).toEqual([sentence]);
+    expect(texts(at("/srv/cat"), at("/srv/other"))).toEqual([sentence]);
+  });
+  it("asks nothing for unchanged, cleared or empty folders or a new interval", () => {
+    expect(texts(at("/srv/cat"), at("/srv/cat"))).toEqual([]);
+    expect(texts(at("/srv/cat"), at(undefined))).toEqual([]);
+    expect(texts(at(undefined), at(""))).toEqual([]);
+    expect(texts(at("/srv/cat"), at("/srv/cat", "6h"))).toEqual([]);
+  });
+  it("draws text inputs for both fields", () => {
+    const s = m.skillsSection(descriptions(), skills());
+    for (const k of ["skills.update_check.folder", "skills.update_check.every"]) {
+      const c = control(s.el, descriptions().find((d) => d.key === k)!.label);
+      expect([c.tag, c.attrs.type]).toEqual(["input", "text"]);
+    }
   });
 });
 
@@ -242,7 +267,7 @@ describe("skillsSection", () => {
       expect(c, d.key).toBeDefined();
       const hint = s.el.all("small").map((x: FakeElement) => x.textContent).find((t: string) => t.startsWith(d.help))!;
       expect(hint).toContain("Default: ");
-      expect(hint).toContain("Takes effect when a run starts or resumes.");
+      expect(hint).toContain(`Takes effect ${d.effectText}.`);
     }
     expect(audit(s.el)).toEqual([]);
   });

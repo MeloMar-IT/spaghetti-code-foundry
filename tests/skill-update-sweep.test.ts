@@ -323,6 +323,74 @@ describe("the sweeper", () => {
     expect(readFindings(file).findings).toEqual([]);
   });
 
+  /** A run that signals it started, waits for its abort and then reports a PROBLEM (which must not be written). */
+  const abortable = () => {
+    let started!: () => void;
+    const go = new Promise<void>((r) => (started = r));
+    const signals: AbortSignal[] = [];
+    const folders: string[] = [];
+    const seen: number[] = [];
+    const run: SweepRun = async ({ folder, out, onChecked, signal }) => {
+      folders.push(folder);
+      signals.push(signal);
+      seen.push(open().length);
+      started();
+      if (folders.length > 1) return 0;
+      await new Promise<void>((r) => signal.addEventListener("abort", () => r()));
+      out("lib: PROBLEM z");
+      onChecked("lib", "PROBLEM");
+      return 1;
+    };
+    return { go, signals, folders, seen, run };
+  };
+
+  it("clearing the folder aborts the check in flight and clears its findings at the next tick", async () => {
+    saveFindings(applySourceChecks([], checked("lib", ["x"]), T0).findings, file);
+    const a = abortable();
+    const s = make(a.run);
+    const first = s.tick();
+    await a.go;
+    cfg.folder = undefined;
+    await s.tick();
+    expect(a.signals[0]!.aborted).toBe(true);
+    await first;
+    expect(open().map((f) => f.fingerprint)).toEqual([sourceFingerprint("lib", "x")]);
+    await s.tick();
+    expect(open()).toEqual([]);
+  });
+
+  it("changing the folder aborts the check in flight; the next tick clears, then checks the new folder", async () => {
+    const repo2 = join(dir, "repo2");
+    mkdirSync(repo2);
+    execFileSync("git", ["init", "--quiet", repo2]);
+    saveFindings(applySourceChecks([], checked("lib", ["x"]), T0).findings, file);
+    const a = abortable();
+    const s = make(a.run);
+    const first = s.tick();
+    await a.go;
+    cfg.folder = repo2;
+    await s.tick();
+    expect(a.signals[0]!.aborted).toBe(true);
+    await first;
+    await s.tick();
+    expect(a.folders).toEqual([repo, repo2]);
+    expect(a.seen[1]).toBe(0);
+  });
+
+  it("a tick with the same folder or a changed every does not abort", async () => {
+    const a = abortable();
+    const s = make(a.run);
+    const first = s.tick();
+    await a.go;
+    await s.tick();
+    cfg.everyMs = 5000;
+    await s.tick();
+    expect(a.signals[0]!.aborted).toBe(false);
+    expect(a.folders).toHaveLength(1);
+    s.stop();
+    await first;
+  });
+
   it("survives a throwing run, config and findingsIdle", async () => {
     await make(async () => {
       throw new Error("boom");
