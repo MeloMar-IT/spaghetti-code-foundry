@@ -4666,6 +4666,39 @@ It reads both releases from `skill-releases/` and prints one line per change, wi
 
 The last line is `DIFF … : <n> changes`, or `no changes`. Both releases must belong to the same catalogue. A release that is missing or does not verify prints `PROBLEM …` and the command exits 1. The output is the same for the same input.
 
+**Propose the release to the deployment repository.** Your deployed config lists the releases it accepts in `skills.releases.approved`. `scf skills release propose` adds the new one to that list in a pull request, so the change is reviewed before it reaches the deployment. Name the repository and the config file in your local config first:
+
+```yaml
+skills:
+  releases:
+    deployment:
+      repository: owner/name   # or host/owner/name
+      file: config.yaml        # relative path to the YAML file that holds skills.releases.approved
+```
+
+Run it in a clone of that repository, where `origin` is the same repository:
+
+```
+scf skills release propose scf-skills@0.2.0
+```
+
+The command reads the release from `skill-releases/`. For a release you did not publish, give `--artifact <absolute folder>`: the folder is checked the same way as `scf skills release adopt`, and nothing is written to the store. Then it:
+
+- reads the file from `origin/<default branch>` and appends one entry (catalogue, version, digest) to the end of `skills.releases.approved`. Every other byte stays, and the older entries stay, so locked runs keep resolving;
+- checks the edit: only the new entry is added, the file is valid YAML and the whole config passes the config schema;
+- pushes the branch `skill-catalogue/<catalogue>-<version>` and opens a pull request. Its body is the change report against the newest approved version of that catalogue: added, removed, changed, deprecated and canonical selection. That older release must be in `skill-releases/`, or named by `artifact` on its entry in your local config; otherwise the command stops before it pushes.
+
+If `skills.releases.keys` is set, give `--key <key-id> --signature <base64>` with the values from `scf skills release sign`. The signature is checked against the digest before anything is pushed.
+
+Output: a `CHANGES` line, then one of these:
+
+- `OK opened <url> …`: the pull request is open;
+- `OPEN <url> …`: a pull request for that branch is already open, so no second one is opened;
+- `UNCHANGED … is already in <file>`: nothing to propose;
+- `PROBLEM …` (exit 1): nothing was proposed. If the command had pushed the branch, it deletes it again, as long as the branch still holds its commit.
+
+The release must be newer than the newest approved version of that catalogue. The command never changes your local config, the data folder or the release store. Merging the pull request changes only the deployment file; this installation uses the release once its own config names it. It is not run on a schedule: run it by hand. A file the command cannot edit byte for byte (for example one with a layout it does not know) gives `PROBLEM`, and you add the entry by hand.
+
 Known limits:
 
 - The release digest is the digest of the Foundry-format package of each skill, not the import digest that records the name.

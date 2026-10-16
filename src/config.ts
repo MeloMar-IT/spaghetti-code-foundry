@@ -12,7 +12,7 @@ import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
 import { decodeBase64Exact, MAX_RELEASE_KEYS } from "./skills/release-signature.js";
-import { artifactPathProblem, REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
+import { artifactPathProblem, relativePathProblem, REVIEW_DEFAULTS, REVIEW_RANGE, SKILL_DIGEST_RE, SkillIdSchema, SkillVersionSchema, ToolPolicySchema, UnresolvedPolicySchema } from "./skills/schema.js";
 
 const watcherShape = {
     id: z.string().regex(/^[\w-]+$/),
@@ -265,6 +265,9 @@ export const STEP_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*(_\*)?$/;
 export const STEP_ENV_REFUSED = /^(FACTORY_|SCF_|GH_|GITHUB_|GIT_|SSH_)/;
 const stepEnvName = z.string().refine((n) => STEP_ENV_NAME.test(n) && !STEP_ENV_REFUSED.test(n), "not a variable name the steps of a user's run may get");
 
+/** `owner/name` or `host/owner/name`. */
+export const DEPLOYMENT_REPOSITORY_RE = /^(?:[A-Za-z0-9.-]+\/)?[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -455,6 +458,20 @@ export const ConfigSchema = z
               .default([]),
             /** Trusted Ed25519 public keys. Once set, every approved release must be signed by one of them. */
             keys: z.array(z.object({ id: SkillIdSchema, ed25519: z.string() }).strict()).max(MAX_RELEASE_KEYS).default([]),
+            /** The deployment repository `scf skills release propose` opens its pull request in, and the config file in it. */
+            deployment: z
+              .object({
+                repository: z.string().regex(DEPLOYMENT_REPOSITORY_RE, "must be owner/name or host/owner/name"),
+                file: z
+                  .string()
+                  .max(300)
+                  .superRefine((p, ctx) => {
+                    const m = relativePathProblem(p) ?? (/[\u0000-\u001f\u007f]/.test(p) ? "path has a control character" : /\.ya?ml$/.test(p) ? undefined : "must end in .yaml or .yml");
+                    if (m) ctx.addIssue({ code: "custom", message: m });
+                  }),
+              })
+              .strict()
+              .optional(),
           })
           .strict()
           .superRefine((r, ctx) => {

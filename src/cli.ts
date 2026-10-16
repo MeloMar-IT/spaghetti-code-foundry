@@ -72,7 +72,8 @@ Usage:
   scf skills release publish <catalogue>@<version>  Publish a catalogue release from skill-releases.yaml (reviewed, promotable, evaluation passed)
   scf skills release sign <catalogue>@<version> --key <private-key-file>  Sign a stored release with an Ed25519 key; prints the approved entry
   scf skills release adopt [<catalogue>@<version>]  Copy signed approved releases from their local artifact into skill-releases/ after checking them; offline
-  scf skills releases check [<file>]           Check the release requests (default: skill-releases.yaml)
+  scf skills release propose <catalogue>@<version> [--artifact <folder>] [--key <key-id> --signature <base64>]  Open a pull request in the deployment repository that approves the release (never changes the local config)
+  scf skills releases check [<file>]          Check the release requests (default: skill-releases.yaml)
   scf skills discover [<export-file> [<file>]]   Propose skill sources from a saved Skills.sh export (never approves)
   scf validate <flow|file.yaml>                 Check a flow definition
   scf flow-guide                                 Print the flow-writing guide for AI assistants
@@ -237,6 +238,8 @@ async function main(argv: string[]): Promise<number> {
       agent: { type: "boolean" },
       builtin: { type: "boolean" },
       key: { type: "string" },
+      signature: { type: "string" },
+      artifact: { type: "string" },
       "stop-work": { type: "boolean" },
       name: { type: "string" },
       owner: { type: "string" },
@@ -335,6 +338,7 @@ async function main(argv: string[]): Promise<number> {
       const { help: _h, ...given } = values;
       if (arg === "import") return (await import("./skill-import/cli.js")).skillImportCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "update") return (await import("./skill-import/update-cli.js")).skillUpdateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
+      if (arg === "release" && positionals[2] === "propose") return (await import("./skill-import/release-propose-cli.js")).releaseProposeCommand({ positionals: positionals.slice(3), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "evaluate") return (await import("./skill-import/evaluate-cli.js")).skillEvaluateCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       if (arg === "discover") return (await import("./skill-import/discover-cli.js")).skillDiscoverCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       const agentScore = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentScore"]>>) => (await import("./skill-eval/score.js")).scoreImportWithAgent(...a);

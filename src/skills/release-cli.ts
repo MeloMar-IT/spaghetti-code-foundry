@@ -1,7 +1,7 @@
 import { createPrivateKey, verify, type KeyObject } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readdirSync, readSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { matchRelease, type ApprovedRelease } from "./release.js";
+import { matchRelease, type ApprovedRelease, type ReleaseManifestV2 } from "./release.js";
 import { readReleaseRequests } from "./release-requests.js";
 import { loadSkillPackage } from "./package.js";
 import type { RegisteredSkill } from "./registry.js";
@@ -117,6 +117,26 @@ export interface ReleaseAdoptOptions {
   userHome: string;
 }
 
+/** The checks adopt makes on a local artifact folder before reading it. Never shows the path. */
+export function artifactFolder(artifact: string, o: { home: string; env: NodeJS.ProcessEnv; userHome: string }): { real: string } | { missing: true } | { problem: string } {
+  const pathProblem = artifactPathProblem(artifact);
+  if (pathProblem) return { problem: `the artifact ${pathProblem}` };
+  try {
+    lstatSync(artifact);
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ENOENT" ? { missing: true } : { problem: "the artifact cannot be read" };
+  }
+  let real: string;
+  try {
+    real = realpathSync(artifact);
+  } catch {
+    return { problem: "the artifact cannot be read" };
+  }
+  if (personalAgentPath(real, o.env, o.userHome)) return { problem: "the artifact is in a personal agent folder" };
+  if (releaseStorePath(real, o.home)) return { problem: "the artifact is inside the release store" };
+  return { real };
+}
+
 /**
  * `scf skills release adopt [<catalogue>@<version>]`: copies each approved release that is missing from the store from its local
  * artifact, after verify, identity and signature checks. Offline. Output never shows a path. Exit 1 on any REFUSED, a store that
@@ -160,35 +180,17 @@ export function releaseAdopt(target: { catalogue: string; version: string } | un
       out(`MISSING-ARTIFACT ${name}: no artifact is set in skills.releases.approved`);
       continue;
     }
-    const pathProblem = artifactPathProblem(a.artifact);
-    if (pathProblem) {
-      refuse(name, `the artifact ${pathProblem}`);
+    const folder = artifactFolder(a.artifact, { home, env: opts.env, userHome: opts.userHome });
+    if ("missing" in folder) {
+      missing = true;
+      out(`MISSING-ARTIFACT ${name}: the artifact folder does not exist`);
       continue;
     }
-    try {
-      lstatSync(a.artifact);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
-        missing = true;
-        out(`MISSING-ARTIFACT ${name}: the artifact folder does not exist`);
-      } else refuse(name, "the artifact cannot be read");
+    if ("problem" in folder) {
+      refuse(name, folder.problem);
       continue;
     }
-    let real: string;
-    try {
-      real = realpathSync(a.artifact);
-    } catch {
-      refuse(name, "the artifact cannot be read");
-      continue;
-    }
-    if (personalAgentPath(real, opts.env, opts.userHome)) {
-      refuse(name, "the artifact is in a personal agent folder");
-      continue;
-    }
-    if (releaseStorePath(real, home)) {
-      refuse(name, "the artifact is inside the release store");
-      continue;
-    }
+    const real = folder.real;
     const sig = approvalSignatureState(a, opts.keys);
     if (sig.state !== "signed") {
       refuse(name, !opts.keys.length ? "no skills.releases.keys are set; adopt needs a signed approval" : sig.state === "unsigned" ? "is not signed by a trusted key" : "signature does not verify");
@@ -226,36 +228,41 @@ export function releaseAdopt(target: { catalogue: string; version: string } | un
 
 type Target = { catalogue: string; version: string };
 
-/** One stored release, checked and loaded: its manifest and the registered packages. Prints the PROBLEM and returns undefined on failure. */
-function loadStored(t: Target, releases: readonly StoredRelease[], out: (line: string) => void) {
+export interface LoadedRelease {
+  manifest: ReleaseManifestV2;
+  digest: string;
+  packages: RegisteredSkill[];
+}
+
+/** Verifies `dir`, checks it holds `t`, loads every package. A string is the sentence after "PROBLEM ". */
+export function loadReleaseDir(dir: string, t: Target): LoadedRelease | string {
   const name = `${t.catalogue}@${t.version}`;
-  const found = releases.find((r) => r.catalogue === t.catalogue && r.version === t.version);
-  if (!found) {
-    out(`PROBLEM release ${name} is not in the release store`);
-    return undefined;
-  }
-  const v = verifyRelease(found.dir);
-  if (!v.ok) {
-    out(`PROBLEM release ${name} invalid: ${v.reason}`);
-    return undefined;
-  }
+  const v = verifyRelease(dir);
+  if (!v.ok) return `release ${name} invalid: ${v.reason}`;
   const m = v.manifest;
-  if (m.catalogue !== t.catalogue || m.version !== t.version) {
-    out(`PROBLEM release ${name} invalid: the release folder does not hold ${name}`);
-    return undefined;
-  }
+  if (m.catalogue !== t.catalogue || m.version !== t.version) return `release ${name} invalid: the release folder does not hold ${name}`;
   const packages: RegisteredSkill[] = [];
   for (const s of m.skills) {
     try {
-      const pkg = loadSkillPackage(join(found.dir, s.id));
+      const pkg = loadSkillPackage(join(dir, s.id));
       if (pkg.id !== s.id || pkg.version !== s.version || pkg.digest !== s.digest) throw new Error("differs");
       packages.push(releaseEntry(pkg, t));
     } catch {
-      out(`PROBLEM release ${name}: skill ${s.id} does not load`);
-      return undefined;
+      return `release ${name}: skill ${s.id} does not load`;
     }
   }
   return { manifest: m, digest: v.digest, packages };
+}
+
+/** One stored release, checked and loaded: its manifest and the registered packages. Prints the PROBLEM and returns undefined on failure. */
+function loadStored(t: Target, releases: readonly StoredRelease[], out: (line: string) => void): LoadedRelease | undefined {
+  const found = releases.find((r) => r.catalogue === t.catalogue && r.version === t.version);
+  const r = found ? loadReleaseDir(found.dir, t) : `release ${t.catalogue}@${t.version} is not in the release store`;
+  if (typeof r === "string") {
+    out(`PROBLEM ${r}`);
+    return undefined;
+  }
+  return r;
 }
 
 /** `scf skills release diff <catalogue>@<old> <catalogue>@<new>`: offline, from the release store. Approval is not needed. Reads only. */

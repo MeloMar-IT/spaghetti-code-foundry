@@ -82,6 +82,9 @@ function contentEnd(node: unknown): number | undefined {
   }
   return rangeOf(node)?.[1];
 }
+// The splice helpers are shared with the release deployment edit (release-deployment.ts).
+export { apply as applySplices, pairOf, rangeOf, lineStart, lineEnd, contentEnd };
+export type { Splice };
 const CANNOT ="skill-sources.yaml has a form this command cannot edit byte for byte";
 
 function parse(text: string) {
