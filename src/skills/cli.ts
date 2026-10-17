@@ -27,7 +27,9 @@ import { effectCheckLine, effectPromotion, effectState, parseEffectOperands, typ
 import { readNewestEffect } from "./evaluation-store.js";
 import { evaluateOperandsProblem, gateImport, scoreImport, type EvaluateCliOptions } from "./evaluate-cli.js";
 import { evaluateLicence } from "./licence.js";
-import { normalizeImport } from "./normalize.js";
+import { normalizeImport, type NormalizedSkill } from "./normalize.js";
+import { descriptionOverrideProblems } from "./catalogue-description.js";
+import { readStagedImport } from "./import-stage.js";
 import { licenceReviewProblem, reviewImport } from "./licence-review.js";
 import { licenceReviewRequired, NO_EVIDENCE_TIME, promoteImport } from "./promotion.js";
 import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
@@ -172,7 +174,7 @@ function sourcesCheck(file: string, out: (line: string) => void, today?: string)
 }
 
 /** `scf skills selections check`: offline, prints checked fields only. */
-function selectionsCheck(file: string, out: (line: string) => void, today: string): number {
+function selectionsCheck(file: string, out: (line: string) => void, today: string, opts: { cwd: string; home?: string }): number {
   const r = readSkillSelections(file, today);
   if (r.state === "none") {
     out("PROBLEM the skill selection file does not exist");
@@ -186,10 +188,36 @@ function selectionsCheck(file: string, out: (line: string) => void, today: strin
     const product = s.product ? `${s.product.name}@${s.product.version}` : "-";
     const sdk = s.sdk ? `${s.sdk.name}@${s.sdk.version}(${s.sdk.language})` : "-";
     const connectors = selectionConnectors(s).join(",") || "-";
-    out(`${(s.source + "/" + s.skill).padEnd(40)} ${s.scope} ${s.provider ?? "-"} ${product} ${sdk} ${connectors} ${s.owner} ${s.reviewed} ${s.digest.slice(0, 19)}`);
+    out(`${(s.source + "/" + s.skill).padEnd(40)} ${s.scope} ${s.provider ?? "-"} ${product} ${sdk} ${connectors} ${s.owner} ${s.reviewed} ${s.digest.slice(0, 19)}${s.catalogueDescription !== undefined ? ` description=${s.catalogueDescription.length} chars` : ""}`);
   }
+  // A catalogue description is only valid for a skill of an enabled, approved source that is staged with this digest. Needs the data folder only when one is set.
+  const overrides = overrideProblems(r.manifest.selections, opts);
+  for (const p of overrides) out(`PROBLEM ${p.where}: ${p.message}`);
+  if (overrides.length > 0) return 1;
   out(`OK ${r.manifest.selections.length} selections`);
   return 0;
+}
+
+/** The PROBLEM lines of the catalogue descriptions of a selections file; reads skill-sources.yaml and the staged imports only when an entry has one. */
+function overrideProblems(selections: readonly SkillSelection[], opts: { cwd: string; home?: string }) {
+  if (!selections.some((s) => s.catalogueDescription !== undefined)) return [];
+  const read = readSources(resolve(opts.cwd, SOURCES_FILE));
+  const manifest = read.state === "ok" ? read.manifest : undefined;
+  const cache = new Map<string, NormalizedSkill[] | undefined>();
+  return descriptionOverrideProblems(selections, {
+    sources: manifest ?? { problem: read.state === "none" ? "does not exist" : "is not valid; run \"scf skills sources check\"" },
+    staged: (sourceId, commit) => {
+      const key = `${sourceId}\0${commit}`;
+      if (cache.has(key)) return cache.get(key);
+      const source = manifest?.sources.find((x) => x.id === sourceId);
+      const staged = readStagedImport(sourceId, commit, { home: opts.home });
+      const skills = source && staged.state === "ok" && staged.record.repositoryKey === source.repositoryKey
+        ? normalizeImport({ record: { ...staged.record, rejected: [] }, files: staged.files }).skills
+        : undefined;
+      cache.set(key, skills);
+      return skills;
+    },
+  });
 }
 
 /**
@@ -626,7 +654,7 @@ export async function skillsCommand(
       return selectionsEvaluate(operands[1]!, operands[2], out, { cwd: cwd ?? process.cwd(), today: today ?? new Date().toISOString().slice(0, 10), now: now ?? new Date(), skills, discover });
     }
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills selections: expects "check" and at most one file, or "evaluate" and a source id');
-    return selectionsCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SELECTIONS_FILE), out, opts.today ?? new Date().toISOString().slice(0, 10));
+    return selectionsCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SELECTIONS_FILE), out, opts.today ?? new Date().toISOString().slice(0, 10), { cwd: opts.cwd ?? process.cwd(), home: opts.home });
   }
 
   if (sub === "overrides" || sub === "project-pins") {
@@ -733,6 +761,7 @@ export async function skillsCommand(
 
   for (const s of reg.skills) {
     out(`${s.id.padEnd(24)} ${s.version}  [${s.label}] ${s.source} ${s.trust} ${s.pin} ${s.digest} effect ${effectState(readNewestEffect(s.id, s.digest, { home: discover.home }))}${s.pkg.provider ? ` provider ${s.pkg.provider.name}` : ""}${s.active ? "" : ` (shadowed by ${s.shadowedBy})`}${s.lifecycle ? ` lifecycle ${s.lifecycle.state}${s.lifecycle.replacement ? ` → ${s.lifecycle.replacement}` : ""}` : ""}`);
+    if (s.catalogueDescription) out(`DESCRIPTION ${s.key} ${s.catalogueDescription.from} ${s.catalogueDescription.release ?? "-"}: ${s.catalogueDescription.text}`);
   }
   for (const r of reg.sources) {
     const rel = r.release;

@@ -60,6 +60,8 @@ export interface RegisteredSkill {
   pkg: SkillPackage;
   /** Set only on a non-active approved or built-in entry: the local state, or the release revocation that wins over it. */
   lifecycle?: EffectiveLifecycle;
+  /** The owner's short catalogue description from an approved, verified release (skill-selections.yaml); the catalogue shows it instead of `pkg.description`. */
+  catalogueDescription?: { text: string; from: "skill-selections"; release?: string };
 }
 export interface SkillProblem {
   kind: "root-missing" | "root-unreadable" | "root-refused" | "invalid-package" | "duplicate" | "too-many" | "integrity" | "lock" | "lifecycle";
@@ -328,6 +330,15 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       if (!reason && v2) {
         const v = verifyRelease(src.root, read);
         if (!v.ok) reason = v.reason;
+      }
+      if (!reason && read.manifest.schema === 2 && rel.state === "approved") {
+        const release = `${read.manifest.catalogue}@${read.manifest.version}`;
+        const texts = new Map<string, string>();
+        for (const m of read.manifest.skills) if (m.catalogueDescription) texts.set(`${m.id}@${m.version}\0${m.digest}`, m.catalogueDescription.text);
+        for (const f of found.slice(mark.found)) {
+          const text = texts.get(`${f.key}\0${f.digest}`);
+          if (text !== undefined) f.catalogueDescription = { text, from: "skill-selections", release };
+        }
       }
       if (reason) {
         rel = report.release = { ...rel, state: "mismatch", reason };

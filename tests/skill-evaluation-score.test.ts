@@ -97,6 +97,14 @@ describe("scoreSelection", () => {
       { code: "offered-unexpectedly", dimension: "selection", scenario: "c" },
     ]);
   });
+  it("asks for the override of the candidate and of imported peers, and is unchanged without one", () => {
+    const s = KAFKA();
+    const peer = skill([doc("peer"), yaml("capabilities: [peer-cap]\n")]);
+    const asked: string[] = [];
+    const r = scoreSelection(bare(s), [sel("a", "kafka", "offered")], profiles, [imp(peer)], (x) => (asked.push(x.package.id), x === s ? "Short." : undefined));
+    expect(r).toEqual(scoreSelection(bare(s), [sel("a", "kafka", "offered")], profiles, [imp(peer)]));
+    expect(asked.sort()).toEqual([peer.package.id, s.package.id].sort());
+  });
   it("throws a TypeError for a missing profile", () => {
     expect(() => scoreSelection(bare(KAFKA()), [sel("a", "nope", "offered")], profiles, [])).toThrow(TypeError);
   });
@@ -254,6 +262,13 @@ describe("scoreContext", () => {
     const r = run(skill([doc("notes", { description: "d".repeat(161) })]), { max_description_chars: 1000 });
     expect(codes(r)).toEqual(["description-cut"]);
     expect(r.sample).toBe(0);
+  });
+  it("judges the description the catalogue will show: an override passes where the package's own text fails", () => {
+    const s = skill([doc("notes", { description: "d".repeat(348), meta: '  budget-planner-chars: "160"\n' })]);
+    expect(codes(run(s, { max_description_chars: 160 }))).toEqual(["description-over-limit", "description-over-budget", "description-cut"]);
+    const r = scoreContext(bare(s), [{ id: "ctx", max_description_chars: 160 }], "e".repeat(120));
+    expect(r).toEqual({ sample: 1, findings: [] });
+    expect(codes(scoreContext(bare(s), [{ id: "ctx", max_description_chars: 100 }], "e".repeat(120)))).toEqual(["description-over-limit"]);
   });
   it("fails an invalid budget", () => {
     const r = run(skill([doc("notes", { meta: '  budget-coder-tokens: "lots"\n' })]));

@@ -373,3 +373,23 @@ describe("skills.releases config", () => {
     expect(parse({ approved: Array.from({ length: 51 }, (_, i) => ({ ...e, version: `1.0.${i}` })) }).success).toBe(false);
   });
 });
+
+describe("catalogue description in a schema-2 release", () => {
+  const withText = (text: unknown, source: unknown = "skill-selections") => mutate((m) => (m.skills[1].catalogueDescription = { text, source }));
+  it("keeps the text and the digest of a manifest without the field", () => {
+    expect(releaseText(v2())).not.toContain("\ndescription ");
+    expect(releaseDigest(v2())).toBe(releaseDigest(clone(v2())));
+  });
+  it("accepts a description, puts it in the text and changes the digest", () => {
+    const m = withText("Short and clear.");
+    expect(ok(m)).toBe(true);
+    expect(releaseText(m)).toContain("\ndescription skill-selections Short and clear.\n");
+    expect(releaseDigest(m)).not.toBe(releaseDigest(v2()));
+  });
+  it("accepts 160 characters and refuses what the catalogue would not show", () => {
+    expect(ok(withText("d".repeat(160)))).toBe(true);
+    for (const bad of ["d".repeat(161), "", " padded", "a\nb", "a​b", "a\ud801"]) expect(ok(withText(bad)), JSON.stringify(bad)).toBe(false);
+    expect(ok(withText("fine", "package"))).toBe(false);
+    expect(ok(mutate((m) => (m.skills[1].catalogueDescription = { text: "x", source: "skill-selections", extra: 1 })))).toBe(false);
+  });
+});

@@ -344,6 +344,144 @@ describe("scf skills gate, mode new", () => {
   });
 });
 
+describe("catalogue description override", () => {
+  const LONG = "Kafka producers, consumers and streams. ".repeat(8).trim();
+  const SHORT = "Kafka work: keys, order, retries and schemas.";
+  const longKafka = () => kafka("kafka", { md: KAFKA_MD.replace(/^description:.*$/m, `description: "${LONG}"`) });
+  /** The selections entry of the staged kafka skill; `description` undefined: no override. */
+  function selectFor(description: string | undefined, over: Record<string, unknown> = {}): void {
+    const staged = readStagedImport("lib", COMMIT, { home });
+    if (staged.state !== "ok") throw new Error("not staged");
+    const s = normalizeImport({ record: { ...staged.record, rejected: [] }, files: staged.files }).skills.find((x) => x.provenance.name === "kafka")!;
+    const entry = {
+      source: "lib", skill: "kafka", digest: s.package.digest, scope: "portable", category: "interface", capabilities: ["kafka"], owner: "@octocat", reviewed: "2026-10-01",
+      ...(description !== undefined ? { catalogue_description: description } : {}), ...over,
+    };
+    writeFileSync(join(cwd, "skill-selections.yaml"), stringify({ schema: 1, selections: [entry] }));
+  }
+  const check = async () => {
+    const lines: string[] = [];
+    const code = await skillsCommand({ positionals: ["selections", "check"], values: {} }, (l) => void lines.push(l), { cwd, home, today: TODAY, now: NOW, ...registryOptions() });
+    return { code, text: lines.join("\n") };
+  };
+
+  it("a long description fails the gate on context, as before", async () => {
+    stage(longKafka());
+    const s = await score();
+    expect(s.text).toContain("description-over-limit");
+    const r = await gate();
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("below-threshold:context");
+  });
+
+  it("judges the context on the override: score, then gate passes, and the record names the scored text", async () => {
+    stage(longKafka());
+    selectFor(SHORT);
+    const s = await score();
+    expect(s.text).not.toContain("description-over-limit");
+    expect(s.text).not.toContain("description-cut");
+    const id = idOf("kafka");
+    const ev = (newest(id).raw as EvaluationRecord).evidence.find((e) => e.name === "catalogue-description");
+    expect(ev?.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const r = await gate();
+    expect(r.text).toContain(`PASSED ${id}@2.0.0 new`);
+    expect(r.code).toBe(0);
+  });
+
+  it("a short package description with no override stores no description evidence", async () => {
+    stage(kafka("kafka"));
+    await score();
+    expect((newest(idOf("kafka")).raw as EvaluationRecord).evidence.some((e) => e.name === "catalogue-description")).toBe(false);
+  });
+
+  it("fails with description-changed when the override is not the one that was scored", async () => {
+    stage(longKafka());
+    selectFor(SHORT);
+    await score();
+    selectFor("Another short text for kafka.");
+    const changed = await gate();
+    expect(changed.code).toBe(1);
+    expect(changed.text).toContain("description-changed");
+    expect(changed.text).toContain('run "scf skills score lib"');
+    selectFor(undefined);
+    expect((await gate()).text).toContain("description-changed");
+    selectFor(SHORT);
+    expect((await gate()).code).toBe(0);
+  });
+
+  it("fails with description-changed when an override is added after scoring", async () => {
+    stage(kafka("kafka"));
+    await score();
+    selectFor(SHORT);
+    const r = await gate();
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("description-changed");
+  });
+
+  it("prepareEvaluation uses the selections it is given and not the file", async () => {
+    const { prepareEvaluation } = await import("../src/skills/evaluate-cli.js");
+    stage(longKafka());
+    selectFor("From the file.");
+    const base = { cwd, home, today: TODAY, now: NOW, skills: SKILLS, discover: registryOptions() as never };
+    const lines: string[] = [];
+    const fromFile = prepareEvaluation("lib", undefined, (l) => void lines.push(l), base, "t");
+    expect(fromFile?.items[0]?.description).toBe("From the file.");
+    const given = prepareEvaluation("lib", undefined, (l) => void lines.push(l), { ...base, selections: [] }, "t");
+    expect(given?.items[0]?.description).toBeUndefined();
+    const digest = fromFile!.items[0]!.skill.package.digest;
+    const snap = [{ source: "lib", skill: "kafka", digest, catalogueDescription: "From the snapshot." }] as never;
+    expect(prepareEvaluation("lib", undefined, (l) => void lines.push(l), { ...base, selections: snap }, "t")?.items[0]?.description).toBe("From the snapshot.");
+  });
+
+  it("an invalid selections file is a PROBLEM for score", async () => {
+    stage(kafka("kafka"));
+    writeFileSync(join(cwd, "skill-selections.yaml"), "schema: 2\n");
+    const r = await score();
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("PROBLEM skill-selections.yaml");
+  });
+
+  it("selections check accepts an override of a staged skill", async () => {
+    stage(longKafka());
+    selectFor(SHORT);
+    const r = await check();
+    expect(r.code).toBe(0);
+    expect(r.text).toContain(`description=${SHORT.length} chars`);
+    expect(r.text).toContain("OK 1 selections");
+  });
+
+  it("selections check without an override needs no staged import", async () => {
+    stage(kafka("kafka"));
+    selectFor(undefined, { digest: "sha256:" + "f".repeat(64) });
+    rmSync(join(home, "skill-quarantine"), { recursive: true, force: true });
+    rmSync(join(cwd, "skill-sources.yaml"));
+    expect((await check()).code).toBe(0);
+  });
+
+  it("selections check: PROBLEM for another digest, a disabled source and a source that is not there", async () => {
+    stage(longKafka());
+    selectFor(SHORT, { digest: "sha256:" + "f".repeat(64) });
+    const other = await check();
+    expect(other.code).toBe(1);
+    expect(other.text).toContain("PROBLEM selections[0] (lib/kafka) catalogue_description: no staged skill kafka with this digest");
+    selectFor(SHORT);
+    writeFileSync(join(cwd, "skill-sources.yaml"), sourcesYaml("disabled"));
+    const disabled = await check();
+    expect(disabled.code).toBe(1);
+    expect(disabled.text).toContain("PROBLEM selections[0] (lib/kafka) catalogue_description: the source lib is disabled");
+    rmSync(join(cwd, "skill-sources.yaml"));
+    expect((await check()).text).toContain("cannot be checked");
+  });
+
+  it("selections check refuses an override over 160 characters", async () => {
+    stage(longKafka());
+    selectFor("d".repeat(161));
+    const r = await check();
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("catalogue_description: must be at most 160 characters");
+  });
+});
+
 describe("scf skills gate, mode duplicate", () => {
   it("names the mode, and the worse one fails", async () => {
     const long = KAFKA_MD.replace(/^description: ".*"$/m, `description: "${"Kafka producers and consumers. ".repeat(10)}"`);

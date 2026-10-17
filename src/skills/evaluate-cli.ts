@@ -4,9 +4,12 @@ import { fileURLToPath } from "node:url";
 import { loadConfig, type Config } from "../config.js";
 import { selectCanonicalSkills } from "./canonical.js";
 import { canonicalFromRegistered } from "./canonical-facts.js";
+import { catalogueDescriptionOf, DESCRIPTION_EVIDENCE, descriptionEvidence } from "./catalogue-description.js";
 import { decisionText, effectPromotion } from "./effect.js";
 import { EVALUATIONS_FILE, readSuiteRecords } from "./suite-records.js";
-import { filesOf, hidden, loadExceptions, plural, stagedImport, type StagedImport } from "./staged-import.js";
+import { filesOf, hidden, loadExceptions, plural, reviewedFiles, stagedImport, type StagedImport } from "./staged-import.js";
+// Not imported from selections.js (a test keeps the list of files that import it short): the type comes from reviewedFiles.
+type SkillSelection = NonNullable<ReturnType<typeof reviewedFiles>>["selections"][number];
 import { collisionCandidate, type CollisionCandidate } from "./collisions.js";
 import { evaluationGate, parseEvaluationRecord, type EvaluationGateInput, type EvaluationReason, type EvaluationRecord, type EvaluationSubject } from "./evaluation.js";
 import { EVALUATION_LIMITS, EVALUATION_REASON_CODES, EVALUATION_SUITE_DEFAULT, type EvaluationDimension, type EvaluationMode } from "./evaluation-rules.js";
@@ -37,6 +40,8 @@ export interface EvaluateCliOptions {
   discover: DiscoverOptions;
   /** The parsed skill-sources.yaml to use instead of reading the file. */
   sources?: SourcesManifest;
+  /** The parsed skill-selections.yaml to use instead of reading the file (publish reads it once and passes it on). */
+  selections?: SkillSelection[];
 }
 export type Out = (line: string) => void;
 
@@ -119,9 +124,13 @@ export interface Item {
   safety: DecidedReport;
   licence: LicenceStatus;
   checks: GateChecks;
+  /** The catalogue description the owner set in skill-selections.yaml for this skill; absent: the package's own is shown. */
+  description?: string;
 }
 export interface Prepared {
   staged: StagedImport;
+  /** The reviewed selections this evaluation uses (one snapshot). */
+  selections: SkillSelection[];
   suite: Extract<EvaluationSuiteRead, { state: "ok" }>;
   approved: RegisteredSkill[];
   items: Item[];
@@ -133,6 +142,7 @@ export interface Prepared {
 export function prepareEvaluation(id: string, suiteFile: string | undefined, out: Out, opts: EvaluateCliOptions, tail: string): Prepared | undefined {
   let exceptions: ScanException[] = [];
   let suite: Extract<EvaluationSuiteRead, { state: "ok" }> | undefined;
+  let selections: SkillSelection[] = opts.selections ?? [];
   const staged = stagedImport(
     id,
     out,
@@ -150,6 +160,11 @@ export function prepareEvaluation(id: string, suiteFile: string | undefined, out
       suite = read;
       const ex = loadExceptions(undefined, out, opts);
       if (ex) exceptions = ex;
+      if (ex && !opts.selections) {
+        const reviewed = reviewedFiles(out, opts, false);
+        if (!reviewed) return false;
+        selections = reviewed.selections;
+      }
       return ex !== undefined;
     },
     "evaluated",
@@ -188,9 +203,10 @@ export function prepareEvaluation(id: string, suiteFile: string | undefined, out
     const root = skill.provenance.root;
     const safety = applyExceptions(pkg.id, scanSkill({ root, files: filesOf(root, files) }), exceptions, opts.today);
     const licence = evaluateLicence({ root, declared: pkg.license, allow: source.licence.allow, evidence }).status;
-    items.push({ skill, id: pkg.id, version: pkg.version, cand: collisionCandidate(skill, source), safety, licence, checks });
+    const description = catalogueDescriptionOf(skill, source.id, selections);
+    items.push({ skill, id: pkg.id, version: pkg.version, cand: collisionCandidate(skill, source), safety, licence, checks, ...(description !== undefined ? { description } : {}) });
   }
-  return { staged, suite, approved, items, problems };
+  return { staged, selections, suite, approved, items, problems };
 }
 
 const stamp = (d: Date) => d.toISOString().replace(/\.\d+Z$/, "Z");
@@ -241,7 +257,7 @@ export function prepareScoring(id: string, suiteFile: string | undefined, out: O
   for (const it of p.items) {
     const { approved, baseline } = comparedFor(p, it);
     try {
-      scored.push({ item: it, score: scoreEvaluation({ suite: suite.suite, profiles: suite.profiles, instructionFixtures: suite.instructionFixtures, candidate: it.cand, approved, ...(baseline ? { baseline } : {}), safety: it.safety }) });
+      scored.push({ item: it, score: scoreEvaluation({ suite: suite.suite, profiles: suite.profiles, instructionFixtures: suite.instructionFixtures, candidate: it.cand, approved, ...(baseline ? { baseline } : {}), safety: it.safety, descriptionOf: (s) => catalogueDescriptionOf(s, s.provenance.source, p.selections) }) });
     } catch (e) {
       if (!(e instanceof RangeError || e instanceof TypeError)) throw e;
       scored.push({ item: it, problem: `${it.id}: cannot be scored (${hidden(e.message)})` });
@@ -281,7 +297,7 @@ export function writeScores(plan: ScoringPlan, out: Out, opts: EvaluateCliOption
       evaluatedAt: stamp(opts.now),
       dimensions: { ...score.dimensions, ...(extra?.dimensions ?? {}) },
       findings,
-      evidence: [{ name: "import", digest: staged.record.digest }, { name: "scan", digest: it.safety.report }, ...(extra?.evidence ?? [])],
+      evidence: [{ name: "import", digest: staged.record.digest }, { name: "scan", digest: it.safety.report }, ...(it.description !== undefined ? [descriptionEvidence(it.description)] : []), ...(extra?.evidence ?? [])],
       ...(extra?.agent ? { agent: extra.agent } : {}),
     };
     const parsed = parseEvaluationRecord(raw);
@@ -387,6 +403,18 @@ export function judgeItems(p: Prepared, opts: { home?: string }): JudgedItem[] {
     const codes = [...new Map(reasons.map((r) => [`${r.code}:${r.dimension ?? r.finding ?? r.licence ?? ""}`, r])).values()]
       .sort((a, b) => EVALUATION_REASON_CODES.indexOf(a.code) - EVALUATION_REASON_CODES.indexOf(b.code) || byteCmp(a.dimension ?? "", b.dimension ?? ""))
       .map((r) => (r.dimension ?? r.finding ?? r.licence ? `${r.code}:${r.dimension ?? r.finding ?? r.licence}` : r.code));
+    // The record must have scored the description the catalogue will show now. Like the effect codes, this is not an EVALUATION_REASON_CODE.
+    if (record.state === "ok") {
+      const parsed = parseEvaluationRecord(record.raw);
+      if ("record" in parsed) {
+        const scored = parsed.record.evidence.find((e) => e.name === DESCRIPTION_EVIDENCE)?.digest;
+        const now = it.description !== undefined ? descriptionEvidence(it.description).digest : undefined;
+        if (scored !== now) {
+          codes.push("description-changed");
+          notes.push(`the catalogue description is not the one scored; run "scf skills score ${staged.source.id}"`);
+        }
+      }
+    }
     judged.push({ item: it, passed: ok && codes.length === 0, modes, codes, notes, record });
   }
   return judged;

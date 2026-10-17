@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { skillsCommand } from "../src/skills/cli.js";
 import { clearSkillRegistryCache, discoverSkills, findSkill, pinSkill, selectSkill, unreleasedSources, type SkillRegistry } from "../src/skills/registry.js";
 import { RELEASE_FILE, releaseDigest, type ReleaseManifest } from "../src/skills/release.js";
 import { loadSkillPackage } from "../src/skills/package.js";
@@ -310,6 +311,30 @@ describe("schema-2 releases in the registry", () => {
     const reg = run(e, cfg([e.root(0)], [], {}, true));
     expect(kinds(reg)).toEqual(["root-refused"]);
     expect(reg.skills).toEqual([]);
+  });
+
+  it("gives the catalogue description of an approved release to its skill, and only to that skill", () => {
+    const e = setup();
+    const ap = v2(e, { attribution: ATTR, catalogueDescriptions: { a: "Short text for a." } });
+    const reg = run(e, cfg([e.root(0)], [ap]));
+    expect(reg.byKey.get("a@1.0.0")!.catalogueDescription).toEqual({ text: "Short text for a.", from: "skill-selections", release: "acme-skills@1.0.0" });
+    expect(reg.byKey.get("b@1.0.0")!.catalogueDescription).toBeUndefined();
+  });
+
+  it("scf skills prints a DESCRIPTION line for a skill with a catalogue description", async () => {
+    const e = setup();
+    const ap = v2(e, { attribution: ATTR, catalogueDescriptions: { a: "Short text for a." } });
+    const lines: string[] = [];
+    await skillsCommand({ positionals: [], values: {} }, (l) => void lines.push(l), { skills: cfg([e.root(0)], [ap]), home: e.home, builtinRoot: e.builtin, userHome: e.userHome, env: {} });
+    expect(lines.filter((l) => l.startsWith("DESCRIPTION "))).toEqual(["DESCRIPTION a@1.0.0 skill-selections acme-skills@1.0.0: Short text for a."]);
+  });
+
+  it("an unapproved release gives no catalogue description", () => {
+    const e = setup();
+    v2(e, { attribution: ATTR, catalogueDescriptions: { a: "Short text for a." } });
+    const reg = run(e, cfg([e.root(0)], [], {}, true));
+    expect(keys(reg)).toEqual(["a@1.0.0", "b@1.0.0"]);
+    expect(reg.byKey.get("a@1.0.0")!.catalogueDescription).toBeUndefined();
   });
 
   it("an intact unapproved schema-2 release still loads under allow_unreleased", () => {
