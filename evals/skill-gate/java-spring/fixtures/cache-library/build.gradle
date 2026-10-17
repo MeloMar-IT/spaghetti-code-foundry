@@ -1,0 +1,11 @@
+plugins {
+  id 'java-library'
+}
+
+java {
+  toolchain {
+    languageVersion = JavaLanguageVersion.of(17)
+  }
+}
+
+// LoadingCacheTest is a plain main class, run with javac and java: no JUnit and no download.

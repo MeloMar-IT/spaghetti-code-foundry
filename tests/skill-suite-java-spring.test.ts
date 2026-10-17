@@ -66,7 +66,8 @@ describe("the suite file", () => {
     expect(offered.every((s) => s.repo === "fixtures/orders-service")).toBe(true);
     expect(not).toHaveLength(2);
     expect(not.every((s) => s.repo === "fixtures/web-tool")).toBe(true);
-    expect(suite.instructions).toBeUndefined();
+    expect(suite.instructions?.mandatory).toBe(false);
+    expect(suite.instructions?.scenarios.map((s) => s.id).sort()).toEqual(["cancel-rules", "log-load-failure", "optimistic-locking", "single-load"]);
   });
 
   it("has the same conflicts, tools and context as the example suite", () => {

@@ -4,7 +4,9 @@ import java.time.Clock;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
+import org.springframework.stereotype.Service;
 
+@Service
 public class OrderService {
   static final int DISCOUNT_MIN_QUANTITY = 10;
   static final int DISCOUNT_PERCENT = 10;
