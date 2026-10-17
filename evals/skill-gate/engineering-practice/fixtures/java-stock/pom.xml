@@ -1,0 +1,12 @@
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.example</groupId>
+  <artifactId>stock</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+  <!-- There is no JUnit and no network. Run the checks (plain classes named *Check) with javac and java:
+       javac -d out $(find src -name "*.java") && java -ea -cp out org.example.stock.StockCheck -->
+</project>
