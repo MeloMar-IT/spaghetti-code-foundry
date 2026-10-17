@@ -251,7 +251,7 @@ async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerR
 const testing = new Set<string>();
 
 /** `POST /api/repos/<id>/test`: runs the checks, saves the result as the connection status and answers with it. */
-async function testRepo(ctx: ApiContext, user: User, id: string): Promise<{ at: string; ok: boolean; checks: unknown[] }> {
+export async function testRepo(ctx: ApiContext, user: User, id: string): Promise<{ at: string; ok: boolean; checks: unknown[] }> {
   const rec = guardedRepos(ctx, () => getRepo(id));
   if (!rec || (rec.owner !== user.id && user.role !== "admin")) throw new HttpError(404, "no such repository");
   if (testing.has(rec.id)) throw new HttpError(409, "a test of this repository is running already; wait for it to finish");

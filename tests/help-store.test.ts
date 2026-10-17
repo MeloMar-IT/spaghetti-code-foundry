@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { StoreError } from "../src/auth/store.js";
 import { createUser, deleteUser, listUsers, usersPath } from "../src/auth/users.js";
-import { checkReply, type Reply } from "../src/help/contract.js";
+import type { Check } from "../src/help/actions.js";
+import { ReplySchema, checkReply, type Reply } from "../src/help/contract.js";
 import { jsonFiles } from "../src/home-migrate.js";
 import {
   CANCELLED_WORDS,
@@ -16,8 +17,12 @@ import {
   KEEP_MS,
   MESSAGE_LIMIT,
   QUESTION_MAX,
+  addOutcome,
+  addHandoff,
+  addCheck,
   addQuestion,
   archiveConversation,
+  revisionOf,
   cancelTurn,
   checkContext,
   checkFeedback,
@@ -550,5 +555,266 @@ describe("rating an answer", () => {
     delete file.conversations[0].messages[1].feedback;
     writeFileSync(helpPath(), JSON.stringify(file));
     expect(listConversations(ANN, at)[0]!.messages[1]!.feedback).toBeUndefined();
+  });
+});
+
+describe("outcomes of approved actions", () => {
+  const outcome = (n: number) => ({
+    action: "cancel-run",
+    about: { kind: "run" as const, id: "r1" },
+    result: "done" as const,
+    words: `Outcome ${n}`,
+    recovery: "Open the run.",
+    seen: "cancelled" as const,
+    at: "2026-03-01T10:00:00.000Z",
+  });
+  const finished = () => {
+    const turn = ask();
+    finishTurn(turn.conversation.id, ref(turn), reply(), at);
+    return { id: turn.conversation.id, message: turn.reply.id, question: turn.question.id };
+  };
+
+  it("keeps the newest 10 on a finished reply, and reads them back", () => {
+    const c = finished();
+    for (let n = 1; n <= 12; n++) addOutcome(ANN, c.id, c.message, outcome(n), at);
+    const kept = getConversation(ANN, c.id, at).messages[1]!.outcomes!;
+    expect(kept.map((o) => o.words)).toEqual(Array.from({ length: 10 }, (_, i) => `Outcome ${i + 3}`));
+    expect(listConversations(ANN, at)[0]!.messages[1]!.outcomes).toHaveLength(10);
+  });
+
+  it("refuses a pending or failed reply, a user message, another account and an extra key", () => {
+    const turn = ask();
+    expect(code(() => addOutcome(ANN, turn.conversation.id, turn.reply.id, outcome(1), at))).toBe("bad-state");
+    failTurn(turn.conversation.id, ref(turn), { code: "provider", retry: true }, at);
+    expect(code(() => addOutcome(ANN, turn.conversation.id, turn.reply.id, outcome(1), at))).toBe("bad-state");
+    const c = finished();
+    expect(code(() => addOutcome(ANN, c.id, c.question, outcome(1), at))).toBe("bad-state");
+    expect(code(() => addOutcome(BOB, c.id, c.message, outcome(1), at))).toBe("not-found");
+    expect(() => addOutcome(ANN, c.id, c.message, { ...outcome(1), extra: "x" } as never, at)).toThrow();
+    expect(getConversation(ANN, c.id, at).messages[1]!.outcomes).toBeUndefined();
+  });
+
+  it("a file with an outcome on an unfinished reply is refused", () => {
+    const c = finished();
+    addOutcome(ANN, c.id, c.message, outcome(1), at);
+    const file = JSON.parse(raw());
+    file.conversations[0].messages[1].status = "cancelled";
+    delete file.conversations[0].messages[1].reply;
+    writeFileSync(helpPath(), JSON.stringify(file));
+    expect(() => listConversations(ANN, at)).toThrow(StoreError);
+  });
+});
+
+describe("hand-offs", () => {
+  const rec = (message: string, page = "#/refinement") => ({ message, where: "refinement" as const, page, copied: ["title" as const, "text" as const, "link" as const] });
+  const finished = () => {
+    const turn = ask();
+    finishTurn(turn.conversation.id, ref(turn), reply(), at);
+    return { id: turn.conversation.id, question: turn.question.id, message: turn.reply.id };
+  };
+
+  it("appends a record and changes `updated` but not `state`", () => {
+    const a = finished();
+    t += 5000;
+    const done = addHandoff(ANN, a.id, rec(a.message), at);
+    expect(done.state).toBe("active");
+    expect(done.updated).toBe("2026-03-01T10:00:05.000Z");
+    expect(done.handoffs).toEqual([{ ...rec(a.message), at: "2026-03-01T10:00:05.000Z" }]);
+    expect(getConversation(ANN, a.id, at).handoffs).toHaveLength(1);
+  });
+
+  it("is refused for another owner, a deleted and an archived conversation", () => {
+    const a = finished();
+    expect(code(() => addHandoff(BOB, a.id, rec(a.message), at))).toBe("not-found");
+    archiveConversation(ANN, a.id, at);
+    expect(code(() => addHandoff(ANN, a.id, rec(a.message), at))).toBe("bad-state");
+    restoreConversation(ANN, a.id, at);
+    deleteConversation(ANN, a.id, at);
+    expect(code(() => addHandoff(ANN, a.id, rec(a.message), at))).toBe("deleted");
+  });
+
+  it("is refused for a question, and for a reply that is pending or failed", () => {
+    const a = finished();
+    expect(code(() => addHandoff(ANN, a.id, rec(a.question), at))).toBe("bad-state");
+    const pending = ask(ANN, a.id, "And then?");
+    expect(code(() => addHandoff(ANN, a.id, rec(pending.reply.id), at))).toBe("bad-state");
+    failTurn(a.id, ref(pending), { code: "provider", retry: true }, at);
+    expect(code(() => addHandoff(ANN, a.id, rec(pending.reply.id), at))).toBe("bad-state");
+    expect(code(() => addHandoff(ANN, a.id, rec(UNKNOWN), at))).toBe("bad-state");
+  });
+
+  it("keeps only the last 50 records", () => {
+    const a = finished();
+    for (let i = 0; i < 55; i++) {
+      t += 1000;
+      addHandoff(ANN, a.id, rec(a.message, `#/runs/r${i}`), at);
+    }
+    const list = getConversation(ANN, a.id, at).handoffs!;
+    expect(list).toHaveLength(50);
+    expect(list[0]!.page).toBe("#/runs/r5");
+    expect(list[49]!.page).toBe("#/runs/r54");
+  });
+
+  it("loads a file without `handoffs`, and removes the records with the conversation", () => {
+    const a = finished();
+    expect(getConversation(ANN, a.id, at).handoffs).toBeUndefined();
+    expect(raw()).not.toContain("handoffs");
+    addHandoff(ANN, a.id, rec(a.message), at);
+    expect(raw()).toContain("handoffs");
+    deleteConversation(ANN, a.id, at);
+    expect(raw()).not.toContain("handoffs");
+    expect(getConversation(ANN, a.id, at).handoffs).toBeUndefined();
+  });
+
+  it("refuses a file whose record names an unknown message", () => {
+    const a = finished();
+    addHandoff(ANN, a.id, rec(a.message), at);
+    const file = JSON.parse(raw());
+    file.conversations[0].handoffs[0].message = UNKNOWN;
+    writeFileSync(helpPath(), JSON.stringify(file));
+    expect(() => listConversations(ANN, at)).toThrow(StoreError);
+  });
+});
+
+describe("storing a check", () => {
+  const OFFER = { type: "refresh-evidence" as const, title: "Read it again", evidence: "state-x", subject: { kind: "run" as const, id: "run-1" } };
+  const withOffer = (): { id: string; message: string } => {
+    const a = ask();
+    const r = ReplySchema.parse({ type: "status", summary: "It waits.", explanation: "", certainty: "unverified", evidence: [], recommendations: [], links: [], drafts: [], actions: [], offers: [OFFER] });
+    finishTurn(a.conversation.id, ref(a), r, at);
+    return { id: a.conversation.id, message: a.reply.id };
+  };
+  const check = (over: Partial<Check> = {}): Check => ({ type: "refresh-evidence", offer: 0, subject: OFFER.subject, scope: "user", title: "A run", outcome: "read", lines: ["status: failed"], observedAt: "2026-03-01T10:00:00.000Z", ...over });
+  const rev = (id: string) => revisionOf(getConversation(ANN, id, at));
+  const tick = () => {
+    t += 1000;
+  };
+
+  it("appends a check message and keeps the conversation active", () => {
+    const c = withOffer();
+    tick();
+    const next = addCheck(ANN, c.id, c.message, check(), rev(c.id), at);
+    expect(next.state).toBe("active");
+    const last = next.messages[next.messages.length - 1]!;
+    expect(last).toMatchObject({ role: "check", status: "done", replyTo: c.message });
+    expect(last.check?.title).toBe("A run");
+    for (const k of ["context", "reply", "failure", "tries", "updated"] as const) expect(last[k]).toBeUndefined();
+    expect(getConversation(ANN, c.id, at).messages.length).toBe(next.messages.length);
+  });
+
+  it("refuses while a reply is pending and in a conversation that is not active", () => {
+    const pending = ask();
+    expect(code(() => addCheck(ANN, pending.conversation.id, pending.reply.id, check(), "x", at))).toBe("busy");
+    for (const [name, make] of [["completed", completeConversation], ["archived", archiveConversation]] as const) {
+      const c = withOffer();
+      make(ANN, c.id, at);
+      expect(code(() => addCheck(ANN, c.id, c.message, check(), rev(c.id), at)), name).toBe("bad-state");
+    }
+    const failed = ask(ANN, undefined, "Another?");
+    failTurn(failed.conversation.id, ref(failed), { code: "timeout", retry: true }, at);
+    expect(code(() => addCheck(ANN, failed.conversation.id, failed.reply.id, check(), rev(failed.conversation.id), at))).toBe("bad-state");
+    const stopped = ask(ANN, undefined, "Again?");
+    cancelTurn(ANN, stopped.conversation.id, at);
+    expect(code(() => addCheck(ANN, stopped.conversation.id, stopped.reply.id, check(), rev(stopped.conversation.id), at))).toBe("bad-state");
+  });
+
+  it("refuses with changed after a question that was asked and finished, and after archive and restore, but not after a rating", () => {
+    const c = withOffer();
+    tick();
+    const before = rev(c.id);
+    rateReply(ANN, c.id, { message: c.message, vote: "helpful", reasons: [] }, at);
+    expect(rev(c.id)).toBe(before);
+
+    const q = ask(ANN, c.id, "And now?");
+    finishTurn(c.id, ref(q), reply(), at);
+    expect(code(() => addCheck(ANN, c.id, c.message, check(), before, at))).toBe("changed");
+
+    const d = withOffer();
+    const start = rev(d.id);
+    tick();
+    archiveConversation(ANN, d.id, at);
+    tick();
+    restoreConversation(ANN, d.id, at);
+    expect(code(() => addCheck(ANN, d.id, d.message, check(), start, at))).toBe("changed");
+  });
+
+  it("refuses with not-found for an unknown message, a question, a wrong offer index, and a type or subject that does not match", () => {
+    const c = withOffer();
+    const expect_ = rev(c.id);
+    const question = getConversation(ANN, c.id, at).messages[0]!.id;
+    expect(code(() => addCheck(ANN, c.id, UNKNOWN, check(), expect_, at))).toBe("not-found");
+    expect(code(() => addCheck(ANN, c.id, question, check(), expect_, at))).toBe("not-found");
+    expect(code(() => addCheck(ANN, c.id, c.message, check({ offer: 1 }), expect_, at))).toBe("not-found");
+    expect(code(() => addCheck(ANN, c.id, c.message, check({ type: "test-repository" }), expect_, at))).toBe("not-found");
+    expect(code(() => addCheck(ANN, c.id, c.message, check({ subject: { kind: "run", id: "run-2" } }), expect_, at))).toBe("not-found");
+    expect(code(() => addCheck(BOB, c.id, c.message, check(), expect_, at))).toBe("not-found");
+  });
+
+  it("refuses at the message limit and after a delete", () => {
+    const c = withOffer();
+    const file = JSON.parse(raw());
+    const conv = file.conversations.find((x: { id: string }) => x.id === c.id);
+    const filler = conv.messages.slice(0, 2);
+    while (conv.messages.length < MESSAGE_LIMIT) {
+      const [u, a] = structuredClone(filler);
+      u.id = crypto.randomUUID();
+      a.id = crypto.randomUUID();
+      a.replyTo = u.id;
+      conv.messages.push(...(conv.messages.length + 2 <= MESSAGE_LIMIT ? [u, a] : [u]));
+    }
+    writeFileSync(helpPath(), JSON.stringify(file));
+    const full = getConversation(ANN, c.id, at);
+    expect(full.messages.length).toBe(MESSAGE_LIMIT);
+    expect(code(() => addCheck(ANN, c.id, c.message, check(), revisionOf(full), at))).toBe("limit");
+    deleteConversation(ANN, c.id, at);
+    expect(code(() => addCheck(ANN, c.id, c.message, check(), "x", at))).toBe("deleted");
+  });
+
+  it("survives a write and read, and an older file without checks loads", () => {
+    const c = withOffer();
+    addCheck(ANN, c.id, c.message, check(), rev(c.id), at);
+    expect(listConversations(ANN, at)[0]!.messages.some((m) => m.role === "check")).toBe(true);
+    expect(JSON.parse(raw()).version).toBe(1);
+    const old = JSON.parse(raw());
+    old.conversations[0].messages = old.conversations[0].messages.filter((m: { role: string }) => m.role !== "check");
+    writeFileSync(helpPath(), JSON.stringify(old));
+    expect(listConversations(ANN, at)[0]!.messages.every((m) => m.role !== "check")).toBe(true);
+  });
+
+  it("refuses a file with a malformed check message", () => {
+    const c = withOffer();
+    addCheck(ANN, c.id, c.message, check(), rev(c.id), at);
+    const patch = (fn: (m: Record<string, unknown>, conv: { messages: Record<string, unknown>[] }) => void) => {
+      const file = JSON.parse(raw());
+      const conv = file.conversations[0];
+      fn(conv.messages[conv.messages.length - 1], conv);
+      writeFileSync(helpPath(), JSON.stringify(file));
+    };
+    const original = raw();
+    const bads: ((m: Record<string, unknown>, conv: { messages: Record<string, unknown>[] }) => void)[] = [
+      (m) => (m.reply = {}),
+      (m) => (m.tries = 1),
+      (m) => (m.updated = "2026-03-01T10:00:00.000Z"),
+      (m) => (m.failure = { code: "timeout", retry: true }),
+      (m) => (m.context = { page: "#/runs" }),
+      (m) => (m.status = "pending"),
+      (m) => delete m.check,
+      (m, conv) => (m.replyTo = conv.messages[0]!.id),
+      (m) => (m.replyTo = m.id),
+    ];
+    for (const [i, bad] of bads.entries()) {
+      writeFileSync(helpPath(), original);
+      patch(bad);
+      expect(() => listConversations(ANN, at), `case ${i}`).toThrow(StoreError);
+    }
+    writeFileSync(helpPath(), original);
+    patch((_m, conv) => (conv.messages[1]!.check = check()));
+    expect(() => listConversations(ANN, at)).toThrow(StoreError);
+  });
+
+  it("keeps retryTurn's rule after an answer and a check", () => {
+    const c = withOffer();
+    addCheck(ANN, c.id, c.message, check(), rev(c.id), at);
+    expect(code(() => retryTurn(ANN, c.id, at))).toBe("bad-state");
   });
 });

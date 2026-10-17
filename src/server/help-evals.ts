@@ -154,7 +154,7 @@ export async function runScenario(s: HelpScenario, model: EvalModel = stubModel,
     const input = { owner: asker.id, role: s.role, question: s.question, history: s.history ?? [], ...(s.context ? { context: s.context } : {}) };
     const resolved = resolveContext(asker, s.context, (_a, ref) => s.visible?.find((v) => v.kind === ref.kind && v.id === ref.id)) ?? null;
     ready = prepareTurn(input, s.sources, guard, resolved);
-    prompt = turnPrompt(ready.input, ready.offered, ready.excerpts, ready.context);
+    prompt = turnPrompt(ready.input, ready.offered, ready.excerpts, ready.context, { actions: true });
   } catch {
     fail("sent", "the turn could not be made safe, so nothing was sent");
     return done();

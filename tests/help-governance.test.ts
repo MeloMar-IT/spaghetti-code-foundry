@@ -92,7 +92,9 @@ describe("who may ask", () => {
       if (!rule.path.includes(":id")) continue;
       for (const other of [bob, admin]) {
         const r = await call(other, rule.method, path, body);
-        expect(r.status, `${rule.method} ${rule.path} as another account`).toBe(404);
+        // the action routes answer from their own rules: the switches come first (help.actions is off here), and dropping a token needs one
+        const own = rule.path.endsWith("/actions/cancel") ? 400 : rule.path.endsWith("/actions/confirm") ? 503 : 404;
+        expect(r.status, `${rule.method} ${rule.path} as another account`).toBe(own);
         expect(r.text).not.toContain("zebra-question-text");
       }
       expect((await call(admin, rule.method, `${path}?as=${ann.user.id}`, body)).status, `${rule.method} ${rule.path} in a preview`).toBe(403);

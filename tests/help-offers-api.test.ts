@@ -8,7 +8,7 @@ import { setStatus, updateUser } from "../src/auth/users.js";
 import { OFFER_WORDS, OFFERS, type Offer } from "../src/help/actions.js";
 import { ReplySchema } from "../src/help/contract.js";
 import { addQuestion, archiveConversation, completeConversation, deleteConversation, finishTurn, getConversation } from "../src/help/store.js";
-import { guardedHelp } from "../src/server/api-help.js";
+import { guardedHelpAsync } from "../src/server/api-help.js";
 import { runOffer } from "../src/server/help-evidence.js";
 import { RULES, findRule } from "../src/server/permissions.js";
 import { startServer } from "../src/server/server.js";
@@ -48,9 +48,9 @@ function keep(owner: TestSession, offers: Offer[]) {
 }
 const offerOf = (type: Offer["type"], kind: Offer["subject"]["kind"], id: string): Offer => ({ type, title: OFFERS.find((o) => o.type === type)!.title, evidence: "state-x", subject: { kind, id } });
 /** What the click gives: the result, or the status and the sentence of the refusal. */
-function click(who: TestSession, role: "admin" | "user", at: { conversation: string; message: string }, offer = 0, guard = {}) {
+async function click(who: TestSession, role: "admin" | "user", at: { conversation: string; message: string }, offer = 0, guard = {}) {
   try {
-    return guardedHelp(started.ctx, () => runOffer(started.ctx, asker(who, role), at.conversation, { message: at.message, offer }, guard));
+    return await guardedHelpAsync(started.ctx, () => runOffer(started.ctx, asker(who, role), at.conversation, { message: at.message, offer }, guard));
   } catch (e) {
     const s = e as { status?: number; message: string };
     return { status: s.status, message: s.message };
@@ -109,48 +109,48 @@ afterAll(() => {
 });
 
 describe("open-run", () => {
-  it("opens the run of the account", () => {
-    expect(click(ann, "user", keep(ann, [offerOf("open-run", "run", "run-ann-1")]))).toEqual({ type: "open-run", to: "#/runs/run-ann-1" });
-    expect(click(admin, "admin", keep(admin, [offerOf("open-run", "run", "run-bob-1")]))).toEqual({ type: "open-run", to: "#/runs/run-bob-1" });
+  it("opens the run of the account", async () => {
+    expect(await click(ann, "user", keep(ann, [offerOf("open-run", "run", "run-ann-1")]))).toEqual({ type: "open-run", to: "#/runs/run-ann-1" });
+    expect(await click(admin, "admin", keep(admin, [offerOf("open-run", "run", "run-bob-1")]))).toEqual({ type: "open-run", to: "#/runs/run-bob-1" });
   });
 
   it("is denied for an account that is blocked now", async () => {
     const at = keep(cy, [offerOf("open-run", "run", "run-cy-1")]);
     await setStatus(cy.user.id, "blocked");
     try {
-      expect(click(cy, "user", at)).toEqual(DENIED);
+      expect(await click(cy, "user", at)).toEqual(DENIED);
     } finally {
       await setStatus(cy.user.id, "active");
     }
-    expect(click(cy, "user", at)).toMatchObject({ type: "open-run" });
+    expect(await click(cy, "user", at)).toMatchObject({ type: "open-run" });
   });
 
   it("is denied when the rule of the call refuses now", async () => {
     const at = keep(ann, [offerOf("open-run", "run", "run-ann-1")]);
-    await withRule(ruleNo("GET", ["runs", "run-ann-1"]), () => {
-      expect(click(ann, "user", at)).toEqual(DENIED);
+    await withRule(ruleNo("GET", ["runs", "run-ann-1"]), async () => {
+      expect(await click(ann, "user", at)).toEqual(DENIED);
     });
-    expect(click(ann, "user", at)).toMatchObject({ type: "open-run" });
+    expect(await click(ann, "user", at)).toMatchObject({ type: "open-run" });
   });
 
-  it("is stale when the run is gone, when the id is now protected, and for the run of another account", () => {
-    expect(click(ann, "user", keep(ann, [offerOf("open-run", "run", "run-gone")]))).toEqual(STALE);
+  it("is stale when the run is gone, when the id is now protected, and for the run of another account", async () => {
+    expect(await click(ann, "user", keep(ann, [offerOf("open-run", "run", "run-gone")]))).toEqual(STALE);
     const at = keep(ann, [offerOf("open-run", "run", "run-ann-1")]);
-    expect(click(ann, "user", at, 0, { patterns: ["run-ann-\\d"] })).toEqual(STALE);
-    expect(click(ann, "user", keep(ann, [offerOf("open-run", "run", "run-bob-1")]))).toEqual(STALE);
+    expect(await click(ann, "user", at, 0, { patterns: ["run-ann-\\d"] })).toEqual(STALE);
+    expect(await click(ann, "user", keep(ann, [offerOf("open-run", "run", "run-bob-1")]))).toEqual(STALE);
   });
 });
 
 describe("open-repository", () => {
-  it("opens the repository of the account", () => {
-    expect(click(ann, "user", keep(ann, [offerOf("open-repository", "repository", annRepo)]))).toEqual({ type: "open-repository", to: `#/repos/${annRepo}` });
+  it("opens the repository of the account", async () => {
+    expect(await click(ann, "user", keep(ann, [offerOf("open-repository", "repository", annRepo)]))).toEqual({ type: "open-repository", to: `#/repos/${annRepo}` });
   });
 
   it("is denied for an account that is blocked now", async () => {
     const at = keep(cy, [offerOf("open-repository", "repository", cyRepo)]);
     await setStatus(cy.user.id, "blocked");
     try {
-      expect(click(cy, "user", at)).toEqual(DENIED);
+      expect(await click(cy, "user", at)).toEqual(DENIED);
     } finally {
       await setStatus(cy.user.id, "active");
     }
@@ -158,14 +158,14 @@ describe("open-repository", () => {
 
   it("is denied when the rule of the call refuses now", async () => {
     const at = keep(ann, [offerOf("open-repository", "repository", annRepo)]);
-    await withRule(ruleNo("GET", ["repos"]), () => {
-      expect(click(ann, "user", at)).toEqual(DENIED);
+    await withRule(ruleNo("GET", ["repos"]), async () => {
+      expect(await click(ann, "user", at)).toEqual(DENIED);
     });
   });
 
-  it("is stale for an unknown repository and for the repository of another account", () => {
-    expect(click(ann, "user", keep(ann, [offerOf("open-repository", "repository", "99999999-9999-4999-8999-999999999999")]))).toEqual(STALE);
-    expect(click(ann, "user", keep(ann, [offerOf("open-repository", "repository", bobRepo)]))).toEqual(STALE);
+  it("is stale for an unknown repository and for the repository of another account", async () => {
+    expect(await click(ann, "user", keep(ann, [offerOf("open-repository", "repository", "99999999-9999-4999-8999-999999999999")]))).toEqual(STALE);
+    expect(await click(ann, "user", keep(ann, [offerOf("open-repository", "repository", bobRepo)]))).toEqual(STALE);
   });
 });
 
@@ -176,15 +176,15 @@ describe("open-turn-item", () => {
     expect(onHome(turnFor(started.ctx), { runId: "run-ann-1" })).toBe(true);
   });
 
-  it("opens Home for a run that is there", () => {
-    expect(click(admin, "admin", keep(admin, [offerOf("open-turn-item", "run", "run-ann-1")]))).toEqual({ type: "open-turn-item", to: "#/home" });
+  it("opens Home for a run that is there", async () => {
+    expect(await click(admin, "admin", keep(admin, [offerOf("open-turn-item", "run", "run-ann-1")]))).toEqual({ type: "open-turn-item", to: "#/home" });
   });
 
   it("is denied for an administrator who is a user now", async () => {
     const at = keep(admin2, [offerOf("open-turn-item", "run", "run-ann-1")]);
     await updateUser(admin2.user.id, { role: "user" });
     try {
-      expect(click(admin2, "admin", at)).toEqual(DENIED);
+      expect(await click(admin2, "admin", at)).toEqual(DENIED);
     } finally {
       await updateUser(admin2.user.id, { role: "admin" });
     }
@@ -195,28 +195,28 @@ describe("open-turn-item", () => {
     const i = RULES.findIndex((r) => r.method === "GET" && r.path === "your-turn");
     const [rule] = RULES.splice(i, 1);
     try {
-      expect(click(admin, "admin", at)).toEqual(DENIED);
+      expect(await click(admin, "admin", at)).toEqual(DENIED);
     } finally {
       RULES.splice(i, 0, rule!);
     }
   });
 
-  it("is stale for a dismissed item, an unknown run and an issue that is not on the board", () => {
+  it("is stale for a dismissed item, an unknown run and an issue that is not on the board", async () => {
     const at = keep(admin, [offerOf("open-turn-item", "run", "run-ann-1"), offerOf("open-turn-item", "run", "run-gone"), offerOf("open-turn-item", "issue", "acme/app#99")]);
     const k = key()!;
     dismissTurn(started.ctx, k);
     try {
-      expect(click(admin, "admin", at, 0)).toEqual(STALE);
+      expect(await click(admin, "admin", at, 0)).toEqual(STALE);
     } finally {
       restoreTurn(k);
     }
-    expect(click(admin, "admin", at, 0)).toMatchObject({ type: "open-turn-item" });
-    expect(click(admin, "admin", at, 1)).toEqual(STALE);
-    expect(click(admin, "admin", at, 2)).toEqual(STALE);
+    expect(await click(admin, "admin", at, 0)).toMatchObject({ type: "open-turn-item" });
+    expect(await click(admin, "admin", at, 1)).toEqual(STALE);
+    expect(await click(admin, "admin", at, 2)).toEqual(STALE);
   });
 
-  it("is not for a user: the type is not hers", () => {
-    expect(click(ann, "user", keep(ann, [offerOf("open-turn-item", "run", "run-ann-1")]))).toEqual(DENIED);
+  it("is not for a user: the type is not hers", async () => {
+    expect(await click(ann, "user", keep(ann, [offerOf("open-turn-item", "run", "run-ann-1")]))).toEqual(DENIED);
   });
 });
 

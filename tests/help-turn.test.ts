@@ -642,6 +642,59 @@ describe("offers of a turn", () => {
     expect(last(ANN.id, turn.conversation.id).reply?.offers).toEqual([{ type: "open-run", title: "Open this run", evidence: "state-run-1", subject: { kind: "run", id: RUN_ID } }]);
     expect(calls[0]!.prompt).not.toContain("\"subject\"");
   });
+
+  it("describes both checks in the prompt: they run only on a click, and their results may come back as Check sources", () => {
+    const prompt = turnPrompt(input, []);
+    expect(prompt).toContain("refresh-evidence");
+    expect(prompt).toContain("test-repository");
+    expect(prompt).toContain("never runs by itself");
+    expect(prompt).toContain("starts with \"Check\"");
+    expect(turnPrompt({ ...input, role: "admin" }, [])).toContain("test-repository");
+  });
+
+  it("stores a check offer about a repository source and drops one about a run source", async () => {
+    const REPO_SRC: Source = { id: "state-repo-1", kind: "state", title: "A repository", ref: "repository r · #/repos/r", observedAt: STATE_SRC.observedAt, subject: { kind: "repository", id: "r" } };
+    const s = svc(answer({ ...offerAnswer, evidence: ["state-run-1", "state-repo-1"], offers: [{ type: "refresh-evidence", evidence: "state-run-1" }, { type: "test-repository", evidence: "state-repo-1" }, { type: "test-repository", evidence: "state-run-1" }] }), { evidence: () => [STATE_SRC, REPO_SRC] });
+    const turn = s.ask(ANN, { question: "Why does it wait?" });
+    await s.idle();
+    expect(last(ANN.id, turn.conversation.id).reply?.offers?.map((o) => [o.type, o.subject.kind])).toEqual([["refresh-evidence", "run"], ["test-repository", "repository"]]);
+  });
+});
+
+describe("actions in the prompt", () => {
+  const input = { owner: ANN.id, role: "user" as const, question: "q", history: [] };
+  const OLD_LINE = "- changes-state: asks you to do or change something\n";
+
+  it("stays as it was with actions off", () => {
+    const p = turnPrompt(input, []);
+    expect(p).toContain('"actions": [],');
+    expect(p).toContain(OLD_LINE);
+    expect(p).not.toContain("resume-run");
+    expect(turnPrompt(input, [], [], undefined, { actions: false })).toBe(p);
+  });
+
+  it("lists the action ids and the binding rule with actions on, for both roles", () => {
+    for (const role of ["user", "admin"] as const) {
+      const p = turnPrompt({ ...input, role }, [], [], undefined, { actions: true });
+      expect(p).toContain('"id": one of ["resume-run","cancel-run"]');
+      expect(p).toContain("put that source's id in `source`, and list it in `evidence` too");
+      expect(p).toContain("it runs only after the person reads the server's preview and confirms it");
+      expect(p).toContain("to resume or cancel one of the person's own runs, answer and propose the action instead");
+      expect(p).not.toContain('"actions": [],');
+      expect(p).not.toContain(OLD_LINE);
+    }
+  });
+
+  it("is switched by help.actions in a real turn", async () => {
+    for (const on of [true, false]) {
+      config = cfg({ actions: on });
+      calls.length = 0;
+      const s = svc();
+      s.ask(ANN, { question: "Why does it wait?" });
+      await s.idle();
+      expect(calls[0]!.prompt.includes("resume-run"), String(on)).toBe(on);
+    }
+  });
 });
 
 describe("the documentation of help turns", () => {

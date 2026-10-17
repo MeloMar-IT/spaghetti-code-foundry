@@ -45,10 +45,10 @@ export const EVENT_ACTIONS = [
   "turn-reject",
   "turn-retry",
   "view-as",
+  "help-action",
   "help-ask",
   "help-delete",
   "help-export",
-  "help-action",
 ] as const;
 export type EventAction = (typeof EVENT_ACTIONS)[number];
 export const TARGET_MAX = 255;

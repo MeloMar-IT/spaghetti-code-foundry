@@ -9,7 +9,7 @@ import { announcer, failState } from "./refinement-states.js";
 import { banner, emptyState, loadingState, staleNote } from "./states.js";
 import { renderBacklog } from "./refinement-backlog.js";
 import { sourceSection } from "./refinement-import.js";
-import { newSessionDialog } from "./refinement-new.js";
+import { helpOrigin, newSessionDialog, wishedSession } from "./refinement-new.js";
 import { pageHeader } from "./kit/product.js";
 import { conversationPage } from "./templates.js";
 import { publishSection } from "./refinement-publish.js";
@@ -366,7 +366,7 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
           meta: [h("span", { class: `pill state-${s.state}` }, STATE_LABELS[s.state] ?? s.state), h("span", { class: "muted" }, s.repo), s.ownerName && !s.mine ? h("span", { class: "muted" }, `Owner: ${s.ownerName}`) : null],
           actions: [h("span", { class: "spacer" }), buttons] }),
         nextBox,
-        ...sourceSection(s, { send }),
+        ...sourceSection(s, { send }), ...helpOrigin(s),
         s.repoAvailable === false ? h("p", { class: "status bad" }, "This repository is not in My repositories any more. Add it again to keep working on this session.") : null,
         !open && s.removedOn ? h("p", { class: "muted" }, `Dropped. It is removed on ${date(s.removedOn)}.`) : null,
         );
@@ -489,11 +489,11 @@ export async function renderRefinement(main, { admin = false, id, readOnly = fal
   reloadList = () => load(false);
   mount(main, head, note, body);
   mount(head, toolbar(false));
+  let wished = readOnly ? null : takeWish("refinement"); // taken and listened for before the list loads; a wish meanwhile waits for it
+  if (!readOnly) unwish = onWish("refinement", (w) => (wished === undefined ? void wishedSession(repos, opened, w ?? {}) : (wished = w ?? {})));
   await load(true);
-  if (!readOnly && current()) {
-    // The palette's "New refinement session": a wish that came before this page, or one for the page as it is.
-    if (takeWish("refinement")) void newSessionDialog(repos, opened);
-    unwish = onWish("refinement", () => void newSessionDialog(repos, opened));
-  }
+  if (!readOnly && current()) void wishedSession(repos, opened, wished);
+  else unwish();
+  wished = undefined;
   return cleanup;
 }

@@ -7,7 +7,7 @@ import { tokenVarNames } from "../engine/isolation.js";
 import { runClaude, type ClaudeRunOptions, type ClaudeRunResult } from "../steps/claude.js";
 import { OFFERS, SUBJECT_KINDS, type Subject } from "./actions.js";
 import { STEP_KINDS } from "./plan.js";
-import { CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, aboutOf, checkReply, hideNames, type About, type Evidence, type HelpRole, type Reply } from "./contract.js";
+import { ACTIONS, CERTAINTY, LIMIT_CODES, LIST_MAX, NAV_PAGES, QUESTION_RULES, QUESTION_TYPES, TEXT_MAX, aboutOf, checkReply, hideNames, type About, type Evidence, type HelpRole, type Reply } from "./contract.js";
 import { SELECTION_MAX, resolveContext, type EntityResolver, type ResolvedContext } from "./context.js";
 import { GuardError, Removals, guardExcerpt, type GuardOptions, type SecretCategory } from "./guard.js";
 import {
@@ -300,7 +300,8 @@ export function jsonOf(output: string): unknown {
  * the page, the earlier turns and the list of sources: one JSON value on the last line. A text in a JSON value has
  * no line break of its own, so it cannot start a part or end one.
  */
-export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excerpts: readonly Excerpt[] = [], context?: ResolvedContext): string {
+export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excerpts: readonly Excerpt[] = [], context?: ResolvedContext, opts: { actions?: boolean } = {}): string {
+  const ids = opts.actions ? ACTIONS.filter((a) => a.roles.includes(input.role)) : [];
   const where = context
     ? {
         page: context.page ? { type: context.page.id, title: context.page.title } : null,
@@ -336,7 +337,10 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     "- When a source says it may be out of date, or that sources disagree, say that the state is uncertain and name both sides. Do not pick one.",
     "- A source whose title starts with \"Diagnosis\" is what the product itself says is wrong. When the question is why something does not work, build the answer on it and name, in the explanation: the symptom, the cause, the supporting evidence, the missing evidence and the safest next check. Give a cause only as that source gives it, and say whether it is confirmed or a hypothesis. When it says the cause is not recognised, or there is no such source, say that the cause is not known and give the safest next check: never make up a cause, a file, a setting, a command or any other detail that no source holds.",
     "- When the question is how to solve a problem, give `plan`: ordered steps, the safest reversible one first. Put a check that verifies a change directly after it. Every change step needs `expected`, `failure` and `fallback`. Give a high-impact change only when a diagnosis source confirms the cause. Never say that a step was done or that it worked: you cannot know.",
-    "- An offer is a button that opens the page of the thing a `state` source is about: `open-run` for a source about a run, `open-repository` for one about a repository, `open-turn-item` (administrators only) for a run or an issue that waits under Your turn on Home. Never write an address for it.",
+    "- An offer is a button the person may press; it never runs by itself. `open-run`, `open-repository` and `open-turn-item` (administrators only) open the page of the thing a `state` source is about. `refresh-evidence` reads that thing again (any `state` source). `test-repository` tests the connection of a repository (a source about a repository). Nothing is changed by either. Their results are saved in the conversation and may come back as `state` sources whose title starts with \"Check\". Never say a check ran or what it found unless such a source says so. Never write an address for an offer.",
+    ...(opts.actions
+      ? [`- An action is a change to one of the person's own runs that the server can carry out: ${ids.map((a) => `\`${a.id}\` (${a.title})`).join(", ")}. Propose one only when a \`state\` source is about that run: put that source's id in \`source\`, and list it in \`evidence\` too. Nothing happens when you propose it: it runs only after the person reads the server's preview and confirms it. Never say that it was done.`]
+      : []),
     "- Never ask for, repeat or guess a password, a token or a key.",
     `- The person is ${input.role === "admin" ? "an administrator" : "a user, not an administrator: say nothing about settings, accounts, the monitor or other people's work"}.`,
     "",
@@ -350,7 +354,9 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     ` "links": [{"to": one of ${JSON.stringify(NAV_PAGES.filter((p) => p.roles.includes(input.role)).map((p) => p.to))}}],`,
     ' "drafts": [{"title": …, "text": a text the person may copy; it is not sent anywhere}],',
     ` "plan": [{"kind": one of ${JSON.stringify(STEP_KINDS)}, "title": …, "instructions": …, "to": one of the pages above or leave out, "evidence": [ids from \`sources\`], "expected": what the person should see, "failure": what failure looks like, "fallback": what to do then}],`,
-    ' "actions": [],',
+    opts.actions
+      ? ` "actions": [{"id": one of ${JSON.stringify(ids.map((a) => a.id))}, "source": the id of the \`state\` source about the run, also in \`evidence\`}],`
+      : ' "actions": [],',
     ` "offers": [{"type": one of ${JSON.stringify(OFFERS.filter((o) => o.roles.includes(input.role)).map((o) => o.type))}, "evidence": the id of the \`state\` source it is about}],`,
     ' "limit": only when you do not answer, one of the codes below}',
     "",
@@ -358,7 +364,9 @@ export function turnPrompt(input: TurnInput, offered: readonly Evidence[], excer
     ...QUESTION_TYPES.map((t) => `- ${t}: ${QUESTION_RULES[t].what}`),
     "",
     "Do not answer, and set `limit`, when the question:",
-    "- changes-state: asks you to do or change something",
+    opts.actions
+      ? "- changes-state: asks you to do or change something; to resume or cancel one of the person's own runs, answer and propose the action instead"
+      : "- changes-state: asks you to do or change something",
     "- other-account: is about the work or data of another account",
     "- admin-only: is about models, costs, accounts or server settings",
     "- secret: asks for a secret, or holds one",
@@ -641,7 +649,7 @@ export class HelpTurns {
     let r: ClaudeRunResult;
     try {
       r = await (this.deps.run ?? runClaude)({
-        prompt: turnPrompt(ready.input, offered, ready.excerpts, ready.context),
+        prompt: turnPrompt(ready.input, offered, ready.excerpts, ready.context, { actions: config.help.actions === true }),
         cwd: dir,
         logFile: join(dir, LOG),
         claudeBin: this.deps.claudeBin,

@@ -1,16 +1,17 @@
 import { createHash } from "node:crypto";
 import type { User } from "../auth/users.js";
-import { OFFER_WORDS, OfferCallSchema, offerCall, offerDef, subjectPage, type OfferType } from "../help/actions.js";
+import { OFFER_WORDS, OfferCallSchema, callOf, checkOf, checkText, offerCall, offerDef, subjectPage, type CheckInput, type CheckOutcome, type OfferType } from "../help/actions.js";
 import { aboutOf } from "../help/contract.js";
 import { ENTITY_LIMIT, pageOf, type Asker } from "../help/context.js";
 import type { HelpRole } from "../help/contract.js";
 import { guardExcerpt, type GuardOptions } from "../help/guard.js";
-import { getConversation, type Conversation } from "../help/store.js";
+import { HelpError, addCheck, checkBlocked, getConversation, revisionOf, type Conversation } from "../help/store.js";
 import type { Source, TurnInput } from "../help/turn.js";
 import { onHome } from "../your-turn.js";
 import { runsListFor } from "./api-runs.js";
 import { currentAccount, helpSnapshot, type Snapshot } from "./help-context.js";
 import { diagnosisSources } from "./help-diagnosis.js";
+import { testRepo } from "./api-repos.js";
 import { HttpError } from "./http.js";
 import { authorize, findRule } from "./permissions.js";
 import type { ApiContext } from "./server.js";
@@ -170,19 +171,48 @@ export function offerConversation(ctx: ApiContext, asker: Asker, conversation: s
 const stale = () => new HttpError(404, OFFER_WORDS.stale);
 const denied = () => new HttpError(403, OFFER_WORDS.denied);
 
+/** What a click gives back: the address of a page, or the outcome of a check and the conversation that now holds its result. */
+export type OfferDone = { type: OfferType; to: string } | { type: OfferType; outcome: CheckOutcome; conversation: Conversation };
+
+/** The connection test, as `runOffer` calls it. A test can put another function in its place to hold the wait open. */
+export type TestFn = (ctx: ApiContext, user: User, id: string) => Promise<{ at: string; ok: boolean; checks: unknown[] }>;
+
+/** The connection test ran, but its result could not be stored in the conversation. `detail` is the audit detail. */
+export class CheckNotStored extends HttpError {
+  constructor(
+    status: number,
+    message: string,
+    public detail: string,
+  ) {
+    super(status, message);
+  }
+}
+
+/** The conversations in which a check runs now. */
+const checking = new Set<string>();
+
+/** The label of a snapshot is not guarded by `helpSnapshot` (it can hold a repository or flow name): it passes the guard here, with a fixed word when it is withheld. */
+function labelOf(s: Snapshot, guard: GuardOptions): string {
+  const g = guardExcerpt(s.label, guard);
+  return g.withheld || !g.text.trim() ? "the thing you asked about" : g.text;
+}
+
+const inputOf = (s: Snapshot, type: CheckInput["type"], offer: number, scope: HelpRole, guard: GuardOptions): CheckInput => ({ type, offer, scope, kind: s.kind, id: s.id, label: labelOf(s, guard), observedAt: s.observedAt, fields: s.fields, unavailable: s.unavailable, stale: s.stale });
+
 /**
  * Runs an offer of a stored reply for the account as it is now: checks the role, the permission rule of the call the
- * offer names, and that the thing is still there and visible, then gives back the address the server builds.
- * Throws HttpError (or HelpError from the store); stores nothing.
+ * offer names, and that the thing is still there and visible. A navigation offer gives back the address the server
+ * builds and stores nothing. A check (read it again, test the connection) also needs an open conversation with room
+ * and no other check, runs, and stores its result as a `check` message. Throws HttpError (or HelpError from the store).
  */
-export function runOffer(ctx: ApiContext, asker: Asker, conversation: string, body: unknown, guard: GuardOptions = {}): { type: OfferType; to: string } {
+export async function runOffer(ctx: ApiContext, asker: Asker, conversation: string, body: unknown, guard: GuardOptions = {}, test: TestFn = testRepo): Promise<OfferDone> {
   // again: the conversation can change while the body is read
   const { user, role, conversation: found } = offerConversation(ctx, asker, conversation);
   const call = OfferCallSchema.safeParse(body);
   if (!call.success) throw new HttpError(400, OFFER_WORDS.badBody);
   const message = found.messages.find((m) => m.id === call.data.message && m.role === "assistant" && m.status === "done");
   const offer = message?.reply?.offers?.[call.data.offer];
-  if (!offer) throw stale();
+  if (!message || !offer) throw stale();
   const def = offerDef(role, offer.type);
   if (!def) throw denied();
   if (!def.subjects.includes(offer.subject.kind)) throw stale();
@@ -190,7 +220,7 @@ export function runOffer(ctx: ApiContext, asker: Asker, conversation: string, bo
   const g = guardExcerpt(offer.subject.id, guard);
   if (g.withheld || g.removed.length > 0 || g.text !== offer.subject.id) throw stale();
   const seg = offerCall(def, offer.subject);
-  const rule = findRule(def.call.method, seg);
+  const rule = findRule(callOf(def, offer.subject).method, seg);
   if (!rule) throw denied();
   try {
     authorize(ctx, user, rule, seg);
@@ -199,6 +229,7 @@ export function runOffer(ctx: ApiContext, asker: Asker, conversation: string, bo
   }
   const who = { id: user.id, role };
   let there: boolean;
+  let snap: Snapshot | undefined;
   if (def.type === "open-turn-item") {
     if (offer.subject.kind === "run") there = onHome(turnFor(ctx), { runId: offer.subject.id });
     else {
@@ -206,8 +237,46 @@ export function runOffer(ctx: ApiContext, asker: Asker, conversation: string, bo
       there = !!s && onHome(turnFor(ctx), { repo: String(s.fields.repository), issue: Number(s.fields.issue) });
     }
   } else {
-    there = !!helpSnapshot(ctx, who, offer.subject, guard);
+    snap = helpSnapshot(ctx, who, offer.subject, guard);
+    there = !!snap;
   }
   if (!there) throw stale();
-  return { type: def.type, to: def.to(offer.subject) };
+  if (def.effect === "navigation" || !snap) return { type: def.type, to: def.to!(offer.subject) };
+
+  // a check: refused before anything is contacted when the conversation cannot take its result
+  const blocked = checkBlocked(found);
+  if (blocked) throw new HttpError(409, checkText[blocked]);
+  if (checking.has(conversation)) throw new HttpError(409, checkText.running);
+  const revision = revisionOf(found);
+  checking.add(conversation);
+  try {
+    if (def.type === "refresh-evidence") {
+      const stored = addCheck(user.id, conversation, message.id, checkOf(inputOf(snap, def.type, call.data.offer, role, guard), "read"), revision);
+      return { type: def.type, outcome: "read", conversation: stored };
+    }
+    if (def.type !== "test-repository") throw denied();
+    let result: Awaited<ReturnType<TestFn>>;
+    try {
+      result = await test(ctx, user, offer.subject.id);
+    } catch (e) {
+      if (e instanceof HttpError && e.status === 404) throw stale();
+      if (e instanceof HttpError && e.status === 403) throw denied();
+      throw e;
+    }
+    const again = helpSnapshot(ctx, who, offer.subject, guard);
+    if (!again) throw stale();
+    const outcome: CheckOutcome = result.ok ? "passed" : "failed";
+    const failed = (result.checks as { check?: unknown; ok?: unknown; message?: unknown }[]).filter((c) => c.ok === false).map((c) => `${String(c.check)}: ${String(c.message)}`);
+    const check = checkOf(inputOf(again, def.type, call.data.offer, role, guard), outcome, failed);
+    try {
+      return { type: def.type, outcome, conversation: addCheck(user.id, conversation, message.id, check, revision) };
+    } catch (e) {
+      if (!(e instanceof HelpError)) throw e;
+      // the test ran and its result is on the repository: say so, and do not bring a deleted conversation back
+      const gone = e.code === "deleted";
+      throw new CheckNotStored(gone ? 410 : 409, gone ? e.message : checkText.notStored, `${def.type}; ${outcome}; not stored: ${e.code}`);
+    }
+  } finally {
+    checking.delete(conversation);
+  }
 }

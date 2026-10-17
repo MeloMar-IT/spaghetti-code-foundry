@@ -103,7 +103,7 @@ describe("an action bound through a turn", () => {
     expect(ready.targets[evil.id]).toBeUndefined();
   });
 
-  it("keeps the prompt's empty actions, and keeps an action only while help.actions is on", async () => {
+  it("keeps the prompt's empty actions while help.actions is off, and keeps an action only while help.actions is on", async () => {
     await withHome(async () => {
       const { ConfigSchema } = await import("../src/config.js");
       const { ACTIONS } = await import("../src/help/contract.js");
@@ -128,7 +128,8 @@ describe("an action bound through a turn", () => {
       expect(off.prompt).not.toContain('"about"');
       const on = await ask(true);
       expect(on.reply.actions).toEqual([{ id: "resume-run", title: "Resume the run", impact: ACTIONS[0]!.effect, source: source.id, about: { kind: "run", id: "run-7" } }]);
-      expect(on.prompt).toContain('"actions": [],');
+      expect(on.prompt).not.toContain('"actions": [],');
+      expect(on.prompt).toContain('"id": one of ["resume-run","cancel-run"]');
     });
   });
 });

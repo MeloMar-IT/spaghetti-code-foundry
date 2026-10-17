@@ -1,4 +1,5 @@
-import { glyph, h, timeAgo } from "./dom.js";
+import { previewOf } from "./ask-handoff.js";
+import { glyph, h, modal, mount, timeAgo } from "./dom.js";
 
 // The nodes of the Ask SCF drawer. No decisions here (those are in ui/ask-model.js) and no calls (ui/ask.js).
 // Every text of a conversation is put in as text: `h` never reads a string as HTML.
@@ -44,7 +45,7 @@ export function askFrame(on, { questionMax, hints = {} }) {
   history.hidden = true;
   const drawer = h("aside", { id: "ask-drawer", class: "ask-drawer", role: "dialog", "aria-modal": "true", "aria-labelledby": "ask-title", tabindex: "-1" },
     h("div", { class: "ask-head" }, h("h2", { id: "ask-title" }, "Ask SCF"), fresh, historyBtn, close),
-    h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. It changes nothing."),
+    h("p", { class: "muted text-sm" }, "Ask SCF explains how the Foundry works. It reads and explains. Nothing changes unless you review and confirm an action."),
     paused,
     status,
     talk,
@@ -66,25 +67,68 @@ const sourceLine = (src, { now, onNavigate }) => [
 ];
 
 /** One proposal of a reply as a card. It says whether it only reads or would change something. It has no control that does anything; a page is a plain link. */
-export function cardNode(card, { onNavigate } = {}) {
+export function cardNode(card, { onNavigate, onReview, focusKey } = {}) {
   return h("div", { class: `ask-card ask-card-${card.kind}`, role: "group", "aria-label": `${card.title}. ${card.effect === "changes-state" ? "Changes state" : "Read-only"}` },
     h("div", { class: "ask-card-head" },
       h("strong", {}, card.title),
       h("span", { class: `pill ${card.effect === "changes-state" ? "sem-warning" : "sem-neutral"}` }, card.effect === "changes-state" ? "Changes state" : "Read-only")),
     card.link ? h("a", { href: card.link.href, onClick: () => onNavigate?.() }, card.link.title) : null,
     card.text ? h(card.pre ? "pre" : "p", { class: "ask-card-text" }, card.text) : null,
+    card.act !== undefined ? h("button", { type: "button", class: "small", "data-act": String(card.act), "data-focus": `ask-review-${focusKey ?? ""}-${card.act}`, onClick: () => onReview?.(card.act) }, "Review the change") : null,
     h("p", { class: "ask-card-note muted" }, card.note));
 }
 
 /** An offer of a reply as a card with a button. The button asks the server; the card itself opens nothing. `onOffer(index)`. */
 export function offerNode(offer, { onOffer } = {}) {
-  return h("div", { class: "ask-card ask-card-offer", role: "group", "aria-label": `${offer.title}. Opens a page` },
+  const check = offer.effect === "check";
+  return h("div", { class: "ask-card ask-card-offer", role: "group", "aria-label": `${offer.title}. ${check ? "Reads only" : "Opens a page"}` },
     h("div", { class: "ask-card-head" },
       h("strong", {}, offer.title),
-      h("span", { class: "pill sem-neutral" }, "Opens a page")),
+      h("span", { class: "pill sem-neutral" }, check ? "Reads only" : "Opens a page")),
     offer.text ? h("p", { class: "ask-card-text" }, offer.text) : null,
-    h("button", { type: "button", class: "small", "data-offer": String(offer.index), onClick: () => onOffer?.(offer.index) }, "Open"),
+    h("button", { type: "button", class: "small", "data-offer": String(offer.index), onClick: () => onOffer?.(offer.index) }, check ? "Run check" : "Open"),
     h("p", { class: "ask-card-note muted" }, offer.note));
+}
+
+/** The stored result of a check: title, outcome pill, the lines the server read, and when. `layout` is `checkLayout`. */
+export function checkNodes(layout, { now } = {}) {
+  if (!layout) return h("p", { class: "ask-card-note muted" }, "This check result cannot be shown.");
+  return h("div", { class: "ask-card ask-card-check", role: "group", "aria-label": `${layout.title}. ${layout.outcome}` },
+    h("div", { class: "ask-card-head" },
+      h("strong", {}, layout.title),
+      h("span", { class: `pill ${layout.pill}` }, layout.outcome)),
+    layout.lines.length ? h("dl", { class: "ask-step-signals" }, layout.lines.map((l) => {
+      const at = l.indexOf(": ");
+      return at > 0 ? [h("dt", {}, l.slice(0, at)), h("dd", {}, l.slice(at + 2))] : [h("dt", {}, "Note"), h("dd", {}, l)];
+    })) : null,
+    h("p", { class: "ask-card-note muted", title: layout.observedAt }, `read ${timeAgo(layout.observedAt, now)}${layout.uncertain ? ". Some of it may be out of date." : ""}`));
+}
+
+/** The dialog that shows the server's preview. Resolves true only for the confirm button; Cancel, Escape, the cross and the backdrop give false. */
+export function reviewDialog({ title, intro, rows, danger, note, confirm }) {
+  let cancelBtn;
+  const done = modal(title, (close) => {
+    cancelBtn = h("button", { type: "button", onClick: () => close(false) }, "Cancel");
+    return h("div", { class: "stack" },
+      h("p", {}, intro),
+      rows.map((r) => h("p", {}, h("strong", {}, `${r.label}: `), r.text)),
+      h("span", { class: `pill ${danger ? "sem-danger" : "sem-warning"}` }, danger ? "High impact" : "Reversible"),
+      h("p", { class: "muted" }, note),
+      h("div", { class: "row" }, h("span", { class: "spacer" }), cancelBtn,
+        h("button", { type: "button", class: danger ? "danger" : "primary", onClick: () => close(true) }, confirm)));
+  });
+  cancelBtn.focus();
+  return done.then((answer) => answer === true);
+}
+
+/** What the server read back after a confirmed change: a word, its words and what to do next. All text. */
+export function outcomeNodes(outcomes) {
+  return h("div", { class: "ask-cards", "aria-label": "What the change did" }, outcomes.map((o) =>
+    h("div", { class: "ask-card ask-card-outcome", role: "group", "aria-label": `${o.title}: ${o.word}` },
+      h("div", { class: "ask-card-head" }, h("strong", {}, o.title), h("span", { class: `pill ${o.pill}` }, o.word)),
+      h("p", { class: "ask-card-text" }, o.words),
+      o.recovery ? h("p", { class: "ask-card-note muted" }, o.recovery) : null,
+      o.at ? h("p", { class: "muted" }, `Read back ${timeAgo(o.at)}`) : null)));
 }
 
 const pillClass = (s) => (s.kind === "high-impact" ? "sem-danger" : s.kind === "reversible" ? "sem-warning" : "sem-neutral");
@@ -126,7 +170,8 @@ export function replyNodes(layout, opts = {}) {
     basis.sources.length ? h("ul", { class: "ask-basis", "aria-label": basis.needs === "state" ? "The current state this answer rests on" : "The documentation this answer rests on" },
       basis.sources.map((src) => h("li", {}, sourceLine(src, opts)))) : null,
     layout.cards.length ? h("div", { class: "ask-cards" }, layout.cards.map((c) => cardNode(c, opts))) : null,
-    layout.offers?.length ? h("div", { class: "ask-cards", "aria-label": "Pages you can open" }, layout.offers.map((o) => offerNode(o, opts))) : null,
+    layout.outcomes?.length ? outcomeNodes(layout.outcomes) : null,
+    layout.offers?.length ? h("div", { class: "ask-cards", "aria-label": "Pages you can open and checks you can run" }, layout.offers.map((o) => offerNode(o, opts))) : null,
     trust.state === "limit" ? null : h("details", { class: "ask-sources" },
       h("summary", {}, `Sources and assumptions (${sources.length === 1 ? "1 source" : `${sources.length} sources`})`),
       h("h4", {}, "Sources"),
@@ -169,8 +214,48 @@ export function entryNode(entry, opts = {}) {
     h("span", { class: "ask-who" }, entry.who),
     entry.kind === "waiting" ? h("span", { class: "spinner", "aria-hidden": "true" }) : null,
     entry.kind === "waiting" ? " " : null,
-    entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i) }) : entry.text,
+    entry.kind === "check" ? checkNodes(entry.check, opts) : entry.layout ? replyNodes(entry.layout, { ...opts, onToggle: (i) => opts.onToggle?.(entry.id, i), onOffer: (i) => opts.onOffer?.(entry.id, i), onReview: (i) => opts.onReview?.(entry.id, i), focusKey: entry.id }) : entry.text,
+    entry.kind === "answer" && opts.onHandoff ? h("button", { type: "button", class: "small", "data-handoff": entry.id, onClick: () => opts.onHandoff(entry.id) }, "Continue on another page") : null,
+    entry.handoffs?.length ? h("ul", { class: "muted small", "aria-label": "Where you took this answer" },
+      entry.handoffs.map((r) => h("li", {}, r.href ? h("a", { href: r.href, onClick: () => opts.onNavigate?.() }, r.text) : r.text, r.at ? ` ${timeAgo(r.at, opts.now)}` : ""))) : null,
     entry.note ? h("span", { class: "ask-note" }, entry.note) : null);
+}
+
+/**
+ * The content of the hand-off preview. Without `picked`: the offers as buttons. With it: what would be copied (as text),
+ * the note, and Cancel / confirm. `on`: onPick(offer), onCancel(), onConfirm().
+ */
+export function handoffPreviewNodes(choices, on) {
+  const { offers, picked } = choices;
+  if (!picked) {
+    return [
+      h("p", { class: "muted" }, "Where do you want to take this answer? You see what is copied before anything opens."),
+      ...offers.map((o) => h("div", { class: "ask-card", role: "group", "aria-label": o.title },
+        h("div", { class: "ask-card-head" }, h("strong", {}, o.title), h("span", { class: "pill sem-neutral" }, o.fill ? "Copies text" : "Opens a page")),
+        h("button", { type: "button", class: "small", "data-handoff-pick": o.key, onClick: () => on.onPick(o) }, "Choose"))),
+      h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { type: "button", onClick: () => on.onCancel() }, "Cancel")),
+    ];
+  }
+  const p = picked.preview;
+  return [
+    h("h3", {}, p.title),
+    ...(p.nothing ? [h("p", {}, "Nothing is copied. The page opens.")]
+      : p.rows.map((r) => h("div", { class: "stack" }, h("b", {}, r.label), h("pre", { class: "pre-wrap" }, r.text)))),
+    h("p", { class: "muted small" }, p.note),
+    h("div", { class: "row" }, h("span", { class: "spacer" }), h("button", { type: "button", "data-handoff-cancel": "1", onClick: () => on.onCancel() }, "Cancel"), h("button", { type: "button", class: "primary", "data-handoff-confirm": "1", onClick: () => on.onConfirm() }, p.confirm)),
+  ];
+}
+
+/** The hand-off dialog: choose a page when there are several, see the preview, confirm. Resolves with the chosen offer, or null on Cancel or Escape. */
+export async function handoffDialog({ offers, conversationTitle = "" }) {
+  const chosen = await modal("Continue on another page", (close) => {
+    const box = h("div", { class: "stack" });
+    const show = (offer) => mount(box, handoffPreviewNodes({ offers, picked: offer ? { offer, preview: previewOf(offer, conversationTitle) } : null }, { onPick: show, onCancel: () => close(null), onConfirm: () => close(offer) }));
+    show(offers.length === 1 ? offers[0] : null);
+    return box;
+  });
+  // the close button of the dialog, Escape and a click outside resolve undefined
+  return chosen ?? null;
 }
 
 /** The suggested questions as buttons. Picking one fills the question box; it does not send. */

@@ -3,6 +3,7 @@ import { writeAudit } from "../auth/audit.js";
 import { effectiveLimits } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
+import { checkSources } from "../help/actions.js";
 import { CONTEXT_MAX, CONTEXT_PRIORITY, ENTITY_LIMIT, FILTER_LIMIT, SELECTION_MAX, contextSize, type EntityResolver } from "../help/context.js";
 import { forRole } from "../help/contract.js";
 import { HelpDocs } from "../help/docs.js";
@@ -34,8 +35,10 @@ import {
 import { addStats, readStats, sumStats, sweepStats } from "../help/telemetry.js";
 import { HelpTurns, REFUSAL_WORDS, TurnRefused, helpPaused, helpTarget, type Asker, type RefusalCode } from "../help/turn.js";
 import type { Config } from "../config.js";
-import { currentAccount, snapshotResolver } from "./help-context.js";
-import { liveEvidence, offerConversation, runOffer } from "./help-evidence.js";
+import { currentAccount, helpSnapshot, snapshotResolver } from "./help-context.js";
+import { handoffsFor, recordHandoff } from "./help-handoff.js";
+import { CheckNotStored, liveEvidence, offerConversation, runOffer } from "./help-evidence.js";
+import { ActionRefused, cancelAction, confirmAction, prepareAction, type ActionDeps } from "./help-actions.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -44,7 +47,7 @@ import { asParam } from "./view-as.js";
 const INTERNAL = "Ask SCF is not working; see the server log";
 /** The answer to a help call made through "View as user": conversations are the owner's alone. */
 export const NOT_IN_PREVIEW = "Ask SCF conversations are not shown in a preview";
-const STATUS: Record<HelpErrorCode, number> = { "bad-question": 400, "bad-context": 400, "not-found": 404, deleted: 410, "bad-state": 409, busy: 409, limit: 409, "bad-feedback": 400 };
+const STATUS: Record<HelpErrorCode, number> = { "bad-question": 400, "bad-context": 400, "not-found": 404, deleted: 410, "bad-state": 409, busy: 409, limit: 409, "bad-feedback": 400, changed: 409 };
 
 /** How often the server applies the retention policy to the stored conversations, in ms. */
 export const HELP_SWEEP_MS = 60 * 60 * 1000;
@@ -109,7 +112,21 @@ export function helpTurnsOf(ctx: ApiContext): HelpTurns {
   if (!s) {
     const docs = helpDocsOf(ctx);
     // the evidence of a turn: what the server observes now for this account, then the fitting sections of the installed documentation
-    s = new HelpTurns({ config: ctx.config, claudeBin: ctx.opts.claudeBin, log: ctx.diagLog, resolve: helpResolver(ctx), allow: (asker) => helpAllowed(ctx, asker), evidence: (input) => [...liveEvidence(ctx, input, { patterns: ctx.config().help.sensitive_patterns ?? [] }), ...docs.sources(input.question, input.role)] });
+    s = new HelpTurns({
+      config: ctx.config,
+      claudeBin: ctx.opts.claudeBin,
+      log: ctx.diagLog,
+      resolve: helpResolver(ctx),
+      allow: (asker) => helpAllowed(ctx, asker),
+      evidence: (input) => {
+        const guard = { patterns: ctx.config().help.sensitive_patterns ?? [] };
+        const who = currentAccount({ id: input.owner, role: input.role });
+        const role = who?.role === "admin" ? "admin" : "user";
+        // the stored checks of this conversation, only about what the account can see now
+        const checks = who ? checkSources(input.history, role, (subject) => !!helpSnapshot(ctx, { id: who.id, role }, subject, guard)) : [];
+        return [...liveEvidence(ctx, input, guard), ...checks, ...docs.sources(input.question, input.role)];
+      },
+    });
     services.set(ctx, s);
   }
   return s;
@@ -129,6 +146,15 @@ function mapped(ctx: ApiContext, e: unknown): HttpError {
 export function guardedHelp<T>(ctx: ApiContext, fn: () => T): T {
   try {
     return fn();
+  } catch (e) {
+    throw mapped(ctx, e);
+  }
+}
+
+/** The same for an async function. */
+export async function guardedHelpAsync<T>(ctx: ApiContext, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
   } catch (e) {
     throw mapped(ctx, e);
   }
@@ -301,6 +327,18 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
   if (seg[1] !== "conversations") return false;
   const id = seg[2] ?? "";
+  // Approved actions: the confirmation, and dropping the token. Before the generic POST block. (The preview shares its path with the offer click below.)
+  const deps: ActionDeps = { allow: (a) => helpAllowed(ctx, a) };
+  if (method === "POST" && seg[3] === "actions" && seg.length === 5 && (seg[4] === "confirm" || seg[4] === "cancel")) {
+    try {
+      if (seg[4] === "cancel") send(res, 200, cancelAction(ctx, user, id, await readJson(req), deps));
+      else send(res, 200, await confirmAction(ctx, user, id, () => readJson(req), deps));
+    } catch (e) {
+      if (e instanceof ActionRefused) throw new HttpError(e.status, e.message);
+      throw mapped(ctx, e);
+    }
+    return true;
+  }
   /** Takes a turn and writes its audit line: started (with the id of the turn) or refused (with the code). A question that is not valid writes none. */
   const audited = (conversation: string | undefined, how: "ask" | "retry", fn: () => Turn): Turn => {
     try {
@@ -328,23 +366,59 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     send(res, 200, conversationView(guardedHelp(ctx, () => turns.cancel(asker, id)), user));
     return true;
   }
-  // An offer of a stored reply: checked again for the account as it is now; nothing is stored. The conversation is checked before the body is read.
+  // One path, two calls: `{ message, index }` previews an approved action with a token; `{ message, offer }` follows an offer.
   if (seg.length === 4 && method === "POST" && seg[3] === "actions") {
+    // Checked again for the account as it is now; the conversation is looked at before the body, for both calls.
     if (!ctx.config().help.enabled) throw new HttpError(503, REFUSAL_WORDS.off);
+    let preview = false;
     try {
       const no = helpAllowed(ctx, asker);
       if (no === "not-allowed") throw new HttpError(REFUSED[no], REFUSAL_WORDS[no]);
       guardedHelp(ctx, () => offerConversation(ctx, asker, id));
       const body = await readJson(req);
-      const done = guardedHelp(ctx, () => runOffer(ctx, asker, id, body, { patterns: ctx.config().help.sensitive_patterns ?? [] }));
-      auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), done.type);
-      send(res, 200, done);
+      // a body with an `index` and no `offer` asks for the preview of an approved action; anything else is an offer click
+      if ("index" in body && !("offer" in body)) {
+        preview = true;
+        send(res, 200, prepareAction(ctx, user, id, body, deps));
+        return true;
+      }
+      const done = await guardedHelpAsync(ctx, () => runOffer(ctx, asker, id, body, { patterns: ctx.config().help.sensitive_patterns ?? [] }));
+      if ("outcome" in done) {
+        auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), `${done.type}; ${done.outcome}`);
+        send(res, 200, { type: done.type, outcome: done.outcome, conversation: conversationView(done.conversation, user) });
+      } else {
+        auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), done.type);
+        send(res, 200, done);
+      }
     } catch (e) {
+      if (preview) {
+        if (e instanceof ActionRefused) throw new HttpError(e.status, e.message);
+        throw mapped(ctx, e);
+      }
+      if (e instanceof CheckNotStored) {
+        auditHelp(ctx, user.id, "help-action", "failed", targetOf(id), e.detail);
+        throw e;
+      }
       // a refusal because of who asks (403) or because the conversation or the thing is not there (404, 410) is audited; a bad body is not
       const why = e instanceof HttpError ? (e.status === 403 ? "denied" : e.status === 404 || e.status === 410 ? "stale" : undefined) : undefined;
       if (why) auditHelp(ctx, user.id, "help-action", "failed", targetOf(id), `refused: ${why}`);
       throw e;
     }
+    return true;
+  }
+  // A hand-off of a finished answer to another page. No model is called, so it works while Ask SCF is off or paused. Only the conversation changes.
+  if (seg.length === 4 && seg[3] === "handoffs" && (method === "GET" || method === "POST")) {
+    const guard = { patterns: ctx.config().help.sensitive_patterns ?? [] };
+    if (method === "GET") {
+      const message = new URL(req.url ?? "/", "http://x").searchParams.get("message");
+      send(res, 200, { offers: guardedHelp(ctx, () => handoffsFor(ctx, asker, id, message, guard)).offers });
+      return true;
+    }
+    guardedHelp(ctx, () => offerConversation(ctx, asker, id));
+    const body = await readJson(req);
+    const { conversation, offer } = guardedHelp(ctx, () => recordHandoff(ctx, asker, id, body, guard));
+    auditHelp(ctx, user.id, "help-action", "ok", targetOf(id), `handoff ${offer.where}`);
+    send(res, 200, { conversation: conversationView(conversation, user), offer });
     return true;
   }
   if (seg.length === 2 && method === "GET") {

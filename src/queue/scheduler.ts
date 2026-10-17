@@ -267,6 +267,12 @@ export class Scheduler {
     return this.pending.some((p) => p.runId === runId);
   }
 
+  /** A copy of the job that waits in the queue for this run, or undefined. Read only. */
+  queuedJob(runId: string): QueuedJob | undefined {
+    const q = this.pending.find((p) => p.runId === runId);
+    return q ? structuredClone(q) : undefined;
+  }
+
   isLocked(lockKey: string) {
     return [...this.active.values()].some((a) => a.queued.lockKey === lockKey) || this.pending.some((p) => p.lockKey === lockKey);
   }

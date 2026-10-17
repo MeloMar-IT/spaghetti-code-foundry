@@ -321,7 +321,7 @@ describe("the answer", () => {
     expect(api.helpConversation).toHaveBeenCalledTimes(2);
     expect(d.ui.status.textContent).toBe("Ask SCF answered. The answer is below your question.");
     const answer = walk(d.ui.thread).filter((e) => e.classList.contains("ask-answer"))[0]!;
-    expect(answer.children.at(-1)).toBe("<img src=x onerror=alert(1)> Because.");
+    expect(answer.children.filter((c) => typeof c === "string").at(-1)).toBe("<img src=x onerror=alert(1)> Because.");
     expect(walk(d.ui.thread).some((e) => e.tag === "img")).toBe(false);
     // nothing is read after the answer
     expect(vi.getTimerCount()).toBe(0);
@@ -409,7 +409,7 @@ describe("a turn from question to answer", () => {
     expect(actions(d)).toEqual(["Stop", "Delete"]);
     expect(d.ui.suggestBox.hidden).toBe(true);
     await vi.advanceTimersByTimeAsync(1500);
-    expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask SCFBecause."]);
+    expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask SCFBecause.Continue on another page"]);
     expect(actions(d)).toEqual(["This solved my problem", "Archive", "Delete"]);
     d.ui.question.value = "And then?";
     await d.send();
@@ -600,7 +600,7 @@ describe("history and a new conversation", () => {
     expect(api.helpConversation).toHaveBeenCalledWith(ID2);
     expect(d.ui.history.hidden).toBe(true);
     expect(d.ui.talk.hidden).toBe(false);
-    expect(texts(d.ui.thread, "ask-entry")).toEqual(["YouOther?", "Ask SCFYes."]);
+    expect(texts(d.ui.thread, "ask-entry")).toEqual(["YouOther?", "Ask SCFYes.Continue on another page"]);
     expect(d.ui.status.textContent).toBe("The conversation is open.");
     expect(doc().activeElement).toBe(d.ui.question);
     // the open one is marked in the list
@@ -709,7 +709,7 @@ describe("late answers are dropped", () => {
     expect(d.state.conversation.id).toBe("c1");
     await vi.advanceTimersByTimeAsync(1500);
     expect(api.helpConversation).toHaveBeenCalledTimes(1);
-    expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask SCFBecause."]);
+    expect(texts(d.ui.thread, "ask-answer")).toEqual(["Ask SCFBecause.Continue on another page"]);
   });
 });
 
@@ -781,7 +781,7 @@ describe("a reply by its parts", () => {
   it("shows the short answer first, then how sure it is, then what it rests on", async () => {
     const { all, answer } = await shown(reply());
     const order = all.filter((e) => e.parent === answer).map((e) => e.attrs.class);
-    expect(order).toEqual(["ask-who", "ask-summary", "ask-explain", "ask-trust ask-trust-confirmed", "ask-basis", "ask-sources"]);
+    expect(order).toEqual(["ask-who", "ask-summary", "ask-explain", "ask-trust ask-trust-confirmed", "ask-basis", "ask-sources", "small"]);
     expect(byClass(all, "ask-summary")[0]!.textContent).toBe("Your run waits.");
     expect(byClass(all, "ask-trust")[0]!.textContent).toBe("✓ Checked against its sources. This rests on the sources listed below.");
     // the sign is for the eye; the words say the same
@@ -831,7 +831,8 @@ describe("a reply by its parts", () => {
   it("keeps HTML and addresses in the text of a reply as text", async () => {
     const evil = '<img src=x onerror=alert(1)> <a href="https://evil.example">click</a> https://evil.example javascript:alert(1) #/settings';
     const { all, answer } = await shown(reply({ summary: evil, explanation: evil, recommendations: [evil], drafts: [{ title: evil, text: evil }], evidence: [state({ title: evil, ref: evil })] }));
-    expect(all.filter((e) => ["img", "script", "iframe", "a", "button", "form", "input"].includes(e.tag))).toEqual([]);
+    // the one control is the hand-off button of the answer
+    expect(all.filter((e) => ["img", "script", "iframe", "a", "button", "form", "input"].includes(e.tag) && e.attrs["data-handoff"] === undefined)).toEqual([]);
     expect(byClass(all, "ask-summary")[0]!.children).toEqual([evil]);
     expect(byClass(all, "ask-explain")[0]!.children).toEqual([evil]);
     expect(answer.textContent.split(evil).length - 1).toBeGreaterThanOrEqual(6);
@@ -856,7 +857,7 @@ describe("a reply by its parts", () => {
     expect(cards[2]!.textContent).toContain("Win: https://evil.example");
     expect(walk(cards[3]!).find((e) => e.tag === "pre")!.textContent).toBe("Line 1\nLine 2");
     // nothing in a reply can be pressed to do something
-    expect(all.filter((e) => e.tag === "button" || e.tag === "form" || e.tag === "input")).toEqual([]);
+    expect(all.filter((e) => (e.tag === "button" && e.attrs["data-handoff"] === undefined) || e.tag === "form" || e.tag === "input")).toEqual([]);
     expect(cards[4]!.textContent).toContain("Ask SCF does not do this. Nothing happens here.");
     for (const c of cards) expect(Object.keys(c.listeners)).toEqual([]);
   });
@@ -1011,7 +1012,7 @@ describe("a plan in the drawer", () => {
 describe("rating an answer", () => {
   const A1 = "a1";
   const rated = (feedback?: any) => conv([q("Why?"), a("done", { id: A1, text: "Because.", ...(feedback ? { feedback } : {}) })]);
-  const buttons = (d: any) => walk(d.ui.thread).filter((e) => e.tag === "button");
+  const buttons = (d: any) => walk(d.ui.thread).filter((e) => e.tag === "button" && e.attrs["data-handoff"] === undefined);
   const byFocus = (d: any, name: string) => walk(d.ui.thread).find((e) => e.attrs["data-focus"] === name)!;
   const rateApi = (current: () => any) => vi.fn(async (_id: any, body: any) => {
     const next = body.vote === null ? rated() : rated({ vote: body.vote, reasons: body.reasons, at: "2026-03-01T10:00:00.000Z" });
@@ -1235,6 +1236,34 @@ describe("offers in the drawer", () => {
       expect(d.ui.error.textContent, String(to)).toBe("This page cannot be opened here.");
       expect(go).not.toHaveBeenCalled();
     }
+  });
+
+  it("shows a Run check button for a check offer, draws the stored result and says it is done, without going anywhere", async () => {
+    const checkReply = { ...reply, offers: [{ type: "refresh-evidence", title: "Read it again", evidence: "state-run-1", subject: { kind: "run", id: "r1" } }] };
+    const check = { type: "refresh-evidence", offer: 0, subject: { kind: "run", id: "r1" }, scope: "user", title: "Run r1 waits", outcome: "read", lines: ["status: waiting"], observedAt: new Date().toISOString() };
+    const stored = { id: "k1", role: "check", status: "done", text: "Run r1 waits: Read again", at: check.observedAt, replyTo: "a1", check };
+    const helpOffer = vi.fn(async () => ({ type: "refresh-evidence", outcome: "read", conversation: conv([q("Why?"), a("done", { reply: checkReply }), stored]) }));
+    const go = vi.fn();
+    const made = make({ api: { helpConversation: vi.fn(async () => conv([q("Why?"), a("done", { reply: checkReply })])), helpOffer }, deps: { go } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    const button = openButtons(made.d)[0]!;
+    expect(button.textContent).toBe("Run check");
+    button.click();
+    await vi.waitFor(() => expect(made.d.ui.status.textContent).toBe("The check is done. Its result is below the answer."));
+    const card = walk(made.d.ui.thread).find((e) => e.classList.contains("ask-card-check"))!;
+    expect(card.textContent).toContain("Run r1 waits");
+    expect(card.textContent).toContain("Read again");
+    expect(card.textContent).toContain("status");
+    expect(go).not.toHaveBeenCalled();
+    expect(made.d.state.open).toBe(true);
+  });
+
+  it("shows the server's sentence for a 409 of a check", async () => {
+    const sentence = "This conversation changed while the check ran. Run the check again.";
+    const { d } = await shown(vi.fn(async () => { throw Object.assign(new Error(sentence), { status: 409 }); }));
+    await d.runOffer("a1", 0);
+    expect(d.ui.error.textContent).toBe(sentence);
   });
 
   it("sends one call for two clicks while it is on its way", async () => {

@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
+import { CheckSchema, checkText, type Check } from "./actions.js";
 import { ReplySchema, displayText, type Reply } from "./contract.js";
+import { OUTCOMES_KEPT, OutcomeSchema, type Outcome } from "./outcome.js";
 import { CONTEXT_KINDS, ContextError, ContextSchema, checkEnvelope, type PageContext } from "./context.js";
+import { HANDOFF_KEEP, HandoffRecordSchema, type HandoffRecord } from "./handoff.js";
 import { SECRET_CATEGORIES, type SecretCategory } from "./guard.js";
 
 export { CONTEXT_KINDS, type PageContext };
@@ -14,7 +17,7 @@ export { CONTEXT_KINDS, type PageContext };
  * changes one takes that account: a conversation of another account is the same as one that does not exist.
  */
 
-export type HelpErrorCode = "bad-question" | "bad-context" | "not-found" | "deleted" | "bad-state" | "busy" | "limit" | "bad-feedback";
+export type HelpErrorCode = "bad-question" | "bad-context" | "not-found" | "deleted" | "bad-state" | "busy" | "limit" | "bad-feedback" | "changed";
 
 /** A problem with what the caller asked for (not with the file). The message is safe to show. */
 export class HelpError extends Error {
@@ -100,7 +103,7 @@ const FailureSchema = z.object({ code: z.enum(FAILURE_CODES), retry: z.boolean()
 const MessageSchema = z
   .object({
     id: z.uuid(),
-    role: z.enum(["user", "assistant"]),
+    role: z.enum(["user", "assistant", "check"]),
     at: z.iso.datetime(),
     status: z.enum(MESSAGE_STATUS),
     /** What a person reads. For a reply the server wrote it from `reply`; it is never parsed back. */
@@ -114,26 +117,37 @@ const MessageSchema = z
     failure: FailureSchema.optional(),
     /** A finished reply: how the owner rated it. Only a vote and fixed reasons, never a text. */
     feedback: FeedbackSchema.optional(),
+    /** A finished reply: what approved actions ended as, read back from the run (the newest OUTCOMES_KEPT). */
+    outcomes: z.array(OutcomeSchema).max(OUTCOMES_KEPT).optional(),
     /** A reply: how often the turn was started (1, and one more for every retry). */
     tries: z.number().int().min(1).max(1000).optional(),
     /** A reply: when it last changed (answered, failed, stopped or started again). */
     updated: z.iso.datetime().optional(),
     /** The kinds of secret the server took out of this text before it was stored. Never a value. */
     redacted: z.array(z.enum(SECRET_CATEGORIES)).min(1).max(SECRET_CATEGORIES.length).optional(),
+    /** A check message: the server-written result of a read-only check the person asked for. */
+    check: CheckSchema.optional(),
   })
   .strict()
   .superRefine((m, ctx) => {
     const issue = (path: string) => ctx.addIssue({ code: "custom", message: "invalid", path: [path] });
     if (m.role === "user") {
       if (m.status !== "done") issue("status");
-      for (const k of ["replyTo", "reply", "failure", "feedback", "tries", "updated"] as const) if (m[k] !== undefined) issue(k);
+      for (const k of ["replyTo", "reply", "failure", "feedback", "outcomes", "tries", "updated", "check"] as const) if (m[k] !== undefined) issue(k);
+    } else if (m.role === "check") {
+      if (m.status !== "done") issue("status");
+      if (m.replyTo === undefined) issue("replyTo");
+      if (m.check === undefined) issue("check");
+      for (const k of ["context", "reply", "failure", "tries", "updated", "feedback", "outcomes"] as const) if (m[k] !== undefined) issue(k);
     } else {
+      if (m.check !== undefined) issue("check");
       if (m.replyTo === undefined) issue("replyTo");
       if (m.tries === undefined) issue("tries");
       if (m.context !== undefined) issue("context");
       if ((m.status === "done") !== (m.reply !== undefined)) issue("reply");
       if ((m.status === "failed") !== (m.failure !== undefined)) issue("failure");
       if (m.feedback !== undefined && m.status !== "done") issue("feedback");
+      if (m.outcomes !== undefined && m.status !== "done") issue("outcomes");
     }
   });
 export type Message = z.infer<typeof MessageSchema>;
@@ -150,6 +164,8 @@ const ConversationSchema = z
     /** While deleted: `expired` when the retention time ended it, not the owner. */
     deletedBy: z.enum(["owner", "expired"]).optional(),
     messages: z.array(MessageSchema).max(MESSAGE_LIMIT),
+    /** The answers the owner took to another page (the last HANDOFF_KEEP). A file written before they existed has none. */
+    handoffs: z.array(HandoffRecordSchema).max(HANDOFF_KEEP).optional(),
     created: z.iso.datetime(),
     updated: z.iso.datetime(),
   })
@@ -163,11 +179,17 @@ const ConversationSchema = z
     if (c.state === "deleted" && (c.messages.length > 0 || c.title !== "")) issue("messages");
     if (c.state !== "deleted" && c.title === "") issue("title");
     const ids = new Set<string>();
+    if (c.state === "deleted" && c.handoffs !== undefined) issue("handoffs");
+    c.handoffs?.forEach((h, i) => {
+      if (!c.messages.some((m) => m.id === h.message && m.role === "assistant")) ctx.addIssue({ code: "custom", message: "invalid", path: ["handoffs", i, "message"] });
+    });
     c.messages.forEach((m, i) => {
       if (ids.has(m.id)) ctx.addIssue({ code: "custom", message: "duplicate", path: ["messages", i, "id"] });
       ids.add(m.id);
       // a reply comes right after its question, and only the last reply can be unfinished
       if (m.role === "assistant" && c.messages[i - 1]?.id !== m.replyTo) ctx.addIssue({ code: "custom", message: "invalid", path: ["messages", i, "replyTo"] });
+      // a check answers an earlier reply of the assistant
+      if (m.role === "check" && !c.messages.slice(0, i).some((x) => x.role === "assistant" && x.id === m.replyTo)) ctx.addIssue({ code: "custom", message: "invalid", path: ["messages", i, "replyTo"] });
       if (m.status === "pending" && i !== c.messages.length - 1) ctx.addIssue({ code: "custom", message: "invalid", path: ["messages", i, "status"] });
     });
   });
@@ -475,6 +497,31 @@ export function rateReply(owner: string, id: string, rating: Rating, opts: Store
   return out!;
 }
 
+/** Adds an outcome to a finished reply of the owner; the newest OUTCOMES_KEPT stay. `updated` is not changed (like rateReply). */
+export function addOutcome(owner: string, id: string, message: string, outcome: Outcome, opts: StoreOptions = {}): Conversation {
+  return change(owner, id, opts, (c) => {
+    const m = c.messages.find((x) => x.id === message);
+    if (!m || m.role !== "assistant" || m.status !== "done") throw new HelpError("bad-state", "only a finished answer can hold an outcome");
+    const outcomes = [...(m.outcomes ?? []), OutcomeSchema.parse(outcome)].slice(-OUTCOMES_KEPT);
+    const next: Conversation = { ...c, messages: c.messages.map((x) => (x === m ? { ...m, outcomes } : x)) };
+    return { next, value: copy(next) };
+  })!;
+}
+
+/**
+ * Records that the owner took a finished answer to another page. Only the conversation changes (`updated`, not
+ * `state`); the last HANDOFF_KEEP records are kept. An archived conversation and anything but a finished reply are `bad-state`.
+ */
+export function addHandoff(owner: string, id: string, rec: Omit<HandoffRecord, "at">, opts: StoreOptions = {}): Conversation {
+  return change(owner, id, opts, (c, at) => {
+    if (c.state === "archived") throw new HelpError("bad-state", "restore the conversation first");
+    const m = c.messages.find((x) => x.id === rec.message);
+    if (!m || m.role !== "assistant" || m.status !== "done") throw new HelpError("bad-state", "only a finished answer can be taken to another page");
+    const next: Conversation = { ...c, handoffs: [...(c.handoffs ?? []), { ...rec, at }].slice(-HANDOFF_KEEP), updated: at };
+    return { next, value: copy(next) };
+  })!;
+}
+
 /** Marks a turn as failed, with the fixed sentence for its reason. */
 export function failTurn(id: string, turn: TurnRef, failure: { code: FailureCode; retry: boolean }, opts: StoreOptions = {}): Conversation | undefined {
   return endTurn(id, turn, opts, (m, at) => ({ state: "failed", message: { ...m, status: "failed", failure: { code: failure.code, retry: failure.retry }, text: FAILURE_WORDS[failure.code], updated: at } }));
@@ -534,6 +581,42 @@ export function deleteConversation(owner: string, id: string, opts: StoreOptions
     const next = wiped(c, at, "owner");
     const pending = pendingOf(c)?.id;
     return { next, value: { conversation: copy(next), ...(pending !== undefined ? { pending } : {}) } };
+  })!;
+}
+
+// ---- checks ----------------------------------------------------------------------------------------
+
+/** A fingerprint of the conversation as a check starts. Every turn and state change moves `updated`; a rating does not. */
+export function revisionOf(c: Conversation): string {
+  const last = c.messages[c.messages.length - 1];
+  return [c.updated, c.state, c.messages.length, last?.id ?? "", last?.status ?? ""].join("|");
+}
+
+/** Why a check cannot run in this conversation now, before anything is contacted. */
+export function checkBlocked(c: Conversation): "busy" | "bad-state" | "limit" | undefined {
+  if (pendingOf(c)) return "busy";
+  if (c.state !== "active") return "bad-state";
+  if (c.messages.length + 1 > MESSAGE_LIMIT) return "limit";
+  return undefined;
+}
+
+/**
+ * Stores the result of a check as a `check` message after the reply it came from. Refused when a reply is pending
+ * (`busy`), the conversation is not active (`bad-state`), it is not the one `expect` (the fingerprint taken before the
+ * check ran) any more (`changed`), the reply or its offer is not as the check says (`not-found`), or it is full (`limit`).
+ */
+export function addCheck(owner: string, id: string, replyTo: string, check: Check, expect: string, opts: StoreOptions = {}): Conversation {
+  const checked = CheckSchema.parse(check);
+  return change(owner, id, opts, (c, at) => {
+    const blocked = checkBlocked(c);
+    if (blocked === "busy" || blocked === "bad-state") throw new HelpError(blocked, checkText[blocked]);
+    if (revisionOf(c) !== expect) throw new HelpError("changed", checkText.changed);
+    const offer = c.messages.find((m) => m.id === replyTo && m.role === "assistant" && m.status === "done")?.reply?.offers?.[checked.offer];
+    if (!offer || offer.type !== checked.type || offer.subject.kind !== checked.subject.kind || offer.subject.id !== checked.subject.id) throw new HelpError("not-found", "no such offer in this conversation");
+    if (blocked === "limit") throw new HelpError("limit", checkText.limit);
+    const message: Message = { id: randomUUID(), role: "check", at, status: "done", text: `${checked.title}: ${checkText.outcome[checked.outcome]}`.slice(0, TEXT_MAX), replyTo, check: checked };
+    const next: Conversation = { ...c, messages: [...c.messages, message], updated: at };
+    return { next, value: copy(next) };
   })!;
 }
 

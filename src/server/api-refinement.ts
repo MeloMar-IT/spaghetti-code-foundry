@@ -53,7 +53,9 @@ import {
   renameSession,
   restoreSession,
 } from "../refinement/store.js";
+import { getConversation } from "../help/store.js";
 import { HttpError, readJson, readOptionalJson, send } from "./http.js";
+import { asParam } from "./view-as.js";
 import { importIssue, removeBuildLabel } from "./api-refinement-import.js";
 import type { ApiContext, Route } from "./server.js";
 
@@ -117,13 +119,26 @@ const deps = (ctx: ApiContext): ArchitectDeps => ({ scheduler: ctx.scheduler, re
 export { deps as architectDeps };
 
 /** The GitHub repositories of an account, as the names a new session takes. */
-function githubNames(userId: string): string[] {
+export function githubNames(userId: string): string[] {
   const out: string[] = [];
   for (const r of listRepos(userId)) {
     const name = githubNameOf(r.url);
     if (name !== undefined) out.push(name);
   }
   return out;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `fromHelp` of a new session: kept only for one of the caller's own Ask SCF conversations that is not deleted; otherwise left out. */
+function helpOrigin(owner: string, v: unknown): string | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== "string" || !UUID.test(v)) throw new HttpError(400, "fromHelp must be the id of one of your Ask SCF conversations");
+  try {
+    return getConversation(owner, v).state !== "deleted" ? v : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** The vars of a flow, read fresh each time so a changed limit shows at once; undefined when the flow cannot be loaded. */
@@ -172,7 +187,7 @@ const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) 
 };
 
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
-function view(ctx: ApiContext, s: Session, viewer: User) {
+function view(ctx: ApiContext, s: Session, viewer: User, viewing = false) {
   const repoAvailable = ownsRepo(s.owner, s.repo);
   // The talk holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
   const talkHidden = !repoAvailable && s.talk !== undefined;
@@ -192,6 +207,8 @@ function view(ctx: ApiContext, s: Session, viewer: User) {
     repoAvailable,
     title: s.title,
     idea: s.idea,
+    // The link back to the owner's Ask SCF conversation: the owner's own read only, never an admin's and never under View as user.
+    ...(mine && !viewing && s.fromHelp ? { fromHelp: s.fromHelp } : {}),
     // The draft that stands for the issue is worked out also for older sessions; the old text kept for a retry is not shown, and the journal of a replacement is not shown, only how far it is.
     ...(s.source
       ? { source: (({ pending: _pending, draft: _draft, replacing: _replacing, ...rest }) => ({ ...rest, ...(markOf(s) !== undefined ? { draft: markOf(s) } : {}), ...(replaceState(s) ? { replace: replaceState(s) } : {}) }))(s.source) }
@@ -292,7 +309,8 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
       }
       return send(res, 201, guarded(ctx, () => view(ctx, made, user))), true;
     }
-    const s = guarded(ctx, () => view(ctx, createSession(user.id, { repo: body.repo, idea: body.idea, title: body.title }), user));
+    const fromHelp = helpOrigin(user.id, body.fromHelp);
+    const s = guarded(ctx, () => view(ctx, createSession(user.id, { repo: body.repo, idea: body.idea, title: body.title, ...(fromHelp ? { fromHelp } : {}) }), user));
     return send(res, 201, s), true;
   }
   /** The session when the caller may see it, after the end of its architect run was taken in. */
@@ -302,7 +320,7 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
     // An admin may have changed the Definition of Ready: the stored drafting/ready state is made right on a read.
     return correctReadyState(id) ?? s;
   };
-  if (seg.length === 2 && method === "GET") return send(res, 200, guarded(ctx, () => view(ctx, settled(seg[1]!), user))), true;
+  if (seg.length === 2 && method === "GET") return send(res, 200, guarded(ctx, () => view(ctx, settled(seg[1]!), user, asParam(req) !== undefined))), true;
   if (seg.length === 2 && method === "PUT") {
     const body = await readJson(req);
     return send(res, 200, guarded(ctx, () => view(ctx, settled(renameSession(actor, seg[1]!, body.title).id), user))), true;

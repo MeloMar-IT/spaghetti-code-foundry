@@ -1243,7 +1243,11 @@ chapter 14 of the user guide holds the same sentences as the code.
 ### Ask SCF: confirmed actions
 
 Part 1 of 2 of #567 (#569), behind `help.actions`, off by default. It only binds a proposal to the
-run the server knows about; nothing is carried out yet (#568 and part 2 do that).
+run the server knows about. Part 2 of 2 (#570) carries out a previewed action through the API. The
+drawer's review and confirm control is #568: `ui/api.js` (`prepareHelpAction`, `confirmHelpAction`,
+`cancelHelpAction`, all through `req`), `ui/ask.js` (`reviewAction`, the `review` option that tests
+replace), `ui/ask-model.js` (`previewRows`, `outcomeOf`) and `ui/ask-view.js` (`reviewDialog`,
+`outcomeNodes`). The prompt lists the role's action ids only when `help.actions` is on (`turnPrompt`).
 
 - **The list.** `ACTIONS` has `resume-run` (`reversible`, `undoable: true`) and `cancel-run` (`high`,
   `undoable: false`), both for `admin` and `user`. Each has a fixed `effect` text written by the
@@ -1263,6 +1267,46 @@ run the server knows about; nothing is carried out yet (#568 and part 2 do that)
 - **Outside check.** `actionProblems(reply, ready, role)` in `src/server/help-evals.ts` re-checks each
   kept action against the prepared turn, and `scf eval help` reports each problem as `unsafe-action`,
   which blocks a release. The scenarios are in the `action` group.
+
+**Part 2 (#570): preview, confirm and cancel.** `prepareAction`, `confirmAction` and `cancelAction` in
+`src/server/help-actions.ts`; the routes are in `src/server/api-help.ts`, before the generic POST block.
+Every error that is a refusal becomes an `ActionRefused` with a code, a status and a fixed sentence.
+
+- **Preview.** `previewOf` builds the answer from fixed words and the run's own fields; no model text
+  is in it. Only the grant is written, in memory.
+- **Grants.** `ActionGrants` (`src/help/grants.ts`) keeps each token under its sha256; the token is never
+  stored. A grant lasts `GRANT_TTL_MS` (5 minutes), at most `GRANTS_PER_OWNER` (5) per owner and
+  `GRANTS_MAX` (1000) in all, and a new preview replaces the grant for the same reply action. `peek`
+  reads a copy without using the token; `take` uses it up, and burns it when the binding does not match
+  (owner, conversation, reply, index). `grantsOf(ctx)` keeps one set per server in a WeakMap.
+- **State version.** `stateVersion(scheduler, runId)` is a sha256 of the run (status, history length and
+  last record, answers, next and waiting step, resumes, finish time) and of the queue: whether the run
+  is queued or active, and the identity of its queued job (`scheduler.queuedJob`: enqueue time, kind,
+  `from`, decision, source, priority, who queued it). A job taken out and queued again changes it.
+- **Confirm, in order.** `peek` gives a fast 409 for an unknown, used or expired token. A resume then
+  awaits `checkResume` (the same gate as the run's page; the await may take a while). Then one
+  synchronous block, with no `await`: `take`, the binding and the proposed action again, the state
+  version, the switches and the account (`checkSwitches`, read again), `mayAct` (the run's rule, the
+  owner only) and `applies`. Two confirms cannot both pass, and a permission change during the gate
+  wait is seen here. Refusals are audited once (`refused: <code>`) and change nothing.
+- **Executor and error boundary.** `startResume` (sync submit and audit) or `cancelRun` runs inside
+  one `try` that covers the executor and the read-back. A throw there leaves the token used, is logged
+  as "did not end cleanly" and does not become a 500. The state is then read again, best effort.
+- **Read-back.** `watchRun` subscribes to the scheduler's events and waits at most `READ_BACK_MS`
+  (5000, overridable by `deps.readBackMs`). `armed` is set after `subscribe` returns, so replayed events
+  are ignored; the timer is `unref`'d; the subscription and timer are released in a `finally` on every
+  path.
+- **Result.** `decide` works from the fresh state only. `done` is reported only after read-back. For a
+  cancel, `cancelled` is checked before "still active", so a stop that was saved while the run finishes
+  is `stopped` only when the status says `cancelled`; a run that ended with another status first is
+  `not-done`. `OUTCOME_WORDS` gives the fixed words and recovery for each result.
+- **Storage.** `addOutcome` (`src/help/store.ts`) adds the outcome to a finished reply and keeps the
+  newest `OUTCOMES_KEPT` (10). `OutcomeSchema` (`src/help/outcome.ts`) is strict. A failed store or audit
+  write answers `stored: false`; the outcome is still returned.
+
+Tests: `tests/help-grants.test.ts`, `tests/help-actions.test.ts` (the checks, with a replaced gate),
+`tests/help-actions-run.test.ts` (the real scheduler: stale evidence, read-back, the error boundary) and
+`tests/help-actions-api.test.ts` (HTTP with `FAKE_HELP`).
 
 ### Ask SCF: stored conversations
 
@@ -1512,6 +1556,49 @@ contract can import its values without a cycle.
 Tests: `tests/help-actions.test.ts` (the registry, `subjectPage`, `OfferSchema`) and
 `tests/help-offers-api.test.ts` (each type: allowed, role denied, rule denied, stale, another
 account's target; the route refusals).
+
+### Ask SCF: checks
+
+#566 (part 2 of 2 of #239) adds two offers with `effect: "check"`: `refresh-evidence` (every subject
+kind, `call: "read"`, so checked against `READ_CALLS[kind]`) and `test-repository` (repositories, checked
+against `POST repos/:id/test`). They run only on a click and have no confirmation token. Helpers in
+`src/help/actions.ts`: `READ_CALLS`, `callOf`, `CheckSchema`, `checkText` (fixed words), `checkOf`,
+`checkSourceId` and `checkSources`.
+
+- **The record.** A check is a `check` message in `help.json`: `status: "done"`, `replyTo` (an earlier
+  assistant message), and `check` (`CheckSchema`, strict: type, offer index, subject, scope, title,
+  outcome `read`/`passed`/`failed`, at most 30 lines of at most 300 characters, `observedAt`, and
+  `uncertain` when it is stale). It has no `context`, `reply`, `failure`, `tries` or `updated`. The
+  conversation refine checks that `replyTo` is an assistant message. `version` stays 1: the field is
+  optional, and a file without checks loads unchanged.
+- **Bounds.** `checkOf` cuts each value and line with `cutText` (300 characters, the marker ` …`
+  included, which keeps the `help-context.ts` 302-character case inside the limit), cuts the title to 500
+  and keeps 30 lines, with the `unavailable` and `stale` lines and the failed connection lines first. The
+  result passes `CheckSchema.parse` before it is stored, so a snapshot with long values stores a valid check.
+- **Pre-checks** (`runOffer`, `help-evidence.ts`, then `addCheck` in `store.ts`). Before any remote call:
+  the conversation is `active`, no reply is pending, there is room for one more message
+  (`MESSAGE_LIMIT`), and no other check runs in the same conversation (an in-memory set keyed by
+  conversation). Otherwise the click answers 409 with `checkText`, and nothing is contacted.
+- **The wait.** `testRepo` (exported from `api-repos.ts`) awaits the remote and saves the status before it
+  returns. If the conversation then changed (a question, an archive, the limit, a delete), `addCheck`
+  refuses with `changed` (409); a conversation deleted meanwhile answers 410 and nothing is restored.
+  `addCheck` also refuses `not-found` (an unknown message, or an offer whose type or subject does not
+  match). The click answers `CheckNotStored` with `checkText.notStored` (or the 410 sentence), and the audit line is
+  `help-action` `failed` with `test-repository; <outcome>; not stored: <code>`. The test still ran; its
+  result is on the repository page. The race is not prevented; its outcome is reported truthfully. Sharing a
+  capacity reservation with `addQuestion` and archive was rejected: it would touch many store functions.
+- **Refusals.** `testRepo` maps 404 to stale and 403 (including the App allow-list, `needOnAppList`) to
+  denied; 409 and 500 pass through. `runOffer` takes the test function as an optional argument, so the
+  race tests can interleave the wait deterministically.
+- **Later turns.** `checkSources` gives the newest `CHECK_SOURCES` (2) checks as `state` sources. A check
+  of the administrator's view is dropped for a user, and so is a check about a subject the account cannot
+  see now (`visible`). A check older than `CHECK_FRESH_MS` (15 minutes) is marked uncertain. In
+  `api-help.ts` the order is: live sources, check sources, then the documentation.
+- **Audit.** `help-action` `ok` with `<type>; <outcome>`; a refusal stays `failed` with `refused: <code>`.
+- **Tests.** `tests/help-checks-api.test.ts` covers the success paths, the authorization matrix (every
+  refusal asserts that the fake remote and `gh` were not called and that no check was stored), the
+  pre-check 409s, the interleavings, oversized values and the visibility of sources after a demotion.
+  `tests/help-store.test.ts` covers `addCheck`.
 
 ### Ask SCF: authorization, retention, audit and limits
 
