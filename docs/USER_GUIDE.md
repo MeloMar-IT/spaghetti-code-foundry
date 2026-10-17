@@ -4263,7 +4263,7 @@ GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…:
 
 ##### The Java and Spring Boot suite
 
-`evals/skill-gate/java-spring/suite.yaml` is the suite for the Java and Spring skills (`java`, `spring-boot`, and the others of that area). It has nine selection cases, a `conflicts`, `context` and `tools` section (the same as `evals/skill-gate/suite.yaml`), and no `instructions` section. Run it like any suite:
+`evals/skill-gate/java-spring/suite.yaml` is the suite for the Java and Spring skills (`java`, `spring-boot`, and the others of that area). It has nine selection cases, a `conflicts`, `context` and `tools` section (the same as `evals/skill-gate/suite.yaml`), and an `instructions` section with four effect scenarios ([The Java and Spring effect scenarios](#the-java-and-spring-effect-scenarios)). The section is not mandatory, and plain `score` and `gate` do not run it. Run it like any suite:
 
 ```
 scf skills score <source-id> evals/skill-gate/java-spring/suite.yaml
@@ -4271,9 +4271,29 @@ scf skills gate <source-id> evals/skill-gate/java-spring/suite.yaml
 ```
 
 - **What it checks.** A skill must be offered for Java work and must not be offered elsewhere. Seven `offered` cases use tasks on `fixtures/orders-service`, a small Spring Boot service with a JPA repository, tests and a Maven `pom.xml`. Two `not-offered` cases use `fixtures/web-tool`, a Node.js package with no Java in it.
-- **When a skill is offered.** The profile reads two names from a project: `java` (a `pom.xml` or `build.gradle` with `.java` sources) and `spring-boot` (a dependency named `org.springframework.boot:*`). A skill is offered when its id or one of its capabilities is one of these names, or when a task names one as a whole word. The Spring Boot fixture gives both names, so every Java and Spring skill is offered there. A plain Java library gives only `java`, so it is not used for the cases.
-- **Fixtures.** Each fixture is a small folder with no network access, no credentials, no symbolic links and no `.claude/` or `.mcp.json`. `orders-service` compiles with the plain JDK against the stand-in types in its `src/stubs/java` folder, so its tests run without Maven. `web-tool` runs with `node --test`. The repository test (`tests/skill-suite-java-spring.test.ts`) checks both, and calls no model.
-- **Not in this part.** The suite has no web starter (`spring-boot-starter-web`) and no Gradle project. Its tasks are only for scoring a skill, not for an agent run.
+- **When a skill is offered.** The profile reads two names from a project: `java` (a `pom.xml` or `build.gradle` with `.java` sources) and `spring-boot` (a dependency named `org.springframework.boot:*`). A skill is offered when its id or one of its capabilities is one of these names, or when a task names one as a whole word. The Spring Boot fixture gives both names, so every Java and Spring skill is offered there. A plain Java library gives only `java`, so it is not used for the selection cases. The effect scenarios use it.
+- **Fixtures.** Each fixture is a small folder with no network access, no credentials, no symbolic links and no `.claude/` or `.mcp.json`. `orders-service` compiles with the plain JDK against the stand-in types in its `src/stubs/java` folder, so its tests run without Maven. `cache-library` is a Gradle project with a plain `main` test that compiles with `javac`, so Gradle is not needed to run it. `web-tool` runs with `node --test`. The repository test (`tests/skill-suite-java-spring.test.ts`) checks the fixtures, and calls no model.
+- **Not in this suite.** There is no web starter (`spring-boot-starter-web`). The selection cases do not use `cache-library`.
+
+##### The Java and Spring effect scenarios
+
+The `instructions` section of `evals/skill-gate/java-spring/suite.yaml` has four scenarios for `scf skills effect`. Each one gives a task to an agent in a copy of a fixture, and a check decides whether the result is right. The check runs offline, with only the JDK and the stand-in types in `src/stubs/java`. Run them like the Kafka example:
+
+```
+scf skills effect <source-id> java evals/skill-gate/java-spring/suite.yaml
+scf skills effect <source-id> spring-boot evals/skill-gate/java-spring/suite.yaml
+```
+
+| Scenario | Fixture | Area | What the check decides |
+|---|---|---|---|
+| `cancel-rules` | `orders-service` | Spring | `OrderService.cancel` throws `IllegalStateException` for a PAID order and leaves it unchanged; throws `NoSuchElementException` for an unknown id; cancels and saves an OPEN order. |
+| `optimistic-locking` | `orders-service` | JPA | `Order` has exactly one `@Version` field, of type `long`, `Long`, `int` or `Integer`, and is still an `@Entity` with an `@Id`. |
+| `single-load` | `cache-library` | Concurrency | `LoadingCache.get` calls the loader once per key, also when two threads ask at the same time, and gives both the loaded value. |
+| `log-load-failure` | `cache-library` | `java.util.logging` | When the loader fails, a `WARNING` on the class logger carries the key and the thrown exception, and the same exception is rethrown. A load that works logs no warning. |
+
+- **Cost.** The number of agent sessions is offered scenarios × `repeat` × 2, with `repeat: 4` in this suite. A Java skill is offered on all four scenarios, so 4 × 4 × 2 = 32 sessions. A Spring Boot skill is offered only on the two `orders-service` scenarios, so 2 × 4 × 2 = 16 sessions.
+- **JDK requirement.** Each check compiles and runs Java with `javac` and `java`. Put a JDK 17 or later on the `PATH` of the terminal that starts the Foundry, installed outside your home folder, for example under `/Library/Java/JavaVirtualMachines` or Homebrew's `/opt/homebrew`. The check runs in the sandbox, where the home folder cannot be read, so a JDK under your home folder (for example from SDKMAN) is not found. Check it with `javac -version` and `java -version`. Without a JDK every check exits 1 in both arms, so the verdict does not measure the skill.
+- **Tests.** `tests/skill-effect-java-spring.test.ts` checks the scenarios without a model. It checks that every check fails (exit 1) on the unchanged fixtures, also when the expected keywords are only in comments, and passes (exit 0) on a reference solution. It also checks which skills are offered on each scenario, and that the `cache-library` test passes with the plain JDK. It is skipped with a warning when `javac` is not found.
 
 ##### The suite file and its instructions section
 
