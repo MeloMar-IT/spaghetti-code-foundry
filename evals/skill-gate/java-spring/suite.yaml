@@ -1,0 +1,50 @@
+# Java and Spring Boot suite for the skill gate (schema 1). It scores one candidate skill offline: nothing of the skill is
+# run and no model is called. It is not an `scf eval` suite (see ../../example.yaml). Fixtures are small folders next to this file.
+schema: 1
+selection:
+  - id: jpa-query
+    repo: fixtures/orders-service
+    task: Add a repository query that finds the open orders of a customer created after a given date.
+    expect: offered
+  - id: reservation-race
+    repo: fixtures/orders-service
+    task: Two orders can reserve the same stock at the same time. Stop that race when an order is placed.
+    expect: offered
+  - id: logging-without-personal-data
+    repo: fixtures/orders-service
+    task: Log placed and cancelled orders without writing customer data to the log.
+    expect: offered
+  - id: discount-tests
+    repo: fixtures/orders-service
+    task: Write tests for the discount rules of placeOrder.
+    expect: offered
+  - id: code-review
+    repo: fixtures/orders-service
+    task: Review the order service before the release.
+    expect: offered
+  - id: flyway-migration
+    repo: fixtures/orders-service
+    task: Add Flyway and a first migration that creates the orders table.
+    expect: offered
+  - id: startup-failure
+    repo: fixtures/orders-service
+    task: The service fails at start-up because the orders table cannot be created. Find the cause and fix it.
+    expect: offered
+  - id: slug-accents
+    repo: fixtures/web-tool
+    task: Keep digits in a slug and turn accented letters into plain letters.
+    expect: not-offered
+  - id: slug-shorten
+    repo: fixtures/web-tool
+    task: Shorten a slug without cutting a word.
+    expect: not-offered
+conflicts:
+  - id: against-approved
+    with: all
+context:
+  - id: coder-budget
+    max_instruction_tokens: 3000
+    max_description_chars: 160
+tools:
+  - id: read-only
+    policy: { shell: false, network: false, filesystem: read }
