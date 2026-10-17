@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- `skill-sources.yaml`: three more sources enabled after the owner's review on 2026-10-17 (community, MIT): `superpowers` (`obra/superpowers` at `bb92a777`, 8 paths), `mattpocock-skills` (`mattpocock/skills` at `49dd158d`, 9 paths) and `claude-code-java` (`decebals/claude-code-java` at `0d98fe9b`, 15 paths). Skills the checks refuse stay unpromoted; the source entries only allow the import.
 - AI help actions 3b: in the Ask SCF drawer you review, confirm or cancel a suggested change, and see its result (#568). Part 2 of 2 of #240, after #567. Behind `help.actions`, which is **off by default**. Nothing happens until you review the change and confirm it.
   - **Review.** A card that the server can carry out has **Review the change**. The dialog shows the server's preview in six rows: action, now, what changes, impact, undo and who may do it. A high-impact change has a red confirm button. Cancel, Escape and the cross send the cancel call, so the token is dropped at once.
   - **Result.** After a confirm, the drawer draws the returned result with its word (**Done**, **Queued**, **Partly done**, **Not done**) and what to do next. The result is shown at once and read back with the conversation; when it was not stored, it still shows until you leave the conversation. A reply that became stale is ignored, and an error (403, 404, 409, 410) shows in the drawer's error line.
