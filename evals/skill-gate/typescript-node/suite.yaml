@@ -1,0 +1,52 @@
+# Suite for TypeScript and Node.js skills (schema 1). It scores one candidate skill offline: nothing of the skill is run and
+# no model is called. Selection: a TypeScript Node.js service and a plain JavaScript package offer the skill; a Java library
+# does not. Conflicts, context and tools use the same limits as ../suite.yaml. The `instructions` section follows in #574 part 2.
+# The fixtures' own tests are run by tests/skill-suite-typescript-node.test.ts.
+# The ts-service tests need Node 22.18 or later (built-in type stripping; nothing is installed).
+# The Java check runs with javac and java only. From fixtures/java-library:
+#   javac -d /tmp/tree-check src/main/java/org/example/tree/Tree.java src/test/java/org/example/tree/TreeCheck.java && java -cp /tmp/tree-check org.example.tree.TreeCheck
+schema: 1
+selection:
+  - id: ts-service-endpoint
+    repo: fixtures/ts-service
+    task: Add an endpoint that lists every item that is out of stock.
+    expect: offered
+  - id: ts-service-config
+    repo: fixtures/ts-service
+    task: Read the port from the environment and refuse a value that is not a port number.
+    expect: offered
+  - id: ts-service-types
+    repo: fixtures/ts-service
+    task: Replace the type assertion in the stock event parser with a check that runs.
+    expect: offered
+  - id: ts-service-module
+    repo: fixtures/ts-service
+    modules: [src]
+    task: Split the report writer into a formatter and a writer.
+    expect: offered
+  - id: js-package-to-typescript
+    repo: fixtures/js-package
+    task: Convert src/notify.js to TypeScript.
+    expect: offered
+  - id: java-null-check
+    repo: fixtures/java-library
+    task: Make insert reject null values and describe the exception in the Javadoc.
+    expect: not-offered
+  - id: java-remove-node
+    repo: fixtures/java-library
+    task: Add a method that removes a node from the tree and keep the types of the public methods.
+    expect: not-offered
+  - id: java-build-release
+    repo: fixtures/java-library
+    task: Raise the Java release in the build to 21 and fix the compiler warnings.
+    expect: not-offered
+conflicts:
+  - id: against-approved
+    with: all
+context:
+  - id: coder-budget
+    max_instruction_tokens: 3000
+    max_description_chars: 160
+tools:
+  - id: read-only
+    policy: { shell: false, network: false, filesystem: read }
