@@ -21,6 +21,8 @@ import { canonicalRecord, checkCanonical, choicesUnchecked, needsAny, startChoic
 export const SKILL_CATALOGUE_TAG = "foundry-skill-catalogue";
 /** The step whose output is the issue text in the shipped flows. */
 export const CATALOGUE_ISSUE_STEP = "pull_ticket";
+/** At most this many descriptions are kept in a run record; the rest are counted. */
+export const DESCRIPTION_RECORD_LIMIT = 20;
 
 export interface RunCatalogueRecord {
   entries: number;
@@ -36,6 +38,9 @@ export interface RunCatalogueRecord {
   choicesSource?: { pins: { commit: string; blob: string } };
   /** The canonical choice per exclusive capability: ids, versions and codes only. Absent without canonical dependencies or a decision. */
   canonical?: CanonicalSelectionRecord[];
+  /** The catalogue descriptions from skill-selections that the agent saw, with the release they came from (at most DESCRIPTION_RECORD_LIMIT). */
+  descriptions?: { skill: string; text: string; from: "skill-selections"; release: string }[];
+  descriptionsOmitted?: number;
 }
 export interface RunCatalogue {
   /** "" when no block is attached. */
@@ -174,6 +179,18 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
       if (ch?.pins?.state === "ok") record.choicesSource = { pins: ch.pins.source };
     }
     if (canonicalRec) record.canonical = canonicalRec;
+    // The owner's catalogue descriptions the agent was shown: the text and the release it came from (bounded; same text as in the prompt).
+    const described: NonNullable<RunCatalogueRecord["descriptions"]> = [];
+    for (const e of cat.entries) {
+      const s = pool.find((x) => x.id === e.id && x.version === e.version);
+      const d = s?.catalogueDescription;
+      // The text the agent saw: a pinned entry shortened by the token limit shows less than the full override.
+      if (d?.release) described.push({ skill: `${e.id}@${e.version}`, text: e.description, from: d.from, release: d.release });
+    }
+    if (described.length) {
+      record.descriptions = described.slice(0, DESCRIPTION_RECORD_LIMIT);
+      if (described.length > DESCRIPTION_RECORD_LIMIT) record.descriptionsOmitted = described.length - DESCRIPTION_RECORD_LIMIT;
+    }
     if (mirrorCount) {
       let room: number = MIRROR_LIMITS.recorded;
       const recorded: { kept: string; collapsed: string[] }[] = [];
@@ -189,9 +206,10 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
     }
     const mirrorNote = mirrorCount ? `; ${mirrorCount} mirror${mirrorCount === 1 ? "" : "s"} collapsed` : "";
     const picked = notCanonical ? `; ${notCanonical} not canonical (skill selection)` : "";
+    const descNote = described.length ? `; ${described.length} catalogue description${described.length === 1 ? "" : "s"} from skill-selections` : "";
     return {
       text,
-      log: `${base}${hidden ? `; ${hidden} hidden (not pinned)` : ""}${notes ? `; ${notes} (skill collisions)` : ""}${mirrorNote}${picked}${choiceNote}`,
+      log: `${base}${hidden ? `; ${hidden} hidden (not pinned)` : ""}${notes ? `; ${notes} (skill collisions)` : ""}${mirrorNote}${picked}${choiceNote}${descNote}`,
       record,
       ...(canonical ? { canonical } : {}),
     };

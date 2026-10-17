@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { localGit } from "../engine/local-git.js";
 import { CHOICE_LIMITS } from "./choice-rules.js";
 import { credentialProblem } from "./credential-scan.js";
+import { CATALOGUE_DESCRIPTION_FROM, catalogueDescriptionOf } from "./catalogue-description.js";
 import { judgeItems, prepareEvaluation, type EvaluateCliOptions, type JudgedItem, type Out, type Prepared } from "./evaluate-cli.js";
 import { parseEvaluationRecord } from "./evaluation.js";
 import { readNewestRecord } from "./evaluation-store.js";
@@ -155,7 +156,6 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
   if (srcRead.state === "none") return stop("the skill source file does not exist");
   if (srcRead.state === "invalid") return stop(...srcRead.problems.map((p) => `${p.where}: ${p.message}`));
   const sources: SourcesManifest = srcRead.manifest;
-  const snap: ReleasePublishOptions = { ...opts, sources };
 
   const revokedOf = (id: string) => entry.revoked?.find((r) => r.id === id);
   const anyGated = entry.skills.some((s) => !revokedOf(s.id));
@@ -167,6 +167,8 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
     if (!r) return stop();
     reviewed = r;
   }
+  // The selections were read once (above); the evaluation uses this snapshot and does not read the file again.
+  const snap: ReleasePublishOptions = { ...opts, sources, selections: reviewed.selections };
 
   // 6. Per source group, then per skill.
   let problems = 0;
@@ -345,6 +347,7 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
       }
       if (reasons > 0 || !evaluation) continue;
 
+      const desc = catalogueDescriptionOf(skill, sourceId, reviewed.selections);
       const prov = {
         source: sourceId,
         repositoryKey: provenance?.repositoryKey ?? skill.provenance.repositoryKey,
@@ -363,10 +366,11 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
         attribution: attribution.map(entryOf),
         evaluation,
         ...(rev ? { revoked: { on: rev.on, reason: rev.reason } } : {}),
+        ...(desc !== undefined ? { catalogueDescription: { text: desc, source: CATALOGUE_DESCRIPTION_FROM } } : {}),
       });
       packages.set(id, pkgFiles.map((f) => ({ path: f.path, content: f.content })));
       if (attribution.length > 0) attributions.set(id, attribution.map((a) => ({ path: a.path, content: a.content })));
-      lines.push({ id, line: `SKILL ${id}@${pkg.version} ${digest} from ${sourceId} evaluation ${evaluation.verdict}${rev ? ` revoked ${rev.on}` : ""}` });
+      lines.push({ id, line: `SKILL ${id}@${pkg.version} ${digest} from ${sourceId} evaluation ${evaluation.verdict}${rev ? ` revoked ${rev.on}` : ""}${desc !== undefined ? " description skill-selections" : ""}` });
     }
   }
   if (problems > 0) return stop();

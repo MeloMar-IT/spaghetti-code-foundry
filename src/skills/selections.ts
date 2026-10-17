@@ -1,5 +1,6 @@
 import { lstatSync } from "node:fs";
 import { parseDocument } from "yaml";
+import { catalogueDescriptionProblem } from "./catalogue-description.js";
 import { credentialProblem } from "./credential-scan.js";
 import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
@@ -7,7 +8,7 @@ import { SKILL_DIGEST_RE, SKILL_ID_RE } from "./schema.js";
 import { hasUnsafeChar, MAX_SOURCES_BYTES, OWNER_RE, shownValue, type SourceProblem } from "./sources.js";
 
 // Reviewed skill selections: which skills of a source are chosen, with scope, product, SDK and what each needs.
-// Pure except readSkillSelections (it reads one file). It grants nothing; no run reads it. Called by `scf skills selections check` (cli.ts).
+// Pure except readSkillSelections (it reads one file). It grants nothing; no run reads it. A `catalogue_description` reaches runs only through a published release. Called by `scf skills selections check` (cli.ts).
 
 export const SELECTIONS_FILE = "skill-selections.yaml";
 export const MAX_SELECTIONS = 500;
@@ -34,6 +35,8 @@ export interface SkillSelection {
   requires: Record<RequiresKind, string[]>;
   owner: string;
   reviewed: string;
+  /** A short description for the catalogue instead of the package's own; at most 160 characters. Tied to `digest`. */
+  catalogueDescription?: string;
 }
 export interface SkillSelections {
   schema: 1;
@@ -47,7 +50,7 @@ export type SkillSelectionsRead =
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const WILDCARD_RE = /[*?[\]{}]/;
 const SDK_NAME_RE = /^[A-Za-z0-9@][A-Za-z0-9@._/:+-]{0,127}$/;
-const ENTRY_KEYS = ["source", "skill", "digest", "scope", "provider", "product", "sdk", "category", "capabilities", "requires", "owner", "reviewed"];
+const ENTRY_KEYS = ["source", "skill", "digest", "scope", "provider", "product", "sdk", "category", "capabilities", "requires", "owner", "reviewed", "catalogue_description"];
 const MAX_NODES = 200000;
 const DAY_MS = 86400000;
 const SLUG_MESSAGE = "must be a lower-case slug of 1–64 characters (letters, digits, single hyphens)";
@@ -288,6 +291,12 @@ function checkEntry(raw: unknown, today: number): { entry?: SkillSelection; prob
     else reviewed = reviewedText;
   }
 
+  const catalogueDescription = text(raw.catalogue_description, "catalogue_description", false);
+  if (catalogueDescription !== undefined) {
+    const why = catalogueDescriptionProblem(catalogueDescription);
+    if (why) err("catalogue_description", why);
+  }
+
   if (problems.length || !requiresOk || !source || !skill || !digest || !scope || !category || !capabilities || !owner || !reviewed) return { problems };
   const entry: SkillSelection = {
     source,
@@ -302,6 +311,7 @@ function checkEntry(raw: unknown, today: number): { entry?: SkillSelection; prob
     requires,
     owner,
     reviewed,
+    ...(catalogueDescription !== undefined ? { catalogueDescription } : {}),
   };
   return { entry, problems };
 }

@@ -157,12 +157,19 @@ function scoreEntry(skill: RegisteredSkill, detected: readonly Detected[], task:
   return { skill, score, pinned: false, evidence: [provider, ...lines], provider };
 }
 
+/** The description the catalogue shows for a skill and where it comes from: the owner's override from an approved release, else the package's own. */
+export function shownDescription(s: Pick<RegisteredSkill, "pkg" | "catalogueDescription">): { text: string; from: "package" | "skill-selections"; release?: string } {
+  const o = s.catalogueDescription;
+  if (o) return { text: o.text, from: o.from, ...(o.release !== undefined ? { release: o.release } : {}) };
+  return { text: s.pkg.description, from: "package" };
+}
+
 function entryAt(item: Item, detail: CatalogueDetail): CatalogueEntry {
   const d = CATALOGUE_DETAIL[detail];
   return {
     id: item.skill.id,
     version: item.skill.version,
-    description: cutChars(cleanText(item.skill.pkg.description), d.descriptionChars),
+    description: cutChars(cleanText(shownDescription(item.skill).text), d.descriptionChars),
     capabilities: item.skill.pkg.capabilities.slice(0, d.capabilities),
     // A shortened entry keeps the provider line: a vendor-specific skill is never shown as portable.
     evidence: item.evidence.slice(0, d.evidence > 0 || !item.provider ? d.evidence : 1),

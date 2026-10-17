@@ -153,6 +153,12 @@ export function selectionLines(sel, admin = false) {
   if (typeof counts.collapsed === "number" && counts.collapsed > shown) lines.push(`And ${counts.collapsed - shown} more copies not offered.`);
   lines.push(...choices.map((c) => choiceLine(c, admin)).filter(Boolean));
   if (typeof counts.choices === "number" && counts.choices > choices.length) lines.push(`And ${counts.choices - choices.length} more pins or overrides.`);
+  const described = arr(sel.descriptions);
+  for (const d of described) {
+    if (!str(d?.skill) || !str(d.text) || !str(d.release)) continue;
+    lines.push(`Catalogue description of ${tick(d.skill)} from skill-selections (release ${tick(d.release)}): ${d.text}`);
+  }
+  if (typeof counts.descriptions === "number" && counts.descriptions > described.length) lines.push(`And ${counts.descriptions - described.length} more catalogue descriptions.`);
   const commit = sel.choicesSource?.pins?.commit;
   if (admin && typeof commit === "string" && lines.length) lines.push(`Project pins from commit ${commit.slice(0, 12)}.`);
   return lines;

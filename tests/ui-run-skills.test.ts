@@ -245,6 +245,13 @@ describe("Why these skills", () => {
     expect(a).toContain(`Project pins from commit ${"e".repeat(12)}.`);
   });
 
+  it("shows a catalogue description with its text and release, and counts the rest", () => {
+    const d = { skill: "a@1.0.0", text: "Short <i>text</i>.", from: "skill-selections", release: "acme@1.2.0" };
+    const l = ui.selectionLines({ capabilities: [], mirrors: [], choices: [], descriptions: [d, { skill: 5 }], counts: { descriptions: 4 } });
+    expect(l).toEqual(["Catalogue description of `a@1.0.0` from skill-selections (release `acme@1.2.0`): Short <i>text</i>.", "And 2 more catalogue descriptions."]);
+    expect(card(view({ selection: { capabilities: [], mirrors: [], choices: [], descriptions: [d], counts: {} } })).all("i")).toHaveLength(0);
+  });
+
   it("draws text, not HTML, and survives garbage", () => {
     const c = card(view({ selection: sel({ capabilities: [{ capability: "<b>", winner: "a@1.0.0" }] }) }));
     expect(lis(c)[0]).toBe("`<b>`: `a@1.0.0`");

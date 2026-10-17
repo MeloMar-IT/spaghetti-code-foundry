@@ -1,5 +1,6 @@
 import type { RunSummary } from "../engine/state.js";
 import { CANONICAL_LEVELS, CANONICAL_REJECT_CODES, type CanonicalLevel } from "../skills/canonical-rules.js";
+import { catalogueDescriptionProblem } from "../skills/catalogue-description.js";
 import { CHOICE_LEVELS } from "../skills/choice-rules.js";
 import { parseSkillKey } from "../skills/lock.js";
 import { SkillIdSchema } from "../skills/schema.js";
@@ -10,7 +11,7 @@ import { OWNER_RE } from "../skills/sources.js";
 // Nothing of the catalogue entries is copied, so skills that played no part never appear. Never throws; every
 // field is checked by type and a bad entry is dropped.
 
-export const SELECTION_VIEW_LIMITS = { capabilities: 20, mirrorGroups: 20, rejected: 5, choices: 20, companions: 20 } as const;
+export const SELECTION_VIEW_LIMITS = { capabilities: 20, mirrorGroups: 20, rejected: 5, choices: 20, companions: 20, descriptions: 20 } as const;
 export type DecidedBy = CanonicalLevel | "only-candidate";
 export interface CapabilityChoiceView {
   capability: string;
@@ -35,12 +36,15 @@ export interface ChoiceView {
   /** Administrator only. */
   digest?: string;
 }
+/** A catalogue description the agent saw instead of the package's own, with where it came from. */
+export interface DescriptionView { skill: string; text: string; from: "skill-selections"; release: string }
 export interface SkillSelectionView {
   capabilities: CapabilityChoiceView[];
   mirrors: MirrorGroupView[];
   choices: ChoiceView[];
+  descriptions?: DescriptionView[];
   /** Totals before the caps, plus what the record itself left out. */
-  counts: { capabilities: number; mirrorGroups: number; collapsed: number; choices: number };
+  counts: { capabilities: number; mirrorGroups: number; collapsed: number; choices: number; descriptions?: number };
   /** Administrator only. */
   choicesSource?: { pins: { commit: string; blob: string } };
 }
@@ -147,18 +151,31 @@ function build(s: Pick<RunSummary, "history" | "skillSelection">, opts: Selectio
       ...(opts.admin && by ? { by } : {}), ...(opts.admin && digest ? { digest } : {}),
     }];
   });
+  const descriptions = list(cat?.descriptions).flatMap((x): DescriptionView[] => {
+    const o = obj(x);
+    const skill = keyOf(o?.skill);
+    const release = keyOf(o?.release);
+    const from = oneOf(o?.from, ["skill-selections"] as const);
+    const text = o?.text;
+    if (!o || !skill || !release || !from || typeof text !== "string" || catalogueDescriptionProblem(text) !== undefined) return [];
+    return [{ skill, text, from, release }];
+  });
   const pins = obj(obj(cat?.choicesSource)?.pins);
   const commit = gitId(pins?.commit);
   const blob = gitId(pins?.blob);
 
   const collapsed = groups.reduce((n, g) => n + g.collapsed.length, 0) + count(cat?.mirrorsOmitted);
-  if (!allCaps.length && !groups.length && !choices.length && collapsed === 0) return undefined;
+  if (!allCaps.length && !groups.length && !choices.length && collapsed === 0 && !descriptions.length) return undefined;
   const L = SELECTION_VIEW_LIMITS;
   return {
     capabilities: allCaps.slice(0, L.capabilities),
     mirrors: groups.slice(0, L.mirrorGroups),
     choices: choices.slice(0, L.choices),
-    counts: { capabilities: allCaps.length, mirrorGroups: groups.length, collapsed, choices: choices.length + count(cat?.choicesOmitted) },
+    ...(descriptions.length ? { descriptions: descriptions.slice(0, L.descriptions) } : {}),
+    counts: {
+      capabilities: allCaps.length, mirrorGroups: groups.length, collapsed, choices: choices.length + count(cat?.choicesOmitted),
+      ...(descriptions.length ? { descriptions: descriptions.length + count(cat?.descriptionsOmitted) } : {}),
+    },
     ...(opts.admin && commit && blob ? { choicesSource: { pins: { commit, blob } } } : {}),
   };
 }
