@@ -4261,6 +4261,20 @@ GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…:
 - **Limits.** A record is at most 2 MiB and a folder holds at most 5,000 files. A source that is not enabled is a `PROBLEM` for `gate`.
 - **Not done.** The gate prints the verdict only. No run or promotion reads it yet.
 
+##### The Java and Spring Boot suite
+
+`evals/skill-gate/java-spring/suite.yaml` is the suite for the Java and Spring skills (`java`, `spring-boot`, and the others of that area). It has nine selection cases, a `conflicts`, `context` and `tools` section (the same as `evals/skill-gate/suite.yaml`), and no `instructions` section. Run it like any suite:
+
+```
+scf skills score <source-id> evals/skill-gate/java-spring/suite.yaml
+scf skills gate <source-id> evals/skill-gate/java-spring/suite.yaml
+```
+
+- **What it checks.** A skill must be offered for Java work and must not be offered elsewhere. Seven `offered` cases use tasks on `fixtures/orders-service`, a small Spring Boot service with a JPA repository, tests and a Maven `pom.xml`. Two `not-offered` cases use `fixtures/web-tool`, a Node.js package with no Java in it.
+- **When a skill is offered.** The profile reads two names from a project: `java` (a `pom.xml` or `build.gradle` with `.java` sources) and `spring-boot` (a dependency named `org.springframework.boot:*`). A skill is offered when its id or one of its capabilities is one of these names, or when a task names one as a whole word. The Spring Boot fixture gives both names, so every Java and Spring skill is offered there. A plain Java library gives only `java`, so it is not used for the cases.
+- **Fixtures.** Each fixture is a small folder with no network access, no credentials, no symbolic links and no `.claude/` or `.mcp.json`. `orders-service` compiles with the plain JDK against the stand-in types in its `src/stubs/java` folder, so its tests run without Maven. `web-tool` runs with `node --test`. The repository test (`tests/skill-suite-java-spring.test.ts`) checks both, and calls no model.
+- **Not in this part.** The suite has no web starter (`spring-boot-starter-web`) and no Gradle project. Its tasks are only for scoring a skill, not for an agent run.
+
 ##### The suite file and its instructions section
 
 The suite file has one section per dimension (`selection`, `conflicts`, `context`, `tools`) and an optional `instructions` section for sandboxed agent scenarios. Plain `score` does not run them and writes no `instructions` scores, so without `--agent` the section only changes the suite digest and the gate's rules. `score --agent` runs them; see the next section.
