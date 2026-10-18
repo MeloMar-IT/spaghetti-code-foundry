@@ -26,6 +26,7 @@ import { dirname } from "node:path";
 import { buildStamp, restartOnNewBuild, supervise } from "./supervise.js";
 import { confirmStart, startGuard } from "./self-update-state.js";
 import { SelfUpdater } from "./self-update.js";
+import { exitAfterTelemetry } from "./telemetry/telemetry.js";
 import { dropEmptyHomeVars, prepareDataHome, watchDataHome } from "./home.js";
 
 const usage = () => `Spaghetti Code Foundry (scf) — run custom flows of headless Claude Code + shell steps
@@ -405,14 +406,14 @@ async function main(argv: string[]): Promise<number> {
         if (stopping) {
           for (const a of scheduler.queue().active) scheduler.cancel(a.runId, { kind: "cli" });
           log("cancelling running runs (they resume on the next start)…");
-          setTimeout(() => process.exit(130), 3000).unref();
+          setTimeout(() => void exitAfterTelemetry(130), 3000).unref();
           return;
         }
         stopping = true;
         watcher.stop();
         const n = scheduler.queue().active.length;
         log(n ? `\nstopped watching; waiting for ${n} running run(s) — Ctrl+C again to cancel them` : "\nstopped");
-        void scheduler.idle().then(() => process.exit(0));
+        void scheduler.idle().then(() => exitAfterTelemetry(0));
       });
       log(`watching ${github_repo} (${cfg.source}) every ${cfg.every} with flow ${cfg.flow} — Ctrl+C to stop`);
       watcher.start();
@@ -462,7 +463,7 @@ async function main(argv: string[]): Promise<number> {
         ctx.watchers.stopAll();
       };
       // a step of the updater runs in its own process group: it must not outlive the server
-      for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); process.exit(code); });
+      for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); void exitAfterTelemetry(code); });
       // other restarts wait while the updater builds
       const idle = () => queueIdle() && !updater.busy();
       restartOnNewBuild({
@@ -593,7 +594,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
+  (code) => exitAfterTelemetry(code),
   async (err: Error) => {
     // the stored secrets are hidden from displayed errors; if that cannot load, show nothing from the message
     let text = "(message hidden: the stored credentials cannot be read)";
@@ -603,6 +604,6 @@ main(process.argv.slice(2)).then(
       // keep the safe text
     }
     process.stderr.write(`error: ${text}\n`);
-    process.exit(1);
+    await exitAfterTelemetry(1);
   },
 );
