@@ -13,6 +13,7 @@ import type { Flow, Step } from "../flow/schema.js";
 import { notifyRun } from "../notify.js";
 import {
   applyChecks,
+  beginStep,
   executeStep,
   newLogFile,
   recordStep,
@@ -37,6 +38,7 @@ import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from
 import { prepareWorkspace } from "./workspace.js";
 import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
+import { runPolicy, type RunPolicy } from "./policy-hooks.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
@@ -145,6 +147,9 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const evidence = runRecorder(summary);
   evidence.queued(opts.queuedAt);
   evidence.created(summary, opts.actor ?? actorOf(opts.source, opts.source === "ui" ? opts.owner : undefined));
+  // policy (observe mode): the run starts here, before any refusal and before the workspace is made
+  const policy = runPolicy(summary, config, liveLog(summary, opts), evidence);
+  policy?.at("run.start");
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
 
   try {
@@ -154,6 +159,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   }
 
   try {
+    // making the workspace reads the repository (a worktree also changes it); an empty workspace touches no repository
+    if (flow.workspace !== "empty") policy?.at("repository.access", { credential: "none" });
     const ws = prepareWorkspace(flow.workspace, opts.repo, runDir, runId);
     summary.workdir = ws.workdir;
     summary.branch = ws.branch;
@@ -165,7 +172,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   } catch (e) {
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: null, lastOutput: "" });
   }
-  return drive(summary, opts, config, null);
+  return drive(summary, opts, config, null, { policy });
 }
 
 /** Continue a stopped, failed, cancelled, interrupted or waiting run. */
@@ -195,17 +202,28 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   return drive(summary, opts, config, { startAt: from, decision });
 }
 
+/** The log of a run: redacted, in the live log and to the caller. */
+function liveLog(summary: RunSummary, opts: CommonOptions): (raw: string) => void {
+  return (raw) => {
+    const line = redactText(raw);
+    appendLiveLog(summary.runDir, line);
+    opts.log?.(line);
+  };
+}
+
 async function drive(
   summary: RunSummary,
   opts: CommonOptions,
   config: Config,
   resume: { startAt: string; decision?: Engine["decision"] } | null,
+  /** A new run has asked `run.start` already (before its workspace was made): its policy goes on here. */
+  early?: { policy: RunPolicy | undefined },
 ): Promise<RunSummary> {
-  const log = (raw: string) => {
-    const line = redactText(raw);
-    appendLiveLog(summary.runDir, line);
-    opts.log?.(line);
-  };
+  const log = liveLog(summary, opts);
+  const evidence = runRecorder(summary);
+  // before anything else of this start, also before the early failure paths below
+  const policy = early ? early.policy : runPolicy(summary, config, log, evidence);
+  if (!early) policy?.at("run.start");
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
   const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: summary.state.next, lastOutput: "" });
@@ -241,7 +259,7 @@ async function drive(
       FACTORY_TOOLS: TOOLS_DIR,
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       ...nextStepEnv(),
-      ...protectedBranchEnv(config.protected_branches, config.secret_scan),
+      ...protectedBranchEnv(config.protected_branches, config.secret_scan, Boolean(policy)),
       ...selfEnv(),
     };
     // fails before any step, as before, when the run starts with the machine's login
@@ -275,7 +293,8 @@ async function drive(
     log,
     save,
     decision: resume?.decision,
-    evidence: runRecorder(summary),
+    evidence,
+    policy,
     actor: opts.actor,
     remainingBudget: () => {
       const left = [
@@ -328,6 +347,7 @@ async function drive(
   } finally {
     unmarkRunning(summary.runId, marker);
   }
+  if (result.outcome === "succeeded") policy?.at("run.complete", { runCostUsd: summary.totalCostUsd });
   return finish(summary, opts, config, result);
 }
 
@@ -498,7 +518,8 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       const d = engine.decision;
       if (top && d && d.stepId === step.id) {
         engine.decision = undefined;
-        engine.evidence?.stepStarted(identity);
+        beginStep(engine, scope, step, identity);
+        engine.policy?.at("approval.consume", { step: step.id }, identity);
         engine.evidence?.stepDecided(identity, d.approved, engine.actor ?? SYSTEM_ACTOR);
         res = { ok: d.approved, output: `${d.approved ? "approved" : "rejected"} by ${d.by ?? "someone"}${d.note ? `: ${d.note}` : ""}` };
         if (!d.approved) res.error = "rejected";
@@ -512,7 +533,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       }
     } else {
       engine.accessFailed = false;
-      engine.evidence?.stepStarted(identity);
+      beginStep(engine, scope, step, identity);
       try {
         res = await executeStep(step, scope, engine, logFile);
       } catch (e) {

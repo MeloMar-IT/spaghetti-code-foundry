@@ -234,7 +234,8 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   `seq` (its place in the stream, from 0), `runId`, `time` and a `type`: eight for the run
   (`run.created`, `run.queued`, `run.started`, `run.stopped`, `run.resumed`, `run.cancelled`,
   `run.failed`, `run.completed`) and seven for a step (`step.started`, `step.routed`, `step.retried`,
-  `step.denied`, `step.approved`, `step.failed`, `step.completed`). `prevHash` and `hash` come
+  `step.denied`, `step.approved`, `step.failed`, `step.completed`) and, from version 2, `policy.decided`
+  (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"). `prevHash` and `hash` come
   together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -299,6 +300,41 @@ numbers and pure functions.
   `enforce` mode. Every reason code fits the evidence format.
 - **Versions.** Each contract has its own number in `version.ts`. A record with another version is
   refused with one sentence. Every object refuses unknown fields, so a new field means a new version.
+### Policy hooks in observe mode
+
+`src/engine/policy-hooks.ts` asks the configured policy packs at the boundaries of a run (#142). It
+is the only place the engine calls `src/policy/`. Nothing in a run changes because of a decision yet:
+packs run in observe mode only.
+
+- **Where the questions come from.** The engine asks, so a flow cannot leave a boundary out: `runner.ts`
+  asks `run.start`, `repository.access` (before a workspace is made), `approval.consume` and
+  `run.complete` (only when the run succeeded); `execute.ts` asks `step.before` and `step.after` for
+  every visit of a step through `beginStep` and `recordStep`, and `repository.access` for a step in the
+  repository's checkout; `agents/run.ts` asks `agent.write` before a write-capable agent step.
+  Built-in and custom flows take the same path.
+- **Pushes.** `push` is asked once for each push a step makes. The pre-push hook (`guards.ts`) appends
+  `<branch>\t<remote url>` to the file in `FACTORY_PUSH_LOG`, which the step gets when packs are
+  configured. `drainPushLog` reads and removes the file when the step ends, and reads only a plain
+  file of at most 64 KiB and 100 pushes. The repository of a push is set only when its remote is a
+  GitHub address. The hook never fails a push.
+- **Facts.** `baseFacts` gives the run's repository, flow, workspace and owner; each boundary adds its
+  own. `policyFacts` keeps only the values that pass their schema in `FactsSchema`; a value that does not
+  is left out, never changed. The repository is lower case, and the placeholder `owner/repo` is no fact.
+- **Packs.** `loadPolicyPacks` reads `<data folder>/policies/<id>.json` with `O_NOFOLLOW` and
+  `O_NONBLOCK`, only as a plain file of at most 1 MiB. A pack that is missing, linked, not a file,
+  unreadable, invalid, for another policy id, or in `enforce` mode becomes a `LoadedPack` with a
+  `policy.unavailable` or `policy.invalid` problem. Its detail never names a path or file content.
+- **Decisions.** `RunPolicy.at` asks every pack, in order, and returns the decisions. Each one is logged
+  as `· policy <id> <version> · <boundary>: <outcome> (<reason>)` and recorded as a `policy.decided`
+  event (`RunRecorder.policyDecided`). A pack that cannot be evaluated is recorded as `policy.invalid`
+  with `unknown` as version, and the log says so. A decision that cannot be recorded either marks the
+  evidence incomplete (`RunRecorder.incomplete`). No method throws into the engine.
+- **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
+  step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
+  The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
+- **Off by default.** With `policy.packs` empty, `runPolicy` returns nothing: no file is read, no hook
+  is added for the pushes, and the engine's `policy` is absent.
+
 ### Context bundle
 
 `src/context/` defines the format that says what a run was given to read, and where each piece came

@@ -3,7 +3,7 @@ import { delimiter, dirname, join } from "node:path";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { codexExecFlags, resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
-import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
+import { DEFAULT_PERMISSION_MODE, pushLogFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
@@ -25,6 +25,7 @@ import { stepOverride, type Override } from "../analyst/overrides.js";
 import { modelOf } from "../analyst/reference.js";
 import type { Config } from "../config.js";
 import { stepIdentity } from "../evidence/record.js";
+import { repositoryFact } from "../engine/policy-hooks.js";
 
 /** Map Claude permission settings onto Codex's sandbox modes. */
 export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean): CodexSandbox {
@@ -43,6 +44,8 @@ type Ran = StepResult & { final?: boolean };
 async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false, draft = false, catalogue?: RunCatalogue, toolCheck?: { tools: SessionTools; check: ToolCheck }): Promise<Ran> {
   // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
+  const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
+  if (pushLog) base.FACTORY_PUSH_LOG = pushLog;
   const ghDir = iso ? ghConfigDir() : undefined;
   try {
     const extra = agentEnv(scope.ctx.vars.agent_env, Boolean(iso));
@@ -397,6 +400,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   });
   const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
   let fallbackFrom: string | undefined;
+  const repository = repositoryFact(scope.ctx.vars);
+  // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: observe only).
+  engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
     const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
@@ -404,6 +410,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       engine.log(`    ! skill context: rejected (${session.refused})`);
       engine.accessFailed = true;
       return { ok: false, output: session.refused, error: session.refused, ...tries() };
+    }
+    // Before every session that can write, retries and fallbacks included, with the sandbox the target really gets.
+    if (!readOnlyStep(step, scope.flow.defaults)) {
+      const sandboxed = boxed || (target.agent === "codex" ? codexSandbox(step, scope, agentSandboxed(step, scope, engine)) !== "danger-full-access" : agentSandboxed(step, scope, engine));
+      engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
     }
     if (!tried.has(target.label)) engine.evidence?.stepRouted(identity, target.label, stepOverride(scope.flow.name, step.id).effort ?? step.effort ?? scope.flow.defaults.effort, fallbackFrom);
     tried.add(target.label);

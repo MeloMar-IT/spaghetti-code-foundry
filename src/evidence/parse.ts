@@ -10,8 +10,8 @@ import {
  * is it checked. Pure: these take the parsed JSON or the text, never a file name.
  */
 
-/** Steps from older event versions. Empty while version 1 is the only one; a new version adds its step here. */
-export const EVENT_MIGRATIONS: EvidenceMigrations = {};
+/** Steps from older event versions. 1 → 2 only sets the version: version 2 added an event type, no field changed. */
+export const EVENT_MIGRATIONS: EvidenceMigrations = { 1: (old) => ({ ...old, version: 2 }) };
 /** Steps from older manifest versions. */
 export const MANIFEST_MIGRATIONS: EvidenceMigrations = {};
 

@@ -3,6 +3,7 @@ import {
   ActorSchema, ApprovalSchema, ArtifactRefSchema, CommitSchema, GitIdentitySchema, ModelIdentitySchema, PolicyIdentitySchema, PullRequestIdentitySchema,
   ReasonCodeSchema, RepositorySchema, RunIdSchema, Sha256Schema, StepIdentitySchema, StepIdSchema, TestResultSchema, TimeSchema, ToolIdentitySchema,
 } from "./identity.js";
+import { PolicyDecisionSchema } from "../policy/schema.js";
 import { EVIDENCE_EVENT_VERSION, EVIDENCE_EVENTS_FILE, RUN_EVIDENCE_VERSION } from "./version.js";
 
 /**
@@ -96,6 +97,9 @@ const EventUnion = z.discriminatedUnion("type", [
   event("step.failed", stepEnd),
   /** The visit ended with success. `commit` and `pullRequest` are set when the step made them. */
   event("step.completed", { ...stepEnd, commit: GitIdentitySchema.optional(), pullRequest: PullRequestIdentitySchema.optional() }),
+
+  /** A policy pack decided at a boundary of the run. `step` is set exactly for the boundaries that are about a step (for `repository.access` it is absent when the question is about the run's workspace). */
+  event("policy.decided", { decision: PolicyDecisionSchema, step: step.optional() }),
 ]);
 
 const uniquePaths = (refs: { path: string }[], ctx: z.RefinementCtx, at: PropertyKey[]) => {
@@ -113,6 +117,12 @@ export const EvidenceEventSchema = EventUnion.superRefine((e, ctx) => {
     ctx.addIssue({ code: "custom", path: ["prevHash"], message: "prevHash is null for the first event (seq 0) and only then" });
   }
   if (e.type === "step.failed" || e.type === "step.completed") uniquePaths(e.artifacts, ctx, ["artifacts"]);
+  if (e.type === "policy.decided") {
+    const runWide = e.decision.boundary === "run.start" || e.decision.boundary === "run.complete";
+    if (runWide && e.step) ctx.addIssue({ code: "custom", path: ["step"], message: `is not allowed for the boundary ${e.decision.boundary}` });
+    // access to the repository is also asked for the run itself, before any step (the workspace is made)
+    if (!runWide && !e.step && e.decision.boundary !== "repository.access") ctx.addIssue({ code: "custom", path: ["step"], message: `is missing: the boundary ${e.decision.boundary} is about a step` });
+  }
   if (e.type === "step.approved" && e.step.type !== "approval") ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be approved" });
   if (e.type === "step.denied" && e.denial.kind === "approval" && e.step.type !== "approval") {
     ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be rejected" });
@@ -123,7 +133,8 @@ export type EvidenceEventType = EvidenceEvent["type"];
 
 export const RUN_EVENT_TYPES = ["run.created", "run.queued", "run.started", "run.stopped", "run.resumed", "run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
 export const STEP_EVENT_TYPES = ["step.started", "step.routed", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"] as const satisfies readonly EvidenceEventType[];
-export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES];
+export const POLICY_EVENT_TYPES = ["policy.decided"] as const satisfies readonly EvidenceEventType[];
+export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES];
 /** The events after which a run is over; exactly one of them ends a finished stream. */
 export const TERMINAL_EVENT_TYPES = ["run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
 
