@@ -1029,6 +1029,38 @@ answers are only recorded: a run never stops or changes because of a pack.
 - **Evidence from this version** has a newer event version. An older build cannot read the evidence of a
   run that has `policy.decided` events, so keep this build for those runs.
 
+### Lifecycle telemetry
+
+The Foundry writes one short telemetry line for each important fact of a run: a run starting or
+ending, a step starting, retrying, failing or finishing, a model being routed, a policy decision, a
+tool call, a push, a pull request and a watcher check. You can read these lines to see what the
+Foundry does, without opening each run folder.
+
+- **What is recorded.** Names, ids, numbers, times and outcomes. Never a prompt, a model's output, the
+  arguments of a tool, an error text, a file's content or a credential. The format has no free-text
+  field, so such a value has no place to go. If a label (for example a branch or a sensitive pattern
+  from your settings) holds a credential, that label is dropped and named in the event's `redacted` list.
+- **Where it is.** One file per day in `<data folder>/telemetry/events-YYYY-MM-DD.jsonl`, named by the
+  UTC date. The folder is readable only by you (0700) and the files too (0600).
+- **Keep it for.** `keep_days` in `config.yaml`. Files older than that are removed when the Foundry
+  opens a day's file for writing. The default is 30 days; the range is 1 to 365.
+
+  ```yaml
+  telemetry:
+    local: true
+    keep_days: 30
+  ```
+
+- **Turn it off.** Set `local: false`. Then no telemetry folder is made and nothing is written. The
+  setting is not in the web interface.
+- **Independent of evidence.** Telemetry is a separate copy of the events. Turning it off does not change
+  `evidence.jsonl`, and a problem with the telemetry file never stops or changes a run. When the evidence of
+  a run has stopped, its telemetry still goes on, without the link to the evidence.
+- **When something is dropped.** An event that does not match the format, holds private data or cannot be
+  written is not stored. The first time each kind of drop happens, the log shows one line such as
+  `! telemetry: the telemetry file could not be written; events are dropped until it can`. The line never
+  shows a value.
+
 ---
 
 ## 4. Write your own flows
