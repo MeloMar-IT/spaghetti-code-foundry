@@ -340,6 +340,7 @@ describe("renderMyRun", () => {
       queue: vi.fn(async () => { if (state.queueError) throw state.queueError; return { pending: state.pending, active: [] }; }),
       events: vi.fn(() => stream),
       diff: vi.fn(async () => ({ patch: "+a", stat: "1 file" })),
+      evidence: vi.fn(async () => ({ runId: "r1", state: "not_available", verification: { status: "absent", verified: false, explanation: "", checks: [], missingOptional: [] }, artifacts: [] })),
       transcript: vi.fn(async () => ({ events: [] })),
       approveRun: vi.fn(async () => ({})),
       rejectRun: vi.fn(async () => ({})),
@@ -805,6 +806,17 @@ describe("renderMyRun", () => {
     await flush();
     expect(one(main, "button", { "data-focus": "diff-retry" }).textContent).toBe("Retry");
     expect(main.textContent).toContain("no access");
+  });
+
+  it("loads the evidence record when the Evidence tab opens", async () => {
+    await open();
+    expect(a.evidence).not.toHaveBeenCalled();
+    find(main, "button").filter((b) => b.attrs["data-tab"])[3]!.click();
+    await flush();
+    expect(a.evidence).toHaveBeenCalledTimes(1);
+    expect(a.evidence).toHaveBeenCalledWith("r1");
+    expect(main.textContent).toContain("Evidence record");
+    expect(main.textContent).toContain("No record");
   });
 
   describe("the tabs keep their state", () => {
