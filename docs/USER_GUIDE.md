@@ -625,6 +625,14 @@ its description, or the kind of step when the flow gives none.
   A user sees **Steps** only: each step with its result and a plain sentence for a failure, but
   no output, no transcripts and no cost.
 
+- **Evidence** — the **Evidence record** of the run: whether its record verifies (**Verified**,
+  **Not verified**, **Not finished** or **No record**), the result, the flow and its version, the
+  commits, the approvals, the tests, the pull request and the files. A failed check names the
+  event or file, says what is wrong and what to do next. **Check again** reloads the record, and
+  **Export evidence** downloads `evidence-<run-id>.json` (the same answer as the API, see
+  "Evidence of a run"). A user sees file counts and no paths; models, policy denials and paths
+  are for administrators. The export never holds the content of a transcript or a log.
+
 - **Changes** — the complete diff the run made, including uncommitted work.
 
   A very long log, diff or transcript does not slow the page. The live log keeps the last 2,000

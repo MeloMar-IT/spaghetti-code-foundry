@@ -7,6 +7,7 @@ import { answerable, createRunHeader, firstLine, runActions, workText } from "..
 import { filterBar, filterEmpty, defaultGo, sameRepo } from "../filters.js";
 import { pageViews } from "../views.js";
 import { createLog } from "../run-output.js";
+import { evidenceRecordSection } from "../run-evidence.js";
 import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
 import { decisionDialog } from "../run-dialogs.js";
@@ -303,7 +304,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     { id: "overview", label: "Overview", ...overviewPanel({ admin: false, extra: answerBox }) },
     { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update({ ...s, history: (s.history ?? []).map(plain) }) },
     { id: "diff", label: "Changes", ...changesPanel({ view: diffView, none: NO_CHANGES, load: () => a.diff(runId) }) },
-    { id: "evidence", label: "Evidence", ...evidencePanel() },
+    { id: "evidence", label: "Evidence", ...evidencePanel({ record: evidenceRecordSection({ load: () => a.evidence(runId), admin: false, runId }) }) },
     { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
   ], { initial: "overview" });
   mount(tabsBox, tabs.el);
