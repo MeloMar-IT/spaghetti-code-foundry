@@ -210,6 +210,120 @@ An admin can also start a run the way a user does. Open **Start work** (`#/start
 
 The same rules as for a user apply: only a published flow, only your own repositories, and no changes to the flow or its variables. The **▶ Run** button of the flow editor works as before.
 
+### Build release files on this machine
+
+The flow `release-build` builds the release files of any repository on the Foundry machine. Everything project-specific is in the repository's recipe, `.factory/release-build.yaml`, so the same flow works for a Node package, a static site or a compiled binary. This part only builds and collects the files. It does not upload them; the upload to a draft GitHub release comes later.
+
+**Start it.** Run flow `release-build` with `github_repo` (`owner/repo`) and `ref` (a branch, tag or commit; default `main`). The flow clones the repository and resolves the ref to one commit. It reads the recipe at that commit. A repository without a recipe fails at once with "this repository has no release-build recipe".
+
+**The recipe.** The keys:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `{commit_datetime}` | The version of the release. |
+| `tag` | `v{version}` | The git tag of the release. |
+| `prerelease` | `true` | Mark the release as a pre-release. |
+| `keep` | `5` | How many releases to keep, 1 to 50. |
+| `timeout_minutes` | `60` | The time limit of each build, 1 to 480 minutes. |
+| `builds` | (required) | The list of builds, at least one. |
+| `assemble` | (none) | A command that runs after all builds. |
+
+`tag`, `prerelease` and `keep` are read and checked now; the upload step (part 2) uses them.
+
+The placeholders, filled from the **committer time of the resolved commit** in UTC (the server's timezone does not change them):
+
+- `{commit_datetime}`: `YYYYMMDDHHMM`, for example `202610181430`.
+- `{commit_date}`: `YYYYMMDD`, for example `20261018`.
+- `{sha}`: the short commit id, 7 characters.
+- `{version}`: only in `tag`; the expanded `version`.
+
+The same commit always gives the same version and tag.
+
+Each build has:
+
+- `name`: letters a–z, digits and `-`, unique in the recipe. It names the folder of the build's files.
+- `on`: a list of `macos`, `linux` and `windows`. Default: any.
+- `arch` (optional): `arm64` or `x64`.
+- `requires` (optional): command names that must be on the machine's `PATH`.
+- `run`: the build command. It runs in the build's own checkout.
+- `artifacts`: file globs, relative to the checkout (`*`, `?`, `**`). Every matching file is collected.
+
+**What happens.**
+
+- Builds run one after the other. Each runs in its own `git worktree` of the commit, never in your checkout, and through `tools/test-slot`, so it waits for a test slot at low priority. Its time limit is `timeout_minutes`.
+- A build whose `on` or `arch` does not match this machine is skipped, with a line such as `windows-x64: skipped, needs windows`. If every build is skipped, the run fails with "nothing to build on this machine".
+- A missing `requires` command fails that build before any build runs, with a line that names the command.
+- A build whose `artifacts` match no file fails.
+- The matching files go to `release/in/<name>/` in the run folder. Each build has its log in `release/logs/<name>.log`.
+- `assemble` runs after all builds. It reads `release/in` and writes its files to `release/out`. Without `assemble`, the collected files are copied to `release/out` as they are.
+- A `SHA256SUMS` file is added to `release/out` when there is none.
+- Stopping the run stops the running build and its whole process tree.
+
+**Environment of a build.** The `run` and `assemble` commands get a short environment, not the Foundry's: `PATH`, `HOME`, `LANG`, a fixed list of toolchain variables, and the five release variables below. The list of toolchain variables is `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `TEMP`, `TMP`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `JAVA_HOME`, `GOPATH`, `GOROOT`, `GOCACHE`, `GOMODCACHE`, `CARGO_HOME`, `RUSTUP_HOME`, `NVM_DIR`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `ANDROID_NDK_HOME`, `PYENV_ROOT`, `DEVELOPER_DIR`, `SDKROOT`, the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and the lower-case forms; a proxy with a password in it is left out), and on Windows `SystemRoot`, `ComSpec`, `PATHEXT`, `WINDIR`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`.
+
+Never passed: `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, the bot's token variable, the provider key variables, and any other name that contains `TOKEN`, `SECRET`, `PASSW`, `CREDENTIAL`, `_KEY` or `AUTH`. A tool that needs another variable is not helped by the recipe: put the tool on `PATH` and let it find its own settings in `HOME`.
+
+The variables the commands get:
+
+- `FACTORY_RELEASE_VERSION`: the expanded `version`.
+- `FACTORY_RELEASE_TAG`: the expanded `tag`.
+- `FACTORY_RELEASE_SHA`: the full commit id.
+- `FACTORY_RELEASE_IN`: the folder of the collected files (`release/in`).
+- `FACTORY_RELEASE_OUT`: the folder for the release files (`release/out`).
+
+The recipe text never goes into a shell command line. The commands run the way the repository's own test command runs, through `sh -c`.
+
+**Windows.** The commands run with `sh`. On a Windows machine, install Git for Windows (Git Bash) and make sure `sh` is on `PATH`.
+
+**Recipes for several kinds of project.** Each recipe is the `.factory/release-build.yaml` of a repository.
+
+A Node command-line package, packed with `npm pack`:
+
+```yaml
+builds:
+  - name: npm-package
+    requires: [npm]
+    run: npm ci && npm pack
+    artifacts: ["*.tgz"]
+```
+
+A static site, zipped:
+
+```yaml
+version: "{commit_date}-{sha}"
+builds:
+  - name: site
+    requires: [npm, zip]
+    run: npm ci && npm run build && cd dist && zip -qr ../site.zip .
+    artifacts: ["site.zip"]
+```
+
+A compiled binary, one build per platform (Go here; any compiler works the same way):
+
+```yaml
+builds:
+  - name: linux-x64
+    on: [linux]
+    arch: x64
+    requires: [go]
+    run: go build -o tool .
+    artifacts: ["tool"]
+  - name: macos-arm64
+    on: [macos]
+    arch: arm64
+    requires: [go]
+    run: go build -o tool .
+    artifacts: ["tool"]
+  - name: windows-x64
+    on: [windows]
+    arch: x64
+    requires: [go]
+    run: go build -o tool.exe .
+    artifacts: ["tool.exe"]
+```
+
+Each machine builds the entries that match it and skips the others. The collected files of `linux-x64` are in `release/in/linux-x64/`.
+
 ---
 
 ## 3. Follow, approve and resume runs

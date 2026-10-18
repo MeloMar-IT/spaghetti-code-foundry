@@ -175,6 +175,7 @@ describe("clone steps", { timeout: 60_000 }, () => {
     ["issue-gitflow", "feature_branch", "."],
     ["daily-pr", "clone", "."],
     ["release-daily", "clone", "."],
+    ["release-build", "clone", "."],
     ["epic-questions", "clone", "."],
     ["refine-brief", "clone", "repo"],
     ["refine-round", "clone", "repo"],

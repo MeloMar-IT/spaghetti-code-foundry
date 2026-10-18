@@ -37,6 +37,9 @@ function slotsNow() {
 let slots = slotsNow();
 const waitMs = num(process.env.FACTORY_TEST_SLOT_WAIT_SEC, 5400) * 1000;
 const pollMs = num(process.env.FACTORY_TEST_SLOT_POLL_MS, 2000);
+// FACTORY_TEST_SLOT_STRICT=1: never run without a slot. When none comes free in time (or the slots folder cannot be used)
+// the command is not run and test-slot exits with 75.
+const strict = process.env.FACTORY_TEST_SLOT_STRICT === "1";
 
 const alive = (pid) => {
   try {
@@ -80,6 +83,10 @@ if (slots > 0) {
   } catch (e) {
     // a slots folder that cannot be made (no write access here) never stops the tests
     usable = false;
+    if (strict) {
+      console.error(`test-slot: the slots folder cannot be used (${e.code ?? "error"}) and FACTORY_TEST_SLOT_STRICT is set — not running`);
+      process.exit(75);
+    }
     console.log(`test-slot: the slots folder cannot be used (${e.code ?? "error"}) — running without a slot`);
   }
 }
@@ -88,6 +95,10 @@ if (slots > 0 && usable) {
   let said = false;
   while (!(slot = take())) {
     if (Date.now() - start >= waitMs) {
+      if (strict) {
+        console.error(`test-slot: no free slot after ${Math.round(waitMs / 1000)} s and FACTORY_TEST_SLOT_STRICT is set — not running`);
+        process.exit(75);
+      }
       console.log(`test-slot: no free slot after ${Math.round(waitMs / 1000)} s — running anyway`);
       break;
     }
