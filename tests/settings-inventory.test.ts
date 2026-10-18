@@ -136,7 +136,7 @@ describe("every setting has a control or a reviewed exception", () => {
   });
 
   it("has exactly the reviewed exceptions, each with a reason", () => {
-    expect(Object.keys(SETTING_EXCEPTIONS).sort()).toEqual(["help.disabled_accounts", "help.pilot_accounts", "help.sensitive_patterns", "providers.*.price.input_per_mtok", "providers.*.price.output_per_mtok"]);
+    expect(Object.keys(SETTING_EXCEPTIONS).sort()).toEqual(["help.disabled_accounts", "help.pilot_accounts", "help.sensitive_patterns", "policy.packs", "providers.*.price.input_per_mtok", "providers.*.price.output_per_mtok"]);
     for (const [k, r] of Object.entries(SETTING_EXCEPTIONS)) expect(r.endsWith("."), k).toBe(true);
   });
 

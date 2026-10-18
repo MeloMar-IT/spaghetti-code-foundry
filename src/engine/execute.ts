@@ -16,6 +16,7 @@ import { shortEnv, shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import type { Actor, StepIdentity } from "../evidence/identity.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
+import { drainPushLog, pushLogFile, repositoryFact, type RunPolicy } from "./policy-hooks.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 
 /** Shell commands may only template trusted values; task and outputs go via env. */
@@ -76,6 +77,8 @@ export interface Engine {
   decision?: ApprovalDecision & { stepId: string };
   /** Writes the evidence events of the run; it never throws. Absent: no evidence is written. */
   evidence?: RunRecorder;
+  /** Asks the configured policy packs at the boundaries of the run (observe mode); absent when no pack is configured. */
+  policy?: RunPolicy;
   /** Evidence only: who asked for this start or resume (and so who decided at an approval step). */
   actor?: Actor;
 }
@@ -132,10 +135,41 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   };
   engine.save();
   engine.evidence?.stepEnded(rec);
+  const identity = stepIdentity(step, scope.prefix, visit);
+  engine.policy?.pushes(identity, drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit)));
+  engine.policy?.at(
+    "step.after",
+    {
+      repository: repositoryFact(scope.ctx.vars),
+      step: step.id,
+      elapsedMs: Math.max(0, Math.round(rec.durationMs)),
+      stepCostUsd: typeof res.costUsd === "number" ? res.costUsd : undefined,
+      runCostUsd: engine.summary.totalCostUsd,
+    },
+    identity,
+  );
   const secs = (rec.durationMs / 1000).toFixed(1);
   const tok = res.tokens ? `, ${Math.round((res.tokens.input + res.tokens.output) / 1000)}k tok` : "";
   engine.log(`${res.ok ? "✔" : "✘"} ${rec.id} (${secs}s${res.costUsd ? `, $${res.costUsd.toFixed(4)}` : ""}${tok})${res.error ? ` — ${res.error}` : ""}`);
   return rec;
+}
+
+/** Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG); undefined without policy packs. */
+export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">, visit: number): string | undefined {
+  if (!engine.policy) return undefined;
+  const file = pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit);
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+  } catch {
+    return undefined; // pushes are then not observed; the step runs as before
+  }
+  return file;
+}
+
+/** A visit of a step begins: the evidence event, then the policy question for `step.before`. Every step visit passes here. */
+export function beginStep(engine: Engine, scope: Scope, step: Pick<Step, "id" | "type">, identity: StepIdentity): void {
+  engine.evidence?.stepStarted(identity);
+  engine.policy?.at("step.before", { repository: repositoryFact(scope.ctx.vars), step: step.id }, identity);
 }
 
 /** Log file of the step that runs after `historyLength` finished steps. */
@@ -178,6 +212,16 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       const holds = access?.kind === "token" || access?.kind === "app" || access?.kind === "key";
       const iso = stepIsolation(engine, ctx.vars, holds);
       if (iso && "refused" in iso) return refuse(iso.refused);
+      // The step works in the repository's checkout, with a sign-in or without one (policy: observe only).
+      engine.policy?.repository(stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1), {
+        repository: repositoryFact(ctx.vars),
+        step: step.id,
+        credential: holds ? "repository" : !iso ? "machine" : "none",
+        isolated: Boolean(iso),
+        shippedFlow: engine.hotfix === "on" ? true : undefined,
+      });
+      const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
+      if (pushLog) env.FACTORY_PUSH_LOG = pushLog;
       if (!iso) Object.assign(env, await engine.botEnv()); // nothing is made yet, so a throw leaves nothing behind
       // The GitHub App: a new token limited to this repository, for this step only (never stored).
       let tokenAccess = access?.kind === "token" ? access : undefined;
@@ -292,7 +336,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           const visit = (scope.visits[id] = (scope.visits[id] ?? 0) + 1);
           const started = new Date();
           const lf = newLogFile(engine, scope.prefix + id);
-          engine.evidence?.stepStarted(stepIdentity(sub, scope.prefix, visit));
+          beginStep(engine, scope, sub, stepIdentity(sub, scope.prefix, visit));
           let res: StepResult;
           try {
             res = await executeStep(sub, scope, engine, lf);

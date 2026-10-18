@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { z } from "zod";
+import type { PolicyDecision } from "../policy/schema.js";
 import type { RunSummary, StepRecord } from "../engine/state.js";
 import type { Step } from "../flow/schema.js";
 import {
@@ -173,6 +174,16 @@ export class RunRecorder {
   /** The decision of a person at an approval step. */
   stepDecided(step: StepIdentity, approved: boolean, by: Actor): void {
     this.put(() => (approved ? { type: "step.approved", step, by } : { type: "step.denied", step, denial: { kind: "approval", by } }));
+  }
+
+  /** Something that had to be recorded could not be: the stream stops and the run has no manifest. The run itself goes on. */
+  incomplete(e: unknown): void {
+    this.stream.stop(e);
+  }
+
+  /** A policy pack decided at a boundary. `step` is given exactly for the boundaries that are about a step. */
+  policyDecided(decision: PolicyDecision, step?: StepIdentity): void {
+    this.put(() => ({ type: "policy.decided", decision, ...(step ? { step } : {}) }), decision.evaluatedAt);
   }
 
   /** The end of one visit: a `step.denied` for every tool the agent was refused, then `step.completed` or `step.failed`. */

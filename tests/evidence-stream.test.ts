@@ -32,7 +32,7 @@ describe("EvidenceStream", () => {
     const first = s.append({ type: "run.created", flow: { name: "f" }, by: { kind: "cli" } }, "2026-01-31T12:00:00.000Z");
     s.append({ type: "run.started" });
     s.append({ type: "step.started", step });
-    expect(first).toMatchObject({ version: 1, id: "ev-000000", seq: 0, runId: "r1", time: "2026-01-31T12:00:00.000Z", type: "run.created" });
+    expect(first).toMatchObject({ version: 2, id: "ev-000000", seq: 0, runId: "r1", time: "2026-01-31T12:00:00.000Z", type: "run.created" });
     const text = readFileSync(file(), "utf8");
     expect(text.endsWith("\n")).toBe(true);
     expect(text.split("\n")).toHaveLength(4);

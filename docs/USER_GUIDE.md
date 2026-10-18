@@ -991,6 +991,36 @@ $ scf evidence verify 20260131-120000-ab12
   (status, the first failure with its code, every check and every file) for a script.
   `--runs-dir <dir>` reads another runs folder.
 
+### Policy packs in observe mode
+
+A policy pack is a set of rules that is asked at the important moments of a run. In this version the
+answers are only recorded: a run never stops or changes because of a pack.
+
+- **Turn it on.** Put the pack in the data folder as `policies/<id>.json` (a plain file, at most 1 MiB),
+  then list its id in `config.yaml`:
+
+  ```yaml
+  policy:
+    packs: [baseline]
+  ```
+
+  Only `mode: observe` is accepted. A pack in `enforce` mode is refused for now. The list is not a
+  setting in the web interface; an older build rejects the `policy` key.
+- **When it is asked.** The start of the run; before the workspace is made; before a step starts in the
+  repository's checkout; before and after every step (also the steps inside a parallel step or a
+  sub-flow); before a write-capable agent step; for each push a step makes; when an approval is used;
+  and when the run succeeded. This is the same for built-in and custom flows.
+- **What you see.** Each answer is a line in the live log, for example
+  `· policy baseline 2026.1 · push: warn (branch.protected) — observe only, nothing was stopped`, and an
+  event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
+- **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack is logged as
+  `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. The run's
+  result is the same as without the pack.
+- **Pushes.** While packs are configured, the Foundry's pre-push hook records each pushed branch, even
+  when no branch is protected. The hook never blocks a push.
+- **Evidence from this version** has a newer event version. An older build cannot read the evidence of a
+  run that has `policy.decided` events, so keep this build for those runs.
+
 ---
 
 ## 4. Write your own flows

@@ -15,6 +15,8 @@ const PRE_PUSH = `#!/bin/sh
 # Installed by Spaghetti Code Foundry: refuse pushes to protected branches, and pushes that add secrets.
 while read local_ref local_sha remote_ref remote_sha; do
   branch=\${remote_ref#refs/heads/}
+  # Policy (observe mode): one line per pushed ref for the engine, which reads it when the step ends. Never fails the push.
+  [ -z "$FACTORY_PUSH_LOG" ] || printf '%s\\t%s\\n' "$branch" "$2" >> "$FACTORY_PUSH_LOG" 2>/dev/null || true
   set -f
   # The one exception: the hotfix merge step may push (not delete) the branch it was granted. FACTORY_PUSH_ALLOW
   # is "<branch>:<token>"; it counts only when the engine wrote that token (a file next to this hook) for the
@@ -51,8 +53,9 @@ exit 0
  * secrets. GIT_CONFIG_* applies to all git processes, including the ones agents start.
  * Note: this replaces the repo's own git hooks during runs.
  */
-export function protectedBranchEnv(patterns: string[], secretScan = false): Record<string, string> {
-  if (!patterns.length && !secretScan) return {};
+export function protectedBranchEnv(patterns: string[], secretScan = false, observe = false): Record<string, string> {
+  // `observe`: policy packs are configured, so the hook is there to tell the engine about each push (see FACTORY_PUSH_LOG)
+  if (!patterns.length && !secretScan && !observe) return {};
   const dir = join(process.env.FACTORY_HOME ?? FACTORY_HOME, "hooks");
   mkdirSync(dir, { recursive: true });
   const hook = join(dir, "pre-push");
