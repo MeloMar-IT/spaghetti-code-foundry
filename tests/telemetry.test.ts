@@ -36,10 +36,29 @@ const mode = (p: string) => statSync(p).mode & 0o777;
 
 describe("telemetry config", () => {
   it("defaults to local with 30 days, and checks its values", () => {
-    expect(ConfigSchema.parse({}).telemetry).toEqual({ local: true, keep_days: 30 });
+    expect(ConfigSchema.parse({}).telemetry).toEqual({ local: true, keep_days: 30, otlp: { enabled: false, timeout_ms: 5000 } });
     for (const keep_days of [1, 365]) expect(() => cfg({ keep_days })).not.toThrow();
     for (const keep_days of [0, 366, 1.5]) expect(() => cfg({ keep_days })).toThrow();
     expect(() => cfg({ foo: 1 })).toThrow();
+  });
+
+  it("accepts good OTLP settings", () => {
+    for (const endpoint of ["http://127.0.0.1:4318/v1/logs", "http://localhost:4318/v1/logs", "http://[::1]:4318/v1/logs", "https://collector.example.com/v1/logs"]) {
+      expect(() => cfg({ otlp: { enabled: true, endpoint } }), endpoint).not.toThrow();
+    }
+    for (const timeout_ms of [100, 60000]) expect(() => cfg({ otlp: { timeout_ms } })).not.toThrow();
+  });
+
+  it("refuses bad OTLP settings", () => {
+    const r = ConfigSchema.safeParse({ protected_branches: [], telemetry: { otlp: { enabled: true } } });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues.map((i) => i.path)).toContainEqual(["telemetry", "otlp", "endpoint"]);
+    for (const endpoint of [
+      "https://u:p@host/v1/logs", "ftp://host/v1/logs", "https://host/v1/logs?x=1", "https://host/v1/logs?", "https://host/v1/logs#a",
+      "https://host/v1/logs ", "https://host/v1\n/logs", "http://collector.example.com/v1/logs", "https://", "nonsense",
+    ]) expect(() => cfg({ otlp: { enabled: true, endpoint } }), JSON.stringify(endpoint)).toThrow();
+    for (const timeout_ms of [99, 60001, 1.5]) expect(() => cfg({ otlp: { timeout_ms } })).toThrow();
+    expect(() => cfg({ otlp: { foo: 1 } })).toThrow();
   });
 });
 

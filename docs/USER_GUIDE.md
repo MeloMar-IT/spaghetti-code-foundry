@@ -1061,6 +1061,35 @@ Foundry does, without opening each run folder.
   `! telemetry: the telemetry file could not be written; events are dropped until it can`. The line never
   shows a value.
 
+#### Send the events to an OpenTelemetry collector
+
+If you run an OpenTelemetry collector, the Foundry can send the same events to its OTLP/HTTP logs
+endpoint. It is off by default, and nothing is sent until you turn it on in `config.yaml`:
+
+```yaml
+telemetry:
+  otlp:
+    enabled: true
+    endpoint: http://127.0.0.1:4318/v1/logs
+    timeout_ms: 5000       # optional: 100 to 60000, one request may take this long
+```
+
+- **Address.** `http:` or `https:`, with no user name, password, `?` or `#`. Plain `http:` works only for
+  `localhost`, `127.x.x.x` and `[::1]`, so the example above is fine on the same machine. For any other host
+  use `https:`. There is no login for the collector: keep it on a machine or network you trust.
+- **What is sent.** The events described above, as OTLP log records. Repository names and account ids
+  (UUIDs) are sent as they are. Each record has its fields as `scf.*` attributes, and all events of a run
+  share one trace id. The local file is written the same way, with or without this setting.
+- **Failure never stops a run.** Events are sent in batches of up to 50, one request at a time. A request that
+  fails, is refused, or takes longer than `timeout_ms` is not retried. Events are held in a queue of 1000; when
+  it is full, the oldest is dropped and counted.
+- **What the log lines mean.**
+  - `! telemetry: the OTLP collector could not be reached or did not accept events; they are dropped until it does`:
+    sending has started to fail. It is shown once for each period of failures, not for each request.
+  - `· telemetry: the OTLP collector accepts events again`: the first successful request after a failure.
+- **On exit.** When `scf` stops (Ctrl+C in `watch`, or a stop of `serve`), it sends what is still queued,
+  for at most 3 seconds. Events that cannot be sent in that time are dropped and counted.
+
 ---
 
 ## 4. Write your own flows

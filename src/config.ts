@@ -278,12 +278,44 @@ export function updateEveryMs(text: unknown): number | undefined {
 /** `owner/name` or `host/owner/name`. */
 export const DEPLOYMENT_REPOSITORY_RE = /^(?:[A-Za-z0-9.-]+\/)?[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
+const LOOPBACK = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/;
+/** An OTLP/HTTP address: http(s), no user or password, no query or fragment, no whitespace or control characters; plain http only for this machine. */
+function isOtlpEndpoint(s: string): boolean {
+  if (/[\s\p{Cc}]/u.test(s) || s.includes("?") || s.includes("#")) return false;
+  if (!URL.canParse(s)) return false;
+  const u = new URL(s);
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  if (u.username !== "" || u.password !== "" || u.hostname === "") return false;
+  return u.protocol === "https:" || LOOPBACK.test(u.hostname);
+}
+
+export const OtlpSchema = z
+  .object({
+    /** Send the telemetry events to an OpenTelemetry collector (OTLP/HTTP, JSON logs). */
+    enabled: z.boolean().default(false),
+    /** The logs address of the collector, e.g. http://127.0.0.1:4318/v1/logs. */
+    endpoint: z
+      .string()
+      .max(2048)
+      .refine(isOtlpEndpoint, "must be an http(s) address without user, password, ? or #; plain http only for 127.0.0.1, ::1 or localhost")
+      .optional(),
+    /** How long one request may take. */
+    timeout_ms: z.number().int().min(100).max(60_000).default(5000),
+  })
+  .strict()
+  .superRefine((o, ctx) => {
+    if (o.enabled && !o.endpoint) ctx.addIssue({ code: "custom", path: ["endpoint"], message: "is needed when enabled is true" });
+  });
+export type OtlpConfig = z.infer<typeof OtlpSchema>;
+
 export const TelemetrySchema = z
   .object({
     /** Write the local telemetry files. */
     local: z.boolean().default(true),
     /** Telemetry files older than this many days (UTC) are removed. */
     keep_days: z.number().int().min(1).max(365).default(30),
+    /** The optional OTLP exporter. */
+    otlp: OtlpSchema.prefault({}),
   })
   .strict();
 export type TelemetryConfig = z.infer<typeof TelemetrySchema>;

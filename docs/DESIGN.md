@@ -704,8 +704,36 @@ the evidence and nothing depends on it.
   `resetTelemetry` is for tests.
 - **Wiring.** `runFlow` and `resumeRun` call `configureTelemetry` right after the config is loaded; the server does
   it after `readConfig()` and on every reload. With `telemetry.local: false` nothing is opened and no folder is made.
-- **Not yet.** No exporter, no Settings control (see `settings/exceptions.ts`), and no exit paths; those come
-  with parts 2 and 3 of #155.
+- **OTLP exporter (#586, part 3 of #155).** `otlp.ts` sends the same events as OTLP/HTTP JSON logs. It is made
+  only when `telemetry.otlp.enabled` is true and has an endpoint, and it gets only events that passed the schema
+  and the privacy check, so it adds no new field. `otlpLogsRequest` maps each event to a log record: the time as
+  a string of nanoseconds, `traceId` = the first 32 hex characters of SHA-256 of the run id (the same for every
+  event of a run), `scf.*` attributes flattened from the event, and WARN for `failed` or `denied`.
+- **Why no SDK.** The OpenTelemetry SDK would add dependencies, its own timers and process listeners, and a
+  global state that the hub cannot control. A request of a few lines of JSON with `fetch` is enough for the
+  one signal we send, and every rule below stays in our code and our tests.
+- **Exporter.** `OtlpExporter` keeps a queue of at most `OTLP_QUEUE_MAX` (1000) events; when it is full the
+  oldest is dropped and counted as `failed`. A batch is sent at `OTLP_BATCH` (50) events, or by an unref'd
+  2 s timer for a short batch. Flushes are serialized: one request at a time, each with `redirect: "error"`,
+  `content-type: application/json` and an `AbortSignal.timeout(timeout_ms)`. There is no retry. Each response
+  body is released, and a request that throws or returns a non-2xx status counts as `failed`. The exporter never
+  throws and holds no process listener.
+- **Log lines.** The first failure of a period logs one `!` line; the first success after it logs one `·` line.
+  The text is fixed (`OTLP_WORDS`), so no value appears in it.
+- **Hub.** `telemetry.ts` keeps one exporter for the current config. It is made on the first event. It is
+  kept while the endpoint, the timeout and the enabled state are unchanged, and it is retired (closed, not
+  dropped) when one of them changes. `fetch` is injected through `configureTelemetry(config, { fetch })`, and
+  the hub counts `exported` and `failed` in `telemetryStats()`. A callback of an exporter from before a
+  `resetTelemetry()` does nothing, so old requests cannot change the new counts or the log.
+- **Shutdown.** `closeTelemetry(ms = 3000)` closes the local file, asks the exporter to send what is queued and
+  waits at most `ms`. It waits for every exporter that is closing, also when called twice, and an event that
+  arrives while it waits is sent if time is left. After the limit the queue is dropped and counted, and a request
+  in flight is aborted. `exitAfterTelemetry(code)` runs it once per process and then exits with the code; the CLI
+  uses it in the `main` handlers, the `watch` interrupts and the `serve` signal handlers (after the updater stops),
+  and `server.close()` calls `closeTelemetry()` before the HTTP server closes.
+- **Not yet.** Endpoint authentication and a Settings control (see `settings/exceptions.ts`). The synchronous
+  restart in `src/supervise.ts` (`process.exit` after the restart) does not go through `exitAfterTelemetry`, so
+  the last unsent batch can be lost there. This is a follow-up.
 
 ## 5. Agents and models
 
