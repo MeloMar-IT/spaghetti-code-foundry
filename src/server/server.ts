@@ -58,6 +58,7 @@ import { yourTurnRoutes } from "./your-turn.js";
 import { USER_ERROR, movedText } from "./user-view.js";
 import { turnActionRoutes } from "./turn-actions.js";
 import { READ_ONLY, asParam, viewAsRoutes, viewRunning, viewedUser } from "./view-as.js";
+import { configureTelemetry } from "../telemetry/telemetry.js";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../ui");
 const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("yaml/package.json")), "browser");
@@ -144,6 +145,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   const shortKeys = new Set<string>();
   const readConfig = (): Config => {
     const c = loadConfig();
+    configureTelemetry(c, { log });
     for (const name of hideKeyVars(providerKeyVars(c))) {
       if (shortKeys.has(name)) continue;
       shortKeys.add(name);

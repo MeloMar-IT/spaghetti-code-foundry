@@ -278,6 +278,16 @@ export function updateEveryMs(text: unknown): number | undefined {
 /** `owner/name` or `host/owner/name`. */
 export const DEPLOYMENT_REPOSITORY_RE = /^(?:[A-Za-z0-9.-]+\/)?[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
+export const TelemetrySchema = z
+  .object({
+    /** Write the local telemetry files. */
+    local: z.boolean().default(true),
+    /** Telemetry files older than this many days (UTC) are removed. */
+    keep_days: z.number().int().min(1).max(365).default(30),
+  })
+  .strict();
+export type TelemetryConfig = z.infer<typeof TelemetrySchema>;
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -606,6 +616,8 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /** Lifecycle telemetry: one value-free event per line in <data folder>/telemetry/events-YYYY-MM-DD.jsonl (the UTC day). */
+    telemetry: TelemetrySchema.prefault({}),
   })
   .strict()
   .superRefine((c, ctx) => {

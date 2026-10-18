@@ -42,6 +42,7 @@ import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { runPolicy, type RunPolicy } from "./policy-hooks.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
+import { configureTelemetry } from "../telemetry/telemetry.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
 
@@ -116,6 +117,7 @@ export function effectiveVars(flow: Flow, repo: string, given: Record<string, st
 /** Start a new run of a flow. */
 export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary> {
   const config = opts.config ?? loadConfig();
+  configureTelemetry(config);
   const runId = opts.runId ?? newRunId();
   const runDir = join(opts.runsDir, runId);
 
@@ -180,6 +182,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
 /** Continue a stopped, failed, cancelled, interrupted or waiting run. */
 export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   const config = opts.config ?? loadConfig();
+  configureTelemetry(config);
   const summary = loadRun(opts.runsDir, opts.runId);
   if (!summary) throw new Error(`run ${opts.runId} not found`);
   if (!summary.flowDef || !summary.state) throw new Error("this run was created by an older version of Spaghetti Code Foundry and can't be resumed");

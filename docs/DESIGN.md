@@ -674,6 +674,39 @@ are `skipped`):
 
 ---
 
+### Telemetry
+
+`src/telemetry/` writes one value-free event for each lifecycle fact of a run, to a local daily file (#584,
+part 1 of 3 of #155). It is a second, smaller view of what the evidence already records; it does not replace
+the evidence and nothing depends on it.
+
+- **Envelope.** `envelope.ts` defines `TelemetryEventSchema`: `version` 1, a strict object with `id`, `time`,
+  `kind` and `name` required, and optional labels that reuse the identity schemas of `evidence/identity.ts`,
+  `evidence/schema.ts` and `policy/schema.ts`. The kind and name must match (`run`, `step`, `model`, `policy`,
+  `tool`, `delivery`, `pull_request`, `watcher`). There is no free-text field, and unknown fields are refused.
+  The id is `ev:<run>:<evidence id>` (with `:pr` for the pull request of `run.completed`) or `tm:<32 hex>`.
+- **From evidence.** `telemetryFromEvidence` maps every evidence body to at least one draft; it never throws.
+  A line that was written gives the evidence id and `seq`; a body that was not written (the stream has
+  stopped) gets a random `tm:` id and no `evidence`. `RunRecorder.put` takes one time for both the append and
+  the telemetry, so the two agree. `watcherRef` gives the watcher part of an event.
+- **Privacy.** `privacy.ts` (`privateTelemetry`) runs three checks, all closed. `id` and `runId` must not
+  change under `scrub` (`identity`). Each redactable label is checked on its own with the stored credentials
+  and `help.sensitive_patterns`; a label that changes is removed and listed in `redacted`. The canonical line is
+  checked once more, reading the credential store again; an unreadable store drops the event (`privacy`).
+- **Local file.** `local.ts` writes `<data folder>/telemetry/events-YYYY-MM-DD.jsonl` (UTC day) with `O_APPEND`,
+  `O_NOFOLLOW` and `O_NONBLOCK`. The folder is made 0700 and the file 0600, loose modes are tightened, and a
+  link or a path owned by another user is refused. `sweepTelemetry(keepDays)` removes only old plain files named
+  `events-<day>.jsonl`, never through a linked folder. The sweep runs each time the writer opens a file.
+- **Hub.** `telemetry.ts` holds the state: `configureTelemetry(config, { log })` reads `telemetry` and
+  `help.sensitive_patterns`; a `log` replaces the current one, and without one the earlier is kept.
+  `emitTelemetry` validates, checks and writes each event, and never throws. A drop is counted and each reason
+  (`invalid`, `privacy`, `identity`, `write`) is logged once, in fixed words, through `DROP_WORDS`.
+  `resetTelemetry` is for tests.
+- **Wiring.** `runFlow` and `resumeRun` call `configureTelemetry` right after the config is loaded; the server does
+  it after `readConfig()` and on every reload. With `telemetry.local: false` nothing is opened and no folder is made.
+- **Not yet.** No exporter, no Settings control (see `settings/exceptions.ts`), and no exit paths; those come
+  with parts 2 and 3 of #155.
+
 ## 5. Agents and models
 
 An agent step names what it needs (a model, an effort level, allowed tools); the Foundry decides
@@ -978,6 +1011,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `notifications.json` | What was already notified |
 | `help.json` | The Ask SCF conversations of every account (mode 0600) |
 | `help-stats.json` | The Ask SCF quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
+| `telemetry/` | `events-YYYY-MM-DD.jsonl`, one value-free lifecycle event per line per UTC day (0700 folder, 0600 files); old days are removed after `telemetry.keep_days` (`src/telemetry/`) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `issue-lists/` | One file per watched repository: the last full issue list read by the watchers (number, title, state, labels, links, dependencies; no issue text), with `readAt` and `cut`. Written atomically; removed when no watcher is left for the repository |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |
