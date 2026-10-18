@@ -324,6 +324,48 @@ builds:
 
 Each machine builds the entries that match it and skips the others. The collected files of `linux-x64` are in `release/in/linux-x64/`.
 
+### Suggest a recipe
+
+`scf release-build init --repo <owner/name>` looks at the build files of a repository and prints a suggested `.factory/release-build.yaml`. It uses plain rules and no agent. It builds nothing, and it changes nothing unless you add `--write`.
+
+**What it does.** It makes a shallow clone of the repository in a temporary folder, reads the tracked files, prints the suggestion to stdout and deletes the folder. The clone may take up to 5 minutes; each other git or `gh` call up to 2 minutes. Only files at the top of the repository count, and for Go also `cmd/<name>/main.go`.
+
+**What it detects.**
+
+| File | Suggested build |
+|---|---|
+| `package.json` | `npm-package`: the install command of the lock file (`npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile`, `bun install`, or `npm install` with no lock file), then `npm run build` when there is a `build` script, then `npm pack`. Artifact `*.tgz`. |
+| `pyproject.toml` or `setup.py` | `python-package`: `python3 -m build`. The machine needs the `build` package. Artifacts are the wheel and the source tarball in `dist/`. |
+| `build.gradle` or `build.gradle.kts` | `gradle-jar`: `./gradlew build -x test` when there is a `gradlew` file, otherwise `gradle build -x test`. |
+| `pom.xml` | `maven-jar`: `mvn -q package -DskipTests`. |
+| `go.mod` | `go-binaries`: one cross-compile each for Linux x64, macOS arm64 and Windows x64, into `dist/`. The binary is named after the last part of the module path. |
+| `Cargo.toml` | `rust-binary`: `cargo build --release` for this machine. The binary is named after `[package]` `name`. |
+| `Dockerfile` | `docker-image`: builds the image and saves it as `image.tar.gz`. Requires `docker` and `gzip`. |
+
+A name taken from the repository is used only when it is plain (letters, digits, `.`, `_` and `-`). Otherwise a fallback name is used, and the comment says so.
+
+**The output.** Every guessed line ends with a `#` comment that says it is a guess and why. The `version` is always `{commit_date}-{sha}`. The first lines name what was detected. Messages go to stderr, so stdout holds only the recipe. When nothing is detected, the output is a commented template and a line on stderr says so. Check every guess before you commit the file.
+
+**With `--write`.** The command opens a pull request instead of only printing the recipe:
+
+1. It makes one commit on top of the default branch that adds the recipe file and nothing else. Your working copy is not touched.
+2. It pushes that commit to the new branch `release-build-recipe`. The push creates the branch only; it never changes an existing one.
+3. It opens a pull request into the default branch with `gh pr create` and prints its URL.
+
+It never commits to or pushes to the default branch. It refuses, changes nothing and exits 1 when:
+
+- the repository already has `.factory/release-build.yaml`;
+- `.factory` is a link or a file in the repository, not a folder;
+- nothing was detected;
+- the branch `release-build-recipe` already exists on GitHub (delete it and run the command again);
+- the default branch cannot be read, or is itself named `release-build-recipe`.
+
+If the pull request cannot be opened, the command first looks for an open pull request from that branch, because `gh` may have made it before it failed. If there is none, it deletes the branch it pushed. If that fails, it tells you to delete the branch by hand. After Ctrl+C, it does the same.
+
+Merging the pull request adds the recipe to the default branch. Then `release-build` finds it at the resolved commit.
+
+The command needs `git` and `gh` on the machine, and `gh` signed in with access to the repository.
+
 ---
 
 ## 3. Follow, approve and resume runs
@@ -5585,6 +5627,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills score <source-id> [<suite-file>] [--agent]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline, except `--agent`, which also runs the instructions scenarios in the macOS sandbox ([Run the scenarios in the sandbox](#run-the-scenarios-in-the-sandbox)); exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes, including the effect codes), `DECISION` or `PROBLEM` per staged skill from its newest evaluation record and its newest effect record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf skills effect <source-id> <skill-id> [<suite-file>]` or `scf skills effect <id@version> [<suite-file>]` | Run the skill's sample tasks with and without the skill in the macOS sandbox and store the verdict (`helps`, `no-measurable-effect` or `harms`) under `skill-effects/`; prints `RUN`, `SKIPPED`, `EFFECT`, `STORED` lines; exits 1 on a `PROBLEM` or an interrupt ([Measure the effect of a skill](#measure-the-effect-of-a-skill)) |
+| `scf release-build init --repo <owner/name> [--write]` | Print a suggested `.factory/release-build.yaml` from the build files of a repository; `--write` opens a pull request that adds it, on the branch `release-build-recipe` ([Suggest a recipe](#suggest-a-recipe)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |

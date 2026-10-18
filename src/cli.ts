@@ -43,7 +43,8 @@ Usage:
                                                  (--live: ask the model of help.model; each scenario costs a turn)
   scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run] [--evidence-older-than days]
                                                  Remove old run workspaces/worktrees (branches kept)
-  scf flows [--repo <dir>]                       List available flows
+  scf release-build init --repo <owner/name> [--write]  Suggest a .factory/release-build.yaml from the build files; --write opens a pull request
+  scf flows [--repo <dir>]                      List available flows
   scf blocks [--repo <dir>]                      List reusable step blocks (the library)
   scf skills [--repo <dir>]                      List skill packages with trust, pin state and digest, and problems
   scf skills pin <id@version> <digest> [--replace]   Pin a listed skill package (copy the digest from the list)
@@ -249,6 +250,7 @@ async function main(argv: string[]): Promise<number> {
       reviewer: { type: "string" },
       licence: { type: "string" },
       due: { type: "boolean" },
+      write: { type: "boolean" },
       all: { type: "boolean" },
       email: { type: "string" },
       json: { type: "boolean" },
@@ -347,6 +349,11 @@ async function main(argv: string[]): Promise<number> {
       const agentScore = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentScore"]>>) => (await import("./skill-eval/score.js")).scoreImportWithAgent(...a);
       const agentEffect = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentEffect"]>>) => (await import("./skill-eval/effect.js")).effectWithAgent(...a);
       return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo, agentScore, agentEffect });
+    }
+
+    case "release-build": {
+      const { releaseBuildCommand } = await import("./release/init-cli.js");
+      return releaseBuildCommand(positionals.slice(1), { repo: values.repo, write: values.write }, (line) => void process.stdout.write(line + "\n"), (line) => void process.stderr.write(line + "\n"));
     }
 
     case "flow-guide": {
