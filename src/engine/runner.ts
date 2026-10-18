@@ -23,6 +23,8 @@ import {
   type StepResult,
 } from "./execute.js";
 import { freeWhenBoxed } from "../agents/boxed.js";
+import { CODEX_LOGIN_NOT_RETURNED, returnCodexLogin } from "../agents/codex-login.js";
+import { codexLoginReturnLine } from "../agents/codex-home.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
@@ -214,6 +216,9 @@ async function drive(
   if (typeof sandbox === "object") return finish(summary, opts, config, { outcome: "failed", reason: sandbox.refused, next: summary.state.next, lastOutput: "" });
   // a key folder that an interrupted run left behind is removed before anything runs; one that stays blocks the run
   if (!removeSignInDir(summary.runDir)) return finish(summary, opts, config, { outcome: "failed", reason: SIGN_IN_NOT_REMOVED, next: summary.state.next, lastOutput: "" });
+  // a lent Codex login that an interrupted run left behind is returned first; one that stays blocks the run (fails closed)
+  const lent = returnCodexLogin(summary.runDir);
+  if (lent === "write-back-failed" || lent === "not-removed") return finish(summary, opts, config, { outcome: "failed", reason: CODEX_LOGIN_NOT_RETURNED, next: summary.state.next, lastOutput: "" });
   hideKeyVars(providerKeyVars(config));
   try {
     requireRedaction();
@@ -389,6 +394,8 @@ export function saveAnswer(runsDir: string, runId: string, text: string, by: str
 
 async function finish(summary: RunSummary, opts: CommonOptions, config: Config, r: LoopResult): Promise<RunSummary> {
   if (!removeSignInDir(summary.runDir)) appendLiveLog(summary.runDir, "! the sign-in folder of this run could not be removed");
+  const back = codexLoginReturnLine(returnCodexLogin(summary.runDir));
+  if (back) appendLiveLog(summary.runDir, back);
   summary.status = r.outcome;
   summary.reason = r.reason === undefined ? undefined : redactText(r.reason);
   summary.state.next = r.next;

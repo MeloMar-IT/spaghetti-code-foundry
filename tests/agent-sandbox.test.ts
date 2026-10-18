@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -196,7 +196,10 @@ describe("steps of runs", () => {
 
   it("an admin's run is unchanged: no key needed, own sandbox, inherited folders and agent_env", async () => {
     process.env.CLAUDE_CONFIG_DIR = "/elsewhere-claude";
-    process.env.CODEX_HOME = "/elsewhere-codex";
+    // the Codex step is isolated now and lends a copy of the login, so this folder needs a login file
+    const codexHome = mkdtempSync(join(tmpdir(), "elsewhere-codex-"));
+    writeFileSync(join(codexHome, "auth.json"), "{}");
+    process.env.CODEX_HOME = codexHome;
     const s = await go(
       flowOf(
         agent("cl", "hello", "    sandbox: true\n") +
@@ -212,7 +215,8 @@ describe("steps of runs", () => {
     expect(out(s, "cl")).toContain("--settings");
     expect(out(s, "cx")).toContain('sandbox_mode="read-only"');
     expect(out(s, "vars")).toContain("CLAUDE_CONFIG_DIR=/elsewhere-claude");
-    expect(out(s, "vars")).toContain("CODEX_HOME=/elsewhere-codex");
+    expect(out(s, "vars")).toContain(`CODEX_HOME=${codexHome}`);
+    rmSync(codexHome, { recursive: true, force: true });
     expect(out(s, "env")).toContain("CLAUDE_CODE_OAUTH_TOKEN");
   });
 

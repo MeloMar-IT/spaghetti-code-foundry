@@ -75,13 +75,8 @@ export function tokenVarNames(config: Pick<Config, "bot">): string[] {
   return [...names];
 }
 
-/**
- * The env that makes a step act without the machine's login: no token, an empty `gh` folder, git without the machine's
- * settings, helpers, ssh agent and keys, no prompts, and the commit name. Added after the engine's own GIT_CONFIG entries
- * (core.hooksPath stays). `undefined` removes an inherited variable. This is the environment only, not an OS sandbox.
- */
-export function isolationEnv(env: Record<string, string | undefined>, config: Pick<Config, "bot">, ghDir: string, who: CommitIdentity): Record<string, string | undefined> {
-  const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10) || 0;
+/** Variables that take the machine's sign-ins away from a process: tokens, ssh, git credential and config entries, and an empty `gh` folder. `undefined` removes an inherited variable. */
+export function noMachineSignIn(config: Pick<Config, "bot">, ghDir: string): Record<string, string | undefined> {
   const tokens: Record<string, string | undefined> = {};
   for (const name of tokenVarNames(config)) tokens[name] = undefined;
   return {
@@ -90,10 +85,6 @@ export function isolationEnv(env: Record<string, string | undefined>, config: Pi
     GIT_SSH: undefined,
     GIT_SSH_COMMAND: undefined,
     SSH_ASKPASS: undefined,
-    GIT_TRACE: undefined,
-    GIT_TRACE_PACKET: undefined,
-    GIT_TRACE_CURL: undefined,
-    GIT_CURL_VERBOSE: undefined,
     GH_CONFIG_DIR: ghDir,
     GH_PROMPT_DISABLED: "1",
     GIT_CONFIG_GLOBAL: "/dev/null",
@@ -103,6 +94,22 @@ export function isolationEnv(env: Record<string, string | undefined>, config: Pi
     GIT_TERMINAL_PROMPT: "0",
     GIT_ASKPASS: "",
     GCM_INTERACTIVE: "never",
+  };
+}
+
+/**
+ * The env that makes a step act without the machine's login: no token, an empty `gh` folder, git without the machine's
+ * settings, helpers, ssh agent and keys, no prompts, and the commit name. Added after the engine's own GIT_CONFIG entries
+ * (core.hooksPath stays). `undefined` removes an inherited variable. This is the environment only, not an OS sandbox.
+ */
+export function isolationEnv(env: Record<string, string | undefined>, config: Pick<Config, "bot">, ghDir: string, who: CommitIdentity): Record<string, string | undefined> {
+  const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10) || 0;
+  return {
+    ...noMachineSignIn(config, ghDir),
+    GIT_TRACE: undefined,
+    GIT_TRACE_PACKET: undefined,
+    GIT_TRACE_CURL: undefined,
+    GIT_CURL_VERBOSE: undefined,
     GIT_CONFIG_COUNT: String(n + 3),
     // a commit never guesses a name from the machine; no helper and no extra header from the workspace's .git/config
     [`GIT_CONFIG_KEY_${n}`]: "user.useConfigOnly",

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,3 +21,7 @@ process.env.FACTORY_TRANSIENT_RETRY_MS = "20,20"; // retries of a briefly unavai
 process.env.SCF_USER_SANDBOX = "off";
 // Steps of a user's run get a short environment; the tests' own FAKE_* switches and the area-lock poll must still reach them.
 process.env.FACTORY_STEP_ENV_PASS = "FAKE_*,AREA_LOCK_POLL_MS";
+// No test may reach the real ~/.codex: the personal Codex folder is a temporary one with a fake login file.
+const codexHome = mkdtempSync(join(tmpdir(), "codex-home-"));
+writeFileSync(join(codexHome, "auth.json"), JSON.stringify({ tokens: { access_token: "fake-test-token" } }));
+process.env.CODEX_HOME = codexHome;
