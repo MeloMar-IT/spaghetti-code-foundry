@@ -1,0 +1,89 @@
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Open source · MIT · runs on your own machine</p>
+      <h1>Your own AI coding factory: from GitHub issue to merged code</h1>
+      <p class="hero-lead">Put one label on a GitHub issue. Spaghetti Code Foundry asks the open questions, plans, codes, tests, reviews and merges the story with Claude Code and Codex, and asks you only when it has to.</p>
+      <div class="cta">
+        <a class="button primary" href="/how-to/install/">Install the Foundry</a>
+        <a class="button" href="/how-to/github-issues/">See how it builds issues</a>
+        <a class="button ghost" href="{{repo}}" rel="noopener">View on GitHub</a>
+      </div>
+      <pre class="hero-code" aria-label="Quick start"><code>git clone {{repo}}.git
+cd spaghetti-code-foundry
+npm install &amp;&amp; npm run build &amp;&amp; npm link
+scf ui      # web UI at http://localhost:4777</code></pre>
+    </div>
+    <figure class="hero-shot">
+      <img src="/images/home.png" alt="The Foundry's Home: what needs you, what is running and what finished" width="1440" height="900" fetchpriority="high">
+      <figcaption>Home shows first what waits for you, with one button each.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li><strong>Label an issue</strong><span>Put <code>Factory_go</code> on a GitHub issue or a whole epic. That is the only label you set.</span></li>
+      <li><strong>Questions first</strong><span>The Foundry asks its open questions on the issue, up front. Answer them, or reply <code>/defaults</code> to take its recommendations.</span></li>
+      <li><strong>Plan, code, test, review</strong><span>Each story gets a plan with a risk score, a review of the plan, code on its own feature branch, tests, a code review by a second model, and docs.</span></li>
+      <li><strong>Merged, once a day to main</strong><span>Finished stories merge into <code>develop</code>. Once a day you get one pull request from <code>develop</code> to <code>main</code> to merge.</span></li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Why teams use it</h2>
+    <ul class="features">
+      <li><h3>Hands-off, with you in control</h3><p>Every plan gets a risk score from 0 to 100. Risky plans wait for your approval; stories that are too big are split into smaller ones.</p></li>
+      <li><h3>Always clear what happens next</h3><p>Home shows what waits for you. The board shows where every story is and why. A health line says when something is wrong with the Foundry itself.</p></li>
+      <li><h3>Several stories at once</h3><p>Runs lock the parts of the code they change, so stories in different areas are built in parallel without merge conflicts.</p></li>
+      <li><h3>Two agents, any model</h3><p>Steps run on Claude Code or the Codex CLI, on Anthropic, OpenAI or local models such as Ollama and LM Studio. One vendor's model reviews the other's work.</p></li>
+      <li><h3>Your own flows</h3><p>Work is described as flows: YAML pipelines of agent steps, shell steps, approvals and branches. Edit them visually, reuse blocks, or let any AI assistant write one.</p></li>
+      <li><h3>Safe by default</h3><p>Every run works in its own copy of the code. Pushes to protected branches and pushes that contain secrets are blocked. Approval steps, budgets and sandboxing when you want them.</p></li>
+      <li><h3>See everything</h3><p>Live logs, readable transcripts of every agent step, diffs, a dashboard of costs, and resume, retry and approve buttons.</p></li>
+      <li><h3>Turn ideas into stories</h3><p>Refinement helps you write good stories with an AI architect that reads your code, asks the right questions and checks each draft against your Definition of Ready.</p></li>
+      <li><h3>Accounts and roles</h3><p>An admin makes flows, watchers and settings. Users run the flows the admin published, on their own repositories, and see only their own runs.</p></li>
+    </ul>
+    <p class="more"><a href="/features/">All features, with screenshots</a></p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap split">
+    <div>
+      <h2>Built for the way you already work</h2>
+      <p>The Foundry follows gitflow: each story on its own feature branch, merged into <code>develop</code> when it is done, and one release pull request a day to <code>main</code>. It reads your issues, comments on them, and labels them so you can follow every story on GitHub too.</p>
+      <p>It runs on your own Mac, with your own accounts for Claude Code, Codex and GitHub. Your code and your keys stay with you.</p>
+      <p><a class="button" href="/how-to/daily-release/">How the daily release works</a></p>
+    </div>
+    <figure><img src="/images/board.png" alt="The board: where every story is, and why" width="1440" height="900" loading="lazy" decoding="async"><figcaption>The board: where every story is, and who has the next move.</figcaption></figure>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Start here</h2>
+    <ul class="cards howto-cards">{{howto}}</ul>
+    <p class="more"><a href="/how-to/">All how-to guides</a> · <a href="/guide/">The complete user guide</a></p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap narrow">
+    <h2>Frequently asked questions</h2>
+    <div class="faq">
+{{faq}}
+    </div>
+  </div>
+</section>
+
+<section class="final-cta">
+  <div class="wrap narrow">
+    <h2>Give your backlog to the Foundry</h2>
+    <p>Install it in a few minutes, connect a repository, and put one label on an issue.</p>
+    <div class="cta"><a class="button primary" href="/how-to/install/">Install the Foundry</a><a class="button ghost" href="{{repo}}" rel="noopener">Star it on GitHub</a></div>
+  </div>
+</section>

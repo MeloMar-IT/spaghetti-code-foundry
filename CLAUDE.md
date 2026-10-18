@@ -29,6 +29,7 @@ node scripts/build-flows.mjs   # regenerate flows/*.yaml (see below)
 | `blocks/` | Reusable step blocks (YAML) |
 | `tools/` | Helper scripts the flows call (`$FACTORY_TOOLS/…`) |
 | `scripts/build-flows.mjs` | Generates `flows/*.yaml` from `blocks/` and code |
+| `website/` | The public website (spaghetti-code-foundry.com): `build.mjs` turns `docs/` and `website/content/` (how-to guides, home, features, FAQ) into `website/dist/`; deployed by `.github/workflows/website.yml`. Edit the docs or the content, never `dist/` |
 | `docs/` | `USER_GUIDE.md`, `DESIGN.md` (how it is built), `LESSONS_LEARNED.md`, `FLOW_AUTHORING.md` (flow format for AI assistants), `CHANGELOG.md` |
 | `tests/` | vitest; `tests/fixtures/` has fake `claude`, `codex` and `gh` |
 
@@ -43,6 +44,7 @@ node scripts/build-flows.mjs   # regenerate flows/*.yaml (see below)
 - Every change comes with tests, and `npm run build && npm test` passes.
 - **Every API route needs a rule** in `src/server/permissions.ts` and an example in
   `tests/permissions.test.ts`.
+- **The website is built from the docs.** `npm run website` must pass: it fails on a broken link, anchor or image in `docs/` or `website/content/`. A new user-guide chapter needs a line in `website/content/guide-descriptions.yaml`.
 - **Add a line to `docs/CHANGELOG.md`** (under "Unreleased") for every change, and update
   `docs/USER_GUIDE.md` when behaviour users see changes. If the flow format changes, update
   `docs/FLOW_AUTHORING.md` too — `tests/guide.test.ts` checks its examples.
