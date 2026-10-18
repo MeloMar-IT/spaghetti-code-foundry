@@ -661,15 +661,15 @@ a **What happens next** block with **You** as who and the approval message as th
   the filled main button of the run header, like **Approve** for a run that waits. A Codex step
   with `resume:` continues the earlier session only when it runs with the same Codex folder;
   otherwise it starts a new session and the log says why.
-- **Codex and your personal setup.** With `isolate_agents` on, a Codex step does not depend on `~/.codex`. The mode depends on how the step signs in; the log says which one in a line that starts with "Codex:".
+- **Codex and your personal setup.** Every Codex step of a run that the server or a watcher starts gets a clean Codex folder of its own, whatever `isolate_agents` says. A local CLI run follows `isolate_agents`. The mode depends on how the step signs in; the log says which one in a line that starts with "Codex:".
 
-  | Mode | When | Personal `config.toml` and MCP servers | Personal skills, `AGENTS.md`, command rules | Sign-in |
-  |---|---|---|---|---|
-  | Private folder | A local model, or a `CODEX_API_KEY` the step sees | Not used | Not used | The key, or none |
-  | `--ignore-user-config` | A Codex login, no key, not local | Skipped | Still apply | The login stays |
-  | Not isolated | The CLI has no `--ignore-user-config` | Used | Used | The login stays |
+  | Mode | When | Personal `config.toml`, MCP servers, plugins, hooks, skills, `AGENTS.md`, command rules | Sign-in |
+  |---|---|---|---|
+  | Clean folder, key or local model | A local model, or a `CODEX_API_KEY` the step sees | Not used | The key, or none |
+  | Clean folder, login copy | A Codex login file, no key, not local | Not used | Only the login file, a copy for this session; it is removed when the session ends |
+  | Not isolated | `isolate_agents: false` in a CLI run | Used | The login stays |
 
-  The private folder is `<run folder>/home/.codex`, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. A Codex reviewer step (`skill_role: reviewer`) always switches off MCP servers and hooks; it gets `--ignore-user-config` in login mode and, as before, when `isolate_agents` is off. `OPENAI_API_KEY` alone does not select it. The Foundry never passes `--ignore-rules`, so in login mode your command rules still apply. If the private folder cannot be made, the step is refused; it never falls back to your personal folder. With `isolate_agents: false`, or in a user's run held by the OS sandbox, nothing changes: no flag, no note, no "Codex:" line.
+  The clean folder is `<run folder>/home/.codex`, made 0700, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. Session history stays, so a resumed session still works. No Codex session starts with an MCP server, so a server in your personal config is never reached. A step never gets your personal Codex folder when it is isolated. Pushing is blocked: a Foundry command rule forbids `git push`, and Codex's own sandbox has no network. A step with `bypassPermissions` and no sandbox is refused, because it could push. A login kept in the keychain, a linked login file or a missing login refuses the step, with a message that says how to sign in with a file. A refreshed token is written back to your personal file only when that file has not changed meanwhile. `OPENAI_API_KEY` alone does not select the key mode. If the clean folder cannot be made, the step is refused; it never falls back to your personal folder. In a CLI run with `isolate_agents: false`, nothing changes: no note, no "Codex:" line. A step held by the OS sandbox gets no clean folder of its own; its log says that git push is blocked in that session.
 - **Retry from step…** re-runs from any earlier step.
 - **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).

@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CODEX_HOME_CHANGED, codexIsolationLine } from "../src/agents/codex-home.js";
+import { CODEX_HOME_CHANGED, CODEX_PUSH_BLOCKED_LINE, CODEX_PUSH_UNHELD, codexIsolationLine } from "../src/agents/codex-home.js";
+import { CODEX_NO_LOGIN, codexLoginRecord } from "../src/agents/codex-login.js";
 import { ConfigSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { liveLogFile } from "../src/engine/state.js";
@@ -13,9 +14,10 @@ import { CODEX_AGENT_NOTE, resetCodexFlagsCache } from "../src/steps/codex.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
 const codexBin = resolve("tests/fixtures/fake-codex.mjs");
-const VARS = ["HOME", "CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "FAKE_CODEX_NO_IGNORE_CONFIG"];
+const VARS = ["HOME", "CODEX_HOME", "CODEX_API_KEY", "OPENAI_API_KEY", "FAKE_CODEX_NO_IGNORE_CONFIG", "GH_TOKEN", "SCF_CANARY_SECRET"];
 const saved = Object.fromEntries(VARS.map((k) => [k, process.env[k]]));
 const FLAG = "--ignore-user-config";
+const PERSONAL_LOGIN = '{"tokens":{"personal":true}}';
 let tmp: string;
 let repo: string;
 let personal: string;
@@ -29,11 +31,15 @@ beforeEach(() => {
   personal = join(tmp, "personal");
   mkdirSync(join(personal, "skills", "canary"), { recursive: true });
   mkdirSync(join(personal, "rules"));
+  writeFileSync(join(personal, "auth.json"), PERSONAL_LOGIN);
   writeFileSync(join(personal, "config.toml"), '[mcp_servers.canary]\ncommand = "x"\n');
   writeFileSync(join(personal, "skills", "canary", "SKILL.md"), "canary");
   writeFileSync(join(personal, "AGENTS.md"), "canary");
+  writeFileSync(join(personal, ".env"), "CANARY=1");
   writeFileSync(join(personal, "rules", "canary.rules"), "canary");
   process.env.CODEX_HOME = personal;
+  process.env.GH_TOKEN = "ghp_canary";
+  process.env.SCF_CANARY_SECRET = "canary";
   // personal skills Codex also reads from $HOME/.agents/skills, whatever CODEX_HOME is
   process.env.HOME = join(tmp, "myhome");
   mkdirSync(join(process.env.HOME, ".agents", "skills", "homecanary"), { recursive: true });
@@ -48,12 +54,13 @@ afterEach(() => {
 });
 
 type Hist = { id: string; output: string; sessionId?: string; codexHome?: string; skills?: { loaded: string[]; role?: string } };
-const run = (steps: string, over: Record<string, unknown> = {}) =>
-  runFlow(parseFlow(`\nname: t\nworkspace: inplace\nsteps:\n${steps}`), { task: "t", repo, runsDir: join(tmp, "runs"), claudeBin, codexBin, config: ConfigSchema.parse({ protected_branches: [], ...over }) });
-const step = (id: string, extra = "") => `  - {id: ${id}, type: claude, ${extra} prompt: "SHOWCODEXHOME"}\n`;
+const run = (steps: string, over: Record<string, unknown> = {}, source?: string) =>
+  runFlow(parseFlow(`\nname: t\nworkspace: inplace\nsteps:\n${steps}`), { task: "t", repo, runsDir: join(tmp, "runs"), claudeBin, codexBin, source, config: ConfigSchema.parse({ protected_branches: [], ...over }) });
+const step = (id: string, extra = "", prompt = "SHOWCODEXHOME") => `  - {id: ${id}, type: claude, ${extra} prompt: ${JSON.stringify(prompt)}}\n`;
 const reviewer = (id: string) => step(id, "agent: codex, skill_role: reviewer, permission_mode: plan,");
 const count = (out: string) => out.split(FLAG).length - 1;
 const OVERRIDES = "-c mcp_servers={} -c features.codex_hooks=false";
+const CLEAN = (runDir: string) => `codex_home=${runDir}/home/.codex config=none mcp=- skills=- instructions=no rules=foundry agents_skills=-`;
 const REQUEST = 'SKILL_REQUEST: {"version":1,"skills":[{"id":"demo","reason":"Needed for the change","evidence":["catalogue:demo"]}]}';
 const gate = `  - id: risk_gate\n    type: shell\n    run: |\n      # /skill-request\n      echo READY\n      echo '${REQUEST}'\n`;
 /** A pinned skill `demo` with a review block; the coding block is longer than the review block. */
@@ -69,113 +76,157 @@ function demoSkill(): string {
 }
 const get = (s: { history: Hist[] }, id: string) => s.history.filter((h) => h.id === id).at(-1)!;
 const log = (s: { runDir: string }) => readFileSync(liveLogFile(s.runDir), "utf8");
+const runCopy = (s: { runDir: string }) => join(s.runDir, "home", ".codex", "auth.json");
 
 describe("Codex steps and the personal Codex setup", () => {
-  it("login mode, private folder for a local model, and a session that moves between them", async () => {
+  it("login mode, a local model, and a session that moves between them, all in the run's clean folder", async () => {
     const s = await run(step("login", "agent: codex,") + step("local", 'model: "codex:ollama:m",') + step("again", 'model: "codex:ollama:m", resume: login,') + step("same", "agent: codex, resume: login,"));
     expect(s.status, s.reason).toBe("succeeded");
     const login = get(s, "login");
-    expect(login.output).toContain(`--skip-git-repo-check ${FLAG} -c sandbox_mode=`);
+    expect(login.output).toContain("--skip-git-repo-check -c sandbox_mode=");
     expect(login.output).toContain('approval_policy="never"');
     expect(login.output).not.toContain("--ignore-rules");
-    expect(login.output).toContain(`codex_home=${personal} config=ignored mcp=- skills=canary instructions=yes rules=canary agents_skills=homecanary`);
+    expect(login.output).not.toContain(FLAG);
+    expect(login.output).toContain(OVERRIDES);
+    expect(login.output).toContain("sandbox_workspace_write.network_access=false");
+    expect(login.output).toContain(`${CLEAN(s.runDir)} login=yes env=no`);
     expect(login.output).toContain(CODEX_AGENT_NOTE);
-    expect(login.codexHome).toMatch(/^personal:/);
-    expect(log(s)).toContain(`    · ${codexIsolationLine("ignore-config")}`);
+    expect(login.codexHome).toBe("run");
+    const l = log(s);
+    expect(l).toContain(`    · ${codexIsolationLine("login")}`);
+    expect(l).toContain(`    · ${CODEX_PUSH_BLOCKED_LINE}`);
 
     const local = get(s, "local");
-    expect(local.output).toContain(`codex_home=${s.runDir}/home/.codex config=none mcp=- skills=- instructions=no rules=- agents_skills=-`);
+    expect(local.output).toContain(`${CLEAN(s.runDir)} login=no env=no`);
     expect(local.output).not.toContain(FLAG);
     expect(local.codexHome).toBe("run");
-    expect(log(s)).toContain(`    · ${codexIsolationLine("private")}`);
+    expect(l).toContain(`    · ${codexIsolationLine("private")}`);
 
-    const again = get(s, "again");
-    expect(again.output).toContain("args=exec --json");
-    expect(again.output).not.toContain("exec resume");
-    expect(log(s)).toContain(`not resuming login: ${CODEX_HOME_CHANGED}`);
+    // one folder for every step: the session carries on
+    for (const id of ["again", "same"]) {
+      expect(get(s, id).output).toContain("args=exec resume ");
+      expect(get(s, id).sessionId).toBe(login.sessionId);
+    }
+    expect(l).not.toContain(CODEX_HOME_CHANGED);
 
-    const same = get(s, "same");
-    expect(same.output).toContain("args=exec resume ");
-    expect(same.output).toContain(FLAG);
-    expect(same.sessionId).toBe(login.sessionId);
+    // the lent copy and its record are gone, and the person's login is unchanged
+    expect(existsSync(runCopy(s))).toBe(false);
+    expect(existsSync(codexLoginRecord(s.runDir))).toBe(false);
+    expect(readFileSync(join(personal, "auth.json"), "utf8")).toBe(PERSONAL_LOGIN);
   });
 
-  it("a CODEX_API_KEY gives the private folder, the note and no flag; OPENAI_API_KEY alone does not", async () => {
-    process.env.CODEX_API_KEY = "k".repeat(20);
-    const s = await run(step("a", "agent: codex,"));
+  it("a login step sees no ambient credential variable", async () => {
+    const s = await run(step("a", "agent: codex,", "SHOWALLENV\nSHOWVARS GIT_CONFIG_GLOBAL HOME CODEX_HOME"));
     expect(s.status, s.reason).toBe("succeeded");
-    const a = get(s, "a");
-    expect(a.output).toContain(`codex_home=${s.runDir}/home/.codex config=none mcp=- skills=- instructions=no rules=- agents_skills=-`);
-    expect(a.output).not.toContain(FLAG);
-    expect(a.codexHome).toBe("run");
-    expect(a.output).toContain(`PROMPT<<<instructions>\n${CODEX_AGENT_NOTE}`);
+    const out = get(s, "a").output;
+    const names = /env: (.*)/.exec(out)![1]!.split(" ");
+    expect(names).not.toContain("GH_TOKEN");
+    expect(names).not.toContain("SCF_CANARY_SECRET");
+    expect(names).not.toContain("SSH_AUTH_SOCK");
+    expect(out).toContain("GIT_CONFIG_GLOBAL=/dev/null");
+    expect(out).toContain(`HOME=${s.runDir}/home\n`);
+    expect(out).toContain(`CODEX_HOME=${s.runDir}/home/.codex`);
+  });
+
+  it("a key step has no login; OPENAI_API_KEY alone is not a Codex key", async () => {
+    process.env.CODEX_API_KEY = "k".repeat(20);
+    const t = await run(step("k", "agent: codex,"));
+    expect(get(t, "k").output).toContain("login=no");
+    expect(get(t, "k").output).toContain(`${CLEAN(t.runDir)} login=no env=no`);
+    expect(get(t, "k").output).not.toContain(FLAG);
+    expect(get(t, "k").codexHome).toBe("run");
+    expect(get(t, "k").output).toContain(`PROMPT<<<instructions>\n${CODEX_AGENT_NOTE}`);
 
     delete process.env.CODEX_API_KEY;
     process.env.OPENAI_API_KEY = "k".repeat(20);
-    const t = await run(step("b", "agent: codex,"));
-    expect(get(t, "b").output).toContain(FLAG);
-    expect(get(t, "b").output).toContain(`codex_home=${personal} config=ignored`);
+    const u = await run(step("b", "agent: codex,"));
+    expect(get(u, "b").output).toContain("login=yes");
   });
 
-  it("a CLI without the flag: no flag, a ! line, the personal setup is visible, the step succeeds; a resumed step uses exec resume", async () => {
+  it("writes a refreshed login back to the personal folder", async () => {
+    const s = await run(step("a", "agent: codex,", 'SHOWCODEXHOME\nCODEX_REFRESH {"new":1}'));
+    expect(s.status, s.reason).toBe("succeeded");
+    expect(readFileSync(join(personal, "auth.json"), "utf8")).toBe('{"new":1}');
+    expect(log(s)).toContain("the refreshed Codex login was written back");
+    expect(log(s)).not.toContain(personal);
+    expect(existsSync(runCopy(s))).toBe(false);
+    expect(existsSync(codexLoginRecord(s.runDir))).toBe(false);
+  });
+
+  it("fails without a login file: Codex never starts, one try, no fallback to the personal folder", async () => {
+    rmSync(join(personal, "auth.json"));
+    const s = await run(step("a", "agent: codex,", "WRITE ran.txt yes"));
+    expect(s.status).toBe("failed");
+    expect(s.reason).toContain(CODEX_NO_LOGIN);
+    expect(s.history.filter((h) => h.id === "a")).toHaveLength(1);
+    expect(get(s, "a").sessionId).toBeUndefined();
+    expect(existsSync(join(repo, "ran.txt"))).toBe(false);
+  });
+
+  it("refuses bypassPermissions without a sandbox on a run the server started", async () => {
+    const s = await run(step("a", "agent: codex, permission_mode: bypassPermissions,", "WRITE ran.txt yes"), {}, "watcher w issue #1");
+    expect(s.status).toBe("failed");
+    expect(s.reason).toContain(CODEX_PUSH_UNHELD);
+    expect(existsSync(join(repo, "ran.txt"))).toBe(false);
+    expect(existsSync(runCopy(s))).toBe(false);
+  });
+
+  it("a CLI without the flag is just as clean: no flag, no ! line, a resumed step uses exec resume", async () => {
     process.env.FAKE_CODEX_NO_IGNORE_CONFIG = "1";
     const s = await run(step("a", "agent: codex,") + step("b", "agent: codex, resume: a,"));
     expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
     expect(a.output).not.toContain(FLAG);
-    expect(a.output).toContain("config=read mcp=canary");
+    expect(a.output).toContain("config=none mcp=-");
     const b = get(s, "b");
     expect(b.output).toContain("args=exec resume ");
-    expect(b.output).not.toContain(FLAG);
     expect(b.sessionId).toBe(a.sessionId);
-    const l = log(s);
-    expect(l).toContain(`    ! ${codexIsolationLine("unsupported")}`);
-    expect(l.split(`    ! ${codexIsolationLine("unsupported")}`)).toHaveLength(3);
+    expect(log(s)).not.toContain("    ! ");
   });
 
-  it("isolate_agents: false runs Codex exactly as before", async () => {
-    const s = await run(step("a", "agent: codex,"), { isolate_agents: false });
+  it("isolate_agents: false on a CLI run runs Codex exactly as before", async () => {
+    const s = await run(step("a", "agent: codex,", "SHOWCODEXHOME\nSHOWVARS GH_TOKEN"), { isolate_agents: false });
     expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
     expect(a.output).not.toContain(FLAG);
     expect(a.output).not.toContain("<instructions>");
+    expect(a.output).not.toContain("mcp_servers={}");
     expect(a.output).toContain(`codex_home=${personal} config=read mcp=canary`);
+    expect(a.output).toContain("GH_TOKEN=ghp_canary");
     expect(log(s)).not.toContain("Codex:");
   });
 
-  it("a reviewer in login mode gets the flag once and the reviewer overrides", async () => {
+  it("isolate_agents: false does not switch isolation off on a run the server started", async () => {
+    const s = await run(step("a", "agent: codex,", "SHOWCODEXHOME\nSHOWVARS GH_TOKEN"), { isolate_agents: false }, "watcher w issue #1");
+    expect(s.status, s.reason).toBe("succeeded");
+    const a = get(s, "a");
+    expect(a.output).toContain(`${CLEAN(s.runDir)} login=yes env=no`);
+    expect(a.output).toContain("GH_TOKEN=(unset)");
+    expect(log(s)).toContain("Codex: a clean Codex folder");
+  });
+
+  it("a reviewer in login mode gets the overrides once, no flag and the clean folder", async () => {
     const s = await run(reviewer("a"));
     expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
-    expect(count(a.output)).toBe(1);
+    expect(count(a.output)).toBe(0);
+    expect(a.output.split("mcp_servers={}")).toHaveLength(2);
     expect(a.output).toContain(OVERRIDES);
-    expect(a.output).toContain(`codex_home=${personal} config=ignored`);
+    expect(a.output).toContain(`${CLEAN(s.runDir)} login=yes`);
     expect(a.output).toContain(CODEX_AGENT_NOTE);
-    expect(log(s)).toContain(`    · ${codexIsolationLine("ignore-config")}`);
+    expect(log(s)).toContain(`    · ${codexIsolationLine("login")}`);
   });
 
-  it("a reviewer in the private folder gets no flag but keeps the overrides", async () => {
+  it("a reviewer with a key gets the overrides, no flag and no login", async () => {
     process.env.CODEX_API_KEY = "k".repeat(20);
     const s = await run(reviewer("a"));
     expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
     expect(count(a.output)).toBe(0);
     expect(a.output).toContain(OVERRIDES);
-    expect(a.output).toContain(`codex_home=${s.runDir}/home/.codex config=none`);
-    expect(a.output).toContain(CODEX_AGENT_NOTE);
+    expect(a.output).toContain(`${CLEAN(s.runDir)} login=no`);
     expect(a.codexHome).toBe("run");
     expect(log(s)).toContain(`    · ${codexIsolationLine("private")}`);
-  });
-
-  it("a reviewer on a CLI without the flag gets no flag, keeps the overrides and logs a ! line", async () => {
-    process.env.FAKE_CODEX_NO_IGNORE_CONFIG = "1";
-    const s = await run(reviewer("a"));
-    expect(s.status, s.reason).toBe("succeeded");
-    const a = get(s, "a");
-    expect(count(a.output)).toBe(0);
-    expect(a.output).toContain(OVERRIDES);
-    expect(a.output).toContain("config=read");
-    expect(log(s)).toContain(`    ! ${codexIsolationLine("unsupported")}`);
   });
 
   it("a reviewer without a lock keeps the old behaviour when isolate_agents is false", async () => {
@@ -197,10 +248,10 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(a.skills).toMatchObject({ loaded: ["demo@1.0.0"], role: "reviewer" });
     expect(a.output).toContain('<foundry-skills count="1" role="reviewer">');
     expect(a.output).toContain("Check the canary.");
-    expect(count(a.output)).toBe(1);
+    expect(count(a.output)).toBe(0);
     expect(a.output).toContain(OVERRIDES);
     expect(a.output).toContain(CODEX_AGENT_NOTE);
-    expect(a.codexHome).toMatch(/^personal:/);
-    expect(log(s)).toContain(`    · ${codexIsolationLine("ignore-config")}`);
+    expect(a.codexHome).toBe("run");
+    expect(log(s)).toContain(`    · ${codexIsolationLine("login")}`);
   });
 });

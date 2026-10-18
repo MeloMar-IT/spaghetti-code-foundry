@@ -91,10 +91,10 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
     expect(out(s, "c1")).not.toContain("--settings");
     expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("own sandbox is off");
     expect(out(s, "x1")).toContain('sandbox_mode="danger-full-access"');
-    // a boxed step keeps its path: no isolation flag, no agent note, no "Codex:" line
+    // a boxed step keeps its path: no isolation flag, no agent note, no "Codex: a clean" line (the push-blocked line is there)
     expect(out(s, "x1")).not.toContain("--ignore-user-config");
     expect(out(s, "x1")).not.toContain("<instructions>");
-    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("Codex:");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("Codex: a clean");
     // a boxed reviewer keeps the MCP and hook overrides, but gets no flag or note
     expect(out(s, "xr")).toContain("-c mcp_servers={} -c features.codex_hooks=false");
     expect(out(s, "xr")).not.toContain("--ignore-user-config");
@@ -129,7 +129,7 @@ describe.skipIf(!basic)("a user's agent step in the OS sandbox", () => {
     expect(rec.codexHome).toBe("run");
     expect(o).not.toContain("--ignore-user-config");
     expect(o).not.toContain("running unattended");
-    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("Codex:");
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).not.toContain("Codex: a clean");
   });
 
   it("hides a key a flow brings in agent_env: it is ignored, and the server's key is not shown", async () => {

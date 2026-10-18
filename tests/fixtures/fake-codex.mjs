@@ -9,6 +9,8 @@
 // With --help in the args it prints the options of `exec` and exits (before reading stdin); it lists --ignore-rules always
 // and --ignore-user-config unless FAKE_CODEX_NO_IGNORE_CONFIG is set.
 // "SHOWCODEXHOME" (a whole line) puts one line before the answer: codex_home=<path|unset> config=<read|ignored|none> mcp=<names|-> skills=<names|-> instructions=<yes|no> rules=<names|->.
+// The line ends with login=<yes|no> env=<yes|no> (whether $CODEX_HOME/auth.json and $CODEX_HOME/.env exist).
+// "CODEX_REFRESH <text>" (a whole line) writes <text> to $CODEX_HOME/auth.json, to stand in for a token refresh.
 // It reads $CODEX_HOME (never $HOME/.codex) and $HOME/.agents/skills (the trailing agents_skills=<names|-> part, as the real CLI does); config.toml is "ignored" (no MCP names) when --ignore-user-config is in the args.
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -48,7 +50,7 @@ function showCodexHome() {
   const cfg = `${dir}/config.toml`;
   const config = !existsSync(cfg) ? "none" : args.includes("--ignore-user-config") ? "ignored" : "read";
   const mcp = config === "read" ? [...readFileSync(cfg, "utf8").matchAll(/^\[mcp_servers\.([^\].]+)\]/gm)].map((m) => m[1]).sort().join(",") || "-" : "-";
-  return `codex_home=${dir} config=${config} mcp=${mcp} skills=${names("skills")} instructions=${existsSync(`${dir}/AGENTS.md`) ? "yes" : "no"} rules=${names("rules", ".rules")} agents_skills=${agentsSkills()}`;
+  return `codex_home=${dir} config=${config} mcp=${mcp} skills=${names("skills")} instructions=${existsSync(`${dir}/AGENTS.md`) ? "yes" : "no"} rules=${names("rules", ".rules")} agents_skills=${agentsSkills()} login=${existsSync(`${dir}/auth.json`) ? "yes" : "no"} env=${existsSync(`${dir}/.env`) ? "yes" : "no"}`;
 }
 // Personal skills the real CLI also loads from $HOME/.agents/skills, whatever CODEX_HOME is.
 function agentsSkills() {
@@ -102,6 +104,8 @@ for (const line of prompt.split("\n")) {
   if (sv) shown.push(...sv[1].split(/\s+/).filter(Boolean).map((n) => `${n}=${process.env[n] ?? "(unset)"}`));
   if (line === "SHOWALLENV") shown.push(`env: ${Object.keys(process.env).sort().join(" ")}`);
   if (line === "SHOWCODEXHOME") codexHomeLine = showCodexHome();
+  const rf = line.match(/^CODEX_REFRESH (.*)$/);
+  if (rf) writeFileSync(`${process.env.CODEX_HOME}/auth.json`, rf[1]);
   if (line === "SHOWGHDIR") {
     const d = process.env.GH_CONFIG_DIR;
     shown.push(`gh_dir=${!d ? "unset" : !existsSync(d) ? "missing" : readdirSync(d).length ? "files" : "empty"}`);
