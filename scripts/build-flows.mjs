@@ -78,7 +78,7 @@ ${header.lines.map((l) => `# ${l}`).join("\n")}
 `;
   // Flows that change code: one run per repository at a time. Planning / PR-only flows run in parallel.
   const { description, workspace, vars, var_info, steps: flowSteps, ...rest } = flow;
-  const coding = !["issue-plan", "daily-pr", "epic-questions", "release-daily", "issue-gitflow", "refine-brief", "refine-round"].includes(name);
+  const coding = !["issue-plan", "daily-pr", "epic-questions", "release-daily", "release-build", "issue-gitflow", "refine-brief", "refine-round"].includes(name);
   // Retired flows are no longer shipped; they stay as test material (tests/fixtures/flows) and get no var_info.
   const retired = RETIRED.has(name);
   const described = vars === undefined || retired ? {} : { var_info: describeVars(vars, var_info) };
@@ -2082,6 +2082,42 @@ write("release-daily", {
         'if [ "$ok" = no ]; then gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" --undo >/dev/null 2>&1 || true; echo "checks failed — PR #$pr is a draft"',
         'else gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" >/dev/null 2>&1 || true; echo "checks passed — PR #$pr ($title) is ready to merge"; fi',
       ].join("\n"),
+    },
+  ],
+});
+
+// ── release-build: build the release files a repository describes in .factory/release-build.yaml ──
+write("release-build", {
+  title: "Build release files on this machine from .factory/release-build.yaml",
+  lines: [
+    "factory run release-build --var github_repo=owner/repo --var ref=main",
+    "",
+    "clone → resolve the ref to a commit, read the recipe at that commit",
+    "      → build (one after the other, each in its own git worktree, through test-slot, no tokens in the environment)",
+    "        → files and SHA256SUMS in the run folder (release/out); nothing is uploaded",
+  ],
+}, {
+  description: "Build the release files described in .factory/release-build.yaml on this machine, in clean worktrees, and collect them in the run folder",
+  workspace: "empty",
+  defaults: { timeout_sec: 3600 },
+  vars: { github_repo: "owner/repo", ref: "main" },
+  var_info: { ref: { label: "Ref", help: "The branch, tag or commit to build. Default: main.", kind: "text" } },
+  steps: [
+    clone,
+    {
+      id: "resolve",
+      type: "shell",
+      description: "Resolve the ref to a commit and read the recipe at that commit",
+      // exec: the engine's stop signal reaches the tool itself
+      run: 'exec node "$FACTORY_TOOLS/release-build" resolve "{{run.dir}}"',
+    },
+    {
+      id: "build",
+      type: "shell",
+      description: "Run the builds one after the other and collect the files",
+      // Every build has its own limit (timeout_minutes in the recipe); this one only covers all of them together.
+      timeout_sec: 86400,
+      run: 'exec node "$FACTORY_TOOLS/release-build" build "{{run.dir}}" "{{run.dir}}/../../test-slots"',
     },
   ],
 });
