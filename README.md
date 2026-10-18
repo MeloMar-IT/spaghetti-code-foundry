@@ -1,6 +1,6 @@
 # Spaghetti Code Foundry
 
-An AI coding factory that runs on your own machine. Put one label on a GitHub issue, and the
+An AI coding factory that runs on your own machine. Website and guides: **[spaghetti-code-foundry.com](https://spaghetti-code-foundry.com)**. Put one label on a GitHub issue, and the
 Foundry asks the open questions, plans, codes, tests, reviews and merges the story — and asks
 you only when it has to.
 
