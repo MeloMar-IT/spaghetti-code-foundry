@@ -10,10 +10,11 @@ import { evaluationsDir, readNewestRecord, writeEvaluationRecord } from "../src/
 import { addLicenceEvidence } from "../src/skills/import-evidence.js";
 import { prepareLicenceEvidence } from "../src/skills/import-licence.js";
 import { prepareImport, type SourceTree, type TreeEntry } from "../src/skills/import-plan.js";
-import { publishImport } from "../src/skills/import-stage.js";
+import { publishImport, readStagedImport } from "../src/skills/import-stage.js";
+import { stringify as stringifyYaml } from "yaml";
 import { collectLicenceEvidence } from "../src/skills/licence.js";
 import { LICENCE_TEMPLATES } from "../src/skills/licence-rules.js";
-import { sourceQualifiedId } from "../src/skills/normalize.js";
+import { normalizeImport, sourceQualifiedId } from "../src/skills/normalize.js";
 import type { GitRun } from "../src/skills/project-pins.js";
 import { parseReleaseTarget, releaseOperandsProblem } from "../src/skills/release-cli.js";
 import { committedState, gitBlobId, NO_EVALUATION_RECORD, releasePublish } from "../src/skills/release-publish.js";
@@ -279,6 +280,47 @@ describe("scf skills release publish", () => {
     expect(snapshot(cwd)).toEqual(cwdBefore);
     expect(existsSync(join(home, "config.yaml"))).toBe(false);
     expect(existsSync(join(home, "skills.lock.json"))).toBe(false);
+  });
+});
+
+describe("catalogue description in a release", () => {
+  const LONG = "Kafka producers, consumers and streams. ".repeat(8).trim();
+  const SHORT = "Kafka work: keys, order, retries and schemas.";
+  function selectFor(description: string): void {
+    const staged = readStagedImport("lib", COMMIT, { home });
+    if (staged.state !== "ok") throw new Error("not staged");
+    const s = normalizeImport({ record: { ...staged.record, rejected: [] }, files: staged.files }).skills.find((x) => x.provenance.name === "kafka")!;
+    const entry = { source: "lib", skill: "kafka", digest: s.package.digest, scope: "portable", category: "interface", capabilities: ["kafka"], owner: "@octocat", reviewed: "2026-10-01", catalogue_description: description };
+    writeFileSync(join(cwd, "skill-selections.yaml"), stringifyYaml({ schema: 1, selections: [entry] }));
+  }
+  async function readyLong() {
+    stage({ ...kafka("kafka"), "skills/kafka/SKILL.md": KAFKA_MD.replace(/^description:.*$/m, `description: "${LONG}"`) });
+    selectFor(SHORT);
+    await scoreAll();
+    writeReleases([idOf("kafka")]);
+  }
+
+  it("writes the scored description into the manifest and prints it on the SKILL line", async () => {
+    await readyLong();
+    const r = await publish();
+    expect(r.code, r.text).toBe(0);
+    expect(r.lines[0]).toMatch(/ from lib evaluation passed description skill-selections$/);
+    expect(manifest().skills[0]).toMatchObject({ catalogueDescription: { text: SHORT, source: "skill-selections" } });
+  });
+
+  it("a skill without an override has no description field", async () => {
+    await ready();
+    expect((await publish()).code).toBe(0);
+    expect("catalogueDescription" in manifest().skills[0]!).toBe(false);
+  });
+
+  it("publishes nothing when the override changed after scoring", async () => {
+    await readyLong();
+    selectFor("Another short text for kafka.");
+    const r = await publish();
+    expect(r.code).toBe(1);
+    expect(r.text).toContain("description-changed");
+    expect(existsSync(join(home, "skill-releases"))).toBe(false);
   });
 });
 

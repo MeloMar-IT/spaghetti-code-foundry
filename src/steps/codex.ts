@@ -54,6 +54,10 @@ export interface CodexRunOptions {
   agentNote?: boolean;
   /** Skip the personal config.toml. Unset: only a reviewer does. false: not even a reviewer (boxed, private folder, CLI without the flag). */
   ignoreUserConfig?: boolean;
+  /** A clean Codex folder: no MCP servers and no hooks, whatever a config says. */
+  clean?: boolean;
+  /** No network in Codex's own sandbox (only `workspace-write` has the setting): pushing and other outbound calls are not possible. */
+  noNetwork?: boolean;
 }
 
 /** What an isolated Codex session is told about its setup. */
@@ -124,7 +128,8 @@ export function buildCodexArgs(o: CodexRunOptions): string[] {
   args.push("--json", "--skip-git-repo-check");
   if (o.ignoreUserConfig ?? o.reviewer) args.push("--ignore-user-config");
   args.push("-c", `sandbox_mode=${toml(o.sandbox)}`, "-c", `approval_policy=${toml("never")}`);
-  if (o.reviewer) args.push("-c", "mcp_servers={}", "-c", "features.codex_hooks=false");
+  if (o.reviewer || o.clean) args.push("-c", "mcp_servers={}", "-c", "features.codex_hooks=false");
+  if (o.noNetwork && o.sandbox === "workspace-write") args.push("-c", "sandbox_workspace_write.network_access=false");
   if (o.model) args.push("-m", o.model);
   if (o.effort) args.push("-c", `model_reasoning_effort=${toml(o.effort === "max" ? "xhigh" : o.effort)}`);
   if (o.localProvider) args.push("-c", `model_provider=${toml(o.localProvider)}`);

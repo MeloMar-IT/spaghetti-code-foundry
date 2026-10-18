@@ -1,0 +1,168 @@
+# Suite for TypeScript and Node.js skills (schema 1). It scores one candidate skill offline: nothing of the skill is run and
+# no model is called. Selection: a TypeScript Node.js service and a plain JavaScript package offer the skill; a Java library
+# does not. Conflicts, context and tools use the same limits as ../suite.yaml.
+# `instructions` holds five sample tasks for `scf skills effect` (4 on ts-service, 1 on js-package).
+# Cost: 5 scenarios x repeat 4 x 2 arms (with and without the skill) = 40 agent sessions.
+# Each check is one folded `node` line run in the work folder. The checks need Node 22.18 or later (type stripping).
+# The fixtures' own tests are run by tests/skill-suite-typescript-node.test.ts.
+# The ts-service tests need Node 22.18 or later (built-in type stripping; nothing is installed).
+# The Java check runs with javac and java only. From fixtures/java-library:
+#   javac -d /tmp/tree-check src/main/java/org/example/tree/Tree.java src/test/java/org/example/tree/TreeCheck.java && java -cp /tmp/tree-check org.example.tree.TreeCheck
+schema: 1
+selection:
+  - id: ts-service-endpoint
+    repo: fixtures/ts-service
+    task: Add an endpoint that lists every item that is out of stock.
+    expect: offered
+  - id: ts-service-config
+    repo: fixtures/ts-service
+    task: Read the port from the environment and refuse a value that is not a port number.
+    expect: offered
+  - id: ts-service-types
+    repo: fixtures/ts-service
+    task: Replace the type assertion in the stock event parser with a check that runs.
+    expect: offered
+  - id: ts-service-module
+    repo: fixtures/ts-service
+    modules: [src]
+    task: Split the report writer into a formatter and a writer.
+    expect: offered
+  - id: js-package-to-typescript
+    repo: fixtures/js-package
+    task: Convert src/notify.js to TypeScript.
+    expect: offered
+  - id: java-null-check
+    repo: fixtures/java-library
+    task: Make insert reject null values and describe the exception in the Javadoc.
+    expect: not-offered
+  - id: java-remove-node
+    repo: fixtures/java-library
+    task: Add a method that removes a node from the tree and keep the types of the public methods.
+    expect: not-offered
+  - id: java-build-release
+    repo: fixtures/java-library
+    task: Raise the Java release in the build to 21 and fix the compiler warnings.
+    expect: not-offered
+conflicts:
+  - id: against-approved
+    with: all
+context:
+  - id: coder-budget
+    max_instruction_tokens: 3000
+    max_description_chars: 160
+tools:
+  - id: read-only
+    policy: { shell: false, network: false, filesystem: read }
+instructions:
+  mandatory: false
+  repeat: 4
+  scenarios:
+    - id: parse-stock-event
+      repo: fixtures/ts-service
+      task: >-
+        In src/stock.ts make parseStockEvent(input: unknown) check its input when it runs instead of asserting the type.
+        It returns { ok: true, event } for a valid event and { ok: false, error } for anything else, where error is a non-empty string,
+        and it never throws. A valid event is an object with type "restock" or "sale", a non-empty string sku and a whole-number
+        quantity above 0. The returned event holds only type, sku and quantity. Export a type for the result. Keep applyEvent.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; const wd = setTimeout(() => process.exit(2), 5000);
+        try { const m = await import(pathToFileURL("src/stock.ts").href);
+        const good = (input, t, s, q) => { const r = m.parseStockEvent(input); const e = r?.ok === true ? r.event : undefined;
+        return typeof e === "object" && e !== null && Object.keys(e).sort().join() === "quantity,sku,type" && e.type === t && e.sku === s && e.quantity === q; };
+        const refused = (input) => { try { const r = m.parseStockEvent(input); return r?.ok === false && typeof r.error === "string" && r.error.length > 0; } catch { return false; } };
+        const v = { type: "sale", sku: "A-1" };
+        const bad = [null, undefined, 7, "sale", [], {}, { ...v, type: "return", quantity: 1 }, { ...v, sku: "", quantity: 1 }, { ...v, sku: 5, quantity: 1 },
+        { ...v, quantity: 0 }, { ...v, quantity: -2 }, { ...v, quantity: 1.5 }, { ...v, quantity: "3" }, v];
+        const ok = good({ type: "restock", sku: "A-1", quantity: 3 }, "restock", "A-1", 3) && good({ type: "sale", sku: "B-2", quantity: 1, note: "x" }, "sale", "B-2", 1) && bad.every(refused);
+        if (!ok) process.exitCode = 1; } catch { process.exitCode = 1; } finally { clearTimeout(wd); }'
+    - id: config-validation
+      repo: fixtures/ts-service
+      task: >-
+        In src/config.ts make loadConfig refuse invalid settings. PORT, when set, must be digits only and a whole number from 1 to 65535.
+        HOST, when set, must not be empty. For an invalid value throw an Error whose message names the variable (PORT or HOST).
+        Without settings the defaults stay port 8080 and host 127.0.0.1. Keep the exports and their parameters.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; const wd = setTimeout(() => process.exit(2), 5000);
+        try { const m = await import(pathToFileURL("src/config.ts").href);
+        const is = (env, host, port) => { const c = m.loadConfig(env); return c.host === host && c.port === port; };
+        const refuses = (env, name) => { try { m.loadConfig(env); return false; } catch (e) { return e instanceof Error && e.message.includes(name); } };
+        const good = is({}, "127.0.0.1", 8080) && is({ PORT: "3000", HOST: "0.0.0.0" }, "0.0.0.0", 3000) && is({ PORT: "65535" }, "127.0.0.1", 65535);
+        const bad = ["abc", "", "0", "65536", "8.5", "-1", " 80", "1e3", "0x50", "80abc"].every((p) => refuses({ PORT: p }, "PORT")) && refuses({ HOST: "" }, "HOST");
+        if (!(good && bad)) process.exitCode = 1; } catch { process.exitCode = 1; } finally { clearTimeout(wd); }'
+    - id: graceful-shutdown
+      repo: fixtures/ts-service
+      task: >-
+        In src/shutdown.ts make handleSignals(proc, server) shut down gracefully on SIGTERM and on SIGINT: call server.close once,
+        wait for its callback, then call proc.exit(0), or proc.exit(1) when close passes an error to the callback. Ignore a second
+        signal while closing. Use only proc.on, proc.exit and server.close, never the global process. Keep the exports and their parameters.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; const quit = process.exit.bind(process); process.exit = () => quit(1);
+        const wd = setTimeout(() => quit(2), 5000);
+        try { const m = await import(pathToFileURL("src/shutdown.ts").href); const tick = () => new Promise((r) => setImmediate(r));
+        const run = async (sig, err) => { const h = {}; const exits = []; let closes = 0; let cb;
+        const emit = (s) => { for (const f of h[s] ?? []) f(); };
+        const proc = { on: (s, f) => { (h[s] ??= []).push(f); return proc; }, exit: (c) => { exits.push(c); } };
+        const server = { close: (f) => { closes++; cb = f; return server; } };
+        m.handleSignals(proc, server); emit(sig); await tick(); emit(sig === "SIGTERM" ? "SIGINT" : "SIGTERM"); emit(sig); await tick();
+        const early = exits.length > 0 || typeof cb !== "function";
+        if (!early) cb(err); await tick(); await tick();
+        return !early && closes === 1 && exits.length === 1 && exits[0] === (err ? 1 : 0); };
+        const ok = (await run("SIGTERM")) && (await run("SIGINT")) && (await run("SIGTERM", new Error("busy")));
+        if (!ok) process.exitCode = 1; } catch { process.exitCode = 1; } finally { clearTimeout(wd); }'
+    - id: report-stream-errors
+      repo: fixtures/ts-service
+      task: >-
+        In src/report.ts make writeReport(rows, out) stream the report: write the header line sku,quantity and then one line per row
+        as each row arrives, without building the whole text first. Resolve only after out has finished. When reading the rows fails,
+        reject with that error and destroy out instead of ending it. Keep the exports and their parameters, and keep formatRow.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; import { Writable } from "node:stream"; const wd = setTimeout(() => process.exit(2), 5000);
+        try { const m = await import(pathToFileURL("src/report.ts").href); const tick = () => new Promise((r) => setImmediate(r));
+        const sink = (hold) => { const w = new Writable({ write(c, e, cb) { w.text += String(c); cb(); }, final(cb) { if (hold) w.rel = cb; else cb(); } });
+        w.text = ""; w.on("error", () => {}); return w; };
+        const a = sink(true); let early = false; let done = false;
+        async function* rows() { yield { sku: "A-1", quantity: 3 }; for (let i = 0; i < 50 && !a.text.includes("A-1,3"); i++) await tick();
+        early = a.text.includes("A-1,3\n"); yield { sku: "B-2", quantity: 0 }; }
+        const p = m.writeReport(rows(), a).then(() => { done = true; });
+        for (let i = 0; i < 50 && !a.rel; i++) await tick();
+        for (let i = 0; i < 5; i++) await tick();
+        const held = !done && typeof a.rel === "function";
+        if (held) { a.rel(); await p; }
+        const ok1 = held && early && a.text === "sku,quantity\nA-1,3\nB-2,0\n" && a.writableFinished === true;
+        const b = sink(false); let msg;
+        async function* broken() { yield { sku: "A-1", quantity: 3 }; throw new Error("read failed"); }
+        try { await m.writeReport(broken(), b); } catch (e) { msg = e?.message; }
+        await tick(); await tick();
+        if (!(ok1 && msg === "read failed" && b.destroyed && !b.writableFinished)) process.exitCode = 1; } catch { process.exitCode = 1; } finally { clearTimeout(wd); }'
+    - id: await-notifications
+      repo: fixtures/js-package
+      task: >-
+        In src/notify.js make notifyAll(ids, send) wait for the sends: it resolves only after every send has finished, rejects with
+        the error of a failed send, leaves no rejected promise unhandled, and runs at most 2 sends at a time. Keep it a JavaScript file
+        with the same export and parameters.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        node --input-type=module -e
+        'import { pathToFileURL } from "node:url"; const wd = setTimeout(() => process.exit(2), 5000);
+        const lost = []; process.on("unhandledRejection", (e) => { lost.push(e); });
+        try { const m = await import(pathToFileURL("src/notify.js").href); const tick = () => new Promise((r) => setImmediate(r));
+        let active = 0; let peak = 0; const done = [];
+        await m.notifyAll(["a", "b", "c", "d", "e"], async (id) => { active++; peak = Math.max(peak, active); await tick(); await tick(); active--; done.push(id); });
+        const all = done.length === 5 && [...done].sort().join() === "a,b,c,d,e" && peak <= 2;
+        const boom = new Error("send failed"); let got;
+        try { await m.notifyAll(["a", "b", "c", "d"], async (id) => { await tick(); if (id === "b") throw boom; }); } catch (e) { got = e; }
+        for (let i = 0; i < 20; i++) await tick();
+        if (!(all && got === boom && lost.length === 0)) process.exitCode = 1; } catch { process.exitCode = 1; } finally { clearTimeout(wd); }'

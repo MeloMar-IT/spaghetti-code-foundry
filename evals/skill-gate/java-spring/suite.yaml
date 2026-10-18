@@ -1,0 +1,115 @@
+# Java and Spring Boot suite for the skill gate (schema 1). It scores one candidate skill offline: nothing of the skill is
+# run and no model is called. It is not an `scf eval` suite (see ../../example.yaml). Fixtures are small folders next to this file.
+# The `instructions` section is for `scf skills effect`: 4 scenarios x repeat 4 x 2 arms = 32 agent sessions for a Java skill
+# (16 for a Spring Boot skill, which is offered on the two orders-service scenarios only). Each check compiles and runs a hidden
+# Java program offline, so it needs a JDK 17 or later on the PATH, installed outside the home folder (the check runs in the sandbox).
+schema: 1
+selection:
+  - id: jpa-query
+    repo: fixtures/orders-service
+    task: Add a repository query that finds the open orders of a customer created after a given date.
+    expect: offered
+  - id: reservation-race
+    repo: fixtures/orders-service
+    task: Two orders can reserve the same stock at the same time. Stop that race when an order is placed.
+    expect: offered
+  - id: logging-without-personal-data
+    repo: fixtures/orders-service
+    task: Log placed and cancelled orders without writing customer data to the log.
+    expect: offered
+  - id: discount-tests
+    repo: fixtures/orders-service
+    task: Write tests for the discount rules of placeOrder.
+    expect: offered
+  - id: code-review
+    repo: fixtures/orders-service
+    task: Review the order service before the release.
+    expect: offered
+  - id: flyway-migration
+    repo: fixtures/orders-service
+    task: Add Flyway and a first migration that creates the orders table.
+    expect: offered
+  - id: startup-failure
+    repo: fixtures/orders-service
+    task: The service fails at start-up because the orders table cannot be created. Find the cause and fix it.
+    expect: offered
+  - id: slug-accents
+    repo: fixtures/web-tool
+    task: Keep digits in a slug and turn accented letters into plain letters.
+    expect: not-offered
+  - id: slug-shorten
+    repo: fixtures/web-tool
+    task: Shorten a slug without cutting a word.
+    expect: not-offered
+conflicts:
+  - id: against-approved
+    with: all
+context:
+  - id: coder-budget
+    max_instruction_tokens: 3000
+    max_description_chars: 160
+tools:
+  - id: read-only
+    policy: { shell: false, network: false, filesystem: read }
+instructions:
+  mandatory: false
+  repeat: 4
+  scenarios:
+    - id: cancel-rules
+      repo: fixtures/orders-service
+      task: >-
+        In `OrderService.cancel` apply the cancel rules. A PAID order cannot be cancelled: throw an `IllegalStateException`,
+        leave the order unchanged and do not save it. An unknown id throws a `NoSuchElementException`. An OPEN order becomes
+        CANCELLED and is saved. Keep the public classes, constructors and methods with their parameters. Only the library
+        types in `src/stubs/java` are available offline; nothing can be downloaded.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        T=$(mktemp -d) || exit 1; trap 'rm -rf "$T"' EXIT;
+        printf '%s' 'import com.example.orders.*; import java.lang.reflect.*; import java.time.*; import java.util.*; public class Check { static int saves; static Order saved; static Object r(OrderService s, Long id) { try { return s.cancel(id); } catch (Throwable e) { return e; } } public static void main(String[] a) { Thread w = new Thread(() -> { try { Thread.sleep(10000); } catch (Exception e) { } Runtime.getRuntime().halt(2); }); w.setDaemon(true); w.start(); try { var paid = new Order("c", 1, 100, Instant.EPOCH); paid.setStatus(Order.Status.PAID); Map<Long, Order> m = Map.of(1L, paid, 2L, new Order("c", 1, 100, Instant.EPOCH)); var repo = (OrderRepository) Proxy.newProxyInstance(Check.class.getClassLoader(), new Class<?>[] { OrderRepository.class }, (p, mt, x) -> { if (mt.getName().equals("findById")) return Optional.ofNullable(m.get(x[0])); if (mt.getName().equals("save")) { saves++; saved = (Order) x[0]; return x[0]; } throw new UnsupportedOperationException(); }); var s = new OrderService(repo, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC)); boolean ok = r(s, 1L) instanceof IllegalStateException && paid.getStatus() == Order.Status.PAID && saves == 0 && r(s, 99L) instanceof NoSuchElementException && saves == 0; ok = ok && r(s, 2L) instanceof Order && saves == 1 && saved.getStatus() == Order.Status.CANCELLED; System.exit(ok ? 0 : 1); } catch (Throwable e) { System.exit(1); } } }' > "$T/Check.java" || exit 1;
+        find src/stubs/java src/main/java -name "*.java" > "$T/files";
+        javac -d "$T/c" @"$T/files" "$T/Check.java" >/dev/null 2>&1 || exit 1;
+        java -cp "$T/c" Check || exit 1
+    - id: optimistic-locking
+      repo: fixtures/orders-service
+      task: >-
+        Two users can change the same order at the same time, and the last save silently wins. Add JPA optimistic locking to
+        the `Order` entity, so that a stale update is refused. Keep the public constructors and methods. Only the library
+        types in `src/stubs/java` are available offline; nothing can be downloaded.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        T=$(mktemp -d) || exit 1; trap 'rm -rf "$T"' EXIT;
+        printf '%s' 'import jakarta.persistence.*; import java.lang.reflect.*; public class Check { public static void main(String[] a) { Thread w = new Thread(() -> { try { Thread.sleep(10000); } catch (Exception e) { } Runtime.getRuntime().halt(2); }); w.setDaemon(true); w.start(); try { Class<?> c = com.example.orders.Order.class; int n = 0; boolean ok = true; boolean id = false; for (Field f : c.getDeclaredFields()) { if (f.isAnnotationPresent(Version.class)) { n++; Class<?> t = f.getType(); int m = f.getModifiers(); if (!(t == long.class || t == Long.class || t == int.class || t == Integer.class) || Modifier.isStatic(m) || Modifier.isFinal(m)) ok = false; } if (f.isAnnotationPresent(Id.class)) id = true; } System.exit(ok && n == 1 && id && c.isAnnotationPresent(Entity.class) ? 0 : 1); } catch (Throwable e) { System.exit(1); } } }' > "$T/Check.java" || exit 1;
+        find src/stubs/java src/main/java -name "*.java" > "$T/files";
+        javac -d "$T/c" @"$T/files" "$T/Check.java" >/dev/null 2>&1 || exit 1;
+        java -cp "$T/c" Check || exit 1
+    - id: single-load
+      repo: fixtures/cache-library
+      task: >-
+        `LoadingCache.get` can call the loader more than once for the same key when two threads ask for it at the same time.
+        Make `get` call the loader only once per key, also for calls at the same time, and give every caller the loaded
+        value. Keep the public constructor and methods. The project has no dependencies: only the JDK is available offline.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        T=$(mktemp -d) || exit 1; trap 'rm -rf "$T"' EXIT;
+        printf '%s' 'import org.example.cache.*; import java.util.concurrent.*; import java.util.concurrent.atomic.*; public class Check { static boolean round(String k) throws Exception { var n = new AtomicInteger(); var i = new AtomicInteger(); var bad = new AtomicBoolean(); Thread[] th = new Thread[2]; var two = new CountDownLatch(2); var b = new CyclicBarrier(2); var c = new LoadingCache<String, String>(x -> { n.incrementAndGet(); two.countDown(); try { two.await(500, TimeUnit.MILLISECONDS); } catch (InterruptedException e) { throw new RuntimeException(e); } for (Thread h : th) { var s = h.getState(); if (h != Thread.currentThread() && (s == Thread.State.RUNNABLE || s == Thread.State.TERMINATED)) bad.set(true); } return "v-" + x; }); var ex = Executors.newFixedThreadPool(2); try { Callable<String> t = () -> { th[i.getAndIncrement()] = Thread.currentThread(); b.await(3, TimeUnit.SECONDS); return c.get(k); }; var f1 = ex.submit(t); var f2 = ex.submit(t); var v = "v-" + k; return v.equals(f1.get(5, TimeUnit.SECONDS)) && v.equals(f2.get(5, TimeUnit.SECONDS)) && n.get() == 1 && !bad.get(); } finally { ex.shutdownNow(); } } public static void main(String[] a) { Thread w = new Thread(() -> { try { Thread.sleep(10000); } catch (Exception e) { } Runtime.getRuntime().halt(2); }); w.setDaemon(true); w.start(); try { var n = new AtomicInteger(); var c = new LoadingCache<String, String>(k -> { n.incrementAndGet(); return k + "!"; }); boolean ok = c.get("a").equals("a!") && c.get("b").equals("b!") && c.get("a").equals("a!") && n.get() == 2; System.exit(ok && round("k") ? 0 : 1); } catch (Throwable e) { System.exit(1); } } }' > "$T/Check.java" || exit 1;
+        find src/main/java -name "*.java" > "$T/files";
+        javac -d "$T/c" @"$T/files" "$T/Check.java" >/dev/null 2>&1 || exit 1;
+        java -cp "$T/c" Check || exit 1
+    - id: log-load-failure
+      repo: fixtures/cache-library
+      task: >-
+        When the loader fails in `LoadingCache.get`, log a WARNING with `java.util.logging` on the logger named after the
+        class (`LoadingCache.class.getName()`). The message must contain the key and the record must carry the thrown
+        exception. Then rethrow that same exception. A load that works logs no warning. Keep the public constructor and
+        methods. The project has no dependencies: only the JDK is available offline.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 600
+      check: >-
+        T=$(mktemp -d) || exit 1; trap 'rm -rf "$T"' EXIT;
+        printf '%s' 'import org.example.cache.*; import java.util.*; import java.util.logging.*; public class Check { static Logger L = Logger.getLogger(LoadingCache.class.getName()); static List<LogRecord> R = Collections.synchronizedList(new ArrayList<>()); public static void main(String[] a) { Thread w = new Thread(() -> { try { Thread.sleep(10000); } catch (Exception e) { } Runtime.getRuntime().halt(2); }); w.setDaemon(true); w.start(); try { L.setUseParentHandlers(false); L.setLevel(Level.ALL); L.addHandler(new Handler() { public void publish(LogRecord r) { R.add(r); } public void flush() { } public void close() { } }); RuntimeException boom = new IllegalStateException("store down"); var c = new LoadingCache<String, String>(k -> { if (k.equals("k-7")) throw boom; return "v"; }); boolean ok = c.get("ok").equals("v") && R.stream().noneMatch(q -> q.getLevel().intValue() >= Level.WARNING.intValue()); RuntimeException got = null; try { c.get("k-7"); } catch (RuntimeException e) { got = e; } boolean hit = false; synchronized (R) { for (LogRecord r : R) if (r.getLevel() == Level.WARNING && r.getThrown() == boom && new SimpleFormatter().formatMessage(r).contains("k-7")) hit = true; } System.exit(ok && got == boom && hit ? 0 : 1); } catch (Throwable e) { System.exit(1); } } }' > "$T/Check.java" || exit 1;
+        find src/main/java -name "*.java" > "$T/files";
+        javac -d "$T/c" @"$T/files" "$T/Check.java" >/dev/null 2>&1 || exit 1;
+        java -cp "$T/c" Check || exit 1

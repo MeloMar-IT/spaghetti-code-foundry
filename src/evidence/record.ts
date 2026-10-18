@@ -2,12 +2,15 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { z } from "zod";
+import type { PolicyDecision } from "../policy/schema.js";
 import type { RunSummary, StepRecord } from "../engine/state.js";
 import type { Step } from "../flow/schema.js";
 import {
   CommitSchema, GitIdentitySchema, isSafeRelativePath, modelIdentityOf, PullRequestIdentitySchema, RepositorySchema, StepIdSchema, ToolIdentitySchema,
   type Actor, type ArtifactRef, type GitIdentity, type ModelIdentity, type PullRequestIdentity, type StepIdentity, type TestResult,
 } from "./identity.js";
+import { emitTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
+import { telemetryFromEvidence } from "../telemetry/envelope.js";
 import { closeEvidenceStream, evidenceStream, hashPlainFile, type EvidenceEventBody, type EvidenceStream } from "./stream.js";
 
 /**
@@ -65,7 +68,7 @@ function gitIdentity(commit: string | undefined, run: Pick<RunSummary, "branch" 
   return { commit: commit!, ...(branch.success && branch.data ? { branch: branch.data } : {}), ...(repo ? { repository: repo } : {}) };
 }
 
-function repositoryOf(vars: Record<string, string> | undefined): string | undefined {
+export function repositoryOf(vars: Record<string, string> | undefined): string | undefined {
   const name = vars?.github_repo;
   return name && name !== "owner/repo" && RepositorySchema.safeParse(name).success ? name : undefined;
 }
@@ -91,16 +94,25 @@ export class RunRecorder {
   constructor(
     private readonly stream: EvidenceStream,
     private readonly runDir: string,
+    private readonly repository?: string,
   ) {}
 
-  /** Makes the event and writes it. A problem while making it stops the stream like a failed write. */
+  /**
+   * Makes the event and writes it. A problem while making it stops the stream like a failed write. The same event is
+   * also given to telemetry, with the same time, even when the evidence stream has stopped.
+   */
   private put(make: () => EvidenceEventBody | undefined, time?: string): void {
+    let body: EvidenceEventBody | undefined;
     try {
-      const body = make();
-      if (body) this.stream.append(body, time);
+      body = make();
     } catch (e) {
       this.stream.stop(e);
+      return;
     }
+    if (!body) return;
+    const at = time ?? new Date().toISOString();
+    const written = this.stream.append(body, at);
+    if (telemetryEnabled()) emitTelemetry(telemetryFromEvidence(this.stream.runId, body, written, at, this.repository));
   }
 
   /** `queuedAt`: when the job was put in the queue. A new run has no folder then, so the event is written now with that time. */
@@ -175,6 +187,16 @@ export class RunRecorder {
     this.put(() => (approved ? { type: "step.approved", step, by } : { type: "step.denied", step, denial: { kind: "approval", by } }));
   }
 
+  /** Something that had to be recorded could not be: the stream stops and the run has no manifest. The run itself goes on. */
+  incomplete(e: unknown): void {
+    this.stream.stop(e);
+  }
+
+  /** A policy pack decided at a boundary. `step` is given exactly for the boundaries that are about a step. */
+  policyDecided(decision: PolicyDecision, step?: StepIdentity): void {
+    this.put(() => ({ type: "policy.decided", decision, ...(step ? { step } : {}) }), decision.evaluatedAt);
+  }
+
   /** The end of one visit: a `step.denied` for every tool the agent was refused, then `step.completed` or `step.failed`. */
   stepEnded(rec: StepRecord): void {
     let step: StepIdentity;
@@ -215,6 +237,6 @@ export class RunRecorder {
 }
 
 /** The recorder of a run. Making it reads and writes nothing. */
-export function runRecorder(run: Pick<RunSummary, "runDir" | "runId">): RunRecorder {
-  return new RunRecorder(evidenceStream(run.runDir, run.runId), run.runDir);
+export function runRecorder(run: Pick<RunSummary, "runDir" | "runId" | "vars">): RunRecorder {
+  return new RunRecorder(evidenceStream(run.runDir, run.runId), run.runDir, repositoryOf(run.vars));
 }

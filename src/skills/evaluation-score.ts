@@ -39,6 +39,8 @@ export interface EvaluationScoreInput {
   baseline?: ComparedSkill;
   /** applyExceptions(candidate id, scanSkill(...), exceptions, today). */
   safety: DecidedReport;
+  /** The catalogue description the owner set for a staged skill (skill-selections.yaml), or undefined: the package's own is used. */
+  descriptionOf?: (s: NormalizedSkill) => string | undefined;
 }
 export interface EvaluationScore {
   suite: { digest: string; scenarios: { id: string; inputs: Record<string, string> }[] };
@@ -86,12 +88,17 @@ function memberOf(c: ComparedSkill): Member {
 }
 const isApproved = (c: ComparedSkill): boolean => (c.kind === "registered" ? c.skill.trust !== "unapproved" && c.skill.active : c.candidate.approved);
 
-function asRegistered(pkg: SkillPackage, label: string): RegisteredSkill {
-  return { key: `${pkg.id}@${pkg.version}`, id: pkg.id, version: pkg.version, source: "admin", label, dir: "", active: true, trust: "approved", pin: "pinned", digest: pkg.digest, pkg };
+function asRegistered(pkg: SkillPackage, label: string, description?: string): RegisteredSkill {
+  return {
+    key: `${pkg.id}@${pkg.version}`, id: pkg.id, version: pkg.version, source: "admin", label, dir: "", active: true, trust: "approved", pin: "pinned", digest: pkg.digest, pkg,
+    ...(description !== undefined ? { catalogueDescription: { text: description, from: "skill-selections" as const } } : {}),
+  };
 }
 
+type DescriptionOf = (s: NormalizedSkill) => string | undefined;
+
 /** Every approved skill plus the candidate, one entry per id: the candidate, then a registered skill, then the highest imported version. */
-function selectionRegistry(c: BareCandidate, approved: readonly ComparedSkill[]): RegisteredSkill[] {
+function selectionRegistry(c: BareCandidate, approved: readonly ComparedSkill[], descriptionOf?: DescriptionOf): RegisteredSkill[] {
   const byId = new Map<string, { skill: RegisteredSkill; rank: number }>();
   const offer = (skill: RegisteredSkill, rank: number) => {
     const have = byId.get(skill.id);
@@ -100,19 +107,19 @@ function selectionRegistry(c: BareCandidate, approved: readonly ComparedSkill[])
       (rank === have.rank && rank === 2 && (compareSkillVersions(skill.version, have.skill.version) > 0 || (skill.version === have.skill.version && byteCmp(skill.digest, have.skill.digest) < 0)));
     if (better) byId.set(skill.id, { skill, rank });
   };
-  offer(asRegistered(c.skill.package, "candidate"), 0);
+  offer(asRegistered(c.skill.package, "candidate", descriptionOf?.(c.skill)), 0);
   for (const a of approved) {
     if (!isApproved(a)) continue;
     if (a.kind === "registered") offer(a.skill, 1);
-    else offer(asRegistered(a.candidate.skill.package, "imported"), 2);
+    else offer(asRegistered(a.candidate.skill.package, "imported", descriptionOf?.(a.candidate.skill)), 2);
   }
   return [...byId.values()].map((x) => x.skill);
 }
 
 export function scoreSelection(
-  c: BareCandidate, scenarios: readonly SelectionScenario[], profiles: ReadonlyMap<string, RepoProfile>, approved: readonly ComparedSkill[],
+  c: BareCandidate, scenarios: readonly SelectionScenario[], profiles: ReadonlyMap<string, RepoProfile>, approved: readonly ComparedSkill[], descriptionOf?: DescriptionOf,
 ): DimensionScore {
-  const skills = selectionRegistry(c, approved);
+  const skills = selectionRegistry(c, approved, descriptionOf);
   const id = c.skill.identity.id;
   const findings: EvaluationFinding[] = [];
   let pass = 0;
@@ -223,10 +230,11 @@ export function scoreConflicts(
 }
 
 const BUDGET_RE = /^[1-9]\d{0,6}$/;
-export function scoreContext(c: BareCandidate, scenarios: readonly ContextScenario[]): DimensionScore {
+/** `description`: the text the catalogue will show; the package's own when the owner set none. */
+export function scoreContext(c: BareCandidate, scenarios: readonly ContextScenario[], description: string = c.skill.package.description): DimensionScore {
   const pkg = c.skill.package;
   const tokens = skillContextTokens(pkg);
-  const chars = pkg.description.length;
+  const chars = description.length;
   const budget = (key: string): number | "invalid" | undefined => {
     const v = pkg.metadata?.[key];
     if (v === undefined) return undefined;
@@ -281,9 +289,9 @@ export function scoreEvaluation(input: EvaluationScoreInput): EvaluationScore {
   const c = bareCandidate(input.candidate);
   const approved = input.approved.map(bareCompared);
   const baseline = input.baseline ? bareCompared(input.baseline) : undefined;
-  const selection = scoreSelection(c, suite.selection, input.profiles, approved);
+  const selection = scoreSelection(c, suite.selection, input.profiles, approved, input.descriptionOf);
   const conflicts = scoreConflicts(c, suite.conflicts, approved, baseline);
-  const context = scoreContext(c, suite.context);
+  const context = scoreContext(c, suite.context, input.descriptionOf?.(input.candidate.skill));
   const tools = scoreTools(c, suite.tools, input.safety);
   const dimensions: Partial<Record<EvaluationDimension, number[]>> = {};
   const parts: Record<string, DimensionScore> = { selection, conflicts, context, tools };

@@ -278,6 +278,16 @@ export function updateEveryMs(text: unknown): number | undefined {
 /** `owner/name` or `host/owner/name`. */
 export const DEPLOYMENT_REPOSITORY_RE = /^(?:[A-Za-z0-9.-]+\/)?[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
+export const TelemetrySchema = z
+  .object({
+    /** Write the local telemetry files. */
+    local: z.boolean().default(true),
+    /** Telemetry files older than this many days (UTC) are removed. */
+    keep_days: z.number().int().min(1).max(365).default(30),
+  })
+  .strict();
+export type TelemetryConfig = z.infer<typeof TelemetrySchema>;
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -595,6 +605,19 @@ export const ConfigSchema = z
       .prefault({}),
     /** The running Foundry updates itself from main of its own repository after a hotfix. Off by default. */
     self_update: SelfUpdateSchema,
+    /** Policy packs asked at every boundary of a run, in observe mode (decisions are recorded, nothing is stopped). Files: <data folder>/policies/<id>.json */
+    policy: z
+      .object({
+        packs: z
+          .array(z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, "must be a policy id: lower-case letters, digits, . _ or -"))
+          .max(20)
+          .refine((l) => new Set(l).size === l.length, "names the same pack twice")
+          .default([]),
+      })
+      .strict()
+      .prefault({}),
+    /** Lifecycle telemetry: one value-free event per line in <data folder>/telemetry/events-YYYY-MM-DD.jsonl (the UTC day). */
+    telemetry: TelemetrySchema.prefault({}),
   })
   .strict()
   .superRefine((c, ctx) => {

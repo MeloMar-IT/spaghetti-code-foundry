@@ -2,8 +2,8 @@ import { mkdirSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
-import { codexExecFlags, resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
-import { DEFAULT_PERMISSION_MODE, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
+import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
+import { DEFAULT_PERMISSION_MODE, pushLogFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
@@ -17,7 +17,7 @@ import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { TOOLS_DIR } from "../engine/guards.js";
 import { render } from "../engine/template.js";
-import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine, codexIsolationMode, codexResumeRefusal, privateCodexHome, type CodexIsolation } from "./codex-home.js";
+import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexMustIsolate, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
 import { discoverJavaHome, javaStandIn } from "./java-gate.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, type Target } from "./targets.js";
@@ -25,6 +25,7 @@ import { stepOverride, type Override } from "../analyst/overrides.js";
 import { modelOf } from "../analyst/reference.js";
 import type { Config } from "../config.js";
 import { stepIdentity } from "../evidence/record.js";
+import { repositoryFact } from "../engine/policy-hooks.js";
 
 /** Map Claude permission settings onto Codex's sandbox modes. */
 export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean): CodexSandbox {
@@ -43,6 +44,8 @@ type Ran = StepResult & { final?: boolean };
 async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false, draft = false, catalogue?: RunCatalogue, toolCheck?: { tools: SessionTools; check: ToolCheck }): Promise<Ran> {
   // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
+  const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
+  if (pushLog) base.FACTORY_PUSH_LOG = pushLog;
   const ghDir = iso ? ghConfigDir() : undefined;
   try {
     const extra = agentEnv(scope.ctx.vars.agent_env, Boolean(iso));
@@ -212,36 +215,48 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const locked = o.draft ? undefined : o.skills;
   let home: string | undefined;
   let mode: CodexIsolation | undefined;
+  let clean: CleanCodex | undefined;
   if (t.agent === "codex") {
     const seen = (n: string) => (n in env ? env[n] : short ? undefined : process.env[n]);
-    // 1. mode: a boxed step already has the run's folder. A block from the run's lock isolates the session even with isolate_agents off; a draft review block does not.
-    if (!boxed) mode = codexIsolationMode({ isolate: claudeIsolated(engine.config.isolate_agents, isolated, locked), local, hasKey: Boolean(seen("CODEX_API_KEY")) });
-    // 2. private folder: never the personal one when it cannot be made
-    if (mode === "private") {
-      const made = privateCodexHome(engine.summary.runDir);
-      if ("refused" in made) return { ok: false, output: made.refused, error: made.refused, final: true };
-      env.CODEX_HOME = made.CODEX_HOME; // over anything agent_env set
-      env.HOME = made.HOME; // the personal ~/.agents/skills is out of reach too
+    const personal = personalCodexDir({ codexHome: seen("CODEX_HOME"), home: seen("HOME") });
+    // 1. mode: a boxed step already has the run's folder. Runs the server starts are always isolated; a block from the run's lock isolates the session even with isolate_agents off; a draft review block does not.
+    if (!boxed) mode = codexIsolationMode({ isolate: codexMustIsolate({ source: engine.summary.source, isolate: claudeIsolated(engine.config.isolate_agents, isolated, locked) }), local, hasKey: Boolean(seen("CODEX_API_KEY")) });
+    // 2. the clean Codex folder: never the personal one when it cannot be made
+    if (boxed || mode === "private" || mode === "login") {
+      const made = prepareCleanCodex({
+        runDir: engine.summary.runDir,
+        env,
+        config: engine.config,
+        kind: t.provider.kind,
+        short,
+        isolated,
+        boxed,
+        mode,
+        sandbox: boxed ? "danger-full-access" : codexSandbox(step, scope, sandboxed),
+        personal,
+        permissionMode: step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE,
+        allowedTools: step.allowed_tools ?? d.allowed_tools ?? [],
+        sandboxed,
+        repo: ctx.vars.github_repo,
+      });
+      if ("refused" in made) {
+        if (made.access) engine.accessFailed = true;
+        return { ok: false, output: made.refused, error: made.refused, final: true };
+      }
+      clean = made;
+      env = made.env;
     }
     // 3. the folder this session lives in
-    home = codexHomeId({ run: boxed || mode === "private", codexHome: seen("CODEX_HOME"), home: seen("HOME") });
+    home = codexHomeId({ run: Boolean(clean), codexHome: seen("CODEX_HOME"), home: seen("HOME") });
     // 4. resume only in the same folder
     const reason = resumeId ? codexResumeRefusal(prev!.codex_home, home) : undefined;
     if (reason) {
       resumeId = undefined;
       engine.log(`    · not resuming ${step.resume}: ${reason}`);
     }
-    // 5. a CLI that does not list the flag for this command form
-    if (mode === "ignore-config" && !codexExecFlags(bin ?? engine.codexBin ?? resolveCodexBin(), { resume: Boolean(resumeId) }).has("--ignore-user-config")) mode = "unsupported";
-    // 6.
     const line = mode ? codexIsolationLine(mode) : undefined;
-    if (line) engine.log(`    ${mode === "unsupported" ? "!" : "·"} ${line}`);
-    // 7. a block from the run's lock never goes into a session that is not isolated at all
-    if (mode === "unsupported" && locked?.text) {
-      engine.log(`    ! skill context: rejected (${CODEX_SKILLS_REFUSED})`);
-      engine.accessFailed = true;
-      return { ok: false, output: CODEX_SKILLS_REFUSED, error: CODEX_SKILLS_REFUSED, final: true };
-    }
+    if (line) engine.log(`    · ${line}`);
+    if (clean && !clean.push) engine.log(`    · ${CODEX_PUSH_BLOCKED_LINE}`);
   }
   // Codex never reuses a block: a resumed Codex session gets it again.
   const attach = o.skills ? attachSkillPayload(o.skills, { continues: t.agent === "claude" && Boolean(resumeId), holds, again: resumeAsked || Boolean(o.again) }) : undefined;
@@ -267,22 +282,31 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
 
   if (t.agent === "codex") {
     const builtinUrl = BUILTIN_PROVIDERS[t.providerName]?.base_url;
-    const r = await runCodex({
-      ...common,
-      env,
-      cleanEnv: short,
-      codexBin: bin ?? engine.codexBin,
-      model: t.model,
-      localProvider: local ? t.provider.kind : undefined,
-      localBaseUrl: local && t.provider.base_url !== builtinUrl ? t.provider.base_url : undefined,
-      sandboxProfile: profile,
-      sandbox: boxed ? "danger-full-access" : codexSandbox(step, scope, sandboxed),
-      reviewer: step.skill_role === "reviewer",
-      agentNote: mode !== undefined && mode !== "off",
-      // unset (not isolated): a reviewer skips the personal config as before; boxed, private and unsupported steps get no flag
-      ignoreUserConfig: mode === "ignore-config" ? true : mode === "off" ? undefined : false,
-      effort,
-    });
+    let r: Awaited<ReturnType<typeof runCodex>>;
+    try {
+      r = await runCodex({
+        ...common,
+        env,
+        cleanEnv: clean?.cleanEnv ?? short,
+        codexBin: bin ?? engine.codexBin,
+        model: t.model,
+        localProvider: local ? t.provider.kind : undefined,
+        localBaseUrl: local && t.provider.base_url !== builtinUrl ? t.provider.base_url : undefined,
+        sandboxProfile: profile,
+        sandbox: boxed ? "danger-full-access" : codexSandbox(step, scope, sandboxed),
+        reviewer: step.skill_role === "reviewer",
+        agentNote: mode !== undefined && mode !== "off",
+        // unset (not isolated): a reviewer skips the personal config as before; a clean folder never needs the flag
+        ignoreUserConfig: mode === "off" ? undefined : false,
+        clean: Boolean(clean),
+        noNetwork: Boolean(clean && !clean.push),
+        effort,
+      });
+    } finally {
+      // the lent login comes back after every session, also when it failed
+      const back = clean ? codexLoginReturnLine(clean.done()) : undefined;
+      if (back) engine.log(`    ${back}`);
+    }
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
     return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, ...(effort ? { effort } : {}), tokens: { input: r.inputTokens, output: r.outputTokens }, ...skills, ...catalogueRecord(o) };
@@ -397,6 +421,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   });
   const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
   let fallbackFrom: string | undefined;
+  const repository = repositoryFact(scope.ctx.vars);
+  // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: observe only).
+  engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
     const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
@@ -404,6 +431,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       engine.log(`    ! skill context: rejected (${session.refused})`);
       engine.accessFailed = true;
       return { ok: false, output: session.refused, error: session.refused, ...tries() };
+    }
+    // Before every session that can write, retries and fallbacks included, with the sandbox the target really gets.
+    if (!readOnlyStep(step, scope.flow.defaults)) {
+      const sandboxed = boxed || (target.agent === "codex" ? codexSandbox(step, scope, agentSandboxed(step, scope, engine)) !== "danger-full-access" : agentSandboxed(step, scope, engine));
+      engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
     }
     if (!tried.has(target.label)) engine.evidence?.stepRouted(identity, target.label, stepOverride(scope.flow.name, step.id).effort ?? step.effort ?? scope.flow.defaults.effort, fallbackFrom);
     tried.add(target.label);

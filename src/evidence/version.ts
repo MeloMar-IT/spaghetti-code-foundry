@@ -3,8 +3,11 @@
  * Pure: no file access. A record carries its own `version`; a reader never guesses it.
  */
 
-/** The version of one line of `evidence.jsonl` this Foundry writes. Raise it for any change of shape or meaning. */
-export const EVIDENCE_EVENT_VERSION = 1;
+/**
+ * The version of one line of `evidence.jsonl` this Foundry writes. Raise it for any change of shape or meaning.
+ * 2 adds the `policy.decided` event.
+ */
+export const EVIDENCE_EVENT_VERSION = 2;
 /** The version of `evidence.json` (the manifest of a finished run) this Foundry writes. */
 export const RUN_EVIDENCE_VERSION = 1;
 

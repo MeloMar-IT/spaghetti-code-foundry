@@ -234,6 +234,20 @@ describe("evidencePanel", () => {
     p.update({ ...USER_RUN });
     expect(node.all("li").every((n: FakeElement, i: number) => n === before[i])).toBe(true);
   });
+  it("places the record first, forwards updates to it and still says there is nothing", () => {
+    const rec = el("section");
+    const record = { build: vi.fn(() => rec), update: vi.fn() };
+    const p = mod.evidencePanel({ record });
+    const node = p.build();
+    expect(node.children[0]).toBe(rec);
+    const prev = { finishedAt: undefined };
+    p.update({}, prev);
+    expect(record.update).toHaveBeenCalledWith({}, prev);
+    expect(node.textContent).toContain("No evidence recorded yet.");
+    p.update(USER_RUN);
+    expect(node.children[0]).toBe(rec);
+    expect(node.all("li")).toHaveLength(3);
+  });
   it("shows the questions of an administrator's stopped run, read from the step that asked", () => {
     const p = mod.evidencePanel();
     const node = p.build();

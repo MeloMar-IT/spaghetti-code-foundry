@@ -13,6 +13,8 @@ export interface V2Options {
   revoked?: Record<string, { on: string; reason: string }>;
   /** Skill id → attribution path → content. Written to `<root>/.attribution/<id>/<path>`. */
   attribution?: Record<string, Record<string, string>>;
+  /** Skill id → catalogue description (skill-selections.yaml) written into the manifest entry. */
+  catalogueDescriptions?: Record<string, string>;
 }
 
 const entry = (path: string, content: Buffer): ReleaseFileEntry => ({ path, sha256: createHash("sha256").update(content).digest("hex"), bytes: content.length });
@@ -51,6 +53,7 @@ export function writeV2Release(root: string, opts: V2Options = {}): { manifest: 
         attribution,
         evaluation: { suite: "default-suite", record: "sha256:" + "c".repeat(64), verdict: opts.verdict ?? ("passed" as const) },
         ...(opts.revoked?.[p.id] ? { revoked: opts.revoked[p.id]! } : {}),
+        ...(opts.catalogueDescriptions?.[p.id] !== undefined ? { catalogueDescription: { text: opts.catalogueDescriptions[p.id]!, source: "skill-selections" as const } } : {}),
       };
     });
   const manifest: ReleaseManifestV2 = {

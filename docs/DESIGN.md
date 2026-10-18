@@ -234,7 +234,8 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   `seq` (its place in the stream, from 0), `runId`, `time` and a `type`: eight for the run
   (`run.created`, `run.queued`, `run.started`, `run.stopped`, `run.resumed`, `run.cancelled`,
   `run.failed`, `run.completed`) and seven for a step (`step.started`, `step.routed`, `step.retried`,
-  `step.denied`, `step.approved`, `step.failed`, `step.completed`). `prevHash` and `hash` come
+  `step.denied`, `step.approved`, `step.failed`, `step.completed`) and, from version 2, `policy.decided`
+  (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"). `prevHash` and `hash` come
   together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -299,6 +300,41 @@ numbers and pure functions.
   `enforce` mode. Every reason code fits the evidence format.
 - **Versions.** Each contract has its own number in `version.ts`. A record with another version is
   refused with one sentence. Every object refuses unknown fields, so a new field means a new version.
+### Policy hooks in observe mode
+
+`src/engine/policy-hooks.ts` asks the configured policy packs at the boundaries of a run (#142). It
+is the only place the engine calls `src/policy/`. Nothing in a run changes because of a decision yet:
+packs run in observe mode only.
+
+- **Where the questions come from.** The engine asks, so a flow cannot leave a boundary out: `runner.ts`
+  asks `run.start`, `repository.access` (before a workspace is made), `approval.consume` and
+  `run.complete` (only when the run succeeded); `execute.ts` asks `step.before` and `step.after` for
+  every visit of a step through `beginStep` and `recordStep`, and `repository.access` for a step in the
+  repository's checkout; `agents/run.ts` asks `agent.write` before a write-capable agent step.
+  Built-in and custom flows take the same path.
+- **Pushes.** `push` is asked once for each push a step makes. The pre-push hook (`guards.ts`) appends
+  `<branch>\t<remote url>` to the file in `FACTORY_PUSH_LOG`, which the step gets when packs are
+  configured. `drainPushLog` reads and removes the file when the step ends, and reads only a plain
+  file of at most 64 KiB and 100 pushes. The repository of a push is set only when its remote is a
+  GitHub address. The hook never fails a push.
+- **Facts.** `baseFacts` gives the run's repository, flow, workspace and owner; each boundary adds its
+  own. `policyFacts` keeps only the values that pass their schema in `FactsSchema`; a value that does not
+  is left out, never changed. The repository is lower case, and the placeholder `owner/repo` is no fact.
+- **Packs.** `loadPolicyPacks` reads `<data folder>/policies/<id>.json` with `O_NOFOLLOW` and
+  `O_NONBLOCK`, only as a plain file of at most 1 MiB. A pack that is missing, linked, not a file,
+  unreadable, invalid, for another policy id, or in `enforce` mode becomes a `LoadedPack` with a
+  `policy.unavailable` or `policy.invalid` problem. Its detail never names a path or file content.
+- **Decisions.** `RunPolicy.at` asks every pack, in order, and returns the decisions. Each one is logged
+  as `· policy <id> <version> · <boundary>: <outcome> (<reason>)` and recorded as a `policy.decided`
+  event (`RunRecorder.policyDecided`). A pack that cannot be evaluated is recorded as `policy.invalid`
+  with `unknown` as version, and the log says so. A decision that cannot be recorded either marks the
+  evidence incomplete (`RunRecorder.incomplete`). No method throws into the engine.
+- **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
+  step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
+  The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
+- **Off by default.** With `policy.packs` empty, `runPolicy` returns nothing: no file is read, no hook
+  is added for the pushes, and the engine's `policy` is absent.
+
 ### Context bundle
 
 `src/context/` defines the format that says what a run was given to read, and where each piece came
@@ -638,6 +674,39 @@ are `skipped`):
 
 ---
 
+### Telemetry
+
+`src/telemetry/` writes one value-free event for each lifecycle fact of a run, to a local daily file (#584,
+part 1 of 3 of #155). It is a second, smaller view of what the evidence already records; it does not replace
+the evidence and nothing depends on it.
+
+- **Envelope.** `envelope.ts` defines `TelemetryEventSchema`: `version` 1, a strict object with `id`, `time`,
+  `kind` and `name` required, and optional labels that reuse the identity schemas of `evidence/identity.ts`,
+  `evidence/schema.ts` and `policy/schema.ts`. The kind and name must match (`run`, `step`, `model`, `policy`,
+  `tool`, `delivery`, `pull_request`, `watcher`). There is no free-text field, and unknown fields are refused.
+  The id is `ev:<run>:<evidence id>` (with `:pr` for the pull request of `run.completed`) or `tm:<32 hex>`.
+- **From evidence.** `telemetryFromEvidence` maps every evidence body to at least one draft; it never throws.
+  A line that was written gives the evidence id and `seq`; a body that was not written (the stream has
+  stopped) gets a random `tm:` id and no `evidence`. `RunRecorder.put` takes one time for both the append and
+  the telemetry, so the two agree. `watcherRef` gives the watcher part of an event.
+- **Privacy.** `privacy.ts` (`privateTelemetry`) runs three checks, all closed. `id` and `runId` must not
+  change under `scrub` (`identity`). Each redactable label is checked on its own with the stored credentials
+  and `help.sensitive_patterns`; a label that changes is removed and listed in `redacted`. The canonical line is
+  checked once more, reading the credential store again; an unreadable store drops the event (`privacy`).
+- **Local file.** `local.ts` writes `<data folder>/telemetry/events-YYYY-MM-DD.jsonl` (UTC day) with `O_APPEND`,
+  `O_NOFOLLOW` and `O_NONBLOCK`. The folder is made 0700 and the file 0600, loose modes are tightened, and a
+  link or a path owned by another user is refused. `sweepTelemetry(keepDays)` removes only old plain files named
+  `events-<day>.jsonl`, never through a linked folder. The sweep runs each time the writer opens a file.
+- **Hub.** `telemetry.ts` holds the state: `configureTelemetry(config, { log })` reads `telemetry` and
+  `help.sensitive_patterns`; a `log` replaces the current one, and without one the earlier is kept.
+  `emitTelemetry` validates, checks and writes each event, and never throws. A drop is counted and each reason
+  (`invalid`, `privacy`, `identity`, `write`) is logged once, in fixed words, through `DROP_WORDS`.
+  `resetTelemetry` is for tests.
+- **Wiring.** `runFlow` and `resumeRun` call `configureTelemetry` right after the config is loaded; the server does
+  it after `readConfig()` and on every reload. With `telemetry.local: false` nothing is opened and no folder is made.
+- **Not yet.** No exporter, no Settings control (see `settings/exceptions.ts`), and no exit paths; those come
+  with parts 2 and 3 of #155.
+
 ## 5. Agents and models
 
 An agent step names what it needs (a model, an effort level, allowed tools); the Foundry decides
@@ -942,6 +1011,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `notifications.json` | What was already notified |
 | `help.json` | The Ask SCF conversations of every account (mode 0600) |
 | `help-stats.json` | The Ask SCF quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
+| `telemetry/` | `events-YYYY-MM-DD.jsonl`, one value-free lifecycle event per line per UTC day (0700 folder, 0600 files); old days are removed after `telemetry.keep_days` (`src/telemetry/`) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `issue-lists/` | One file per watched repository: the last full issue list read by the watchers (number, title, state, labels, links, dependencies; no issue text), with `readAt` and `cut`. Written atomically; removed when no watcher is left for the repository |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |

@@ -459,9 +459,26 @@ describe("Codex isolation arguments", () => {
     expect(off).toContain("features.codex_hooks=false");
   });
 
+  it("a clean session adds the two overrides once (also for a reviewer) and no flag", () => {
+    for (const reviewer of [false, true]) {
+      const a = buildCodexArgs({ ...base, clean: true, reviewer, ignoreUserConfig: false });
+      expect(a.filter((x) => x === "mcp_servers={}")).toHaveLength(1);
+      expect(a.filter((x) => x === "features.codex_hooks=false")).toHaveLength(1);
+      expect(a).not.toContain("--ignore-user-config");
+    }
+    expect(buildCodexArgs(base)).not.toContain("mcp_servers={}");
+  });
+
+  it("noNetwork switches off the network of the workspace-write sandbox only", () => {
+    const net = "sandbox_workspace_write.network_access=false";
+    expect(buildCodexArgs({ ...base, noNetwork: true })).toContain(net);
+    expect(buildCodexArgs({ ...base, noNetwork: false })).not.toContain(net);
+    for (const sandbox of ["read-only", "danger-full-access"] as const) expect(buildCodexArgs({ ...base, sandbox, noNetwork: true })).not.toContain(net);
+  });
+
   it("no combination passes --ignore-rules", () => {
-    for (const reviewer of [false, true]) for (const ignoreUserConfig of [undefined, false, true]) for (const agentNote of [false, true]) for (const resumeSessionId of [undefined, "T"]) for (const localProvider of [undefined, "ollama"]) {
-      expect(buildCodexArgs({ ...base, reviewer, ignoreUserConfig, agentNote, resumeSessionId, localProvider })).not.toContain("--ignore-rules");
+    for (const reviewer of [false, true]) for (const clean of [false, true]) for (const ignoreUserConfig of [undefined, false, true]) for (const agentNote of [false, true]) for (const resumeSessionId of [undefined, "T"]) for (const localProvider of [undefined, "ollama"]) {
+      expect(buildCodexArgs({ ...base, reviewer, clean, ignoreUserConfig, agentNote, resumeSessionId, localProvider })).not.toContain("--ignore-rules");
     }
   });
 

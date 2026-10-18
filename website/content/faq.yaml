@@ -1,0 +1,37 @@
+# Questions on the home page (also published as FAQPage structured data). Answers are Markdown.
+- q: What is Spaghetti Code Foundry?
+  a: |
+    An open-source AI coding factory that runs on your own machine. It runs **flows**: pipelines of steps that code,
+    test, review and ship changes with AI coding agents. Its main use: put one label on a GitHub issue, and the
+    Foundry asks the open questions, plans, codes, tests, reviews and merges the story.
+- q: Which AI agents and models does it use?
+  a: |
+    Steps run on Claude Code or OpenAI's Codex CLI, on Anthropic, OpenAI or local models (Ollama, LM Studio).
+    Routing rules pick the model per step, with fallbacks when a model hits a limit. See
+    [choosing models](/how-to/models-and-routing/).
+- q: What do I need to run it?
+  a: |
+    Node.js 20 or newer and git, Claude Code logged in, and the GitHub CLI (`gh`) logged in for the GitHub flows.
+    The Codex CLI, Ollama or LM Studio and Docker are optional. It is built and used on macOS. See
+    [how to install it](/how-to/install/).
+- q: Does my code leave my machine?
+  a: |
+    The Foundry runs on your own machine and works on a copy of your repository for every run. The agents it starts
+    use the AI providers you configure, the same way they do when you use Claude Code or Codex yourself.
+- q: How do I stay in control of what it changes?
+  a: |
+    Every plan gets a risk score; risky plans wait for your approval. Pushes to protected branches and pushes that
+    contain secrets are blocked, and all work lands on `develop` first. You merge one pull request a day to `main`.
+    See [keeping your code and secrets safe](/how-to/safety/).
+- q: Can I write my own pipelines?
+  a: |
+    Yes. Flows are YAML files you edit visually or as text, with a block library of reusable steps. Any AI assistant
+    can write one for you from the [flow format reference](/flow-format/). See [how to write a flow](/how-to/write-a-flow/).
+- q: What does it cost?
+  a: |
+    The Foundry itself is free and open source under the MIT licence. You pay for the AI subscriptions or API usage
+    of the agents and models you choose. The dashboard shows what each run cost. See [controlling costs](/how-to/costs/).
+- q: Is it only for GitHub?
+  a: |
+    The issue watchers and the daily release pull request work with GitHub. You can also run any flow by hand on a
+    local repository with `scf run`. See [your first run](/how-to/first-run/).

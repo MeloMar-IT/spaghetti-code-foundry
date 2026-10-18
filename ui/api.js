@@ -107,6 +107,7 @@ export const api = {
   answerRun: (id, text) => req("POST", `/api/runs/${enc(id)}/answer`, { text }),
   transcript: (id, n) => req("GET", `/api/runs/${enc(id)}/transcript/${n}`),
   diff: (id) => req("GET", `/api/runs/${enc(id)}/diff`),
+  evidence: (id) => req("GET", `/api/runs/${enc(id)}/evidence`),
   repos: () => req("GET", "/api/repos"),
   epics: (id) => req("GET", `/api/repos/${enc(id)}/epics`),
   epic: (id, epicId) => req("GET", `/api/repos/${enc(id)}/epics/${enc(epicId)}`),

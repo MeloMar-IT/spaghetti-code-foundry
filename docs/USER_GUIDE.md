@@ -625,6 +625,14 @@ its description, or the kind of step when the flow gives none.
   A user sees **Steps** only: each step with its result and a plain sentence for a failure, but
   no output, no transcripts and no cost.
 
+- **Evidence** — the **Evidence record** of the run: whether its record verifies (**Verified**,
+  **Not verified**, **Not finished** or **No record**), the result, the flow and its version, the
+  commits, the approvals, the tests, the pull request and the files. A failed check names the
+  event or file, says what is wrong and what to do next. **Check again** reloads the record, and
+  **Export evidence** downloads `evidence-<run-id>.json` (the same answer as the API, see
+  "Evidence of a run"). A user sees file counts and no paths; models, policy denials and paths
+  are for administrators. The export never holds the content of a transcript or a log.
+
 - **Changes** — the complete diff the run made, including uncommitted work.
 
   A very long log, diff or transcript does not slow the page. The live log keeps the last 2,000
@@ -653,15 +661,15 @@ a **What happens next** block with **You** as who and the approval message as th
   the filled main button of the run header, like **Approve** for a run that waits. A Codex step
   with `resume:` continues the earlier session only when it runs with the same Codex folder;
   otherwise it starts a new session and the log says why.
-- **Codex and your personal setup.** With `isolate_agents` on, a Codex step does not depend on `~/.codex`. The mode depends on how the step signs in; the log says which one in a line that starts with "Codex:".
+- **Codex and your personal setup.** Every Codex step of a run that the server or a watcher starts gets a clean Codex folder of its own, whatever `isolate_agents` says. A local CLI run follows `isolate_agents`. The mode depends on how the step signs in; the log says which one in a line that starts with "Codex:".
 
-  | Mode | When | Personal `config.toml` and MCP servers | Personal skills, `AGENTS.md`, command rules | Sign-in |
-  |---|---|---|---|---|
-  | Private folder | A local model, or a `CODEX_API_KEY` the step sees | Not used | Not used | The key, or none |
-  | `--ignore-user-config` | A Codex login, no key, not local | Skipped | Still apply | The login stays |
-  | Not isolated | The CLI has no `--ignore-user-config` | Used | Used | The login stays |
+  | Mode | When | Personal `config.toml`, MCP servers, plugins, hooks, skills, `AGENTS.md`, command rules | Sign-in |
+  |---|---|---|---|
+  | Clean folder, key or local model | A local model, or a `CODEX_API_KEY` the step sees | Not used | The key, or none |
+  | Clean folder, login copy | A Codex login file, no key, not local | Not used | Only the login file, a copy for this session; it is removed when the session ends |
+  | Not isolated | `isolate_agents: false` in a CLI run | Used | The login stays |
 
-  The private folder is `<run folder>/home/.codex`, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. A Codex reviewer step (`skill_role: reviewer`) always switches off MCP servers and hooks; it gets `--ignore-user-config` in login mode and, as before, when `isolate_agents` is off. `OPENAI_API_KEY` alone does not select it. The Foundry never passes `--ignore-rules`, so in login mode your command rules still apply. If the private folder cannot be made, the step is refused; it never falls back to your personal folder. With `isolate_agents: false`, or in a user's run held by the OS sandbox, nothing changes: no flag, no note, no "Codex:" line.
+  The clean folder is `<run folder>/home/.codex`, made 0700, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. Session history stays, so a resumed session still works. No Codex session starts with an MCP server, so a server in your personal config is never reached. A step never gets your personal Codex folder when it is isolated. Pushing is blocked: a Foundry command rule forbids `git push`, and Codex's own sandbox has no network. A step with `bypassPermissions` and no sandbox is refused, because it could push. A login kept in the keychain, a linked login file or a missing login refuses the step, with a message that says how to sign in with a file. A refreshed token is written back to your personal file only when that file has not changed meanwhile. `OPENAI_API_KEY` alone does not select the key mode. If the clean folder cannot be made, the step is refused; it never falls back to your personal folder. In a CLI run with `isolate_agents: false`, nothing changes: no note, no "Codex:" line. A step held by the OS sandbox gets no clean folder of its own; its log says that git push is blocked in that session.
 - **Retry from step…** re-runs from any earlier step.
 - **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
@@ -990,6 +998,68 @@ $ scf evidence verify 20260131-120000-ab12
 - **Exit code:** 0 verified, 1 not verified, 2 nothing to verify. `--json` prints the whole result
   (status, the first failure with its code, every check and every file) for a script.
   `--runs-dir <dir>` reads another runs folder.
+
+### Policy packs in observe mode
+
+A policy pack is a set of rules that is asked at the important moments of a run. In this version the
+answers are only recorded: a run never stops or changes because of a pack.
+
+- **Turn it on.** Put the pack in the data folder as `policies/<id>.json` (a plain file, at most 1 MiB),
+  then list its id in `config.yaml`:
+
+  ```yaml
+  policy:
+    packs: [baseline]
+  ```
+
+  Only `mode: observe` is accepted. A pack in `enforce` mode is refused for now. The list is not a
+  setting in the web interface; an older build rejects the `policy` key.
+- **When it is asked.** The start of the run; before the workspace is made; before a step starts in the
+  repository's checkout; before and after every step (also the steps inside a parallel step or a
+  sub-flow); before a write-capable agent step; for each push a step makes; when an approval is used;
+  and when the run succeeded. This is the same for built-in and custom flows.
+- **What you see.** Each answer is a line in the live log, for example
+  `· policy baseline 2026.1 · push: warn (branch.protected) — observe only, nothing was stopped`, and an
+  event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
+- **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack is logged as
+  `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. The run's
+  result is the same as without the pack.
+- **Pushes.** While packs are configured, the Foundry's pre-push hook records each pushed branch, even
+  when no branch is protected. The hook never blocks a push.
+- **Evidence from this version** has a newer event version. An older build cannot read the evidence of a
+  run that has `policy.decided` events, so keep this build for those runs.
+
+### Lifecycle telemetry
+
+The Foundry writes one short telemetry line for each important fact of a run: a run starting or
+ending, a step starting, retrying, failing or finishing, a model being routed, a policy decision, a
+tool call, a push, a pull request and a watcher check. You can read these lines to see what the
+Foundry does, without opening each run folder.
+
+- **What is recorded.** Names, ids, numbers, times and outcomes. Never a prompt, a model's output, the
+  arguments of a tool, an error text, a file's content or a credential. The format has no free-text
+  field, so such a value has no place to go. If a label (for example a branch or a sensitive pattern
+  from your settings) holds a credential, that label is dropped and named in the event's `redacted` list.
+- **Where it is.** One file per day in `<data folder>/telemetry/events-YYYY-MM-DD.jsonl`, named by the
+  UTC date. The folder is readable only by you (0700) and the files too (0600).
+- **Keep it for.** `keep_days` in `config.yaml`. Files older than that are removed when the Foundry
+  opens a day's file for writing. The default is 30 days; the range is 1 to 365.
+
+  ```yaml
+  telemetry:
+    local: true
+    keep_days: 30
+  ```
+
+- **Turn it off.** Set `local: false`. Then no telemetry folder is made and nothing is written. The
+  setting is not in the web interface.
+- **Independent of evidence.** Telemetry is a separate copy of the events. Turning it off does not change
+  `evidence.jsonl`, and a problem with the telemetry file never stops or changes a run. When the evidence of
+  a run has stopped, its telemetry still goes on, without the link to the evidence.
+- **When something is dropped.** An event that does not match the format, holds private data or cannot be
+  written is not stored. The first time each kind of drop happens, the log shows one line such as
+  `! telemetry: the telemetry file could not be written; events are dropped until it can`. The line never
+  shows a value.
 
 ---
 
@@ -4228,9 +4298,12 @@ GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…:
 ```
 
 - **The suite.** Both commands read the suite file you name, or `skill-evaluation.yaml` in the current folder. The gate checks each record against the suite it reads, so a record made with another suite is `FAILED` (`suite-mismatch`). A missing or invalid suite is a `PROBLEM`. Run `score` again after you change the suite.
+- **TypeScript and Node.js suite.** `evals/skill-gate/typescript-node/suite.yaml` scores these skills offline (selection, conflicts, context and tools; `scf skills effect` uses its `instructions` section, see [Measure the effect of a skill](#measure-the-effect-of-a-skill)). Its selection cases use three fixtures: a TypeScript Node.js service and a plain JavaScript package, where a skill is offered, and a Java library, where it is not. A skill is offered only when its id or a capability is `typescript` or `nodejs`, or when the task names it. Pass it as the suite file: `scf skills score <source-id> evals/skill-gate/typescript-node/suite.yaml`.
+- **Engineering-practice suite (testing).** `evals/skill-gate/engineering-practice/suite.yaml` scores skills of the testing practice: writing tests, test-first development and regression tests for a bug. Its nine selection cases use two fixtures, a Node.js package (`js-cart`) and a Java library (`java-stock`). A skill is offered when its id or capability is `testing`, or when the task names it. The other practices (planning, review, documentation, git, security and so on) have no suite yet, so this suite does not score them. Pass it as the suite file: `scf skills score <source-id> evals/skill-gate/engineering-practice/suite.yaml`. Its `instructions` section has five scenarios for `scf skills effect` (see [Measure the effect of a skill](#measure-the-effect-of-a-skill)); each runs offline and needs `javac` and `java` for the two Java scenarios.
 - **Records.** Each run adds one record per skill under `<data folder>/skill-evaluations/<source>/<commit>/`. Earlier records are kept. Files are written atomically with mode `0600` in `0700` folders. The newest record is the one written last.
+- **Catalogue description.** When a skill has a `catalogue_description` in [Skill selections](#skill-selections), `score` judges its `context` dimension (the length check, `description-cut` and `description-over-limit`) on that text instead of the package's own. Its `selection` dimension is judged on the same text, for the candidate and for the imported skills it is compared with. The record stores the digest of the text it scored. `gate` and `scf skills release publish` refuse with `description-changed` when the description is no longer the one scored, so run `score` again after you change it. Without an override, both use the package's own text, as before.
 - **Mode.** The gate picks the mode by itself: `new` (no approved skill with the same id or a shared capability), `upgrade` (compared with the approved skill of the same id or the canonical winner of a shared capability), or `duplicate` (another staged skill shares a capability). A skill can have more than one mode; it passes only when every comparison passes.
-- **Lines.** `PASSED <id>@<version> <mode>` for a skill that may be promoted. `FAILED <id>@<version> <mode>: <reason codes>` for one that may not. Reason codes name the cause, for example `record-invalid`, `digest-mismatch`, `suite-mismatch`, `safety-blocked`, `licence-not-allowed`, `below-threshold`, `baseline-missing`, `regression` or an effect code (see **Effect** below); a dimension name follows the code where it applies. `PROBLEM` names the file or field that stops the command. `GATED` gives the counts.
+- **Lines.** `PASSED <id>@<version> <mode>` for a skill that may be promoted. `FAILED <id>@<version> <mode>: <reason codes>` for one that may not. Reason codes name the cause, for example `record-invalid`, `digest-mismatch`, `suite-mismatch`, `safety-blocked`, `licence-not-allowed`, `below-threshold`, `baseline-missing`, `regression`, `description-changed` or an effect code (see **Effect** below); a dimension name follows the code where it applies. `PROBLEM` names the file or field that stops the command. `GATED` gives the counts.
 - **Missing or unreadable records.** A skill with no record, or a record that cannot be read, has the wrong mode or digest, or belongs to another skill, source or commit, is `FAILED`. It is never passed. Run `scf skills score <source-id>` to make the record.
 - **Effect.** `gate` also reads the newest effect record of each skill, for its id and its package digest (see [Measure the effect of a skill](#measure-the-effect-of-a-skill)). `scf skills promote check` applies the same rule. Each verdict is:
   - `helps`: nothing is added.
@@ -4259,6 +4332,40 @@ GATED 1 skill from example/skills@0123456789ab sha256:… with suite sha256:…:
 - **Exit codes.** `score` exits 1 when a `PROBLEM` is printed. `gate` exits 0 only when every skill passes and no `PROBLEM` is printed.
 - **Limits.** A record is at most 2 MiB and a folder holds at most 5,000 files. A source that is not enabled is a `PROBLEM` for `gate`.
 - **Not done.** The gate prints the verdict only. No run or promotion reads it yet.
+
+##### The Java and Spring Boot suite
+
+`evals/skill-gate/java-spring/suite.yaml` is the suite for the Java and Spring skills (`java`, `spring-boot`, and the others of that area). It has nine selection cases, a `conflicts`, `context` and `tools` section (the same as `evals/skill-gate/suite.yaml`), and an `instructions` section with four effect scenarios ([The Java and Spring effect scenarios](#the-java-and-spring-effect-scenarios)). The section is not mandatory, and plain `score` and `gate` do not run it. Run it like any suite:
+
+```
+scf skills score <source-id> evals/skill-gate/java-spring/suite.yaml
+scf skills gate <source-id> evals/skill-gate/java-spring/suite.yaml
+```
+
+- **What it checks.** A skill must be offered for Java work and must not be offered elsewhere. Seven `offered` cases use tasks on `fixtures/orders-service`, a small Spring Boot service with a JPA repository, tests and a Maven `pom.xml`. Two `not-offered` cases use `fixtures/web-tool`, a Node.js package with no Java in it.
+- **When a skill is offered.** The profile reads two names from a project: `java` (a `pom.xml` or `build.gradle` with `.java` sources) and `spring-boot` (a dependency named `org.springframework.boot:*`). A skill is offered when its id or one of its capabilities is one of these names, or when a task names one as a whole word. The Spring Boot fixture gives both names, so every Java and Spring skill is offered there. A plain Java library gives only `java`, so it is not used for the selection cases. The effect scenarios use it.
+- **Fixtures.** Each fixture is a small folder with no network access, no credentials, no symbolic links and no `.claude/` or `.mcp.json`. `orders-service` compiles with the plain JDK against the stand-in types in its `src/stubs/java` folder, so its tests run without Maven. `cache-library` is a Gradle project with a plain `main` test that compiles with `javac`, so Gradle is not needed to run it. `web-tool` runs with `node --test`. The repository test (`tests/skill-suite-java-spring.test.ts`) checks the fixtures, and calls no model.
+- **Not in this suite.** There is no web starter (`spring-boot-starter-web`). The selection cases do not use `cache-library`.
+
+##### The Java and Spring effect scenarios
+
+The `instructions` section of `evals/skill-gate/java-spring/suite.yaml` has four scenarios for `scf skills effect`. Each one gives a task to an agent in a copy of a fixture, and a check decides whether the result is right. The check runs offline, with only the JDK and the stand-in types in `src/stubs/java`. Run them like the Kafka example:
+
+```
+scf skills effect <source-id> java evals/skill-gate/java-spring/suite.yaml
+scf skills effect <source-id> spring-boot evals/skill-gate/java-spring/suite.yaml
+```
+
+| Scenario | Fixture | Area | What the check decides |
+|---|---|---|---|
+| `cancel-rules` | `orders-service` | Spring | `OrderService.cancel` throws `IllegalStateException` for a PAID order and leaves it unchanged; throws `NoSuchElementException` for an unknown id; cancels and saves an OPEN order. |
+| `optimistic-locking` | `orders-service` | JPA | `Order` has exactly one `@Version` field, of type `long`, `Long`, `int` or `Integer`, and is still an `@Entity` with an `@Id`. |
+| `single-load` | `cache-library` | Concurrency | `LoadingCache.get` calls the loader once per key, also when two threads ask at the same time, and gives both the loaded value. |
+| `log-load-failure` | `cache-library` | `java.util.logging` | When the loader fails, a `WARNING` on the class logger carries the key and the thrown exception, and the same exception is rethrown. A load that works logs no warning. |
+
+- **Cost.** The number of agent sessions is offered scenarios × `repeat` × 2, with `repeat: 4` in this suite. A Java skill is offered on all four scenarios, so 4 × 4 × 2 = 32 sessions. A Spring Boot skill is offered only on the two `orders-service` scenarios, so 2 × 4 × 2 = 16 sessions.
+- **JDK requirement.** Each check compiles and runs Java with `javac` and `java`. Put a JDK 17 or later on the `PATH` of the terminal that starts the Foundry, installed outside your home folder, for example under `/Library/Java/JavaVirtualMachines` or Homebrew's `/opt/homebrew`. The check runs in the sandbox, where the home folder cannot be read, so a JDK under your home folder (for example from SDKMAN) is not found. Check it with `javac -version` and `java -version`. Without a JDK every check exits 1 in both arms, so the verdict does not measure the skill.
+- **Tests.** `tests/skill-effect-java-spring.test.ts` checks the scenarios without a model. It checks that every check fails (exit 1) on the unchanged fixtures, also when the expected keywords are only in comments, and passes (exit 0) on a reference solution. It also checks which skills are offered on each scenario, and that the `cache-library` test passes with the plain JDK. It is skipped with a warning when `javac` is not found.
 
 ##### The suite file and its instructions section
 
@@ -4345,6 +4452,7 @@ The first form is for a staged skill of an import. The second is for an approved
 - **Where records go.** `<data folder>/skill-effects/<id>/<digest>/effect--<sequence>.json`. Each record holds the suite, the runs, the verdict and the runtime (Foundry and Node versions, agent and model). Records are only added, never replaced. The newest record of each skill and digest is read by [`scf skills gate`](#score-and-gate-an-import), [`scf skills promote check`](#check-a-promotion) and the `effect` column of `scf skills`. A `helps` verdict passes. `harms` always blocks promotion. `no-measurable-effect` and a missing record need an owner decision (`effect_decisions` in `skill-evaluations.yaml`), which is described under [Score and gate an import](#score-and-gate-an-import).
 - **Cost.** The number of agent sessions is offered scenarios × `repeat` × 2. The tokens are about that number times the tokens of one session. For the example suite in `evals/skill-effect/kafka/`, all 5 scenarios are offered, so 5 × 4 × 2 = 40 sessions.
 - **Example set.** `evals/skill-effect/kafka/suite.yaml` has five Kafka tasks (idempotent producer, commit after processing, key by order, dead letter, retry with backoff) on the `fixtures/orders` project. It has no network and no credentials. Its checks are offline behaviour tests with stubbed clients.
+- **TypeScript and Node.js set.** `evals/skill-gate/typescript-node/suite.yaml` has five tasks: `parse-stock-event` (a parser that checks its input and never throws), `config-validation` (the PORT and HOST rules), `graceful-shutdown` (close the server, then exit), `report-stream-errors` (stream a report and destroy the output on a read error) and `await-notifications` (a bounded async send, in JavaScript). Four run on `fixtures/ts-service` and one on `fixtures/js-package`. It has no network and no credentials; each check is an offline `node` script with stubs. The cost is 5 × 4 × 2 = 40 sessions. The checks need Node 22.18 or later, for type stripping of `.ts` files.
 
 #### Skill identity and content fingerprint
 
@@ -4477,7 +4585,7 @@ UNRESOLVED github.com/example/gone: the repository could not be reached
 
 #### Skill selections
 
-`skill-selections.yaml` next to `skill-sources.yaml` records which skills of a source the maintainers have selected, with the product and SDK they target and what each one needs. It is changed by pull request and checked with the CLI. It grants nothing: no run reads it, and a selected skill is not used because it is listed here.
+`skill-selections.yaml` next to `skill-sources.yaml` records which skills of a source the maintainers have selected, with the product and SDK they target and what each one needs. It is changed by pull request and checked with the CLI. It grants nothing: no run reads the file itself, and a selected skill is not used because it is listed here. The one exception is `catalogue_description` (below), which reaches runs only through a published release.
 
 ```yaml
 schema: 1
@@ -4492,14 +4600,19 @@ selections:
     category: database
     capabilities: [cosmos-db]
     requires: { clis: [az], mcp: [azure], credentials: [azure-identity], services: [azure-cosmos-db] }
+    catalogue_description: "Azure Cosmos DB data access in Python: queries, partitions and throughput."   # optional
     owner: "@octocat"
     reviewed: 2026-10-13
 ```
 
 - **Fields.** `source` and `skill` name one skill of a source; `source`+`skill` is listed once. `digest` is the skill's digest in `import.json`. `scope` is `portable` (guidance for any provider) or `provider` (specific to one provider). `provider` is a lower-case slug, required for `provider` and refused for `portable`. `product` (`name`, `version`) and `sdk` (`name`, `language`, `version`) are required for `provider`; `sdk.name` is a package name such as `@azure/cosmos`. `category` and `capabilities` (1 to 32 slugs) describe the skill. `owner` is a GitHub user or team; `reviewed` is a date that is not in the future.
+- **Catalogue description.** `catalogue_description` is an optional short description for the [skill catalogue](#skill-catalogue), used instead of the package's own when the skill is in the catalogue. Use it when the upstream description is too long or does not say what the skill is for. It is 1 to 160 characters, with no leading or trailing space, no control or invisible character and nothing that looks like a credential. It is tied to `digest`: an upstream update that changes the digest drops the override until the entry is reviewed again. The upstream package, its digest and its provenance do not change, and the instructions of the skill are not changed. The catalogue shows the override in place of the package's text, and `scf skills score` and `gate` judge the skill on that text (see [Score and gate an import](#score-and-gate-an-import)).
+  - **Where it reaches runs.** `scf skills release publish` writes the text into the release entry of the skill as `catalogueDescription` (`source: skill-selections`). The release digest covers it. A release without the field keeps the package's own text. An older Foundry refuses a release that carries the field, because its manifest schema is strict.
+  - **Where it is shown.** `scf skills` prints `DESCRIPTION <id>@<version> skill-selections <release>: <text>` for each skill whose override came from an approved, verified release. The run record keeps up to 20 of the descriptions the agent was shown, with their release, and the "Why these skills" list of the run page shows them as plain text.
 - **No wildcards.** Names refuse `* ? [ ] { }`, and versions refuse `*` and `?`: one entry names one skill and one version or range. Versions are text of at most 64 characters.
 - **Requirements.** `requires` lists what the agent itself must call or reach during a run: `clis`, `mcp` servers, `credentials` and `services`. Each name is a lower-case slug. The total is at most 16 names, and a name may be listed only once across all four lists. Each name becomes a connector slug: `cli-<name>`, `mcp-<name>`, `credential-<name>` or `service-<name>` (at most 64 characters). `scf skills selections check` prints them sorted.
 - **Check.** `scf skills selections check [<file>]` reads `skill-selections.yaml` in the current folder, or the file you name. It works offline and does not need the data folder. It prints one line per entry (source and skill, scope, provider, product, SDK, connectors, owner, reviewed date and the start of the digest), then `OK <n> selections`, and exits 0. Otherwise it prints one `PROBLEM <where>: <message>` line per error and exits 1. A missing file is a `PROBLEM` for this command (for readers, it means "no selections"). Credential-like values and control characters are never printed.
+  - **Overrides.** An entry with `catalogue_description` also needs its source to be enabled with an approved commit in `skill-sources.yaml`, and the skill must be staged with this digest at that commit. Otherwise the check prints `PROBLEM selections[<n>] (<source>/<skill>) catalogue_description: …` and exits 1. The check reads `skill-sources.yaml` and the staged import only when an entry has an override; each line of an entry with one ends with `description=<n> chars`.
 - **Limits.** At most 500 selections. Every problem names its entry and field, for example `selections[0] (microsoft-skills/azure-cosmos-py) requires.mcp[0]`.
 - **Use in checks.** `scf skills overlap` and `scf skills promote check` read this file to give capabilities to a skill that declares none, when its digest matches the staged skill. A skill with its own capabilities is not changed.
 
@@ -4782,6 +4895,7 @@ skills:
 ```
 
 - **Ranking:** by evidence in the repository profile, skill names found in the issue text, and the modules the work touches. The same input always gives the same list.
+- **Description.** The description of a skill is the owner's `catalogue_description` when an approved, verified release carries one (see [Skill selections](#skill-selections)); otherwise it is the package's own, cut to 160 characters. Ranking does not read the description; it changes only the text shown. `scf skills` prints a `DESCRIPTION` line for each override it shows, and the run record lists them under "Why these skills".
 - **Spring Boot is not guessed from Java.** The built-in `spring-boot` skill needs a Spring Boot dependency in a build file, or sources that import `org.springframework.boot`, in a module the work touches. Plain Java, plain Spring and other modules of the same repository do not get it, unless the issue names Spring Boot. It depends on the `java` skill, so `java` is loaded with it (and counts towards the limits).
 - **TypeScript is not guessed from JavaScript.** The built-in `typescript` skill needs TypeScript sources (plus `tsconfig.json` or a `typescript` dependency as extra evidence). Work that touches only JavaScript files does not get it, unless the issue names TypeScript or `tsconfig`.
 - **Node.js is not guessed from TypeScript or JavaScript.** The built-in `nodejs` skill needs evidence of the Node.js runtime in the module the work touches: `engines.node`, `@types/node` or a server package (such as `express` or `fastify`) in `package.json`, or an import of a Node.js built-in module. A browser-only package does not get it.

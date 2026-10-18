@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { CATALOGUE_DESCRIPTION_FROM, catalogueDescriptionProblem } from "./catalogue-description.js";
 import { credentialProblem } from "./credential-scan.js";
 import { readRegular } from "./package.js";
 import { approvalSignatureProblem, type ReleaseKey } from "./release-signature.js";
@@ -50,6 +51,8 @@ export interface ReleaseSkillV2 {
   attribution: ReleaseFileEntry[];
   evaluation: { suite: string; record: string; verdict: (typeof RELEASE_VERDICTS)[number] };
   revoked?: { on: string; reason: string };
+  /** The owner's short catalogue description from skill-selections.yaml; the digest of the release covers it. */
+  catalogueDescription?: { text: string; source: "skill-selections" };
 }
 export interface ReleaseManifestV2 extends Omit<ReleaseManifestV1, "schema" | "skills"> {
   schema: 2;
@@ -182,6 +185,10 @@ const V2Skill = z
       .object({ on: day, reason: plain.refine((r) => r.length >= 1 && r.length <= 200 && r === r.trim(), "must be 1–200 characters, trimmed") })
       .strict()
       .optional(),
+    catalogueDescription: z
+      .object({ text: plain.refine((t) => catalogueDescriptionProblem(t) === undefined, "must be a short, trimmed description of 1–160 characters"), source: z.literal(CATALOGUE_DESCRIPTION_FROM) })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -204,6 +211,7 @@ function skillLinesV2(s: ReleaseSkillV2): string[] {
     ...(p.review ? [`review ${p.review.by} ${p.review.on} ${p.review.commit} ${p.review.licence}`] : []),
     ...[...s.licences].sort(cmp).map((l) => `licence ${l}`),
     `evaluation ${s.evaluation.suite} ${s.evaluation.record} ${s.evaluation.verdict}`,
+    ...(s.catalogueDescription ? [`description ${s.catalogueDescription.source} ${s.catalogueDescription.text}`] : []),
     ...[...s.files].sort(byPath).map((f) => `file ${f.sha256} ${f.bytes} ${f.path}`),
     ...[...s.attribution].sort(byPath).map((f) => `attribution ${f.sha256} ${f.bytes} ${f.path}`),
     ...(s.revoked ? [`revoked ${s.revoked.on} ${s.revoked.reason}`] : []),

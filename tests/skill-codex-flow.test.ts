@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CODEX_SKILLS_REFUSED, codexHomeId, codexIsolationLine } from "../src/agents/codex-home.js";
+import { codexIsolationLine } from "../src/agents/codex-home.js";
 import { ConfigSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { liveLogFile } from "../src/engine/state.js";
@@ -29,6 +29,7 @@ beforeEach(() => {
   mkdirSync(repo);
   personal = join(tmp, "personal");
   mkdirSync(join(personal, "skills", "canary"), { recursive: true });
+  writeFileSync(join(personal, "auth.json"), '{"tokens":{}}');
   writeFileSync(join(personal, "config.toml"), '[mcp_servers.canary]\ncommand = "x"\n');
   writeFileSync(join(personal, "skills", "canary", "SKILL.md"), "canary");
   process.env.CODEX_HOME = personal;
@@ -90,10 +91,11 @@ describe("locked skills in Codex sessions", () => {
     expect(p.indexOf("</instructions>")).toBeGreaterThanOrEqual(0);
     expect(p.indexOf("</instructions>")).toBeLessThan(p.indexOf("<foundry-skills count="));
     expect(p.indexOf("<foundry-skills count=")).toBeLessThan(p.indexOf("SHOWCODEXHOME"));
-    expect(login!.output).toContain("--ignore-user-config");
+    expect(login!.output).not.toContain("--ignore-user-config");
+    expect(login!.output).toContain("-c mcp_servers={} -c features.codex_hooks=false");
     expect(login!.output).toContain(CODEX_AGENT_NOTE);
     expect(login!.skills).toMatchObject({ loaded: ["demo@1.0.0"], state: "loaded" });
-    expect(login!.codexHome).toBe(codexHomeId({ run: false, codexHome: personal }));
+    expect(login!.codexHome).toBe("run");
 
     expect(local!.codexHome).toBe("run");
     expect(local!.skills).toMatchObject({ loaded: ["demo@1.0.0"] });
@@ -101,7 +103,7 @@ describe("locked skills in Codex sessions", () => {
     expect(readdirSync(repo)).toEqual([]);
     const l = log(s);
     expect(l).toContain("skill context: loaded demo@1.0.0");
-    expect(l).toContain(codexIsolationLine("ignore-config"));
+    expect(l).toContain(codexIsolationLine("login"));
     expect(l).toContain(codexIsolationLine("private"));
   });
 
@@ -126,20 +128,16 @@ describe("locked skills in Codex sessions", () => {
     expect(get(s, "x").sessionId).toBeUndefined();
   });
 
-  it("refuses a block from the lock on a CLI without --ignore-user-config, with no fallback and no on_failure", async () => {
+  it("runs a block from the lock in the clean Codex folder on a CLI without --ignore-user-config", async () => {
     demo("1.0.0");
     process.env.FAKE_CODEX_NO_IGNORE_CONFIG = "1";
-    const steps = GATE + agentStep("x", "agent: codex, on_failure: sentinel,", "WRITE ran.txt yes") + "  - {id: sentinel, type: shell, jump_only: true, run: echo failed > failure-branch.txt}\n";
-    const s = await run(steps);
-    expect(s.status).toBe("failed");
-    expect(s.reason).toContain(CODEX_SKILLS_REFUSED);
-    expect(existsSync(join(repo, "ran.txt"))).toBe(false);
-    expect(existsSync(join(repo, "failure-branch.txt"))).toBe(false);
-    expect(s.history.filter((h) => h.id === "x")).toHaveLength(1);
-    expect(get(s, "x").sessionId).toBeUndefined();
-    const l = log(s);
-    expect(l).toContain("skill context: rejected");
-    expect(l).not.toContain("↪");
+    const s = await run(GATE + agentStep("x", "agent: codex,", "SHOWCODEXHOME"));
+    expect(s.status, s.reason).toBe("succeeded");
+    const x = get(s, "x");
+    expect(x.output).not.toContain("--ignore-user-config");
+    expect(x.output).toContain(`codex_home=${s.runDir}/home/.codex config=none mcp=- skills=-`);
+    expect(promptOf(x.output)).toContain("<foundry-skills count=");
+    expect(log(s)).not.toContain("skill context: rejected");
   });
 
   it("still runs the review of a draft plan on a CLI without --ignore-user-config", async () => {
@@ -154,8 +152,8 @@ describe("locked skills in Codex sessions", () => {
     expect(promptOf(rev.output)).toContain("Check it.");
     expect(rev.skills).toMatchObject({ role: "reviewer", loaded: ["demo@9.0.0"] });
     const l = log(s);
-    expect(l).toContain(codexIsolationLine("unsupported"));
     expect(l).not.toContain("skill context: rejected");
+    expect(l).not.toContain("!  Codex");
     expect(existsSync(join(s.runDir, "skill-lock.json"))).toBe(false);
   });
 
