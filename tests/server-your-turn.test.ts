@@ -133,6 +133,23 @@ describe("Your turn runs", () => {
     expect(ids([run("rf", { source: "refinement 11111111-1111-4111-8111-111111111111" })])).toEqual([]);
   });
 
+  it("says 'Build failed — open the run' for a failed automatic release build, and keeps a hand-started one as it is", () => {
+    const vars = { github_repo: "acme/app", ref: "main", release_build_watcher: "rel" };
+    const auto = run("rb", { flow: "release-build", source: "watcher rel release-build", vars, task: "Build it" });
+    const hand = run("rh", { flow: "release-build", source: "ui", vars: { github_repo: "acme/app", ref: "main" }, task: "Build it" });
+    const c = cfg([issuesWatcher]);
+    const out = items(stub({ config: c, runs: [auto, hand] }));
+    const a = out.find((i) => i.next.runId === "rb")!;
+    expect(a.what).toBe("Build failed — open the run");
+    expect(a.next.where.url).toBe("#/runs/rb");
+    expect(a.dismissable).toBe(true);
+    const h = out.find((i) => i.next.runId === "rh")!;
+    expect(h.what).toBe("Build it");
+    // the key is the usual one, so it can be dismissed like any failed run
+    dismissTurn(stub({ config: c, runs: [auto] }), a.key, NOW);
+    expect(items(stub({ config: c, runs: [auto] }))).toEqual([]);
+  });
+
   it("lists a failed run without a source for 7 days", () => {
     expect(ids([run("new", { finishedAt: ago(6) })])).toEqual(["new"]);
     expect(ids([run("old", { finishedAt: ago(8) })])).toEqual([]);

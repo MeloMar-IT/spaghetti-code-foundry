@@ -8,6 +8,7 @@ import { ConfigSchema } from "../src/config.js";
 import { TOOLS_DIR } from "../src/engine/guards.js";
 import { resetSandboxCache, sandboxAvailable } from "../src/engine/os-sandbox.js";
 import { runFlow } from "../src/engine/runner.js";
+import { hasCommit } from "../src/release/build-claims.js";
 import { resetRedactCache } from "../src/credentials/redact.js";
 import { parseFlow } from "../src/flow/load.js";
 import { runProcess } from "../src/steps/process.js";
@@ -143,6 +144,25 @@ describe.skipIf(!basic)("a user's shell step in the OS sandbox", () => {
     expect(t.timedOut).toBe(true);
     const r = await runProcess("/bin/sh", ["-c", "echo SECRET-VALUE-12345; echo SECRET-VALUE-12345 >&2"], { cwd: gh.tmp, logFile: log, pinnedSecrets: ["SECRET-VALUE-12345"], sandboxProfile: "(version 1)(allow default)" });
     expect(r.stdout + r.stderr + readFileSync(log, "utf8")).not.toContain("SECRET-VALUE-12345");
+  });
+
+  it("an automatic release-build run of a user takes its commit on the server, outside the sandbox", async () => {
+    const sha = "e".repeat(40);
+    const flow = parseFlow(
+      `name: release-build\nworkspace: empty\nvars: { github_repo: acme/app, ref: main }\nsteps:\n` +
+        `  - id: resolve\n    type: shell\n    run: ${JSON.stringify(`mkdir -p "{{run.dir}}/release" && echo '{"sha":"${sha}","recipe":{}}' > "{{run.dir}}/release/plan.json" && echo resolved`)}\n`,
+      "release-build.yaml",
+    );
+    const start = () =>
+      runFlow(flow, { task: "t", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app", ref: "main", release_build_watcher: "rel" }, config: config(), owner: user.id, source: "watcher rel release-build" });
+    const one = await start();
+    expect(one.status, out(one, "resolve")).toBe("succeeded");
+    expect(hasCommit("acme/app", "main", sha)).toBe(true);
+    // the step itself could not have written there
+    const direct = await go(flowOf(`mkdir -p "${process.env.FACTORY_HOME}/release-builds/x" && echo no`), user.id);
+    expect(direct.status).toBe("failed");
+    const two = await start();
+    expect(JSON.parse(readFileSync(join(two.runDir, "release", "plan.json"), "utf8"))).toEqual({ sha, skip: "this commit was handled before" });
   });
 
   it("records whether a profile nests (for #305): a step that starts sandbox-exec itself", async () => {

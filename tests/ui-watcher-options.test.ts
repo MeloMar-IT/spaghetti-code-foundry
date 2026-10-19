@@ -146,4 +146,12 @@ describe("the form body", () => {
     expect(form.repoWatcherBody(v, false).auto_defaults).toBe(false);
     expect(form.repoWatcherBody({ ...v, source: "schedule" }, false).auto_defaults).toBeUndefined();
   });
+
+  it("repoWatcherBody sends release_build for a schedule watcher only", () => {
+    const v = { id: "w", source: "schedule", flow: "f", label: "go", every: "7d", max: "1", enabled: true, vars: {}, exclude: "", options: o() };
+    expect(form.repoWatcherBody({ ...v, releaseBuild: true }, false).release_build).toBe(true);
+    expect(form.repoWatcherBody({ ...v, releaseBuild: false }, false).release_build).toBe(false);
+    expect("release_build" in form.repoWatcherBody({ ...v, source: "issues", releaseBuild: true }, false)).toBe(false);
+    expect(form.repoWatcherBody({ ...v, source: "issues", releaseBuild: true }, true).release_build).toBeNull();
+  });
 });

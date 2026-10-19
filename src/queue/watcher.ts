@@ -12,7 +12,9 @@ import { failedIndex, failureSummary } from "../failure.js";
 import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
 import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
+import { RELEASE_BUILD_FLOW, RELEASE_BUILD_SUBMISSION_VAR, RELEASE_BUILD_VAR } from "../release/auto-build.js";
 import { dependencies, openDependencies } from "./deps.js";
+import { checkReleaseBuild, mainBranchOf, releaseCheckEvery } from "./release-trigger.js";
 import { freshIssueList } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
@@ -296,7 +298,7 @@ export class Watcher {
       if (this.stopped) return;
       let every: number;
       try {
-        every = parseInterval(this.cfg.every);
+        every = releaseCheckEvery(this.cfg, parseInterval(this.cfg.every));
       } catch {
         return; // tick() reported the invalid interval as the watcher's error
       }
@@ -407,7 +409,7 @@ export class Watcher {
     if (this.cfg.source === "issues") await this.tickIssues(token, checkStartedAt);
     else if (this.cfg.source === "pr-feedback") await this.tickPrs();
     else if (this.cfg.source === "ci-failures") await this.tickCi();
-    else await this.tickSchedule();
+    else await this.tickSchedule(token);
   }
 
   /** Latest run per issue/PR number for this repo (newest first in the list). */
@@ -512,8 +514,47 @@ export class Watcher {
     }
   }
 
+  private async tickSchedule(token: number) {
+    await this.tickChore();
+    if (this.cfg.release_build) await this.tickReleaseBuild(token);
+  }
+
+  /** Looks at the main branch; a new commit with a release-build recipe gets one queued release-build run (see queue/release-trigger.ts). */
+  private async tickReleaseBuild(token: number) {
+    const alive = () => {
+      if (token !== this.tickToken || this.retired) throw new Error("this check was given up");
+    };
+    const branch = mainBranchOf(this.cfg);
+    const { flow } = loadFlow(RELEASE_BUILD_FLOW, this.d.repo);
+    const r = await checkReleaseBuild({
+      repo: this.repo,
+      branch,
+      alive,
+      jobs: {
+        busy: (lock) => {
+          const q = this.d.scheduler.queue();
+          return [...q.pending, ...q.active].find((j) => j.lockKey === lock)?.runId;
+        },
+        // called only when no job with the lock key is queued or running: a job that got in has left a run behind
+        accepted: (submission) => this.d.scheduler.list(1000).some((s) => s.vars?.[RELEASE_BUILD_SUBMISSION_VAR] === submission),
+        queue: (lock, submission) =>
+          this.queue(
+            {
+              kind: "run", flow, repo: this.d.repo, task: `Build the release files of ${this.repo} at the newest commit on ${branch}`,
+              vars: { github_repo: this.repo, ref: branch, [RELEASE_BUILD_VAR]: this.cfg.id, [RELEASE_BUILD_SUBMISSION_VAR]: submission },
+            },
+            { lockKey: lock, source: `watcher ${this.cfg.id} release-build` },
+          ),
+      },
+    });
+    for (const n of r.notes) this.act(n);
+    const sha = (r.head ?? "").slice(0, 7);
+    if (r.kind === "queued") this.act(`new commit ${sha} on ${branch} → release build run ${r.runId}`);
+    else if (r.kind === "no_recipe") this.act(`new commit ${sha} on ${branch} has no release-build recipe — nothing built`);
+  }
+
   /** Run the chore when the last one started at least `every` ago (survives restarts). */
-  private async tickSchedule() {
+  private async tickChore() {
     const last = this.d.scheduler.list(1000).find((s) => s.vars?.chore_watcher === this.cfg.id);
     if (this.cfg.at) {
       // Once a day at `at` (caught up later that day if the Mac was off at that time).

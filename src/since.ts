@@ -1,5 +1,6 @@
 import type { RunSummary } from "./engine/state.js";
 import type { NextStep } from "./next-step.js";
+import { isWatcherReleaseBuild } from "./release/auto-build.js";
 import type { TurnItem } from "./your-turn.js";
 
 /** What "Since you last looked" says. Pure: the server passes in the runs, pull requests and Your turn items. */
@@ -155,6 +156,15 @@ export function buildSince(o: SinceInput): SinceSummary {
       released.push({ repo: m.repo, title: p.title, where: { label: `Pull request #${p.number}`, url: p.url }, at: p.mergedAt });
     }
   }
+  // A build a schedule watcher started by itself, uploaded to a draft release
+  let builds = 0;
+  for (const { run } of finished) {
+    const url = run.outputs?.release_url;
+    if (!isWatcherReleaseBuild(run) || run.status !== "succeeded" || typeof url !== "string" || !url.startsWith("https://")) continue;
+    const tag = run.outputs?.release_tag;
+    builds++;
+    released.push({ repo: run.vars?.github_repo ?? "", title: "release files uploaded", where: { label: tag ? `Draft release ${tag}` : "Draft release", url }, at: run.finishedAt! });
+  }
   released.sort(newest);
 
   const waiting: SinceEntry[] = o.waiting
@@ -162,7 +172,10 @@ export function buildSince(o: SinceInput): SinceSummary {
     .map((i) => ({ repo: i.repo, issue: i.next.issue, title: i.what, where: i.next.where, at: i.stamp }))
     .sort(newest);
 
-  const releaseLabel = [...bases].map(([base, n]) => `${plural(n, "release", "releases")} to ${base}`).join(", ");
+  const releaseLabel = [
+    ...[...bases].map(([base, n]) => `${plural(n, "release", "releases")} to ${base}`),
+    ...(builds ? [builds === 1 ? "release files uploaded" : `release files uploaded ${builds} times`] : []),
+  ].join(", ");
   const defs: [SinceGroupId, string, SinceEntry[]][] = [
     ["done", `${stories(done.length)} done`, done],
     ["develop", `${stories(develop.length)} merged into develop`, develop],

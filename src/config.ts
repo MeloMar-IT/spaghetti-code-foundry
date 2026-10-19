@@ -74,11 +74,14 @@ const watcherShape = {
     at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "HH:MM").optional(),
     /** schedule: IANA time zone for `at`, e.g. Europe/Berlin (default: this Mac's). */
     timezone: z.string().optional(),
+    /** schedule: after each new commit on the main branch, build the release files (release-build) when the repository has a recipe. */
+    release_build: z.boolean().default(false),
     /** The e-mail of the account that owns this watcher's runs (default: the first admin). Only an admin can set it. */
     owner: z.string().max(254).optional(),
 };
 
 const scheduleNeedsTask = (w: { source: string; task?: string }) => w.source !== "schedule" || !!w.task?.trim();
+const releaseNeedsSchedule = (w: { source: string; release_build?: boolean }) => !w.release_build || w.source === "schedule";
 const zoneKnown = (w: { timezone?: string }) => !w.timezone || validTimeZone(w.timezone);
 
 /**
@@ -90,13 +93,15 @@ const RepoWatcherSchema = z
   .object({ ...repoWatcherShape, source: z.enum(["issues", "pr-feedback", "ci-failures", "schedule"]).default("issues") })
   .strict()
   .refine(scheduleNeedsTask, { message: "a schedule watcher needs a task", path: ["task"] })
-  .refine(zoneKnown, { message: "unknown time zone (use e.g. Europe/Berlin)", path: ["timezone"] });
+  .refine(zoneKnown, { message: "unknown time zone (use e.g. Europe/Berlin)", path: ["timezone"] })
+  .refine(releaseNeedsSchedule, { message: "only a schedule watcher builds release files", path: ["release_build"] });
 
 const WatcherSchema = z
   .object(watcherShape)
   .strict()
   .refine(scheduleNeedsTask, { message: "a schedule watcher needs a task", path: ["task"] })
   .refine(zoneKnown, { message: "unknown time zone (use e.g. Europe/Berlin)", path: ["timezone"] })
+  .refine(releaseNeedsSchedule, { message: "only a schedule watcher builds release files", path: ["release_build"] })
   .superRefine((w, ctx) => {
     if (w.source !== "monitor") {
       if (!/^[\w.-]+\/[\w.-]+$/.test(w.github_repo)) ctx.addIssue({ code: "custom", message: "owner/repo", path: ["github_repo"] });
