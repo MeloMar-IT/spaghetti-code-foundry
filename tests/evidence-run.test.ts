@@ -170,15 +170,16 @@ steps:
       return e.type === "step.started" && e.step.id === "check";
     });
     const whole = raw.slice(0, k + 1).join("\n") + "\n";
+    const kept = types(s).indexOf("step.started:check") + 1; // the events of the run before the cut, without policy decisions
     writeFileSync(join(s.runDir, "evidence.jsonl"), whole + `{"version":1,"id":"ev-${String(k + 1).padStart(6, "0")}","se`);
     writeFileSync(join(s.runDir, "run.json"), JSON.stringify({ ...JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8")), status: "running", finishedAt: undefined, state: { ...s.state, next: "check" } }));
 
     const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, config: cfg() });
     expect(r.status).toBe("succeeded");
     expect(text(r).startsWith(whole)).toBe(true);
-    expect(types(r).slice(6)).toEqual(["run.resumed", "step.started:check", "step.completed:check", "run.completed"]);
-    expect(steps(r)[6]).toMatchObject({ from: "check", by: { kind: "system" } });
-    expect(steps(r)[7]).toMatchObject({ step: { id: "check", visit: 1 } });
+    expect(types(r).slice(kept)).toEqual(["run.resumed", "step.started:check", "step.completed:check", "run.completed"]);
+    expect(steps(r)[kept]).toMatchObject({ from: "check", by: { kind: "system" } });
+    expect(steps(r)[kept + 1]).toMatchObject({ step: { id: "check", visit: 1 } });
     inOrder(r);
     expect(readFileSync(join(r.runDir, "live.log"), "utf8").match(/evidence:/g)).toHaveLength(1);
   });
