@@ -7,7 +7,8 @@ import { ConfigSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
 import { TOOLCHAIN_VARS } from "../src/release/host.js";
-import { claudeBin, fakeGithub } from "./helpers/fake-github.js";
+import { releaseMarker } from "../src/release/recipe.js";
+import { claudeBin, fakeGithub, fakeRelease } from "./helpers/fake-github.js";
 
 // The flow release-build end to end: a bare git repository as the remote, three recipes of different kinds.
 const MARKERS = { JAVA_HOME: "m-java", GH_TOKEN: "m-gh", GITHUB_TOKEN: "m-github", GH_ENTERPRISE_TOKEN: "m-ent", MY_BOT_TOKEN: "m-bot", FACTORY_VAR_SECRETISH: "m-factory" };
@@ -98,7 +99,10 @@ describe("release-build flow", () => {
     const names = env.split("\n").filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split("=")[0]!);
     expect(names.filter((n) => !allowed.has(n))).toEqual([]);
     expect(names).toContain("FACTORY_RELEASE_SHA");
-    expect(gh.ghLog()).toBe("");
+    // the only gh calls are the upload's (the clone uses git); the build steps never call gh
+    const calls = gh.ghLog().split("\n").filter((l) => l.startsWith("gh "));
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((l) => l.startsWith("gh api "))).toBe(true);
     expect(worktrees(r.s)).toHaveLength(1);
   });
 
@@ -149,7 +153,96 @@ describe("release-build flow", () => {
     expect(r.s.status).toBe("failed");
     expect(r.log).toContain("this repository has no release-build recipe");
     expect(r.log).toContain("is not a repository in the Foundry");
-    expect(r.s.history.map((h) => h.id)).toEqual(["clone", "resolve"]);
+    expect(r.s.history.map((h) => h.id)).toEqual(["lock", "clone", "resolve"]);
+  });
+
+  describe("upload", () => {
+    const RECIPE_KEEP2 = "keep: 2\nbuilds:\n  - {name: cli, run: 'echo one > a.tgz && echo twotwo > b.tgz', artifacts: ['*.tgz']}\n";
+    const marker = releaseMarker({ tag: "v{version}" });
+    const drafts = () => [
+      fakeRelease(11, "v202501010101", { body: marker, created_at: "2025-01-01T00:00:00Z" }),
+      fakeRelease(12, "v202501020101", { body: marker, created_at: "2025-01-02T00:00:00Z" }),
+      fakeRelease(13, "v202501030101", { body: marker, created_at: "2025-01-03T00:00:00Z" }),
+      fakeRelease(14, "v202501040101", { body: "by hand", created_at: "2025-01-04T00:00:00Z" }),
+      fakeRelease(15, "v202501050101", { body: marker, draft: false, created_at: "2025-01-05T00:00:00Z" }),
+      fakeRelease(16, "nightly", { body: marker, created_at: "2025-01-06T00:00:00Z" }),
+    ];
+
+    it("uploads to a new draft at the commit, prunes old drafts of this recipe only and records the url", async () => {
+      const sha = commit(RECIPE_KEEP2);
+      gh.setReleases(drafts());
+      const r = await go();
+      expect(r.s.status, r.s.reason).toBe("succeeded");
+      const calls = gh.ghLog();
+      expect(calls).toContain("gh api --paginate repos/acme/app/releases?per_page=100");
+      expect(calls).toContain(`target_commitish=${sha}`);
+      expect(calls).toContain("draft=true");
+      const rels = gh.releases();
+      const made = rels.find((x) => x.tag_name === "v202610182030")!;
+      expect(made).toMatchObject({ draft: true, prerelease: true, target_commitish: sha });
+      expect(made.assets.map((a) => [a.name, a.size])).toEqual([["SHA256SUMS", expect.any(Number)], ["cli-a.tgz", 4], ["cli-b.tgz", 7]]);
+      expect(made.assets[0]!.text).toMatch(/^[0-9a-f]{64} {2}cli-a\.tgz\n[0-9a-f]{64} {2}cli-b\.tgz\n$/);
+      // the two oldest marked drafts went; the newest marked one, the hand-made draft, the published release and "nightly" stayed
+      expect(rels.map((x) => x.id).sort((a, b) => a - b)).toEqual([13, 14, 15, 16, made.id]);
+      expect(r.s.outputs).toEqual({
+        release_url: made.html_url,
+        release_tag: "v202610182030",
+        release_files: expect.stringMatching(/^SHA256SUMS \(\d+ B\); cli-a\.tgz \(4 B\); cli-b\.tgz \(7 B\)$/),
+      });
+      expect(made.html_url).toMatch(/^https:\/\/github\.com\/acme\/app\/releases\/tag\/untagged-\d+$/);
+      expect(r.log).toContain("UPLOADED: 3 files");
+      expect(r.log).toContain("cli-a.tgz  4 B");
+      expect(r.log).toContain(`URL: ${made.html_url}`);
+      expect(r.log).toContain("PRUNED: v202501020101 (12), v202501010101 (11)");
+      expect(JSON.parse(readFileSync(join(r.s.runDir, "run.json"), "utf8")).outputs.release_tag).toBe("v202610182030");
+    });
+
+    it("does not rely on the order of GitHub's list", async () => {
+      commit(RECIPE_KEEP2);
+      gh.setReleases(drafts());
+      process.env.FAKE_GH_RELEASE_ORDER = "reverse-id";
+      const r = await go();
+      expect(r.s.status, r.s.reason).toBe("succeeded");
+      expect(gh.releases().map((x) => x.id).filter((id) => id < 100).sort((a, b) => a - b)).toEqual([13, 14, 15, 16]);
+    });
+
+    it("fails when a published release has the tag, and changes nothing on GitHub", async () => {
+      commit(RECIPE_KEEP2);
+      gh.setReleases([...drafts(), fakeRelease(21, "v202610182030", { draft: false, body: marker })]);
+      const before = readFileSync(gh.releasesFile, "utf8");
+      const r = await go();
+      expect(r.s.status).toBe("failed");
+      expect(r.s.history.at(-1)!.id).toBe("upload");
+      expect(r.log).toContain("already published");
+      expect(readFileSync(gh.releasesFile, "utf8")).toBe(before);
+      expect(gh.ghLog()).not.toMatch(/-X (POST|DELETE)/);
+    });
+
+    it("replaces the files of an existing draft with the tag", async () => {
+      commit(RECIPE_KEEP2);
+      gh.setReleases([fakeRelease(30, "v202610182030", { body: marker, assets: [{ id: 300, name: "cli-a.tgz", size: 1 }, { id: 301, name: "keep.txt", size: 2 }] })]);
+      const r = await go();
+      expect(r.s.status, r.s.reason).toBe("succeeded");
+      const rels = gh.releases();
+      expect(rels.map((x) => x.id)).toEqual([30]);
+      // the old cli-a.tgz (id 300) was deleted by id and uploaded again with its new size
+      expect(rels[0]!.assets.map((a) => [a.name, a.size])).toEqual([["keep.txt", 2], ["SHA256SUMS", expect.any(Number)], ["cli-a.tgz", 4], ["cli-b.tgz", 7]]);
+      expect(rels[0]!.assets.some((a) => a.id === 300)).toBe(false);
+      expect(gh.ghLog()).toContain("gh api -X DELETE repos/acme/app/releases/assets/300");
+    });
+  });
+
+  it("gives only the clone and the upload step the login, and takes the lock in every step that does work", () => {
+    const { flow } = loadFlow("release-build", gh.tmp);
+    expect(flow.steps.filter((s) => s.type === "shell" && s.repo_access).map((s) => s.id)).toEqual(["clone", "upload"]);
+    for (const id of ["lock", "resolve", "build", "upload"]) {
+      const step = flow.steps.find((s) => s.id === id)!;
+      if (step.type !== "shell") throw new Error("not a shell step");
+      expect(step.run, id).toContain('"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID"');
+      expect(step.run, id).toContain("@release-build");
+      const wait = Number(/--wait-sec (\d+)/.exec(step.run)![1]);
+      expect(wait, id).toBeLessThan(step.timeout_sec ?? flow.defaults?.timeout_sec ?? 3600);
+    }
   });
 
   const store = (recipe: string) => {

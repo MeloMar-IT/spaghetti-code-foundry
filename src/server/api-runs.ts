@@ -8,7 +8,7 @@ import { readTranscript } from "../engine/transcript.js";
 import { runEvidenceView } from "./evidence-view.js";
 import { auditAction } from "../auth/audit.js";
 import type { User } from "../auth/users.js";
-import { ownsRepo } from "../auth/repos.js";
+import { findOwnedRepo, ownsRepo } from "../auth/repos.js";
 import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { isRefinementFlow } from "../flow/usage.js";
 import { AnswerRefused, effectiveVars } from "../engine/runner.js";
@@ -17,7 +17,7 @@ import { parseFlow, resolveFlowPath } from "../flow/load.js";
 import { isPublished, userVars } from "../flow/publish.js";
 import { isVarName, type Flow } from "../flow/schema.js";
 import { guardedRepos } from "./api-repos.js";
-import { publishedFlows } from "./permissions.js";
+import { checkReleaseRef, isReleaseBuildFlow, publishedFlows } from "./permissions.js";
 import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
 import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
 import { answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
@@ -218,6 +218,12 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
         throw new HttpError(403, 'set the var "github_repo" to one of your repositories');
       } else if (!guardedRepos(ctx, () => ownsRepo(user.id, given))) {
         throw new HttpError(403, `"${given}" is not one of your repositories`);
+      }
+      // release-build: a user builds the default branch only (the repository's mainBranch setting, else main).
+      if (isReleaseBuildFlow(flow)) {
+        const repoName = runVars.github_repo ?? "";
+        const dflt = guardedRepos(ctx, () => findOwnedRepo(user.id, repoName)?.settings?.mainBranch) ?? "main";
+        runVars = checkReleaseRef(flow, vars, runVars, dflt);
       }
     }
     const lockKey = runVars.github_repo && (runVars.issue || runVars.pr) ? `${runVars.github_repo}#${runVars.issue || runVars.pr}` : undefined;

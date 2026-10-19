@@ -5,7 +5,7 @@
 //                                                   recipe (file at that commit, else stored), write <run-dir>/release/plan.json
 //   release-build build <run-dir> <test-slots-dir>  run the builds of that plan, one after the other, each in its own
 //                                                   git worktree; the release files end up in <run-dir>/release/out
-// Build commands get a short environment and no tokens (see src/release/host.ts).
+// Build commands get a short environment and no tokens (see src/release/host.ts). The upload is tools/release-upload.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";

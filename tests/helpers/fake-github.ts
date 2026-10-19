@@ -22,6 +22,31 @@ export interface FakeIssue {
   pull_request?: unknown;
 }
 
+/** A release as the fake gh stores it (the REST shape). */
+export interface FakeRelease {
+  id: number;
+  tag_name: string;
+  draft: boolean;
+  prerelease: boolean;
+  created_at: string;
+  body: string;
+  html_url: string;
+  upload_url: string;
+  name?: string;
+  target_commitish?: string;
+  assets: { id: number; name: string; size: number; text?: string }[];
+}
+
+/** A planted release (a published one when `draft` is false); the URLs are made from the id. */
+export function fakeRelease(id: number, tag: string, o: Partial<FakeRelease> = {}): FakeRelease {
+  return {
+    id, tag_name: tag, draft: true, prerelease: true, created_at: "2025-01-01T00:00:00Z", body: "", name: tag, assets: [],
+    html_url: `https://github.com/acme/app/releases/tag/${o.draft === false ? tag : `untagged-${id}`}`,
+    upload_url: `https://uploads.github.com/repos/acme/app/releases/${id}/assets{?name,label}`,
+    ...o,
+  };
+}
+
 /** One call of the fake gh as the auth log has it ("-" when a token was not set). */
 export interface AuthRow {
   token: string;
@@ -94,6 +119,7 @@ export function fakeGithub() {
   writeFileSync(ghLog, "");
   const issuesFile = `${ghLog}.issues.json`;
   const labelsFile = `${ghLog}.labels`;
+  const releasesFile = `${ghLog}.releases.json`;
   // The status comments the Foundry remembers must not leak from one test into the next.
   rmSync(join(process.env.FACTORY_HOME ?? tmp, "status-comments.json"), { force: true });
   rmSync(join(process.env.FACTORY_HOME ?? tmp, "issue-states"), { recursive: true, force: true });
@@ -127,6 +153,10 @@ export function fakeGithub() {
     setBugIssues: (list: FakeIssue[]) => writeFileSync(issuesFile, JSON.stringify(list)),
     /** The pull requests the fake gh knows (`api repos/…/pulls/<n>`); a number that is not here is a 404. */
     setPulls: (list: { number: number; state: "open" | "closed"; merged?: boolean }[]) => writeFileSync(`${ghLog}.pulls.json`, JSON.stringify(list)),
+    /** The releases the fake gh holds (see the header of fake-gh.sh), and a way to plant some before a run. */
+    releases: (): FakeRelease[] => (existsSync(releasesFile) ? (JSON.parse(readFileSync(releasesFile, "utf8")) as FakeRelease[]) : []),
+    setReleases: (list: FakeRelease[]) => writeFileSync(releasesFile, JSON.stringify(list)),
+    releasesFile,
     /** The title and text of every issue the fake gh was asked to make through the REST API, as sent on stdin. */
     createdBodies: (): { title: string; body: string; labels: string[] }[] =>
       [...readFileSync(ghLog, "utf8").matchAll(/^--- created issue \(api\):\n([\s\S]*?)\n--- end issue$/gm)].map((m) => JSON.parse(m[1]!)),

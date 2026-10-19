@@ -219,3 +219,24 @@ export function expandVersion(recipe: Pick<Recipe, "version">, commit: CommitInf
 export function expandTag(recipe: Pick<Recipe, "version" | "tag">, commit: CommitInfo): string {
   return fill(recipe.tag.replaceAll("{version}", expandVersion(recipe, commit)), commit);
 }
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+
+/**
+ * A regular expression for the whole tag a recipe can give: every placeholder has its own format
+ * (`{commit_datetime}` 12 digits, `{commit_date}` 8 digits, `{sha}` 7 hex characters), literal text is escaped.
+ */
+export function tagPattern(recipe: Pick<Recipe, "version" | "tag">): RegExp {
+  const formats: Record<string, string> = { commit_datetime: "\\d{12}", commit_date: "\\d{8}", sha: "[0-9a-f]{7}" };
+  const part = (text: string) =>
+    text
+      .split(/(\{(?:commit_datetime|commit_date|sha)\})/)
+      .map((p, i) => (i % 2 ? formats[p.slice(1, -1)]! : escapeRe(p)))
+      .join("");
+  return new RegExp(`^${part(recipe.tag.replaceAll("{version}", recipe.version))}$`);
+}
+
+/** The line in the notes of a draft that says this Foundry made it for this recipe. Pruning deletes only drafts that carry it. */
+export function releaseMarker(recipe: Pick<Recipe, "tag">): string {
+  return `<!-- spaghetti-code-foundry release-build tag=${recipe.tag} -->`;
+}

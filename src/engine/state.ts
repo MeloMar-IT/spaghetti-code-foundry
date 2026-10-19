@@ -115,6 +115,8 @@ export interface RunSummary {
   skillCarry?: RunSkillCarry;
   /** What plan_check found (see plan-carry.ts). Absent on older runs and on runs with their own plan gate. */
   planCheck?: RunPlanCheck;
+  /** Values a step handed on in `<run dir>/outputs.json` (see run-outputs.ts), e.g. `release_url` and `release_tag` of release-build. Absent on older runs. */
+  outputs?: Record<string, string>;
   /** When the run was archived (taken out of the default list). Absent: not archived. */
   archivedAt?: string;
   /** The id of the account that archived it. Never shown to a user. */
