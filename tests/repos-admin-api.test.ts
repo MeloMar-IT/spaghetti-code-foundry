@@ -114,6 +114,26 @@ describe("admin repositories API", () => {
     expect((await all()).find((x) => x.id === bobRepo.id)!.settings).toEqual({});
   });
 
+  it("stores a release recipe for an admin, checks it with the recipe schema, audits the key only, and clears it", async () => {
+    const url = `/api/admin/repos/${bobRepo.id}/settings`;
+    const RECIPE = "builds:\n  - {name: secretname, run: make, artifacts: [out]}\n";
+    const ok = await call(admin, "PUT", url, { releaseRecipe: RECIPE });
+    expect(ok.status).toBe(200);
+    expect((await all()).find((x) => x.id === bobRepo.id)!.settings).toEqual({ releaseRecipe: RECIPE.trimEnd() });
+    const audit = readFileSync(auditPath(), "utf8");
+    expect(audit).toContain("settings: releaseRecipe");
+    expect(audit).not.toContain("secretname");
+    for (const bad of ["builds: []", "colour: red\nbuilds:\n  - {name: a, run: x, artifacts: [x]}", "a: [unclosed"]) {
+      const r = await call(admin, "PUT", url, { releaseRecipe: bad });
+      expect(r.status).toBe(400);
+      expect(r.error()).toMatch(/^releaseRecipe: /);
+      expect(r.error()).not.toContain("\n");
+    }
+    expect((await all()).find((x) => x.id === bobRepo.id)!.settings).toEqual({ releaseRecipe: RECIPE.trimEnd() });
+    expect((await call(ann, "PUT", url, { releaseRecipe: RECIPE })).status).toBe(403);
+    expect((await call(admin, "PUT", url, {})).json().settings).toEqual({});
+  });
+
   it("transfers a token repository by e-mail in upper case: wiped, settings kept, lists updated", async () => {
     const r = await call(admin, "POST", `/api/admin/repos/${annRepo.id}/transfer`, { email: "  BOB@EXAMPLE.COM " });
     expect(r.status).toBe(200);

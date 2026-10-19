@@ -268,7 +268,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET refinement/:id/publish": { path: `refinement/${UNKNOWN}/publish`, user: 404, admin: 404 },
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
-  "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
+  "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, { releaseRecipe: "" }),
   "GET admin/credentials": no("admin/credentials", 200),
   "PUT admin/repos/:id/ready": no(`admin/repos/${UNKNOWN}/ready`, 404, {}),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),

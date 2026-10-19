@@ -2088,16 +2088,16 @@ write("release-daily", {
 
 // ── release-build: build the release files a repository describes in .factory/release-build.yaml ──
 write("release-build", {
-  title: "Build release files on this machine from .factory/release-build.yaml",
+  title: "Build release files on this machine from the repository's release recipe",
   lines: [
     "factory run release-build --var github_repo=owner/repo --var ref=main",
     "",
-    "clone → resolve the ref to a commit, read the recipe at that commit",
+    "clone → resolve the ref to a commit, find the recipe: .factory/release-build.yaml at the commit, else the recipe stored in the Foundry settings",
     "      → build (one after the other, each in its own git worktree, through test-slot, no tokens in the environment)",
     "        → files and SHA256SUMS in the run folder (release/out); nothing is uploaded",
   ],
 }, {
-  description: "Build the release files described in .factory/release-build.yaml on this machine, in clean worktrees, and collect them in the run folder",
+  description: "Build the release files described in .factory/release-build.yaml at the commit, else in the recipe stored in the Foundry settings, on this machine, in clean worktrees, and collect them in the run folder",
   workspace: "empty",
   defaults: { timeout_sec: 3600 },
   vars: { github_repo: "owner/repo", ref: "main" },
@@ -2107,7 +2107,7 @@ write("release-build", {
     {
       id: "resolve",
       type: "shell",
-      description: "Resolve the ref to a commit and read the recipe at that commit",
+      description: "Resolve the ref to a commit and find the recipe (the file at that commit wins over the stored one)",
       // exec: the engine's stop signal reaches the tool itself
       run: 'exec node "$FACTORY_TOOLS/release-build" resolve "{{run.dir}}"',
     },

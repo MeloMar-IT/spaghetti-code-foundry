@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Builds the release files a repository describes in .factory/release-build.yaml (the logic is in src/release/).
-//   release-build resolve <run-dir>                 resolve $FACTORY_VAR_REF in the current folder (a clone), read the
-//                                                   recipe at that commit, write <run-dir>/release/plan.json
+// Builds the release files a repository describes in .factory/release-build.yaml, or else in the recipe stored in the
+// Foundry settings of $FACTORY_VAR_GITHUB_REPO (the logic is in src/release/).
+//   release-build resolve <run-dir>                 resolve $FACTORY_VAR_REF in the current folder (a clone), find the
+//                                                   recipe (file at that commit, else stored), write <run-dir>/release/plan.json
 //   release-build build <run-dir> <test-slots-dir>  run the builds of that plan, one after the other, each in its own
 //                                                   git worktree; the release files end up in <run-dir>/release/out
 // Build commands get a short environment and no tokens (see src/release/host.ts).
@@ -23,12 +24,13 @@ const planFile = join(runDir, "release", "plan.json");
 
 try {
   if (mode === "resolve") {
-    const { resolveCommit, readRecipe } = await lib("build");
-    const { expandVersion, expandTag } = await lib("recipe");
+    const { resolveCommit } = await lib("build");
+    const { expandVersion, expandTag, loadReleaseRecipe, RECIPE_SOURCE_TEXT } = await lib("recipe");
     const commit = resolveCommit(process.cwd(), process.env.FACTORY_VAR_REF || "main");
-    const recipe = readRecipe(process.cwd(), commit.sha);
+    const { recipe, source } = loadReleaseRecipe(process.env.FACTORY_VAR_GITHUB_REPO ?? "", process.cwd(), commit.sha);
     const plan = {
       sha: commit.sha,
+      recipeSource: source,
       version: expandVersion(recipe, commit),
       tag: expandTag(recipe, commit),
       prerelease: recipe.prerelease,
@@ -37,6 +39,7 @@ try {
     };
     mkdirSync(join(runDir, "release"), { recursive: true });
     writeFileSync(planFile, JSON.stringify(plan, null, 2));
+    console.log(`recipe: ${RECIPE_SOURCE_TEXT[source]}`);
     console.log(`COMMIT: ${plan.sha}`);
     console.log(`VERSION: ${plan.version}`);
     console.log(`TAG: ${plan.tag}`);

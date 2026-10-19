@@ -4,10 +4,7 @@ import { closeSync, copyFileSync, createReadStream, existsSync, mkdirSync, openS
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { buildEnv, deniedNames, findCommand, groupAlive, killTree, matchBuild, type Host } from "./host.js";
-import { parseRecipe, RecipeError, type Build, type CommitInfo, type Recipe } from "./recipe.js";
-
-const RECIPE_PATH = ".factory/release-build.yaml";
-const MAX_RECIPE_BYTES = 64 * 1024;
+import type { Build, CommitInfo, Recipe } from "./recipe.js";
 
 export interface BuildPlan {
   run: Build[];
@@ -114,18 +111,6 @@ export function resolveCommit(repoDir: string, ref: string): CommitInfo {
     return { sha, committerTime: t };
   }
   throw new Error(`cannot find "${ref}" in this repository`);
-}
-
-/** The recipe as committed at `sha`. */
-export function readRecipe(repoDir: string, sha: string): Recipe {
-  let size: number;
-  try {
-    size = Number(git(repoDir, ["cat-file", "-s", `${sha}:${RECIPE_PATH}`]));
-  } catch {
-    throw new RecipeError(`this repository has no release-build recipe (${RECIPE_PATH} at ${sha.slice(0, 7)})`);
-  }
-  if (size > MAX_RECIPE_BYTES) throw new RecipeError(`the release-build recipe is too big (over ${MAX_RECIPE_BYTES / 1024} KB)`);
-  return parseRecipe(execFileSync("git", ["show", `${sha}:${RECIPE_PATH}`], { cwd: repoDir, encoding: "utf8", maxBuffer: 1024 * 1024 }));
 }
 
 export interface CommandOpts {

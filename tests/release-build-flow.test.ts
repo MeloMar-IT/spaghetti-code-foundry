@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { addRepo, reposPath, setRepoSettings } from "../src/auth/repos.js";
 import { ConfigSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
@@ -32,6 +33,7 @@ describe("release-build flow", () => {
   });
   afterEach(() => {
     rmSync(homeConfig(), { force: true });
+    rmSync(reposPath(), { force: true });
     gh.restore();
     for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
     Object.assign(process.env, saved);
@@ -146,7 +148,42 @@ describe("release-build flow", () => {
     const r = await go();
     expect(r.s.status).toBe("failed");
     expect(r.log).toContain("this repository has no release-build recipe");
+    expect(r.log).toContain("is not a repository in the Foundry");
     expect(r.s.history.map((h) => h.id)).toEqual(["clone", "resolve"]);
+  });
+
+  const store = (recipe: string) => {
+    const rec = addRepo("11111111-1111-4111-8111-111111111111", "https://github.com/Acme/App", { ownerOk: () => true });
+    setRepoSettings(rec.id, { releaseRecipe: recipe });
+  };
+  const STORED = "builds:\n  - {name: stored, on: [linux, macos, windows], run: echo s > s.txt, artifacts: [s.txt]}\n";
+  const FILE = "builds:\n  - {name: filed, on: [linux, macos, windows], run: echo f > f.txt, artifacts: [f.txt]}\n";
+
+  it("says so when the repository is in the Foundry but has no recipe at all", async () => {
+    addRepo("11111111-1111-4111-8111-111111111111", "https://github.com/Acme/App", { ownerOk: () => true });
+    commit(undefined);
+    const r = await go();
+    expect(r.s.status).toBe("failed");
+    expect(r.log).toContain("none stored in the Foundry settings");
+  });
+
+  it("uses the recipe stored in the Foundry settings when the commit has no file", async () => {
+    store(STORED);
+    commit(undefined);
+    const r = await go();
+    expect(r.s.status, r.s.reason).toBe("succeeded");
+    expect(r.log).toContain("recipe: stored in the Foundry settings");
+    expect(r.files).toContain("stored/s.txt");
+  });
+
+  it("lets the file at the commit win over the stored recipe", async () => {
+    store(STORED);
+    commit(FILE);
+    const r = await go();
+    expect(r.s.status, r.s.reason).toBe("succeeded");
+    expect(r.log).toContain("recipe: .factory/release-build.yaml");
+    expect(r.files).toContain("filed/f.txt");
+    expect(r.files).not.toContain("stored/s.txt");
   });
 
   it("fails when every build is for another machine", async () => {
