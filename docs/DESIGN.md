@@ -233,8 +233,9 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
 - **`EvidenceEvent`**: one line of `runs/<run-id>/evidence.jsonl`. Every event has `version`, `id`,
   `seq` (its place in the stream, from 0), `runId`, `time` and a `type`: eight for the run
   (`run.created`, `run.queued`, `run.started`, `run.stopped`, `run.resumed`, `run.cancelled`,
-  `run.failed`, `run.completed`) and seven for a step (`step.started`, `step.routed`, `step.retried`,
-  `step.denied`, `step.approved`, `step.failed`, `step.completed`) and, from version 2, `policy.decided`
+  `run.failed`, `run.completed`) and eight for a step (`step.started`, `step.routed`, `step.retried`,
+  `step.denied`, `step.approved`, `step.failed`, `step.completed`), with `step.profiled` (the tool
+  profile of one try, see "Tool profiles") from version 3, and `policy.decided` from version 2
   (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"). `prevHash` and `hash` come
   together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
@@ -446,8 +447,8 @@ hashes (`hashContextSources`). **It is not called by the engine yet**: giving a 
 ### Tool profiles
 
 `src/tool-profile/` defines what an agent session may do with which tools, and what an agent program
-can be made to hold of that (#146). Nothing starts an agent with a profile yet; the stories after it
-do. The folder has no side effects: schemas, version numbers and pure functions.
+can be made to hold of that (#146). Every agent step works out one profile before an agent starts
+(#148; see "Run time" below). The folder has no side effects: schemas, version numbers and pure functions.
 
 - **`ToolProfile`**: `version` (of the format), `profile` (`id` and `version` of the contents) and
   `grants`. It names no agent program. It is closed: a kind, an operation or a target that no grant
@@ -479,7 +480,7 @@ do. The folder has no side effects: schemas, version numbers and pure functions.
 - **Hash and reference.** `normalizeToolProfile` gives the one canonical form (grants, operations
   and targets in a fixed order). `toolProfileSha256` is the SHA-256 of its canonical JSON, so the
   order a profile was written in does not count. `toolProfileRef` gives `id`, `version` and `sha256`:
-  what a run keeps of the profile it resolved. Nothing writes it yet.
+  what a run keeps of the profile it resolved: every `step.profiled` event carries it.
 - **Least privilege.** `toolProfileExcess(a, b)` lists every point where `a` allows more than `b`;
   `isAtMostAsPermissive` is true when there is none. `resolveToolProfile(identity, profiles)` gives
   what all profiles allow under the strictest condition of any: an operation stays only when every
@@ -512,6 +513,30 @@ do. The folder has no side effects: schemas, version numbers and pure functions.
 - **Versions and errors.** Each contract has its own number in `version.ts`. A record with another
   version is refused with one sentence. A `ToolProfileSchemaError` has a code and the fields that
   are wrong, and never repeats a value of the record.
+- **Run time (#148).** An agent step resolves its profile once, before an agent is picked
+  (`resolveStepProfile` in `src/agents/tool-gate.ts`), from the settings the step gets: the same
+  inputs as `legacyToolProfile`. The profile is then checked again for each try (`gateTarget`), so
+  a retry or a fallback gets the same profile. A profile passed as `RunOptions.toolProfile` is read
+  with `declaredToolProfile`, copied with `snapshotToolProfile` and saved in `run.json` as
+  `toolProfile`, which resume reads. Like `owner`, it is trusted server state: a changed or deleted
+  saved profile is not detected, but each `step.profiled` event carries its hash, so a change shows
+  in the evidence. A saved profile that is no longer valid is refused on every step.
+- **Refusal and partial.** A declared profile is refused before an agent is picked when the
+  settings allow more than it (`toolSession`, and again after mapping with `mappedExcess`). Each try
+  then asks `adapterFit` whether the agent holds it: rules with no meaning in a profile, data classes
+  below `restricted`, controls the agent cannot hold, and the personal setup a session would load
+  all refuse. The settings cannot say the data class or the network of a command, so those are not
+  checked against them. A Codex shell command under its own workspace sandbox with no network is
+  `held` by that sandbox, not a gap; that relies on the network assumption of #147. A generated
+  profile is never refused: what the agent cannot hold is `partial` and only recorded.
+- **The mapping only narrows.** `mapSessionSettings` gives the sandboxes a session really runs
+  with. Claude's sandbox is never switched on, because it would auto-allow Bash; Codex's sandbox is
+  only made stricter, never wider. A generated profile maps to today's settings unchanged.
+- **Diagnostics.** A refusal or a log line uses only fixed words, error codes, counts and the first
+  12 characters of the hash. Profile ids, versions, rules, Zod messages and exception texts are never
+  echoed, so a profile cannot make a line look like a limit, an outage or a sign-in error to the
+  classifiers in `targets.ts`.
+
 ### The evidence stream
 
 Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).

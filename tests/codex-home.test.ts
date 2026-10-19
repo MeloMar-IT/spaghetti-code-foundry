@@ -445,8 +445,10 @@ describe("returnCodexLogin", () => {
 
 describe("prepareCleanCodex", () => {
   const config = ConfigSchema.parse({ protected_branches: [] });
+  const profileOf = (permissionMode: "acceptEdits" | "bypassPermissions") => legacyToolProfile({ permissionMode, allowedTools: [], sandbox: false, boxed: false, noTools: false, mcpServers: false, credential: "machine" }).profile;
+  const bypass = profileOf("bypassPermissions");
   const prep = (runDir: string, personal: string, over: Partial<PrepareCleanCodex> = {}) =>
-    prepareCleanCodex({ runDir, env: {}, config, kind: "openai", short: false, isolated: false, boxed: false, mode: "private", sandbox: "workspace-write", personal, permissionMode: "acceptEdits", allowedTools: [], sandboxed: false, repo: "o/r", ...over });
+    prepareCleanCodex({ runDir, env: {}, config, kind: "openai", short: false, isolated: false, boxed: false, mode: "private", sandbox: "workspace-write", personal, profile: profileOf("acceptEdits"), repo: "o/r", ...over });
 
   it("gives a non-short run the short environment and no machine sign-in", () => {
     const l = loan();
@@ -471,10 +473,10 @@ describe("prepareCleanCodex", () => {
 
   it("refuses danger-full-access when push is not allowed, but not a boxed step", () => {
     const l = loan();
-    const r = prep(l.runDir, l.personal, { sandbox: "danger-full-access", permissionMode: "bypassPermissions" });
+    const r = prep(l.runDir, l.personal, { sandbox: "danger-full-access", profile: bypass });
     expect(r).toEqual({ refused: CODEX_PUSH_UNHELD });
     expect(CODEX_PUSH_UNHELD.startsWith(CODEX_HOME_REFUSED)).toBe(true);
-    expect("refused" in prep(l.runDir, l.personal, { sandbox: "danger-full-access", permissionMode: "bypassPermissions", boxed: true, short: true })).toBe(false);
+    expect("refused" in prep(l.runDir, l.personal, { sandbox: "danger-full-access", profile: bypass, boxed: true, short: true })).toBe(false);
   });
 
   it("lends the login in login mode and returns it with done()", () => {

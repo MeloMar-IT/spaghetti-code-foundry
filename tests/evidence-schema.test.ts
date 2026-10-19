@@ -14,7 +14,7 @@ const C2 = "b".repeat(40);
 const USER = "0b8f6a0e-5a52-4a4e-9a57-0f2f3f1f7c11";
 const T = "2026-01-31T12:00:00.000Z";
 
-const base = { version: 2, id: "e0001", seq: 1, runId: "20260131-120000-abc", time: T } as const;
+const base = { version: 3, id: "e0001", seq: 1, runId: "20260131-120000-abc", time: T } as const;
 const shell = { id: "test", visit: 1, type: "shell" } as const;
 const agent = { id: "code", visit: 2, type: "claude", parent: "build/inner" } as const;
 const gate = { id: "approve", visit: 1, type: "approval" } as const;
@@ -48,6 +48,19 @@ const EVENTS: Record<EvidenceEventType, Record<string, unknown>> = {
   "run.completed": { ...base, type: "run.completed", final: { commit: C2 }, pullRequest: pr },
   "step.started": { ...base, type: "step.started", step: agent },
   "step.routed": { ...base, type: "step.routed", step: agent, model, fallbackFrom: { agent: "claude", provider: "anthropic", model: "opus", effort: "high" } },
+  "step.profiled": {
+    ...base,
+    type: "step.profiled",
+    step: agent,
+    agent: "codex",
+    source: "declared",
+    profile: { id: "reviewer", version: "1", sha256: H1 },
+    outcome: "refused",
+    gaps: [{ kind: "files", restriction: "data-class" }, { kind: "shell", restriction: "sandbox-network", heldBy: "codex-sandbox" }],
+    excess: [{ kind: "shell", operation: "run", field: "targets" }],
+    unmappedRules: 1,
+    personalSetup: false,
+  },
   "step.retried": { ...base, type: "step.retried", step: agent, cause: "limit" },
   "step.denied": { ...base, type: "step.denied", step: agent, denial: { kind: "policy", policy: { id: "baseline", version: "2026.1" }, reasonCode: "network.blocked", tool: { name: "Bash" } } },
   "step.approved": { ...base, type: "step.approved", step: gate, by: user },
@@ -99,7 +112,7 @@ describe("evidence events", () => {
   it("names the events that end a run, and the file names", () => {
     expect(TERMINAL_EVENT_TYPES).toEqual(["run.cancelled", "run.failed", "run.completed"]);
     expect([EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE]).toEqual(["evidence.jsonl", "evidence.json"]);
-    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([2, 1]);
+    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([3, 1]);
     expect(STEP_TYPES).toEqual(["claude", "shell", "approval", "parallel", "flow"]);
   });
 
@@ -146,6 +159,17 @@ describe("evidence events", () => {
     expect(EvidenceEventSchema.safeParse({ ...EVENTS["step.denied"], denial: { kind: "tool", tool: { name: "mcp__files__read" } } }).success).toBe(true);
     expect(problems(() => parseEvidenceEvent({ ...EVENTS["step.failed"], artifacts: [log, log] })).issues[0]).toEqual({ path: "artifacts.1.path", message: "the same file is named twice" });
     expect(EvidenceEventSchema.safeParse({ ...EVENTS["step.retried"], cause: "mood" }).success).toBe(false);
+    const profiled = EVENTS["step.profiled"]!;
+    const ok = (o: Record<string, unknown>) => EvidenceEventSchema.safeParse({ ...profiled, ...o }).success;
+    expect(ok({ agent: undefined, outcome: "enforced" })).toBe(false); // no agent: refused before routing
+    expect(ok({ agent: undefined, gaps: [] })).toBe(true);
+    expect(ok({ source: "generated" })).toBe(false); // a generated profile is never refused
+    expect(ok({ source: "generated", outcome: "partial", excess: [] })).toBe(true);
+    expect(ok({ profile: undefined })).toBe(false); // an absent profile needs `unreadable`
+    expect(ok({ profile: undefined, unreadable: "not-an-object", excess: [], gaps: [] })).toBe(true);
+    expect(ok({ unreadable: "invalid" })).toBe(false); // ...and only then
+    expect(ok({ excess: [{ kind: "shell", operation: "push", field: "targets" }] })).toBe(false); // not an operation of the kind
+    expect(ok({ agent: "claude" })).toBe(false); // only Codex holds a gap with its sandbox
     expect(EvidenceEventSchema.safeParse({ ...EVENTS["step.failed"], durationMs: undefined }).success).toBe(false);
   });
 });
@@ -247,9 +271,9 @@ describe("the run manifest", () => {
 
 describe("versions and migration", () => {
   it("refuses a version it does not support, in one clear sentence", () => {
-    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 3 }));
+    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 4 }));
     expect([e.kind, e.code]).toEqual(["event", "unsupported-version"]);
-    expect(e.message).toBe("evidence event: version 3 is not supported; this Foundry reads versions 1 to 2. It was written by a newer Foundry: update to read it");
+    expect(e.message).toBe("evidence event: version 4 is not supported; this Foundry reads versions 1 to 3. It was written by a newer Foundry: update to read it");
     expect(problems(() => upgradeEvidence({ version: 9 }, "manifest", 3, {})).message).toContain("this Foundry reads versions 1 to 3");
   });
 
@@ -282,10 +306,11 @@ describe("versions and migration", () => {
   });
 
   it("checks a migrated record against the current schema", () => {
-    // A version 2 record is current, so the step table is only used for lower versions.
+    // A version 3 record is current, so the step table is only used for lower versions.
     const typed: EvidenceEvent = parseEvidenceEvent(EVENTS["run.queued"], { 1: () => ({ version: 2 }) });
-    expect(typed.version).toBe(2);
-    // version 1 lines of an older Foundry read as version 2 (the real migration only sets the version)
+    expect(typed.version).toBe(3);
+    // version 1 and 2 lines of an older Foundry read as version 3 (the real migrations only set the version)
+    expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 2 })).toEqual(EVENTS["run.queued"]);
     const old = parseEvidenceEvent({ ...EVENTS["run.queued"], version: 1 });
     expect(old).toEqual(EVENTS["run.queued"]);
     const m: RunEvidence = parseRunEvidence(manifest(), {});
