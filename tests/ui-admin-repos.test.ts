@@ -90,8 +90,10 @@ describe("pure functions", () => {
       protectedBranches: ["release/*"],
       mainBranch: "main",
       developBranch: "",
+      releaseRecipe: "",
     });
-    expect(ui.settingsBody()).toEqual({ testCommand: "", docs: [], protectedBranches: [], mainBranch: "", developBranch: "" });
+    expect(ui.settingsBody({ releaseRecipe: "builds:\n  - x\n" }).releaseRecipe).toBe("builds:\n  - x\n");
+    expect(ui.settingsBody()).toEqual({ testCommand: "", docs: [], protectedBranches: [], mainBranch: "", developBranch: "", releaseRecipe: "" });
   });
 
   it("ownerText and sortRepos", () => {
@@ -268,7 +270,7 @@ describe("the page", () => {
 });
 
 describe("settings dialog", () => {
-  const S = { testCommand: "npm test", docs: ["a.md", "b.md"], protectedBranches: ["release/*"], mainBranch: "main", developBranch: "develop" };
+  const S = { testCommand: "npm test", docs: ["a.md", "b.md"], protectedBranches: ["release/*"], mainBranch: "main", developBranch: "develop", releaseRecipe: "builds:\n  - name: x" };
   let closed: Promise<any>;
   const open = async (r = rec({ settings: S }), options?: object) => {
     closed = ui.settingsDialog(r, options);
@@ -284,7 +286,7 @@ describe("settings dialog", () => {
     expect(field(root(), "mainBranch")!.value).toBe("main");
     expect(field(root(), "developBranch")!.value).toBe("develop");
     expect(root().textContent).toContain("? one character");
-    expect(root().textContent).toContain("Runs do not use these settings yet.");
+    expect(root().textContent).toContain("Runs do not use these settings yet, except the release-build recipe.");
   });
 
   it("saves with the exact body, shows the toast, closes and resolves with the server's row", async () => {
@@ -320,7 +322,7 @@ describe("settings dialog", () => {
       await flush();
       await flush();
       expect(current).toHaveBeenCalledTimes(1);
-      expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { testCommand: "make test", docs: ["fresh.md"], protectedBranches: ["release/*"], mainBranch: "main2", developBranch: "develop" } }]);
+      expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { testCommand: "make test", docs: ["fresh.md"], protectedBranches: ["release/*"], mainBranch: "main2", developBranch: "develop", releaseRecipe: "" } }]);
     });
 
     it("falls back to the record's own settings without current()", async () => {

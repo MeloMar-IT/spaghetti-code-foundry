@@ -286,7 +286,7 @@ describe("gitflow pipeline", () => {
     await watcher({ reuse_test_results: "no" }).tick();
     await settle();
     expect(runOf("7")!.history.find((h) => h.id === "baseline_tests")!.output).not.toContain("not run again");
-  });
+  }, 180_000); // three full pipeline runs: about 40 s alone, over the 60 s default on a busy machine
 
   it("tries the push to develop again when GitHub has a server problem", async () => {
     // The remote fails the first push to develop with a server error, then accepts it.

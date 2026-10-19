@@ -214,7 +214,9 @@ The same rules as for a user apply: only a published flow, only your own reposit
 
 The flow `release-build` builds the release files of any repository on the Foundry machine. Everything project-specific is in the repository's recipe, `.factory/release-build.yaml`, so the same flow works for a Node package, a static site or a compiled binary. This part only builds and collects the files. It does not upload them; the upload to a draft GitHub release comes later.
 
-**Start it.** Run flow `release-build` with `github_repo` (`owner/repo`) and `ref` (a branch, tag or commit; default `main`). The flow clones the repository and resolves the ref to one commit. It reads the recipe at that commit. A repository without a recipe fails at once with "this repository has no release-build recipe".
+**Start it.** Run flow `release-build` with `github_repo` (`owner/repo`) and `ref` (a branch, tag or commit; default `main`). The flow clones the repository and resolves the ref to one commit. It finds the recipe for that commit (see the next paragraph). A repository without a recipe fails at once with "this repository has no release-build recipe", and the message says whether the repository is registered in the Foundry.
+
+**Where the recipe comes from.** The file `.factory/release-build.yaml` at the commit wins. When the commit has no such file, the recipe stored in the Foundry settings of the repository is used: an admin sets it on the admin page (Administration → All repositories, **Edit**) or with `PUT /api/admin/repos/<id>/settings`, field `releaseRecipe`. Use it for a repository that should not contain a Foundry file. The run summary says which one was used: `recipe: .factory/release-build.yaml` or `recipe: stored in the Foundry settings`. The repository is matched by `owner/name` in any letter case, with or without `.git`. If the repository is registered under two accounts with different stored recipes, the run fails and an admin must keep one. Only an admin can store a recipe, and a stored recipe runs commands on the Foundry machine just like a file in the repository, so store only what you would commit.
 
 **The recipe.** The keys:
 
@@ -3215,12 +3217,16 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
 
 - **Settings** per repository (**Edit** in the sections Branches and Run settings): the test command (one line, up to 500 characters), the docs to update (up to
   50 paths, no leading `/`, `~` or `-`, no `..`), the protected branches (up to 50 patterns), and the names of
-  the main and the develop branch. Input is checked on the server: lengths, no control characters. Branch names
-  follow git's rules, are at most 200 characters, and may not be `@`. In a pattern `*` matches any text and
-  `?` matches one character; `[…]` is not allowed. `{}` clears the settings.
-- **The settings are only stored and shown.** Runs do not use them yet: the test command still comes from the
-  flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. They are never in
-  `GET /api/repos` and never shown on **My repositories**.
+  the main and the develop branch, and the release-build recipe (**Edit** in the section Release recipe; the
+  YAML text, up to 16 384 characters, checked on save with the same rules as `.factory/release-build.yaml`; a
+  wrong recipe is refused with a message that names the key). Input is checked on the server: lengths, no control
+  characters. Branch names follow git's rules, are at most 200 characters, and may not be `@`. In a pattern `*`
+  matches any text and `?` matches one character; `[…]` is not allowed. `{}` clears the settings.
+- **The settings are only stored and shown, with one exception.** Runs do not use them yet: the test command still
+  comes from the flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. The
+  release-build recipe is read by the flow `release-build` when the commit has no `.factory/release-build.yaml`
+  (see "Build release files on this machine"). The settings are never in `GET /api/repos` and never shown on
+  **My repositories**.
 - **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
   the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of
   seven items: the value is clear (who and why); it stands on its own or its dependencies are named; every
@@ -3474,7 +3480,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
-| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches and branch names of a repository |
+| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names and release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) of a repository; writes an audit line |
 | `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |

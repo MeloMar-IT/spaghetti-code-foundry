@@ -26,7 +26,7 @@ let authAnswer: any;
 const realFetch = globalThis.fetch;
 const ME = "me";
 let n = 1;
-const S = { testCommand: "npm test", docs: ["a.md"], protectedBranches: ["release/*"], mainBranch: "main", developBranch: "develop" };
+const S = { testCommand: "npm test", docs: ["a.md"], protectedBranches: ["release/*"], mainBranch: "main", developBranch: "develop", releaseRecipe: "builds:\n  - name: x" };
 const readyOf = (items = DEFAULT_READY.map(({ id, text }) => ({ id, text })), isDefault = true) => ({ items, isDefault });
 const rec = (over: object = {}) => ({
   id: `r${n++}`, owner: ME, url: "https://github.com/o/a", method: "github-token", added: "2026-03-04T10:00:00.000Z", settings: { ...S }, ready: readyOf(),
@@ -131,13 +131,26 @@ const show = async (r: any, opts: object = {}) => {
 describe("the admin view", () => {
   it("draws the sections in order, with Transfer inside the danger section", async () => {
     await show(rec());
-    expect(ids()).toEqual(["overview", "connection", "branches", "run-settings", "watchers", "danger"]);
+    expect(ids()).toEqual(["overview", "connection", "branches", "run-settings", "release-recipe", "watchers", "danger"]);
     expect(button(section("danger"), "Transfer")).toBeDefined();
     expect(button(section("danger"), "Remove")).toBeDefined();
     expect(section("branches").textContent).toContain("develop");
     expect(section("branches").textContent).toContain("release/*");
     expect(section("run-settings").textContent).toContain("npm test");
     expect(section("run-settings").textContent).toContain("(default)");
+    expect(section("release-recipe").textContent).toContain("name: x");
+  });
+
+  it("Release recipe says when none is stored, and Edit sends the whole settings with the new recipe", async () => {
+    const r = rec({ settings: { ...S, releaseRecipe: undefined } });
+    await show(r);
+    expect(section("release-recipe").textContent).toContain("None stored");
+    press(action("release-recipe"));
+    await flush();
+    field(root(), "releaseRecipe")!.value = "builds:\n  - name: y";
+    press(button(root(), "Save"));
+    await settle();
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, releaseRecipe: "builds:\n  - name: y" });
   });
 
   it("is plain for a user: no admin sections and no admin or watcher request", async () => {

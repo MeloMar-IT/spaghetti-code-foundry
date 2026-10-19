@@ -3,6 +3,8 @@ import { basename } from "node:path";
 import { auditAction, auditActions } from "../auth/audit.js";
 import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
 import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { checkRepoSettings } from "../auth/repo-settings.js";
+import { RecipeError, parseRecipe } from "../release/recipe.js";
 import { readyView } from "../refinement/ready-list.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
 import { type InstallProblem, type RepoApp, installUrl, repoApp, repoInstallation } from "../github-app.js";
@@ -145,6 +147,19 @@ function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string
   return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}) };
 }
 
+/** Checks a `releaseRecipe` in the settings body with the recipe schema (here, not in checkRepoSettings: that would be an import cycle). */
+function checkReleaseRecipe(body: unknown): void {
+  const t = checkRepoSettings(body).releaseRecipe;
+  if (t === undefined) return;
+  try {
+    parseRecipe(t);
+  } catch (e) {
+    if (!(e instanceof RecipeError)) throw e;
+    const lines = e.message.split("\n").map((l) => l.trim().replace(/^- /, "")).filter(Boolean);
+    throw new RepoError("bad-settings", `releaseRecipe: ${lines.join("; ")}`);
+  }
+}
+
 /** The admin calls (the permission table lets only an admin through): all repositories, their settings, and transfer. */
 async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, by: string): Promise<boolean> {
   if (seg[1] !== "repos") return false;
@@ -158,7 +173,10 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
   }
   if (seg.length === 4 && seg[3] === "settings" && method === "PUT") {
     const body = await readJson(req);
-    const r = guardedRepos(ctx, () => setRepoSettings(seg[2]!, body));
+    const r = guardedRepos(ctx, () => {
+      checkReleaseRecipe(body);
+      return setRepoSettings(seg[2]!, body);
+    });
     if (r.changed.length) auditAction(ctx.diagLog, by, "repo-change", r.repo.id, `settings: ${r.changed.join(", ")}`);
     const row = adminRow(r.repo);
     return send(res, 200, row, publicKeys([row])), true;
