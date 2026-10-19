@@ -314,10 +314,17 @@ packs run in observe mode only.
   repository's checkout; `agents/run.ts` asks `agent.write` before a write-capable agent step.
   Built-in and custom flows take the same path.
 - **Pushes.** `push` is asked once for each push a step makes. The pre-push hook (`guards.ts`) appends
-  `<branch>\t<remote url>` to the file in `FACTORY_PUSH_LOG`, which the step gets when packs are
-  configured. `drainPushLog` reads and removes the file when the step ends, and reads only a plain
-  file of at most 64 KiB and 100 pushes. The repository of a push is set only when its remote is a
-  GitHub address. The hook never fails a push.
+  `<branch>\t<remote url>\t<secrets found>\t<identity>` to the file in `FACTORY_PUSH_LOG`. The count is
+  empty when the scan did not finish, and the identity is `1` or `0` (whether git can find a committer
+  identity). Two-field lines from older hooks still read. `drainPushLog` reads and removes the file when
+  the step ends, and reads only a plain file of at most 64 KiB and 100 pushes. A count that is not 1 to
+  9 digits and an identity that is not `1` or `0` are left out. The repository of a push is set only
+  when its remote is a GitHub address. The hook never fails a push. The count and the identity are
+  observations only: a step can write to this file too, so they never drive a guard.
+- **The push gap.** The hook is added only when something needs it: a protected branch, the secret scan,
+  or configured packs (`protectedBranchEnv(…, observe)`). A run with both guards off and no packs keeps
+  the hook out, so its pushes are not observed. `RunPolicy.observesPushes` says whether the hook is there,
+  and the baseline's `push` rules are asked only then.
 - **Facts.** `baseFacts` gives the run's repository, flow, workspace and owner; each boundary adds its
   own. `policyFacts` keeps only the values that pass their schema in `FactsSchema`; a value that does not
   is left out, never changed. The repository is lower case, and the placeholder `owner/repo` is no fact.
@@ -325,16 +332,30 @@ packs run in observe mode only.
   `O_NONBLOCK`, only as a plain file of at most 1 MiB. A pack that is missing, linked, not a file,
   unreadable, invalid, for another policy id, or in `enforce` mode becomes a `LoadedPack` with a
   `policy.unavailable` or `policy.invalid` problem. Its detail never names a path or file content.
-- **Decisions.** `RunPolicy.at` asks every pack, in order, and returns the decisions. Each one is logged
-  as `· policy <id> <version> · <boundary>: <outcome> (<reason>)` and recorded as a `policy.decided`
-  event (`RunRecorder.policyDecided`). A pack that cannot be evaluated is recorded as `policy.invalid`
+- **Layers and precedence.** `src/policy/compose.ts` (pure) gives the layers `mandatory` (the baseline and
+  the admin's `policy.mandatory` overlays), `repository` (`policy.repositories` for the run's
+  `owner/name`, matched in lower case) and `optional` (`policy.packs`). `layeredPackIds` keeps an id only in
+  the first layer that names it. `combineDecisions` picks the most restrictive outcome; a tie goes to the
+  higher layer, and a tie inside one layer to the first pack. So a repository pack cannot relax a
+  baseline deny, and the answer does not depend on the order of the lists.
+- **Baseline.** `src/policy/baseline.ts` builds `foundry.baseline`. The Foundry owns it: its version is
+  the package version, and admins can only add overlays. It is always in the list of packs, so a run
+  always asks it. The file's only read is `package.json`, once, for that version; it is the one file
+  read in `src/policy/`. A bad or missing version becomes `unknown`.
+- **Decisions.** `RunPolicy.at` asks every pack, in layer order, and returns `{decisions, combined}`, where
+  `combined` is the winning decision. Each one is logged
+  as `· policy <id> <version> [<layer>] · <boundary>: <outcome> (<reason>)`, with ` · wins` on the combined
+  decision when there is more than one pack, and recorded as a `policy.decided` event
+  (`RunRecorder.policyDecided`). A pack that cannot be evaluated is recorded as `policy.invalid`
   with `unknown` as version, and the log says so. A decision that cannot be recorded either marks the
   evidence incomplete (`RunRecorder.incomplete`). No method throws into the engine.
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
-- **Off by default.** With `policy.packs` empty, `runPolicy` returns nothing: no file is read, no hook
-  is added for the pushes, and the engine's `policy` is absent.
+- **Baseline always asked, files only when configured.** With no packs in any list, `runPolicy` still
+  returns a `RunPolicy` that asks the baseline at every boundary. It reads no file (`loadPolicyPacks` runs
+  only for listed ids). Without packs the hook is added only for a guard, so pushes are observed only
+  when a guard or a pack needs the hook. The engine's `policy` is set for every run it starts (`execute.ts`).
 
 ### Context bundle
 

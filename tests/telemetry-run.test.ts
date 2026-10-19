@@ -63,7 +63,7 @@ describe("telemetry of a run", () => {
     const s = await start(cfg());
     expect(s.status).toBe("succeeded");
     const t = lines(s);
-    expect(t.map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "step.completed", "step.started", "step.completed", "run.completed"]);
+    expect(t.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "step.completed", "step.started", "step.completed", "run.completed"]);
     expect(t.every((e) => e.repository === "owner/name")).toBe(true);
     const ev = evidence(s);
     expect(t).toHaveLength(ev.length);
@@ -85,7 +85,7 @@ describe("telemetry of a run", () => {
     const s = await start(cfg(), runId);
     expect(s.status).toBe("succeeded");
     const t = lines(s);
-    expect(t.map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "step.completed", "step.started", "step.completed", "run.completed"]);
+    expect(t.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "step.completed", "step.started", "step.completed", "run.completed"]);
     expect(t.every((e) => e.id.startsWith("tm:") && e.evidence === undefined)).toBe(true);
   });
 

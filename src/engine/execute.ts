@@ -80,7 +80,7 @@ export interface Engine {
   decision?: ApprovalDecision & { stepId: string };
   /** Writes the evidence events of the run; it never throws. Absent: no evidence is written. */
   evidence?: RunRecorder;
-  /** Asks the configured policy packs at the boundaries of the run (observe mode); absent when no pack is configured. */
+  /** Asks the baseline and the configured policy packs at the boundaries of the run (observe mode); always there for a run started by the engine. */
   policy?: RunPolicy;
   /** Evidence only: who asked for this start or resume (and so who decided at an approval step). */
   actor?: Actor;
@@ -159,7 +159,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   return rec;
 }
 
-/** Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG); undefined without policy packs. */
+/** Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG); undefined when the folder can't be made. */
 export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">, visit: number): string | undefined {
   if (!engine.policy) return undefined;
   const file = pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit);

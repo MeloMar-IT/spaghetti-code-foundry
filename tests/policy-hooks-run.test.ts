@@ -9,6 +9,7 @@ import { parseEvidenceEventLine } from "../src/evidence/parse.js";
 import type { EvidenceEvent } from "../src/evidence/schema.js";
 import { verifyRunEvidence } from "../src/evidence/verify.js";
 import { loadFlow, parseFlow } from "../src/flow/load.js";
+import { BASELINE_POLICY_ID } from "../src/policy/baseline.js";
 import { BOUNDARIES, type Boundary } from "../src/policy/schema.js";
 import { checkRule, coverPack, okRule, writePack } from "./fixtures/policy-pack.js";
 
@@ -38,7 +39,12 @@ beforeEach(() => {
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
 const start = (yaml: string, config: Config = cfg()) => runFlow(parseFlow(yaml), { task: "the task", repo, runsDir, claudeBin, config });
-const events = (s: Pick<RunSummary, "runDir">): EvidenceEvent[] => readFileSync(join(s.runDir, "evidence.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => parseEvidenceEventLine(l));
+const rawEvents = (s: Pick<RunSummary, "runDir">): EvidenceEvent[] => readFileSync(join(s.runDir, "evidence.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => parseEvidenceEventLine(l));
+type Decided = Extract<EvidenceEvent, { type: "policy.decided" }>;
+const isBaseline = (e: EvidenceEvent): e is Decided => e.type === "policy.decided" && e.decision.policy.id === BASELINE_POLICY_ID;
+/** The events of the run without the decisions of the built-in baseline, which every run has. */
+const events = (s: Pick<RunSummary, "runDir">): EvidenceEvent[] => rawEvents(s).filter((e) => !isBaseline(e));
+const baseline = (s: Pick<RunSummary, "runDir">): Decided[] => rawEvents(s).filter(isBaseline);
 const decided = (s: Pick<RunSummary, "runDir">) => events(s).filter((e): e is Extract<EvidenceEvent, { type: "policy.decided" }> => e.type === "policy.decided");
 const live = (s: Pick<RunSummary, "runDir">) => readFileSync(join(s.runDir, "live.log"), "utf8");
 /** "step.before:a" for a decision about a step, "run.start" for one about the run. */
@@ -87,7 +93,7 @@ describe("policy hooks at the boundaries of a run", () => {
       expect(events(r).some((x) => x.type === "step.started" && JSON.stringify(x.step) === JSON.stringify(e.step)), `${e.decision.boundary} ${e.step!.id}`).toBe(true);
     }
     expect(verifyRunEvidence(r.runDir, r.runId).status).toBe("verified");
-    expect(live(r).match(/^· policy cover 1 · /gm)).toHaveLength(all.length);
+    expect(live(r).match(/^· policy cover 1 \[optional\] · /gm)).toHaveLength(all.length);
   });
 
   it.each(BOUNDARIES)("has a decision at %s", async (b: Boundary) => {
@@ -185,11 +191,37 @@ steps:
     expect(live(withPack).match(/^· policy strict /gm)).toHaveLength(all.length);
   });
 
-  it("has no policy lines and events without packs", async () => {
+  it("asks only the baseline without packs", async () => {
     const s = await start(SHELL, cfg([]));
     expect(s.status).toBe("succeeded");
+    const base = baseline(s);
+    expect(base.length).toBeGreaterThan(0);
+    expect(base.every((e) => e.decision.outcome === "allow")).toBe(true);
+    const lines = live(s).split("\n").filter((l) => /policy/.test(l));
+    for (const l of lines) {
+      expect(l.startsWith("· policy foundry.baseline ")).toBe(true);
+      expect(l).toContain(" [mandatory] · ");
+    }
+    expect(lines).toHaveLength(base.length);
     expect(decided(s)).toEqual([]);
-    expect(live(s)).not.toMatch(/policy/);
+  });
+
+  it("denies a push that adds a secret, at the baseline, and says so in the log", async () => {
+    const config = ConfigSchema.parse({ protected_branches: [], bot: { name: "Bot", email: "bot@example.com" }, policy: { packs: [] } });
+    const s = await start(
+      `
+name: leak
+workspace: inplace
+steps:
+  - {id: leak, type: shell, run: "printf 'const k = \\"%s%s\\";\\\\n' AKIA ABCDEFGHIJKLMNOP > k.js && git add k.js && git -c user.name=t -c user.email=t@example.com commit -qm k && git push -q '${remote}' HEAD:refs/heads/feat"}
+`,
+      config,
+    );
+    expect(s.status).toBe("failed");
+    const push = baseline(s).filter((e) => e.decision.boundary === "push");
+    expect(push).toHaveLength(1);
+    expect(push[0]!.decision).toMatchObject({ outcome: "deny", reasonCode: "secret.detected", rule: "secret-detected" });
+    expect(live(s)).toMatch(/^· policy foundry\.baseline \S+ \[mandatory\] · push /m);
   });
 
   it("does not ask for agent.write at a read-only agent step", async () => {
