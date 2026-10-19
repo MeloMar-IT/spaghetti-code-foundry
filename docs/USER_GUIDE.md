@@ -1218,6 +1218,14 @@ Foundry does, without opening each run folder.
   written is not stored. The first time each kind of drop happens, the log shows one line such as
   `! telemetry: the telemetry file could not be written; events are dropped until it can`. The line never
   shows a value.
+- **Push attempts.** A push is recorded only where the protected-branch or secret-scan hook runs, or where a
+  policy pack is set. Those are the only places where the Foundry checks the pushes of a step. A push is an
+  attempt, not a confirmed delivery: a refused push is recorded too, and a step can write that log itself.
+  The repository is shown only for a GitHub remote.
+- **Tool calls.** `tool.called` holds the tool's name only, never its arguments. It is written for Claude
+  Code steps only; Codex steps give none.
+- **Watchers.** A watcher records each check (ok, or failed without the error text), each queued run and
+  each pull-request feedback run. `scf watch` writes these too.
 
 #### Send the events to an OpenTelemetry collector
 

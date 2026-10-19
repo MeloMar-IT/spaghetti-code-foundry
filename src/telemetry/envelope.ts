@@ -101,7 +101,7 @@ export function watcherRef(id: unknown, source: unknown): { id: string; source: 
   return r.success ? r.data : undefined;
 }
 
-const tmId = (): string => `tm:${randomBytes(16).toString("hex")}`;
+export const tmId =(): string => `tm:${randomBytes(16).toString("hex")}`;
 
 type Draft = Partial<TelemetryEvent>;
 

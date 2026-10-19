@@ -24,7 +24,9 @@ import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAu
 import { stepOverride, type Override } from "../analyst/overrides.js";
 import { modelOf } from "../analyst/reference.js";
 import type { Config } from "../config.js";
-import { stepIdentity } from "../evidence/record.js";
+import { repositoryOf, stepIdentity } from "../evidence/record.js";
+import { ToolIdentitySchema } from "../evidence/identity.js";
+import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { repositoryFact } from "../engine/policy-hooks.js";
 
 /** Map Claude permission settings onto Codex's sandbox modes. */
@@ -323,6 +325,8 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   }
   logSkills();
   const limit = evaluationLimits();
+  const stepId = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
+  const repository = repositoryOf(scope.ctx.vars);
   const r = await runClaude({
     ...common,
     env,
@@ -338,6 +342,10 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     noMcp: local,
     isolated: isolatedSession,
     effort,
+    onTool: (name) => {
+      const tool = ToolIdentitySchema.safeParse({ name });
+      if (tool.success) emitLiveTelemetry("tool", "tool.called", { runId: engine.summary.runId, step: stepId, ...(repository ? { repository } : {}), tool: tool.data });
+    },
   });
   for (const d of r.denied ?? []) engine.log(`    ⚠ blocked: ${d}`);
   return {

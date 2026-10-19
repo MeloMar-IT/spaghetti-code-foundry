@@ -131,6 +131,8 @@ export interface ClaudeRunOptions {
   /** low | medium | high | xhigh | max */
   effort?: string;
   onProgress?: (msg: string) => void;
+  /** The name of each tool the model calls; never its arguments. */
+  onTool?: (name: string) => void;
 }
 
 export interface ClaudeRunResult {
@@ -220,9 +222,12 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
         return;
       }
       if (ev.type === "result") final = ev;
-      else if (ev.type === "assistant" && o.onProgress) {
+      else if (ev.type === "assistant" && (o.onProgress || o.onTool)) {
         for (const c of ev.message?.content ?? []) {
-          if (c.type === "tool_use" && c.name) o.onProgress(describeToolUse(c.name, c.input));
+          if (c.type === "tool_use" && c.name) {
+            o.onTool?.(c.name);
+            o.onProgress?.(describeToolUse(c.name, c.input));
+          }
         }
       }
     },

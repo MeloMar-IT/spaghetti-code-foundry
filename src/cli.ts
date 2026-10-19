@@ -26,7 +26,7 @@ import { dirname } from "node:path";
 import { buildStamp, restartOnNewBuild, supervise } from "./supervise.js";
 import { confirmStart, startGuard } from "./self-update-state.js";
 import { SelfUpdater } from "./self-update.js";
-import { exitAfterTelemetry } from "./telemetry/telemetry.js";
+import { configureTelemetry, exitAfterTelemetry } from "./telemetry/telemetry.js";
 import { dropEmptyHomeVars, prepareDataHome, watchDataHome } from "./home.js";
 
 const usage = () => `Spaghetti Code Foundry (scf) — run custom flows of headless Claude Code + shell steps
@@ -397,9 +397,10 @@ async function main(argv: string[]): Promise<number> {
         vars: rest,
         task: values.task,
       });
-      const config = loadConfig();
-      const runsDir = resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs"));
       const log = (m: string) => process.stdout.write(m + "\n");
+      const config = loadConfig();
+      configureTelemetry(config, { log });
+      const runsDir = resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs"));
       const scheduler = new Scheduler({ runsDir, config: () => config });
       const watcher = new Watcher(cfg, { scheduler, runsDir, repo, dailyBudget: () => config.daily_budget_usd, log });
       if (values.once) {
