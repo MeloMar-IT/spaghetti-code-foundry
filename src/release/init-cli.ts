@@ -3,19 +3,22 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  CatalogueError,
   commitFile,
   createPullRequest,
   defaultBranch,
   deleteOwnBranch,
+  GitError,
+  Interrupted,
   openPullRequest,
   pushNewBranch,
-  readBlob,
+  readBlobText,
   remoteBranchHead,
-  type CatalogueContext,
-  type CatalogueErrorCode,
-} from "../skill-import/catalogue-git.js";
-import { Interrupted, tickFor, withSignal } from "../skill-import/update-common.js";
+  tickFor,
+  tryGit,
+  withSignal,
+  type GitContext,
+  type GitErrorCode,
+} from "./git.js";
 import { detectBuilds, RECIPE_FILE, suggestRecipe } from "./init.js";
 
 // `scf release-build init --repo <owner/name> [--write]`: shallow-clones the repository into a temporary folder, prints a suggested
@@ -45,7 +48,7 @@ export interface InitOptions {
   beforePush?: () => void;
 }
 
-const SENTENCES: Partial<Record<CatalogueErrorCode, string>> = {
+const SENTENCES: Partial<Record<GitErrorCode, string>> = {
   "no-git": "git was not found",
   "no-gh": "gh was not found",
   timeout: "a git or gh call took too long",
@@ -54,22 +57,7 @@ const SENTENCES: Partial<Record<CatalogueErrorCode, string>> = {
   "push-failed": "the push failed",
   "gh-failed": "a gh call failed",
 };
-const sentence = (e: CatalogueError) => SENTENCES[e.code] ?? "a git call failed";
-
-/** A local git call with a time limit; the output, or undefined on any failure. */
-function localGit(ctx: CatalogueContext, args: string[]): Buffer | undefined {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [k, v] of Object.entries(ctx.env)) if (v !== undefined && !/^GIT_(?:DIR|WORK_TREE|INDEX_FILE)$/.test(k)) env[k] = v;
-  const r = spawnSync("git", args, {
-    cwd: ctx.cwd,
-    env: { ...env, GIT_TERMINAL_PROMPT: "0", GIT_LITERAL_PATHSPECS: "1", LC_ALL: "C" },
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: GIT_TIMEOUT_MS,
-    killSignal: "SIGKILL",
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  return r.error || r.status !== 0 ? undefined : r.stdout;
-}
+const sentence = (e: GitError) => SENTENCES[e.code] ?? "a git call failed";
 
 export async function releaseBuildCommand(
   positionals: string[],
@@ -105,9 +93,9 @@ export async function releaseBuildCommand(
       await tick();
 
       // 2. the files of the default branch (tracked ones only) and a reader that refuses links and large files
-      const ctx: CatalogueContext = { cwd: dir, env };
-      const base = localGit(ctx, ["rev-parse", "--verify", "HEAD^{commit}"])?.toString("utf8").trim();
-      const listing = base && HEX_RE.test(base) ? localGit(ctx, ["ls-tree", "-r", "-z", "--name-only", "--full-tree", base]) : undefined;
+      const ctx: GitContext = { cwd: dir, env };
+      const base = tryGit(ctx, ["rev-parse", "--verify", "HEAD^{commit}"])?.toString("utf8").trim();
+      const listing = base && HEX_RE.test(base) ? tryGit(ctx, ["ls-tree", "-r", "-z", "--name-only", "--full-tree", base]) : undefined;
       if (!base || !listing) {
         err(`could not read the files of ${repo}`);
         return 1;
@@ -115,7 +103,7 @@ export async function releaseBuildCommand(
       const files = listing.toString("utf8").split("\0").filter(Boolean);
       const read = (p: string): string | undefined => {
         try {
-          return readBlob(ctx, base, p)?.content.toString("utf8");
+          return readBlobText(ctx, base, p);
         } catch {
           return undefined;
         }
@@ -148,19 +136,19 @@ export async function releaseBuildCommand(
         if (target === RECIPE_BRANCH) return refuse(`the default branch is called ${RECIPE_BRANCH}`);
         if (remoteBranchHead(ctx, RECIPE_BRANCH) !== undefined) return refuse(`the branch ${RECIPE_BRANCH} already exists on GitHub; delete it and try again`);
       } catch (e) {
-        if (!(e instanceof CatalogueError)) throw e;
+        if (!(e instanceof GitError)) throw e;
         return refuse(sentence(e));
       }
       await tick();
 
       // 5. commit (temporary index, the working copy stays as it is) and push (create-only)
-      commit = commitFile(ctx, base, RECIPE_FILE, Buffer.from(text, "utf8"), "100644", "Add a suggested release-build recipe");
+      commit = commitFile(ctx, base, RECIPE_FILE, Buffer.from(text, "utf8"),"Add a suggested release-build recipe");
       await tick();
       opts.beforePush?.();
       try {
         pushNewBranch(ctx, RECIPE_BRANCH, commit);
       } catch (e) {
-        if (!(e instanceof CatalogueError)) throw e;
+        if (!(e instanceof GitError)) throw e;
         deleteOwnBranch(ctx, RECIPE_BRANCH, commit);
         let head: string | undefined;
         try {
@@ -189,7 +177,7 @@ export async function releaseBuildCommand(
       try {
         url = createPullRequest(ctx, { repo, base: target, head: RECIPE_BRANCH, title: "Add a release-build recipe", body: PR_BODY });
       } catch (e) {
-        if (!(e instanceof CatalogueError)) throw e;
+        if (!(e instanceof GitError)) throw e;
       }
       if (url === undefined) {
         // gh may have made the pull request before it failed
@@ -208,7 +196,7 @@ export async function releaseBuildCommand(
         err(`interrupted; ${NOTHING}`);
         return 1;
       }
-      if (e instanceof CatalogueError) {
+      if (e instanceof GitError) {
         err(`${sentence(e)}; ${NOTHING}`);
         return 1;
       }
