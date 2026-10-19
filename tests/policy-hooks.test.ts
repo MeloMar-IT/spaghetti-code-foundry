@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { protectedBranchEnv } from "../src/engine/guards.js";
 import { baseFacts, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
+import { BASELINE_PACK, BASELINE_POLICY_ID } from "../src/policy/baseline.js";
 import { parseEvidenceEvent } from "../src/evidence/parse.js";
 import type { RunRecorder } from "../src/evidence/record.js";
 import { parsePolicyDecision } from "../src/policy/parse.js";
@@ -91,26 +93,39 @@ describe("RunPolicy", () => {
     const policyDecided = vi.fn();
     const incomplete = vi.fn();
     const evidence = (extra.evidence ?? { policyDecided, incomplete }) as RunRecorder;
-    const policy = new RunPolicy({ runId: "run-1", packs, base: { flow: "f" }, log: (l) => lines.push(l), evidence, now: () => T });
+    const policy = new RunPolicy({ runId: "run-1", packs: packs.map((p) => ({ layer: "optional" as const, ...p })), base: { flow: "f" }, log: (l) => lines.push(l), evidence, now: () => T });
     return { policy, lines, policyDecided, incomplete };
   };
 
   it("returns one decision per pack in order, logs one line each and records them with the step", () => {
     const second = pack({ policy: { id: "p2", version: "7" } });
     const { policy, lines, policyDecided } = make([{ id: "p1", pack: pack() }, { id: "p2", pack: second }]);
-    const out = policy.at("step.before", { step: "build" }, STEP);
+    const answer = policy.at("step.before", { step: "build" }, STEP);
+    const out = answer.decisions.map((d) => d.decision);
     expect(out.map((d) => [d.policy.id, d.outcome, d.rule])).toEqual([["p1", "warn", "any-step"], ["p2", "warn", "any-step"]]);
+    expect(answer.combined).toBe(answer.decisions[0]);
     expect(lines).toEqual([
-      "· policy p1 1 · step.before outer/build: warn (output.limit-exceeded, rule any-step) — observe only, nothing was stopped",
-      "· policy p2 7 · step.before outer/build: warn (output.limit-exceeded, rule any-step) — observe only, nothing was stopped",
+      "· policy p1 1 [optional] · step.before outer/build: warn (output.limit-exceeded, rule any-step) · wins — observe only, nothing was stopped",
+      "· policy p2 7 [optional] · step.before outer/build: warn (output.limit-exceeded, rule any-step) — observe only, nothing was stopped",
     ]);
     expect(policyDecided).toHaveBeenCalledTimes(2);
     expect(policyDecided).toHaveBeenCalledWith(out[0], STEP);
+    expect(policyDecided).toHaveBeenCalledWith(out[1], STEP);
+  });
+
+  it("names the layer, and marks no winner with a single pack", () => {
+    const lines: string[] = [];
+    const policy = new RunPolicy({ runId: "run-1", packs: [{ layer: "mandatory", id: "p1", pack: pack() }], base: { flow: "f" }, log: (l) => lines.push(l), now: () => T });
+    const { decisions, combined } = policy.at("step.before", { step: "build" });
+    expect(combined).toBe(decisions[0]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain(" [mandatory] · ");
+    expect(lines[0]).not.toContain("wins");
   });
 
   it("records an unavailable pack as an observe-mode deny without a pack hash", () => {
     const { policy } = make([{ id: "gone", problem: "policy.unavailable", detail: "no file" }, { id: "wrong", problem: "policy.invalid", detail: "x" }]);
-    const [a, b] = policy.at("run.start");
+    const [a, b] = policy.at("run.start").decisions.map((d) => d.decision);
     expect(a).toMatchObject({ policy: { id: "gone", version: "unknown" }, mode: "observe", outcome: "deny", reasonCode: "policy.unavailable", boundary: "run.start" });
     expect(b).toMatchObject({ reasonCode: "policy.invalid" });
     expect(a).not.toHaveProperty("packSha256");
@@ -122,7 +137,7 @@ describe("RunPolicy", () => {
   it("records a policy.invalid decision when an evaluation throws, and never throws", () => {
     const broken = { id: "p1", pack: { ...pack(), version: 99 } } as unknown as LoadedPack;
     const { policy, lines, policyDecided, incomplete } = make([broken]);
-    const out = policy.at("run.start");
+    const out = policy.at("run.start").decisions.map((d) => d.decision);
     expect(out).toHaveLength(1);
     expect(out[0]).toMatchObject({ reasonCode: "policy.invalid", outcome: "deny", mode: "observe" });
     expect(lines[0]).toBe("! policy p1: could not be evaluated at run.start — recorded as policy.invalid; the run goes on");
@@ -133,7 +148,7 @@ describe("RunPolicy", () => {
   it("marks the evidence incomplete when even that cannot be recorded", () => {
     const broken = { id: "Bad Id", pack: { ...pack(), version: 99 } } as unknown as LoadedPack;
     const { policy, lines, incomplete, policyDecided } = make([broken]);
-    expect(policy.at("run.start")).toEqual([]);
+    expect(policy.at("run.start").decisions).toEqual([]);
     expect(incomplete).toHaveBeenCalledTimes(1);
     expect(policyDecided).not.toHaveBeenCalled();
     expect(lines.at(-1)).toMatch(/^! policy: a decision could not be made or recorded/);
@@ -174,23 +189,67 @@ describe("RunPolicy", () => {
   it("lets a boundary override a fact of the run, also with nothing (no fall back to the run's value)", () => {
     const rule = { id: "r", boundaries: ["run.start" as const], when: { repository: { in: ["acme/*"] } }, outcome: "deny" as const, reasonCode: "repository.not-allowed" as const };
     const lines: string[] = [];
-    const policy = new RunPolicy({ runId: "run-1", packs: [{ id: "p1", pack: pack({ rules: [rule] }) }], base: { repository: "acme/widgets" }, log: (l) => lines.push(l), now: () => T });
-    expect(policy.at("run.start")[0]).toMatchObject({ outcome: "deny", reasonCode: "repository.not-allowed" });
-    expect(policy.at("run.start", { repository: undefined })[0]).toMatchObject({ reasonCode: "policy.input-incomplete" });
+    const policy = new RunPolicy({ runId: "run-1", packs: [{ layer: "optional", id: "p1", pack: pack({ rules: [rule] }) }], base: { repository: "acme/widgets" }, log: (l) => lines.push(l), now: () => T });
+    expect(policy.at("run.start").decisions[0]!.decision).toMatchObject({ outcome: "deny", reasonCode: "repository.not-allowed" });
+    expect(policy.at("run.start", { repository: undefined }).decisions[0]!.decision).toMatchObject({ reasonCode: "policy.input-incomplete" });
   });
 
   it("works with a pack that holds a rule for every boundary", () => {
     const { policy } = make([{ id: "cover", pack: coverPack() }]);
-    expect(policy.at("run.complete", { runCostUsd: 0 })[0]).toMatchObject({ rule: "run-complete-ok" });
-    expect(policy.at("run.complete")[0]).toMatchObject({ reasonCode: "policy.input-incomplete", rule: "run-complete-check" });
+    expect(policy.at("run.complete", { runCostUsd: 0 }).decisions[0]!.decision).toMatchObject({ rule: "run-complete-ok" });
+    expect(policy.at("run.complete").decisions[0]!.decision).toMatchObject({ reasonCode: "policy.input-incomplete", rule: "run-complete-check" });
   });
 });
 
 describe("runPolicy and the config", () => {
-  it("reads nothing and gives nothing for no packs", () => {
+  it("reads nothing for no packs and asks only the baseline", () => {
     const lines: string[] = [];
-    expect(runPolicy({ runId: "r", vars: {}, flow: "f" } as never, ConfigSchema.parse({}), (l) => lines.push(l), undefined, join(home, "never-read"))).toBeUndefined();
+    const policy = runPolicy({ runId: "r", vars: {}, flow: "f", flowDef: { workspace: "worktree" } } as never, ConfigSchema.parse({}), (l) => lines.push(l), undefined, join(home, "never-read"));
+    expect(policy).toBeInstanceOf(RunPolicy);
+    expect(existsSync(join(home, "never-read"))).toBe(false);
     expect(lines).toEqual([]);
+    const answer = policy.at("run.start");
+    expect(answer.decisions).toHaveLength(1);
+    expect(answer.decisions[0]).toMatchObject({ layer: "mandatory", decision: { policy: { id: BASELINE_POLICY_ID }, outcome: "allow" } });
+    expect(answer.combined).toBe(answer.decisions[0]);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^· policy foundry\.baseline \S+ \[mandatory\] · run\.start: allow /);
+    expect(lines[0]).not.toContain("wins");
+    expect(policy.observesPushes).toBe(false);
+  });
+
+  it("asks the baseline, the overlays, the repository packs and the optional packs in that order", () => {
+    for (const id of ["o", "r", "p"]) writePack(home, id, pack({ policy: { id, version: "1" } }));
+    const lines: string[] = [];
+    const config = ConfigSchema.parse({ policy: { mandatory: ["o"], repositories: { "acme/a": ["r"], "acme/b": ["x"] }, packs: ["p"] } });
+    const policy = runPolicy({ runId: "r", vars: { github_repo: "Acme/A" }, flow: "f" } as never, config, (l) => lines.push(l), undefined, home);
+    expect(policy.observesPushes).toBe(true);
+    const { decisions } = policy.at("run.start");
+    expect(decisions.map((d) => [d.decision.policy.id, d.layer])).toEqual([[BASELINE_POLICY_ID, "mandatory"], ["o", "mandatory"], ["r", "repository"], ["p", "optional"]]);
+    expect(lines.some((l) => l.startsWith("!"))).toBe(false);
+  });
+
+  it("pushes: the baseline reads the secret count and the identity", () => {
+    const answers: string[] = [];
+    const policy = new RunPolicy({ runId: "r", packs: [{ layer: "mandatory", id: BASELINE_POLICY_ID, pack: BASELINE_PACK }], base: {}, log: () => {}, now: () => T, evidence: { policyDecided: (d: { reasonCode: string }) => answers.push(d.reasonCode), incomplete: () => {} } as never });
+    policy.pushes(STEP, [{ branch: "a", secretsFound: 2, commitIdentity: true }, { branch: "b", secretsFound: 0, commitIdentity: false }, { branch: "c", secretsFound: 0, commitIdentity: true }]);
+    expect(answers).toEqual(["secret.detected", "identity.missing", "policy.no-rule-matched"]);
+  });
+
+  it("reads the secret count and the identity from the hook's lines", () => {
+    const file = join(home, "p.log");
+    const read = (text: string) => {
+      writeFileSync(file, text);
+      return drainPushLog(file);
+    };
+    expect(read("feat\turl\t2\t1\n")).toEqual([{ branch: "feat", secretsFound: 2, commitIdentity: true }]);
+    expect(read("b\t\t0\t0\n")).toEqual([{ branch: "b", secretsFound: 0, commitIdentity: false }]);
+    for (const bad of ["x", "-1", "1234567890"]) expect(read(`b\turl\t${bad}\t1\n`)).toEqual([{ branch: "b", commitIdentity: true }]);
+    expect(read("b\turl\n")).toEqual([{ branch: "b" }]);
+  });
+
+  it("installs no hook for no guards and no packs", () => {
+    expect(protectedBranchEnv([], false, false)).toEqual({});
   });
 
   it("logs one line for a pack that cannot be loaded", () => {
@@ -201,11 +260,16 @@ describe("runPolicy and the config", () => {
   });
 
   it("defaults to no packs and refuses odd lists", () => {
-    expect(ConfigSchema.parse({}).policy).toEqual({ packs: [] });
-    for (const packs of [["a", "a"], ["../x"], ["Upper"], Array.from({ length: 21 }, (_, i) => `p${i}`)]) {
+    expect(ConfigSchema.parse({}).policy).toEqual({ packs: [], mandatory: [], repositories: {} });
+    for (const packs of [["a", "a"], ["../x"], ["Upper"], Array.from({ length: 21 }, (_, i) => `p${i}`), [BASELINE_POLICY_ID]]) {
       expect(ConfigSchema.safeParse({ policy: { packs } }).success, JSON.stringify(packs)).toBe(false);
+      expect(ConfigSchema.safeParse({ policy: { mandatory: packs } }).success, JSON.stringify(packs)).toBe(false);
+      expect(ConfigSchema.safeParse({ policy: { repositories: { "acme/a": packs } } }).success, JSON.stringify(packs)).toBe(false);
     }
-    expect(ConfigSchema.safeParse({ policy: { packs: ["a", "b.c"] } }).success).toBe(true);
+    for (const key of ["Acme/A", "acme", "acme/a/b"]) expect(ConfigSchema.safeParse({ policy: { repositories: { [key]: ["a"] } } }).success, key).toBe(false);
+    const many = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`acme/r${i}`, ["a"]]));
+    expect(ConfigSchema.safeParse({ policy: { repositories: many } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ policy: { packs: ["a", "b.c"], mandatory: ["m"], repositories: { "acme/a": ["a", "b"] } } }).success).toBe(true);
   });
 });
 

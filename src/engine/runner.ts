@@ -222,7 +222,7 @@ async function drive(
   config: Config,
   resume: { startAt: string; decision?: Engine["decision"] } | null,
   /** A new run has asked `run.start` already (before its workspace was made): its policy goes on here. */
-  early?: { policy: RunPolicy | undefined },
+  early?: { policy: RunPolicy },
 ): Promise<RunSummary> {
   const log = liveLog(summary, opts);
   const evidence = runRecorder(summary);
@@ -267,7 +267,7 @@ async function drive(
       FACTORY_TOOLS: TOOLS_DIR,
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       ...nextStepEnv(),
-      ...protectedBranchEnv(config.protected_branches, config.secret_scan, Boolean(policy)),
+      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes),
       ...selfEnv(),
     };
     // fails before any step, as before, when the run starts with the machine's login

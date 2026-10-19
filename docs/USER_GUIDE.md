@@ -1162,30 +1162,59 @@ $ scf evidence verify 20260131-120000-ab12
 A policy pack is a set of rules that is asked at the important moments of a run. In this version the
 answers are only recorded: a run never stops or changes because of a pack.
 
-- **Turn it on.** Put the pack in the data folder as `policies/<id>.json` (a plain file, at most 1 MiB),
-  then list its id in `config.yaml`:
+- **The baseline.** The Foundry has a built-in pack, `foundry.baseline`. It is asked at every boundary of
+  every run, with no setting. Its version is the Foundry's version. It has four rules:
+  - a push that would add secrets is denied (`secret.detected`);
+  - a push without a committer name and e-mail that git can find is denied (`identity.missing`);
+  - an agent write by a user without a sandbox is denied (`sandbox.required`);
+  - an in-place run by a user is denied (`workspace.admin-only`).
+
+  Nothing else is built in. The id `foundry.baseline` is reserved: `policy.packs`, `policy.mandatory`
+  and `policy.repositories` refuse it.
+- **Turn packs on.** Put a pack in the data folder as `policies/<id>.json` (a plain file, at most 1 MiB),
+  then list its id in `config.yaml`. Packs are read only from the data folder, never from a repository.
+  There are three layers:
 
   ```yaml
   policy:
-    packs: [baseline]
+    mandatory: [org-overlay]          # asked for every run, after the baseline
+    repositories:                     # asked for the runs of that repository only
+      acme/app: [app-rules]
+    packs: [team-extras]              # optional packs, asked for every run
   ```
 
-  Only `mode: observe` is accepted. A pack in `enforce` mode is refused for now. The list is not a
-  setting in the web interface; an older build rejects the `policy` key.
+  A repository key is `owner/name` in lower case. Each list has at most 20 ids, with no id twice in
+  a list. Only `mode: observe` is accepted. A pack in `enforce` mode is refused for now. The settings are
+  not in the web interface; an older build rejects the `policy` key.
+- **Which answer counts.** For each boundary the Foundry takes the most restrictive answer of all packs
+  (from least to most restrictive: `allow`, `warn`, `require_approval`, `deny`). On a tie the higher layer wins:
+  `mandatory`, then `repositories`, then `packs`. A repository pack can only make things stricter: it
+  cannot allow what the baseline denies.
 - **When it is asked.** The start of the run; before the workspace is made; before a step starts in the
   repository's checkout; before and after every step (also the steps inside a parallel step or a
   sub-flow); before a write-capable agent step; for each push a step makes; when an approval is used;
   and when the run succeeded. This is the same for built-in and custom flows.
-- **What you see.** Each answer is a line in the live log, for example
-  `· policy baseline 2026.1 · push: warn (branch.protected) — observe only, nothing was stopped`, and an
-  event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
+- **What you see.** Every run has a line in the live log for each answer, at each boundary, also when no
+  pack is configured. The line names the layer, and the answer that counts has ` · wins`. For example:
+
+  ```text
+  · policy foundry.baseline 0.1.0 [mandatory] · push: deny (secret.detected, rule secret-detected) · wins — observe only, nothing was stopped
+  ```
+
+  Each answer is also an event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
 - **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack is logged as
   `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. The run's
   result is the same as without the pack.
-- **Pushes.** While packs are configured, the Foundry's pre-push hook records each pushed branch, even
-  when no branch is protected. The hook never blocks a push.
-- **Evidence from this version** has a newer event version. An older build cannot read the evidence of a
-  run that has `policy.decided` events, so keep this build for those runs.
+- **Pushes.** The Foundry's pre-push hook records each pushed branch, the number of secrets its scan
+  found and whether git can find a committer identity. The baseline is asked at `push` only when the
+  hook is there: when a branch is protected, the secret scan is on, or packs are configured. With both
+  guards off and no packs, there is no hook and pushes are not observed. The hook still refuses pushes to
+  protected branches and pushes the secret scan rejects; it never blocks a push for an observation.
+- **Without the secret scan,** a push gets `policy.input-incomplete` for the secret rule, since the number
+  of secrets is not known.
+- **Evidence format.** It is unchanged since #142. The baseline adds `policy.decided` events to every run.
+  An older build cannot read the evidence of a run that has `policy.decided` events, so keep this build
+  for those runs.
 
 ### Lifecycle telemetry
 
