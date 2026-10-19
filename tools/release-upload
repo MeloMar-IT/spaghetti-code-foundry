@@ -24,6 +24,10 @@ try {
   const repo = process.env.FACTORY_VAR_GITHUB_REPO || "";
   if (!validGithubName(repo)) throw new Error('the variable github_repo must be "owner/name"');
   const plan = JSON.parse(readFileSync(join(runDir, "release", "plan.json"), "utf8"));
+  if (plan.skip) {
+    console.log(`skipped: ${plan.skip}`);
+    process.exit(0);
+  }
   const stop = new AbortController();
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, () => stop.abort());
   const res = await uploadRelease({

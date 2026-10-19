@@ -159,6 +159,37 @@ describe("buildSince", () => {
     expect(group(s, "waiting")!.items[0]!.where).toEqual(release.where);
   });
 
+  describe("automatic release builds", () => {
+    const URL = "https://github.com/acme/app/releases/tag/v1";
+    const rb = (id: string, over: Record<string, unknown> = {}) =>
+      run(id, {
+        flow: "release-build", source: "watcher rel release-build", vars: { github_repo: "acme/app", ref: "main", release_build_watcher: "rel" },
+        outputs: { release_url: URL, release_tag: "v1" }, history: [], ...over,
+      });
+
+    it("lists a successful build under the releases", () => {
+      const s = build({ runs: [entry(rb("b1"))] });
+      const g = group(s, "released")!;
+      expect(g.label).toBe("release files uploaded");
+      expect(g.items).toMatchObject([{ repo: "acme/app", title: "release files uploaded", where: { label: "Draft release v1", url: URL }, at: at(10) }]);
+    });
+
+    it("joins the label with the releases and counts several builds", () => {
+      expect(group(build({ runs: [entry(rb("b1"))], merged: [read({ prs: [pr(1, at(10))] })] }), "released")!.label).toBe("1 release to main, release files uploaded");
+      expect(group(build({ runs: [entry(rb("b1")), entry(rb("b2"))] }), "released")!.label).toBe("release files uploaded 2 times");
+    });
+
+    it("leaves out hand-started builds, other addresses and builds without outputs; a failed one is in failed", () => {
+      const hand = rb("h", { source: "ui", vars: { github_repo: "acme/app", ref: "main" } });
+      const http = rb("p", { outputs: { release_url: "http://github.com/x" } });
+      const none = rb("n", { outputs: undefined });
+      const failed = rb("f", { status: "failed", outputs: undefined });
+      const s = build({ runs: [entry(hand), entry(http), entry(none), entry(failed)] });
+      expect(group(s, "released")).toBeUndefined();
+      expect(group(s, "failed")!.count).toBe(1);
+    });
+  });
+
   it("says when GitHub could not be read or a limit was hit", () => {
     const s = build({ merged: [read({ repo: "o/a", ok: false }), read({ repo: "o/b", ok: false })], runs: [entry(run("a"))] });
     expect(s.complete).toBe(false);

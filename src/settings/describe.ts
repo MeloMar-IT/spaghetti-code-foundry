@@ -293,7 +293,7 @@ export const ITEM_SETTINGS: Record<string, ItemSettingText> = {
     help: "What each watcher follows and how it starts runs, with the variables of its flow.",
     effect: "now",
     fields: {
-      ...on("watcher-form.js", ["id", "enabled", "source", "flow", "github_repo", "label", "every", "max_per_tick", "vars", "task", "branch", "exclude_labels", "at", "timezone", "owner"]),
+      ...on("watcher-form.js", ["id", "enabled", "source", "flow", "github_repo", "label", "every", "max_per_tick", "vars", "task", "branch", "exclude_labels", "at", "timezone", "owner", "release_build"]),
       ...on("watcher-options.js", [
         "priority_labels", "status_labels.working", "status_labels.done", "status_labels.needs_info", "status_labels.waiting", "status_labels.failed",
         "wait_for_dependencies", "dependency_done_labels", "precheck_flow", "auto_defaults", "remove_on_done", "comment_on_failure", "status_comment",

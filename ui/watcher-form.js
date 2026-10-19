@@ -64,6 +64,7 @@ export function repoWatcherBody(v, editing) {
     task: opt(v.source === "schedule", v.task),
     at: opt(v.source === "schedule", v.at),
     timezone: opt(v.source === "schedule", v.timezone),
+    release_build: v.source === "schedule" ? !!v.releaseBuild : clear,
     branch: opt(v.source === "ci-failures", v.branch),
   };
   Object.assign(body, optionsBody(v.options, v.source, editing));
@@ -118,6 +119,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const at = input(w.at ?? "", { class: "mono", placeholder: "HH:MM (optional)" });
     const tz = input(w.timezone ?? "", { class: "mono", placeholder: Intl.DateTimeFormat().resolvedOptions().timeZone });
     const label = input(w.label, { class: "mono" });
+    const releaseBuild = check(w.release_build, "Build release files after each release");
     const every = input(w.every, { class: "mono", placeholder: "5m" });
     const max = input(String(w.max_per_tick), { type: "number", min: 1 });
     const vars = h("textarea", { rows: 3, class: "mono", placeholder: "test_cmd=npm test\nrequire_approval=yes" });
@@ -205,7 +207,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       if (read.error) return void mark(read.error);
       const body = repoWatcherBody({
         id: id.value, source: source.value, flow: flow.value, label: label.value, exclude: exclude.value, every: every.value, max: max.value,
-        enabled: enabled.el.checked, vars: mergeVars({ ...held(), ...parsed.vars }, read.values), task: task.value, branch: branch.value, at: at.value, timezone: tz.value, options: opts.values(),
+        enabled: enabled.el.checked, vars: mergeVars({ ...held(), ...parsed.vars }, read.values), task: task.value, branch: branch.value, at: at.value, timezone: tz.value, releaseBuild: releaseBuild.el.checked, options: opts.values(),
       }, !!existing);
       const send = () => (existing ? api.saveRepoWatcher(existing.repoId, existing.id, body) : api.addRepoWatcher(repo.value, body));
       return guarded(state, save, send, close, mark)();
@@ -214,11 +216,14 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const atField = h("div", { class: "grid" }, f("Once a day at", at, "Instead of every interval"), f("Time zone", tz));
     const taskField = h("div", {}, f("Chore", task, "Becomes the run's task. The flow opens a PR only if something changed."),
       h("div", { class: "chips mt-6" }, CHORES.map(([name, text]) => h("button", { class: "chip", type: "button", onClick: () => (task.value = text) }, name))));
+    const releaseField = h("div", {}, releaseBuild.row,
+      h("small", { class: "muted" }, "After each new commit on main, builds the release files on this machine and uploads them to a draft GitHub release. Needs a release-build recipe. Default: off"));
     const branchField = f("Branch to watch", branch);
     const showFor = () => {
       labelField.hidden = source.value !== "issues";
       taskField.hidden = source.value !== "schedule";
       atField.hidden = source.value !== "schedule";
+      releaseField.hidden = source.value !== "schedule";
       branchField.hidden = source.value !== "ci-failures";
       opts.showFor(source.value);
     };
@@ -242,6 +247,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       h("div", { class: "grid" }, f("Flow", flow), labelField, branchField),
       taskField,
       atField,
+      releaseField,
       h("div", { class: "grid" }, f("Check every", every, "e.g. 5m, 1h — for chores: how often it runs, e.g. 1d, 7d"), f("Max new runs per check", max)),
       fieldsBox,
       f("Variables for each run", vars, "For variables the flow does not describe. One name=value per line. github_repo and issue/pr are set automatically."),

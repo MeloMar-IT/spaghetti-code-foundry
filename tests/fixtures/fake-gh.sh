@@ -103,6 +103,16 @@ const dir=q.get("direction")==="desc"?-1:1;l=l.slice().sort((x,y)=>dir*(((x&&x.n
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const p=l.find(x=>x.number===Number(process.argv[2]));if(!p){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify({number:p.number,state:p.state,merged:p.merged===true,merged_at:p.merged===true?"2026-01-01T00:00:00Z":null}))' "$FAKE_GH_LOG.pulls.json" "${all##*/pulls/}"
     exit $? ;;
 esac
+# Main branch: "api repos/R/git/ref/heads/<branch>" answers $FAKE_GH_MAIN_SHA as the commit (404 when it is unset).
+# "api repos/R/contents/.factory/release-build.yaml?ref=<sha>" answers a file when $FAKE_GH_RECIPE=1, else 404.
+case "$1 $2" in
+  "api repos/"*"/git/ref/heads/"*)
+    if [ -z "$FAKE_GH_MAIN_SHA" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+    printf '{"ref":"refs/heads/x","object":{"sha":"%s","type":"commit"}}\n' "$FAKE_GH_MAIN_SHA"; exit 0 ;;
+  "api repos/"*"/contents/.factory/release-build.yaml?ref="*)
+    if [ "$FAKE_GH_RECIPE" != 1 ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+    echo '{"type":"file","path":".factory/release-build.yaml"}'; exit 0 ;;
+esac
 # Releases. State: $FAKE_GH_LOG.releases.json, a list of { id, tag_name, draft, prerelease, created_at, body, html_url, upload_url, name, target_commitish,
 # assets: [{ id, name, size, text? }] } (a test may write it first). Calls: "api --paginate repos/R/releases?per_page=100 --jq …" (one compact JSON line per
 # release, ordered by $FAKE_GH_RELEASE_ORDER: newest (default), oldest or reverse-id), "api repos/R/releases/<id>" (404 when unknown), "api -X POST repos/R/releases

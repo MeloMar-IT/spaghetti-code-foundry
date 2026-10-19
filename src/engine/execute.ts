@@ -12,6 +12,7 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { claimAfterResolve } from "./release-claim.js";
 import { readRunOutputs } from "./run-outputs.js";
 import { shortEnv,shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
@@ -136,6 +137,14 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     skills_digest: res.skills?.digest ?? "",
     visit,
   };
+  if (!scope.prefix) {
+    try {
+      const line = claimAfterResolve({ flow: engine.summary.flow, stepId: step.id, ok: res.ok, runDir: engine.summary.runDir, runId: engine.summary.runId, vars: scope.ctx.vars });
+      if (line) engine.log(line);
+    } catch (e) {
+      engine.log(`  release commit claim failed: ${(e as Error).message}`);
+    }
+  }
   const outputs = readRunOutputs(engine.summary.runDir, engine.log);
   if (outputs) engine.summary.outputs = { ...engine.summary.outputs, ...outputs };
   engine.save();
