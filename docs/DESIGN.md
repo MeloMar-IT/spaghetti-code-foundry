@@ -735,6 +735,17 @@ the evidence and nothing depends on it.
   A line that was written gives the evidence id and `seq`; a body that was not written (the stream has
   stopped) gets a random `tm:` id and no `evidence`. `RunRecorder.put` takes one time for both the append and
   the telemetry, so the two agree. `watcherRef` gives the watcher part of an event.
+- **Live events (#585, part 2 of 3 of #155).** Events with no evidence line are written by `emitLiveTelemetry(kind, name, fields)`
+  in `telemetry.ts`. It gets a new `tm:` id and the time now, returns at once when telemetry is off, and never throws.
+  Its `name` is typed against `TELEMETRY_NAMES[kind]`, so a wrong kind/name pair fails the build. Sources:
+  `delivery.push_attempted` (`recordStep`, from the push log), `tool.called` (`onTool` of `runClaude`, Claude Code
+  only, name only), `watcher.checked` / `watcher.failed` / `watcher.queued` (`Watcher`) and `pull_request.feedback`
+  (`Watcher.submit` for a PR). Each label (repository, branch, tool name, actor) is checked with its own schema and
+  left out when it fails, so one bad label does not drop the event.
+- **Push log.** The pre-push hook already appends `<branch>\t<remote url>` to `FACTORY_PUSH_LOG` before its checks, so a
+  refused push is logged too. `pushLogFor` returns that file also when telemetry is on and the protected-branch or
+  secret-scan hook is installed. Hook installation is unchanged on purpose: `core.hooksPath` replaces the repository's
+  own git hooks, so turning it on for telemetry would change every run in every repository.
 - **Privacy.** `privacy.ts` (`privateTelemetry`) runs three checks, all closed. `id` and `runId` must not
   change under `scrub` (`identity`). Each redactable label is checked on its own with the stored credentials
   and `help.sensitive_patterns`; a label that changes is removed and listed in `redacted`. The canonical line is
@@ -748,8 +759,8 @@ the evidence and nothing depends on it.
   `emitTelemetry` validates, checks and writes each event, and never throws. A drop is counted and each reason
   (`invalid`, `privacy`, `identity`, `write`) is logged once, in fixed words, through `DROP_WORDS`.
   `resetTelemetry` is for tests.
-- **Wiring.** `runFlow` and `resumeRun` call `configureTelemetry` right after the config is loaded; the server does
-  it after `readConfig()` and on every reload. With `telemetry.local: false` nothing is opened and no folder is made.
+- **Wiring.** `runFlow` and `resumeRun` call `configureTelemetry` right after the config is loaded; `scf watch` does
+  it right after `loadConfig()` (with its log line); the server does it after `readConfig()` and on every reload. With `telemetry.local: false` nothing is opened and no folder is made.
 - **OTLP exporter (#586, part 3 of #155).** `otlp.ts` sends the same events as OTLP/HTTP JSON logs. It is made
   only when `telemetry.otlp.enabled` is true and has an endpoint, and it gets only events that passed the schema
   and the privacy check, so it adds no new field. `otlpLogsRequest` maps each event to a log record: the time as

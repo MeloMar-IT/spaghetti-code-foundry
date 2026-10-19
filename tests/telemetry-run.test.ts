@@ -8,11 +8,13 @@ import { runFlow, type RunSummary } from "../src/engine/runner.js";
 import { parseEvidenceEventLine } from "../src/evidence/parse.js";
 import { parseFlow } from "../src/flow/load.js";
 import { TelemetryEventSchema, type TelemetryEvent } from "../src/telemetry/envelope.js";
-import { flushTelemetry, resetTelemetry } from "../src/telemetry/telemetry.js";
+import { configureTelemetry, flushTelemetry, resetTelemetry } from "../src/telemetry/telemetry.js";
+import { pushLogFor, type Engine, type Scope } from "../src/engine/execute.js";
+import { runClaude } from "../src/steps/claude.js";
 import { coverPack, writePack } from "./fixtures/policy-pack.js";
 
 const claudeBin = resolve("tests/fixtures/fake-claude.mjs");
-const cfg = (telemetry: object = {}, packs: string[] = []): Config => ConfigSchema.parse({ protected_branches: [], telemetry, policy: { packs } });
+const cfg = (telemetry: object = {}, packs: string[] = [], extra: object = {}): Config => ConfigSchema.parse({ protected_branches: [], telemetry, policy: { packs }, ...extra });
 let tmp: string;
 let home: string;
 let saved: string | undefined;
@@ -62,9 +64,10 @@ describe("telemetry of a run", () => {
   it("mirrors the evidence of a run, in order, with its ids", async () => {
     const s = await start(cfg());
     expect(s.status).toBe("succeeded");
-    const t = lines(s);
-    expect(t.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "step.completed", "step.started", "step.completed", "run.completed"]);
-    expect(t.every((e) => e.repository === "owner/name")).toBe(true);
+    const all = lines(s);
+    expect(all.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "tool.called", "step.profiled", "step.completed", "step.started", "step.completed", "run.completed"]);
+    expect(all.every((e) => e.repository === "owner/name")).toBe(true);
+    const t = all.filter((e) => e.evidence);
     const ev = evidence(s);
     expect(t).toHaveLength(ev.length);
     t.forEach((e, i) => {
@@ -85,8 +88,80 @@ describe("telemetry of a run", () => {
     const s = await start(cfg(), runId);
     expect(s.status).toBe("succeeded");
     const t = lines(s);
-    expect(t.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "step.completed", "step.started", "step.completed", "run.completed"]);
+    expect(t.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "tool.called", "step.profiled", "step.completed", "step.started", "step.completed", "run.completed"]);
     expect(t.every((e) => e.id.startsWith("tm:") && e.evidence === undefined)).toBe(true);
+  });
+
+  it("gives one tool.called with the tool's name only", async () => {
+    const s = await start(cfg());
+    flushTelemetry();
+    const raw = telemetryFiles().map((f) => readFileSync(join(home, "telemetry", f), "utf8")).join("");
+    const called = lines(s).filter((e) => e.name === "tool.called");
+    expect(called).toHaveLength(1);
+    expect(called[0]!.tool).toEqual({ name: "Write" });
+    expect(called[0]!.step?.id).toBe("write");
+    expect(called[0]!.repository).toBe("owner/name");
+    expect(called[0]!.id.startsWith("tm:")).toBe(true);
+    const line = raw.split("\n").find((l) => l.includes("tool.called"))!;
+    expect(line).not.toContain("out.txt");
+    expect(line).not.toContain("hello");
+  });
+
+  it("calls onTool for each tool use without onProgress", async () => {
+    const names: string[] = [];
+    await runClaude({ prompt: "WRITE a.txt x\nWRITE b.txt y", cwd: repo, claudeBin, logFile: join(tmp, "c.log"), onTool: (n) => names.push(n) });
+    expect(names).toEqual(["Write", "Write"]);
+  });
+
+  describe("push attempts", () => {
+    const PUSHES = (to: string): string => `
+name: push
+workspace: inplace
+vars: {github_repo: owner/name}
+steps:
+  - {id: push, type: shell, run: "${to}"}
+`;
+    const startPush = (to: string, extra: object) => {
+      git(tmp, "init", "--bare", "-q", "remote.git");
+      git(repo, "remote", "add", "origin", join(tmp, "remote.git"));
+      return runFlow(parseFlow(PUSHES(to)), { task: "t", repo, runsDir, claudeBin, config: cfg({}, [], extra) });
+    };
+
+    it("records a push to a bare remote with its branch and no repository", async () => {
+      const s = await startPush("git push -q origin HEAD:refs/heads/feature-x", { protected_branches: ["release/*"], secret_scan: false });
+      expect(s.status).toBe("succeeded");
+      const p = lines(s).filter((e) => e.name === "delivery.push_attempted");
+      expect(p).toHaveLength(1);
+      expect(p[0]!.branch).toBe("feature-x");
+      expect(p[0]!.repository).toBeUndefined();
+      expect(p[0]!.step?.id).toBe("push");
+      expect(p[0]!.runId).toBe(s.runId);
+      expect(p[0]!.id.startsWith("tm:")).toBe(true);
+    });
+
+    it("records a push the hook refused", async () => {
+      const s = await startPush("git push -q origin HEAD:refs/heads/main || true", { protected_branches: ["main"], secret_scan: false });
+      expect(() => execFileSync("git", ["-C", join(tmp, "remote.git"), "rev-parse", "--verify", "-q", "main"], { stdio: "ignore" })).toThrow();
+      const p = lines(s).filter((e) => e.name === "delivery.push_attempted");
+      expect(p).toHaveLength(1);
+      expect(p[0]!.branch).toBe("main");
+    });
+
+    it("records nothing without a hook", async () => {
+      const s = await startPush("git push -q origin HEAD:refs/heads/feature-x", { protected_branches: [], secret_scan: false });
+      expect(s.status).toBe("succeeded");
+      expect(lines(s).filter((e) => e.name === "delivery.push_attempted")).toHaveLength(0);
+    });
+  });
+
+  it("pushLogFor gives a file only when telemetry is on and the hook is installed anyway", () => {
+    const engine = (extra: object) => ({ policy: undefined, config: ConfigSchema.parse({ protected_branches: [], secret_scan: false, ...extra }), summary: { runDir: tmp } }) as unknown as Engine;
+    const scope = { prefix: "" } as Scope;
+    configureTelemetry(cfg());
+    expect(pushLogFor(engine({}), scope, { id: "a" }, 1)).toBeUndefined();
+    expect(pushLogFor(engine({ protected_branches: ["main"] }), scope, { id: "a" }, 1)).toBe(join(tmp, "pushes", "a-1.log"));
+    configureTelemetry(cfg({ local: false }));
+    expect(pushLogFor(engine({ protected_branches: ["main"] }), scope, { id: "a" }, 1)).toBeUndefined();
   });
 
   it("gives policy decisions the time of the evidence", async () => {

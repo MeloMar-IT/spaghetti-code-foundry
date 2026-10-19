@@ -15,7 +15,8 @@ import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsSt
 import { readRunOutputs } from "./run-outputs.js";
 import { shortEnv,shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
-import type { Actor, StepIdentity } from "../evidence/identity.js";
+import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } from "../evidence/identity.js";
+import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
 import { drainPushLog, pushLogFile, repositoryFact, type RunPolicy } from "./policy-hooks.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
@@ -141,7 +142,16 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   engine.save();
   engine.evidence?.stepEnded(rec);
   const identity = stepIdentity(step, scope.prefix, visit);
-  engine.policy?.pushes(identity, drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit)));
+  const pushed = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
+  engine.policy?.pushes(identity, pushed);
+  for (const p of pushed) {
+    emitLiveTelemetry("delivery", "delivery.push_attempted", {
+      runId: engine.summary.runId,
+      step: identity,
+      ...(p.repository && RepositorySchema.safeParse(p.repository).success ? { repository: p.repository } : {}),
+      ...(GitIdentitySchema.shape.branch.safeParse(p.branch).success ? { branch: p.branch } : {}),
+    });
+  }
   engine.policy?.at(
     "step.after",
     {
@@ -159,9 +169,14 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   return rec;
 }
 
-/** Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG); undefined when the folder can't be made. */
+/**
+ * Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG). Undefined without policy packs,
+ * unless telemetry is on and the protected-branch/secret-scan hook is installed anyway; the hook is never installed for this.
+ * Also undefined when the folder can't be made.
+ */
 export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">, visit: number): string | undefined {
-  if (!engine.policy) return undefined;
+  const hook = engine.config.protected_branches.length > 0 || engine.config.secret_scan;
+  if (!engine.policy && !(telemetryEnabled() && hook)) return undefined;
   const file = pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit);
   try {
     mkdirSync(dirname(file), { recursive: true });
