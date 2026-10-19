@@ -53,17 +53,17 @@ describe("the evidence stream of a run", () => {
   it("has the events of a run that succeeds, and refers to its logs without copying them", async () => {
     const s = await start(TWO, { source: "cli" });
     expect(s.status).toBe("succeeded");
-    expect(types(s)).toEqual(["run.created", "run.started", "step.started:write", "step.routed:write", "step.completed:write", "step.started:check", "step.completed:check", "run.completed"]);
+    expect(types(s)).toEqual(["run.created", "run.started", "step.started:write", "step.routed:write", "step.profiled:write", "step.completed:write", "step.started:check", "step.completed:check", "run.completed"]);
     inOrder(s);
     const all = events(s);
     expect(all[0]).toMatchObject({ type: "run.created", runId: s.runId, flow: { name: "two" }, by: { kind: "cli" } });
     expect(all[3]).toMatchObject({ step: { id: "write", visit: 1, type: "claude" }, model: { agent: "claude", provider: "anthropic" } });
-    for (const i of [4, 6]) {
+    for (const i of [5, 7]) {
       const e = all[i] as Extract<EvidenceEvent, { type: "step.completed" }>;
-      const log = readFileSync(s.history[i === 4 ? 0 : 1]!.logFile);
-      expect(e.artifacts).toEqual([{ kind: i === 4 ? "transcript" : "log", path: `logs/${i === 4 ? "001-write" : "002-check"}.log`, sha256: sha256Hex(log), bytes: log.length, required: true }]);
+      const log = readFileSync(s.history[i === 5 ? 0 : 1]!.logFile);
+      expect(e.artifacts).toEqual([{ kind: i === 5 ? "transcript" : "log", path: `logs/${i === 5 ? "001-write" : "002-check"}.log`, sha256: sha256Hex(log), bytes: log.length, required: true }]);
     }
-    expect(all[6]).toMatchObject({ exitCode: 0 });
+    expect(all[7]).toMatchObject({ exitCode: 0 });
     // nothing of the run's text is in the stream, and run.json has no evidence in it
     for (const word of ["sk-secret-in-task", "hello", "found", "WRITE", tmp]) expect(text(s)).not.toContain(word);
     const saved = readFileSync(join(s.runDir, "run.json"), "utf8");
@@ -205,16 +205,16 @@ steps:
   it("records a fallback to another model, a retry after an outage, and a refused tool", async () => {
     const s = await start("name: fb\nworkspace: inplace\nsteps:\n  - {id: a, type: claude, prompt: \"CLAUDE_LIMIT\\nSAY from codex\"}\n", { config: cfg({ router: { fallback: ["codex"] } }) });
     expect(s.status).toBe("succeeded");
-    expect(types(s)).toEqual(["run.created", "run.started", "step.started:a", "step.routed:a", "step.retried:a", "step.routed:a", "step.completed:a", "run.completed"]);
+    expect(types(s)).toEqual(["run.created", "run.started", "step.started:a", "step.routed:a", "step.profiled:a", "step.retried:a", "step.routed:a", "step.profiled:a", "step.completed:a", "run.completed"]);
     const all = events(s);
-    expect(all[4]).toMatchObject({ cause: "limit" });
-    expect(all[5]).toMatchObject({ model: { agent: "codex", provider: "openai", model: "default" }, fallbackFrom: { agent: "claude", provider: "anthropic" } });
-    expect(all[6]).toMatchObject({ model: { agent: "codex", provider: "openai", model: "default" } });
+    expect(all[5]).toMatchObject({ cause: "limit" });
+    expect(all[6]).toMatchObject({ model: { agent: "codex", provider: "openai", model: "default" }, fallbackFrom: { agent: "claude", provider: "anthropic" } });
+    expect(all[8]).toMatchObject({ model: { agent: "codex", provider: "openai", model: "default" } });
 
     const out = await start("name: un\nworkspace: inplace\nsteps:\n  - {id: a, type: claude, prompt: CLAUDE_UNREACHABLE}\n");
     expect(out.status).toBe("stopped");
-    expect(types(out)).toEqual(["run.created", "run.started", "step.started:a", "step.routed:a", "step.retried:a", "step.retried:a", "step.failed:a", "run.stopped"]);
-    expect(events(out)[4]).toMatchObject({ cause: "outage" });
+    expect(types(out)).toEqual(["run.created", "run.started", "step.started:a", "step.routed:a", "step.profiled:a", "step.retried:a", "step.profiled:a", "step.retried:a", "step.profiled:a", "step.failed:a", "run.stopped"]);
+    expect(events(out)[5]).toMatchObject({ cause: "outage" });
     expect(events(out).at(-1)).toMatchObject({ at: "a" });
 
     const d = await start("name: dn\nworkspace: inplace\nsteps:\n  - {id: a, type: claude, prompt: \"DENY Bash mkdir secret-folder\"}\n");

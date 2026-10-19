@@ -17,7 +17,7 @@ import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { TOOLS_DIR } from "../engine/guards.js";
 import { render } from "../engine/template.js";
-import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexMustIsolate, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
+import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
 import { discoverJavaHome, javaStandIn } from "./java-gate.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
 import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, type Target } from "./targets.js";
@@ -26,22 +26,18 @@ import { modelOf } from "../analyst/reference.js";
 import type { Config } from "../config.js";
 import { stepIdentity } from "../evidence/record.js";
 import { repositoryFact } from "../engine/policy-hooks.js";
+import type { ToolProfile } from "../tool-profile/schema.js";
+import type { SessionMapping } from "../tool-profile/session.js";
+import { agentSandboxed, claudeIsolated, codexIsolated, codexSandbox, gateTarget, isolationSkills, resolveStepProfile, type StepProfile, type StepProfiledFields } from "./tool-gate.js";
 
-/** Map Claude permission settings onto Codex's sandbox modes. */
-export function codexSandbox(step: ClaudeStep, scope: Scope, sandboxed: boolean): CodexSandbox {
-  const d = scope.flow.defaults;
-  const mode = step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE;
-  if (readOnlyStep(step, d)) return "read-only";
-  if (mode === "bypassPermissions" && !sandboxed) return "danger-full-access";
-  return "workspace-write";
-}
+export { codexSandbox, claudeIsolated, isolationSkills };
 
 type Iso = { who: CommitIdentity };
 
 /** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). */
 type Ran = StepResult & { final?: boolean };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills?: SkillPayload, again = false, draft = false, catalogue?: RunCatalogue, toolCheck?: { tools: SessionTools; check: ToolCheck }): Promise<Ran> {
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate): Promise<Ran> {
   // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
   const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
@@ -75,7 +71,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
       // the learnings folder is made here: the step may write the file but not move or remove its folder
       if (env.FACTORY_LEARNINGS_FILE) mkdirSync(dirname(env.FACTORY_LEARNINGS_FILE), { recursive: true });
       // a Codex read-only step keeps the workspace read-only: Codex's own sandbox is off, so the profile holds it
-      const readOnly = t.agent === "codex" && codexSandbox(step, scope, agentSandboxed(step, scope, engine)) === "read-only";
+      const readOnly = t.agent === "codex" && gate.mapping.codexSandbox === "read-only";
       // the exact program the step will start (also one under the home, like the Claude desktop app's): the profile opens it, and runClaude/runCodex get the same path
       bin = t.agent === "codex" ? (engine.codexBin ?? resolveCodexBin()) : (engine.claudeBin ?? (await resolveClaudeBinAsync()));
       profile = sandboxProfile(
@@ -91,18 +87,21 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, ...gate });
   } finally {
     if (ghDir) removeGhConfigDir(ghDir);
   }
 }
 
-/** Does the flow ask for the agent's own sandbox on this step? */
-function agentSandboxed(step: ClaudeStep, scope: Scope, engine: Engine): boolean {
-  return step.sandbox ?? scope.flow.sandbox.claude ?? engine.config.sandbox.claude ?? false;
+/** What the tool profile of the step decided for one try. */
+interface Gate {
+  /** The sandboxes the session runs with. */
+  mapping: SessionMapping;
+  /** The tool profile of the session (it decides whether Codex may push). `profile` below is the OS sandbox profile. */
+  toolProfile: ToolProfile;
 }
 
-interface WithOptions {
+interface WithOptions extends Gate {
   isolated: boolean;
   short: boolean;
   /** Held by the OS sandbox profile: the agent's own sandbox is off. */
@@ -135,16 +134,6 @@ export function sessionToResume(
   // --resume replays the transcript on any provider or model, so the resumed session still holds its block.
   const holds = id && typeof prev.skills_digest === "string" && prev.skills_digest ? prev.skills_digest : undefined;
   return { asked: true, id, prevAgent, ...(holds ? { holds } : {}) };
-}
-
-/** An agent session (Claude or Codex) runs without the personal setup when the server says so, on a user's run, and always when the run's lock holds skills. */
-export function claudeIsolated(isolateAgents: boolean, userRun: boolean, skills?: Pick<SkillPayload, "loaded" | "omitted">, reviewer = false): boolean {
-  return isolateAgents || userRun || reviewer || Boolean(skills && (skills.loaded.length || skills.omitted.length));
-}
-
-/** The skills that count for isolation: a skill left out for its tools still isolates the session. */
-export function isolationSkills(s: SkillPayload | undefined, check?: Pick<ToolCheck, "leftOut">): Pick<SkillPayload, "loaded" | "omitted"> | undefined {
-  return s && { loaded: s.loaded, omitted: [...s.omitted, ...(check?.leftOut.map((l) => l.key) ?? [])] };
 }
 
 /** May the session a step continues hold a skill this step was not given? The last digest a session recorded does not prove what its transcript holds, so any left-out skill means no resume. */
@@ -193,7 +182,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const local = LOCAL_KINDS.includes(t.provider.kind);
   const asked = agentSandboxed(step, scope, engine);
   // profiles may not nest: the outer profile holds a boxed step, so the agent's own sandbox is off
-  const sandboxed = boxed ? false : asked;
+  const sandboxed = boxed ? false : o.mapping.claudeSandbox;
   if (boxed && asked && t.agent === "claude") engine.log("    · Claude's own sandbox is off: the run's sandbox holds this step");
   const tuned = analystSet(step, flow, engine.config, scope.visits[step.id] ?? 1).effort;
   if (tuned && tuned !== (step.effort ?? d.effort)) engine.log(`    · effort ${tuned}: set by the analyst`);
@@ -220,7 +209,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     const seen = (n: string) => (n in env ? env[n] : short ? undefined : process.env[n]);
     const personal = personalCodexDir({ codexHome: seen("CODEX_HOME"), home: seen("HOME") });
     // 1. mode: a boxed step already has the run's folder. Runs the server starts are always isolated; a block from the run's lock isolates the session even with isolate_agents off; a draft review block does not.
-    if (!boxed) mode = codexIsolationMode({ isolate: codexMustIsolate({ source: engine.summary.source, isolate: claudeIsolated(engine.config.isolate_agents, isolated, locked) }), local, hasKey: Boolean(seen("CODEX_API_KEY")) });
+    if (!boxed) mode = codexIsolationMode({ isolate: codexIsolated({ source: engine.summary.source, isolateAgents: engine.config.isolate_agents, isolated, skills: locked }), local, hasKey: Boolean(seen("CODEX_API_KEY")) });
     // 2. the clean Codex folder: never the personal one when it cannot be made
     if (boxed || mode === "private" || mode === "login") {
       const made = prepareCleanCodex({
@@ -232,11 +221,9 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
         isolated,
         boxed,
         mode,
-        sandbox: boxed ? "danger-full-access" : codexSandbox(step, scope, sandboxed),
+        sandbox: boxed ? "danger-full-access" : o.mapping.codexSandbox,
         personal,
-        permissionMode: step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE,
-        allowedTools: step.allowed_tools ?? d.allowed_tools ?? [],
-        sandboxed,
+        profile: o.toolProfile,
         repo: ctx.vars.github_repo,
       });
       if ("refused" in made) {
@@ -293,7 +280,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
         localProvider: local ? t.provider.kind : undefined,
         localBaseUrl: local && t.provider.base_url !== builtinUrl ? t.provider.base_url : undefined,
         sandboxProfile: profile,
-        sandbox: boxed ? "danger-full-access" : codexSandbox(step, scope, sandboxed),
+        sandbox: boxed ? "danger-full-access" : o.mapping.codexSandbox,
         reviewer: step.skill_role === "reviewer",
         agentNote: mode !== undefined && mode !== "off",
         // unset (not isolated): a reviewer skips the personal config as before; a clean folder never needs the flag
@@ -424,6 +411,14 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const repository = repositoryFact(scope.ctx.vars);
   // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: observe only).
   engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
+  // One tool profile per step: the same for Claude and Codex, and for every try. A declared profile the step cannot stay within is refused before an agent is picked.
+  const resolved: StepProfile | { refused: string; event: StepProfiledFields } = resolveStepProfile(step, scope, engine, { boxed, isolated: iso !== undefined });
+  if ("refused" in resolved) {
+    engine.evidence?.stepProfiled(identity, resolved.event);
+    engine.log(`    ! ${resolved.refused}`);
+    engine.accessFailed = true;
+    return { ok: false, output: resolved.refused, error: resolved.refused };
+  }
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
     const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
@@ -434,12 +429,20 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     }
     // Before every session that can write, retries and fallbacks included, with the sandbox the target really gets.
     if (!readOnlyStep(step, scope.flow.defaults)) {
-      const sandboxed = boxed || (target.agent === "codex" ? codexSandbox(step, scope, agentSandboxed(step, scope, engine)) !== "danger-full-access" : agentSandboxed(step, scope, engine));
+      const sandboxed = boxed || (target.agent === "codex" ? resolved.mapping.codexSandbox !== "danger-full-access" : resolved.mapping.claudeSandbox);
       engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
     }
     if (!tried.has(target.label)) engine.evidence?.stepRouted(identity, target.label, stepOverride(scope.flow.name, step.id).effort ?? step.effort ?? scope.flow.defaults.effort, fallbackFrom);
     tried.add(target.label);
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools });
+    // Every try records how well this agent holds the profile; a declared profile it cannot hold is refused here, with no retry or fallback.
+    const gated = gateTarget(target, resolved, { step, engine, boxed, isolated: iso !== undefined, skills: session.payload, check: session.tools, draft: Boolean(session.draft), repo: scope.ctx.vars.github_repo });
+    engine.evidence?.stepProfiled(identity, gated.event);
+    engine.log(`    ${gated.refused ? "!" : "·"} ${gated.line}`);
+    if (gated.refused) {
+      engine.accessFailed = true;
+      return { ok: false, output: gated.refused, error: gated.refused, ...tries() };
+    }
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile });
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.

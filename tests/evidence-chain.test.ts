@@ -96,18 +96,18 @@ describe("the hash chain", () => {
     const other = stream(); // a restart: the chain goes on from the hash on disk
     other.append({ type: "step.failed", step: STEP, exitCode: -1, durationMs: 1500, artifacts: [artifact] }, "2026-01-31T12:00:03.000Z");
     const last = other.append({ type: "run.failed", step: STEP }, "2026-01-31T12:00:03.001Z");
-    // the golden vectors are version 1 lines (they still read, see below): the writer's lines are the same with version 2
+    // the golden vectors are version 1 lines (they still read, see below): the writer's lines are the same with version 3
     const written = readFileSync(file(), "utf8").split("\n").slice(0, -1);
     expect(written).toHaveLength(LINES.length);
     written.forEach((line, i) => {
       const { hash, ...rest } = JSON.parse(line) as Record<string, unknown>;
       expect(line).toBe(canonicalJson({ ...rest, hash }));
-      expect(rest.version).toBe(2);
+      expect(rest.version).toBe(3);
       expect(hash).toBe(eventHash(rest));
       const old = JSON.parse(LINES[i]!) as Record<string, unknown>;
       const { hash: _h, prevHash: _p, ...oldRest } = old;
       const { prevHash: _q, ...newRest } = rest;
-      expect(newRest).toEqual({ ...oldRest, version: 2 });
+      expect(newRest).toEqual({ ...oldRest, version: 3 });
     });
     expect(last?.hash).toBe((JSON.parse(written[3]!) as { hash: string }).hash);
     expect(readEvidenceChain(written, "run-1")).toMatchObject({ ok: true, terminalHash: last?.hash });
@@ -141,7 +141,7 @@ describe("the hash chain", () => {
       ["an empty line", [LINES[0]!, "", ...LINES.slice(1)], 2, "not-json"],
       ["an array", ["[]"], 1, "not-json"],
       ["an unknown field", swap(0, '"seq":0', '"secret":"x","seq":0'), 1, "invalid"],
-      ["a newer version", swap(0, '"version":1', '"version":3'), 1, "unsupported-version"],
+      ["a newer version", swap(0, '"version":1', '"version":4'), 1, "unsupported-version"],
       ["another run", chained([{ type: "run.started" }], "run-2"), 1, "order"],
       ["no hashes", ['{"id":"ev-000000","runId":"run-1","seq":0,"time":"2026-01-31T12:00:00.000Z","type":"run.started","version":1}'], 1, "unchained"],
     ];

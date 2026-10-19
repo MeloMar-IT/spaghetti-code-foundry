@@ -861,6 +861,7 @@ a **What happens next** block with **You** as who and the approval message as th
   | Not isolated | `isolate_agents: false` in a CLI run | Used | The login stays |
 
   The clean folder is `<run folder>/home/.codex`, made 0700, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. Session history stays, so a resumed session still works. No Codex session starts with an MCP server, so a server in your personal config is never reached. A step never gets your personal Codex folder when it is isolated. Pushing is blocked: a Foundry command rule forbids `git push`, and Codex's own sandbox has no network. A step with `bypassPermissions` and no sandbox is refused, because it could push. A login kept in the keychain, a linked login file or a missing login refuses the step, with a message that says how to sign in with a file. A refreshed token is written back to your personal file only when that file has not changed meanwhile. `OPENAI_API_KEY` alone does not select the key mode. If the clean folder cannot be made, the step is refused; it never falls back to your personal folder. In a CLI run with `isolate_agents: false`, nothing changes: no note, no "Codex:" line. A step held by the OS sandbox gets no clean folder of its own; its log says that git push is blocked in that session.
+- **The `tools:` line.** Each try of an agent step writes one line, for example `· tools: generated profile 3f2a9c1b8d0e on Codex: partial — Codex cannot hold … (recorded only)`. The twelve characters are the start of the profile's hash; the line never shows its id or rules. `enforced` means the agent holds the step's tool profile in full. `partial` means it cannot hold all of it: the line names what it cannot hold, such as Git and GitHub commands run through the shell, and for Codex the paths and tools it cannot limit one by one. Today's flows get `partial` where it applies, and the line only records it: nothing changes. `refused` means the step does not start (its line starts with `!`). That happens only with a tool profile the run was started with, when the step's settings allow more than the profile, or the agent cannot hold it. A refused step is not retried and no other agent takes it.
 - **Retry from step…** re-runs from any earlier step.
 - **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
@@ -1091,15 +1092,19 @@ can be found.
 
 - **Run events:** queued, created, started, stopped (also: waiting for approval), resumed,
   cancelled, failed, completed.
-- **Step events:** started, given to a model (and the model before it, after a fallback), tried
-  again (after an outage or a usage limit), a tool that was refused, approved or rejected, failed,
-  completed.
+- **Step events:** started, given to a model (and the model before it, after a fallback), its tool
+  profile worked out for a try (`step.profiled`, from version 3: the profile's id, version and hash,
+  and what the agent cannot hold, never its rules), tried again (after an outage or a usage limit),
+  a tool that was refused, approved or rejected, failed, completed.
 - **What is in it:** ids, names, times, who asked (an account id, the command line, a watcher or
   the Foundry), the model, the exit code, and for every finished step the path, SHA-256 and size
   of its log or transcript. **What is not:** the task, prompts, outputs, error texts, notes,
   tokens or keys. Logs are named, not copied.
 - A shell step whose id has the word `test` or `tests` (for example `run_tests`) is recorded as a
   test run, passed or failed.
+- **Older builds.** Evidence version 3 adds `step.profiled`. Version 2 lines are read as before. A
+  Foundry from before this change refuses the evidence of a run that has version 3 lines, so it
+  cannot verify that run.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run

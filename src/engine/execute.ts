@@ -64,6 +64,8 @@ export interface Engine {
   logsDir: string;
   claudeBin?: string;
   codexBin?: string;
+  /** The declared tool profile saved with the run (`null`: it could not be read). Undefined: generated profiles. */
+  toolProfile?: unknown;
   signal?: AbortSignal;
   /** Set once a budget is used up and a free fallback exists: all agent steps run there. */
   budgetFallback?: Target;

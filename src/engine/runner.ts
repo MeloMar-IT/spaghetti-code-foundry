@@ -42,6 +42,7 @@ import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { runPolicy, type RunPolicy } from "./policy-hooks.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
+import { snapshotToolProfile } from "../tool-profile/session.js";
 import { configureTelemetry } from "../telemetry/telemetry.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
@@ -80,6 +81,8 @@ export interface RunOptions extends CommonOptions {
   source?: string;
   /** The id of the account that started the run; saved in run.json. */
   owner?: string;
+  /** A declared tool profile for every agent step: checked and copied when the run starts, then saved in run.json (see snapshotToolProfile). */
+  toolProfile?: unknown;
 }
 
 export interface ResumeOptions extends CommonOptions {
@@ -142,6 +145,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     pid: process.pid,
     ...(opts.source ? { source: opts.source } : {}),
     ...(owner ? { owner } : {}),
+    // never the raw value: JSON would drop a function and the run would quietly get the generated profile
+    ...(opts.toolProfile !== undefined ? { toolProfile: snapshotToolProfile(opts.toolProfile) } : {}),
   };
   claimRunStart(opts.runsDir, () => {
     mkdirSync(join(runDir, "logs"), { recursive: true });
@@ -297,6 +302,7 @@ async function drive(
     logsDir: join(summary.runDir, "logs"),
     claudeBin: opts.claudeBin,
     codexBin: opts.codexBin,
+    toolProfile: summary.toolProfile,
     signal: opts.signal,
     log,
     save,

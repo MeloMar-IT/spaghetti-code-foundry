@@ -57,6 +57,6 @@ steps:
     const log = readFileSync(liveLogFile(s.runDir), "utf8");
     expect(log).not.toContain("agent codex");
     expect(log).not.toMatch(/fall(ing)? ?back/i);
-    expect(log).not.toContain("Codex:");
+    expect(log.replace(/^.*· tools: .*$/gm, "")).not.toContain("Codex:");
   });
 });

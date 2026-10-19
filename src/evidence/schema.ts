@@ -4,6 +4,10 @@ import {
   ReasonCodeSchema, RepositorySchema, RunIdSchema, Sha256Schema, StepIdentitySchema, StepIdSchema, TestResultSchema, TimeSchema, ToolIdentitySchema,
 } from "./identity.js";
 import { PolicyDecisionSchema } from "../policy/schema.js";
+import { EXCESS_FIELDS } from "../tool-profile/resolve.js";
+import { OPERATIONS, TOOL_KINDS, ToolProfileRefSchema } from "../tool-profile/schema.js";
+import { FIT_OUTCOMES, FIT_RESTRICTIONS, HELD_BY, PROFILE_SOURCES, UNREADABLE } from "../tool-profile/session.js";
+import { AGENTS } from "../flow/schema.js";
 import { EVIDENCE_EVENT_VERSION, EVIDENCE_EVENTS_FILE, RUN_EVIDENCE_VERSION } from "./version.js";
 
 /**
@@ -87,6 +91,22 @@ const EventUnion = z.discriminatedUnion("type", [
   event("step.started", { step }),
   /** The step was given to a model. `fallbackFrom` is the model that was tried first, when this one took over after a limit. */
   event("step.routed", { step, model: ModelIdentitySchema, fallbackFrom: ModelIdentitySchema.optional() }),
+  /**
+   * The tool profile of the session of one try, and how well the agent holds it. `agent` is absent when the profile was
+   * refused before a model was picked; `profile` is absent when a declared profile could not be read (`unreadable`).
+   */
+  event("step.profiled", {
+    step,
+    agent: z.enum(AGENTS).optional(),
+    source: z.enum(PROFILE_SOURCES),
+    profile: ToolProfileRefSchema.optional(),
+    unreadable: z.enum(UNREADABLE).optional(),
+    outcome: z.enum(FIT_OUTCOMES),
+    gaps: z.array(z.object({ kind: z.enum(TOOL_KINDS), restriction: z.enum(FIT_RESTRICTIONS), heldBy: z.enum(HELD_BY).optional() }).strict()).max(100),
+    excess: z.array(z.object({ kind: z.enum(TOOL_KINDS), operation: z.string().max(40), field: z.enum(EXCESS_FIELDS) }).strict()).max(200),
+    unmappedRules: z.number().int().min(0),
+    personalSetup: z.boolean(),
+  }),
   /** The same visit is tried again: "outage" after the service could not be reached, "limit" on another model after a usage limit. */
   event("step.retried", { step, cause: z.enum(["outage", "limit"]) }),
   /** Something in the step was refused (see DenialSchema). The step itself may still go on; its end is its own event. */
@@ -123,6 +143,19 @@ export const EvidenceEventSchema = EventUnion.superRefine((e, ctx) => {
     // access to the repository is also asked for the run itself, before any step (the workspace is made)
     if (!runWide && !e.step && e.decision.boundary !== "repository.access") ctx.addIssue({ code: "custom", path: ["step"], message: `is missing: the boundary ${e.decision.boundary} is about a step` });
   }
+  if (e.type === "step.profiled") {
+    const add = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });
+    if (!e.agent && e.outcome !== "refused") add("outcome", 'must be "refused" without an agent');
+    if (e.source === "generated" && (e.outcome === "refused" || e.excess.length > 0 || !e.profile)) add("source", "a generated profile is never refused, has no excess and has a profile");
+    if ((e.profile === undefined) !== (e.unreadable !== undefined)) add("unreadable", "is set exactly when the profile is absent");
+    if (e.profile === undefined && (e.source !== "declared" || e.outcome !== "refused")) add("profile", "can only be absent for a declared profile that was refused");
+    e.excess.forEach((x, i) => {
+      if (!(OPERATIONS[x.kind] as readonly string[]).includes(x.operation)) ctx.addIssue({ code: "custom", path: ["excess", i, "operation"], message: `is not an operation of ${x.kind}` });
+    });
+    e.gaps.forEach((g, i) => {
+      if (g.heldBy && e.agent !== "codex") ctx.addIssue({ code: "custom", path: ["gaps", i, "heldBy"], message: "only Codex holds a gap with its sandbox" });
+    });
+  }
   if (e.type === "step.approved" && e.step.type !== "approval") ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be approved" });
   if (e.type === "step.denied" && e.denial.kind === "approval" && e.step.type !== "approval") {
     ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be rejected" });
@@ -132,7 +165,7 @@ export type EvidenceEvent = z.infer<typeof EvidenceEventSchema>;
 export type EvidenceEventType = EvidenceEvent["type"];
 
 export const RUN_EVENT_TYPES = ["run.created", "run.queued", "run.started", "run.stopped", "run.resumed", "run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
-export const STEP_EVENT_TYPES = ["step.started", "step.routed", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"] as const satisfies readonly EvidenceEventType[];
+export const STEP_EVENT_TYPES = ["step.started", "step.routed", "step.profiled", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"] as const satisfies readonly EvidenceEventType[];
 export const POLICY_EVENT_TYPES = ["policy.decided"] as const satisfies readonly EvidenceEventType[];
 export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES];
 /** The events after which a run is over; exactly one of them ends a finished stream. */

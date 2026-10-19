@@ -164,6 +164,6 @@ describe("locked skills in Codex sessions", () => {
     expect(x.output).not.toContain("<foundry-skills count=");
     expect(x.skills).toBeUndefined();
     expect(x.output).not.toContain("--ignore-user-config");
-    expect(log(s)).not.toContain("Codex:");
+    expect(log(s).replace(/^.*· tools: .*$/gm, "")).not.toContain("Codex:");
   });
 });

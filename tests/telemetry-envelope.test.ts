@@ -30,6 +30,7 @@ const SAMPLES: Record<EvidenceEventType, unknown> = {
   "run.completed": { type: "run.completed", final: { commit, branch: "feat" } },
   "step.started": { type: "step.started", step },
   "step.routed": { type: "step.routed", step, model, fallbackFrom: { ...model, model: "opus" } },
+  "step.profiled": { type: "step.profiled", step, agent: "claude", source: "generated", profile: { id: "generated.flow-settings", version: "1", sha256: "a".repeat(64) }, outcome: "enforced", gaps: [], excess: [], unmappedRules: 0, personalSetup: false },
   "step.retried": { type: "step.retried", step, cause: "limit" },
   "step.denied": { type: "step.denied", step, denial: { kind: "tool", tool: { name: "Bash" } } },
   "step.approved": { type: "step.approved", step: approval, by },
@@ -117,6 +118,12 @@ describe("telemetry envelope", () => {
     expect(d).toMatchObject({ cause: "tool", tool: { name: "Bash" }, outcome: "denied" });
     const [a] = telemetryFromEvidence("r1", { type: "step.denied", step: approval, denial: { kind: "approval", by } }, undefined, TIME);
     expect(a).toMatchObject({ cause: "approval", actor: by });
+    const [ok] = made("step.profiled");
+    expect(ok).toMatchObject({ kind: "step", name: "step.profiled", outcome: "ok" });
+    expect(ok!.cause).toBeUndefined();
+    const refused = telemetryFromEvidence("r1", { ...(SAMPLES["step.profiled"] as object), outcome: "refused" } as EvidenceEventBody, undefined, TIME);
+    expect(refused[0]).toMatchObject({ name: "step.profiled", outcome: "denied", cause: "tool" });
+    TelemetryEventSchema.parse(refused[0]);
   });
 
   it("puts the repository argument on every event", () => {
