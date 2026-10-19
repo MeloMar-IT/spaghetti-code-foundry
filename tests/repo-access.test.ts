@@ -11,7 +11,7 @@ import { listBlocks } from "../src/flow/blocks.js";
 import { claudeBin, fakeGithub, flowPath } from "./helpers/fake-github.js";
 import { remoteTools, runsTestsOrBuild, scanRepoAccess, scanSteps, usesRepo } from "./helpers/repo-access-scan.js";
 
-const TOOLS = ["create-split", "daily-branch", "post-questions"];
+const TOOLS = ["create-split", "daily-branch", "post-questions", "release-upload"];
 
 describe("repo-access scan helpers", () => {
   it("usesRepo sees gh, the remote and the remote tools", () => {
@@ -175,6 +175,7 @@ describe("clone steps", { timeout: 60_000 }, () => {
     ["issue-gitflow", "feature_branch", "."],
     ["daily-pr", "clone", "."],
     ["release-daily", "clone", "."],
+    ["release-build", "clone", "."],
     ["epic-questions", "clone", "."],
     ["refine-brief", "clone", "repo"],
     ["refine-round", "clone", "repo"],

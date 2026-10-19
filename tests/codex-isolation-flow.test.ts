@@ -193,7 +193,7 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(a.output).not.toContain("mcp_servers={}");
     expect(a.output).toContain(`codex_home=${personal} config=read mcp=canary`);
     expect(a.output).toContain("GH_TOKEN=ghp_canary");
-    expect(log(s)).not.toContain("Codex:");
+    expect(log(s).replace(/^.*· tools: .*$/gm, "")).not.toContain("Codex:");
   });
 
   it("isolate_agents: false does not switch isolation off on a run the server started", async () => {
@@ -238,7 +238,7 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(a.output).not.toContain("<instructions>");
     expect(a.output).not.toContain(CODEX_AGENT_NOTE);
     expect(a.codexHome).toMatch(/^personal:/);
-    expect(log(s)).not.toContain("Codex:");
+    expect(log(s).replace(/^.*· tools: .*$/gm, "")).not.toContain("Codex:");
   });
 
   it("a reviewer with a loaded review block is isolated even when isolate_agents is false", async () => {

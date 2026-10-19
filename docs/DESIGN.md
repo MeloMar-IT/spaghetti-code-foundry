@@ -233,8 +233,9 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
 - **`EvidenceEvent`**: one line of `runs/<run-id>/evidence.jsonl`. Every event has `version`, `id`,
   `seq` (its place in the stream, from 0), `runId`, `time` and a `type`: eight for the run
   (`run.created`, `run.queued`, `run.started`, `run.stopped`, `run.resumed`, `run.cancelled`,
-  `run.failed`, `run.completed`) and seven for a step (`step.started`, `step.routed`, `step.retried`,
-  `step.denied`, `step.approved`, `step.failed`, `step.completed`) and, from version 2, `policy.decided`
+  `run.failed`, `run.completed`) and eight for a step (`step.started`, `step.routed`, `step.retried`,
+  `step.denied`, `step.approved`, `step.failed`, `step.completed`), with `step.profiled` (the tool
+  profile of one try, see "Tool profiles") from version 3, and `policy.decided` from version 2
   (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"). `prevHash` and `hash` come
   together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
@@ -313,10 +314,17 @@ packs run in observe mode only.
   repository's checkout; `agents/run.ts` asks `agent.write` before a write-capable agent step.
   Built-in and custom flows take the same path.
 - **Pushes.** `push` is asked once for each push a step makes. The pre-push hook (`guards.ts`) appends
-  `<branch>\t<remote url>` to the file in `FACTORY_PUSH_LOG`, which the step gets when packs are
-  configured. `drainPushLog` reads and removes the file when the step ends, and reads only a plain
-  file of at most 64 KiB and 100 pushes. The repository of a push is set only when its remote is a
-  GitHub address. The hook never fails a push.
+  `<branch>\t<remote url>\t<secrets found>\t<identity>` to the file in `FACTORY_PUSH_LOG`. The count is
+  empty when the scan did not finish, and the identity is `1` or `0` (whether git can find a committer
+  identity). Two-field lines from older hooks still read. `drainPushLog` reads and removes the file when
+  the step ends, and reads only a plain file of at most 64 KiB and 100 pushes. A count that is not 1 to
+  9 digits and an identity that is not `1` or `0` are left out. The repository of a push is set only
+  when its remote is a GitHub address. The hook never fails a push. The count and the identity are
+  observations only: a step can write to this file too, so they never drive a guard.
+- **The push gap.** The hook is added only when something needs it: a protected branch, the secret scan,
+  or configured packs (`protectedBranchEnv(…, observe)`). A run with both guards off and no packs keeps
+  the hook out, so its pushes are not observed. `RunPolicy.observesPushes` says whether the hook is there,
+  and the baseline's `push` rules are asked only then.
 - **Facts.** `baseFacts` gives the run's repository, flow, workspace and owner; each boundary adds its
   own. `policyFacts` keeps only the values that pass their schema in `FactsSchema`; a value that does not
   is left out, never changed. The repository is lower case, and the placeholder `owner/repo` is no fact.
@@ -324,16 +332,30 @@ packs run in observe mode only.
   `O_NONBLOCK`, only as a plain file of at most 1 MiB. A pack that is missing, linked, not a file,
   unreadable, invalid, for another policy id, or in `enforce` mode becomes a `LoadedPack` with a
   `policy.unavailable` or `policy.invalid` problem. Its detail never names a path or file content.
-- **Decisions.** `RunPolicy.at` asks every pack, in order, and returns the decisions. Each one is logged
-  as `· policy <id> <version> · <boundary>: <outcome> (<reason>)` and recorded as a `policy.decided`
-  event (`RunRecorder.policyDecided`). A pack that cannot be evaluated is recorded as `policy.invalid`
+- **Layers and precedence.** `src/policy/compose.ts` (pure) gives the layers `mandatory` (the baseline and
+  the admin's `policy.mandatory` overlays), `repository` (`policy.repositories` for the run's
+  `owner/name`, matched in lower case) and `optional` (`policy.packs`). `layeredPackIds` keeps an id only in
+  the first layer that names it. `combineDecisions` picks the most restrictive outcome; a tie goes to the
+  higher layer, and a tie inside one layer to the first pack. So a repository pack cannot relax a
+  baseline deny, and the answer does not depend on the order of the lists.
+- **Baseline.** `src/policy/baseline.ts` builds `foundry.baseline`. The Foundry owns it: its version is
+  the package version, and admins can only add overlays. It is always in the list of packs, so a run
+  always asks it. The file's only read is `package.json`, once, for that version; it is the one file
+  read in `src/policy/`. A bad or missing version becomes `unknown`.
+- **Decisions.** `RunPolicy.at` asks every pack, in layer order, and returns `{decisions, combined}`, where
+  `combined` is the winning decision. Each one is logged
+  as `· policy <id> <version> [<layer>] · <boundary>: <outcome> (<reason>)`, with ` · wins` on the combined
+  decision when there is more than one pack, and recorded as a `policy.decided` event
+  (`RunRecorder.policyDecided`). A pack that cannot be evaluated is recorded as `policy.invalid`
   with `unknown` as version, and the log says so. A decision that cannot be recorded either marks the
   evidence incomplete (`RunRecorder.incomplete`). No method throws into the engine.
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
-- **Off by default.** With `policy.packs` empty, `runPolicy` returns nothing: no file is read, no hook
-  is added for the pushes, and the engine's `policy` is absent.
+- **Baseline always asked, files only when configured.** With no packs in any list, `runPolicy` still
+  returns a `RunPolicy` that asks the baseline at every boundary. It reads no file (`loadPolicyPacks` runs
+  only for listed ids). Without packs the hook is added only for a guard, so pushes are observed only
+  when a guard or a pack needs the hook. The engine's `policy` is set for every run it starts (`execute.ts`).
 
 ### Context bundle
 
@@ -446,8 +468,8 @@ hashes (`hashContextSources`). **It is not called by the engine yet**: giving a 
 ### Tool profiles
 
 `src/tool-profile/` defines what an agent session may do with which tools, and what an agent program
-can be made to hold of that (#146). Nothing starts an agent with a profile yet; the stories after it
-do. The folder has no side effects: schemas, version numbers and pure functions.
+can be made to hold of that (#146). Every agent step works out one profile before an agent starts
+(#148; see "Run time" below). The folder has no side effects: schemas, version numbers and pure functions.
 
 - **`ToolProfile`**: `version` (of the format), `profile` (`id` and `version` of the contents) and
   `grants`. It names no agent program. It is closed: a kind, an operation or a target that no grant
@@ -479,7 +501,7 @@ do. The folder has no side effects: schemas, version numbers and pure functions.
 - **Hash and reference.** `normalizeToolProfile` gives the one canonical form (grants, operations
   and targets in a fixed order). `toolProfileSha256` is the SHA-256 of its canonical JSON, so the
   order a profile was written in does not count. `toolProfileRef` gives `id`, `version` and `sha256`:
-  what a run keeps of the profile it resolved. Nothing writes it yet.
+  what a run keeps of the profile it resolved: every `step.profiled` event carries it.
 - **Least privilege.** `toolProfileExcess(a, b)` lists every point where `a` allows more than `b`;
   `isAtMostAsPermissive` is true when there is none. `resolveToolProfile(identity, profiles)` gives
   what all profiles allow under the strictest condition of any: an operation stays only when every
@@ -512,6 +534,30 @@ do. The folder has no side effects: schemas, version numbers and pure functions.
 - **Versions and errors.** Each contract has its own number in `version.ts`. A record with another
   version is refused with one sentence. A `ToolProfileSchemaError` has a code and the fields that
   are wrong, and never repeats a value of the record.
+- **Run time (#148).** An agent step resolves its profile once, before an agent is picked
+  (`resolveStepProfile` in `src/agents/tool-gate.ts`), from the settings the step gets: the same
+  inputs as `legacyToolProfile`. The profile is then checked again for each try (`gateTarget`), so
+  a retry or a fallback gets the same profile. A profile passed as `RunOptions.toolProfile` is read
+  with `declaredToolProfile`, copied with `snapshotToolProfile` and saved in `run.json` as
+  `toolProfile`, which resume reads. Like `owner`, it is trusted server state: a changed or deleted
+  saved profile is not detected, but each `step.profiled` event carries its hash, so a change shows
+  in the evidence. A saved profile that is no longer valid is refused on every step.
+- **Refusal and partial.** A declared profile is refused before an agent is picked when the
+  settings allow more than it (`toolSession`, and again after mapping with `mappedExcess`). Each try
+  then asks `adapterFit` whether the agent holds it: rules with no meaning in a profile, data classes
+  below `restricted`, controls the agent cannot hold, and the personal setup a session would load
+  all refuse. The settings cannot say the data class or the network of a command, so those are not
+  checked against them. A Codex shell command under its own workspace sandbox with no network is
+  `held` by that sandbox, not a gap; that relies on the network assumption of #147. A generated
+  profile is never refused: what the agent cannot hold is `partial` and only recorded.
+- **The mapping only narrows.** `mapSessionSettings` gives the sandboxes a session really runs
+  with. Claude's sandbox is never switched on, because it would auto-allow Bash; Codex's sandbox is
+  only made stricter, never wider. A generated profile maps to today's settings unchanged.
+- **Diagnostics.** A refusal or a log line uses only fixed words, error codes, counts and the first
+  12 characters of the hash. Profile ids, versions, rules, Zod messages and exception texts are never
+  echoed, so a profile cannot make a line look like a limit, an outage or a sign-in error to the
+  classifiers in `targets.ts`.
+
 ### The evidence stream
 
 Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
@@ -704,8 +750,36 @@ the evidence and nothing depends on it.
   `resetTelemetry` is for tests.
 - **Wiring.** `runFlow` and `resumeRun` call `configureTelemetry` right after the config is loaded; the server does
   it after `readConfig()` and on every reload. With `telemetry.local: false` nothing is opened and no folder is made.
-- **Not yet.** No exporter, no Settings control (see `settings/exceptions.ts`), and no exit paths; those come
-  with parts 2 and 3 of #155.
+- **OTLP exporter (#586, part 3 of #155).** `otlp.ts` sends the same events as OTLP/HTTP JSON logs. It is made
+  only when `telemetry.otlp.enabled` is true and has an endpoint, and it gets only events that passed the schema
+  and the privacy check, so it adds no new field. `otlpLogsRequest` maps each event to a log record: the time as
+  a string of nanoseconds, `traceId` = the first 32 hex characters of SHA-256 of the run id (the same for every
+  event of a run), `scf.*` attributes flattened from the event, and WARN for `failed` or `denied`.
+- **Why no SDK.** The OpenTelemetry SDK would add dependencies, its own timers and process listeners, and a
+  global state that the hub cannot control. A request of a few lines of JSON with `fetch` is enough for the
+  one signal we send, and every rule below stays in our code and our tests.
+- **Exporter.** `OtlpExporter` keeps a queue of at most `OTLP_QUEUE_MAX` (1000) events; when it is full the
+  oldest is dropped and counted as `failed`. A batch is sent at `OTLP_BATCH` (50) events, or by an unref'd
+  2 s timer for a short batch. Flushes are serialized: one request at a time, each with `redirect: "error"`,
+  `content-type: application/json` and an `AbortSignal.timeout(timeout_ms)`. There is no retry. Each response
+  body is released, and a request that throws or returns a non-2xx status counts as `failed`. The exporter never
+  throws and holds no process listener.
+- **Log lines.** The first failure of a period logs one `!` line; the first success after it logs one `·` line.
+  The text is fixed (`OTLP_WORDS`), so no value appears in it.
+- **Hub.** `telemetry.ts` keeps one exporter for the current config. It is made on the first event. It is
+  kept while the endpoint, the timeout and the enabled state are unchanged, and it is retired (closed, not
+  dropped) when one of them changes. `fetch` is injected through `configureTelemetry(config, { fetch })`, and
+  the hub counts `exported` and `failed` in `telemetryStats()`. A callback of an exporter from before a
+  `resetTelemetry()` does nothing, so old requests cannot change the new counts or the log.
+- **Shutdown.** `closeTelemetry(ms = 3000)` closes the local file, asks the exporter to send what is queued and
+  waits at most `ms`. It waits for every exporter that is closing, also when called twice, and an event that
+  arrives while it waits is sent if time is left. After the limit the queue is dropped and counted, and a request
+  in flight is aborted. `exitAfterTelemetry(code)` runs it once per process and then exits with the code; the CLI
+  uses it in the `main` handlers, the `watch` interrupts and the `serve` signal handlers (after the updater stops),
+  and `server.close()` calls `closeTelemetry()` before the HTTP server closes.
+- **Not yet.** Endpoint authentication and a Settings control (see `settings/exceptions.ts`). The synchronous
+  restart in `src/supervise.ts` (`process.exit` after the restart) does not go through `exitAfterTelemetry`, so
+  the last unsent batch can be lost there. This is a follow-up.
 
 ## 5. Agents and models
 

@@ -1,13 +1,20 @@
 import { z } from "zod";
 import { RepoError } from "./repo-url.js";
 
-/** Per-repository settings an admin sets. They are stored and shown only; runs do not use them yet. */
+/**
+ * Per-repository settings an admin sets. They are stored and shown, and runs do not use them yet. The exception is
+ * `releaseRecipe`: `tools/release-build` reads it through `findReleaseRecipe` in `src/release/recipe.ts` when the commit has
+ * no `.factory/release-build.yaml`. Nothing under `auth/` may import `release/recipe.ts` (it imports `auth/repos.ts`: a cycle).
+ */
 export const MAX_BRANCH = 200;
+export const MAX_RECIPE_TEXT = 16_384;
 export const MAX_DOC_PATH = 300;
 export const MAX_COMMAND = 500;
 export const MAX_LIST = 50;
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+// Tab and line breaks are fine in the text of a recipe.
+const RECIPE_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 
 /** A branch name by git's rules (git check-ref-format), at most 200 characters, and not "@". */
 export function validBranchName(name: unknown): boolean {
@@ -39,6 +46,7 @@ export const RepoSettingsSchema = z
     protectedBranches: list(validBranchPattern),
     mainBranch: z.string().refine(validBranchName),
     developBranch: z.string().refine(validBranchName),
+    releaseRecipe: z.string().min(1).max(MAX_RECIPE_TEXT).refine((t) => t.trim() !== "" && !RECIPE_CONTROL.test(t)),
   })
   .partial()
   .strict()
@@ -47,7 +55,7 @@ export const RepoSettingsSchema = z
 export type RepoSettings = z.infer<typeof RepoSettingsSchema>;
 
 const bad = (message: string) => new RepoError("bad-settings", message);
-const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch"];
+const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe"];
 const PATTERN_HELP = '"*" matches any text, "?" one character';
 const shown = (t: string) => JSON.stringify(t.replace(CONTROL_G, "?").slice(0, 80));
 const CONTROL_G = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -97,5 +105,12 @@ export function checkRepoSettings(input: unknown): RepoSettings {
   if (main) out.mainBranch = main;
   const dev = branch("developBranch", o.developBranch);
   if (dev) out.developBranch = dev;
+  if (o.releaseRecipe !== undefined && o.releaseRecipe !== null) {
+    if (typeof o.releaseRecipe !== "string") throw bad("releaseRecipe must be text (the YAML of the recipe)");
+    const t = o.releaseRecipe.replace(/\r\n?/g, "\n").trimEnd();
+    if (RECIPE_CONTROL.test(t)) throw bad("releaseRecipe may not hold control characters (tabs and line breaks are fine)");
+    if (t.length > MAX_RECIPE_TEXT) throw bad(`releaseRecipe must be at most ${MAX_RECIPE_TEXT} characters`);
+    if (t.trim()) out.releaseRecipe = t;
+  }
   return out;
 }

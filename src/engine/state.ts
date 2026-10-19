@@ -103,6 +103,8 @@ export interface RunSummary {
   source?: string;
   /** The id of the account that started the run. Absent for runs of watchers, the CLI and older versions. */
   owner?: string;
+  /** The declared tool profile saved at start: the parsed profile, or `null` when the supplied one could not be read (`null` always refuses). Trusted like `owner`. Absent: steps get the profile their settings give. */
+  toolProfile?: unknown;
   /** Answers a person gave on the run page to the questions the run stopped with, oldest first. */
   answers?: RunAnswer[];
   /** Summary of <runDir>/skill-lock.json. Absent on runs without a checked plan and on runs of older versions. */
@@ -115,6 +117,8 @@ export interface RunSummary {
   skillCarry?: RunSkillCarry;
   /** What plan_check found (see plan-carry.ts). Absent on older runs and on runs with their own plan gate. */
   planCheck?: RunPlanCheck;
+  /** Values a step handed on in `<run dir>/outputs.json` (see run-outputs.ts), e.g. `release_url` and `release_tag` of release-build. Absent on older runs. */
+  outputs?: Record<string, string>;
   /** When the run was archived (taken out of the default list). Absent: not archived. */
   archivedAt?: string;
   /** The id of the account that archived it. Never shown to a user. */

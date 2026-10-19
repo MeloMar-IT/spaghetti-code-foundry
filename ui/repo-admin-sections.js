@@ -88,6 +88,18 @@ function runSettings(ctx) {
   ];
 }
 
+function releaseRecipe(ctx) {
+  const { repo, readOnly } = ctx;
+  const s = repo.settings;
+  if (!s) return unavailable("The settings");
+  return [
+    s.releaseRecipe ? h("pre", { class: "mono" }, s.releaseRecipe) : h("p", { class: "muted" }, "None stored. release-build reads .factory/release-build.yaml from the commit."),
+    h("small", {}, "A .factory/release-build.yaml in the built commit wins over this."),
+    readOnly ? null : h("div", { class: "row" },
+      h("button", { "data-action": "release-recipe", onClick: editSettings(ctx, "release-recipe", ["releaseRecipe"], "Release recipe") }, "Edit")),
+  ];
+}
+
 function watchers(ctx) {
   const { repo, readOnly, extra } = ctx;
   if (repo.watcherProblem) return h("p", { class: "status bad" }, repo.watcherProblem);
@@ -146,6 +158,7 @@ export function adminSections(base) {
   const added = [
     { id: "branches", title: "Branches", show, draw: branches },
     { id: "run-settings", title: "Run settings", show, draw: runSettings },
+    { id: "release-recipe", title: "Release recipe", show, draw: releaseRecipe },
     { id: "watchers", title: "Watchers", show, draw: watchers },
   ];
   return base.flatMap((s, i) => (i === at ? [...added, { ...s, draw: (ctx) => [s.draw(ctx), transfer(ctx)] }] : [s]));

@@ -13,10 +13,15 @@ const ZERO = "0000000000000000000000000000000000000000";
 
 const PRE_PUSH = `#!/bin/sh
 # Installed by Spaghetti Code Foundry: refuse pushes to protected branches, and pushes that add secrets.
+url=$2
+# Policy (observe mode): can git find a committer identity (env, EMAIL, committer.*/user.* config, auto-detection)? Never fails the push.
+if git var GIT_COMMITTER_IDENT >/dev/null 2>&1 </dev/null; then ident=1; else ident=0; fi
+# one line per pushed ref for the engine: branch, remote url, secrets found (empty: not known), identity. Never fails the push.
+note() { [ -z "$FACTORY_PUSH_LOG" ] || printf '%s\\t%s\\t%s\\t%s\\n' "$branch" "$url" "$1" "$ident" >> "$FACTORY_PUSH_LOG" 2>/dev/null || true; }
 while read local_ref local_sha remote_ref remote_sha; do
   branch=\${remote_ref#refs/heads/}
-  # Policy (observe mode): one line per pushed ref for the engine, which reads it when the step ends. Never fails the push.
-  [ -z "$FACTORY_PUSH_LOG" ] || printf '%s\\t%s\\n' "$branch" "$2" >> "$FACTORY_PUSH_LOG" 2>/dev/null || true
+  found=
+  rc=0
   set -f
   # The one exception: the hotfix merge step may push (not delete) the branch it was granted. FACTORY_PUSH_ALLOW
   # is "<branch>:<token>"; it counts only when the engine wrote that token (a file next to this hook) for the
@@ -31,18 +36,29 @@ while read local_ref local_sha remote_ref remote_sha; do
   if [ "$allowed" != 1 ]; then
     for pattern in $FACTORY_PROTECTED_BRANCHES; do
       case "$branch" in
-        $pattern) echo "Spaghetti Code Foundry: pushing to protected branch '$branch' is blocked" >&2; exit 1 ;;
+        $pattern) echo "Spaghetti Code Foundry: pushing to protected branch '$branch' is blocked" >&2; note ""; exit 1 ;;
       esac
     done
   fi
   set +f
-  if [ -n "$FACTORY_SECRET_SCAN" ] && [ "$local_sha" != "${ZERO}" ]; then
-    if [ "$remote_sha" = "${ZERO}" ]; then
-      "$FACTORY_SECRET_SCAN" "$local_sha" --not --remotes || exit 1
+  if [ -n "$FACTORY_SECRET_SCAN" ]; then
+    if [ "$local_sha" = "${ZERO}" ]; then
+      found=0
     else
-      "$FACTORY_SECRET_SCAN" "$remote_sha..$local_sha" || exit 1
+      if [ "$remote_sha" = "${ZERO}" ]; then
+        scan=$("$FACTORY_SECRET_SCAN" "$local_sha" --not --remotes 2>&1); rc=$?
+      else
+        scan=$("$FACTORY_SECRET_SCAN" "$remote_sha..$local_sha" 2>&1); rc=$?
+      fi
+      [ -z "$scan" ] || printf '%s\\n' "$scan" >&2
+      case "$rc" in
+        0) found=0 ;;
+        1) found=$(printf '%s\\n' "$scan" | sed -n 's/^secret-scan: \\([0-9][0-9]*\\) possible secret.*/\\1/p' | head -n 1); [ -n "$found" ] || found=1 ;;
+      esac
     fi
   fi
+  note "$found"
+  [ "$rc" = 0 ] || exit 1
 done
 exit 0
 `;
@@ -54,7 +70,7 @@ exit 0
  * Note: this replaces the repo's own git hooks during runs.
  */
 export function protectedBranchEnv(patterns: string[], secretScan = false, observe = false): Record<string, string> {
-  // `observe`: policy packs are configured, so the hook is there to tell the engine about each push (see FACTORY_PUSH_LOG)
+  // `observe`: file policy packs are configured, so the hook is there (even with both guards off) to tell the engine about each push (see FACTORY_PUSH_LOG)
   if (!patterns.length && !secretScan && !observe) return {};
   const dir = join(process.env.FACTORY_HOME ?? FACTORY_HOME, "hooks");
   mkdirSync(dir, { recursive: true });

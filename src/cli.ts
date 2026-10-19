@@ -10,6 +10,7 @@ import { getRepo } from "./auth/repos.js";
 import { getUser } from "./auth/users.js";
 import { effectiveRepoWatchers, listRepoWatchers } from "./repos/watchers.js";
 import { FORCE_HINT, gateRun } from "./run-gate.js";
+import { looksLikeGithubRepo, runTarget } from "./run-target.js";
 import { listBlocks } from "./flow/blocks.js";
 import { pinBuiltinSkillsAtStart } from "./skills/registry.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
@@ -26,6 +27,7 @@ import { dirname } from "node:path";
 import { buildStamp, restartOnNewBuild, supervise } from "./supervise.js";
 import { confirmStart, startGuard } from "./self-update-state.js";
 import { SelfUpdater } from "./self-update.js";
+import { exitAfterTelemetry } from "./telemetry/telemetry.js";
 import { dropEmptyHomeVars, prepareDataHome, watchDataHome } from "./home.js";
 
 const usage = () => `Spaghetti Code Foundry (scf) — run custom flows of headless Claude Code + shell steps
@@ -42,7 +44,8 @@ Usage:
                                                  (--live: ask the model of help.model; each scenario costs a turn)
   scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run] [--evidence-older-than days]
                                                  Remove old run workspaces/worktrees (branches kept)
-  scf flows [--repo <dir>]                       List available flows
+  scf release-build init --repo <owner/name> [--write]  Suggest a .factory/release-build.yaml from the build files; --write opens a pull request
+  scf flows [--repo <dir>]                      List available flows
   scf blocks [--repo <dir>]                      List reusable step blocks (the library)
   scf skills [--repo <dir>]                      List skill packages with trust, pin state and digest, and problems
   scf skills pin <id@version> <digest> [--replace]   Pin a listed skill package (copy the digest from the list)
@@ -114,7 +117,8 @@ Usage:
 
 Run options:
   -t, --task <text>        Task description (or --task-file <path>); optional for ticket flows
-  -r, --repo <dir>         Target repository (default: current directory)
+  -r, --repo <dir|owner/name>  Target repository (default: current directory); owner/name for flows that clone it themselves (release-build)
+      --ref <branch|sha>   Sets the variable ref (release-build: what to build; default main)
   -v, --var key=value      Override a flow variable (repeatable)
       --runs-dir <dir>     Where run logs/worktrees go (default: ${join(FACTORY_HOME, "runs")})
 
@@ -185,6 +189,7 @@ function report(s: RunSummary): number {
       `\n  run log:   ${join(s.runDir, "run.json")}` +
       (s.workdir ? `\n  workspace: ${s.workdir}` : "") +
       (s.branch ? `\n  branch:    ${s.branch}` : "") +
+      (s.outputs?.release_url ? `\n  release:   ${s.outputs.release_url}` : "") +
       (s.status === "waiting" ? `\n  next:      scf approve ${s.runId}   (or: scf reject ${s.runId})` : "") +
       (s.status === "stopped" || s.status === "failed" ? `\n  next:      scf resume ${s.runId}` : "") +
       "\n",
@@ -209,6 +214,7 @@ async function main(argv: string[]): Promise<number> {
       task: { type: "string", short: "t" },
       "task-file": { type: "string" },
       repo: { type: "string", short: "r" },
+      ref: { type: "string" },
       var: { type: "string", short: "v", multiple: true },
       "runs-dir": { type: "string" },
       reason: { type: "string" },
@@ -248,6 +254,7 @@ async function main(argv: string[]): Promise<number> {
       reviewer: { type: "string" },
       licence: { type: "string" },
       due: { type: "boolean" },
+      write: { type: "boolean" },
       all: { type: "boolean" },
       email: { type: "string" },
       json: { type: "boolean" },
@@ -274,13 +281,16 @@ async function main(argv: string[]): Promise<number> {
       if (!arg) throw new Error("usage: scf run <flow> --task \"...\"");
       const task = values.task ?? (values["task-file"] ? readFileSync(values["task-file"], "utf8") : undefined);
       // The task is optional: e.g. GitHub flows take their work from the ticket.
-      if (!existsSync(repo)) throw new Error(`repo not found: ${repo}`);
-      const { flow } = loadFlow(arg, repo);
+      // --repo is a folder, or (flows that clone the repository themselves) "owner/name": see run-target.ts
+      const isFolder = !values.repo || existsSync(repo);
+      if (!isFolder && !looksLikeGithubRepo(values.repo!)) throw new Error(`repo not found: ${repo}`);
+      const { flow } = loadFlow(arg, isFolder ? repo : process.cwd());
+      const target = runTarget({ repoArg: values.repo, ref: values.ref, vars: parseVars(values.var), cwd: process.cwd(), workspace: flow.workspace });
       const summary = await runFlow(flow, {
         task: task?.trim() ?? "",
-        repo,
+        repo: target.repo,
         runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
-        vars: parseVars(values.var),
+        vars: target.vars,
         source: "cli",
         log: (m) => process.stdout.write(m + "\n"),
       });
@@ -348,6 +358,11 @@ async function main(argv: string[]): Promise<number> {
       return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo, agentScore, agentEffect });
     }
 
+    case "release-build": {
+      const { releaseBuildCommand } = await import("./release/init-cli.js");
+      return releaseBuildCommand(positionals.slice(1), { repo: values.repo, write: values.write }, (line) => void process.stdout.write(line + "\n"), (line) => void process.stderr.write(line + "\n"));
+    }
+
     case "flow-guide": {
       const { flowGuide } = await import("./server/generate.js");
       process.stdout.write(flowGuide());
@@ -405,14 +420,14 @@ async function main(argv: string[]): Promise<number> {
         if (stopping) {
           for (const a of scheduler.queue().active) scheduler.cancel(a.runId, { kind: "cli" });
           log("cancelling running runs (they resume on the next start)…");
-          setTimeout(() => process.exit(130), 3000).unref();
+          setTimeout(() => void exitAfterTelemetry(130), 3000).unref();
           return;
         }
         stopping = true;
         watcher.stop();
         const n = scheduler.queue().active.length;
         log(n ? `\nstopped watching; waiting for ${n} running run(s) — Ctrl+C again to cancel them` : "\nstopped");
-        void scheduler.idle().then(() => process.exit(0));
+        void scheduler.idle().then(() => exitAfterTelemetry(0));
       });
       log(`watching ${github_repo} (${cfg.source}) every ${cfg.every} with flow ${cfg.flow} — Ctrl+C to stop`);
       watcher.start();
@@ -462,7 +477,7 @@ async function main(argv: string[]): Promise<number> {
         ctx.watchers.stopAll();
       };
       // a step of the updater runs in its own process group: it must not outlive the server
-      for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); process.exit(code); });
+      for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); void exitAfterTelemetry(code); });
       // other restarts wait while the updater builds
       const idle = () => queueIdle() && !updater.busy();
       restartOnNewBuild({
@@ -593,7 +608,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
+  (code) => exitAfterTelemetry(code),
   async (err: Error) => {
     // the stored secrets are hidden from displayed errors; if that cannot load, show nothing from the message
     let text = "(message hidden: the stored credentials cannot be read)";
@@ -603,6 +618,6 @@ main(process.argv.slice(2)).then(
       // keep the safe text
     }
     process.stderr.write(`error: ${text}\n`);
-    process.exit(1);
+    await exitAfterTelemetry(1);
   },
 );

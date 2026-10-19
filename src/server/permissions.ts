@@ -1,6 +1,7 @@
 import { listFlows, type FlowListing } from "../flow/load.js";
 import type { User } from "../auth/users.js";
 import { isRefinementFlow } from "../flow/usage.js";
+import type { Flow } from "../flow/schema.js";
 import { HttpError, NAME_RE } from "./http.js";
 import type { ApiContext } from "./server.js";
 
@@ -60,7 +61,7 @@ export const RULES: Rule[] = [
   r("GET", "runs", "yes", "list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap"),
   r("GET", "run-owners", "no", "the accounts that have runs, for the owner filter"),
   r("GET", "run-filters", "yes", "the repositories and flows of the runs you can see, for the filter menus"),
-  r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules)"),
+  r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref)"),
   r("GET", "runs/:id", "own", "read a run (a user: without costs and setup)"),
   r("POST", "runs/:id/cancel", "own", "cancel a run that runs, is queued, waits or is stopped"),
   r("POST", "runs/:id/archive", "own", "archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted"),
@@ -118,7 +119,7 @@ export const RULES: Rule[] = [
   r("DELETE", "repos/:id", "yes", "remove your repository and its stored token or key"),
   r("DELETE", "repos/:owner/:name", "yes", "remove a GitHub repository by name (old form)"),
   r("GET", "admin/repos", "no", "the repositories of all accounts, with their settings"),
-  r("PUT", "admin/repos/:id/settings", "no", "set the test command, docs, protected branches and branch names of a repository"),
+  r("PUT", "admin/repos/:id/settings", "no", "set the test command, docs, protected branches, branch names and release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) of a repository; writes an audit line"),
   r("PUT", "admin/repos/:id/ready", "no", "set the Definition of Ready of a repository, or put the default list back"),
   r("POST", "admin/repos/:id/transfer", "no", "move a repository to another account, by e-mail"),
   r("GET", "admin/repos/:id/watchers", "no", "the watchers of a repository, with status and holds"),
@@ -211,6 +212,34 @@ export function authorize(ctx: ApiContext, user: User, rule: Rule, seg: string[]
 /** The flows a user may see and start: valid, published ones whose name a run can use. The list and the start check both use this. */
 export function publishedFlows(repo: string): FlowListing[] {
   return listFlows(repo).filter((f) => !f.error && NAME_RE.test(f.name) && f.published === true && !isRefinementFlow(f.name));
+}
+
+/** True for the release-build flow, or any flow with a shell step that runs the release-build tool. */
+export function isReleaseBuildFlow(flow: Flow): boolean {
+  return flow.name === "release-build" || flow.steps.some((s) => s.type === "shell" && s.run.includes("$FACTORY_TOOLS/release-build"));
+}
+
+/**
+ * A user (or an admin who starts like one) may build only the default branch of the repository. Finds the ref the run would build
+ * (the given value, the fixed value, or the default branch) and refuses it with 403 unless it is exactly the default branch.
+ * Returns the run's variables with `ref` set to that ref.
+ */
+export function checkReleaseRef(flow: Flow, given: Record<string, string>, runVars: Record<string, string>, defaultBranch: string): Record<string, string> {
+  const spec = flow.publish?.vars.ref;
+  const repo = runVars.github_repo ?? "the repository";
+  let ref = defaultBranch;
+  if (spec?.mode === "input") {
+    if (given.ref !== undefined && given.ref !== "") ref = given.ref;
+  } else if (spec?.mode === "fixed") {
+    ref = runVars.ref ?? "";
+    if (ref !== defaultBranch) {
+      throw new HttpError(403, `this published flow builds "${ref}", not the default branch "${defaultBranch}" of ${repo}; only an admin can start it`);
+    }
+  }
+  if (ref !== defaultBranch) {
+    throw new HttpError(403, `you can build only the default branch of ${repo} ("${defaultBranch}"), not "${ref}"; only an admin can build another ref`);
+  }
+  return { ...runVars, ref };
 }
 
 /** The table for the guide, in Markdown. */

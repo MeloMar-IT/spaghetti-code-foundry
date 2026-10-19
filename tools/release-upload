@@ -1,0 +1,44 @@
+#!/usr/bin/env node
+// Uploads the release files of a release-build run to a DRAFT GitHub release (never publishes) and prunes old drafts of the recipe
+// (the logic is in src/release/upload.ts).
+//   release-upload <run-dir>   upload <run-dir>/release/out to the draft for the tag in <run-dir>/release/plan.json, in the
+//                              repository $FACTORY_VAR_GITHUB_REPO; writes release_url and release_tag to <run-dir>/outputs.json
+// Needs the gh login, so the flow step has repo_access. $FACTORY_GH_BIN replaces the gh program (tests).
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+const [runDir] = process.argv.slice(2);
+const fail = (msg) => {
+  console.error(`release-upload: ${msg}`);
+  process.exit(1);
+};
+if (!runDir) {
+  console.error("usage: release-upload <run-dir>");
+  process.exit(2);
+}
+
+try {
+  const { uploadRelease, ghRunner } = await import(new URL("../dist/release/upload.js", import.meta.url).href);
+  const { validGithubName } = await import(new URL("../dist/auth/repo-url.js", import.meta.url).href);
+  const { writeRunOutputs } = await import(new URL("../dist/engine/run-outputs.js", import.meta.url).href);
+  const repo = process.env.FACTORY_VAR_GITHUB_REPO || "";
+  if (!validGithubName(repo)) throw new Error('the variable github_repo must be "owner/name"');
+  const plan = JSON.parse(readFileSync(join(runDir, "release", "plan.json"), "utf8"));
+  const stop = new AbortController();
+  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, () => stop.abort());
+  const res = await uploadRelease({
+    repo,
+    plan,
+    outDir: join(runDir, "release", "out"),
+    stageDir: join(runDir, "release", "upload"),
+    gh: ghRunner({ bin: process.env.FACTORY_GH_BIN || "gh", signal: stop.signal }),
+    log: (line) => console.log(line),
+  });
+  // the uploaded files with their sizes, for people who do not see the step output (cut at 1900 characters)
+  const { formatSize } = await import(new URL("../dist/release/upload.js", import.meta.url).href);
+  let files = res.files.map((f) => `${f.name} (${formatSize(f.size)})`).join("; ");
+  if (files.length > 1900) files = `${files.slice(0, 1900)} …`;
+  writeRunOutputs(runDir, { release_url: res.url, release_tag: res.tag, release_files: files });
+} catch (e) {
+  fail(e.message);
+}

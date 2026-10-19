@@ -144,6 +144,7 @@ export const PEOPLE: Cmd[] = [
       "protected-branches": { type: "string", as: "list", help: "branch patterns nothing may push to, with commas" },
       "main-branch": { type: "string", help: "the name of the main branch" },
       "develop-branch": { type: "string", help: "the name of the develop branch" },
+      "release-recipe": { type: "string", help: "the release-build recipe as YAML text, e.g. \"$(cat recipe.yaml)\"" },
     },
     help: "set all settings of a repository at once; a setting you leave out is cleared",
     confirm: "This replaces all settings of the repository: a setting you do not name is cleared.", show: repo },

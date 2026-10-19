@@ -6,7 +6,9 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { userCommand } from "../src/auth/cli.js";
-import { RULES, findRule, permissionTable, ruleKey } from "../src/server/permissions.js";
+import { parseFlow } from "../src/flow/load.js";
+import { HttpError } from "../src/server/http.js";
+import { RULES, checkReleaseRef, findRule, isReleaseBuildFlow, permissionTable, ruleKey } from "../src/server/permissions.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
@@ -268,7 +270,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET refinement/:id/publish": { path: `refinement/${UNKNOWN}/publish`, user: 404, admin: 404 },
   "DELETE repos/:owner/:name": { path: "repos/nope/nope", user: 404, admin: 404 },
   "GET admin/repos": no("admin/repos", 200),
-  "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, {}),
+  "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, { releaseRecipe: "" }),
   "GET admin/credentials": no("admin/credentials", 200),
   "PUT admin/repos/:id/ready": no(`admin/repos/${UNKNOWN}/ready`, 404, {}),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
@@ -974,5 +976,73 @@ describe("security review", () => {
     expect((await call(ann, "GET", `/api/runs/${copy}/diff`)).status).toBe(403);
     expect((await call(admin, "GET", `/api/runs/${copy}/diff`)).status).toBe(200);
     expect((await call(ann, "GET", `/api/runs/${mine}/diff`)).status).toBe(200);
+  });
+});
+
+/** A published flow that is a release-build flow: its step mentions the tool. */
+const RELEASE = (name: string, ref: "input" | "fixed" | "none") =>
+  `name: ${name}\nworkspace: empty\nvars:\n  github_repo: owner/repo\n  ref: ${ref === "fixed" ? "feature" : "main"}\npublish:\n  enabled: true\n  vars:\n    github_repo: {mode: input}\n${ref === "input" ? "    ref: {mode: input}\n" : ref === "fixed" ? "    ref: {mode: fixed}\n" : ""}steps:\n  - {id: a, type: shell, run: "# $FACTORY_TOOLS/release-build"}\n`;
+
+describe("release-build refs", () => {
+  const flowOf = (ref: "input" | "fixed" | "none") => parseFlow(RELEASE("rb", ref));
+  const vars = { github_repo: "acme/app", ref: "main" };
+
+  it("knows a release-build flow by its name or by its tool", () => {
+    expect(isReleaseBuildFlow(flowOf("input"))).toBe(true);
+    expect(isReleaseBuildFlow(parseFlow(PRIVATE("release-build")))).toBe(true);
+    expect(isReleaseBuildFlow(parseFlow(PRIVATE("other")))).toBe(false);
+  });
+
+  it("allows the default branch only", () => {
+    const f = flowOf("input");
+    expect(checkReleaseRef(f, { ref: "main" }, vars, "main").ref).toBe("main");
+    expect(() => checkReleaseRef(f, { ref: "feature" }, vars, "main")).toThrow('default branch of acme/app ("main"), not "feature"');
+    expect(() => checkReleaseRef(f, { ref: "abc1234" }, vars, "main")).toThrow(HttpError);
+    expect(() => checkReleaseRef(f, { ref: "main " }, vars, "main")).toThrow(HttpError);
+  });
+
+  it("uses the default branch when nothing is given, also a different one", () => {
+    expect(checkReleaseRef(flowOf("input"), {}, vars, "develop").ref).toBe("develop");
+    expect(checkReleaseRef(flowOf("input"), { ref: "" }, vars, "develop").ref).toBe("develop");
+    expect(() => checkReleaseRef(flowOf("input"), { ref: "main" }, vars, "develop")).toThrow(HttpError);
+  });
+
+  it("ignores a ref the flow does not publish", () => {
+    expect(checkReleaseRef(flowOf("none"), {}, { ...vars, ref: "feature" }, "main").ref).toBe("main");
+  });
+
+  it("refuses a fixed ref that is not the default branch, and accepts a fixed default branch", () => {
+    expect(() => checkReleaseRef(flowOf("fixed"), {}, { ...vars, ref: "feature" }, "main")).toThrow(
+      'this published flow builds "feature", not the default branch "main" of acme/app; only an admin can start it',
+    );
+    expect(checkReleaseRef(flowOf("fixed"), {}, { ...vars, ref: "main" }, "main").ref).toBe("main");
+  });
+});
+
+describe("starting release-build through the server", () => {
+  const start = (who: TestSession, body: unknown) => call(who, "POST", "/api/runs", body);
+  const saveFlow = async (name: string, yaml: string) => expect((await call(admin, "PUT", `/api/flows/${name}`, { yaml, scope: "repo" })).status).toBe(200);
+
+  beforeAll(async () => {
+    await saveFlow("rb-input", RELEASE("rb-input", "input"));
+    await saveFlow("rb-fixed", RELEASE("rb-fixed", "fixed"));
+    expect((await call(admin, "POST", "/api/repos", { name: "adm/app" })).status).toBe(201);
+  });
+
+  it("lets a user build the default branch only", async () => {
+    const bad = await start(ann, { flow: "rb-input", vars: { github_repo: "acme/app", ref: "feature" } });
+    expect(bad.status).toBe(403);
+    expect(bad.error()).toContain('not "feature"');
+    expect((await start(ann, { flow: "rb-input", vars: { github_repo: "acme/app", ref: "main" } })).status).toBe(201);
+    expect((await start(ann, { flow: "rb-input", vars: { github_repo: "acme/app" } })).status).toBe(201);
+    expect((await start(ann, { flow: "rb-fixed", vars: { github_repo: "acme/app" } })).status).toBe(403);
+  });
+
+  it("lets an admin build any ref, unless the admin starts like a user", async () => {
+    expect((await start(admin, { flow: "rb-input", vars: { github_repo: "adm/app", ref: "feature" } })).status).toBe(201);
+    const like = await start(admin, { flow: "rb-input", vars: { github_repo: "adm/app", ref: "feature" }, likeUser: true });
+    expect(like.status).toBe(403);
+    expect(like.error()).toContain('not "feature"');
+    await ctx.scheduler.idle();
   });
 });

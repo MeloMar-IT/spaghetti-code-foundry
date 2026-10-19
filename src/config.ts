@@ -8,6 +8,7 @@ import { z } from "zod";
 import { editYamlText, removeYamlKey } from "./config-edit.js";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
+import { BASELINE_POLICY_ID } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { CANONICAL_LIMITS } from "./skills/canonical-rules.js";
@@ -278,15 +279,55 @@ export function updateEveryMs(text: unknown): number | undefined {
 /** `owner/name` or `host/owner/name`. */
 export const DEPLOYMENT_REPOSITORY_RE = /^(?:[A-Za-z0-9.-]+\/)?[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
+const LOOPBACK = /^(?:localhost|127(?:\.\d{1,3}){3}|\[::1\])$/;
+/** An OTLP/HTTP address: http(s), no user or password, no query or fragment, no whitespace or control characters; plain http only for this machine. */
+function isOtlpEndpoint(s: string): boolean {
+  if (/[\s\p{Cc}]/u.test(s) || s.includes("?") || s.includes("#")) return false;
+  if (!URL.canParse(s)) return false;
+  const u = new URL(s);
+  if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+  if (u.username !== "" || u.password !== "" || u.hostname === "") return false;
+  return u.protocol === "https:" || LOOPBACK.test(u.hostname);
+}
+
+export const OtlpSchema = z
+  .object({
+    /** Send the telemetry events to an OpenTelemetry collector (OTLP/HTTP, JSON logs). */
+    enabled: z.boolean().default(false),
+    /** The logs address of the collector, e.g. http://127.0.0.1:4318/v1/logs. */
+    endpoint: z
+      .string()
+      .max(2048)
+      .refine(isOtlpEndpoint, "must be an http(s) address without user, password, ? or #; plain http only for 127.0.0.1, ::1 or localhost")
+      .optional(),
+    /** How long one request may take. */
+    timeout_ms: z.number().int().min(100).max(60_000).default(5000),
+  })
+  .strict()
+  .superRefine((o, ctx) => {
+    if (o.enabled && !o.endpoint) ctx.addIssue({ code: "custom", path: ["endpoint"], message: "is needed when enabled is true" });
+  });
+export type OtlpConfig = z.infer<typeof OtlpSchema>;
+
 export const TelemetrySchema = z
   .object({
     /** Write the local telemetry files. */
     local: z.boolean().default(true),
     /** Telemetry files older than this many days (UTC) are removed. */
     keep_days: z.number().int().min(1).max(365).default(30),
+    /** The optional OTLP exporter. */
+    otlp: OtlpSchema.prefault({}),
   })
   .strict();
 export type TelemetryConfig = z.infer<typeof TelemetrySchema>;
+
+/** A list of at most 20 policy ids, each once; the built-in baseline is always asked and cannot be listed. */
+const policyIds = () =>
+  z
+    .array(z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, "must be a policy id: lower-case letters, digits, . _ or -"))
+    .max(20)
+    .refine((l) => new Set(l).size === l.length, "names the same pack twice")
+    .refine((l) => !l.includes(BASELINE_POLICY_ID), `${BASELINE_POLICY_ID} is built in and always asked: leave it out`);
 
 export const ConfigSchema = z
   .object({
@@ -605,14 +646,19 @@ export const ConfigSchema = z
       .prefault({}),
     /** The running Foundry updates itself from main of its own repository after a hotfix. Off by default. */
     self_update: SelfUpdateSchema,
-    /** Policy packs asked at every boundary of a run, in observe mode (decisions are recorded, nothing is stopped). Files: <data folder>/policies/<id>.json */
+    /**
+     * Policy packs asked at every boundary of a run, in observe mode (decisions are recorded, nothing is stopped).
+     * The built-in baseline (foundry.baseline) is always asked. Files: <data folder>/policies/<id>.json, in three layers:
+     * `mandatory` (overlays), `repositories` (per "owner/name"), `packs` (optional). The most restrictive decision wins.
+     */
     policy: z
       .object({
-        packs: z
-          .array(z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, "must be a policy id: lower-case letters, digits, . _ or -"))
-          .max(20)
-          .refine((l) => new Set(l).size === l.length, "names the same pack twice")
-          .default([]),
+        packs: policyIds().default([]),
+        mandatory: policyIds().default([]),
+        repositories: z
+          .record(z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9_.-]{1,100}$/, 'must be a repository as "owner/name" in lower case'), policyIds())
+          .refine((r) => Object.keys(r).length <= 20, "at most 20 repositories")
+          .default({}),
       })
       .strict()
       .prefault({}),

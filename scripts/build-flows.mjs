@@ -78,7 +78,7 @@ ${header.lines.map((l) => `# ${l}`).join("\n")}
 `;
   // Flows that change code: one run per repository at a time. Planning / PR-only flows run in parallel.
   const { description, workspace, vars, var_info, steps: flowSteps, ...rest } = flow;
-  const coding = !["issue-plan", "daily-pr", "epic-questions", "release-daily", "issue-gitflow", "refine-brief", "refine-round"].includes(name);
+  const coding = !["issue-plan", "daily-pr", "epic-questions", "release-daily", "release-build", "issue-gitflow", "refine-brief", "refine-round"].includes(name);
   // Retired flows are no longer shipped; they stay as test material (tests/fixtures/flows) and get no var_info.
   const retired = RETIRED.has(name);
   const described = vars === undefined || retired ? {} : { var_info: describeVars(vars, var_info) };
@@ -2082,6 +2082,63 @@ write("release-daily", {
         'if [ "$ok" = no ]; then gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" --undo >/dev/null 2>&1 || true; echo "checks failed — PR #$pr is a draft"',
         'else gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" >/dev/null 2>&1 || true; echo "checks passed — PR #$pr ($title) is ready to merge"; fi',
       ].join("\n"),
+    },
+  ],
+});
+
+// ── release-build: build the release files a repository describes in .factory/release-build.yaml ──
+// One release-build run per repository at a time (area @release-build). A resume starts at the saved step, and area-lock drops the lock
+// of a run that is not running, so every step that does work takes the lock again (the same run id: harmless).
+const RB_LOCK =
+  '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @release-build --wait-sec 3000 >/dev/null || { echo "another release-build run of this repository holds the lock — resume this run when it is done"; exit 1; }\n';
+write("release-build", {
+  title: "Build release files on this machine from the repository's release recipe and upload them to a draft GitHub release",
+  lines: [
+    "scf run release-build --repo owner/repo [--ref main]",
+    "",
+    "lock (one run per repository) → clone → resolve the ref to a commit, find the recipe: .factory/release-build.yaml at the commit, else the recipe stored in the Foundry settings",
+    "      → build (one after the other, each in its own git worktree, through test-slot, no tokens in the environment)",
+    "        → files and SHA256SUMS in the run folder (release/out)",
+    "      → upload to a DRAFT release of the recipe's tag (never published), prune the oldest drafts of this recipe",
+    "        → outputs.release_url and outputs.release_tag in run.json",
+  ],
+}, {
+  description: "Build the release files described in .factory/release-build.yaml at the commit, else in the recipe stored in the Foundry settings, on this machine, in clean worktrees, and upload them to a draft GitHub release",
+  workspace: "empty",
+  defaults: { timeout_sec: 3600 },
+  vars: { github_repo: "owner/repo", ref: "main" },
+  var_info: { ref: { label: "Ref", help: "The branch, tag or commit to build. Default: main. A user can build only the repository's default branch.", kind: "text" } },
+  steps: [
+    {
+      id: "lock",
+      type: "shell",
+      description: "Wait until no other release-build run of this repository is working",
+      timeout_sec: 90000,
+      run: '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @release-build --wait-sec 86400 >/dev/null || { echo "another release-build run of this repository held the lock for 24 hours — look at that run"; exit 1; }',
+    },
+    clone,
+    {
+      id: "resolve",
+      type: "shell",
+      description: "Resolve the ref to a commit and find the recipe (the file at that commit wins over the stored one)",
+      // exec: the engine's stop signal reaches the tool itself
+      run: RB_LOCK + 'exec node "$FACTORY_TOOLS/release-build" resolve "{{run.dir}}"',
+    },
+    {
+      id: "build",
+      type: "shell",
+      description: "Run the builds one after the other and collect the files",
+      // Every build has its own limit (timeout_minutes in the recipe); this one only covers all of them together.
+      timeout_sec: 86400,
+      run: RB_LOCK + 'exec node "$FACTORY_TOOLS/release-build" build "{{run.dir}}" "{{run.dir}}/../../test-slots"',
+    },
+    {
+      id: "upload",
+      type: "shell",
+      description: "Upload the files to the draft release of the recipe's tag and prune old drafts",
+      repo_access: true,
+      timeout_sec: 7200,
+      run: RB_LOCK + 'exec node "$FACTORY_TOOLS/release-upload" "{{run.dir}}"',
     },
   ],
 });

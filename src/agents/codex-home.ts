@@ -7,7 +7,6 @@ import { ownDir } from "../engine/os-sandbox.js";
 import { shortEnv } from "../engine/short-env.js";
 import type { Config, ProviderConfig } from "../config.js";
 import type { PolicyDecision } from "../policy/schema.js";
-import { legacyToolProfile, type LegacyToolSettings } from "../tool-profile/legacy.js";
 import { checkToolCall } from "../tool-profile/resolve.js";
 import type { ToolProfile } from "../tool-profile/schema.js";
 import { CODEX_LOGIN_FILE, CODEX_LOGIN_NOT_RETURNED, lendCodexLogin, returnCodexLogin, type CodexLoginReturn } from "./codex-login.js";
@@ -122,9 +121,8 @@ export interface PrepareCleanCodex {
   sandbox: CodexSandboxMode;
   /** The person's own Codex folder (where the login is). */
   personal: string;
-  permissionMode: LegacyToolSettings["permissionMode"];
-  allowedTools: string[];
-  sandboxed: boolean;
+  /** The tool profile of the session: it decides whether the session may push. */
+  profile: ToolProfile;
   /** The repository the run works on, as "owner/name". */
   repo?: string;
 }
@@ -142,21 +140,7 @@ export interface CleanCodex {
  * refusal is final; `access` is set when no login could be lent.
  */
 export function prepareCleanCodex(o: PrepareCleanCodex): CleanCodex | { refused: string; access?: boolean } {
-  let profile: ToolProfile | undefined;
-  try {
-    profile = legacyToolProfile({
-      permissionMode: o.permissionMode,
-      allowedTools: o.allowedTools,
-      sandbox: o.sandboxed,
-      boxed: o.boxed,
-      noTools: false,
-      mcpServers: false,
-      credential: o.isolated ? "none" : "machine",
-    }).profile;
-  } catch {
-    profile = undefined;
-  }
-  const push = codexPushAllowed(profile, o.repo);
+  const push = codexPushAllowed(o.profile, o.repo);
   if (!push && !o.boxed && o.sandbox === "danger-full-access") return { refused: CODEX_PUSH_UNHELD };
   const login = o.mode === "login";
   if (!login) {

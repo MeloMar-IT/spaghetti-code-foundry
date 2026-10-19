@@ -58,7 +58,7 @@ import { yourTurnRoutes } from "./your-turn.js";
 import { USER_ERROR, movedText } from "./user-view.js";
 import { turnActionRoutes } from "./turn-actions.js";
 import { READ_ONLY, asParam, viewAsRoutes, viewRunning, viewedUser } from "./view-as.js";
-import { configureTelemetry } from "../telemetry/telemetry.js";
+import { closeTelemetry, configureTelemetry } from "../telemetry/telemetry.js";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../ui");
 const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("yaml/package.json")), "browser");
@@ -403,6 +403,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       clearTimeout(retryTimer);
       notifier?.stop();
       watchers.stopAll();
+      void closeTelemetry();
       server.close();
     },
   };

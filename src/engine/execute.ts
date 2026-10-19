@@ -12,7 +12,8 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
-import { shortEnv, shortEnvRun } from "./short-env.js";
+import { readRunOutputs } from "./run-outputs.js";
+import { shortEnv,shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import type { Actor, StepIdentity } from "../evidence/identity.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
@@ -63,6 +64,8 @@ export interface Engine {
   logsDir: string;
   claudeBin?: string;
   codexBin?: string;
+  /** The declared tool profile saved with the run (`null`: it could not be read). Undefined: generated profiles. */
+  toolProfile?: unknown;
   signal?: AbortSignal;
   /** Set once a budget is used up and a free fallback exists: all agent steps run there. */
   budgetFallback?: Target;
@@ -77,7 +80,7 @@ export interface Engine {
   decision?: ApprovalDecision & { stepId: string };
   /** Writes the evidence events of the run; it never throws. Absent: no evidence is written. */
   evidence?: RunRecorder;
-  /** Asks the configured policy packs at the boundaries of the run (observe mode); absent when no pack is configured. */
+  /** Asks the baseline and the configured policy packs at the boundaries of the run (observe mode); always there for a run started by the engine. */
   policy?: RunPolicy;
   /** Evidence only: who asked for this start or resume (and so who decided at an approval step). */
   actor?: Actor;
@@ -133,6 +136,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     skills_digest: res.skills?.digest ?? "",
     visit,
   };
+  const outputs = readRunOutputs(engine.summary.runDir, engine.log);
+  if (outputs) engine.summary.outputs = { ...engine.summary.outputs, ...outputs };
   engine.save();
   engine.evidence?.stepEnded(rec);
   const identity = stepIdentity(step, scope.prefix, visit);
@@ -154,7 +159,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   return rec;
 }
 
-/** Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG); undefined without policy packs. */
+/** Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG); undefined when the folder can't be made. */
 export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">, visit: number): string | undefined {
   if (!engine.policy) return undefined;
   const file = pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit);

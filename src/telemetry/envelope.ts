@@ -18,7 +18,7 @@ export const TELEMETRY_VERSION = 1;
 
 export const TELEMETRY_NAMES = {
   run: RUN_EVENT_TYPES,
-  step: ["step.started", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"],
+  step: ["step.started", "step.profiled", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"],
   model: ["model.routed"],
   policy: ["policy.decided"],
   tool: ["tool.called"],
@@ -135,6 +135,10 @@ function parts(body: EvidenceEventBody): { kind: TelemetryKind; name: string; fi
       return { kind: "step", name: type, fields: { step: body.step } };
     case "step.routed":
       return { kind: "model", name: "model.routed", fields: { step: body.step, model: body.model, ...(body.fallbackFrom ? { fallbackFrom: body.fallbackFrom } : {}) } };
+    case "step.profiled": {
+      const refused = body.outcome === "refused";
+      return { kind: "step", name: type, fields: { step: body.step, outcome: refused ? "denied" : "ok", ...(refused ? { cause: "tool" as const } : {}) } };
+    }
     case "step.retried":
       return { kind: "step", name: type, fields: { step: body.step, cause: body.cause } };
     case "step.denied": {

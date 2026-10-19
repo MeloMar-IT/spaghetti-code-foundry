@@ -15,6 +15,8 @@ export function settingsBody(values = {}) {
     protectedBranches: lines(values.protectedBranches),
     mainBranch: String(values.mainBranch ?? "").trim(),
     developBranch: String(values.developBranch ?? "").trim(),
+    // not trimmed here: the server tidies the text, and an empty text clears it
+    releaseRecipe: String(values.releaseRecipe ?? ""),
   };
 }
 
@@ -65,13 +67,16 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       protectedBranches: h("textarea", { name: "protectedBranches", rows: 3, class: "mono", placeholder: "release/*" }),
       mainBranch: h("input", { name: "mainBranch", class: "mono", value: s.mainBranch ?? "", placeholder: "main", autocomplete: "off" }),
       developBranch: h("input", { name: "developBranch", class: "mono", value: s.developBranch ?? "", placeholder: "develop", autocomplete: "off" }),
+      releaseRecipe: h("textarea", { name: "releaseRecipe", rows: 12, class: "mono", spellcheck: "false", placeholder: "builds:\n  - name: …" }),
     };
+    all.releaseRecipe.value = s.releaseRecipe ?? "";
     all.docs.value = (s.docs ?? []).join("\n");
     all.protectedBranches.value = (s.protectedBranches ?? []).join("\n");
     const els = only ? Object.fromEntries(Object.entries(all).filter(([k]) => only.includes(k))) : all;
     const labels = {
       testCommand: ["Test command"], docs: ["Docs to update (one path per line)"], protectedBranches: ["Protected branches (one pattern per line)", PATTERN_HINT],
       mainBranch: ["Main branch"], developBranch: ["Develop branch"],
+      releaseRecipe: ["Release-build recipe (YAML)", "Used by release-build when the commit has no .factory/release-build.yaml. A file in the repository wins."],
     };
     const err = h("p", { class: "status bad flush", role: "alert" });
     const pairs = [
@@ -80,6 +85,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       [/^protectedBranches|branch pattern/, "protectedBranches"],
       [/^mainBranch/, "mainBranch"],
       [/^developBranch/, "developBranch"],
+      [/^releaseRecipe/, "releaseRecipe"],
     ];
     const mark = (m) => showError(err, m, { fields: Object.values(els), field: els[fieldFor(m, pairs)] });
     const typed = () => Object.fromEntries(Object.entries(els).map(([k, el]) => [k, el.value]));
@@ -92,7 +98,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
     return h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
       Object.entries(els).map(([k, el]) => field(labels[k][0], el, labels[k][1])),
-      only ? null : h("small", {}, "Stored with the repository. Runs do not use these settings yet."),
+      only ? null : h("small", {}, "Stored with the repository. Runs do not use these settings yet, except the release-build recipe."),
       err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   });
   shown.then(() => { state.closed = true; });

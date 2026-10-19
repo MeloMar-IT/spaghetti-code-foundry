@@ -178,6 +178,11 @@ export class RunRecorder {
     });
   }
 
+  /** The tool profile of one try, with how well the agent holds it. */
+  stepProfiled(step: StepIdentity, fields: Omit<Extract<EvidenceEventBody, { type: "step.profiled" }>, "type" | "step">): void {
+    this.put(() => ({ type: "step.profiled", step, ...fields }));
+  }
+
   stepRetried(step: StepIdentity, cause: "outage" | "limit"): void {
     this.put(() => ({ type: "step.retried", step, cause }));
   }

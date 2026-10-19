@@ -210,6 +210,197 @@ An admin can also start a run the way a user does. Open **Start work** (`#/start
 
 The same rules as for a user apply: only a published flow, only your own repositories, and no changes to the flow or its variables. The **▶ Run** button of the flow editor works as before.
 
+### Build release files on this machine
+
+The flow `release-build` builds the release files of any repository on the Foundry machine. Everything project-specific is in the repository's recipe, `.factory/release-build.yaml`, so the same flow works for a Node package, a static site or a compiled binary. The files are then uploaded to a **draft** GitHub release of the recipe's tag. The Foundry never publishes a release, and it keeps only the newest drafts of the recipe (see "Upload to a draft" and "Pruning drafts" below).
+
+**Start it.** By hand: `scf run release-build --repo <owner/name> [--ref <branch, tag or sha>]`. `--repo` takes `owner/name` when no folder of that name exists here; it sets the variable `github_repo`. `--ref` sets the variable `ref` (default `main`). In the web UI, start `release-build` and fill in the repository and the ref. The flow clones the repository and resolves the ref to one commit. It finds the recipe for that commit (see the next paragraph). A repository without a recipe fails at once with "this repository has no release-build recipe", and the message says whether the repository is registered in the Foundry.
+
+**Where the recipe comes from.** The file `.factory/release-build.yaml` at the commit wins. When the commit has no such file, the recipe stored in the Foundry settings of the repository is used: an admin sets it on the admin page (Administration → All repositories, **Edit**) or with `PUT /api/admin/repos/<id>/settings`, field `releaseRecipe`. Use it for a repository that should not contain a Foundry file. The run summary says which one was used: `recipe: .factory/release-build.yaml` or `recipe: stored in the Foundry settings`. The repository is matched by `owner/name` in any letter case, with or without `.git`. If the repository is registered under two accounts with different stored recipes, the run fails and an admin must keep one. Only an admin can store a recipe, and a stored recipe runs commands on the Foundry machine just like a file in the repository, so store only what you would commit.
+**Who may build which ref.** An admin may build any ref. A user may build only the repository's default branch: its `mainBranch` setting, else `main`. For any other ref, a branch, a tag or a commit id (even one that is on the default branch), the server refuses the start with a 403 that names the ref. This also holds for a published flow that fixes the ref. An admin who starts a run as a user (`likeUser`) follows the user rule.
+
+**The recipe.** The keys:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `version` | `{commit_datetime}` | The version of the release. |
+| `tag` | `v{version}` | The git tag of the release. |
+| `prerelease` | `true` | Mark the release as a pre-release. |
+| `keep` | `5` | How many releases to keep, 1 to 50. |
+| `timeout_minutes` | `60` | The time limit of each build, 1 to 480 minutes. |
+| `builds` | (required) | The list of builds, at least one. |
+| `assemble` | (none) | A command that runs after all builds. |
+
+`tag`, `prerelease` and `keep` are used by the upload, described below.
+
+The placeholders, filled from the **committer time of the resolved commit** in UTC (the server's timezone does not change them):
+
+- `{commit_datetime}`: `YYYYMMDDHHMM`, for example `202610181430`.
+- `{commit_date}`: `YYYYMMDD`, for example `20261018`.
+- `{sha}`: the short commit id, 7 characters.
+- `{version}`: only in `tag`; the expanded `version`.
+
+The same commit always gives the same version and tag.
+
+Each build has:
+
+- `name`: letters a–z, digits and `-`, unique in the recipe. It names the folder of the build's files.
+- `on`: a list of `macos`, `linux` and `windows`. Default: any.
+- `arch` (optional): `arm64` or `x64`.
+- `requires` (optional): command names that must be on the machine's `PATH`.
+- `run`: the build command. It runs in the build's own checkout.
+- `artifacts`: file globs, relative to the checkout (`*`, `?`, `**`). Every matching file is collected.
+
+**What happens.**
+
+- Builds run one after the other. Each runs in its own `git worktree` of the commit, never in your checkout, and through `tools/test-slot`, so it waits for a test slot at low priority. Its time limit is `timeout_minutes`.
+- A build whose `on` or `arch` does not match this machine is skipped, with a line such as `windows-x64: skipped, needs windows`. If every build is skipped, the run fails with "nothing to build on this machine".
+- A missing `requires` command fails that build before any build runs, with a line that names the command.
+- A build whose `artifacts` match no file fails.
+- The matching files go to `release/in/<name>/` in the run folder. Each build has its log in `release/logs/<name>.log`.
+- `assemble` runs after all builds. It reads `release/in` and writes its files to `release/out`. Without `assemble`, the collected files are copied to `release/out` as they are.
+- A `SHA256SUMS` file is added to `release/out` when there is none.
+- Stopping the run stops the running build and its whole process tree.
+
+**Environment of a build.** The `run` and `assemble` commands get a short environment, not the Foundry's: `PATH`, `HOME`, `LANG`, a fixed list of toolchain variables, and the five release variables below. The list of toolchain variables is `LC_ALL`, `LC_CTYPE`, `TMPDIR`, `TEMP`, `TMP`, `USER`, `LOGNAME`, `SHELL`, `TERM`, `JAVA_HOME`, `GOPATH`, `GOROOT`, `GOCACHE`, `GOMODCACHE`, `CARGO_HOME`, `RUSTUP_HOME`, `NVM_DIR`, `ANDROID_HOME`, `ANDROID_SDK_ROOT`, `ANDROID_NDK_HOME`, `PYENV_ROOT`, `DEVELOPER_DIR`, `SDKROOT`, the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` and the lower-case forms; a proxy with a password in it is left out), and on Windows `SystemRoot`, `ComSpec`, `PATHEXT`, `WINDIR`, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA`.
+
+Never passed: `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN`, the bot's token variable, the provider key variables, and any other name that contains `TOKEN`, `SECRET`, `PASSW`, `CREDENTIAL`, `_KEY` or `AUTH`. A tool that needs another variable is not helped by the recipe: put the tool on `PATH` and let it find its own settings in `HOME`.
+
+The variables the commands get:
+
+- `FACTORY_RELEASE_VERSION`: the expanded `version`.
+- `FACTORY_RELEASE_TAG`: the expanded `tag`.
+- `FACTORY_RELEASE_SHA`: the full commit id.
+- `FACTORY_RELEASE_IN`: the folder of the collected files (`release/in`).
+- `FACTORY_RELEASE_OUT`: the folder for the release files (`release/out`).
+
+The recipe text never goes into a shell command line. The commands run the way the repository's own test command runs, through `sh -c`.
+
+**Windows.** The commands run with `sh`. On a Windows machine, install Git for Windows (Git Bash) and make sure `sh` is on `PATH`.
+
+**Recipes for several kinds of project.** Each recipe is the `.factory/release-build.yaml` of a repository.
+
+A Node command-line package, packed with `npm pack`:
+
+```yaml
+builds:
+  - name: npm-package
+    requires: [npm]
+    run: npm ci && npm pack
+    artifacts: ["*.tgz"]
+```
+
+A static site, zipped:
+
+```yaml
+version: "{commit_date}-{sha}"
+builds:
+  - name: site
+    requires: [npm, zip]
+    run: npm ci && npm run build && cd dist && zip -qr ../site.zip .
+    artifacts: ["site.zip"]
+```
+
+A compiled binary, one build per platform (Go here; any compiler works the same way):
+
+```yaml
+builds:
+  - name: linux-x64
+    on: [linux]
+    arch: x64
+    requires: [go]
+    run: go build -o tool .
+    artifacts: ["tool"]
+  - name: macos-arm64
+    on: [macos]
+    arch: arm64
+    requires: [go]
+    run: go build -o tool .
+    artifacts: ["tool"]
+  - name: windows-x64
+    on: [windows]
+    arch: x64
+    requires: [go]
+    run: go build -o tool.exe .
+    artifacts: ["tool.exe"]
+```
+
+Each machine builds the entries that match it and skips the others. The collected files of `linux-x64` are in `release/in/linux-x64/`.
+
+### Suggest a recipe
+
+`scf release-build init --repo <owner/name>` looks at the build files of a repository and prints a suggested `.factory/release-build.yaml`. It uses plain rules and no agent. It builds nothing, and it changes nothing unless you add `--write`.
+
+**What it does.** It makes a shallow clone of the repository in a temporary folder, reads the tracked files, prints the suggestion to stdout and deletes the folder. The clone may take up to 5 minutes; each other git or `gh` call up to 2 minutes. Only files at the top of the repository count, and for Go also `cmd/<name>/main.go`.
+
+**What it detects.**
+
+| File | Suggested build |
+|---|---|
+| `package.json` | `npm-package`: the install command of the lock file (`npm ci`, `pnpm install --frozen-lockfile`, `yarn install --frozen-lockfile`, `bun install`, or `npm install` with no lock file), then `npm run build` when there is a `build` script, then `npm pack`. Artifact `*.tgz`. |
+| `pyproject.toml` or `setup.py` | `python-package`: `python3 -m build`. The machine needs the `build` package. Artifacts are the wheel and the source tarball in `dist/`. |
+| `build.gradle` or `build.gradle.kts` | `gradle-jar`: `./gradlew build -x test` when there is a `gradlew` file, otherwise `gradle build -x test`. |
+| `pom.xml` | `maven-jar`: `mvn -q package -DskipTests`. |
+| `go.mod` | `go-binaries`: one cross-compile each for Linux x64, macOS arm64 and Windows x64, into `dist/`. The binary is named after the last part of the module path. |
+| `Cargo.toml` | `rust-binary`: `cargo build --release` for this machine. The binary is named after `[package]` `name`. |
+| `Dockerfile` | `docker-image`: builds the image and saves it as `image.tar.gz`. Requires `docker` and `gzip`. |
+
+A name taken from the repository is used only when it is plain (letters, digits, `.`, `_` and `-`). Otherwise a fallback name is used, and the comment says so.
+
+**The output.** Every guessed line ends with a `#` comment that says it is a guess and why. The `version` is always `{commit_date}-{sha}`. The first lines name what was detected. Messages go to stderr, so stdout holds only the recipe. When nothing is detected, the output is a commented template and a line on stderr says so. Check every guess before you commit the file.
+
+**With `--write`.** The command opens a pull request instead of only printing the recipe:
+
+1. It makes one commit on top of the default branch that adds the recipe file and nothing else. Your working copy is not touched.
+2. It pushes that commit to the new branch `release-build-recipe`. The push creates the branch only; it never changes an existing one.
+3. It opens a pull request into the default branch with `gh pr create` and prints its URL.
+
+It never commits to or pushes to the default branch. It refuses, changes nothing and exits 1 when:
+
+- the repository already has `.factory/release-build.yaml`;
+- `.factory` is a link or a file in the repository, not a folder;
+- nothing was detected;
+- the branch `release-build-recipe` already exists on GitHub (delete it and run the command again);
+- the default branch cannot be read, or is itself named `release-build-recipe`.
+
+If the pull request cannot be opened, the command first looks for an open pull request from that branch, because `gh` may have made it before it failed. If there is none, it deletes the branch it pushed. If that fails, it tells you to delete the branch by hand. After Ctrl+C, it does the same.
+
+Merging the pull request adds the recipe to the default branch. Then `release-build` finds it at the resolved commit.
+
+The command needs `git` and `gh` on the machine, and `gh` signed in with access to the repository.
+### Upload to a draft release
+
+**Upload to a draft.** After the build, the step `upload` sends the files to the draft release of the recipe's tag. It works in this order:
+
+- It lists the releases of the repository and looks for the tag. If a **published** release has the tag, the run fails with a link to that release and changes nothing. The Foundry never changes a published release.
+- If no release has the tag, it creates a draft on the built commit, with `prerelease` from the recipe. A git tag without a release is fine: the draft does not create the git tag; it appears when the release is published.
+- If one draft has the tag, the files go into that draft. If several drafts have it, the newest (by creation date) is used and a warning names the count and the id.
+- A file with the same name as one already on the release is replaced. The `prerelease` flag is set when the draft is created; an existing draft keeps its own flag.
+- The file names on the release have no folders. `/` becomes `-`, and any character other than a letter, a digit, `.`, `_` or `-` becomes `_`. So `linux-x64/tool` is `linux-x64-tool`. A release takes at most 1000 files, and a name at most 200 characters. Two files that would get the same name fail the run.
+- `SHA256SUMS` is written again with the names as they are on the release. `release/out` itself is not changed.
+- If the release is published while the files are uploaded, the upload stops and the message says how many files were uploaded.
+
+The upload step uses the Foundry's GitHub login for the repository (repository access). The build steps never get it. A repository that is reached only with a deploy key cannot be uploaded to: the step fails with the message about the missing GitHub login.
+
+**Pruning drafts.** After a successful upload, the step deletes the oldest drafts of the recipe until `keep` drafts remain. The new draft counts. Age is the creation date. A draft is deleted only if all of these hold:
+
+- It is a draft. Published releases are never deleted.
+- Its tag matches the recipe's tag pattern. Each placeholder has its own format: `{commit_datetime}` is 12 digits, `{commit_date}` is 8 digits, `{sha}` is 7 lowercase hex characters, and `{version}` is the expanded `version`. The rest of the tag is literal text. So `v{commit_date}-{sha}` matches `v20261018-a1b2c3d`, but not `v2026-a1b2c3d` or `v20261018-release`.
+- Its notes hold the Foundry's marker line for this recipe. The Foundry writes it when it creates the draft. A draft made by hand, or made for another recipe, is never deleted. Removing the marker line from the notes of a draft keeps that draft.
+
+Each draft is checked again just before it is deleted. A draft that changed since the list is skipped with a warning. A draft that cannot be deleted gets a warning too; the run still succeeds.
+
+**Result.** The step output lists the uploaded files with their sizes, the link to the draft, the drafts pruned and the drafts kept. The run's data (`run.json`, field `outputs`) holds `release_url` (the link to the draft), `release_tag` and `release_files` (the names and sizes). Later parts of the Foundry read these fields.
+
+**One run at a time.** Every step that does work takes the lock `@release-build`. A second run of `release-build` waits in the queue until the first one finishes, for up to 24 hours at the first step. The lock is not per repository: runs for different repositories also wait for each other.
+
+**Start by hand, examples.**
+
+```bash
+scf run release-build --repo owner/repo             # the default branch (main)
+scf run release-build --repo owner/repo --ref v2.4.0
+```
+
 ---
 
 ## 3. Follow, approve and resume runs
@@ -670,6 +861,7 @@ a **What happens next** block with **You** as who and the approval message as th
   | Not isolated | `isolate_agents: false` in a CLI run | Used | The login stays |
 
   The clean folder is `<run folder>/home/.codex`, made 0700, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. Session history stays, so a resumed session still works. No Codex session starts with an MCP server, so a server in your personal config is never reached. A step never gets your personal Codex folder when it is isolated. Pushing is blocked: a Foundry command rule forbids `git push`, and Codex's own sandbox has no network. A step with `bypassPermissions` and no sandbox is refused, because it could push. A login kept in the keychain, a linked login file or a missing login refuses the step, with a message that says how to sign in with a file. A refreshed token is written back to your personal file only when that file has not changed meanwhile. `OPENAI_API_KEY` alone does not select the key mode. If the clean folder cannot be made, the step is refused; it never falls back to your personal folder. In a CLI run with `isolate_agents: false`, nothing changes: no note, no "Codex:" line. A step held by the OS sandbox gets no clean folder of its own; its log says that git push is blocked in that session.
+- **The `tools:` line.** Each try of an agent step writes one line, for example `· tools: generated profile 3f2a9c1b8d0e on Codex: partial — Codex cannot hold … (recorded only)`. The twelve characters are the start of the profile's hash; the line never shows its id or rules. `enforced` means the agent holds the step's tool profile in full. `partial` means it cannot hold all of it: the line names what it cannot hold, such as Git and GitHub commands run through the shell, and for Codex the paths and tools it cannot limit one by one. Today's flows get `partial` where it applies, and the line only records it: nothing changes. `refused` means the step does not start (its line starts with `!`). That happens only with a tool profile the run was started with, when the step's settings allow more than the profile, or the agent cannot hold it. A refused step is not retried and no other agent takes it.
 - **Retry from step…** re-runs from any earlier step.
 - **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
@@ -900,15 +1092,19 @@ can be found.
 
 - **Run events:** queued, created, started, stopped (also: waiting for approval), resumed,
   cancelled, failed, completed.
-- **Step events:** started, given to a model (and the model before it, after a fallback), tried
-  again (after an outage or a usage limit), a tool that was refused, approved or rejected, failed,
-  completed.
+- **Step events:** started, given to a model (and the model before it, after a fallback), its tool
+  profile worked out for a try (`step.profiled`, from version 3: the profile's id, version and hash,
+  and what the agent cannot hold, never its rules), tried again (after an outage or a usage limit),
+  a tool that was refused, approved or rejected, failed, completed.
 - **What is in it:** ids, names, times, who asked (an account id, the command line, a watcher or
   the Foundry), the model, the exit code, and for every finished step the path, SHA-256 and size
   of its log or transcript. **What is not:** the task, prompts, outputs, error texts, notes,
   tokens or keys. Logs are named, not copied.
 - A shell step whose id has the word `test` or `tests` (for example `run_tests`) is recorded as a
   test run, passed or failed.
+- **Older builds.** Evidence version 3 adds `step.profiled`. Version 2 lines are read as before. A
+  Foundry from before this change refuses the evidence of a run that has version 3 lines, so it
+  cannot verify that run.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
@@ -1004,30 +1200,59 @@ $ scf evidence verify 20260131-120000-ab12
 A policy pack is a set of rules that is asked at the important moments of a run. In this version the
 answers are only recorded: a run never stops or changes because of a pack.
 
-- **Turn it on.** Put the pack in the data folder as `policies/<id>.json` (a plain file, at most 1 MiB),
-  then list its id in `config.yaml`:
+- **The baseline.** The Foundry has a built-in pack, `foundry.baseline`. It is asked at every boundary of
+  every run, with no setting. Its version is the Foundry's version. It has four rules:
+  - a push that would add secrets is denied (`secret.detected`);
+  - a push without a committer name and e-mail that git can find is denied (`identity.missing`);
+  - an agent write by a user without a sandbox is denied (`sandbox.required`);
+  - an in-place run by a user is denied (`workspace.admin-only`).
+
+  Nothing else is built in. The id `foundry.baseline` is reserved: `policy.packs`, `policy.mandatory`
+  and `policy.repositories` refuse it.
+- **Turn packs on.** Put a pack in the data folder as `policies/<id>.json` (a plain file, at most 1 MiB),
+  then list its id in `config.yaml`. Packs are read only from the data folder, never from a repository.
+  There are three layers:
 
   ```yaml
   policy:
-    packs: [baseline]
+    mandatory: [org-overlay]          # asked for every run, after the baseline
+    repositories:                     # asked for the runs of that repository only
+      acme/app: [app-rules]
+    packs: [team-extras]              # optional packs, asked for every run
   ```
 
-  Only `mode: observe` is accepted. A pack in `enforce` mode is refused for now. The list is not a
-  setting in the web interface; an older build rejects the `policy` key.
+  A repository key is `owner/name` in lower case. Each list has at most 20 ids, with no id twice in
+  a list. Only `mode: observe` is accepted. A pack in `enforce` mode is refused for now. The settings are
+  not in the web interface; an older build rejects the `policy` key.
+- **Which answer counts.** For each boundary the Foundry takes the most restrictive answer of all packs
+  (from least to most restrictive: `allow`, `warn`, `require_approval`, `deny`). On a tie the higher layer wins:
+  `mandatory`, then `repositories`, then `packs`. A repository pack can only make things stricter: it
+  cannot allow what the baseline denies.
 - **When it is asked.** The start of the run; before the workspace is made; before a step starts in the
   repository's checkout; before and after every step (also the steps inside a parallel step or a
   sub-flow); before a write-capable agent step; for each push a step makes; when an approval is used;
   and when the run succeeded. This is the same for built-in and custom flows.
-- **What you see.** Each answer is a line in the live log, for example
-  `· policy baseline 2026.1 · push: warn (branch.protected) — observe only, nothing was stopped`, and an
-  event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
+- **What you see.** Every run has a line in the live log for each answer, at each boundary, also when no
+  pack is configured. The line names the layer, and the answer that counts has ` · wins`. For example:
+
+  ```text
+  · policy foundry.baseline 0.1.0 [mandatory] · push: deny (secret.detected, rule secret-detected) · wins — observe only, nothing was stopped
+  ```
+
+  Each answer is also an event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
 - **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack is logged as
   `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. The run's
   result is the same as without the pack.
-- **Pushes.** While packs are configured, the Foundry's pre-push hook records each pushed branch, even
-  when no branch is protected. The hook never blocks a push.
-- **Evidence from this version** has a newer event version. An older build cannot read the evidence of a
-  run that has `policy.decided` events, so keep this build for those runs.
+- **Pushes.** The Foundry's pre-push hook records each pushed branch, the number of secrets its scan
+  found and whether git can find a committer identity. The baseline is asked at `push` only when the
+  hook is there: when a branch is protected, the secret scan is on, or packs are configured. With both
+  guards off and no packs, there is no hook and pushes are not observed. The hook still refuses pushes to
+  protected branches and pushes the secret scan rejects; it never blocks a push for an observation.
+- **Without the secret scan,** a push gets `policy.input-incomplete` for the secret rule, since the number
+  of secrets is not known.
+- **Evidence format.** It is unchanged since #142. The baseline adds `policy.decided` events to every run.
+  An older build cannot read the evidence of a run that has `policy.decided` events, so keep this build
+  for those runs.
 
 ### Lifecycle telemetry
 
@@ -1060,6 +1285,35 @@ Foundry does, without opening each run folder.
   written is not stored. The first time each kind of drop happens, the log shows one line such as
   `! telemetry: the telemetry file could not be written; events are dropped until it can`. The line never
   shows a value.
+
+#### Send the events to an OpenTelemetry collector
+
+If you run an OpenTelemetry collector, the Foundry can send the same events to its OTLP/HTTP logs
+endpoint. It is off by default, and nothing is sent until you turn it on in `config.yaml`:
+
+```yaml
+telemetry:
+  otlp:
+    enabled: true
+    endpoint: http://127.0.0.1:4318/v1/logs
+    timeout_ms: 5000       # optional: 100 to 60000, one request may take this long
+```
+
+- **Address.** `http:` or `https:`, with no user name, password, `?` or `#`. Plain `http:` works only for
+  `localhost`, `127.x.x.x` and `[::1]`, so the example above is fine on the same machine. For any other host
+  use `https:`. There is no login for the collector: keep it on a machine or network you trust.
+- **What is sent.** The events described above, as OTLP log records. Repository names and account ids
+  (UUIDs) are sent as they are. Each record has its fields as `scf.*` attributes, and all events of a run
+  share one trace id. The local file is written the same way, with or without this setting.
+- **Failure never stops a run.** Events are sent in batches of up to 50, one request at a time. A request that
+  fails, is refused, or takes longer than `timeout_ms` is not retried. Events are held in a queue of 1000; when
+  it is full, the oldest is dropped and counted.
+- **What the log lines mean.**
+  - `! telemetry: the OTLP collector could not be reached or did not accept events; they are dropped until it does`:
+    sending has started to fail. It is shown once for each period of failures, not for each request.
+  - `· telemetry: the OTLP collector accepts events again`: the first successful request after a failure.
+- **On exit.** When `scf` stops (Ctrl+C in `watch`, or a stop of `serve`), it sends what is still queued,
+  for at most 3 seconds. Events that cannot be sent in that time are dropped and counted.
 
 ---
 
@@ -3030,12 +3284,16 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
 
 - **Settings** per repository (**Edit** in the sections Branches and Run settings): the test command (one line, up to 500 characters), the docs to update (up to
   50 paths, no leading `/`, `~` or `-`, no `..`), the protected branches (up to 50 patterns), and the names of
-  the main and the develop branch. Input is checked on the server: lengths, no control characters. Branch names
-  follow git's rules, are at most 200 characters, and may not be `@`. In a pattern `*` matches any text and
-  `?` matches one character; `[…]` is not allowed. `{}` clears the settings.
-- **The settings are only stored and shown.** Runs do not use them yet: the test command still comes from the
-  flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. They are never in
-  `GET /api/repos` and never shown on **My repositories**.
+  the main and the develop branch, and the release-build recipe (**Edit** in the section Release recipe; the
+  YAML text, up to 16 384 characters, checked on save with the same rules as `.factory/release-build.yaml`; a
+  wrong recipe is refused with a message that names the key). Input is checked on the server: lengths, no control
+  characters. Branch names follow git's rules, are at most 200 characters, and may not be `@`. In a pattern `*`
+  matches any text and `?` matches one character; `[…]` is not allowed. `{}` clears the settings.
+- **The settings are only stored and shown, with one exception.** Runs do not use them yet: the test command still
+  comes from the flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. The
+  release-build recipe is read by the flow `release-build` when the commit has no `.factory/release-build.yaml`
+  (see "Build release files on this machine"). The settings are never in `GET /api/repos` and never shown on
+  **My repositories**.
 - **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
   the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of
   seven items: the value is clear (who and why); it stands on its own or its dependencies are named; every
@@ -3231,7 +3489,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap |
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
-| `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules) |
+| `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
 | `POST /api/runs/:id/archive` | yes | own runs | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
@@ -3289,7 +3547,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
-| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches and branch names of a repository |
+| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names and release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) of a repository; writes an audit line |
 | `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |
@@ -5414,7 +5672,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf ui [--port 4777] [--no-open] [--dev]` | Web UI, queue and watchers. Restarts itself when a new build is installed and no run is active (set `SCF_NO_SUPERVISE=1` to turn that off) |
 | `scf serve [--port 4777] [--dev]` | The same without opening a browser. `--dev` (also on `scf ui`) serves the component gallery at `/gallery/` for developers; leave it off in normal use |
 | `scf service install \| uninstall \| status` | Run `scf serve` in the background (macOS) |
-| `scf run <flow> --task "…" [--var k=v] [--repo dir]` | Run a flow |
+| `scf run <flow> --task "…" [--var k=v] [--repo dir\|owner/name] [--ref ref]` | Run a flow. `--repo owner/name` is for flows that clone the repository themselves (`release-build`); `--ref` sets the variable `ref` |
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
@@ -5442,6 +5700,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf skills score <source-id> [<suite-file>] [--agent]` | Score every skill of a staged import with the suite (default `skill-evaluation.yaml`) and store one record each under `skill-evaluations/`; offline, except `--agent`, which also runs the instructions scenarios in the macOS sandbox ([Run the scenarios in the sandbox](#run-the-scenarios-in-the-sandbox)); exits 1 on a `PROBLEM` ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf skills gate <source-id> [<suite-file>]` | Print `PASSED`, `FAILED` (with reason codes, including the effect codes), `DECISION` or `PROBLEM` per staged skill from its newest evaluation record and its newest effect record; offline and read-only; exits 1 when a skill fails or a `PROBLEM` is printed ([Score and gate an import](#score-and-gate-an-import)) |
 | `scf skills effect <source-id> <skill-id> [<suite-file>]` or `scf skills effect <id@version> [<suite-file>]` | Run the skill's sample tasks with and without the skill in the macOS sandbox and store the verdict (`helps`, `no-measurable-effect` or `harms`) under `skill-effects/`; prints `RUN`, `SKIPPED`, `EFFECT`, `STORED` lines; exits 1 on a `PROBLEM` or an interrupt ([Measure the effect of a skill](#measure-the-effect-of-a-skill)) |
+| `scf release-build init --repo <owner/name> [--write]` | Print a suggested `.factory/release-build.yaml` from the build files of a repository; `--write` opens a pull request that adds it, on the branch `release-build-recipe` ([Suggest a recipe](#suggest-a-recipe)) |
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
