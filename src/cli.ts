@@ -10,6 +10,7 @@ import { getRepo } from "./auth/repos.js";
 import { getUser } from "./auth/users.js";
 import { effectiveRepoWatchers, listRepoWatchers } from "./repos/watchers.js";
 import { FORCE_HINT, gateRun } from "./run-gate.js";
+import { looksLikeGithubRepo, runTarget } from "./run-target.js";
 import { listBlocks } from "./flow/blocks.js";
 import { pinBuiltinSkillsAtStart } from "./skills/registry.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
@@ -115,7 +116,8 @@ Usage:
 
 Run options:
   -t, --task <text>        Task description (or --task-file <path>); optional for ticket flows
-  -r, --repo <dir>         Target repository (default: current directory)
+  -r, --repo <dir|owner/name>  Target repository (default: current directory); owner/name for flows that clone it themselves (release-build)
+      --ref <branch|sha>   Sets the variable ref (release-build: what to build; default main)
   -v, --var key=value      Override a flow variable (repeatable)
       --runs-dir <dir>     Where run logs/worktrees go (default: ${join(FACTORY_HOME, "runs")})
 
@@ -186,6 +188,7 @@ function report(s: RunSummary): number {
       `\n  run log:   ${join(s.runDir, "run.json")}` +
       (s.workdir ? `\n  workspace: ${s.workdir}` : "") +
       (s.branch ? `\n  branch:    ${s.branch}` : "") +
+      (s.outputs?.release_url ? `\n  release:   ${s.outputs.release_url}` : "") +
       (s.status === "waiting" ? `\n  next:      scf approve ${s.runId}   (or: scf reject ${s.runId})` : "") +
       (s.status === "stopped" || s.status === "failed" ? `\n  next:      scf resume ${s.runId}` : "") +
       "\n",
@@ -210,6 +213,7 @@ async function main(argv: string[]): Promise<number> {
       task: { type: "string", short: "t" },
       "task-file": { type: "string" },
       repo: { type: "string", short: "r" },
+      ref: { type: "string" },
       var: { type: "string", short: "v", multiple: true },
       "runs-dir": { type: "string" },
       reason: { type: "string" },
@@ -275,13 +279,16 @@ async function main(argv: string[]): Promise<number> {
       if (!arg) throw new Error("usage: scf run <flow> --task \"...\"");
       const task = values.task ?? (values["task-file"] ? readFileSync(values["task-file"], "utf8") : undefined);
       // The task is optional: e.g. GitHub flows take their work from the ticket.
-      if (!existsSync(repo)) throw new Error(`repo not found: ${repo}`);
-      const { flow } = loadFlow(arg, repo);
+      // --repo is a folder, or (flows that clone the repository themselves) "owner/name": see run-target.ts
+      const isFolder = !values.repo || existsSync(repo);
+      if (!isFolder && !looksLikeGithubRepo(values.repo!)) throw new Error(`repo not found: ${repo}`);
+      const { flow } = loadFlow(arg, isFolder ? repo : process.cwd());
+      const target = runTarget({ repoArg: values.repo, ref: values.ref, vars: parseVars(values.var), cwd: process.cwd(), workspace: flow.workspace });
       const summary = await runFlow(flow, {
         task: task?.trim() ?? "",
-        repo,
+        repo: target.repo,
         runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
-        vars: parseVars(values.var),
+        vars: target.vars,
         source: "cli",
         log: (m) => process.stdout.write(m + "\n"),
       });

@@ -26,6 +26,8 @@ export interface UserRun {
   flowDef: { name: string; steps: { id: string; type: string; description?: string }[]; publish?: { enabled: boolean; version: number } };
   history: UserStep[]; state: { next: string | null };
   waiting?: { stepId: string; message: string; since: string }; next?: NextStep;
+  /** What a step handed on in outputs.json (release-build: release_url, release_tag, release_files). Already limited and redacted. */
+  outputs?: Record<string, string>;
   /** The questions of a run that stopped to ask them: the output of that one step, nothing else. */
   questions?: string;
   /** What was answered on the run page, oldest first. */
@@ -157,6 +159,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(s.next ? { next: userRecord(s.next) } : {}),
     ...(questionsOf(s) ? { questions: questionsOf(s) } : {}),
     ...(Array.isArray(s.answers) && s.answers.length ? { answers: s.answers.map((a) => ({ at: a.at, text: a.text })) } : {}),
+    ...(s.outputs && Object.keys(s.outputs).length ? { outputs: s.outputs } : {}),
     ...(s.canAnswer ? { canAnswer: true as const } : {}),
     ...(userSkills(s) ? { skills: userSkills(s) } : {}),
     ...(s.skillView ? { skillView: s.skillView } : {}),

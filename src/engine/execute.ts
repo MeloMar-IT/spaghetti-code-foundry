@@ -12,7 +12,8 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
-import { shortEnv, shortEnvRun } from "./short-env.js";
+import { readRunOutputs } from "./run-outputs.js";
+import { shortEnv,shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import type { Actor, StepIdentity } from "../evidence/identity.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
@@ -133,6 +134,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     skills_digest: res.skills?.digest ?? "",
     visit,
   };
+  const outputs = readRunOutputs(engine.summary.runDir, engine.log);
+  if (outputs) engine.summary.outputs = { ...engine.summary.outputs, ...outputs };
   engine.save();
   engine.evidence?.stepEnded(rec);
   const identity = stepIdentity(step, scope.prefix, visit);

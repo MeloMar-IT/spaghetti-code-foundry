@@ -2087,29 +2087,42 @@ write("release-daily", {
 });
 
 // ── release-build: build the release files a repository describes in .factory/release-build.yaml ──
+// One release-build run per repository at a time (area @release-build). A resume starts at the saved step, and area-lock drops the lock
+// of a run that is not running, so every step that does work takes the lock again (the same run id: harmless).
+const RB_LOCK =
+  '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @release-build --wait-sec 3000 >/dev/null || { echo "another release-build run of this repository holds the lock — resume this run when it is done"; exit 1; }\n';
 write("release-build", {
-  title: "Build release files on this machine from .factory/release-build.yaml",
+  title: "Build release files on this machine from .factory/release-build.yaml and upload them to a draft GitHub release",
   lines: [
-    "factory run release-build --var github_repo=owner/repo --var ref=main",
+    "scf run release-build --repo owner/repo [--ref main]",
     "",
-    "clone → resolve the ref to a commit, read the recipe at that commit",
+    "lock (one run per repository) → clone → resolve the ref to a commit, read the recipe at that commit",
     "      → build (one after the other, each in its own git worktree, through test-slot, no tokens in the environment)",
-    "        → files and SHA256SUMS in the run folder (release/out); nothing is uploaded",
+    "        → files and SHA256SUMS in the run folder (release/out)",
+    "      → upload to a DRAFT release of the recipe's tag (never published), prune the oldest drafts of this recipe",
+    "        → outputs.release_url and outputs.release_tag in run.json",
   ],
 }, {
-  description: "Build the release files described in .factory/release-build.yaml on this machine, in clean worktrees, and collect them in the run folder",
+  description: "Build the release files described in .factory/release-build.yaml on this machine, in clean worktrees, and upload them to a draft GitHub release",
   workspace: "empty",
   defaults: { timeout_sec: 3600 },
   vars: { github_repo: "owner/repo", ref: "main" },
-  var_info: { ref: { label: "Ref", help: "The branch, tag or commit to build. Default: main.", kind: "text" } },
+  var_info: { ref: { label: "Ref", help: "The branch, tag or commit to build. Default: main. A user can build only the repository's default branch.", kind: "text" } },
   steps: [
+    {
+      id: "lock",
+      type: "shell",
+      description: "Wait until no other release-build run of this repository is working",
+      timeout_sec: 90000,
+      run: '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @release-build --wait-sec 86400 >/dev/null || { echo "another release-build run of this repository held the lock for 24 hours — look at that run"; exit 1; }',
+    },
     clone,
     {
       id: "resolve",
       type: "shell",
       description: "Resolve the ref to a commit and read the recipe at that commit",
       // exec: the engine's stop signal reaches the tool itself
-      run: 'exec node "$FACTORY_TOOLS/release-build" resolve "{{run.dir}}"',
+      run: RB_LOCK + 'exec node "$FACTORY_TOOLS/release-build" resolve "{{run.dir}}"',
     },
     {
       id: "build",
@@ -2117,7 +2130,15 @@ write("release-build", {
       description: "Run the builds one after the other and collect the files",
       // Every build has its own limit (timeout_minutes in the recipe); this one only covers all of them together.
       timeout_sec: 86400,
-      run: 'exec node "$FACTORY_TOOLS/release-build" build "{{run.dir}}" "{{run.dir}}/../../test-slots"',
+      run: RB_LOCK + 'exec node "$FACTORY_TOOLS/release-build" build "{{run.dir}}" "{{run.dir}}/../../test-slots"',
+    },
+    {
+      id: "upload",
+      type: "shell",
+      description: "Upload the files to the draft release of the recipe's tag and prune old drafts",
+      repo_access: true,
+      timeout_sec: 7200,
+      run: RB_LOCK + 'exec node "$FACTORY_TOOLS/release-upload" "{{run.dir}}"',
     },
   ],
 });

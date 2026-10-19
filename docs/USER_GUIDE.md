@@ -212,9 +212,11 @@ The same rules as for a user apply: only a published flow, only your own reposit
 
 ### Build release files on this machine
 
-The flow `release-build` builds the release files of any repository on the Foundry machine. Everything project-specific is in the repository's recipe, `.factory/release-build.yaml`, so the same flow works for a Node package, a static site or a compiled binary. This part only builds and collects the files. It does not upload them; the upload to a draft GitHub release comes later.
+The flow `release-build` builds the release files of any repository on the Foundry machine. Everything project-specific is in the repository's recipe, `.factory/release-build.yaml`, so the same flow works for a Node package, a static site or a compiled binary. The files are then uploaded to a **draft** GitHub release of the recipe's tag. The Foundry never publishes a release, and it keeps only the newest drafts of the recipe (see "Upload to a draft" and "Pruning drafts" below).
 
-**Start it.** Run flow `release-build` with `github_repo` (`owner/repo`) and `ref` (a branch, tag or commit; default `main`). The flow clones the repository and resolves the ref to one commit. It reads the recipe at that commit. A repository without a recipe fails at once with "this repository has no release-build recipe".
+**Start it.** By hand: `scf run release-build --repo <owner/name> [--ref <branch, tag or sha>]`. `--repo` takes `owner/name` when no folder of that name exists here; it sets the variable `github_repo`. `--ref` sets the variable `ref` (default `main`). In the web UI, start `release-build` and fill in the repository and the ref. The flow clones the repository and resolves the ref to one commit. It reads the recipe at that commit. A repository without a recipe fails at once with "this repository has no release-build recipe".
+
+**Who may build which ref.** An admin may build any ref. A user may build only the repository's default branch: its `mainBranch` setting, else `main`. For any other ref, a branch, a tag or a commit id (even one that is on the default branch), the server refuses the start with a 403 that names the ref. This also holds for a published flow that fixes the ref. An admin who starts a run as a user (`likeUser`) follows the user rule.
 
 **The recipe.** The keys:
 
@@ -228,7 +230,7 @@ The flow `release-build` builds the release files of any repository on the Found
 | `builds` | (required) | The list of builds, at least one. |
 | `assemble` | (none) | A command that runs after all builds. |
 
-`tag`, `prerelease` and `keep` are read and checked now; the upload step (part 2) uses them.
+`tag`, `prerelease` and `keep` are used by the upload, described below.
 
 The placeholders, filled from the **committer time of the resolved commit** in UTC (the server's timezone does not change them):
 
@@ -323,6 +325,37 @@ builds:
 ```
 
 Each machine builds the entries that match it and skips the others. The collected files of `linux-x64` are in `release/in/linux-x64/`.
+
+**Upload to a draft.** After the build, the step `upload` sends the files to the draft release of the recipe's tag. It works in this order:
+
+- It lists the releases of the repository and looks for the tag. If a **published** release has the tag, the run fails with a link to that release and changes nothing. The Foundry never changes a published release.
+- If no release has the tag, it creates a draft on the built commit, with `prerelease` from the recipe. A git tag without a release is fine: the draft does not create the git tag; it appears when the release is published.
+- If one draft has the tag, the files go into that draft. If several drafts have it, the newest (by creation date) is used and a warning names the count and the id.
+- A file with the same name as one already on the release is replaced. The `prerelease` flag is set when the draft is created; an existing draft keeps its own flag.
+- The file names on the release have no folders. `/` becomes `-`, and any character other than a letter, a digit, `.`, `_` or `-` becomes `_`. So `linux-x64/tool` is `linux-x64-tool`. A release takes at most 1000 files, and a name at most 200 characters. Two files that would get the same name fail the run.
+- `SHA256SUMS` is written again with the names as they are on the release. `release/out` itself is not changed.
+- If the release is published while the files are uploaded, the upload stops and the message says how many files were uploaded.
+
+The upload step uses the Foundry's GitHub login for the repository (repository access). The build steps never get it. A repository that is reached only with a deploy key cannot be uploaded to: the step fails with the message about the missing GitHub login.
+
+**Pruning drafts.** After a successful upload, the step deletes the oldest drafts of the recipe until `keep` drafts remain. The new draft counts. Age is the creation date. A draft is deleted only if all of these hold:
+
+- It is a draft. Published releases are never deleted.
+- Its tag matches the recipe's tag pattern. Each placeholder has its own format: `{commit_datetime}` is 12 digits, `{commit_date}` is 8 digits, `{sha}` is 7 lowercase hex characters, and `{version}` is the expanded `version`. The rest of the tag is literal text. So `v{commit_date}-{sha}` matches `v20261018-a1b2c3d`, but not `v2026-a1b2c3d` or `v20261018-release`.
+- Its notes hold the Foundry's marker line for this recipe. The Foundry writes it when it creates the draft. A draft made by hand, or made for another recipe, is never deleted. Removing the marker line from the notes of a draft keeps that draft.
+
+Each draft is checked again just before it is deleted. A draft that changed since the list is skipped with a warning. A draft that cannot be deleted gets a warning too; the run still succeeds.
+
+**Result.** The step output lists the uploaded files with their sizes, the link to the draft, the drafts pruned and the drafts kept. The run's data (`run.json`, field `outputs`) holds `release_url` (the link to the draft), `release_tag` and `release_files` (the names and sizes). Later parts of the Foundry read these fields.
+
+**One run at a time.** Every step that does work takes the lock `@release-build`. A second run of `release-build` waits in the queue until the first one finishes, for up to 24 hours at the first step. The lock is not per repository: runs for different repositories also wait for each other.
+
+**Start by hand, examples.**
+
+```bash
+scf run release-build --repo owner/repo             # the default branch (main)
+scf run release-build --repo owner/repo --ref v2.4.0
+```
 
 ---
 
@@ -3374,7 +3407,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap |
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
-| `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules) |
+| `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
 | `POST /api/runs/:id/archive` | yes | own runs | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
@@ -5557,7 +5590,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf ui [--port 4777] [--no-open] [--dev]` | Web UI, queue and watchers. Restarts itself when a new build is installed and no run is active (set `SCF_NO_SUPERVISE=1` to turn that off) |
 | `scf serve [--port 4777] [--dev]` | The same without opening a browser. `--dev` (also on `scf ui`) serves the component gallery at `/gallery/` for developers; leave it off in normal use |
 | `scf service install \| uninstall \| status` | Run `scf serve` in the background (macOS) |
-| `scf run <flow> --task "…" [--var k=v] [--repo dir]` | Run a flow |
+| `scf run <flow> --task "…" [--var k=v] [--repo dir\|owner/name] [--ref ref]` | Run a flow. `--repo owner/name` is for flows that clone the repository themselves (`release-build`); `--ref` sets the variable `ref` |
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |

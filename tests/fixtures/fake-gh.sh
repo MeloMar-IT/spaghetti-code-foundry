@@ -103,6 +103,58 @@ const dir=q.get("direction")==="desc"?-1:1;l=l.slice().sort((x,y)=>dir*(((x&&x.n
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const p=l.find(x=>x.number===Number(process.argv[2]));if(!p){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify({number:p.number,state:p.state,merged:p.merged===true,merged_at:p.merged===true?"2026-01-01T00:00:00Z":null}))' "$FAKE_GH_LOG.pulls.json" "${all##*/pulls/}"
     exit $? ;;
 esac
+# Releases. State: $FAKE_GH_LOG.releases.json, a list of { id, tag_name, draft, prerelease, created_at, body, html_url, upload_url, name, target_commitish,
+# assets: [{ id, name, size, text? }] } (a test may write it first). Calls: "api --paginate repos/R/releases?per_page=100 --jq …" (one compact JSON line per
+# release, ordered by $FAKE_GH_RELEASE_ORDER: newest (default), oldest or reverse-id), "api repos/R/releases/<id>" (404 when unknown), "api -X POST repos/R/releases
+# -f/-F fields", "api -X DELETE repos/R/releases/<id>" and ".../releases/assets/<id>", and "api -X POST https://uploads.github.com/repos/R/releases/<id>/assets?name=X
+# --input <file>" (an existing name: 422 already_exists). "release list|view|create|upload|delete" work on the same state; like the real gh, view, upload and delete
+# find a tag among the PUBLISHED releases only. $FAKE_GH_FAIL_API=release-list|release-upload|release-delete makes that call fail.
+REL_JS='const fs=require("fs");const f=process.argv[1];const a=process.argv.slice(2);
+const load=()=>fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const save=(l)=>fs.writeFileSync(f,JSON.stringify(l,null,1));
+const die=(m,c)=>{console.error(m);process.exit(c||1)};const failOn=(n)=>{if(process.env.FAKE_GH_FAIL_API===n)die(process.env.FAKE_GH_FAIL_TEXT||"boom")};
+const l=load();const nextId=()=>Math.max(999,...l.map((x)=>x.id))+1;const nextAsset=()=>Math.max(4999,...l.flatMap((x)=>x.assets.map((y)=>y.id)))+1;
+const stamp=()=>{const newest=Math.max(0,...l.map((x)=>Date.parse(x.created_at)));return new Date(Math.max(Date.now(),newest+1000)).toISOString()};
+const view=(r)=>({id:r.id,tag_name:r.tag_name,draft:r.draft,prerelease:r.prerelease,created_at:r.created_at,html_url:r.html_url,upload_url:r.upload_url,body:r.body,assets:r.assets.map((x)=>({id:x.id,name:x.name,size:x.size}))});
+const mk=(repo,o)=>{const id=nextId();const r={id,tag_name:o.tag,name:o.name||o.tag,target_commitish:o.target||"",draft:o.draft,prerelease:o.prerelease,created_at:stamp(),body:o.body||"",
+ html_url:"https://github.com/"+repo+"/releases/tag/"+(o.draft?"untagged-"+id:o.tag),upload_url:"https://uploads.github.com/repos/"+repo+"/releases/"+id+"/assets{?name,label}",assets:[]};l.push(r);return r};
+const addAsset=(r,name,file)=>{const st=fs.statSync(file);const x={id:nextAsset(),name,size:st.size};if(st.size<100000)x.text=fs.readFileSync(file,"utf8");r.assets.push(x);return x};
+if(a[0]==="release"){const sub=a[1];const pos=[];const flags={};const files=[];
+ for(let i=2;i<a.length;i++){const x=a[i];if(x==="--target"||x==="--notes"||x==="--title"||x==="-t"||x==="-n"||x==="--repo"||x==="-R"){flags[x]=a[++i]}else if(x.startsWith("-"))flags[x]=true;else pos.push(x)}
+ const repo=flags["--repo"]||flags["-R"]||"owner/repo";
+ if(sub==="list"){failOn("release-list");for(const r of l)console.log([r.name||r.tag_name,r.draft?"Draft":r.prerelease?"Pre-release":"Latest",r.tag_name,r.created_at].join("\t"));process.exit(0)}
+ if(sub==="create"){const r=mk(repo,{tag:pos[0],draft:!!flags["--draft"],prerelease:!!flags["--prerelease"],target:flags["--target"],body:flags["--notes"],name:flags["--title"]});
+  for(const p of pos.slice(1))addAsset(r,p.split("/").pop(),p);save(l);console.log(r.html_url);process.exit(0)}
+ const pub=l.find((r)=>!r.draft&&r.tag_name===pos[0]);if(!pub)die("release not found");
+ if(sub==="view"){console.log("title:\t"+pub.name+"\ntag:\t"+pub.tag_name+"\nurl:\t"+pub.html_url);process.exit(0)}
+ if(sub==="upload"){failOn("release-upload");for(const p of pos.slice(1)){const name=p.split("/").pop();const old=pub.assets.findIndex((x)=>x.name===name);
+   if(old>=0){if(!flags["--clobber"])die("a release asset named "+name+" already exists");pub.assets.splice(old,1)}addAsset(pub,name,p)}save(l);process.exit(0)}
+ if(sub==="delete"){failOn("release-delete");save(l.filter((r)=>r!==pub));process.exit(0)}
+ process.exit(99)}
+let method="GET",path="",paginate=false,input="";const fields={};
+for(let i=1;i<a.length;i++){const x=a[i];if(x==="-X")method=a[++i];else if(x==="-f"||x==="-F"){const kv=a[++i];const k=kv.indexOf("=");fields[kv.slice(0,k)]=kv.slice(k+1)}
+ else if(x==="--paginate")paginate=true;else if(x==="--jq"||x==="-H"||x==="--hostname")i++;else if(x==="--input")input=a[++i];else path=x}
+if(Object.keys(fields).length&&method==="GET")method="POST";
+let m;const nf=()=>die("gh: Not Found (HTTP 404)");
+if(m=/^https:\/\/uploads\.github\.com\/repos\/([^/]+\/[^/]+)\/releases\/(\d+)\/assets\?(.*)$/.exec(path)){failOn("release-upload");
+ const r=l.find((x)=>x.id===Number(m[2]));if(!r)nf();const name=new URLSearchParams(m[3]).get("name");
+ if(!input||!fs.existsSync(input))die("gh: no such file: "+input);
+ if(r.assets.some((x)=>x.name===name))die("gh: Validation Failed (HTTP 422)\n{\"errors\":[{\"code\":\"already_exists\",\"field\":\"name\"}]}");
+ const x=addAsset(r,name,input);save(l);console.log(JSON.stringify({id:x.id,name:x.name,size:x.size}));process.exit(0)}
+if(m=/^repos\/([^/]+\/[^/]+)\/releases\?per_page=100$/.exec(path)){failOn("release-list");const order=process.env.FAKE_GH_RELEASE_ORDER||"newest";
+ const s=l.slice().sort((x,y)=>order==="oldest"?Date.parse(x.created_at)-Date.parse(y.created_at):order==="reverse-id"?y.id-x.id:Date.parse(y.created_at)-Date.parse(x.created_at));
+ for(const r of s)console.log(JSON.stringify(view(r)));process.exit(0)}
+if(m=/^repos\/([^/]+\/[^/]+)\/releases$/.exec(path)){if(method!=="POST")process.exit(99);
+ const r=mk(m[1],{tag:fields.tag_name,name:fields.name,target:fields.target_commitish,body:fields.body,draft:fields.draft==="true",prerelease:fields.prerelease==="true"});save(l);console.log(JSON.stringify(view(r)));process.exit(0)}
+if(m=/^repos\/([^/]+\/[^/]+)\/releases\/assets\/(\d+)$/.exec(path)){if(method!=="DELETE")process.exit(99);failOn("release-delete");
+ const r=l.find((x)=>x.assets.some((y)=>y.id===Number(m[2])));if(!r)nf();r.assets=r.assets.filter((y)=>y.id!==Number(m[2]));save(l);process.exit(0)}
+if(m=/^repos\/([^/]+\/[^/]+)\/releases\/(\d+)$/.exec(path)){const r=l.find((x)=>x.id===Number(m[2]));
+ if(method==="DELETE"){failOn("release-delete");if(!r)nf();save(l.filter((x)=>x!==r));process.exit(0)}
+ if(method!=="GET")process.exit(99);if(!r)nf();console.log(JSON.stringify(view(r)));process.exit(0)}
+process.exit(99)'
+case "$all" in "release "*|"api "*"releases"*)
+  node -e "$REL_JS" "$FAKE_GH_LOG.releases.json" "$@"; rc=$?
+  [ "$rc" -ne 99 ] && exit "$rc" ;;
+esac
 # $FAKE_GH_STORIES=1: the issues made by the REST POST (bug stories) are real to "issue list/view/close" too. Without it, nothing here runs.
 # list: $FAKE_GH_ISSUES plus the open stories with the --label; view/close: for a number found in $FAKE_GH_LOG.issues.json.
 STORY_JS='const fs=require("fs"),f=process.argv[1],[mode,...a]=process.argv.slice(2);const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(a[0]));
