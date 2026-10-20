@@ -1199,8 +1199,9 @@ $ scf evidence verify 20260131-120000-ab12
 
 ### Policy packs in observe mode
 
-A policy pack is a set of rules that is asked at the important moments of a run. In this version the
-answers are only recorded: a run never stops or changes because of a pack.
+A policy pack is a set of rules that is asked at the important moments of a run. The answers are
+recorded, and a run does not stop because of them, with one exception: a mandatory pack that cannot be
+read or evaluated stops the steps that sign in or write (see [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read)).
 
 - **The baseline.** The Foundry has a built-in pack, `foundry.baseline`. It is asked at every boundary of
   every run, with no setting. Its version is the Foundry's version. It has four rules:
@@ -1243,8 +1244,9 @@ answers are only recorded: a run never stops or changes because of a pack.
 
   Each answer is also an event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
 - **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack is logged as
-  `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. The run's
-  result is the same as without the pack.
+  `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. For a
+  repository or optional pack, the run's result is the same as without the pack. For a mandatory pack,
+  see [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read).
 - **Pushes.** The Foundry's pre-push hook records each pushed branch, the number of secrets its scan
   found and whether git can find a committer identity. The baseline is asked at `push` only when the
   hook is there: when a branch is protected, the secret scan is on, or packs are configured. With both
@@ -1255,6 +1257,35 @@ answers are only recorded: a run never stops or changes because of a pack.
 - **Evidence format.** It is unchanged since #142. The baseline adds `policy.decided` events to every run.
   An older build cannot read the evidence of a run that has `policy.decided` events, so keep this build
   for those runs.
+
+#### When the mandatory policy cannot be read
+
+A mandatory pack is one in `policy.mandatory`, or the built-in baseline. If that pack is missing, linked,
+not a plain file, not valid JSON, has another id, is set to `mode: enforce`, is too large, or cannot be
+evaluated, the Foundry stops the steps that need trust. It does not carry on quietly.
+
+- **What is stopped.** A step that signs in to the repository with the machine's login or a stored
+  repository token, an agent step that writes, and an approval that is used. Everything else runs as
+  before: the start and end of a run, the steps before and after each step, pushes, steps with no
+  sign-in, and the workspace. An isolated read-only agent step and an isolated shell step without
+  `repo_access` run too. An isolated agent step that writes is stopped.
+- **What is not stopped.** A broken or missing pack in `policy.repositories` or `policy.packs` never stops
+  a step. A valid mandatory pack whose rule denies is only recorded.
+- **What you see.** The run ends `failed` and the step does not run. `on_failure` is not followed. The
+  error and the log say:
+
+  ```text
+  mandatory policy org-overlay cannot be used (policy.unavailable): repository.access is denied
+  ```
+
+  The live log also has the load line (`! policy org-overlay: … — recorded as policy.unavailable; this
+  mandatory policy denies steps with a sign-in and writing agents`), and the policy line of the step ends
+  with `— enforced: the step is stopped`. The evidence has a `step.denied` event with the policy's id and
+  version `unknown`, and it still verifies. No token is fetched when the run starts, so a run that is
+  stopped this way does not use the bot's sign-in.
+- **What to do.** Fix the file in `policies/<id>.json` (it must be a plain file with valid JSON, the same
+  id, and `mode: observe`), or remove the id from `policy.mandatory` in `config.yaml` if the overlay is
+  no longer wanted. A run reads the packs when it starts or resumes, so start the run again after the fix.
 
 ### Lifecycle telemetry
 

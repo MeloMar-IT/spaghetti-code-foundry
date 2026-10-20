@@ -4,12 +4,14 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { protectedBranchEnv } from "../src/engine/guards.js";
-import { baseFacts, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
+import { baseFacts, deniedReason, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
+import { ENGINE_REASONS } from "../src/policy/reasons.js";
+import { DenialSchema } from "../src/evidence/schema.js";
 import { BASELINE_PACK, BASELINE_POLICY_ID } from "../src/policy/baseline.js";
 import { parseEvidenceEvent } from "../src/evidence/parse.js";
 import type { RunRecorder } from "../src/evidence/record.js";
 import { parsePolicyDecision } from "../src/policy/parse.js";
-import type { PolicyPack } from "../src/policy/schema.js";
+import { BOUNDARIES, type Boundary, type Facts, type PolicyPack } from "../src/policy/schema.js";
 import { coverPack, writePack } from "./fixtures/policy-pack.js";
 
 const H = "1".repeat(64);
@@ -270,6 +272,161 @@ describe("runPolicy and the config", () => {
     const many = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`acme/r${i}`, ["a"]]));
     expect(ConfigSchema.safeParse({ policy: { repositories: many } }).success).toBe(false);
     expect(ConfigSchema.safeParse({ policy: { packs: ["a", "b.c"], mandatory: ["m"], repositories: { "acme/a": ["a", "b"] } } }).success).toBe(true);
+  });
+});
+
+describe("fail closed", () => {
+  type Layer = "mandatory" | "repository" | "optional";
+  const make = (packs: Array<{ layer: Layer } & LoadedPack>) => {
+    const lines: string[] = [];
+    const policyDecided = vi.fn();
+    const incomplete = vi.fn();
+    const evidence = { policyDecided, incomplete } as unknown as RunRecorder;
+    const policy = new RunPolicy({ runId: "run-1", packs, base: { flow: "f" }, log: (l) => lines.push(l), evidence, now: () => T });
+    return { policy, lines, incomplete };
+  };
+  const problem = (code: "policy.unavailable" | "policy.invalid", layer: Layer = "mandatory") => ({ layer, id: "org", problem: code, detail: "x" }) as const;
+  const WRITE: Facts = { step: "build", isolated: false, sandboxed: false };
+  const ASKS: Array<[Boundary, Facts]> = [
+    ["agent.write", WRITE],
+    ["repository.access", { credential: "machine" }],
+    ["repository.access", { credential: "repository" }],
+    ["approval.consume", { step: "build" }],
+  ];
+
+  it("privilegedBoundary: only a sign-in, a writing agent and a used approval", () => {
+    for (const b of BOUNDARIES) {
+      for (const credential of ["machine", "repository", "none"] as const) {
+        const expected = b === "agent.write" || b === "approval.consume" || (b === "repository.access" && credential !== "none");
+        expect(privilegedBoundary(b, { credential }), `${b} ${credential}`).toBe(expected);
+      }
+    }
+    expect(privilegedBoundary("repository.access", {})).toBe(false);
+    expect(privilegedBoundary("repository.access", { credential: "other" } as unknown as Facts)).toBe(false);
+  });
+
+  it("mandatoryUnusable: only for a mandatory pack with a problem", () => {
+    const base = { layer: "mandatory" as const, id: BASELINE_POLICY_ID, pack: BASELINE_PACK };
+    expect(make([base, problem("policy.unavailable")]).policy.mandatoryUnusable).toBe(true);
+    expect(make([base]).policy.mandatoryUnusable).toBe(false);
+    expect(make([base, problem("policy.invalid", "repository")]).policy.mandatoryUnusable).toBe(false);
+    expect(make([base, problem("policy.invalid", "optional")]).policy.mandatoryUnusable).toBe(false);
+  });
+
+  const cases = (["policy.unavailable", "policy.invalid"] as const).flatMap((code) => ASKS.map(([b, f]) => [code, b, f] as const));
+  it.each(cases)("denies at a privileged boundary: %s %s %j", (code, boundary, facts) => {
+    const { policy, lines, incomplete } = make([problem(code)]);
+    const answer = policy.at(boundary, facts, STEP);
+    expect(answer.denied?.reason).toBe(deniedReason("org", code, boundary));
+    const d = answer.decisions[0]!.decision;
+    expect(d).toMatchObject({ mode: "enforce", outcome: "deny", reasonCode: code, policy: { id: "org", version: "unknown" } });
+    expect(d).not.toHaveProperty("packSha256");
+    expect(parsePolicyDecision(d)).toEqual(d);
+    expect(answer.denied?.decision).toBe(d);
+    expect(answer.denied?.denial).toEqual({ kind: "policy", policy: { id: "org", version: "unknown" }, reasonCode: code });
+    expect(() => DenialSchema.parse(answer.denied?.denial)).not.toThrow();
+    expect(lines[0]).toMatch(/— enforced: the step is stopped$/);
+    const event = { version: 2, id: "e1", seq: 0, runId: "run-1", time: T, type: "step.denied", step: STEP, denial: answer.denied?.denial };
+    expect(() => parseEvidenceEvent(event)).not.toThrow();
+    expect(incomplete).not.toHaveBeenCalled();
+  });
+
+  it("uses the exact reason text", () => {
+    expect(deniedReason("org", "policy.unavailable", "agent.write")).toBe("mandatory policy org cannot be used (policy.unavailable): agent.write is denied");
+  });
+
+  it("stays observe at the other boundaries and for the workspace", () => {
+    const asks: Array<[Boundary, Facts]> = [
+      ["run.start", {}],
+      ["step.before", { step: "build" }],
+      ["step.after", { step: "build" }],
+      ["push", { step: "build" }],
+      ["run.complete", {}],
+      ["repository.access", { credential: "none", step: "build" }],
+      ["repository.access", { credential: "none" }],
+      ["repository.access", {}],
+    ];
+    for (const [b, f] of asks) {
+      const { policy, lines } = make([problem("policy.unavailable")]);
+      const answer = policy.at(b, f);
+      expect(answer.denied, b).toBeUndefined();
+      expect(answer.decisions[0]!.decision.mode).toBe("observe");
+      expect(lines[0]).toMatch(/— observe only, nothing was stopped$/);
+    }
+  });
+
+  it("never denies for the repository and optional layers", () => {
+    for (const layer of ["repository", "optional"] as const) {
+      const answer = make([problem("policy.invalid", layer)]).policy.at("agent.write", WRITE);
+      expect(answer.denied).toBeUndefined();
+      expect(answer.decisions[0]!.decision.mode).toBe("observe");
+    }
+  });
+
+  it("does not stop anything for a valid mandatory pack whose rule denies", () => {
+    const deny = pack({ rules: [{ id: "no-write", boundaries: ["agent.write"], when: {}, outcome: "deny", reasonCode: "output.limit-exceeded" }] });
+    const answer = make([{ layer: "mandatory", id: "p1", pack: deny }]).policy.at("agent.write", WRITE);
+    expect(answer.decisions[0]!.decision).toMatchObject({ outcome: "deny", mode: "observe" });
+    expect(answer.denied).toBeUndefined();
+  });
+
+  it("an evaluation that throws is policy.invalid, enforced only at a privileged boundary", () => {
+    const bad = { layer: "mandatory" as const, id: "p1", pack: { ...pack(), version: 99 } as unknown as PolicyPack };
+    const a = make([bad]);
+    const answer = a.policy.at("agent.write", WRITE, STEP);
+    expect(answer.decisions[0]!.decision).toMatchObject({ mode: "enforce", reasonCode: "policy.invalid" });
+    expect(answer.denied?.reason).toBe(deniedReason("p1", "policy.invalid", "agent.write"));
+    expect(answer.denied?.denial).toBeDefined();
+    expect(a.lines[0]).toBe("! policy p1: could not be evaluated at agent.write — recorded as policy.invalid; the step is stopped");
+    expect(a.incomplete).not.toHaveBeenCalled();
+    const b = make([bad]);
+    expect(b.policy.at("run.start").denied).toBeUndefined();
+    expect(b.lines[0]).toBe("! policy p1: could not be evaluated at run.start — recorded as policy.invalid; the run goes on");
+  });
+
+  it("is denied without a decision when even the failure cannot be recorded", () => {
+    const { policy, incomplete } = make([{ layer: "mandatory", id: "Bad Id", pack: { ...pack(), version: 99 } as unknown as PolicyPack }]);
+    const answer = policy.at("agent.write", WRITE);
+    expect(answer.decisions).toEqual([]);
+    expect(answer.denied).toEqual({ reason: deniedReason("Bad Id", "policy.invalid", "agent.write") });
+    expect(answer.denied).not.toHaveProperty("decision");
+    expect(answer.denied).not.toHaveProperty("denial");
+    expect(incomplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("is denied when the input cannot be built", () => {
+    const { policy } = make([{ layer: "mandatory", id: BASELINE_POLICY_ID, pack: BASELINE_PACK }]);
+    const facts = { credential: "machine" } as Facts;
+    Object.defineProperty(facts, "step", {
+      enumerable: true,
+      get: () => {
+        throw new Error("boom");
+      },
+    });
+    const answer = policy.at("repository.access", facts);
+    expect(answer.denied?.reason).toBe(deniedReason(BASELINE_POLICY_ID, "policy.invalid", "repository.access"));
+  });
+
+  it("repository() returns the answer", () => {
+    const { policy } = make([problem("policy.unavailable")]);
+    expect(policy.repository(STEP, { credential: "repository" }).denied).toBeDefined();
+  });
+
+  it("logs a load problem of a mandatory pack differently", () => {
+    const lines: string[] = [];
+    const summary = { runId: "r", vars: {}, flow: "f", flowDef: undefined, owner: undefined } as never;
+    const mandatory = runPolicy(summary, ConfigSchema.parse({ policy: { mandatory: ["org"] } }), (l) => lines.push(l), undefined, home);
+    expect(lines).toEqual(["! policy org: no file policies/org.json — recorded as policy.unavailable; this mandatory policy denies steps with a sign-in and writing agents"]);
+    expect(mandatory.mandatoryUnusable).toBe(true);
+    lines.length = 0;
+    const optional = runPolicy(summary, ConfigSchema.parse({ policy: { packs: ["org"] } }), (l) => lines.push(l), undefined, home);
+    expect(lines).toEqual(["! policy org: no file policies/org.json — recorded as policy.unavailable; the run goes on"]);
+    expect(optional.mandatoryUnusable).toBe(false);
+  });
+
+  it("keeps the text of the engine reasons", () => {
+    expect(ENGINE_REASONS["policy.unavailable"]).toBe("The pack could not be loaded, so the action is denied.");
+    expect(ENGINE_REASONS["policy.invalid"]).toBe("The pack could not be read, so the action is denied.");
   });
 });
 

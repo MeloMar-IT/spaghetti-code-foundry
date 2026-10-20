@@ -3,7 +3,7 @@ import { delimiter, dirname, join } from "node:path";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
-import { DEFAULT_PERMISSION_MODE, pushLogFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
+import { DEFAULT_PERMISSION_MODE, pushLogFor, refuseByPolicy, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
@@ -432,8 +432,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
   let fallbackFrom: string | undefined;
   const repository = repositoryFact(scope.ctx.vars);
-  // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: observe only).
-  engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
+  // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: a mandatory policy that cannot be used stops it).
+  const access = engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
+  if (access?.denied) return refuseByPolicy(engine, identity, access.denied);
   // One tool profile per step: the same for Claude and Codex, and for every try. A declared profile the step cannot stay within is refused before an agent is picked.
   const resolved: StepProfile | { refused: string; event: StepProfiledFields } = resolveStepProfile(step, scope, engine, { boxed, isolated: iso !== undefined });
   if ("refused" in resolved) {
@@ -453,7 +454,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     // Before every session that can write, retries and fallbacks included, with the sandbox the target really gets.
     if (!readOnlyStep(step, scope.flow.defaults)) {
       const sandboxed = boxed || (target.agent === "codex" ? resolved.mapping.codexSandbox !== "danger-full-access" : resolved.mapping.claudeSandbox);
-      engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
+      const write = engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
+      if (write?.denied) return { ...refuseByPolicy(engine, identity, write.denied), ...tries() };
     }
     if (!tried.has(target.label)) engine.evidence?.stepRouted(identity, target.label, stepOverride(scope.flow.name, step.id).effort ?? step.effort ?? scope.flow.defaults.effort, fallbackFrom);
     tried.add(target.label);
