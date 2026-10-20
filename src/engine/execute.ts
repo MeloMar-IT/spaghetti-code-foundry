@@ -19,7 +19,7 @@ import type { RunSummary, StepRecord } from "./state.js";
 import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } from "../evidence/identity.js";
 import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
-import { drainPushLog, pushLogFile, repositoryFact, type RunPolicy } from "./policy-hooks.js";
+import { drainPushLog, pushLogFile, repositoryFact, type PolicyDenied, type RunPolicy } from "./policy-hooks.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 
 /** Shell commands may only template trusted values; task and outputs go via env. */
@@ -59,7 +59,7 @@ export interface Engine {
   summary: RunSummary;
   config: Config;
   baseEnv: Record<string, string>;
-  /** The bot's name and token (asked once per run). Only for steps that keep the machine's login. */
+  /** The bot's name and token (asked once per run). Only for steps that keep the machine's login. Not fetched up front when a mandatory policy cannot be used. */
   botEnv: () => Promise<Record<string, string>>;
   /** Whether this run may take the hotfix path (see hotfixState); "off" when unset. */
   hotfix?: "on" | "off" | "other";
@@ -82,7 +82,7 @@ export interface Engine {
   decision?: ApprovalDecision & { stepId: string };
   /** Writes the evidence events of the run; it never throws. Absent: no evidence is written. */
   evidence?: RunRecorder;
-  /** Asks the baseline and the configured policy packs at the boundaries of the run (observe mode); always there for a run started by the engine. */
+  /** Asks the baseline and the configured policy packs at the boundaries of the run (observe mode; a mandatory pack that cannot be used denies privileged boundaries, see `refuseByPolicy`); always there for a run started by the engine. */
   policy?: RunPolicy;
   /** Evidence only: who asked for this start or resume (and so who decided at an approval step). */
   actor?: Actor;
@@ -201,6 +201,14 @@ export function beginStep(engine: Engine, scope: Scope, step: Pick<Step, "id" | 
   engine.policy?.at("step.before", { repository: repositoryFact(scope.ctx.vars), step: step.id }, identity);
 }
 
+/** A mandatory policy cannot be used at a privileged boundary: the step is refused and the run ends there (`on_failure` is not followed). */
+export function refuseByPolicy(engine: Engine, step: StepIdentity, denied: PolicyDenied): StepResult {
+  engine.accessFailed = true;
+  if (denied.denial) engine.evidence?.stepDenied(step, denied.denial);
+  engine.log(`    ! ${denied.reason}`);
+  return { ok: false, output: denied.reason, error: denied.reason };
+}
+
 /** Log file of the step that runs after `historyLength` finished steps. */
 export function stepLogFile(logsDir: string, historyLength: number, id: string): string {
   return join(logsDir, `${String(historyLength + 1).padStart(3, "0")}-${id.replace(/\//g, "__")}.log`);
@@ -241,14 +249,16 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       const holds = access?.kind === "token" || access?.kind === "app" || access?.kind === "key";
       const iso = stepIsolation(engine, ctx.vars, holds);
       if (iso && "refused" in iso) return refuse(iso.refused);
-      // The step works in the repository's checkout, with a sign-in or without one (policy: observe only).
-      engine.policy?.repository(stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1), {
+      // The step works in the repository's checkout, with a sign-in or without one (policy: a mandatory policy that cannot be used stops it).
+      const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
+      const asked = engine.policy?.repository(identity, {
         repository: repositoryFact(ctx.vars),
         step: step.id,
         credential: holds ? "repository" : !iso ? "machine" : "none",
         isolated: Boolean(iso),
         shippedFlow: engine.hotfix === "on" ? true : undefined,
       });
+      if (asked?.denied) return refuseByPolicy(engine, identity, asked.denied);
       const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
       if (pushLog) env.FACTORY_PUSH_LOG = pushLog;
       if (!iso) Object.assign(env, await engine.botEnv()); // nothing is made yet, so a throw leaves nothing behind

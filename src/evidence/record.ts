@@ -9,7 +9,8 @@ import {
   CommitSchema, GitIdentitySchema, isSafeRelativePath, modelIdentityOf, PullRequestIdentitySchema, RepositorySchema, StepIdSchema, ToolIdentitySchema,
   type Actor, type ArtifactRef, type GitIdentity, type ModelIdentity, type PullRequestIdentity, type StepIdentity, type TestResult,
 } from "./identity.js";
-import { emitTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
+import type { Denial } from "./schema.js";
+import { emitTelemetry,telemetryEnabled } from "../telemetry/telemetry.js";
 import { telemetryFromEvidence } from "../telemetry/envelope.js";
 import { closeEvidenceStream, evidenceStream, hashPlainFile, type EvidenceEventBody, type EvidenceStream } from "./stream.js";
 
@@ -190,6 +191,11 @@ export class RunRecorder {
   /** The decision of a person at an approval step. */
   stepDecided(step: StepIdentity, approved: boolean, by: Actor): void {
     this.put(() => (approved ? { type: "step.approved", step, by } : { type: "step.denied", step, denial: { kind: "approval", by } }));
+  }
+
+  /** A policy refused the step (see policy-hooks.ts `PolicyDenied`). */
+  stepDenied(step: StepIdentity, denial: Denial): void {
+    this.put(() => ({ type: "step.denied", step, denial }));
   }
 
   /** Something that had to be recorded could not be: the stream stops and the run has no manifest. The run itself goes on. */

@@ -304,8 +304,8 @@ numbers and pure functions.
 ### Policy hooks in observe mode
 
 `src/engine/policy-hooks.ts` asks the configured policy packs at the boundaries of a run (#142). It
-is the only place the engine calls `src/policy/`. Nothing in a run changes because of a decision yet:
-packs run in observe mode only.
+is the only place the engine calls `src/policy/`. A decision changes a run in one case only: fail closed
+(below). Otherwise packs run in observe mode.
 
 - **Where the questions come from.** The engine asks, so a flow cannot leave a boundary out: `runner.ts`
   asks `run.start`, `repository.access` (before a workspace is made), `approval.consume` and
@@ -349,6 +349,20 @@ packs run in observe mode only.
   (`RunRecorder.policyDecided`). A pack that cannot be evaluated is recorded as `policy.invalid`
   with `unknown` as version, and the log says so. A decision that cannot be recorded either marks the
   evidence incomplete (`RunRecorder.incomplete`). No method throws into the engine.
+- **Fail closed (#614).** `privilegedBoundary(boundary, facts)` is true for `agent.write`, `approval.consume`
+  and `repository.access` with the `machine` or `repository` credential. A pack in the `mandatory` layer
+  that cannot be loaded (`policy.unavailable`/`policy.invalid`) or evaluated gets `mode: "enforce"` at a
+  privileged boundary, from `decide`/`noPack`: the decision is `deny` with version `unknown` and no
+  `packSha256`. `at` then sets `denied` on the answer (`PolicyDenied`: the reason from `deniedReason`, the
+  decision and its `policyDenial`). If even the decision cannot be built (for example a bad id), `denied`
+  has the reason only, and `fail()` marks the evidence incomplete. Nothing throws. The other layers and
+  boundaries stay `observe`. `refuseByPolicy` (`execute.ts`) is the one place that acts on `denied`: it sets
+  `accessFailed` (so `on_failure` is not followed), records `RunRecorder.stepDenied` (`step.denied` with
+  kind `policy`) when there is a decision, and logs the reason. The shell step checks before `pushLogFor` and
+  the bot token; the agent checks at `repository.access` and before each writing session; the approval
+  checks at `approval.consume` and records no `step.approved`. `RunPolicy.mandatoryUnusable` stops the
+  run from fetching the bot token up front. No push check is needed: `push` is not privileged, and the
+  sign-in was already refused at `repository.access`.
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
