@@ -18,6 +18,7 @@ import { describeEntry, inQuietTime, loadGuard, openBreaker, storiesState, write
 import { activeMutes, expireMutes, muteFor } from "./mutes.js";
 import type { Reporter, StoryNowResult } from "./report.js";
 import { withStory } from "./state.js";
+import { SloInputCache, sloLookbackHours } from "./slo-input.js";
 import { markerHash } from "./story.js";
 import { ALL_DETECTORS } from "./work-detectors.js";
 
@@ -156,6 +157,7 @@ export class Monitor {
   private orphans = new Map<string, string>();
   /** When the server last woke up from a sleep (as far as the monitor saw). */
   private wokeAt?: string;
+  private slo = new SloInputCache();
   private usualCache?: { at: number; hours: number; history: DurationHistory };
   /** The notes of the last check: one is logged when it first appears. */
   private noted = new Set<string>();
@@ -270,13 +272,14 @@ export class Monitor {
       stories,
       storyRuns.flatMap((b) => [b.runId, b.dirName]),
     );
+    const sloIn = await this.slo.build(seen.runs, new Map(briefs.map((b) => [b.runDir, b.updatedAt])), start, config);
     const found = runDetectors(this.d.detectors ?? ALL_DETECTORS, {
       now: start, asleep, config, runs: seen.runs, watchers: seen.watchers, log: this.d.serverLog?.() ?? [], rate: this.d.rateLimit?.(),
       // A queued story job is not looked at either; the active jobs stay, they fill the slots.
       queue: { ...queue, pending: queue.pending.filter((p) => !isStoryRun({ githubRepo: p.githubRepo, issue: p.issue }, stories)) }, monitorId: this.cfg.id,
       ...(this.wokeAt ? { wokeAt: this.wokeAt } : {}),
       active: seen.active, areaLocks: this.areaLocks(start, activeIds, seen.locks), lastStart: this.d.scheduler.lastStart?.(), restart: this.d.restart?.(), history,
-      update: (this.d.selfUpdate ?? loadUpdateState)(),
+      update: (this.d.selfUpdate ?? loadUpdateState)(), measures: sloIn.measures, evidence: sloIn.evidence,
     });
     const merged = mergeFindings(stored.findings, found, start);
     let findings = merged.findings;
@@ -460,14 +463,14 @@ export class Monitor {
 
   /**
    * The runs the detectors need, each once, newest write first, at most MAX_RUNS: runs written lately (for restart loops),
-   * failed runs, and runs written within the longest look-back of the develop and slow-step detectors.
+   * failed runs, and runs written within the longest look-back of the develop, slow-step and SLO detectors.
    */
   private async collect(briefs: RunBrief[], now: Date, config: MonitorConfig): Promise<RunSummary[]> {
     const t = now.getTime();
     const written = (b: RunBrief) => Date.parse(b.updatedAt);
     const resumedFrom = t - config.restart_loop.within_minutes * 60_000;
     const failedFrom = t - Math.max(config.unexplained_failure.within_hours, config.same_step_failing.within_hours, 1) * HOUR;
-    const recentFrom = t - Math.max(config.develop_red.within_hours, config.slow_step.within_hours) * HOUR;
+    const recentFrom = t - Math.max(config.develop_red.within_hours, config.slow_step.within_hours, sloLookbackHours(config)) * HOUR;
     // The architect's reads are not judged: a failure shows in the session only.
     const picked = briefs
       .filter((b) => !isRefinementRun(b.source))

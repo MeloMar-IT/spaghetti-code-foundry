@@ -71,9 +71,9 @@ describe("the settings of the monitor and their reset", () => {
   const reset = (key: unknown, version?: string) => call("POST", "/api/settings/reset", { key }, { ...session.headers("POST"), ...(version ? { "x-config-version": version } : {}) });
   const version = async () => (await call("GET", "/api/monitor")).headers.get("x-config-version")!;
 
-  it("lists the 28 monitor settings with value and stored", async () => {
+  it("lists the 41 monitor settings with value and stored", async () => {
     const m = await get();
-    expect(m.settings).toHaveLength(28);
+    expect(m.settings).toHaveLength(41);
     expect(m.settings.every((s: { key: string }) => s.key.startsWith("monitor."))).toBe(true);
     expect(settingOf(m, "monitor.restart_loop.resumes")).toMatchObject({ kind: "number", integer: true, min: 1, max: 49, default: 5, value: 5, stored: false, effectText: "at once", control: "problems.js" });
     const to = settingOf(m, "monitor.report_to");
@@ -182,6 +182,9 @@ describe("GET /api/monitor for the Problems page", () => {
     expect(d("self-update").thresholds).toBeUndefined();
     expect(d("detector-failed").thresholds).toBeUndefined();
     expect(d("slow-step").lastFound).toBeUndefined();
+    expect(d("step-latency-p95")).toMatchObject({ key: "step_latency_p95", thresholds: { minutes: 60, min_visits: 5, within_hours: 24 }, slo: { owner: "admin" } });
+    expect(d("step-latency-p95").slo.threshold).toContain("60 minutes");
+    expect(d("restart-loop").slo).toBeUndefined();
   });
 
   it("shows a threshold saved through the config, and refuses one out of range", async () => {

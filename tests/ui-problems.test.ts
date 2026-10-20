@@ -50,6 +50,7 @@ const base = () => ({
   detectors: [
     { name: "restart-loop", key: "restart_loop", description: "Runs restart again and again.", thresholds: { resumes: 5, within_minutes: 10 }, lastFound: iso(8) },
     { name: "self-update", key: "self_update", description: "A self-update failed." },
+    { name: "repeated-tool-denial", key: "repeated_tool_denial", description: "A tool was refused again and again.", slo: { owner: "repository owner", threshold: "the same tool refused 3 times in one repository", window: "last 24 hours", action: "Add the tool to allowed_tools of the step." } },
   ],
   settings: settings(),
 });
@@ -340,6 +341,20 @@ describe("the page", () => {
     expect(r.textContent).toContain(new Date(iso(8)).toLocaleString());
     expect(rowOf(d, "self-update").textContent).toContain("none");
     expect(rowOf(d, "self-update").textContent).toContain("nothing in the last 30 days");
+  });
+
+  it("the detectors table shows owner, threshold, window and next action of an SLO detector, and empty cells for the others", async () => {
+    const main = await draw();
+    const d = main.all("table").at(-1)!;
+    const heads = d.all("th").map((t) => t.textContent);
+    for (const h of ["Owner", "Threshold", "Window", "Next action"]) expect(heads).toContain(h);
+    const slo = rowOf(d, "repeated-tool-denial");
+    for (const t of ["repository owner", "the same tool refused 3 times in one repository", "last 24 hours", "Add the tool to allowed_tools of the step."]) expect(slo.textContent).toContain(t);
+    const cells = rowOf(d, "restart-loop").all("td").map((c) => c.textContent);
+    expect(cells[2]).toBe(""); // owner
+    expect(cells[4]).toBe(""); // window
+    expect(cells[5]).toBe(""); // next action
+    expect(rowOf(d, "restart-loop").all("input").map((i) => i.value)).toEqual(["5", "10"]);
   });
 
   it("Save reads the config and sends only the changed threshold; an empty input sends nothing", async () => {

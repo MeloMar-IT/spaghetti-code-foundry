@@ -143,6 +143,16 @@ const MonitorSchema = z
     develop_red: z.object({ failures: z.number().int().min(1).max(100).default(2), within_hours: z.number().int().min(1).max(720).default(24) }).strict().prefault({}),
     /** A step took more than `factor` times its usual time, `times` times within `within_hours`. */
     slow_step: z.object({ factor: z.number().min(1.5).max(100).default(3), times: z.number().int().min(1).max(1000).default(3), within_hours: z.number().int().min(1).max(720).default(24) }).strict().prefault({}),
+    /** Decisions with policy.unavailable or policy.invalid: `decisions` or more within `within_hours`. */
+    policy_service_failure: z.object({ decisions: z.number().int().min(1).max(1000).default(1), within_hours: z.number().int().min(1).max(720).default(1) }).strict().prefault({}),
+    /** `runs` runs ended over 2 minutes ago without evidence.json (or with an incomplete stream), within `within_hours`. */
+    evidence_finalization: z.object({ runs: z.number().int().min(1).max(1000).default(1), within_hours: z.number().int().min(1).max(720).default(24) }).strict().prefault({}),
+    /** The p95 of a step's durations is above `minutes`, from at least `min_visits` visits within `within_hours`. */
+    step_latency_p95: z.object({ minutes: z.number().min(1).max(10080).default(60), min_visits: z.number().int().min(1).max(1000).default(5), within_hours: z.number().int().min(1).max(720).default(24) }).strict().prefault({}),
+    /** The same tool was refused `times` times in one repository within `within_hours`. */
+    repeated_tool_denial: z.object({ times: z.number().int().min(1).max(1000).default(3), within_hours: z.number().int().min(1).max(720).default(24) }).strict().prefault({}),
+    /** A step wrote more than `factor` times the median output of its flow + step, and more than `min_tokens`; the median needs `min_samples` visits. */
+    abnormal_output: z.object({ factor: z.number().min(1.5).max(100).default(5), min_tokens: z.number().int().min(1).max(10_000_000).default(20000), min_samples: z.number().int().min(2).max(1000).default(5), within_hours: z.number().int().min(1).max(720).default(24) }).strict().prefault({}),
     /** The repository (owner/repo) where the monitor writes bug stories. Without it, findings are only shown. */
     report_to: z.string().regex(/^[\w.-]+\/[\w.-]+$/, "owner/repo").optional(),
     /** At most `per_day` new bug stories a day and `per_check` in one check (at most 3: it bounds the GitHub calls of a check). */

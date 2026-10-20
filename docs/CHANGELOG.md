@@ -4,6 +4,13 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Telemetry 2b: five SLO detectors with owner, threshold, window and next action (#613). Part 2 of 2 of #156, part of #133.
+  - **Detectors.** `policy-service-failure`, `evidence-finalization`, `step-latency-p95`, `repeated-tool-denial` and `abnormal-output`. The Problems page shows the owner, threshold, window and next action of each.
+  - **Settings.** Five new `monitor` keys with defaults an admin can change.
+  - **Local files only.** They read `run.json` and the evidence files, never telemetry, so telemetry off or an unreachable collector changes nothing. Evidence files over 16 MiB are not read.
+  - **Code.** New `src/monitor/slo-detectors.ts` (the five detectors, `p95`, `median`) and `src/monitor/slo-input.ts` (the local input, cached by run folder and `updatedAt`). Changed `src/monitor/detectors.ts` (`Slo`, `Detector.slo`, `measures` and `evidence` in `DetectorInput`), `src/monitor/work-detectors.ts` (`ALL_DETECTORS`, `detectorInfo(config)`), `src/monitor/monitor.ts`, `src/config.ts`, `src/settings/describe.ts`, `src/server/api-monitor.ts` and `ui/problems.js` (Owner, Window and Next action columns).
+  - **Tests.** New `tests/monitor-slo-detectors.test.ts` (each detector below, at and above its threshold, outside its window, and with missing data; the telemetry-off case). Changed the detector, settings, Problems API, Problems UI and watch tests.
+  - Docs: `docs/USER_GUIDE.md` (the detector table, the `config.yaml` example, "The Problems page"), this entry.
 - Telemetry 2a: each ended run is measured in fixed terms (#612). Part 1 of 2 of #156, part of #133.
   - **Measures.** A catalogue of 12 measures, each with a unit, an owner (`admin` or `repository owner`, never an account) and the detector or setting it informs: duration, queue time, retries, tokens, cost, denials, policy outcomes, context size, tool latency, interruptions, approval latency and pull-request result. A test fails when an entry has no owner or no decision.
   - **One event.** A `run.measured` telemetry event is written when a run ends (succeeded, failed or cancelled), after the evidence is final. It holds only numbers (a new strict `measures` object), and a measure without a source is left out. A run that is only stopped or waiting gets none. It is best effort and never changes the run.
