@@ -11,6 +11,7 @@ import { parsePolicyDecision, parsePolicyPack } from "../policy/parse.js";
 import { evaluatePolicy, policyDenial, policyInputSha256 } from "../policy/evaluate.js";
 import { FactsSchema, type Boundary, type FactName, type Facts, type Mode, type PolicyDecision, type PolicyInput, type PolicyPack } from "../policy/schema.js";
 import { POLICY_INPUT_VERSION, PolicySchemaError } from "../policy/version.js";
+import { saveLastKnownGood } from "./policy-store.js";
 import { userAccount } from "./isolation.js";
 import type { RunSummary } from "./state.js";
 
@@ -56,21 +57,21 @@ export const deniedReason = (id: string, code: NoPackCode, boundary: Boundary): 
 const unavailable = (id: string, detail: string): LoadedPack => ({ id, problem: "policy.unavailable", detail });
 const invalid = (id: string, detail: string): LoadedPack => ({ id, problem: "policy.invalid", detail });
 
-function loadOne(id: string, home: string): LoadedPack {
-  const name = `${POLICY_FOLDER}/${id}.json`;
+export type PolicyFileRead = { text: string } | { problem: "missing" | "not-file" | "too-large" | "unreadable" };
+
+/** Reads a plain file up to `maxBytes`: never follows a link and never waits for a pipe. Never throws. */
+export function readPolicyFile(path: string, maxBytes: number): PolicyFileRead {
   let fd: number;
   try {
-    // never follows a link and never waits for a pipe
-    fd = openSync(join(home, POLICY_FOLDER, `${id}.json`), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    return unavailable(id, code === "ENOENT" || code === "ENOTDIR" ? `no file ${name}` : code === "ELOOP" ? "not a plain file" : "could not be read");
+    return { problem: code === "ENOENT" || code === "ENOTDIR" ? "missing" : code === "ELOOP" ? "not-file" : "unreadable" };
   }
-  let text: string;
   try {
     const st = fstatSync(fd);
-    if (!st.isFile()) return unavailable(id, "not a plain file");
-    if (st.size > MAX_PACK_BYTES) return invalid(id, "larger than 1 MiB");
+    if (!st.isFile()) return { problem: "not-file" };
+    if (st.size > maxBytes) return { problem: "too-large" };
     const buf = Buffer.alloc(st.size);
     let done = 0;
     while (done < buf.length) {
@@ -78,12 +79,24 @@ function loadOne(id: string, home: string): LoadedPack {
       if (n === 0) break;
       done += n;
     }
-    text = buf.subarray(0, done).toString("utf8");
+    return { text: buf.subarray(0, done).toString("utf8") };
   } catch {
-    return unavailable(id, "could not be read");
+    return { problem: "unreadable" };
   } finally {
     closeSync(fd);
   }
+}
+
+function loadOne(id: string, home: string): LoadedPack {
+  const name = `${POLICY_FOLDER}/${id}.json`;
+  const read = readPolicyFile(join(home, POLICY_FOLDER, `${id}.json`), MAX_PACK_BYTES);
+  if ("problem" in read) {
+    if (read.problem === "missing") return unavailable(id, `no file ${name}`);
+    if (read.problem === "not-file") return unavailable(id, "not a plain file");
+    if (read.problem === "too-large") return invalid(id, "larger than 1 MiB");
+    return unavailable(id, "could not be read");
+  }
+  const text = read.text;
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -359,7 +372,7 @@ export function runPolicy(summary: RunSummary, config: Pick<Config, "policy">, l
     if ("problem" in p) {
       const tail = ids[i]!.layer === "mandatory" ? "this mandatory policy denies steps with a sign-in and writing agents" : "the run goes on";
       log(`! policy ${p.id}: ${p.detail} — recorded as ${p.problem}; ${tail}`);
-    }
+    } else if (ids[i]!.layer === "mandatory") saveLastKnownGood(home ?? dataHome(), p.id, p.pack, log);
   });
   const packs: LayeredPack[] = [{ layer: "mandatory", id: BASELINE_POLICY_ID, pack: BASELINE_PACK }, ...loaded.map((l, i) => ({ ...l, layer: ids[i]!.layer }))];
   return new RunPolicy({ runId: summary.runId, packs, base, log, evidence, observesPushes: ids.length > 0 });

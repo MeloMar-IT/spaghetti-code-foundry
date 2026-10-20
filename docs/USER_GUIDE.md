@@ -1287,6 +1287,36 @@ evaluated, the Foundry stops the steps that need trust. It does not carry on qui
   id, and `mode: observe`), or remove the id from `policy.mandatory` in `config.yaml` if the overlay is
   no longer wanted. A run reads the packs when it starts or resumes, so start the run again after the fix.
 
+#### Restore the last-known-good copy
+
+Each time a run starts, the Foundry saves a copy of every valid mandatory overlay in the data folder, at
+`policies/last-known-good/<id>.json`. The folder is private (mode 0700) and the file is 0600. The copy is
+written in one step, so a crash never leaves a half-written file. The baseline, repository packs and
+optional packs get no copy. An invalid overlay keeps the copy from the last valid start. If a copy cannot
+be saved, the run logs `! policy <id>: the last-known-good copy could not be saved` and goes on.
+
+To put the copy back when `policies/<id>.json` is broken:
+
+1. Run `scf policy restore <id>`. For example, `scf policy restore org-overlay`.
+2. The command checks the copy before it touches `policies/`. It refuses, and writes nothing, when the id
+   is not valid or is `foundry.baseline`, when there is no copy, when the copy is a link or not a plain
+   file, when its SHA-256 does not match the stored one (it was changed), when it is over 1 MiB as compact
+   JSON, or when `policies/<id>.json` is a folder.
+3. If `policies/<id>.json` is valid, the command also refuses. Add `--force` to replace it:
+   `scf policy restore org-overlay --force`.
+4. The copy is written as compact JSON and replaces `policies/<id>.json` with one rename. The file that was
+   there is kept as `policies/<id>.json.replaced-<time>`, for example `org-overlay.json.replaced-2026-10-20T10-11-12Z`.
+   A second backup in the same second gets `-1`, `-2` and so on. An earlier backup is never overwritten.
+5. The command prints `✔ restored policy org-overlay (sha256 …)` and, when a file was kept,
+   `  kept the replaced file as policies/<name>`. It exits 0. A refusal prints `✘` and the reason, and exits 1.
+   The messages do not show the data-folder path or the file contents.
+6. Start the run again. The restore is written to `audit.jsonl` as `policy-restore`, with `result: "ok"`.
+   A refusal after the lock is taken is written as `result: "failed"`. A refused id writes no line.
+
+The SHA-256 check catches a change made by mistake. It is not a signature: someone who can write to
+`policies/` can change the copy and its hash together. Restore only from a copy you trust, and keep the
+`.replaced-<time>` files until you no longer need them.
+
 ### Lifecycle telemetry
 
 The Foundry writes one short telemetry line for each important fact of a run: a run starting or
@@ -5789,6 +5819,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
 | `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
+| `scf policy restore <id> [--force]` | Put back the last-known-good copy of a mandatory policy overlay as `policies/<id>.json`. A valid file is only replaced with `--force`; the replaced file is kept as `<id>.json.replaced-<time>` ([Restore the last-known-good copy](#restore-the-last-known-good-copy)) |
 
 **Plan records.** When `issue-plan` posts a plan, the Foundry saves a small plan record in
 `<data folder>/skill-plans/`. It holds the skill request, the plan comment ID and hash, the HEAD
