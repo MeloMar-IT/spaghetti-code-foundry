@@ -304,7 +304,7 @@ numbers and pure functions.
 ### Policy hooks in observe mode
 
 `src/engine/policy-hooks.ts` asks the configured policy packs at the boundaries of a run (#142). It
-is the only place the engine calls `src/policy/`. A decision changes a run in one case only: fail closed
+is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` holds the last-known-good copies and the restore. A decision changes a run in one case only: fail closed
 (below). Otherwise packs run in observe mode.
 
 - **Where the questions come from.** The engine asks, so a flow cannot leave a boundary out: `runner.ts`
@@ -332,6 +332,7 @@ is the only place the engine calls `src/policy/`. A decision changes a run in on
   `O_NONBLOCK`, only as a plain file of at most 1 MiB. A pack that is missing, linked, not a file,
   unreadable, invalid, for another policy id, or in `enforce` mode becomes a `LoadedPack` with a
   `policy.unavailable` or `policy.invalid` problem. Its detail never names a path or file content.
+- **Last-known-good.** `saveLastKnownGood` (called by `runPolicy` for each mandatory overlay that loaded) writes `policies/last-known-good/<id>.json` with `{ version, id, savedAt, policyPackSha256, pack }`. The folder is 0700 and the file 0600, written by a random temp file and one `rename`. It never throws: a failure is one `!` log line. `restorePolicy` (`policy-store.ts`, under `withAuthLock`, always on `dataHome()`) reads the copy with `readPolicyFile`, checks the id, `mode: observe`, the stored SHA-256 and the size of the compact JSON, and refuses a link, a folder, a changed copy or a valid current file without `--force`. It keeps the replaced entry as `<id>.json.replaced-<time>` (never overwritten), replaces the active file with one `rename` (the temp file is written with `wx`, and removed on failure), and writes `policy-restore` to the audit log. The SHA-256 is not a signature. The command is `policy-cli.ts`.
 - **Layers and precedence.** `src/policy/compose.ts` (pure) gives the layers `mandatory` (the baseline and
   the admin's `policy.mandatory` overlays), `repository` (`policy.repositories` for the run's
   `owner/name`, matched in lower case) and `optional` (`policy.packs`). `layeredPackIds` keeps an id only in

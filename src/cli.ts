@@ -94,6 +94,7 @@ Usage:
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
+  scf policy restore <id> [--force]              Put back the last-known-good copy of a mandatory policy overlay
   scf evidence verify <run-id> [--json]          Check the evidence of a run: manifest, chain of events, named files
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
   scf login | logout | whoami                    Sign the command line in to a running Foundry
@@ -601,6 +602,11 @@ async function main(argv: string[]): Promise<number> {
     case "monitor": {
       const { monitorCommand } = await import("./monitor/cli.js");
       return monitorCommand(positionals.slice(1), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "policy": {
+      const { policyCommand } = await import("./engine/policy-cli.js");
+      return policyCommand(positionals.slice(1), { force: values.force }, (line) => void process.stdout.write(line + "\n"));
     }
 
     default:
