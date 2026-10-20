@@ -15,7 +15,7 @@ export interface Stats {
 }
 
 /** What a run works on: a GitHub issue / PR / CI run / chore, or (without those) just itself. */
-function workKey(r: RunSummary): string {
+export function workKey(r: RunSummary): string {
   const v = r.vars ?? {};
   const repo = v.github_repo;
   if (repo && v.issue) return `${repo}#issue:${v.issue}`;

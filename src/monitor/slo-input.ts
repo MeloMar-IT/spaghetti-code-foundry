@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { MonitorConfig } from "../config.js";
 import type { RunSummary, StepRecord } from "../engine/state.js";
 import { parseEvidenceEventLine } from "../evidence/parse.js";
-import { TERMINAL_RUN_STATUSES } from "../evidence/schema.js";
+import { TERMINAL_RUN_STATUSES, type EvidenceEvent } from "../evidence/schema.js";
 import { EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE, EVIDENCE_MANIFEST_FILE } from "../evidence/version.js";
 import { ownerRepo } from "./detectors.js";
 
@@ -74,53 +74,67 @@ const nap = () => new Promise<void>((r) => setImmediate(r));
 /** Reads the facts of evidence.jsonl without keeping the events. Never throws; an unreadable or too large file gives none. */
 async function readFacts(runDir: string, runId: string): Promise<EventFacts | undefined> {
   const facts: EventFacts = { segments: new Map(), policyFailures: [] };
+  const status = await readEvidenceEvents(runDir, runId, (e) => {
+    if (e.type === "step.started") {
+      const k = keyOf(e.step);
+      facts.segments.set(k, [...(facts.segments.get(k) ?? []), { tools: new Map() }]);
+    } else if (e.type === "step.denied") {
+      const tool = e.denial.kind === "tool" ? e.denial.tool.name : e.denial.kind === "policy" ? e.denial.tool?.name : undefined;
+      if (!tool) return;
+      const k = keyOf(e.step);
+      const list = facts.segments.get(k) ?? [];
+      if (!list.length) list.push({ tools: new Map() });
+      facts.segments.set(k, list);
+      const seg = list[list.length - 1]!;
+      const t = seg.tools.get(tool) ?? { count: 0, at: 0 };
+      t.count++;
+      t.at = Math.max(t.at, stamp(e.time) || 0);
+      seg.tools.set(tool, t);
+    } else if (e.type === "policy.decided" && (e.decision.reasonCode === "policy.unavailable" || e.decision.reasonCode === "policy.invalid")) {
+      const at = stamp(e.time);
+      if (Number.isFinite(at)) facts.policyFailures.push(at);
+    }
+  });
+  return status === "read" ? facts : undefined;
+}
+
+export type EvidenceReadStatus = "read" | "missing" | "refused";
+
+/**
+ * Reads evidence.jsonl in pieces and hands each event of `runId` to `take` (an error in `take` skips that line).
+ * Never throws, never follows a link, never reads past the size checked on the open file.
+ * "missing": no file. "refused": a link, a file that is not plain, a file over the limit, or an I/O error.
+ */
+export async function readEvidenceEvents(runDir: string, runId: string, take: (e: EvidenceEvent) => void, maxBytes = MAX_EVIDENCE_BYTES): Promise<EvidenceReadStatus> {
   let fh;
   try {
     fh = await open(join(runDir, EVIDENCE_EVENTS_FILE), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
     const st = await fh.stat();
-    if (!st.isFile() || st.size > MAX_EVIDENCE_BYTES) return undefined;
+    if (!st.isFile() || st.size > maxBytes) return "refused";
     const buf = Buffer.alloc(Math.min(CHUNK, Math.max(1, st.size)));
     let pos = 0;
     let rest = "";
     let skipping = false;
     let lines = 0;
-    const take = (line: string) => {
-      if (!line.trim()) return;
+    const line = (text: string) => {
+      if (!text.trim()) return;
       try {
-        const e = parseEvidenceEventLine(line);
-        if (e.runId !== runId) return;
-        if (e.type === "step.started") {
-          const k = keyOf(e.step);
-          facts.segments.set(k, [...(facts.segments.get(k) ?? []), { tools: new Map() }]);
-        } else if (e.type === "step.denied") {
-          const tool = e.denial.kind === "tool" ? e.denial.tool.name : e.denial.kind === "policy" ? e.denial.tool?.name : undefined;
-          if (!tool) return;
-          const k = keyOf(e.step);
-          const list = facts.segments.get(k) ?? [];
-          if (!list.length) list.push({ tools: new Map() });
-          facts.segments.set(k, list);
-          const seg = list[list.length - 1]!;
-          const t = seg.tools.get(tool) ?? { count: 0, at: 0 };
-          t.count++;
-          t.at = Math.max(t.at, stamp(e.time) || 0);
-          seg.tools.set(tool, t);
-        } else if (e.type === "policy.decided" && (e.decision.reasonCode === "policy.unavailable" || e.decision.reasonCode === "policy.invalid")) {
-          const at = stamp(e.time);
-          if (Number.isFinite(at)) facts.policyFailures.push(at);
-        }
+        const e = parseEvidenceEventLine(text);
+        if (e.runId === runId) take(e);
       } catch {
         // a line that cannot be read is skipped
       }
     };
     while (pos < st.size) {
-      const { bytesRead } = await fh.read(buf, 0, buf.length, pos);
+      // never read past the size that was checked: a file that grows later is cut there
+      const { bytesRead } = await fh.read(buf, 0, Math.min(buf.length, st.size - pos), pos);
       if (bytesRead === 0) break;
       pos += bytesRead;
       const parts = (rest + buf.toString("utf8", 0, bytesRead)).split("\n");
       rest = parts.pop() ?? "";
       for (const p of parts) {
         if (skipping) skipping = false;
-        else if (p.length <= MAX_LINE_BYTES) take(p);
+        else if (p.length <= MAX_LINE_BYTES) line(p);
         if (++lines % YIELD_LINES === 0) await nap();
       }
       if (rest.length > MAX_LINE_BYTES) {
@@ -129,10 +143,10 @@ async function readFacts(runDir: string, runId: string): Promise<EventFacts | un
       }
       await nap();
     }
-    if (rest && !skipping && rest.length <= MAX_LINE_BYTES) take(rest);
-    return facts;
-  } catch {
-    return undefined;
+    if (rest && !skipping && rest.length <= MAX_LINE_BYTES) line(rest);
+    return "read";
+  } catch (e) {
+    return (e as NodeJS.ErrnoException)?.code === "ENOENT" ? "missing" : "refused";
   } finally {
     await fh?.close().catch(() => {});
   }
@@ -200,6 +214,14 @@ async function present(path: string): Promise<boolean> {
   }
 }
 
+export interface EvidenceFiles { stream: boolean; manifest: boolean; incomplete: boolean }
+
+/** Whether each evidence file is there (lstat; a file that cannot be looked at counts as there). Never throws. */
+export async function evidenceFiles(runDir: string): Promise<EvidenceFiles> {
+  const [stream, manifest, incomplete] = await Promise.all([present(join(runDir, EVIDENCE_EVENTS_FILE)), present(join(runDir, EVIDENCE_MANIFEST_FILE)), present(join(runDir, EVIDENCE_INCOMPLETE_FILE))]);
+  return { stream, manifest, incomplete };
+}
+
 /** Builds the input once per check. Measures are cached per run folder and `updatedAt`; the file checks are made again every time. */
 export class SloInputCache {
   private cache = new Map<string, { updatedAt: string; runId: string; measured: MeasuredRun }>();
@@ -232,8 +254,7 @@ export class SloInputCache {
         if (settled || this.cache.has(run.runDir)) seen.add(run.runDir);
         out.measures.push(measured);
         if (ended) {
-          const [stream, manifest, incomplete] = await Promise.all([present(join(run.runDir, EVIDENCE_EVENTS_FILE)), present(join(run.runDir, EVIDENCE_MANIFEST_FILE)), present(join(run.runDir, EVIDENCE_INCOMPLETE_FILE))]);
-          out.evidence.push({ runId: run.runId, flow: run.flow, ...(measured.repo ? { repo: measured.repo } : {}), finishedAt: run.finishedAt!, stream, manifest, incomplete });
+          out.evidence.push({ runId: run.runId, flow: run.flow, ...(measured.repo ? { repo: measured.repo } : {}), finishedAt: run.finishedAt!, ...(await evidenceFiles(run.runDir)) });
         }
       } catch {
         // a run that cannot be read is left out
