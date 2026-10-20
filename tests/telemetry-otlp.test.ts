@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 const ev = (n = 1, more: Partial<TelemetryEvent> = {}): TelemetryEvent => ({
-  version: 1, id: `ev:r1:ev-${String(n).padStart(6, "0")}`, time: "2026-03-10T12:00:00.000Z", kind: "run", name: "run.queued", runId: "r1",
+  version: 2, id: `ev:r1:ev-${String(n).padStart(6, "0")}`, time: "2026-03-10T12:00:00.000Z", kind: "run", name: "run.queued", runId: "r1",
   evidence: { id: `ev-${String(n).padStart(6, "0")}`, seq: n }, ...more,
 });
 const failedStep = (n = 1): TelemetryEvent => ev(n, { kind: "step", name: "step.failed", step: { id: "build", visit: 1, type: "shell" }, outcome: "failed", durationMs: 12 });
@@ -79,12 +79,21 @@ function lines() {
 const localLines = () => readFileSync(telemetryFile(new Date().toISOString().slice(0, 10)), "utf8").trim().split("\n");
 
 describe("otlpLogsRequest", () => {
+  it("flattens the measures of run.measured", () => {
+    const m = ev(1, { id: `tm:${"0f".repeat(16)}`, evidence: undefined, name: "run.measured", measures: { toolCalls: 3, costUsd: 0.25 } });
+    const req = otlpLogsRequest([m]) as any;
+    const attrs = req.resourceLogs[0].scopeLogs[0].logRecords[0].attributes as { key: string; value: unknown }[];
+    const at = (k: string) => attrs.find((a) => a.key === k)?.value;
+    expect(at("scf.measures.toolCalls")).toEqual({ intValue: "3" });
+    expect(at("scf.measures.costUsd")).toEqual({ doubleValue: 0.25 });
+  });
+
   it("builds one resource with flattened attributes", () => {
     const req = otlpLogsRequest([failedStep(1), ev(2)]) as any;
     expect(req.resourceLogs).toHaveLength(1);
     const rl = req.resourceLogs[0];
     expect(rl.resource.attributes).toEqual([{ key: "service.name", value: { stringValue: "spaghetti-code-foundry" } }]);
-    expect(rl.scopeLogs[0].scope).toEqual({ name: "spaghetti-code-foundry/telemetry", version: "1" });
+    expect(rl.scopeLogs[0].scope).toEqual({ name: "spaghetti-code-foundry/telemetry", version: "2" });
     const [a, b] = rl.scopeLogs[0].logRecords;
     expect(a.timeUnixNano).toBe("1773144000000000000");
     expect([a.severityNumber, a.severityText, b.severityNumber, b.severityText]).toEqual([13, "WARN", 9, "INFO"]);

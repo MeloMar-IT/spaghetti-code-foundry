@@ -43,21 +43,38 @@ const made = (type: EvidenceEventType, written?: Pick<EvidenceEvent, "id" | "seq
   telemetryFromEvidence("r1", SAMPLES[type] as EvidenceEventBody, written as EvidenceEvent | undefined, TIME, repo);
 
 const valid = {
-  version: 1, id: "ev:r1:ev-000003", time: TIME, kind: "step", name: "step.started", runId: "r1", evidence: { id: "ev-000003", seq: 3 },
+  version: 2, id: "ev:r1:ev-000003", time: TIME, kind: "step", name: "step.started", runId: "r1", evidence: { id: "ev-000003", seq: 3 },
 };
 
 describe("telemetry envelope", () => {
   it("accepts one sample for every kind and name", () => {
     for (const [kind, names] of Object.entries(TELEMETRY_NAMES)) {
-      for (const name of names) expect(TelemetryEventSchema.safeParse({ ...valid, kind, name }).success, name).toBe(true);
+      for (const name of names) expect(TelemetryEventSchema.safeParse({ ...valid, kind, name, ...(name === "run.measured" ? { measures: {} } : {}) }).success, name).toBe(true);
     }
+  });
+
+  describe("run.measured", () => {
+    const measured = { ...valid, id: `tm:${"0f".repeat(16)}`, evidence: undefined, kind: "run", name: "run.measured", measures: { steps: 2, costUsd: 0.0123, pullRequestDelivered: 1 } };
+    const ok = (e: object) => TelemetryEventSchema.safeParse(e).success;
+
+    it("accepts the measures of a run, with a fractional cost", () => {
+      expect(ok(measured)).toBe(true);
+    });
+    it("needs measures exactly for run.measured", () => {
+      expect(ok({ ...measured, measures: undefined })).toBe(false);
+      expect(ok({ ...valid, measures: {} })).toBe(false);
+    });
+    it("refuses text, negative numbers, fractional counts, unknown keys and a flag above 1", () => {
+      for (const bad of [{ steps: "2" }, { steps: -1 }, { steps: 1.5 }, { costUsd: -0.1 }, { foo: 1 }, { pullRequestDelivered: 2 }]) expect(ok({ ...measured, measures: bad }), JSON.stringify(bad)).toBe(false);
+    });
   });
 
   it("refuses a wrong pair, unknown fields and another version", () => {
     expect(TelemetryEventSchema.safeParse({ ...valid, kind: "run", name: "step.started" }).success).toBe(false);
     expect(TelemetryEventSchema.safeParse({ ...valid, kind: "watcher" as TelemetryKind, name: "model.routed" }).success).toBe(false);
     for (const f of ["prompt", "output", "arguments", "error", "foo"]) expect(TelemetryEventSchema.safeParse({ ...valid, [f]: "x" }).success, f).toBe(false);
-    expect(TelemetryEventSchema.safeParse({ ...valid, version: 2 }).success).toBe(false);
+    expect(TelemetryEventSchema.safeParse({ ...valid, version: 1 }).success).toBe(false);
+    expect(TelemetryEventSchema.safeParse({ ...valid, version: 3 }).success).toBe(false);
     expect(TelemetryEventSchema.safeParse({ ...valid, outcome: "skipped" }).success).toBe(false);
     expect(TelemetryEventSchema.safeParse({ ...valid, cause: "x" }).success).toBe(false);
   });

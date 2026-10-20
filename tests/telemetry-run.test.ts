@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
-import { runFlow, type RunSummary } from "../src/engine/runner.js";
+import { cancelStoppedRun, cancelWaitingRun, resumeRun, runFlow, type RunSummary } from "../src/engine/runner.js";
 import { parseEvidenceEventLine } from "../src/evidence/parse.js";
 import { parseFlow } from "../src/flow/load.js";
 import { TelemetryEventSchema, type TelemetryEvent } from "../src/telemetry/envelope.js";
@@ -65,7 +65,7 @@ describe("telemetry of a run", () => {
     const s = await start(cfg());
     expect(s.status).toBe("succeeded");
     const all = lines(s);
-    expect(all.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed"]);
+    expect(all.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed", "run.measured"]);
     expect(all.every((e) => e.repository === "owner/name")).toBe(true);
     const t = all.filter((e) => e.evidence);
     const ev = evidence(s);
@@ -88,7 +88,7 @@ describe("telemetry of a run", () => {
     const s = await start(cfg(), runId);
     expect(s.status).toBe("succeeded");
     const t = lines(s);
-    expect(t.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed"]);
+    expect(t.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed", "run.measured"]);
     expect(t.every((e) => e.id.startsWith("tm:") && e.evidence === undefined)).toBe(true);
   });
 
@@ -107,10 +107,93 @@ describe("telemetry of a run", () => {
     expect(line).not.toContain("hello");
   });
 
-  it("calls onTool for each tool use without onProgress", async () => {
-    const names: string[] = [];
-    await runClaude({ prompt: "WRITE a.txt x\nWRITE b.txt y", cwd: repo, claudeBin, logFile: join(tmp, "c.log"), onTool: (n) => names.push(n) });
-    expect(names).toEqual(["Write", "Write"]);
+  it("calls onTool for each tool use without onProgress, with the time when the result came back", async () => {
+    const seen: [string, number | undefined][] = [];
+    const r = await runClaude({ prompt: "WRITE a.txt x\nWRITE b.txt y", cwd: repo, claudeBin, logFile: join(tmp, "c.log"), onTool: (n, ms) => seen.push([n, ms]) });
+    expect(seen.map(([n]) => n)).toEqual(["Write", "Write"]);
+    for (const [, ms] of seen) expect(Number.isInteger(ms) && ms! >= 0).toBe(true);
+    expect(r.tools?.calls).toBe(2);
+    expect(r.contextTokens).toBe(2110);
+  });
+
+  it("gives tool.called a whole duration, and the step its tool times and context size", async () => {
+    const s = await start(cfg());
+    const called = lines(s).find((e) => e.name === "tool.called")!;
+    expect(Number.isInteger(called.durationMs) && called.durationMs! >= 0).toBe(true);
+    const rec = s.history.find((h) => h.id === "write")!;
+    expect(rec.tools).toMatchObject({ calls: 1 });
+    expect(rec.contextTokens).toBe(1110);
+    expect(s.history.find((h) => h.id === "check")!.tools).toBeUndefined();
+  });
+
+  describe("run.measured", () => {
+    const measuredOf = (s: Pick<RunSummary, "runId">) => lines(s).filter((e) => e.name === "run.measured");
+
+    it("is the last event of a finished run, with its measures", async () => {
+      const s = await start(cfg());
+      const all = lines(s);
+      const m = all.filter((e) => e.name === "run.measured");
+      expect(m).toHaveLength(1);
+      expect(all.at(-1)).toBe(m[0]);
+      expect(m[0]).toMatchObject({ kind: "run", outcome: "ok", repository: "owner/name", flow: { name: "tele" } });
+      expect(m[0]!.id.startsWith("tm:")).toBe(true);
+      expect(m[0]!.measures).toMatchObject({ steps: 2, toolCalls: 1, contextTokensMax: 1110, policyDeny: 0, pullRequestDelivered: 0 });
+    });
+
+    it("is written for a failed run, once", async () => {
+      const s = await runFlow(parseFlow(FLOW.replace("grep -q hello out.txt", "false")), { task: "t", repo, runsDir, claudeBin, config: cfg() });
+      expect(s.status).toBe("failed");
+      const m = measuredOf(s);
+      expect(m).toHaveLength(1);
+      expect(m[0]!.outcome).toBe("failed");
+    });
+
+    it("is written once when a run waiting for approval is cancelled, and not while it waits", async () => {
+      const flow = `name: gated\nworkspace: inplace\nvars: {github_repo: owner/name}\nsteps:\n  - {id: gate, type: approval, message: "ok?"}\n`;
+      const s = await runFlow(parseFlow(flow), { task: "t", repo, runsDir, claudeBin, config: cfg() });
+      expect(s.status).toBe("waiting");
+      expect(measuredOf(s)).toHaveLength(0);
+      expect(cancelWaitingRun(runsDir, s.runId, cfg())?.status).toBe("cancelled");
+      const m = measuredOf(s);
+      expect(m).toHaveLength(1);
+      expect(m[0]).toMatchObject({ outcome: "cancelled" });
+      expect(m[0]!.measures).toMatchObject({ approvalsCancelled: 1, stops: 1 });
+    });
+
+    it("measures the wait of an approval from when the run began waiting to the decision", async () => {
+      const flow = `name: gated\nworkspace: inplace\nvars: {github_repo: owner/name}\nsteps:\n  - {id: gate, type: approval, message: "ok?"}\n  - {id: after, type: shell, run: "true"}\n`;
+      const w = await runFlow(parseFlow(flow), { task: "t", repo, runsDir, claudeBin, config: cfg() });
+      expect(w.status).toBe("waiting");
+      const s = await resumeRun({ runId: w.runId, runsDir, claudeBin, config: cfg(), decision: { approved: true, by: "cli" }, actor: { kind: "cli" } });
+      expect(s.status).toBe("succeeded");
+      const ev = evidence(s);
+      const stopped = Date.parse(ev.find((e) => e.type === "run.stopped")!.time);
+      const approved = Date.parse(ev.find((e) => e.type === "step.approved")!.time);
+      const started = Date.parse(ev.find((e) => e.type === "step.started" && e.step.type === "approval")!.time);
+      const m = measuredOf(s);
+      expect(m).toHaveLength(1);
+      // from the stop, not from the step.started written when the decision was consumed
+      expect(m[0]!.measures).toMatchObject({ approvals: 1, approvalMs: approved - stopped, approvalMaxMs: approved - stopped, stops: 1, resumes: 1 });
+      expect(approved - stopped).toBeGreaterThanOrEqual(approved - started);
+    });
+
+    it("is written once when a stopped run is cancelled", async () => {
+      const flow = `name: stopper\nworkspace: inplace\nvars: {github_repo: owner/name}\nsteps:\n  - {id: a, type: shell, run: "true", on_success: stop}\n  - {id: b, type: shell, run: "true"}\n`;
+      const s = await runFlow(parseFlow(flow), { task: "t", repo, runsDir, claudeBin, config: cfg() });
+      expect(s.status).toBe("stopped");
+      expect(measuredOf(s)).toHaveLength(0);
+      expect(cancelStoppedRun(runsDir, s.runId, cfg())?.status).toBe("cancelled");
+      const m = measuredOf(s);
+      expect(m).toHaveLength(1);
+      expect(m[0]).toMatchObject({ outcome: "cancelled" });
+      expect(m[0]!.measures).toMatchObject({ stops: 1 });
+    });
+
+    it("writes nothing when telemetry is off, and the run is the same", async () => {
+      const s = await runFlow(parseFlow(FLOW), { task: "t", repo, runsDir, claudeBin, config: ConfigSchema.parse({ protected_branches: [], telemetry: { local: false } }) });
+      expect(s.status).toBe("succeeded");
+      expect(telemetryFiles()).toEqual([]);
+    });
   });
 
   describe("push attempts", () => {

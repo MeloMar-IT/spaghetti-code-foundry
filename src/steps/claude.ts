@@ -131,8 +131,8 @@ export interface ClaudeRunOptions {
   /** low | medium | high | xhigh | max */
   effort?: string;
   onProgress?: (msg: string) => void;
-  /** The name of each tool the model calls; never its arguments. */
-  onTool?: (name: string) => void;
+  /** The name of each tool the model calls; never its arguments. Once per call: when its result comes back, with the time in whole ms, or at the end of the session without one. */
+  onTool?: (name: string, durationMs?: number) => void;
 }
 
 export interface ClaudeRunResult {
@@ -146,6 +146,24 @@ export interface ClaudeRunResult {
   error?: string;
   /** Tool calls Claude Code refused (at most 5), without intentional `git push`. */
   denied?: string[];
+  /** Tool calls of the session and the time they took (whole ms). Absent when the program did not start. */
+  tools?: ToolTimes;
+  /** The largest input of one model turn (input + cache read + cache creation tokens). Absent without `usage` lines. */
+  contextTokens?: number;
+}
+
+/** Calls of a session and the time between each call and its result. A call without a result counts in `calls` only. */
+export interface ToolTimes {
+  calls: number;
+  totalMs: number;
+  maxMs: number;
+}
+
+interface Usage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
 }
 
 interface StreamEvent {
@@ -156,9 +174,64 @@ interface StreamEvent {
   session_id?: string;
   total_cost_usd?: number;
   num_turns?: number;
-  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+  usage?: Usage;
   permission_denials?: Array<{ tool_name?: string; tool_input?: Record<string, unknown> }>;
-  message?: { content?: Array<{ type?: string; name?: string; input?: Record<string, unknown> }> };
+  message?: { usage?: Usage; content?: Array<{ type?: string; id?: string; tool_use_id?: string; name?: string; input?: Record<string, unknown> }> };
+}
+
+const count = (n: unknown): number => (typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0);
+
+/**
+ * Times tool calls and finds the largest model turn from the lines of the stream. Pure apart from the clock and
+ * `onTool`. Durations are whole milliseconds. Never throws on odd lines.
+ */
+export function streamMeter(o: { now?: () => number; onTool?: (name: string, durationMs?: number) => void }): { line(ev: unknown): void; end(): { tools: ToolTimes; contextTokens?: number } } {
+  const now = o.now ?? (() => performance.now());
+  const pending: { id?: string; name: string; at: number }[] = [];
+  const tools: ToolTimes = { calls: 0, totalMs: 0, maxMs: 0 };
+  let context: number | undefined;
+  const notify = (name: string, ms?: number) => {
+    try {
+      o.onTool?.(name, ms);
+    } catch {
+      // a broken callback does not stop the session
+    }
+  };
+  return {
+    line(raw) {
+      const ev = raw as StreamEvent | null;
+      if (!ev || typeof ev !== "object") return;
+      const content = Array.isArray(ev.message?.content) ? ev.message!.content! : [];
+      if (ev.type === "assistant") {
+        const u = ev.message?.usage;
+        if (u && typeof u === "object") {
+          const turn = count(u.input_tokens) + count(u.cache_read_input_tokens) + count(u.cache_creation_input_tokens);
+          context = Math.max(context ?? 0, turn);
+        }
+        for (const c of content) {
+          if (c?.type === "tool_use" && c.name) {
+            tools.calls++;
+            pending.push({ ...(typeof c.id === "string" && c.id ? { id: c.id } : {}), name: c.name, at: now() });
+          }
+        }
+      } else if (ev.type === "user") {
+        for (const c of content) {
+          if (c?.type !== "tool_result" || typeof c.tool_use_id !== "string") continue;
+          const i = pending.findIndex((p) => p.id === c.tool_use_id);
+          if (i < 0) continue;
+          const [p] = pending.splice(i, 1);
+          const ms = Math.max(0, Math.round(now() - p!.at));
+          tools.totalMs += ms;
+          tools.maxMs = Math.max(tools.maxMs, ms);
+          notify(p!.name, ms);
+        }
+      }
+    },
+    end() {
+      for (const p of pending.splice(0)) notify(p.name);
+      return { tools: { ...tools }, ...(context !== undefined ? { contextTokens: context } : {}) };
+    },
+  };
 }
 
 export function buildClaudeArgs(o: ClaudeRunOptions): string[] {
@@ -204,6 +277,7 @@ function isPush(tool: string, input: Record<string, unknown> = {}): boolean {
 export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const bin = o.claudeBin ?? (await resolveClaudeBinAsync());
   let final: StreamEvent | undefined;
+  const meter = streamMeter({ onTool: o.onTool });
 
   const spawned = await runProcess(bin, buildClaudeArgs(o), {
     cwd: o.cwd,
@@ -221,28 +295,29 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
       } catch {
         return;
       }
+      meter.line(ev);
       if (ev.type === "result") final = ev;
-      else if (ev.type === "assistant" && (o.onProgress || o.onTool)) {
+      else if (ev.type === "assistant" && o.onProgress) {
         for (const c of ev.message?.content ?? []) {
-          if (c.type === "tool_use" && c.name) {
-            o.onTool?.(c.name);
-            o.onProgress?.(describeToolUse(c.name, c.input));
-          }
+          if (c.type === "tool_use" && c.name) o.onProgress(describeToolUse(c.name, c.input));
         }
       }
     },
   }).then((r) => ({ res: r }), (e: Error) => ({ err: e }));
   // A program that is not there is a setup problem with a stable message (the failure rules read it).
   if ("err" in spawned) {
+    meter.end();
     const msg = /ENOENT/.test(spawned.err.message) ? "claude CLI not found — install Claude Code on the computer that runs the Foundry" : spawned.err.message;
     return { ok: false, output: "", error: msg };
   }
   const res = spawned.res;
+  const measured = meter.end();
 
-  if (res.aborted) return { ok: false, output: final?.result ?? "", error: "cancelled" };
-  if (res.timedOut) return { ok: false, output: final?.result ?? "", error: "timed out" };
+  if (res.aborted) return { ok: false, output: final?.result ?? "", error: "cancelled", ...measured };
+  if (res.timedOut) return { ok: false, output: final?.result ?? "", error: "timed out", ...measured };
   if (!final) {
     return {
+      ...measured,
       ok: false,
       output: "",
       error: `claude exited with code ${res.exitCode} and no result. ${res.stderr.trim().slice(-500)}`,
@@ -255,6 +330,7 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
       .map((d) => describeToolUse(d.tool_name!, d.tool_input)),
   )].slice(0, 5);
   return {
+    ...measured,
     denied: denied.length ? denied : undefined,
     ok,
     output: final.result ?? "",

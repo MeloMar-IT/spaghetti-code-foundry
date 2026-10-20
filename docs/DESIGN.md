@@ -726,10 +726,11 @@ are `skipped`):
 part 1 of 3 of #155). It is a second, smaller view of what the evidence already records; it does not replace
 the evidence and nothing depends on it.
 
-- **Envelope.** `envelope.ts` defines `TelemetryEventSchema`: `version` 1, a strict object with `id`, `time`,
+- **Envelope.** `envelope.ts` defines `TelemetryEventSchema`: `version` 2 (`TELEMETRY_VERSION`), a strict object with `id`, `time`,
   `kind` and `name` required, and optional labels that reuse the identity schemas of `evidence/identity.ts`,
   `evidence/schema.ts` and `policy/schema.ts`. The kind and name must match (`run`, `step`, `model`, `policy`,
   `tool`, `delivery`, `pull_request`, `watcher`). There is no free-text field, and unknown fields are refused.
+  Version 2 adds the `run.measured` name and the `measures` object (see below); `measures` is present exactly for `run.measured`.
   The id is `ev:<run>:<evidence id>` (with `:pr` for the pull request of `run.completed`) or `tm:<32 hex>`.
 - **From evidence.** `telemetryFromEvidence` maps every evidence body to at least one draft; it never throws.
   A line that was written gives the evidence id and `seq`; a body that was not written (the stream has
@@ -742,6 +743,25 @@ the evidence and nothing depends on it.
   only, name only), `watcher.checked` / `watcher.failed` / `watcher.queued` (`Watcher`) and `pull_request.feedback`
   (`Watcher.submit` for a PR). Each label (repository, branch, tool name, actor) is checked with its own schema and
   left out when it fails, so one bad label does not drop the event.
+- **Measures (#612, part 1 of 2 of #156).** `src/monitor/measures.ts` holds `MEASURES`, the catalogue of 12 measures. Each
+  entry has a `name`, a `unit`, an `owner` (`admin` or `repository owner`, a role and never an account) and a
+  `decision` (the detector or the setting it informs). A test fails when an entry lacks an owner or a decision.
+  `measureRun(run, events)` is pure: it reads no files, calls no AI and never throws. Per step it gives duration,
+  retries, tokens, cost, denials, context size and tool latency. Per run it gives queue time (`run.queued` to the
+  first `run.started`), stops and resumes, approval latency (approval `step.started` or the stop at the approval, to
+  `step.approved` or `step.denied`), policy outcomes (one count per outcome, and `policy.unavailable`/`policy.invalid`
+  together) and the pull-request result. A missing source leaves its measure out. `readRunEvents(runDir, runId)` reads
+  `evidence.jsonl` loosely: an unreadable line is skipped. `emitRunMeasured(run)` writes one `run.measured` event
+  after evidence finalization in `finish`, `cancelWaitingRun` and `cancelStoppedRun`. Its `measures` object is
+  `TelemetryMeasuresSchema`: numbers ≥ 0 only, all optional, strict. It is the sums and maxima of the steps and the
+  run's own numbers. OTLP flattens these numbers on its own.
+  - **Tool latency.** `runClaude` times each call from its `tool_use` to its `tool_result` (`streamMeter`, whole ms).
+    `onTool(name, durationMs)` sends `tool.called` with `durationMs` when the result arrives. A call that never gets a
+    result is sent at the end of the session without it. `StepRecord.tools` holds `calls`, `totalMs` and `maxMs`.
+  - **Context size.** `StepRecord.contextTokens` is the largest input of one model turn (input, cache read and cache
+    creation tokens from the `usage` of each assistant message). Claude steps only; Codex has none.
+  - **Retries.** Tool times and context size are kept over all tries of an agent step, so a retry never hides an
+    earlier, slower call or larger context.
 - **Push log.** The pre-push hook already appends `<branch>\t<remote url>` to `FACTORY_PUSH_LOG` before its checks, so a
   refused push is logged too. `pushLogFor` returns that file also when telemetry is on and the protected-branch or
   secret-scan hook is installed. Hook installation is unchanged on purpose: `core.hooksPath` replaces the repository's

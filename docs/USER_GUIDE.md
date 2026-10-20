@@ -1260,8 +1260,8 @@ answers are only recorded: a run never stops or changes because of a pack.
 
 The Foundry writes one short telemetry line for each important fact of a run: a run starting or
 ending, a step starting, retrying, failing or finishing, a model being routed, a policy decision, a
-tool call, a push, a pull request and a watcher check. You can read these lines to see what the
-Foundry does, without opening each run folder.
+tool call, a push, a pull request, a watcher check and the measures of a run that has ended. You can read
+these lines to see what the Foundry does, without opening each run folder.
 
 - **What is recorded.** Names, ids, numbers, times and outcomes. Never a prompt, a model's output, the
   arguments of a tool, an error text, a file's content or a credential. The format has no free-text
@@ -1292,7 +1292,15 @@ Foundry does, without opening each run folder.
   attempt, not a confirmed delivery: a refused push is recorded too, and a step can write that log itself.
   The repository is shown only for a GitHub remote.
 - **Tool calls.** `tool.called` holds the tool's name only, never its arguments. It is written for Claude
-  Code steps only; Codex steps give none.
+  Code steps only; Codex steps give none. It also gets `durationMs`, the time from the call to its result.
+  A call that never got a result has no duration.
+- **Run measures.** When a run ends (succeeded, failed or cancelled), one `run.measured` line holds its
+  numbers, and no text: the duration and queue time, the steps, retries, tokens, cost and denials, the largest
+  context of a model turn and the time the tools took, the stops, resumes and approvals (with their waiting
+  times), the policy outcomes, and whether the pull request was delivered. A number that the run does not
+  have is left out. A run that is only stopped or waiting gets no line until it ends. The owner of each
+  measure is an admin or the repository owner, and each one informs a detector or a setting; these are fixed
+  in the code and are not in the web interface.
 - **Watchers.** A watcher records each check (ok, or failed without the error text), each queued run and
   each pull-request feedback run. `scf watch` writes these too.
 
