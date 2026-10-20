@@ -27,7 +27,7 @@ afterEach(() => {
 const NOW = new Date("2026-03-10T12:00:00.000Z");
 const day = (offset: number) => new Date(NOW.getTime() - offset * 86_400_000).toISOString().slice(0, 10);
 const ev = (n = 1): TelemetryEvent => ({
-  version: 1, id: `ev:r1:ev-${String(n).padStart(6, "0")}`, time: "2026-03-10T12:00:00.000Z", kind: "run", name: "run.queued", runId: "r1",
+  version: 2, id: `ev:r1:ev-${String(n).padStart(6, "0")}`, time: "2026-03-10T12:00:00.000Z", kind: "run", name: "run.queued", runId: "r1",
   evidence: { id: `ev-${String(n).padStart(6, "0")}`, seq: n },
 });
 const cfg = (telemetry: object = {}) => ConfigSchema.parse({ protected_branches: [], telemetry });

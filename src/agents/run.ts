@@ -329,9 +329,11 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     noMcp: local,
     isolated: isolatedSession,
     effort,
-    onTool: (name) => {
+    onTool: (name, durationMs) => {
       const tool = ToolIdentitySchema.safeParse({ name });
-      if (tool.success) emitLiveTelemetry("tool", "tool.called", { runId: engine.summary.runId, step: stepId, ...(repository ? { repository } : {}), tool: tool.data });
+      // whole, non-negative ms only: anything else is left out rather than making the event invalid
+      const ms = typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0 ? Math.round(durationMs) : undefined;
+      if (tool.success) emitLiveTelemetry("tool", "tool.called", { runId: engine.summary.runId, step: stepId, ...(repository ? { repository } : {}), tool: tool.data, ...(ms !== undefined ? { durationMs: ms } : {}) });
     },
   });
   for (const d of r.denied ?? []) engine.log(`    ⚠ blocked: ${d}`);
@@ -346,6 +348,8 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     agent: t.label,
     ...(effort ? { effort } : {}),
     tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
+    ...(r.tools ? { tools: r.tools } : {}),
+    ...(r.contextTokens !== undefined ? { contextTokens: r.contextTokens } : {}),
     ...claudeSkills,
     ...catalogueRecord(o),
   };
@@ -389,7 +393,18 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const tried = new Set<string>();
   let blips = 0;
   let models = 0;
-  const tries = () => (blips || models ? { retried: { blips, models } } : {});
+  // Tool times and context size over every try: a retry must not hide a slower call or a larger context of an earlier one.
+  let toolTimes: StepResult["tools"];
+  let contextTokens: number | undefined;
+  const seen = (r: Pick<StepResult, "tools" | "contextTokens">) => {
+    if (r.tools) toolTimes = { calls: (toolTimes?.calls ?? 0) + r.tools.calls, totalMs: (toolTimes?.totalMs ?? 0) + r.tools.totalMs, maxMs: Math.max(toolTimes?.maxMs ?? 0, r.tools.maxMs) };
+    if (r.contextTokens !== undefined) contextTokens = Math.max(contextTokens ?? 0, r.contextTokens);
+  };
+  const tries = () => ({
+    ...(blips || models ? { retried: { blips, models } } : {}),
+    ...(toolTimes ? { tools: toolTimes } : {}),
+    ...(contextTokens !== undefined ? { contextTokens } : {}),
+  });
   // Built once: one log line and the same bytes for every try, retries and fallbacks included.
   const canon =
     step.skills === "catalog"
@@ -451,6 +466,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       return { ok: false, output: gated.refused, error: gated.refused, ...tries() };
     }
     const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile });
+    seen(r);
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.

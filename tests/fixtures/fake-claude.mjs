@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stand-in for the `claude` CLI: reads the prompt from stdin, emits stream-json.
-// Prompt directives: "WRITE <file> <text>" writes a file; "SAY <text>" sets the result;
+// Prompt directives: "WRITE <file> <text>" writes a file (with an assistant line that has `usage` and a tool_use id, then a user line with its tool_result); "SAY <text>" sets the result;
 // "ERROR" returns an error result; "DENY <Tool> <text>" adds a refused tool call to the result's
 // permission_denials (command for Bash, file_path otherwise); "SHOWPROMPT" answers with the arguments and the whole prompt (as `args=…` and `PROMPT<<…>>`); "SHOWGH" reports whether it saw a GH_TOKEN. Args are echoed into the result for assertions.
 // Plans that ask for a skill request: a line "REQUEST_SKILLS <id> [<id>…]" requests those ids; a line "REQUEST_CATALOGUE_SKILLS" requests every id of the
@@ -40,6 +40,7 @@ const ghSeen = !process.env.GH_TOKEN ? "none" : process.env.GH_TOKEN === process
 let result = `ok args=${args.join(" ")}`;
 const denials = [];
 const shown = [];
+let writes = 0;
 for (const line of prompt.split("\n")) {
   // With `--tools ""` the real CLI has no tools: nothing is written or refused.
   const noTools = args.includes("--tools") && args[args.indexOf("--tools") + 1] === "";
@@ -47,8 +48,13 @@ for (const line of prompt.split("\n")) {
   if (dn) denials.push({ tool_name: dn[1], tool_use_id: `toolu_${denials.length}`, tool_input: dn[1] === "Bash" ? { command: dn[2] } : { file_path: dn[2] } });
   const w = noTools ? null : line.match(/^WRITE (\S+) (.*)$/);
   if (w) {
-    emit({ type: "assistant", message: { content: [{ type: "tool_use", name: "Write", input: { file_path: w[1] } }] } });
+    // Like the real CLI: a turn with `usage` and a tool_use id, then the tool_result in a user line.
+    const id = `toolu_w${writes}`;
+    const usage = { input_tokens: 100, cache_read_input_tokens: 1000 * (writes + 1), cache_creation_input_tokens: 10, output_tokens: 5 };
+    writes++;
+    emit({ type: "assistant", message: { usage, content: [{ type: "tool_use", id, name: "Write", input: { file_path: w[1] } }] } });
     writeFileSync(w[1], w[2]);
+    emit({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id }] } });
   }
   const s = line.match(/^SAY (.*)$/);
   if (s) result = s[1];

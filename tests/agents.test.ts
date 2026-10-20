@@ -222,6 +222,22 @@ steps:
     expect(s.history[0]!.retried?.models).toBe(1);
   });
 
+  it("keeps the tool times and context size of the earlier try when another model takes over", async () => {
+    const s = await start(`
+name: t
+workspace: inplace
+steps:
+  - {id: a, type: claude, prompt: "WRITE a.txt x\\nCLAUDE_LIMIT\\nSAY from codex"}
+`, cfg({ router: { fallback: ["codex"] } }));
+    const rec = s.history[0]!;
+    expect(rec.agent).toBe("codex:openai");
+    expect(rec.retried?.models).toBe(1);
+    // the Claude try that hit the limit made one call; the Codex try reports none
+    expect(rec.tools?.calls).toBe(1);
+    expect(Number.isInteger(rec.tools?.totalMs)).toBe(true);
+    expect(rec.contextTokens).toBe(1110);
+  });
+
   it("pauses the run on a usage limit when no fallback is left, and resumes where it stopped", async () => {
     const flow = `
 name: t

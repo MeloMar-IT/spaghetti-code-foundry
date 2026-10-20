@@ -43,11 +43,33 @@ const breakStore = () => {
 };
 
 const event = (extra: Partial<TelemetryEvent> = {}): TelemetryEvent => ({
-  version: 1, id: "ev:r1:ev-000001", time: "2026-03-01T10:00:00.000Z", kind: "step", name: "step.started", runId: "r1", evidence: { id: "ev-000001", seq: 1 },
+  version: 2, id: "ev:r1:ev-000001", time: "2026-03-01T10:00:00.000Z", kind: "step", name: "step.started", runId: "r1", evidence: { id: "ev-000001", seq: 1 },
   step: { id: "build", visit: 1, type: "shell" }, ...extra,
 });
 
 describe("telemetry privacy", () => {
+  const measured = (extra: Partial<TelemetryEvent> = {}): TelemetryEvent => ({
+    version: 2, id: `tm:${"0f".repeat(16)}`, time: "2026-03-01T10:00:00.000Z", kind: "run", name: "run.measured", runId: "r1", outcome: "ok", durationMs: 5,
+    measures: { steps: 2, toolCalls: 1, costUsd: 0.5 }, ...extra,
+  });
+
+  it("keeps the measures of run.measured as they are", () => {
+    const r = privateTelemetry(measured());
+    expect(r).toMatchObject({ ok: true });
+    if (r.ok) expect(r.event).toEqual(measured());
+  });
+
+  it("drops a flow name that holds a secret and keeps the measures", () => {
+    store("s3cr3t-flow-secret-value");
+    const r = privateTelemetry(measured({ flow: { name: "s3cr3t-flow-secret-value" } }));
+    expect(r).toMatchObject({ ok: true });
+    if (r.ok) {
+      expect(r.event.flow).toBeUndefined();
+      expect(r.event.redacted).toEqual(["flow"]);
+      expect(r.event.measures).toEqual({ steps: 2, toolCalls: 1, costUsd: 0.5 });
+    }
+  });
+
   it("keeps a clean event as it is", () => {
     const r = privateTelemetry(event());
     expect(r).toMatchObject({ ok: true });

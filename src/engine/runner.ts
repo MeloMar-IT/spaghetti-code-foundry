@@ -44,6 +44,7 @@ import { runPolicy, type RunPolicy } from "./policy-hooks.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
 import { snapshotToolProfile } from "../tool-profile/session.js";
 import { configureTelemetry } from "../telemetry/telemetry.js";
+import { emitRunMeasured } from "../monitor/measures.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
 
@@ -377,6 +378,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   saveRun(s);
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
+  emitRunMeasured(s);
   appendLiveLog(s.runDir, "■ cancelled while waiting for approval");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -393,6 +395,7 @@ export function cancelStoppedRun(runsDir: string, runId: string, config: Config 
   saveRun(s);
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
+  emitRunMeasured(s);
   appendLiveLog(s.runDir, "■ cancelled while stopped");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -449,6 +452,7 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
       opts.onUpdate?.(summary);
     }
   }
+  emitRunMeasured(summary); // after the evidence is final and the last cost is added; nothing for a run that is only stopped or waiting
   await notifyRun(config, summary).catch(() => {});
   if (summary.status === "stopped") {
     // Cancelled while the notification ran: the saved cancel stands, and the caller must see it.
