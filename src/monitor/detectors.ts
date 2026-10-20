@@ -8,6 +8,8 @@ import type { Scheduler } from "../queue/scheduler.js";
 import { parseInterval, type TrackedIssue, type WatcherStatus } from "../queue/watcher.js";
 import type { UpdateState } from "../self-update-state.js";
 import type { Evidence, FindingInput, Severity } from "./findings.js";
+import type { MeasureOwner } from "./measures.js";
+import type { EvidenceState, MeasuredRun } from "./slo-input.js";
 
 export interface LogLine { at: string; text: string }
 
@@ -46,6 +48,18 @@ export interface DetectorInput {
   history?: DurationHistory;
   /** The record of the self-update (`broken`: it could not be read). */
   update?: { state: UpdateState; broken: boolean };
+  /** Observations of runs within the SLO windows (from run.json and evidence.jsonl only; never telemetry). */
+  measures?: MeasuredRun[];
+  /** The evidence files of the runs that ended within the SLO windows. */
+  evidence?: EvidenceState[];
+}
+
+/** Who acts on a finding, and what it says about the limit, the window and the next step. */
+export interface Slo {
+  owner: MeasureOwner;
+  threshold(c: MonitorConfig): string;
+  window(c: MonitorConfig): string;
+  action: string;
 }
 
 export interface Detector {
@@ -53,6 +67,7 @@ export interface Detector {
   /** What it looks for and why it matters: two short sentences the app can show. */
   description: string;
   run(input: DetectorInput): FindingInput[];
+  slo?: Slo;
 }
 
 export const HOUR = 3_600_000;

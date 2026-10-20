@@ -1739,6 +1739,11 @@ log; none calls an AI or GitHub.
 | Restart overdue | a new version is installed and the server has not restarted | major | more than 2 hours |
 | Develop is red | the tests after a merge into develop failed one after the other | critical | 2 in a row, looking back 24 hours |
 | Slow step | a step took much longer than its usual time (the times kept for estimates; needs 3 earlier runs and more than 2 minutes) | minor | more than 3 times, 3 times in 24 hours |
+| Policy service failed | policy decisions said the policy was unavailable or invalid (`policy.unavailable`, `policy.invalid`) | major | 1 decision in the last hour |
+| Evidence not finalized | a run ended more than 2 minutes ago with `evidence.jsonl` but no `evidence.json`, or its stream was marked incomplete | major | 1 run in the last 24 hours |
+| Step latency p95 | the p95 of a step's durations, per repository, flow and step, is above the limit (approval and flow steps are not counted) | minor | p95 above 60 minutes, from at least 5 visits, in the last 24 hours |
+| Repeated tool denial | the same tool was refused again and again in one repository | minor | 3 times in the last 24 hours |
+| Abnormal output | a step's output tokens are above 5 times the median of that flow and step, and above 20000 tokens (the median needs 5 visits) | minor | in the last 24 hours |
 | Self-update failed | an update failed and the old version keeps running (major); the new version did not start healthy, the Foundry could not go back, or `self-update.json` cannot be read (critical) | major / critical | always (only when a self-update was tried) |
 
 *Critical* means work has stopped, *major* means work is slowed or wrong, *minor* means wrong but
@@ -1763,6 +1768,11 @@ monitor:
   restart_overdue: { hours: 2 }
   develop_red: { failures: 2, within_hours: 24 }
   slow_step: { factor: 3, times: 3, within_hours: 24 }
+  policy_service_failure: { decisions: 1, within_hours: 1 }
+  evidence_finalization: { runs: 1, within_hours: 24 }
+  step_latency_p95: { minutes: 60, min_visits: 5, within_hours: 24 }
+  repeated_tool_denial: { times: 3, within_hours: 24 }
+  abnormal_output: { factor: 5, min_tokens: 20000, min_samples: 5, within_hours: 24 }
 ```
 
 **What is never a finding:** a run that waits for a person (approval or questions), a usage limit
@@ -1783,6 +1793,14 @@ Notes:
 - Slow step compares with the newest 500 succeeded runs that finished before the last
   `within_hours`, rebuilt about once an hour.
 - The monitor keeps running while a new version waits for the server to restart.
+- The five service-level detectors (policy service failed, evidence not finalized, step latency
+  p95, repeated tool denial, abnormal output) read only local files: `run.json` and the evidence
+  files of the runs in their window. They never read telemetry, so they work with telemetry off or
+  with no collector reachable. Evidence files over 16 MiB are not read; such a run is measured from
+  its `run.json` alone. Each one has an owner: an admin, or the repository owner for the two about
+  tools and output. Their windows are judged by the time of each observation (a decision, the end
+  of a step visit). Evidence not finalized is the only one that looks at ended runs, and only
+  after a settle time of 2 minutes.
 
 Findings are kept in `monitor-findings.json` in the data folder and survive a restart. Each has a
 detector, a fingerprint (the same problem gives the same one), a severity, one sentence, the
@@ -1990,9 +2008,11 @@ happens to each problem.
   the monitor is off, is not running, or no repository is set. The API answers 409 when the
   monitor is off or not running, or the finding has a story, is muted, used its two tries, is
   gone or has no repository; 502 when GitHub fails.
-- **Detectors.** Each detector is listed with what it looks for, its threshold numbers, when it
-  last found something and whether it is muted. Change a number and press **Save**; this changes
-  the setting `monitor.<detector>` like the Settings page.
+- **Detectors.** Each detector is listed with what it looks for, its owner, its threshold, its
+  window, its next action, when it last found something and whether it is muted. The owner is
+  **admin** or **repository owner**; a detector without an owner shows an empty cell. The threshold,
+  window and next action are sentences from the server, and they follow the numbers you set. Change
+  a number and press **Save**; this changes the setting `monitor.<detector>` like the Settings page.
 - **Thresholds and settings.** The Detectors table has one number field per threshold of each
   detector. Below the Mutes, the **Monitor settings** section holds two groups. **Bug stories**: the
   repository (`report_to`), the limits per day and per check, the quiet time after a start and the
@@ -6439,6 +6459,11 @@ These are the names as they appear in the log and in mutes. The thresholds are i
 - `restart-overdue` (major): a new version is installed and the server has not restarted.
 - `develop-red` (critical): the tests after a merge into `develop` fail one after the other.
 - `slow-step` (minor): a step took much longer than usual.
+- `policy-service-failure` (major): policy decisions said the policy was unavailable or invalid.
+- `evidence-finalization` (major): a run ended but its evidence has no `evidence.json`, or its stream stopped.
+- `step-latency-p95` (minor): the p95 of a step's durations is above the limit.
+- `repeated-tool-denial` (minor): the same tool was refused again and again in one repository.
+- `abnormal-output` (minor): a step wrote far more output than is usual for that step.
 - `self-update` (major or critical): an update failed.
 - `detector-failed`: a detector crashed, so its problem is not checked.
 
