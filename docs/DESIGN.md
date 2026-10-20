@@ -776,6 +776,32 @@ the evidence and nothing depends on it.
     creation tokens from the `usage` of each assistant message). Claude steps only; Codex has none.
   - **Retries.** Tool times and context size are kept over all tries of an agent step, so a retry never hides an
     earlier, slower call or larger context.
+- **Outcomes (#617, part 1 of 4 of #157).** `src/outcomes.ts` holds `OUTCOME_DEFINITIONS`, the ten outcome measures, and
+  `computeOutcomes(runs, facts, window)`, which is pure and never throws (on an error or a bad window every measure is
+  `null`). `src/outcome-facts.ts` turns one run's events into small facts (`outcomeFactsOf`, pure). `OutcomeFactsCache`
+  reads `evidence.jsonl` for them. Each definition has a decision sentence and the detector or setting it informs.
+  - **Delivered.** A run is delivered when it succeeded and a `push` policy decision has an outcome other than `deny`.
+    So merge rate is "pushed work": a merge done by hand on GitHub is not seen. Observe mode is literal: an observed
+    `deny` at `push` is not a delivery, unless another decision at that push allows it.
+  - **Window.** Runs count by `finishedAt` in `[from, to)`. Work items count by the end of their first delivery
+    (the earliest ended, delivering, evidenced run of the item). Issue-to-PR time starts at the earliest
+    `run.queued` (or start) of the item's runs up to that delivery. Rework counts delivered items with a later run
+    on the same item that ends before `to`. Returning users compare the owners of the window with the owners of
+    the previous window.
+  - **Exclusions.** Refinement runs are excluded everywhere and are never open. Open runs (not ended, started in the
+    window) only count in `open`. Runs whose evidence is missing, too old, too large or a link are excluded from the
+    measures that need evidence; cost, resumes and returning users do not need it.
+  - **Unit of `excluded`.** Always runs, never work items, so the counts can be compared across measures. A run
+    that is excluded for two reasons counts once.
+  - **Pairing.** Every speed (`ms`) and cost (`usd`) measure lists `pairedWith` measures from the quality, rework,
+    policy and user categories, so that a faster or cheaper result is always read with its effect on quality.
+    A test checks this for every catalogue entry.
+  - **Cache limits.** `OutcomeFactsCache` holds 2000 finished entries (the least recently used goes first). A
+    run is read only when it has settled (`SETTLE_MS`, 2 minutes after `finishedAt`), at most once per run folder,
+    run id and `updatedAt`, and calls that come while the read runs share it. The read uses the same guards as the
+    SLO input: no links (`O_NOFOLLOW`) and no file over `MAX_EVIDENCE_BYTES` (16 MiB). The cache keeps the facts,
+    never the events. The manifest and the incomplete marker are checked on every call, so a late file shows up.
+  - **Owners.** The definition texts and the owners are a proposal, reviewed by the owner in the pull request.
 - **Push log.** The pre-push hook already appends `<branch>\t<remote url>` to `FACTORY_PUSH_LOG` before its checks, so a
   refused push is logged too. `pushLogFor` returns that file also when telemetry is on and the protected-branch or
   secret-scan hook is installed. Hook installation is unchanged on purpose: `core.hooksPath` replaces the repository's
