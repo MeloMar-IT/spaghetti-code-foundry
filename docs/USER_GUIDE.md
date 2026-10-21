@@ -3591,6 +3591,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap |
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
+| `GET /api/outcomes` | yes | yes | the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
