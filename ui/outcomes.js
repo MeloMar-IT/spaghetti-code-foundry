@@ -33,11 +33,18 @@ export function outcomeGroups(definitions) {
     const paired = (Array.isArray(lead.pairedWith) ? lead.pairedWith : []).map((id) => byId.get(id)).filter(Boolean);
     const items = [lead, ...paired];
     items.forEach((d) => used.add(d.id));
-    groups.push({ title: lead.label, caption: `${lead.label} and the measures to read with it`, items });
+    const hidden = (Array.isArray(lead.pairedWith) ? lead.pairedWith : []).length - paired.length;
+    groups.push({ title: lead.label, caption: `${lead.label} and the measures to read with it`, items, hidden });
   }
   const rest = defs.filter((d) => !used.has(d.id));
-  if (rest.length) groups.push({ title: "Other measures", caption: "Other measures", items: rest });
+  if (rest.length) groups.push({ title: "Other measures", caption: "Other measures", items: rest, hidden: 0 });
   return groups;
+}
+
+/** The note under a group that lacks `n` paired measures the viewer may not see. */
+export function adminOnlyText(n) {
+  if (!(n > 0)) return "";
+  return n === 1 ? "1 measure to read with this is for admins only." : `${n} measures to read with this are for admins only.`;
 }
 
 /** One group as a table. `measuresById`: Map of id to { value, counted, excluded }. */
@@ -63,10 +70,12 @@ export function outcomeTable(group, measuresById) {
 
 /**
  * The Outcomes card. `load(params)` fetches the answer of GET /api/outcomes, `note(what, error, retry)` draws a failure.
+ * Options: `repo` fixes the repository (its filter is hidden and it is always sent); `admin` (default true) false hides the
+ * model and policy filters and the admin-only and cost measures; `embedded` returns the body without the card and its title.
  * Returns the card and `ready`, the promise of the latest load (it never rejects).
  */
-export function outcomesSection({ load, note }) {
-  const state = { repo: "", flow: "", model: "", policy: "", days: "30" };
+export function outcomesSection({ load, note, repo, admin = true, embedded = false }) {
+  const state = { repo: repo ?? "", flow: "", model: "", policy: "", days: "30" };
   let loads = 0;
   let latest = Promise.resolve();
   const result = h("div", {});
@@ -85,10 +94,14 @@ export function outcomesSection({ load, note }) {
   modelLabel.hidden = true;
   policyLabel.hidden = true;
 
-  const el = h("div", { class: "card span-all" }, h("h3", {}, "Outcomes"),
-    h("p", { class: "muted" }, "Every speed or cost number is shown with the numbers to read it with. — means there is no value; Left out counts the runs that were not counted."),
-    h("div", { class: "toolbar" }, wrap("Repository", repoSel), wrap("Flow", flowSel), modelLabel, policyLabel, wrap("Window", daysSel)),
-    result);
+  const repoLabel = wrap("Repository", repoSel);
+  repoLabel.hidden = !!repo;
+  const intro = h("p", { class: "muted" }, "Every speed or cost number is shown with the numbers to read it with. — means there is no value; Left out counts the runs that were not counted.");
+  const toolbar = h("div", { class: "toolbar" }, repoLabel, wrap("Flow", flowSel), modelLabel, policyLabel, wrap("Window", daysSel));
+  const el = embedded
+    ? h("div", { class: "outcomes" }, intro, toolbar, result)
+    : h("div", { class: "card span-all" }, h("h3", {}, "Outcomes"), intro, toolbar, result);
+  const heading = embedded ? "h3" : "h4";
 
   function fillSelect(sel, allText, list, current) {
     const items = Array.isArray(list) ? list.filter((x) => typeof x === "string") : [];
@@ -99,25 +112,29 @@ export function outcomesSection({ load, note }) {
 
   function fill(data) {
     const values = data?.values ?? {};
-    fillSelect(repoSel, "All repositories", values.repos, state.repo);
+    if (!repo) fillSelect(repoSel, "All repositories", values.repos, state.repo);
     fillSelect(flowSel, "All flows", values.flows, state.flow);
-    const hasModels = Array.isArray(values.models);
-    const hasPolicies = Array.isArray(values.policies);
+    const hasModels = admin && Array.isArray(values.models);
+    const hasPolicies = admin && Array.isArray(values.policies);
     if (hasModels) fillSelect(modelSel, "All model routes", values.models, state.model);
     if (hasPolicies) fillSelect(policySel, "All policy versions", values.policies, state.policy);
     modelLabel.hidden = !hasModels;
     policyLabel.hidden = !hasPolicies;
-    const defs = Array.isArray(data?.definitions) ? data.definitions : [];
+    const all = Array.isArray(data?.definitions) ? data.definitions : [];
+    const defs = admin ? all : all.filter((d) => d && !d.adminOnly && d.unit !== "usd");
     if (!defs.length) return mount(result, h("p", { class: "muted" }, "No outcome measures yet."));
     const byId = new Map((Array.isArray(data.measures) ? data.measures : []).filter((m) => m && m.id).map((m) => [m.id, m]));
-    mount(result, outcomeGroups(defs).flatMap((g) => [h("h4", {}, g.title), outcomeTable(g, byId)]));
+    mount(result, outcomeGroups(defs).flatMap((g) => [
+      h(heading, {}, g.title), outcomeTable(g, byId),
+      g.hidden > 0 ? h("p", { class: "muted text-sm" }, adminOnlyText(g.hidden)) : null,
+    ]));
   }
 
   function reload() {
     const my = ++loads;
     mount(result, loadingState("Loading the outcomes…", { rows: 4, shape: "table" }));
     const params = {};
-    for (const k of ["repo", "flow", "model", "policy"]) if (state[k]) params[k] = state[k];
+    for (const k of admin ? ["repo", "flow", "model", "policy"] : ["repo", "flow"]) if (state[k]) params[k] = state[k];
     params.days = Number(state.days);
     let started;
     try { started = Promise.resolve(load(params)); } catch (e) { started = Promise.reject(e); }

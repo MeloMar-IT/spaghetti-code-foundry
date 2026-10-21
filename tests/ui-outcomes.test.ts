@@ -152,7 +152,70 @@ describe("outcomes card", () => {
   });
 });
 
+const makeWith = (opts: object, list: unknown) => {
+  const calls: any[] = [];
+  const section = o.outcomesSection({ load: (p: any) => { calls.push(p); return Promise.resolve(list); }, note, ...opts });
+  return { calls, section };
+};
+const label = (el: FakeElement, text: string) => el.all("label").find((l: FakeElement) => l.textContent.startsWith(text))!;
+
+describe("options of the card", () => {
+  it("repo: always sent, the repository filter is hidden", async () => {
+    const { section, calls } = makeWith({ repo: "acme/app" }, answer());
+    await section.ready;
+    expect(calls[0]).toEqual({ repo: "acme/app", days: 30 });
+    expect(label(section.el, "Repository").hidden).toBe(true);
+    await change(section, "flow", "feature");
+    expect(calls[1]).toEqual({ repo: "acme/app", flow: "feature", days: 30 });
+  });
+
+  it("admin false: no model or policy filter, no cost or returning users, and a note for the missing pair", async () => {
+    const { section, calls } = makeWith({ repo: "acme/app", admin: false }, answer());
+    await section.ready;
+    expect(label(section.el, "Model route").hidden).toBe(true);
+    expect(label(section.el, "Policy version").hidden).toBe(true);
+    const names = rows(section.el).map((r) => r[0]);
+    expect(names).not.toContain("Cost per successful run");
+    expect(names).not.toContain("Returning users");
+    expect(section.el.textContent).toContain("1 measure to read with this is for admins only.");
+    await change(section, "days", "7");
+    for (const c of calls) { expect(c.model).toBeUndefined(); expect(c.policy).toBeUndefined(); }
+  });
+
+  it("admin true: filters shown and no admins-only note", async () => {
+    const { section } = makeWith({}, answer());
+    await section.ready;
+    expect(label(section.el, "Model route").hidden).toBe(false);
+    expect(label(section.el, "Policy version").hidden).toBe(false);
+    expect(section.el.textContent).not.toContain("for admins only");
+  });
+
+  it("embedded: no card class and no Outcomes title; groups use h3", async () => {
+    const { section } = makeWith({ embedded: true }, answer());
+    await section.ready;
+    expect(String(section.el.attrs.class ?? "")).not.toContain("card");
+    expect(section.el.all("h3").map((x: FakeElement) => x.textContent)).toContain("Issue to pull request");
+    expect(section.el.all("h3").map((x: FakeElement) => x.textContent)).not.toContain("Outcomes");
+    expect(section.el.all("h4").length).toBe(0);
+  });
+});
+
 describe("helpers", () => {
+  it("outcomeGroups counts the paired measures that are missing", () => {
+    const user = OUTCOME_DEFINITIONS.filter((d: any) => !d.adminOnly && d.unit !== "usd");
+    const groups = o.outcomeGroups(user);
+    expect(groups.some((g: any) => g.title === "Cost per successful run")).toBe(false);
+    expect(groups.find((g: any) => g.title === "Issue to pull request").hidden).toBe(1);
+    expect(groups.at(-1).hidden).toBe(0);
+    expect(o.outcomeGroups(OUTCOME_DEFINITIONS).every((g: any) => g.hidden === 0)).toBe(true);
+  });
+
+  it("adminOnlyText", () => {
+    expect(o.adminOnlyText(0)).toBe("");
+    expect(o.adminOnlyText(1)).toBe("1 measure to read with this is for admins only.");
+    expect(o.adminOnlyText(2)).toBe("2 measures to read with this are for admins only.");
+  });
+
   it("outcomeGroups skips missing ids and bad input", () => {
     expect(o.outcomeGroups(null)).toEqual([]);
     const defs = OUTCOME_DEFINITIONS.filter((d) => d.id !== "cost_per_successful_run" && d.id !== "returning_users");
