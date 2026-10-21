@@ -37,8 +37,9 @@ const SAMPLES: Record<EvidenceEventType, unknown> = {
   "step.failed": { type: "step.failed", ...end },
   "step.completed": { type: "step.completed", ...end },
   "policy.decided": { type: "policy.decided", decision, step },
+  "repo.operation": { type: "repo.operation", step, operation: "push", repository: "own/repo", branch: "feat", credential: "repository", policy: "allow", outcome: "done" },
 };
-const NAME_OF: Partial<Record<EvidenceEventType, string>> = { "step.routed": "model.routed" };
+const NAME_OF: Partial<Record<EvidenceEventType, string>> = { "step.routed": "model.routed", "repo.operation": "tool.called" };
 const made = (type: EvidenceEventType, written?: Pick<EvidenceEvent, "id" | "seq">, repo?: string) =>
   telemetryFromEvidence("r1", SAMPLES[type] as EvidenceEventBody, written as EvidenceEvent | undefined, TIME, repo);
 
@@ -115,6 +116,24 @@ describe("telemetry envelope", () => {
     expect(out[1]!.id).toBe(`${out[0]!.id}:pr`);
     expect(out[1]!.pullRequest).toEqual({ repository: "own/repo", number: 7 });
     for (const e of out) TelemetryEventSchema.parse(e);
+  });
+
+  it("maps a repository operation to tool.called, and a done push also to delivery.push_attempted", () => {
+    const out = made("repo.operation", { id: "ev-000003", seq: 3 });
+    expect(out.map((e) => e.name)).toEqual(["tool.called", "delivery.push_attempted"]);
+    expect(out[0]).toMatchObject({ kind: "tool", tool: { name: "git.push" }, outcome: "ok", branch: "feat", repository: "own/repo" });
+    expect(out[1]).toMatchObject({ kind: "delivery", runId: "r1", branch: "feat", repository: "own/repo" });
+    expect(out[1]!.id).toMatch(/^tm:[0-9a-f]{32}$/);
+    expect(out[1]!.evidence).toBeUndefined();
+    const of = (over: object) => telemetryFromEvidence("r1", { ...(SAMPLES["repo.operation"] as object), ...over } as EvidenceEventBody, undefined, TIME);
+    const policy = of({ outcome: "refused", refusal: "policy" });
+    expect(policy).toHaveLength(1);
+    expect(policy[0]).toMatchObject({ outcome: "denied", cause: "policy" });
+    expect(of({ outcome: "refused", refusal: "not-in-profile" })[0]).toMatchObject({ outcome: "denied", cause: "tool" });
+    expect(of({ outcome: "failed" })).toHaveLength(1);
+    expect(of({ outcome: "failed" })[0]).toMatchObject({ outcome: "failed" });
+    expect(of({ operation: "pull-request" })[0]).toMatchObject({ tool: { name: "github.pull-request.write" } });
+    for (const e of [...out, ...policy]) TelemetryEventSchema.parse(e);
   });
 
   it("uses the evidence line for the id, or a random tm: id without one", () => {

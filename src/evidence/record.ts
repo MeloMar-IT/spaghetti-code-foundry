@@ -209,6 +209,11 @@ export class RunRecorder {
     return this.put(() => ({ type: "policy.decided", decision, ...(step ? { step } : {}) }), decision.evaluatedAt);
   }
 
+  /** The repository broker did, or refused, one operation. */
+  repoOperation(fields: Omit<Extract<EvidenceEventBody, { type: "repo.operation" }>, "type">): void {
+    this.put(() => ({ type: "repo.operation", ...fields }));
+  }
+
   /** The end of one visit: a `step.denied` for every tool the agent was refused, then `step.completed` or `step.failed`. */
   stepEnded(rec: StepRecord): void {
     let step: StepIdentity;

@@ -6,7 +6,7 @@ import { type RepoAccess, repoAccess } from "../auth/repos.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import type { Config } from "../config.js";
 import type { Step } from "../flow/schema.js";
-import { GithubAppError, installationTokenInfo, repoApp } from "../github-app.js";
+import { type AppPermissions, GithubAppError, installationTokenInfo, repoApp } from "../github-app.js";
 import { sshKeyEnv } from "../repos/connect.js";
 import { APP_BROKEN_RUN, APP_FAILED_RUN, APP_NOT_INSTALLED_RUN, APP_NOT_SET_UP_RUN, APP_RATE_LIMIT_RUN, APP_REFUSED_RUN, APP_UNREACHABLE_RUN, DEPLOY_KEY_NO_GH, isRepoReadStep } from "./guards.js";
 import type { RunSummary } from "./state.js";
@@ -104,6 +104,41 @@ export function repoTokenEnv(access: RepoAccess, env: Record<string, string>, gh
   };
 }
 
+/**
+ * Like `repoTokenEnv`, for a network operation with no credential: the same settings (https only, no prompts, an empty
+ * `gh` folder, no helper, no extra header), no token. The entries come after the engine's own GIT_CONFIG entries.
+ */
+export function repoNoCredentialEnv(env: Record<string, string>, ghDir = ""): Record<string, string | undefined> {
+  const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10) || 0;
+  return {
+    GIT_TRACE: undefined,
+    GIT_TRACE_PACKET: undefined,
+    GIT_TRACE_CURL: undefined,
+    GIT_TRACE_CURL_NO_DATA: undefined,
+    GIT_CURL_VERBOSE: undefined,
+    GIT_TRACE_REDACT: "1",
+    GH_TOKEN: undefined,
+    GH_ENTERPRISE_TOKEN: undefined,
+    GITHUB_TOKEN: undefined,
+    GH_HOST: "github.com",
+    ...(ghDir ? { GH_CONFIG_DIR: ghDir } : {}),
+    GH_PROMPT_DISABLED: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_PARAMETERS: "",
+    GIT_ALLOW_PROTOCOL: "https",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "",
+    LC_ALL: "C",
+    GCM_INTERACTIVE: "never",
+    GIT_CONFIG_COUNT: String(n + 2),
+    [`GIT_CONFIG_KEY_${n}`]: "credential.helper",
+    [`GIT_CONFIG_VALUE_${n}`]: "",
+    [`GIT_CONFIG_KEY_${n + 1}`]: "http.extraHeader",
+    [`GIT_CONFIG_VALUE_${n + 1}`]: "",
+  };
+}
+
 // ── The GitHub App: a new token for one step ──
 
 export type AppTokenResult = { ok: true; token: string; expires: number } | { ok: false; reason: string };
@@ -112,11 +147,11 @@ export type AppTokenResult = { ok: true; token: string; expires: number } | { ok
  * A new installation token limited to the repository, for one step. Never cached, never stored. A failure is a fixed sentence:
  * no text of GitHub, no request, no key path.
  */
-export async function appTokenAccess(access: Extract<RepoAccess, { kind: "app" }>, config: Pick<Config, "github_app">, timeoutMs = 20_000): Promise<AppTokenResult> {
+export async function appTokenAccess(access: Extract<RepoAccess, { kind: "app" }>, config: Pick<Config, "github_app">, timeoutMs = 20_000, permissions?: AppPermissions): Promise<AppTokenResult> {
   const app = repoApp(config);
   if (!app) return { ok: false, reason: APP_NOT_SET_UP_RUN };
   try {
-    const t = await installationTokenInfo(app, access.installationId, { repository: access.github.split("/")[1], fresh: true, timeoutMs });
+    const t = await installationTokenInfo(app, access.installationId, { repository: access.github.split("/")[1], fresh: true, timeoutMs, ...(permissions ? { permissions } : {}) });
     return { ok: true, ...t };
   } catch (e) {
     if (!(e instanceof GithubAppError)) return { ok: false, reason: APP_FAILED_RUN };

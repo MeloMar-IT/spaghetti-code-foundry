@@ -3,7 +3,8 @@ import {
   ActorSchema, ApprovalSchema, ArtifactRefSchema, CommitSchema, GitIdentitySchema, ModelIdentitySchema, PolicyIdentitySchema, PullRequestIdentitySchema,
   ReasonCodeSchema, RepositorySchema, RunIdSchema, Sha256Schema, StepIdentitySchema, StepIdSchema, TestResultSchema, TimeSchema, ToolIdentitySchema,
 } from "./identity.js";
-import { PolicyDecisionSchema } from "../policy/schema.js";
+import { CREDENTIALS, OUTCOMES, PolicyDecisionSchema } from "../policy/schema.js";
+import { REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS } from "../engine/repo-request.js";
 import { EXCESS_FIELDS } from "../tool-profile/resolve.js";
 import { OPERATIONS, TOOL_KINDS, ToolProfileRefSchema } from "../tool-profile/schema.js";
 import { FIT_OUTCOMES, FIT_RESTRICTIONS, HELD_BY, PROFILE_SOURCES, UNREADABLE } from "../tool-profile/session.js";
@@ -120,6 +121,22 @@ const EventUnion = z.discriminatedUnion("type", [
 
   /** A policy pack decided at a boundary of the run. `step` is set exactly for the boundaries that are about a step (for `repository.access` it is absent when the question is about the run's workspace). */
   event("policy.decided", { decision: PolicyDecisionSchema, step: step.optional() }),
+
+  /**
+   * The repository broker carried out, or refused, one operation. `credential` is the sign-in chosen (none when the operation was
+   * refused before that); `policy` is the combined outcome when policy was asked; `refusal` is set exactly when `outcome` is "refused".
+   */
+  event("repo.operation", {
+    step,
+    operation: z.enum(REPO_EVIDENCE_OPERATIONS),
+    repository: RepositorySchema.optional(),
+    branch: GitIdentitySchema.shape.branch,
+    credential: z.enum(CREDENTIALS),
+    policy: z.enum(OUTCOMES).optional(),
+    outcome: z.enum(REPO_OUTCOMES),
+    refusal: z.enum(REPO_REFUSALS).optional(),
+    pullRequest: PullRequestIdentitySchema.optional(),
+  }),
 ]);
 
 const uniquePaths = (refs: { path: string }[], ctx: z.RefinementCtx, at: PropertyKey[]) => {
@@ -156,6 +173,11 @@ export const EvidenceEventSchema = EventUnion.superRefine((e, ctx) => {
       if (g.heldBy && e.agent !== "codex") ctx.addIssue({ code: "custom", path: ["gaps", i, "heldBy"], message: "only Codex holds a gap with its sandbox" });
     });
   }
+  if (e.type === "repo.operation") {
+    if ((e.outcome === "refused") !== (e.refusal !== undefined)) ctx.addIssue({ code: "custom", path: ["refusal"], message: 'is set exactly when the outcome is "refused"' });
+    if (e.operation === "unknown" && (e.outcome !== "refused" || e.refusal !== "invalid-request")) ctx.addIssue({ code: "custom", path: ["operation"], message: '"unknown" is only for a refused invalid-request' });
+    if (e.pullRequest && (e.operation !== "pull-request" || e.outcome !== "done")) ctx.addIssue({ code: "custom", path: ["pullRequest"], message: "is only for a pull request that is done" });
+  }
   if (e.type === "step.approved" && e.step.type !== "approval") ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be approved" });
   if (e.type === "step.denied" && e.denial.kind === "approval" && e.step.type !== "approval") {
     ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be rejected" });
@@ -167,7 +189,8 @@ export type EvidenceEventType = EvidenceEvent["type"];
 export const RUN_EVENT_TYPES = ["run.created", "run.queued", "run.started", "run.stopped", "run.resumed", "run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
 export const STEP_EVENT_TYPES = ["step.started", "step.routed", "step.profiled", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"] as const satisfies readonly EvidenceEventType[];
 export const POLICY_EVENT_TYPES = ["policy.decided"] as const satisfies readonly EvidenceEventType[];
-export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES];
+export const REPO_EVENT_TYPES = ["repo.operation"] as const satisfies readonly EvidenceEventType[];
+export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES, ...REPO_EVENT_TYPES];
 /** The events after which a run is over; exactly one of them ends a finished stream. */
 export const TERMINAL_EVENT_TYPES = ["run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
 
