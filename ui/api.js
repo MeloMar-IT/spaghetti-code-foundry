@@ -213,6 +213,14 @@ export const api = {
   clarity: () => req("GET", "/api/clarity"),
   board: () => req("GET", "/api/board"),
   stats: () => req("GET", "/api/stats"),
+  /** `params`: { repo, flow, model, policy, days }; only the ones that are set, in that order. */
+  outcomes: (params) => {
+    const p = params ?? {};
+    const text = ["repo", "flow", "model", "policy", "days"]
+      .filter((k) => p[k] !== undefined && p[k] !== null && String(p[k]) !== "")
+      .map((k) => `${k}=${enc(String(p[k]))}`).join("&");
+    return req("GET", text ? `/api/outcomes?${text}` : "/api/outcomes");
+  },
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
   // Ask SCF. `stay`: a typed question must survive a session that ended.

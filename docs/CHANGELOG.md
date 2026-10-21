@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Telemetry 3c (#619): an **Outcomes** card on the Dashboard shows the ten outcome measures for 7, 30 or 90 days, each speed or cost measure next to the measures to read it with. Part 3 of 4 of #157.
+  - **Card.** Filters for repository, flow and window; model route and policy version for an admin only. A change of filter loads `GET /api/outcomes` again and redraws only the card. Each row shows the value (`—` when there is none), how many it counts, how many runs were left out, the owner, the decision and a "Definition and exclusions" disclosure with the server's text.
+  - **Failure.** If the answer cannot be loaded, the card shows "Could not load the outcomes." with Retry; the rest of the Dashboard still works.
+  - **Docs.** `docs/USER_GUIDE.md` ("Outcomes": the ten definitions and their exclusions, the same text as `OUTCOME_DEFINITIONS`).
+  - **Code.** New `ui/outcomes.js` (`outcomesSection`, `outcomeGroups`, `outcomeTable`, `outcomeValueText`, `countText`). Changed `ui/api.js` (`api.outcomes(params)`) and `ui/dashboard.js` (the card after "Cost per day"; `renderDashboard` waits for it).
+  - **Tests.** New `tests/ui-outcomes.test.ts`. Changed `tests/ui-dashboard.test.ts` (the outcomes answer and failure) and `tests/ui-a11y-equivalents.test.ts` (the card's audit and captions).
 - Telemetry 3b (#618): `GET /api/outcomes` answers the outcome measures for one window, with filters and access rules. Part 2 of 4 of #157.
   - **Query.** `repo`, `flow`, `model` (`agent:provider:model`), `policy` (`id@version`) and `days` (a whole number from 1 to 90, default 30). A wrong value answers 400. `model` and `policy` are admin only: a user who sends them gets 403, and a malformed value gets 400 first.
   - **Answer.** `{ window: { from, to, days }, filters, values: { repos, flows, models?, policies? }, measures, definitions }`. `values.repos` and `values.flows` come from the runs the caller may see, as on `/api/run-filters`. `models` and `policies` are only for an admin.
