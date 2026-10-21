@@ -1,6 +1,7 @@
 import { api } from "./api.js";
 import { h, mount, svg, tableBox } from "./dom.js";
 import { needsYou, nextList, waitingGroups } from "./next.js";
+import { outcomesSection } from "./outcomes.js";
 import { ownerLabel } from "./runs.js";
 import { errorState, explainError, loadingState, staleNote } from "./states.js";
 import { overviewPage } from "./templates.js";
@@ -141,6 +142,7 @@ export const partNote = (what, error, onRetry) =>
 
 export async function renderDashboard(main) {
   mount(main, overviewPage({ title: "Dashboard", sections: loadingState("Loading the dashboard…", { rows: 6, shape: "cards" }) }));
+  const outcomes = outcomesSection({ load: api.outcomes, note: partNote });
   const parts = await Promise.all([api.stats(), api.info(), api.evals(), api.watchers(), api.runs(), api.clarity()].map(part));
   const [ps, pinfo, pevals, pwatchers, pruns, pclarity] = parts;
   const retry = () => renderDashboard(main);
@@ -174,6 +176,7 @@ export async function renderDashboard(main) {
       yours.map(group),
       yours.length && rest.length ? h("div", { class: "hold-rest" }, rest.map(group)) : rest.map(group)) : null,
     s ? h("div", { class: "card" }, h("h3", {}, "Cost per day"), costChart(s.byDay), costTable(s.byDay)) : statsNote,
+    outcomes.el,
     h("div", { class: "dash-grid" },
       s ? h("div", { class: "card" }, h("h3", {}, "By flow"),
         s.byFlow.length ? tableBox(h("table", { class: "table compact" },
@@ -204,4 +207,5 @@ export async function renderDashboard(main) {
           h("tbody", {}, s.loops.map((l) => h("tr", {}, h("td", { class: "mono" }, l.step), h("td", {}, l.extraVisits)))))) : h("p", { class: "muted" }, "No retries yet.")) : null),
     ],
   }));
+  await outcomes.ready;
 }

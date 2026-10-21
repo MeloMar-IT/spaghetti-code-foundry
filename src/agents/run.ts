@@ -3,7 +3,7 @@ import { delimiter, dirname, join } from "node:path";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
-import { DEFAULT_PERMISSION_MODE, pushLogFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
+import { DEFAULT_PERMISSION_MODE, pushLogFor, refuseByPolicy, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
@@ -24,7 +24,9 @@ import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAu
 import { stepOverride, type Override } from "../analyst/overrides.js";
 import { modelOf } from "../analyst/reference.js";
 import type { Config } from "../config.js";
-import { stepIdentity } from "../evidence/record.js";
+import { repositoryOf, stepIdentity } from "../evidence/record.js";
+import { ToolIdentitySchema } from "../evidence/identity.js";
+import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { repositoryFact } from "../engine/policy-hooks.js";
 import type { ToolProfile } from "../tool-profile/schema.js";
 import type { SessionMapping } from "../tool-profile/session.js";
@@ -310,6 +312,8 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   }
   logSkills();
   const limit = evaluationLimits();
+  const stepId = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
+  const repository = repositoryOf(scope.ctx.vars);
   const r = await runClaude({
     ...common,
     env,
@@ -325,6 +329,12 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     noMcp: local,
     isolated: isolatedSession,
     effort,
+    onTool: (name, durationMs) => {
+      const tool = ToolIdentitySchema.safeParse({ name });
+      // whole, non-negative ms only: anything else is left out rather than making the event invalid
+      const ms = typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs >= 0 ? Math.round(durationMs) : undefined;
+      if (tool.success) emitLiveTelemetry("tool", "tool.called", { runId: engine.summary.runId, step: stepId, ...(repository ? { repository } : {}), tool: tool.data, ...(ms !== undefined ? { durationMs: ms } : {}) });
+    },
   });
   for (const d of r.denied ?? []) engine.log(`    ⚠ blocked: ${d}`);
   return {
@@ -338,6 +348,8 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     agent: t.label,
     ...(effort ? { effort } : {}),
     tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
+    ...(r.tools ? { tools: r.tools } : {}),
+    ...(r.contextTokens !== undefined ? { contextTokens: r.contextTokens } : {}),
     ...claudeSkills,
     ...catalogueRecord(o),
   };
@@ -381,7 +393,18 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const tried = new Set<string>();
   let blips = 0;
   let models = 0;
-  const tries = () => (blips || models ? { retried: { blips, models } } : {});
+  // Tool times and context size over every try: a retry must not hide a slower call or a larger context of an earlier one.
+  let toolTimes: StepResult["tools"];
+  let contextTokens: number | undefined;
+  const seen = (r: Pick<StepResult, "tools" | "contextTokens">) => {
+    if (r.tools) toolTimes = { calls: (toolTimes?.calls ?? 0) + r.tools.calls, totalMs: (toolTimes?.totalMs ?? 0) + r.tools.totalMs, maxMs: Math.max(toolTimes?.maxMs ?? 0, r.tools.maxMs) };
+    if (r.contextTokens !== undefined) contextTokens = Math.max(contextTokens ?? 0, r.contextTokens);
+  };
+  const tries = () => ({
+    ...(blips || models ? { retried: { blips, models } } : {}),
+    ...(toolTimes ? { tools: toolTimes } : {}),
+    ...(contextTokens !== undefined ? { contextTokens } : {}),
+  });
   // Built once: one log line and the same bytes for every try, retries and fallbacks included.
   const canon =
     step.skills === "catalog"
@@ -409,8 +432,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
   let fallbackFrom: string | undefined;
   const repository = repositoryFact(scope.ctx.vars);
-  // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: observe only).
-  engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
+  // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: a mandatory policy that cannot be used stops it).
+  const access = engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
+  if (access?.denied) return refuseByPolicy(engine, identity, access.denied);
   // One tool profile per step: the same for Claude and Codex, and for every try. A declared profile the step cannot stay within is refused before an agent is picked.
   const resolved: StepProfile | { refused: string; event: StepProfiledFields } = resolveStepProfile(step, scope, engine, { boxed, isolated: iso !== undefined });
   if ("refused" in resolved) {
@@ -430,7 +454,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     // Before every session that can write, retries and fallbacks included, with the sandbox the target really gets.
     if (!readOnlyStep(step, scope.flow.defaults)) {
       const sandboxed = boxed || (target.agent === "codex" ? resolved.mapping.codexSandbox !== "danger-full-access" : resolved.mapping.claudeSandbox);
-      engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
+      const write = engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
+      if (write?.denied) return { ...refuseByPolicy(engine, identity, write.denied), ...tries() };
     }
     if (!tried.has(target.label)) engine.evidence?.stepRouted(identity, target.label, stepOverride(scope.flow.name, step.id).effort ?? step.effort ?? scope.flow.defaults.effort, fallbackFrom);
     tried.add(target.label);
@@ -443,6 +468,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       return { ok: false, output: gated.refused, error: gated.refused, ...tries() };
     }
     const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile });
+    seen(r);
     if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.

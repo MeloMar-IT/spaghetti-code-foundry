@@ -14,10 +14,10 @@ import { BOUNDARIES, MODES, OUTCOMES } from "../policy/schema.js";
  * put in by mistake. A new field is a new version.
  */
 
-export const TELEMETRY_VERSION = 1;
+export const TELEMETRY_VERSION = 2;
 
 export const TELEMETRY_NAMES = {
-  run: RUN_EVENT_TYPES,
+  run: [...RUN_EVENT_TYPES, "run.measured"],
   step: ["step.started", "step.profiled", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"],
   model: ["model.routed"],
   policy: ["policy.decided"],
@@ -45,6 +45,39 @@ export type RedactableField = (typeof REDACTABLE_FIELDS)[number];
 
 export const TelemetryIdSchema = z.string().regex(/^(?:ev:[\w-]{1,128}:ev-\d{6,}(?::pr)?|tm:[0-9a-f]{32})$/, "must be a telemetry id: ev:<run>:<evidence id> or tm:<32 hex>");
 
+const count = z.number().int().min(0).optional();
+
+/** The decision measures of one ended run: numbers only, every field optional (a measure without a source is left out). */
+export const TelemetryMeasuresSchema = z
+  .object({
+    steps: count,
+    stepMs: count,
+    queueMs: count,
+    retries: count,
+    tokensIn: count,
+    tokensOut: count,
+    costUsd: z.number().finite().min(0).optional(),
+    denials: count,
+    contextTokensMax: count,
+    toolCalls: count,
+    toolMs: count,
+    toolMaxMs: count,
+    stops: count,
+    resumes: count,
+    approvals: count,
+    approvalMs: count,
+    approvalMaxMs: count,
+    approvalsCancelled: count,
+    policyAllow: count,
+    policyWarn: count,
+    policyRequireApproval: count,
+    policyDeny: count,
+    policyUnavailable: count,
+    pullRequestDelivered: z.number().int().min(0).max(1).optional(),
+  })
+  .strict();
+export type TelemetryMeasures = z.infer<typeof TelemetryMeasuresSchema>;
+
 const WatcherRefSchema = z.object({ id: z.string().regex(/^[\w-]{1,128}$/), source: z.enum(WATCHER_SOURCES) }).strict();
 
 export const TelemetryEventSchema = z
@@ -67,6 +100,8 @@ export const TelemetryEventSchema = z
     actor: ActorSchema.optional(),
     watcher: WatcherRefSchema.optional(),
     outcome: z.enum(TELEMETRY_OUTCOMES).optional(),
+    /** Only on run.measured. */
+    measures: TelemetryMeasuresSchema.optional(),
     durationMs: z.number().int().min(0).optional(),
     exitCode: z.number().int().optional(),
     cause: z.enum(TELEMETRY_CAUSES).optional(),
@@ -87,6 +122,7 @@ export const TelemetryEventSchema = z
       if (!e.evidence) add("evidence", "is missing: an ev: id names an evidence event");
       else if (e.evidence.id !== ev[2] || e.evidence.id !== evidenceEventId(e.evidence.seq)) add("evidence", "does not match the id");
     } else if (e.evidence) add("evidence", "is not allowed with a tm: id");
+    if ((e.measures !== undefined) !== (e.name === "run.measured")) add("measures", "is present exactly for run.measured");
     if (e.id.endsWith(":pr") && e.name !== "pull_request.delivered") add("id", "the :pr suffix is only for pull_request.delivered");
     if (e.redacted) {
       if (new Set(e.redacted).size !== e.redacted.length) add("redacted", "names a field twice");
@@ -101,7 +137,7 @@ export function watcherRef(id: unknown, source: unknown): { id: string; source: 
   return r.success ? r.data : undefined;
 }
 
-const tmId = (): string => `tm:${randomBytes(16).toString("hex")}`;
+export const tmId =(): string => `tm:${randomBytes(16).toString("hex")}`;
 
 type Draft = Partial<TelemetryEvent>;
 

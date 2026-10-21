@@ -260,7 +260,12 @@ function detectorsTable(m, reload) {
     return h("tr", {},
       h("td", {}, d.name),
       h("td", {}, d.description),
-      h("td", {}, list.length ? settingsForm(list, m, reload, { saved: "Threshold saved" }) : h("span", { class: "muted" }, "none")),
+      h("td", {}, d.slo?.owner ?? ""),
+      h("td", {},
+        d.slo ? h("div", {}, d.slo.threshold) : null,
+        list.length ? settingsForm(list, m, reload, { saved: "Threshold saved" }) : h("span", { class: "muted" }, "none")),
+      h("td", {}, d.slo?.window ?? ""),
+      h("td", {}, d.slo?.action ?? ""),
       h("td", {}, d.lastFound ? when(d.lastFound) : "nothing in the last 30 days"),
       h("td", {}, mute ? `muted ${untilText(mute.until)}: ${mute.reason}` : ""),
       h("td", {}, mute
@@ -268,7 +273,7 @@ function detectorsTable(m, reload) {
         : h("button", { class: "small", onClick: async () => { if (await muteForm({ detector: d.name }, m.detectors)) await reload(); } }, "Mute")));
   });
   return tableBox(h("table", { class: "table compact", "aria-label": "Detectors" },
-    h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Threshold", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
+    h("thead", {}, h("tr", {}, ["Detector", "What it looks for", "Owner", "Threshold", "Window", "Next action", "Last found", "Muted", h("span", { class: "sr-only" }, "Actions")].map((c) => h("th", { scope: "col" }, c)))),
     h("tbody", {}, rows)));
 }
 

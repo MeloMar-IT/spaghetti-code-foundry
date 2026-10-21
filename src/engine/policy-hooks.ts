@@ -3,19 +3,25 @@ import { join } from "node:path";
 import { dataHome } from "../auth/store.js";
 import type { Config } from "../config.js";
 import type { StepIdentity } from "../evidence/identity.js";
+import type { Denial } from "../evidence/schema.js";
 import type { RunRecorder } from "../evidence/record.js";
 import { BASELINE_PACK, BASELINE_POLICY_ID } from "../policy/baseline.js";
 import { combineDecisions, layeredPackIds, type Layer, type LayeredDecision } from "../policy/compose.js";
 import { parsePolicyDecision, parsePolicyPack } from "../policy/parse.js";
-import { evaluatePolicy, policyInputSha256 } from "../policy/evaluate.js";
-import { FactsSchema, type Boundary, type FactName, type Facts, type PolicyDecision, type PolicyInput, type PolicyPack } from "../policy/schema.js";
+import { evaluatePolicy, policyDenial, policyInputSha256 } from "../policy/evaluate.js";
+import { FactsSchema, type Boundary, type FactName, type Facts, type Mode, type PolicyDecision, type PolicyInput, type PolicyPack } from "../policy/schema.js";
 import { POLICY_INPUT_VERSION, PolicySchemaError } from "../policy/version.js";
+import { activeBreakGlass, type BreakGlass } from "./policy-break-glass.js";
+import { saveLastKnownGood } from "./policy-store.js";
 import { userAccount } from "./isolation.js";
 import type { RunSummary } from "./state.js";
 
 /**
- * The baseline and the policy packs asked at the boundaries of a run, in observe mode: every decision is logged and
- * recorded as evidence, and nothing in the run changes because of it. Nothing here throws into the engine.
+ * The baseline and the policy packs (and their rules) asked at the boundaries of a run, in observe mode: every decision is logged and
+ * recorded as evidence, and nothing in the run changes because of it. The one exception is fail closed: a pack in the
+ * mandatory layer that cannot be loaded or evaluated denies the privileged boundaries (see `privilegedBoundary`).
+ * The one way out is an active break-glass (#626): it turns that denial into a recorded `warn`, but only when the
+ * decision can be written to the run's evidence. Nothing here throws into the engine.
  * The baseline is built in and always asked; it is asked at `push` only when the pre-push hook is installed.
  */
 
@@ -28,29 +34,46 @@ export type LoadedPack =
   | { id: string; problem: "policy.unavailable" | "policy.invalid"; detail: string };
 
 export type LayeredPack = LoadedPack & { layer: Layer };
+type NoPackCode = "policy.unavailable" | "policy.invalid";
+
+/** A mandatory policy that cannot be used stopped the step: why, and what to record (no decision when even that failed). */
+export interface PolicyDenied {
+  reason: string;
+  decision?: PolicyDecision;
+  denial?: Denial;
+}
 export interface PolicyAnswer {
   decisions: LayeredDecision[];
   combined?: LayeredDecision;
+  denied?: PolicyDenied;
 }
+
+/** The boundaries at which a mandatory policy that cannot be used stops the step: a sign-in, a writing agent, a used approval. */
+export function privilegedBoundary(boundary: Boundary, facts: Facts): boolean {
+  if (boundary === "agent.write" || boundary === "approval.consume") return true;
+  return boundary === "repository.access" && (facts.credential === "machine" || facts.credential === "repository");
+}
+
+export const deniedReason = (id: string, code: NoPackCode, boundary: Boundary): string => `mandatory policy ${id} cannot be used (${code}): ${boundary} is denied`;
 
 const unavailable = (id: string, detail: string): LoadedPack => ({ id, problem: "policy.unavailable", detail });
 const invalid = (id: string, detail: string): LoadedPack => ({ id, problem: "policy.invalid", detail });
 
-function loadOne(id: string, home: string): LoadedPack {
-  const name = `${POLICY_FOLDER}/${id}.json`;
+export type PolicyFileRead = { text: string } | { problem: "missing" | "not-file" | "too-large" | "unreadable" };
+
+/** Reads a plain file up to `maxBytes`: never follows a link and never waits for a pipe. Never throws. */
+export function readPolicyFile(path: string, maxBytes: number): PolicyFileRead {
   let fd: number;
   try {
-    // never follows a link and never waits for a pipe
-    fd = openSync(join(home, POLICY_FOLDER, `${id}.json`), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    return unavailable(id, code === "ENOENT" || code === "ENOTDIR" ? `no file ${name}` : code === "ELOOP" ? "not a plain file" : "could not be read");
+    return { problem: code === "ENOENT" || code === "ENOTDIR" ? "missing" : code === "ELOOP" ? "not-file" : "unreadable" };
   }
-  let text: string;
   try {
     const st = fstatSync(fd);
-    if (!st.isFile()) return unavailable(id, "not a plain file");
-    if (st.size > MAX_PACK_BYTES) return invalid(id, "larger than 1 MiB");
+    if (!st.isFile()) return { problem: "not-file" };
+    if (st.size > maxBytes) return { problem: "too-large" };
     const buf = Buffer.alloc(st.size);
     let done = 0;
     while (done < buf.length) {
@@ -58,12 +81,24 @@ function loadOne(id: string, home: string): LoadedPack {
       if (n === 0) break;
       done += n;
     }
-    text = buf.subarray(0, done).toString("utf8");
+    return { text: buf.subarray(0, done).toString("utf8") };
   } catch {
-    return unavailable(id, "could not be read");
+    return { problem: "unreadable" };
   } finally {
     closeSync(fd);
   }
+}
+
+function loadOne(id: string, home: string): LoadedPack {
+  const name = `${POLICY_FOLDER}/${id}.json`;
+  const read = readPolicyFile(join(home, POLICY_FOLDER, `${id}.json`), MAX_PACK_BYTES);
+  if ("problem" in read) {
+    if (read.problem === "missing") return unavailable(id, `no file ${name}`);
+    if (read.problem === "not-file") return unavailable(id, "not a plain file");
+    if (read.problem === "too-large") return invalid(id, "larger than 1 MiB");
+    return unavailable(id, "could not be read");
+  }
+  const text = read.text;
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -77,8 +112,16 @@ function loadOne(id: string, home: string): LoadedPack {
     return invalid(id, e instanceof PolicySchemaError ? (e.message.split("\n")[0] ?? "not valid") : "not valid");
   }
   if (pack.policy.id !== id) return invalid(id, `the file is for policy ${pack.policy.id}`);
-  if (pack.mode !== "observe") return invalid(id, `mode ${pack.mode} is not supported yet: set mode to observe`);
+  const problem = enforceProblem(pack);
+  if (problem) return invalid(id, problem);
   return { id, pack };
+}
+
+/** Why a pack cannot be used yet: the pack or one of its rules is in enforce mode. Undefined when everything is observe. */
+export function enforceProblem(pack: PolicyPack): string | undefined {
+  if (pack.mode !== "observe") return `mode ${pack.mode} is not supported yet: set mode to observe`;
+  const rule = pack.rules.find((r) => r.mode === "enforce");
+  return rule ? `rule ${rule.id} has mode enforce, which is not supported yet: set its mode to observe or leave it out` : undefined;
 }
 
 /** Reads <home>/policies/<id>.json for each id. Never throws; the detail names no machine path and no file content. */
@@ -197,59 +240,112 @@ export class RunPolicy {
   private readonly now: () => string;
   /** What each step in progress was asked at repository.access, for its pushes. */
   private readonly access = new Map<string, Facts>();
+  /** A mandatory pack could not be loaded: privileged steps will be denied, so the runner does not fetch the bot's token up front. */
+  readonly mandatoryUnusable: boolean;
+  private readonly breakGlass: () => BreakGlass | undefined;
 
-  constructor(o: { runId: string; packs: LayeredPack[]; base: Facts; log: (line: string) => void; evidence?: RunRecorder; now?: () => string; observesPushes?: boolean }) {
+  constructor(o: { breakGlass?: () => BreakGlass | undefined; runId: string; packs: LayeredPack[]; base: Facts; log: (line: string) => void; evidence?: RunRecorder; now?: () => string; observesPushes?: boolean }) {
     this.observesPushes = o.observesPushes ?? false;
+    this.mandatoryUnusable = o.packs.some((p) => p.layer === "mandatory" && "problem" in p);
     this.runId = o.runId;
     this.packs = o.packs;
     this.base = o.base;
     this.log = o.log;
     this.evidence = o.evidence;
     this.now = o.now ?? (() => new Date().toISOString());
+    this.breakGlass = o.breakGlass ?? (() => undefined);
   }
 
-  /** Asks every pack at one boundary; logs and records each decision; returns them and the winner. Never throws; decides nothing for the run. */
+  /**
+   * Asks every pack at one boundary; logs and records each decision; returns them and the winner. Never throws.
+   * Observe only, except: a mandatory pack that cannot be loaded or evaluated at a privileged boundary sets `denied`.
+   * While a break-glass is active, that denial becomes a `warn` (policy.break-glass), but only once the decision is recorded.
+   */
   at(boundary: Boundary, facts: Facts = {}, step?: StepIdentity): PolicyAnswer {
     const decisions: LayeredDecision[] = [];
+    const glass = new Map<LayeredDecision, { id: string; original: PolicyDecision; bg: BreakGlass }>();
+    let denied: PolicyDenied | undefined;
     let input: PolicyInput;
     try {
       input = { version: POLICY_INPUT_VERSION, boundary, runId: this.runId, facts: policyFacts({ ...this.base, ...facts }) };
     } catch (e) {
       this.fail(e);
-      return { decisions };
+      let privileged = true;
+      try {
+        privileged = privilegedBoundary(boundary, facts);
+      } catch {
+        // counts as privileged
+      }
+      const first = this.packs.find((p) => p.layer === "mandatory");
+      return privileged && first ? { decisions, denied: { reason: deniedReason(first.id, "policy.invalid", boundary) } } : { decisions };
     }
     for (const loaded of this.packs) {
+      const mode: Mode = loaded.layer === "mandatory" && privilegedBoundary(boundary, input.facts) ? "enforce" : "observe";
       try {
-        decisions.push({ layer: loaded.layer, decision: this.decide(loaded, input) });
+        const raw = this.decide(loaded, input, mode);
+        const o = loaded.layer === "mandatory" ? this.outage(loaded.id, raw, boundary) : { decision: raw };
+        const decision = o.decision;
+        const entry: LayeredDecision = { layer: loaded.layer, decision };
+        decisions.push(entry);
+        if (o.breakGlass) glass.set(entry, { id: loaded.id, original: raw, bg: o.breakGlass });
+        if (decision.mode === "enforce" && decision.outcome === "deny") {
+          const denial = policyDenial(decision);
+          denied ??= { reason: deniedReason(loaded.id, decision.reasonCode as NoPackCode, boundary), decision, ...(denial ? { denial } : {}) };
+        }
       } catch (e) {
         // the answer is not lost silently: a decision that says so is recorded, and when even that fails the evidence is marked incomplete
         try {
-          const decision = this.noPack(loaded.id, "policy.invalid", input);
-          this.log(`! policy ${loaded.id}: could not be evaluated at ${boundary} — recorded as policy.invalid; the run goes on`);
-          decisions.push({ layer: loaded.layer, decision });
+          const raw = this.noPack(loaded.id, "policy.invalid", input, mode);
+          const o = loaded.layer === "mandatory" ? this.outage(loaded.id, raw, boundary) : { decision: raw };
+          const decision = o.decision;
+          this.log(`! policy ${loaded.id}: could not be evaluated at ${boundary} — recorded as ${decision.reasonCode}; ${decision.reasonCode === "policy.break-glass" ? "break-glass: the step goes on" : mode === "enforce" ? "the step is stopped" : "the run goes on"}`);
+          const entry: LayeredDecision = { layer: loaded.layer, decision };
+          decisions.push(entry);
+          if (o.breakGlass) glass.set(entry, { id: loaded.id, original: raw, bg: o.breakGlass });
+          if (decision.mode === "enforce" && decision.outcome === "deny") {
+            const denial = policyDenial(decision);
+            denied ??= { reason: deniedReason(loaded.id, "policy.invalid", boundary), decision, ...(denial ? { denial } : {}) };
+          }
         } catch (e2) {
           this.fail(e2 ?? e);
+          if (mode === "enforce") denied ??= { reason: deniedReason(loaded.id, "policy.invalid", boundary) };
         }
       }
     }
     const combined = combineDecisions(decisions);
     for (const ld of decisions) {
+      let recorded = false;
       try {
-        this.report(ld, step, decisions.length > 1 && ld === combined);
+        recorded = this.report(ld, step, decisions.length > 1 && ld === combined);
       } catch (e) {
         this.fail(e);
       }
+      const g = glass.get(ld);
+      if (!g) continue;
+      if (recorded) {
+        this.log(`! policy: break-glass active until ${g.bg.expiresAt} (${g.bg.reason}) — ${g.id} ${g.original.reasonCode} allowed`);
+        continue;
+      }
+      // the override needs its audit record: without it the original denial stands
+      this.log(`! policy ${g.id}: the break-glass decision could not be recorded — ${boundary} is denied`);
+      const reason = deniedReason(g.id, g.original.reasonCode as NoPackCode, boundary);
+      try {
+        const denial = policyDenial(g.original);
+        denied ??= { reason, decision: g.original, ...(denial ? { denial } : {}) };
+      } catch {
+        denied ??= { reason };
+      }
     }
-    return combined ? { decisions, combined } : { decisions };
+    return { decisions, ...(combined ? { combined } : {}), ...(denied ? { denied } : {}) };
   }
 
   /**
    * A step starts in the repository's checkout (with a sign-in or without one): asks repository.access. The facts that
    * describe how the step reaches it are kept for the pushes the step makes (see `pushes`).
    */
-  repository(step: StepIdentity, facts: Facts): void {
+  repository(step: StepIdentity, facts: Facts): PolicyAnswer {
     this.access.set(stepKey(step), facts);
-    this.at("repository.access", facts, step);
+    return this.at("repository.access", facts, step);
   }
 
   /** The pushes a step made, as the pre-push hook saw them: one `push` question for each, with its own repository and branch. */
@@ -265,17 +361,17 @@ export class RunPolicy {
     }
   }
 
-  private decide(loaded: LayeredPack, input: PolicyInput): PolicyDecision {
+  private decide(loaded: LayeredPack, input: PolicyInput, mode: Mode): PolicyDecision {
     const at = this.now();
-    if ("problem" in loaded) return this.noPack(loaded.id, loaded.problem, input, at);
+    if ("problem" in loaded) return this.noPack(loaded.id, loaded.problem, input, mode, at);
     return evaluatePolicy(loaded.pack, input, at);
   }
 
-  private noPack(id: string, reasonCode: "policy.unavailable" | "policy.invalid", input: PolicyInput, at = this.now()): PolicyDecision {
+  private noPack(id: string, reasonCode: NoPackCode, input: PolicyInput, mode: Mode, at = this.now()): PolicyDecision {
     return parsePolicyDecision({
       version: 1,
       policy: { id, version: UNKNOWN_POLICY_VERSION },
-      mode: "observe",
+      mode,
       boundary: input.boundary,
       inputSha256: policyInputSha256(input),
       outcome: "deny",
@@ -284,10 +380,40 @@ export class RunPolicy {
     });
   }
 
-  private report(ld: LayeredDecision, step: StepIdentity | undefined, wins: boolean): void {
+  /** A mandatory outage denial while a break-glass is active: the warn decision that replaces it, with the record; otherwise the same decision. Never throws. */
+  private outage(id: string, decision: PolicyDecision, boundary: Boundary): { decision: PolicyDecision; breakGlass?: BreakGlass } {
+    if (decision.mode !== "enforce" || decision.outcome !== "deny") return { decision };
+    if (decision.reasonCode !== "policy.unavailable" && decision.reasonCode !== "policy.invalid") return { decision };
+    // no recorder, no audit record: no break-glass
+    if (!this.evidence) return { decision };
+    let bg: BreakGlass | undefined;
+    try {
+      bg = this.breakGlass();
+    } catch {
+      return { decision };
+    }
+    if (!bg) return { decision };
+    try {
+      const warn = parsePolicyDecision({
+        version: 1,
+        policy: { id, version: UNKNOWN_POLICY_VERSION },
+        mode: "enforce",
+        boundary,
+        inputSha256: decision.inputSha256,
+        outcome: "warn",
+        reasonCode: "policy.break-glass",
+        evaluatedAt: decision.evaluatedAt,
+      });
+      return { decision: warn, breakGlass: bg };
+    } catch {
+      return { decision };
+    }
+  }
+
+  private report(ld: LayeredDecision, step: StepIdentity | undefined, wins: boolean): boolean {
     const d = ld.decision;
-    this.log(`· policy ${d.policy.id} ${d.policy.version} [${ld.layer}] · ${d.boundary}${step ? ` ${stepName(step)}` : ""}: ${d.outcome} (${d.reasonCode}${d.rule ? `, rule ${d.rule}` : ""})${wins ? " · wins" : ""} — observe only, nothing was stopped`);
-    this.evidence?.policyDecided(d, step);
+    this.log(`· policy ${d.policy.id} ${d.policy.version} [${ld.layer}] · ${d.boundary}${step ? ` ${stepName(step)}` : ""}: ${d.outcome} (${d.reasonCode}${d.rule ? `, rule ${d.rule}` : ""})${wins ? " · wins" : ""} ${d.reasonCode === "policy.break-glass" ? "— break-glass: the step goes on" : d.mode === "enforce" ? "— enforced: the step is stopped" : "— observe only, nothing was stopped"}`);
+    return this.evidence?.policyDecided(d, step) ?? false;
   }
 
   private fail(e: unknown): void {
@@ -310,9 +436,12 @@ export function runPolicy(summary: RunSummary, config: Pick<Config, "policy">, l
         home,
       )
     : [];
-  for (const p of loaded) {
-    if ("problem" in p) log(`! policy ${p.id}: ${p.detail} — recorded as ${p.problem}; the run goes on`);
-  }
+  loaded.forEach((p, i) => {
+    if ("problem" in p) {
+      const tail = ids[i]!.layer === "mandatory" ? "this mandatory policy denies steps with a sign-in and writing agents" : "the run goes on";
+      log(`! policy ${p.id}: ${p.detail} — recorded as ${p.problem}; ${tail}`);
+    } else if (ids[i]!.layer === "mandatory") saveLastKnownGood(home ?? dataHome(), p.id, p.pack, log);
+  });
   const packs: LayeredPack[] = [{ layer: "mandatory", id: BASELINE_POLICY_ID, pack: BASELINE_PACK }, ...loaded.map((l, i) => ({ ...l, layer: ids[i]!.layer }))];
-  return new RunPolicy({ runId: summary.runId, packs, base, log, evidence, observesPushes: ids.length > 0 });
+  return new RunPolicy({ runId: summary.runId, packs, base, log, evidence, observesPushes: ids.length > 0, breakGlass: () => activeBreakGlass(home ?? dataHome()) });
 }

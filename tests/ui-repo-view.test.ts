@@ -61,6 +61,7 @@ beforeEach(() => {
       const status = new URL(url, "http://x").searchParams.get("status");
       return reply(runsAnswer.filter((r) => !status || r.status === status));
     }
+    if (init.method === "GET" && url.startsWith("/api/outcomes")) return reply({ values: { flows: [] }, definitions: [], measures: [] });
     if (init.method === "GET" && url.endsWith("/ready")) return reply({ items: [{ id: "a", text: "first" }], isDefault: true });
     if (init.method === "GET") {
       const f = repoGets.shift();
@@ -143,7 +144,7 @@ describe("a source that returns foreign and back", () => {
 describe("the sections", () => {
   it("draws Overview, Connection and Dangerous actions in that order, the last one as a fail card", async () => {
     await show(rec());
-    expect(titles()).toEqual(["overview", "connection", "danger"]);
+    expect(titles()).toEqual(["overview", "connection", "outcomes", "danger"]);
     expect(section("danger").attrs.class).toContain("scf-card--fail");
     expect(section("overview").attrs.class).toContain("scf-card--neutral");
     expect(button(section("danger"), "Generate a new key")).toBeUndefined();
@@ -285,7 +286,7 @@ describe("the sections", () => {
       ...view.SECTIONS,
     ];
     await show(rec(), { sections });
-    expect(titles()).toEqual(["one", "overview", "connection", "danger"]);
+    expect(titles()).toEqual(["one", "overview", "connection", "outcomes", "danger"]);
     expect(view.SECTIONS.at(-1).id).toBe("danger");
   });
 });
@@ -324,7 +325,7 @@ describe("unknown repository, name and loading", () => {
   it("tolerates a failed methods call", async () => {
     methodsAnswer = undefined;
     await show(rec());
-    expect(titles()).toEqual(["overview", "connection", "danger"]);
+    expect(titles()).toEqual(["overview", "connection", "outcomes", "danger"]);
   });
 });
 
@@ -333,7 +334,7 @@ describe("read-only", () => {
     methodsAnswer = { methods: ["github-app"], githubApp: { available: true, installUrl: APP_URL } };
     const c = { ...badConn(), checks: [{ check: "github-api", ok: false, code: "app-not-installed", message: "The app is not installed." }] };
     await show(rec({ method: "github-app", connection: c }), { readOnly: true });
-    expect(titles()).toEqual(["overview", "connection", "danger"]);
+    expect(titles()).toEqual(["overview", "connection", "outcomes", "danger"]);
     expect(buttons()).toEqual([]);
     expect(walk(main()).some((e) => e.attrs.href === APP_URL)).toBe(false);
     expect(section("danger").textContent).toContain("Remove is not available in a read-only view.");

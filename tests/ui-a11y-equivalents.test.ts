@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { nextStep } from "../src/next-step.js";
+import { OUTCOME_DEFINITIONS } from "../src/outcomes.js";
 import { audit, parseHtml } from "./helpers/a11y.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 import { readUiCss } from "./helpers/ui-css.js";
@@ -263,16 +264,30 @@ describe("audit", () => {
       "/api/info": { spentToday: 1, dailyBudget: 0, costLimits: true },
       "/api/evals": [{ suite: "s", startedAt: "2026-03-01T10:00:00.000Z", summary: [{ variant: "v", runs: 5, passRate: 0.8, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 3, avgFixLoops: 0 }] }],
       "/api/watchers": [], "/api/runs": [], "/api/clarity": null,
+      "/api/outcomes": { values: { repos: ["a/b"], flows: ["f"] }, definitions: OUTCOME_DEFINITIONS, measures: OUTCOME_DEFINITIONS.map((d) => ({ id: d.id, value: null, detail: {}, counted: 0, excluded: 1 })) },
     };
     (globalThis as any).fetch = async (url: string) => ({ ok: true, status: 200, statusText: "ok", json: async () => body[String(url).split("?")[0]!] });
     try {
       const main = new FakeElement("main");
       await dash.renderDashboard(main);
       expect(main.textContent).toContain("Show as table");
+      expect(main.textContent).toContain("Outcomes");
       expect(audit(main)).toEqual([]);
     } finally {
       (globalThis as any).fetch = real;
     }
+  });
+
+  it("finds nothing in the outcomes card, and names every disclosure", async () => {
+    const { outcomesSection } = await import("../ui/outcomes.js" as string);
+    const answer = { values: { repos: ["a/b"], flows: [] }, definitions: OUTCOME_DEFINITIONS, measures: [] };
+    const s = outcomesSection({ load: async () => answer, note: () => new FakeElement("div") });
+    await s.ready;
+    expect(audit(s.el)).toEqual([]);
+    const summaries = s.el.all("summary").map((x: FakeElement) => x.textContent);
+    expect(summaries.length).toBeGreaterThan(0);
+    for (const t of summaries) expect(t).toMatch(/^Definition and exclusions of .+/);
+    expect(s.el.all("table").every((t: FakeElement) => t.all("caption").length === 1)).toBe(true);
   });
 
   it("finds nothing on a refinement session", () => {

@@ -84,7 +84,7 @@ function lists(ctx: ApiContext, thresholdsFrom = ctx.config().monitor) {
       };
     }),
     mutes: mutes.map((m) => muteView(m, byFingerprint)),
-    detectors: detectorInfo().map((d) => {
+    detectors: detectorInfo(config).map((d) => {
       const key = d.name.replace(/-/g, "_");
       const set = (config as Record<string, unknown>)[key];
       const thresholds = d.name !== "detector-failed" && set && typeof set === "object" ? (set as Record<string, number>) : undefined;

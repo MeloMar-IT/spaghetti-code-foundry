@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { PolicyIdentitySchema, ReasonCodeSchema as EvidenceReasonCodeSchema } from "../src/evidence/identity.js";
+import { z } from "zod";
+import { PolicyIdentitySchema, sha256Hex, ReasonCodeSchema as EvidenceReasonCodeSchema } from "../src/evidence/identity.js";
 import { parseEvidenceEvent } from "../src/evidence/parse.js";
 import { DenialSchema } from "../src/evidence/schema.js";
 import { canonicalJson, evaluatePolicy, factsNeeded, matchesPattern, policyDenial, policyIdentityOf, policyInputSha256, policyPackSha256 } from "../src/policy/evaluate.js";
@@ -53,24 +54,99 @@ const edit = <T>(value: T, change: (copy: any) => void): any => {
 
 describe("versions", () => {
   it("every contract has its own explicit version", () => {
-    expect([POLICY_PACK_VERSION, POLICY_INPUT_VERSION, POLICY_DECISION_VERSION]).toEqual([1, 1, 1]);
+    expect([POLICY_PACK_VERSION, POLICY_INPUT_VERSION, POLICY_DECISION_VERSION]).toEqual([2, 1, 1]);
     expect(parsePolicyPack(BASELINE).version).toBe(1);
     expect(decide("push", { branch: "feature/x", secretsFound: 0, paths: [] }).version).toBe(1);
   });
 
   it.each([
-    ["pack", parsePolicyPack],
-    ["input", parsePolicyInput],
-    ["decision", parsePolicyDecision],
-  ] as const)("a %s is refused without a version, with another version, or when it is not an object", (kind, parse) => {
+    ["pack", parsePolicyPack, 3, "versions 1 to 2"],
+    ["input", parsePolicyInput, 2, "version 1"],
+    ["decision", parsePolicyDecision, 2, "version 1"],
+  ] as const)("a %s is refused without a version, with another version, or when it is not an object", (kind, parse, unsupported, reads) => {
     expect(failure(() => parse(null)).code).toBe("not-an-object");
     expect(failure(() => parse([])).code).toBe("not-an-object");
     expect(failure(() => parse({})).code).toBe("no-version");
     expect(failure(() => parse({ version: "1" })).code).toBe("no-version");
     expect(failure(() => parse({ version: 0 })).code).toBe("no-version");
-    const newer = failure(() => parse({ version: 2 }));
+    const newer = failure(() => parse({ version: unsupported }));
     expect([newer.kind, newer.code]).toEqual([kind, "unsupported-version"]);
-    expect(newer.message).toContain("version 2 is not supported; this Foundry reads version 1");
+    expect(newer.message).toContain(`version ${unsupported} is not supported; this Foundry reads ${reads}`);
+  });
+});
+
+describe("pack format version 2", () => {
+  // The hash of BASELINE as written in version 1, taken from the code before version 2 existed.
+  const V1_SHA = "4b6b2f44d3a4143d9dd18567ff45f0afb1028e9bdcd620c84fe512e6743fb58e";
+  const V2: PolicyPack = edit(BASELINE, (p) => {
+    p.version = 2;
+  });
+  const withMode = (pack: PolicyPack, mode: PolicyPack["mode"], ruleModes: Record<string, "observe" | "enforce"> = {}): PolicyPack =>
+    ({ ...pack, mode, rules: pack.rules.map((r) => (ruleModes[r.id] ? { ...r, mode: ruleModes[r.id] } : r)) }) as PolicyPack;
+
+  it("reads a version 1 pack as written, with no rule mode added", () => {
+    const parsed = parsePolicyPack(BASELINE);
+    expect(parsed).toEqual(BASELINE);
+    expect(parsed.version).toBe(1);
+    for (const rule of parsed.rules) expect("mode" in rule).toBe(false);
+  });
+
+  it("refuses a rule mode in a version 1 pack", () => {
+    const e = failure(() => parsePolicyPack(edit(BASELINE, (p) => (p.rules[0].mode = "observe"))));
+    expect(e.code).toBe("invalid");
+    expect(e.issues.map((i) => i.path)).toContain("rules.0");
+  });
+
+  it("keeps the hash of a version 1 pack: it is hashed as written", () => {
+    expect(policyPackSha256(BASELINE)).toBe(V1_SHA);
+    expect(policyPackSha256(BASELINE)).toBe(sha256Hex(canonicalJson(BASELINE)));
+    expect(decide("run.complete", { runCostUsd: 1 }).packSha256).toBe(V1_SHA);
+    expect(policyPackSha256(V2)).not.toBe(V1_SHA);
+  });
+
+  it("reads a version 2 pack without rule modes, and with enforce on a rule or on the pack", () => {
+    expect(parsePolicyPack(V2)).toEqual(V2);
+    expect(parsePolicyPack(withMode(V2, "observe", { "no-secrets": "enforce" })).rules[0]!.mode).toBe("enforce");
+    expect(parsePolicyPack(withMode(V2, "enforce")).mode).toBe("enforce");
+  });
+
+  it("takes the mode of the decision from the rule, else from the pack", () => {
+    const secret: Facts = { branch: "feature/x", secretsFound: 1, paths: [] };
+    const d = decide("push", secret, withMode(V2, "observe", { "no-secrets": "enforce" }));
+    expect(d).toMatchObject({ mode: "enforce", rule: "no-secrets", outcome: "deny" });
+    expect(policyDenial(d)).toBeDefined();
+
+    const o = decide("push", secret, withMode(V2, "enforce", { "no-secrets": "observe" }));
+    expect(o).toMatchObject({ mode: "observe", rule: "no-secrets" });
+    expect(policyDenial(o)).toBeUndefined();
+
+    const inherited = decide("push", { branch: "main", secretsFound: 0, flow: "other", step: "push", shippedFlow: false }, withMode(V2, "enforce", { "no-secrets": "observe" }));
+    expect(inherited).toMatchObject({ mode: "enforce", rule: "protected-branches", reasonCode: "branch.protected" });
+  });
+
+  it("takes the mode of the rule for policy.input-incomplete", () => {
+    const d = decide("push", {}, withMode(V2, "observe", { "no-secrets": "enforce" }));
+    expect(d).toMatchObject({ outcome: "deny", reasonCode: "policy.input-incomplete", rule: "no-secrets", mode: "enforce" });
+  });
+
+  it("takes the mode of the pack for policy.no-rule-matched", () => {
+    const every = Object.fromEntries(V2.rules.map((r) => [r.id, "enforce" as const]));
+    const d = decide("run.complete", { runCostUsd: 1 }, withMode(V2, "observe", every));
+    expect(d).toMatchObject({ reasonCode: "policy.no-rule-matched", mode: "observe" });
+  });
+
+  it("refuses an unknown rule field and an unknown rule mode", () => {
+    const field = failure(() => parsePolicyPack(edit(V2, (p) => (p.rules[0].weight = 1))));
+    expect(field.issues.map((i) => i.path)).toContain("rules.0");
+    const mode = failure(() => parsePolicyPack(edit(V2, (p) => (p.rules[0].mode = "block"))));
+    expect(mode.issues.map((i) => i.path)).toContain("rules.0.mode");
+  });
+
+  it("refuses version 3 even when the rest is valid", () => {
+    const e = failure(() => parsePolicyPack({ ...V2, version: 3 }));
+    expect(e.code).toBe("unsupported-version");
+    expect(e.message).toContain("versions 1 to 2");
+    expect(e.message).toContain("newer Foundry");
   });
 });
 
@@ -168,7 +244,7 @@ describe("reason codes", () => {
     expect([...REASON_CODES].sort()).toEqual([
       "approval.required", "branch.hotfix-exception", "branch.protected", "budget.daily-exceeded", "budget.run-exceeded", "budget.step-exceeded",
       "credential.scope-exceeded", "exception.granted", "flow.retired", "identity.missing", "issue.closed", "output.limit-exceeded", "path.forbidden",
-      "policy.input-incomplete", "policy.invalid", "policy.no-rule-matched", "policy.unavailable", "repository.not-allowed", "sandbox.required",
+      "policy.break-glass", "policy.input-incomplete", "policy.invalid", "policy.no-rule-matched", "policy.unavailable", "repository.not-allowed", "sandbox.required",
       "secret.detected", "timeout.exceeded", "tool.not-allowed", "workspace.admin-only",
     ]);
   });
@@ -294,7 +370,7 @@ describe("evaluatePolicy", () => {
   it("decides nothing on bad data", () => {
     const question = input("push", { branch: "main" });
     expect(failure(() => evaluatePolicy(edit(BASELINE, (p) => (p.rules[0].outcome = "maybe")), question, T)).kind).toBe("pack");
-    expect(failure(() => evaluatePolicy({ ...BASELINE, version: 2 } as never, question, T)).code).toBe("unsupported-version");
+    expect(failure(() => evaluatePolicy({ ...BASELINE, version: 3 } as never, question, T)).code).toBe("unsupported-version");
     expect(failure(() => evaluatePolicy(BASELINE, edit(question, (i) => (i.facts.extra = 1)), T)).kind).toBe("input");
     for (const time of ["yesterday", "2026-01-31", "2026-01-31T12:00:00+01:00", ""]) {
       const e = failure(() => evaluatePolicy(BASELINE, question, time));
@@ -340,6 +416,23 @@ describe("PolicyDecision", () => {
     expect(failure(() => parsePolicyDecision({ ...unread, outcome: "allow" })).issues[0]!.path).toBe("outcome");
     expect(failure(() => parsePolicyDecision({ ...unread, packSha256: H })).issues[0]!.path).toBe("packSha256");
     expect(failure(() => parsePolicyDecision({ ...unread, rule: "r" })).issues[0]!.path).toBe("rule");
+  });
+
+  it("accepts a break-glass decision only as an enforced warning with no pack hash and no rule", () => {
+    const glass = { version: 1, policy: { id: "org", version: "unknown" }, mode: "enforce", boundary: "agent.write", inputSha256: H, outcome: "warn", reasonCode: "policy.break-glass", evaluatedAt: T };
+    expect(parsePolicyDecision(glass).reasonCode).toBe("policy.break-glass");
+    expect(failure(() => parsePolicyDecision({ ...glass, outcome: "deny" })).issues[0]!.path).toBe("outcome");
+    expect(failure(() => parsePolicyDecision({ ...glass, outcome: "allow" })).issues[0]!.path).toBe("outcome");
+    expect(failure(() => parsePolicyDecision({ ...glass, mode: "observe" })).issues[0]!.path).toBe("mode");
+    expect(failure(() => parsePolicyDecision({ ...glass, packSha256: H })).issues[0]!.path).toBe("packSha256");
+    expect(failure(() => parsePolicyDecision({ ...glass, rule: "r" })).issues[0]!.path).toBe("rule");
+  });
+
+  it("is refused by an older build: its closed list of codes lacks policy.break-glass", () => {
+    const old = z.enum(REASON_CODES.filter((c) => c !== "policy.break-glass") as [string, ...string[]]);
+    expect(old.safeParse("policy.break-glass").success).toBe(false);
+    const glass = { version: 1, policy: { id: "org", version: "unknown" }, mode: "enforce", boundary: "agent.write", inputSha256: H, outcome: "warn", reasonCode: "policy.future-code", evaluatedAt: T };
+    expect(failure(() => parsePolicyDecision(glass)).code).toBe("invalid");
   });
 });
 

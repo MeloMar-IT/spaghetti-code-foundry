@@ -9,7 +9,8 @@ import {
   CommitSchema, GitIdentitySchema, isSafeRelativePath, modelIdentityOf, PullRequestIdentitySchema, RepositorySchema, StepIdSchema, ToolIdentitySchema,
   type Actor, type ArtifactRef, type GitIdentity, type ModelIdentity, type PullRequestIdentity, type StepIdentity, type TestResult,
 } from "./identity.js";
-import { emitTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
+import type { Denial } from "./schema.js";
+import { emitTelemetry,telemetryEnabled } from "../telemetry/telemetry.js";
 import { telemetryFromEvidence } from "../telemetry/envelope.js";
 import { closeEvidenceStream, evidenceStream, hashPlainFile, type EvidenceEventBody, type EvidenceStream } from "./stream.js";
 
@@ -101,18 +102,19 @@ export class RunRecorder {
    * Makes the event and writes it. A problem while making it stops the stream like a failed write. The same event is
    * also given to telemetry, with the same time, even when the evidence stream has stopped.
    */
-  private put(make: () => EvidenceEventBody | undefined, time?: string): void {
+  private put(make: () => EvidenceEventBody | undefined, time?: string): boolean {
     let body: EvidenceEventBody | undefined;
     try {
       body = make();
     } catch (e) {
       this.stream.stop(e);
-      return;
+      return false;
     }
-    if (!body) return;
+    if (!body) return false;
     const at = time ?? new Date().toISOString();
     const written = this.stream.append(body, at);
     if (telemetryEnabled()) emitTelemetry(telemetryFromEvidence(this.stream.runId, body, written, at, this.repository));
+    return written !== undefined;
   }
 
   /** `queuedAt`: when the job was put in the queue. A new run has no folder then, so the event is written now with that time. */
@@ -192,14 +194,19 @@ export class RunRecorder {
     this.put(() => (approved ? { type: "step.approved", step, by } : { type: "step.denied", step, denial: { kind: "approval", by } }));
   }
 
+  /** A policy refused the step (see policy-hooks.ts `PolicyDenied`). */
+  stepDenied(step: StepIdentity, denial: Denial): void {
+    this.put(() => ({ type: "step.denied", step, denial }));
+  }
+
   /** Something that had to be recorded could not be: the stream stops and the run has no manifest. The run itself goes on. */
   incomplete(e: unknown): void {
     this.stream.stop(e);
   }
 
-  /** A policy pack decided at a boundary. `step` is given exactly for the boundaries that are about a step. */
-  policyDecided(decision: PolicyDecision, step?: StepIdentity): void {
-    this.put(() => ({ type: "policy.decided", decision, ...(step ? { step } : {}) }), decision.evaluatedAt);
+  /** A policy pack decided at a boundary. `step` is given exactly for the boundaries that are about a step. True when the event is in the evidence. */
+  policyDecided(decision: PolicyDecision, step?: StepIdentity): boolean {
+    return this.put(() => ({ type: "policy.decided", decision, ...(step ? { step } : {}) }), decision.evaluatedAt);
   }
 
   /** The end of one visit: a `step.denied` for every tool the agent was refused, then `step.completed` or `step.failed`. */

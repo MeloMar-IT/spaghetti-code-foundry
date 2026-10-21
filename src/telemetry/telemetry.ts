@@ -1,5 +1,5 @@
 import { TelemetrySchema, type Config, type OtlpConfig } from "../config.js";
-import { TelemetryEventSchema, type TelemetryEvent } from "./envelope.js";
+import { TELEMETRY_NAMES, TELEMETRY_VERSION, TelemetryEventSchema, tmId, type TelemetryEvent, type TelemetryKind } from "./envelope.js";
 import { TelemetryWriter } from "./local.js";
 import { OtlpExporter, type OtlpFetch } from "./otlp.js";
 import { privateTelemetry } from "./privacy.js";
@@ -101,6 +101,18 @@ function drop(r: DropReason): void {
     log(DROP_WORDS[r]);
   } catch {
     // a broken log is not a reason to fail
+  }
+}
+
+type LiveFields = Omit<Partial<TelemetryEvent>, "version" | "id" | "time" | "kind" | "name" | "evidence">;
+
+/** One event without an evidence line (a push, a tool call, a watcher fact): a new tm: id and the time now. Never throws. */
+export function emitLiveTelemetry<K extends TelemetryKind>(kind: K, name: (typeof TELEMETRY_NAMES)[K][number], fields: LiveFields): void {
+  if (!telemetryEnabled()) return;
+  try {
+    emitTelemetry({ ...fields, version: TELEMETRY_VERSION, id: tmId(), time: new Date().toISOString(), kind, name } as TelemetryEvent);
+  } catch {
+    // never throws
   }
 }
 

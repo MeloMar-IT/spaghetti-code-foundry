@@ -6,6 +6,7 @@ import { addRepo, reposPath, setRepoSettings } from "../src/auth/repos.js";
 import { ConfigSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
+import { hasCommit, markCommit } from "../src/release/build-claims.js";
 import { TOOLCHAIN_VARS } from "../src/release/host.js";
 import { releaseMarker } from "../src/release/recipe.js";
 import { claudeBin, fakeGithub, fakeRelease } from "./helpers/fake-github.js";
@@ -60,9 +61,9 @@ describe("release-build flow", () => {
     return git("rev-parse", "HEAD");
   }
 
-  async function go(ref = "main", signal?: AbortSignal, log: string[] = []) {
+  async function go(ref = "main", signal?: AbortSignal, log: string[] = [], extra: Record<string, string> = {}) {
     const s = await runFlow(loadFlow("release-build", gh.tmp).flow, {
-      task: "", repo: gh.tmp, runsDir: join(gh.tmp, "runs"), claudeBin, config, vars: { github_repo: "acme/app", ref }, signal,
+      task: "", repo: gh.tmp, runsDir: join(gh.tmp, "runs"), claudeBin, config, vars: { github_repo: "acme/app", ref, ...extra }, signal,
       log: (l) => void log.push(l),
     });
     const out = join(s.runDir, "release", "out");
@@ -146,6 +147,42 @@ describe("release-build flow", () => {
     expect(r.log).toContain("linux-x64: skipped, needs linux");
     expect(r.files).toEqual(["SHA256SUMS", "app-macos-arm64"]);
     expect(r.text("app-macos-arm64")).toBe("mac\n");
+  });
+
+  describe("started by a watcher", () => {
+    const RECIPE = "builds:\n  - {name: cli, run: 'echo one > a.tgz', artifacts: ['*.tgz']}\n";
+    const auto = { release_build_watcher: "rel" };
+
+    it("claims the commit it builds, and a second run of the same commit builds and uploads nothing", async () => {
+      const sha = commit(RECIPE);
+      const one = await go("main", undefined, [], auto);
+      expect(one.s.status, one.s.reason).toBe("succeeded");
+      expect(one.s.outputs?.release_url).toMatch(/^https:/);
+      expect(hasCommit("acme/app", "main", sha)).toBe(true);
+      const two = await go("main", undefined, [], auto);
+      expect(two.s.status, two.s.reason).toBe("succeeded");
+      expect(two.log).toContain("this commit was handled before");
+      expect(two.s.outputs).toBeUndefined();
+      expect(two.files).toEqual([]);
+      expect(gh.releases()).toHaveLength(1);
+    });
+
+    it("does not build a commit that was seen before (main went back to it)", async () => {
+      const sha = commit(RECIPE);
+      markCommit("acme/app", "main", sha);
+      const r = await go("main", undefined, [], auto);
+      expect(r.s.status, r.s.reason).toBe("succeeded");
+      expect(r.log).toContain("skipped");
+      expect(gh.releases()).toHaveLength(0);
+    });
+
+    it("a run started by hand builds a seen commit", async () => {
+      const sha = commit(RECIPE);
+      markCommit("acme/app", "main", sha);
+      const r = await go();
+      expect(r.s.status, r.s.reason).toBe("succeeded");
+      expect(gh.releases()).toHaveLength(1);
+    });
   });
 
   it("fails at once when the repository has no recipe", async () => {

@@ -61,6 +61,7 @@ export const RULES: Rule[] = [
   r("GET", "runs", "yes", "list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap"),
   r("GET", "run-owners", "no", "the accounts that have runs, for the owner filter"),
   r("GET", "run-filters", "yes", "the repositories and flows of the runs you can see, for the filter menus"),
+  r("GET", "outcomes", "yes", "the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values"),
   r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref)"),
   r("GET", "runs/:id", "own", "read a run (a user: without costs and setup)"),
   r("POST", "runs/:id/cancel", "own", "cancel a run that runs, is queued, waits or is stopped"),

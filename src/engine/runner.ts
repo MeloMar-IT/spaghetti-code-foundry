@@ -17,6 +17,7 @@ import {
   executeStep,
   newLogFile,
   recordStep,
+  refuseByPolicy,
   type ApprovalDecision,
   type Engine,
   type LoopResult,
@@ -44,6 +45,7 @@ import { runPolicy, type RunPolicy } from "./policy-hooks.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
 import { snapshotToolProfile } from "../tool-profile/session.js";
 import { configureTelemetry } from "../telemetry/telemetry.js";
+import { emitRunMeasured } from "../monitor/measures.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
 
@@ -275,8 +277,9 @@ async function drive(
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes),
       ...selfEnv(),
     };
-    // fails before any step, as before, when the run starts with the machine's login
-    if (!stepIsolated(summary.owner, summary.vars.github_repo)) await botEnv();
+    // fails before any step, as before, when the run starts with the machine's login — unless a mandatory policy
+    // cannot be used: then every step with that login is denied, and no token is fetched at all
+    if (!stepIsolated(summary.owner, summary.vars.github_repo) && !policy.mandatoryUnusable) await botEnv();
   } catch (e) {
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: summary.state.next, lastOutput: "" });
   }
@@ -377,6 +380,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   saveRun(s);
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
+  emitRunMeasured(s);
   appendLiveLog(s.runDir, "■ cancelled while waiting for approval");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -393,6 +397,7 @@ export function cancelStoppedRun(runsDir: string, runId: string, config: Config 
   saveRun(s);
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
+  emitRunMeasured(s);
   appendLiveLog(s.runDir, "■ cancelled while stopped");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -449,6 +454,7 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
       opts.onUpdate?.(summary);
     }
   }
+  emitRunMeasured(summary); // after the evidence is final and the last cost is added; nothing for a run that is only stopped or waiting
   await notifyRun(config, summary).catch(() => {});
   if (summary.status === "stopped") {
     // Cancelled while the notification ran: the saved cancel stands, and the caller must see it.
@@ -534,11 +540,15 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       const d = engine.decision;
       if (top && d && d.stepId === step.id) {
         engine.decision = undefined;
+        engine.accessFailed = false;
         beginStep(engine, scope, step, identity);
-        engine.policy?.at("approval.consume", { step: step.id }, identity);
-        engine.evidence?.stepDecided(identity, d.approved, engine.actor ?? SYSTEM_ACTOR);
-        res = { ok: d.approved, output: `${d.approved ? "approved" : "rejected"} by ${d.by ?? "someone"}${d.note ? `: ${d.note}` : ""}` };
-        if (!d.approved) res.error = "rejected";
+        const consumed = engine.policy?.at("approval.consume", { step: step.id }, identity);
+        if (consumed?.denied) res = refuseByPolicy(engine, identity, consumed.denied);
+        else {
+          engine.evidence?.stepDecided(identity, d.approved, engine.actor ?? SYSTEM_ACTOR);
+          res = { ok: d.approved, output: `${d.approved ? "approved" : "rejected"} by ${d.by ?? "someone"}${d.note ? `: ${d.note}` : ""}` };
+          if (!d.approved) res.error = "rejected";
+        }
       } else {
         visits[step.id] = visit - 1; // waiting is not a visit
         if (!top) return { outcome: "failed", reason: "approval steps are not supported in sub-flows", ...here() };

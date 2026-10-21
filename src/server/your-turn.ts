@@ -8,6 +8,7 @@ import { waitsForPerson } from "../monitor/fix.js";
 import { breakerNow, breakerWhy, loadGuard } from "../monitor/guard.js";
 import { activeMutes, muteFor } from "../monitor/mutes.js";
 import { markerHash } from "../monitor/story.js";
+import { isWatcherReleaseBuild } from "../release/auto-build.js";
 import { nextStep, releaseWatchersFor, trackingWatcher, type NextStep } from "../next-step.js";
 import { buildTurn, runOrigin, soonest, type ReleaseTime, type TurnSource, type YourTurn } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
@@ -173,11 +174,15 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue; // an eval run of an older version
     const run: RunSummary | undefined = list.find((r) => r.runId === b.runId) ?? ctx.scheduler.get(b.runId);
     if (!run) continue;
-    const next = c.next(run);
+    const plain = c.next(run);
+    // A failed automatic release build says so; the key stays the usual one, so earlier dismissals still match.
+    const next: NextStep = isWatcherReleaseBuild(run) && plain.kind === "failed"
+      ? { ...plain, title: "Build failed — open the run", where: { label: "Open the run", url: `#/runs/${run.runId}` } }
+      : plain;
     // Its watcher shows it, unless the watcher cannot: the state of the issue is unknown.
     if (origin !== "hand" && trackingWatcher(cfg.watchers, run) && !next.issueUnchecked) continue;
     const since = runSince(run);
-    sources.push({ key: keyOf(next), next, since, stamp: since, dismissable: true });
+    sources.push({ key: keyOf(plain), next, since, stamp: since, dismissable: true });
   }
 
   const stories = new Set<string>();

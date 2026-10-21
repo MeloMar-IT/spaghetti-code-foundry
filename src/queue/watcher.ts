@@ -2,6 +2,9 @@ import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { isStoppedCancel, isUserBudgetStop, loadRun, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
+import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
+import { watcherRef } from "../telemetry/envelope.js";
+import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
 import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
@@ -9,7 +12,9 @@ import { failedIndex, failureSummary } from "../failure.js";
 import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
 import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
+import { RELEASE_BUILD_FLOW, RELEASE_BUILD_SUBMISSION_VAR, RELEASE_BUILD_VAR } from "../release/auto-build.js";
 import { dependencies, openDependencies } from "./deps.js";
+import { checkReleaseBuild, mainBranchOf, releaseCheckEvery } from "./release-trigger.js";
 import { freshIssueList } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
@@ -293,7 +298,7 @@ export class Watcher {
       if (this.stopped) return;
       let every: number;
       try {
-        every = parseInterval(this.cfg.every);
+        every = releaseCheckEvery(this.cfg, parseInterval(this.cfg.every));
       } catch {
         return; // tick() reported the invalid interval as the watcher's error
       }
@@ -367,8 +372,10 @@ export class Watcher {
         this.status.errorSince = undefined;
         this.status.errorCount = undefined;
         this.status.lastOk = new Date().toISOString();
+        emitLiveTelemetry("watcher", "watcher.checked", { ...this.teleLabels(), durationMs: Math.max(0, Date.now() - checkStartedAt), outcome: "ok" });
       }
     } catch (e) {
+      emitLiveTelemetry("watcher", "watcher.failed", { ...this.teleLabels(), durationMs: Math.max(0, Date.now() - checkStartedAt), outcome: "failed" });
       this.status.lastError = errorLine((e as Error).message);
       this.status.errorSince ??= new Date().toISOString();
       this.status.errorCount = (this.status.errorCount ?? 0) + 1;
@@ -402,7 +409,7 @@ export class Watcher {
     if (this.cfg.source === "issues") await this.tickIssues(token, checkStartedAt);
     else if (this.cfg.source === "pr-feedback") await this.tickPrs();
     else if (this.cfg.source === "ci-failures") await this.tickCi();
-    else await this.tickSchedule();
+    else await this.tickSchedule(token);
   }
 
   /** Latest run per issue/PR number for this repo (newest first in the list). */
@@ -507,8 +514,47 @@ export class Watcher {
     }
   }
 
+  private async tickSchedule(token: number) {
+    await this.tickChore();
+    if (this.cfg.release_build) await this.tickReleaseBuild(token);
+  }
+
+  /** Looks at the main branch; a new commit with a release-build recipe gets one queued release-build run (see queue/release-trigger.ts). */
+  private async tickReleaseBuild(token: number) {
+    const alive = () => {
+      if (token !== this.tickToken || this.retired) throw new Error("this check was given up");
+    };
+    const branch = mainBranchOf(this.cfg);
+    const { flow } = loadFlow(RELEASE_BUILD_FLOW, this.d.repo);
+    const r = await checkReleaseBuild({
+      repo: this.repo,
+      branch,
+      alive,
+      jobs: {
+        busy: (lock) => {
+          const q = this.d.scheduler.queue();
+          return [...q.pending, ...q.active].find((j) => j.lockKey === lock)?.runId;
+        },
+        // called only when no job with the lock key is queued or running: a job that got in has left a run behind
+        accepted: (submission) => this.d.scheduler.list(1000).some((s) => s.vars?.[RELEASE_BUILD_SUBMISSION_VAR] === submission),
+        queue: (lock, submission) =>
+          this.queue(
+            {
+              kind: "run", flow, repo: this.d.repo, task: `Build the release files of ${this.repo} at the newest commit on ${branch}`,
+              vars: { github_repo: this.repo, ref: branch, [RELEASE_BUILD_VAR]: this.cfg.id, [RELEASE_BUILD_SUBMISSION_VAR]: submission },
+            },
+            { lockKey: lock, source: `watcher ${this.cfg.id} release-build` },
+          ),
+      },
+    });
+    for (const n of r.notes) this.act(n);
+    const sha = (r.head ?? "").slice(0, 7);
+    if (r.kind === "queued") this.act(`new commit ${sha} on ${branch} → release build run ${r.runId}`);
+    else if (r.kind === "no_recipe") this.act(`new commit ${sha} on ${branch} has no release-build recipe — nothing built`);
+  }
+
   /** Run the chore when the last one started at least `every` ago (survives restarts). */
-  private async tickSchedule() {
+  private async tickChore() {
     const last = this.d.scheduler.list(1000).find((s) => s.vars?.chore_watcher === this.cfg.id);
     if (this.cfg.at) {
       // Once a day at `at` (caught up later that day if the Mac was off at that time).
@@ -539,11 +585,26 @@ export class Watcher {
     const owner = this.cfg.repoId !== undefined ? this.cfg.ownerId : watcherOwner(this.cfg.owner);
     // the owner's account also counts as the one that queued it, so a block or delete drops the job and holds it while blocked
     const queuedBy = this.cfg.repoId !== undefined ? { queuedBy: this.cfg.ownerId } : {};
-    return this.d.scheduler.submit(job, { ...meta, ...queuedBy, ...(job.kind === "run" ? { owner } : {}) });
+    const runId = this.d.scheduler.submit(job, { ...meta, ...queuedBy, ...(job.kind === "run" ? { owner } : {}) });
+    const actor = ActorSchema.safeParse({ kind: "watcher", id: this.cfg.id });
+    emitLiveTelemetry("watcher", "watcher.queued", { ...this.teleLabels(), runId, ...(actor.success ? { actor: actor.data } : {}) });
+    return runId;
+  }
+
+  /** The labels of a watcher event; each one is left out when telemetry would not accept it. */
+  private teleLabels(): { watcher?: NonNullable<ReturnType<typeof watcherRef>>; repository?: string } {
+    const watcher = watcherRef(this.cfg.id, this.cfg.source);
+    const repo = RepositorySchema.safeParse(this.repo);
+    return { ...(watcher ? { watcher } : {}), ...(repo.success ? { repository: repo.data } : {}) };
   }
 
   private submit(n: number, kind: "issue" | "pr", job: Parameters<Scheduler["submit"]>[0], first?: { storyAt?: string }): string {
-    return this.queue(job, { lockKey: kind === "issue" ? this.lockFor(n) : `${this.repo}#${n}`, source: `watcher ${this.cfg.id} ${kind} #${n}`, ...firstMeta(first) });
+    const runId = this.queue(job, { lockKey: kind === "issue" ? this.lockFor(n) : `${this.repo}#${n}`, source: `watcher ${this.cfg.id} ${kind} #${n}`, ...firstMeta(first) });
+    if (kind === "pr") {
+      const { watcher, repository } = this.teleLabels();
+      emitLiveTelemetry("pull_request", "pull_request.feedback", { ...(repository ? { pullRequest: { repository, number: n } } : {}), runId, ...(watcher ? { watcher } : {}) });
+    }
+    return runId;
   }
 
   /** Is this run still after a code area held by `holder`: stepped aside for it, or about to claim areas? */

@@ -1,9 +1,12 @@
+import type { MonitorConfig } from "../config.js";
 import { cleanLine } from "../errors.js";
 import { slowVisits } from "../estimate.js";
 import { failedIndex } from "../failure.js";
 import type { RunSummary } from "../engine/state.js";
 import { DETECTORS, failure, HOUR, iso, latest, ownerRepo, plural, uniq, when, type Detector } from "./detectors.js";
 import type { FindingInput } from "./findings.js";
+import type { MeasureOwner } from "./measures.js";
+import { SLO_DETECTORS } from "./slo-detectors.js";
 import { SKILL_SOURCE_DETECTOR } from "./skill-source-findings.js";
 
 // Detectors of the slower and quieter problems: work that stands still, steps that keep failing, labels that lie.
@@ -341,12 +344,14 @@ const slowStep: Detector = {
 
 export const WORK_DETECTORS: Detector[] = [stuckRun, sameStepFailing, labelMismatch, orphanLock, queueStalled, restartOverdue, developRed, slowStep];
 
-export const ALL_DETECTORS: Detector[] = [...DETECTORS, ...WORK_DETECTORS];
+export const ALL_DETECTORS: Detector[] = [...DETECTORS, ...WORK_DETECTORS, ...SLO_DETECTORS];
 
-/** Name and description of every finding the monitor can make, for the app. */
-export function detectorInfo(): { name: string; description: string }[] {
+export interface DetectorInfo { name: string; description: string; slo?: { owner: MeasureOwner; threshold: string; window: string; action: string } }
+
+/** Name and description of every finding the monitor can make, for the app. With `config`, a detector with an SLO also gives its owner, threshold, window and next action as texts. */
+export function detectorInfo(config?: MonitorConfig): DetectorInfo[] {
   return [
-    ...ALL_DETECTORS.map(({ name, description }) => ({ name, description })),
+    ...ALL_DETECTORS.map(({ name, description, slo }): DetectorInfo => ({ name, description, ...(slo && config ? { slo: { owner: slo.owner, threshold: slo.threshold(config), window: slo.window(config), action: slo.action } } : {}) })),
     { name: SKILL_SOURCE_DETECTOR, description: "A scheduled check of a skill source of the catalogue ended with PROBLEM. Check the reported problem before continuing with the source update." },
     { name: "detector-failed", description: "A detector of the monitor crashed, so the problems it looks for are not checked. The monitor itself needs a fix." },
   ];

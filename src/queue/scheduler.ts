@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { cancelStoppedRun, cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -469,6 +469,13 @@ export class Scheduler {
 
   get(runId: string): RunSummary | undefined {
     return this.active.get(runId)?.summary ?? this.markStale(loadRun(this.o.runsDir, runId));
+  }
+
+  /** Like get, but the run.json is read with fs/promises. */
+  async getAsync(runId: string): Promise<RunSummary | undefined> {
+    const live = this.active.get(runId)?.summary;
+    if (live) return live;
+    return this.markStale(await loadRunAsync(this.o.runsDir, runId));
   }
 
   list(limit = 100): RunSummary[] {

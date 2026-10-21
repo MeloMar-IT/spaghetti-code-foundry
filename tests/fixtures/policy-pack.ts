@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Boundary, Conditions, PolicyPack } from "../../src/policy/schema.js";
 
@@ -45,6 +45,13 @@ export function coverPack(id = "cover", version = "1"): PolicyPack {
     rules.push({ id: okRule(boundary), boundaries: [boundary], when: spec.ok, outcome: "warn", reasonCode: "output.limit-exceeded" });
   }
   return { version: 1, policy: { id, version }, mode: "observe", defaultOutcome: "allow", rules };
+}
+
+/** Writes a valid pack to `target` and links <home>/policies/<id>.json to it. */
+export function linkPack(home: string, id: string, target: string): void {
+  mkdirSync(join(home, "policies"), { recursive: true });
+  writeFileSync(target, JSON.stringify(coverPack(id)));
+  symlinkSync(target, join(home, "policies", `${id}.json`));
 }
 
 /** Writes <home>/policies/<id>.json. */

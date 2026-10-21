@@ -266,7 +266,10 @@ numbers and pure functions.
   carries as its policy identity. `mode` is `observe` (decisions are only recorded) or `enforce`.
   `rules` are read from the first to the last; `defaultOutcome` (`allow` or `deny`) decides when no
   rule applies.
-- **A rule** has an `id`, the `boundaries` it is about, `when`, an `outcome` and a `reasonCode`.
+- **A rule** has an `id`, the `boundaries` it is about, `when`, an `outcome` and a `reasonCode`. From
+  version 2 it may also have its own `mode` (`observe` or `enforce`). A decision takes the `mode` of the
+  rule that decided, or the pack's `mode` when the rule has none; `policy.input-incomplete` of a rule
+  takes that rule's mode, and `policy.no-rule-matched` takes the pack's mode.
   `when` has at most one condition per fact, and all of them must hold: `in` or `notIn` with
   patterns for a text (`*` stands for any characters, nothing else is special), `in` or `notIn` with
   fixed values for a choice, `anyIn` for the changed paths, `over` for a number (more than, never
@@ -288,7 +291,8 @@ numbers and pure functions.
   `budget.daily-exceeded`, `sandbox.required`, `workspace.admin-only`, `repository.not-allowed`,
   `credential.scope-exceeded`, `identity.missing`, `tool.not-allowed`, `issue.closed`,
   `flow.retired`, `approval.required`, `exception.granted`. Codes only the evaluation gives:
-  `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`.
+  `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`. The code
+  only the break-glass gives: `policy.break-glass` (a `warn` in `enforce` mode, see "Break-glass" below).
 - **`evaluatePolicy(pack, input, evaluatedAt)`** gives one decision and is deterministic: no file,
   network, model, clock or randomness; the caller gives the time. A rule that does not name the
   boundary of the input is passed over. The first rule whose conditions all hold decides. A rule
@@ -301,11 +305,20 @@ numbers and pure functions.
   `enforce` mode. Every reason code fits the evidence format.
 - **Versions.** Each contract has its own number in `version.ts`. A record with another version is
   refused with one sentence. Every object refuses unknown fields, so a new field means a new version.
+  The pack format is version 2 (`POLICY_PACK_VERSION`). `parsePolicyPack` also reads version 1, with
+  `PolicyPackV1Schema` (no rule `mode`, so a `mode` on a rule of a version 1 pack is refused). A version 1
+  pack is read and hashed as written, never rewritten to version 2, so its `policyPackSha256` does not
+  change. Any other version is refused. The decision format (`POLICY_DECISION_VERSION`) did not change:
+  its `mode` already existed.
+- **Enforce is refused at load time.** `parsePolicyPack` accepts `enforce` on a pack or a rule, since a
+  pack built in memory may use it. `loadOne` (`loadPolicyPacks`) and the last-known-good restore refuse a
+  pack in which the pack or any rule is in `enforce` (`enforceProblem` in `policy-hooks.ts`).
+
 ### Policy hooks in observe mode
 
 `src/engine/policy-hooks.ts` asks the configured policy packs at the boundaries of a run (#142). It
-is the only place the engine calls `src/policy/`. Nothing in a run changes because of a decision yet:
-packs run in observe mode only.
+is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` holds the last-known-good copies and the restore. A decision changes a run in one case only: fail closed
+(below), which an active break-glass can turn into a recorded `warn` (see "Break-glass"). Otherwise packs run in observe mode.
 
 - **Where the questions come from.** The engine asks, so a flow cannot leave a boundary out: `runner.ts`
   asks `run.start`, `repository.access` (before a workspace is made), `approval.consume` and
@@ -332,6 +345,7 @@ packs run in observe mode only.
   `O_NONBLOCK`, only as a plain file of at most 1 MiB. A pack that is missing, linked, not a file,
   unreadable, invalid, for another policy id, or in `enforce` mode becomes a `LoadedPack` with a
   `policy.unavailable` or `policy.invalid` problem. Its detail never names a path or file content.
+- **Last-known-good.** `saveLastKnownGood` (called by `runPolicy` for each mandatory overlay that loaded) writes `policies/last-known-good/<id>.json` with `{ version, id, savedAt, policyPackSha256, pack }`. The folder is 0700 and the file 0600, written by a random temp file and one `rename`. It never throws: a failure is one `!` log line. `restorePolicy` (`policy-store.ts`, under `withAuthLock`, always on `dataHome()`) reads the copy with `readPolicyFile`, checks the id, `mode: observe`, the stored SHA-256 and the size of the compact JSON, and refuses a link, a folder, a changed copy or a valid current file without `--force`. It keeps the replaced entry as `<id>.json.replaced-<time>` (never overwritten), replaces the active file with one `rename` (the temp file is written with `wx`, and removed on failure), and writes `policy-restore` to the audit log. The SHA-256 is not a signature. The command is `policy-cli.ts`.
 - **Layers and precedence.** `src/policy/compose.ts` (pure) gives the layers `mandatory` (the baseline and
   the admin's `policy.mandatory` overlays), `repository` (`policy.repositories` for the run's
   `owner/name`, matched in lower case) and `optional` (`policy.packs`). `layeredPackIds` keeps an id only in
@@ -349,6 +363,36 @@ packs run in observe mode only.
   (`RunRecorder.policyDecided`). A pack that cannot be evaluated is recorded as `policy.invalid`
   with `unknown` as version, and the log says so. A decision that cannot be recorded either marks the
   evidence incomplete (`RunRecorder.incomplete`). No method throws into the engine.
+- **Fail closed (#614).** `privilegedBoundary(boundary, facts)` is true for `agent.write`, `approval.consume`
+  and `repository.access` with the `machine` or `repository` credential. A pack in the `mandatory` layer
+  that cannot be loaded (`policy.unavailable`/`policy.invalid`) or evaluated gets `mode: "enforce"` at a
+  privileged boundary, from `decide`/`noPack`: the decision is `deny` with version `unknown` and no
+  `packSha256`. `at` then sets `denied` on the answer (`PolicyDenied`: the reason from `deniedReason`, the
+  decision and its `policyDenial`). If even the decision cannot be built (for example a bad id), `denied`
+  has the reason only, and `fail()` marks the evidence incomplete. Nothing throws. The other layers and
+  boundaries stay `observe`. `refuseByPolicy` (`execute.ts`) is the one place that acts on `denied`: it sets
+  `accessFailed` (so `on_failure` is not followed), records `RunRecorder.stepDenied` (`step.denied` with
+  kind `policy`) when there is a decision, and logs the reason. The shell step checks before `pushLogFor` and
+  the bot token; the agent checks at `repository.access` and before each writing session; the approval
+  checks at `approval.consume` and records no `step.approved`. `RunPolicy.mandatoryUnusable` stops the
+  run from fetching the bot token up front. No push check is needed: `push` is not privileged, and the
+  sign-in was already refused at `repository.access`.
+- **Break-glass (#626).** `runPolicy` passes `RunPolicy` a reader, `() => activeBreakGlass(home ?? dataHome())`
+  (`breakGlass` option; the default `() => undefined` fails closed). `RunPolicy.outage(id, decision, boundary)`
+  is called for each mandatory pack's decision, in `decide` and in the `catch` path of `at`. It acts only on
+  an `enforce` `deny` with `policy.unavailable` or `policy.invalid`, and only when the run has a recorder. Then
+  the reader is asked; a throw or `undefined` keeps the denial. The replacement is `warn` with
+  `policy.break-glass`, the same policy id, version `unknown`, the input hash of the denial, and no pack hash
+  or rule. `at` keeps it only after `report` has recorded it: `RunRecorder.policyDecided` returns whether the
+  event was written (`put` too). If it was not, the original denial stands, `denied` is set and the log says
+  so. Rule decisions, the other layers and the other boundaries never call the reader. The run log line is
+  `! policy: break-glass active until …`, and the policy line ends with `— break-glass: the step goes on`.
+  `PolicyDecisionSchema` accepts `policy.break-glass` only with `outcome: "warn"` and `mode: "enforce"`, and
+  `NO_RULE_REASONS` and `NO_PACK_REASONS` include it. The decision version is unchanged, so an older build
+  refuses a run that has it. `breakGlassWatch(log, now)` (`policy-break-glass.ts`) is the server's watch: it runs
+  at startup and every 60 s on an unref'd timer, logs while a record is active (first check, a new `startedAt`,
+  every 15 minutes), writes the `expired` line through `endExpiredBreakGlass` on expiry and logs when the record
+  is gone. It never throws. Counting break-glass decisions in the SLO input (`slo-input.ts`) is not done yet.
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
@@ -726,15 +770,72 @@ are `skipped`):
 part 1 of 3 of #155). It is a second, smaller view of what the evidence already records; it does not replace
 the evidence and nothing depends on it.
 
-- **Envelope.** `envelope.ts` defines `TelemetryEventSchema`: `version` 1, a strict object with `id`, `time`,
+- **Envelope.** `envelope.ts` defines `TelemetryEventSchema`: `version` 2 (`TELEMETRY_VERSION`), a strict object with `id`, `time`,
   `kind` and `name` required, and optional labels that reuse the identity schemas of `evidence/identity.ts`,
   `evidence/schema.ts` and `policy/schema.ts`. The kind and name must match (`run`, `step`, `model`, `policy`,
   `tool`, `delivery`, `pull_request`, `watcher`). There is no free-text field, and unknown fields are refused.
+  Version 2 adds the `run.measured` name and the `measures` object (see below); `measures` is present exactly for `run.measured`.
   The id is `ev:<run>:<evidence id>` (with `:pr` for the pull request of `run.completed`) or `tm:<32 hex>`.
 - **From evidence.** `telemetryFromEvidence` maps every evidence body to at least one draft; it never throws.
   A line that was written gives the evidence id and `seq`; a body that was not written (the stream has
   stopped) gets a random `tm:` id and no `evidence`. `RunRecorder.put` takes one time for both the append and
   the telemetry, so the two agree. `watcherRef` gives the watcher part of an event.
+- **Live events (#585, part 2 of 3 of #155).** Events with no evidence line are written by `emitLiveTelemetry(kind, name, fields)`
+  in `telemetry.ts`. It gets a new `tm:` id and the time now, returns at once when telemetry is off, and never throws.
+  Its `name` is typed against `TELEMETRY_NAMES[kind]`, so a wrong kind/name pair fails the build. Sources:
+  `delivery.push_attempted` (`recordStep`, from the push log), `tool.called` (`onTool` of `runClaude`, Claude Code
+  only, name only), `watcher.checked` / `watcher.failed` / `watcher.queued` (`Watcher`) and `pull_request.feedback`
+  (`Watcher.submit` for a PR). Each label (repository, branch, tool name, actor) is checked with its own schema and
+  left out when it fails, so one bad label does not drop the event.
+- **Measures (#612, part 1 of 2 of #156).** `src/monitor/measures.ts` holds `MEASURES`, the catalogue of 12 measures. Each
+  entry has a `name`, a `unit`, an `owner` (`admin` or `repository owner`, a role and never an account) and a
+  `decision` (the detector or the setting it informs). A test fails when an entry lacks an owner or a decision.
+  `measureRun(run, events)` is pure: it reads no files, calls no AI and never throws. Per step it gives duration,
+  retries, tokens, cost, denials, context size and tool latency. Per run it gives queue time (`run.queued` to the
+  first `run.started`), stops and resumes, approval latency (approval `step.started` or the stop at the approval, to
+  `step.approved` or `step.denied`), policy outcomes (one count per outcome, and `policy.unavailable`/`policy.invalid`
+  together) and the pull-request result. A missing source leaves its measure out. `readRunEvents(runDir, runId)` reads
+  `evidence.jsonl` loosely: an unreadable line is skipped. `emitRunMeasured(run)` writes one `run.measured` event
+  after evidence finalization in `finish`, `cancelWaitingRun` and `cancelStoppedRun`. Its `measures` object is
+  `TelemetryMeasuresSchema`: numbers ≥ 0 only, all optional, strict. It is the sums and maxima of the steps and the
+  run's own numbers. OTLP flattens these numbers on its own.
+  - **Tool latency.** `runClaude` times each call from its `tool_use` to its `tool_result` (`streamMeter`, whole ms).
+    `onTool(name, durationMs)` sends `tool.called` with `durationMs` when the result arrives. A call that never gets a
+    result is sent at the end of the session without it. `StepRecord.tools` holds `calls`, `totalMs` and `maxMs`.
+  - **Context size.** `StepRecord.contextTokens` is the largest input of one model turn (input, cache read and cache
+    creation tokens from the `usage` of each assistant message). Claude steps only; Codex has none.
+  - **Retries.** Tool times and context size are kept over all tries of an agent step, so a retry never hides an
+    earlier, slower call or larger context.
+- **Outcomes (#617, part 1 of 4 of #157).** `src/outcomes.ts` holds `OUTCOME_DEFINITIONS`, the ten outcome measures, and
+  `computeOutcomes(runs, facts, window)`, which is pure and never throws (on an error or a bad window every measure is
+  `null`). `src/outcome-facts.ts` turns one run's events into small facts (`outcomeFactsOf`, pure). `OutcomeFactsCache`
+  reads `evidence.jsonl` for them. Each definition has a decision sentence and the detector or setting it informs.
+  - **Delivered.** A run is delivered when it succeeded and a `push` policy decision has an outcome other than `deny`.
+    So merge rate is "pushed work": a merge done by hand on GitHub is not seen. Observe mode is literal: an observed
+    `deny` at `push` is not a delivery, unless another decision at that push allows it.
+  - **Window.** Runs count by `finishedAt` in `[from, to)`. Work items count by the end of their first delivery
+    (the earliest ended, delivering, evidenced run of the item). Issue-to-PR time starts at the earliest
+    `run.queued` (or start) of the item's runs up to that delivery. Rework counts delivered items with a later run
+    on the same item that ends before `to`. Returning users compare the owners of the window with the owners of
+    the previous window.
+  - **Exclusions.** Refinement runs are excluded everywhere and are never open. Open runs (not ended, started in the
+    window) only count in `open`. Runs whose evidence is missing, too old, too large or a link are excluded from the
+    measures that need evidence; cost, resumes and returning users do not need it.
+  - **Unit of `excluded`.** Always runs, never work items, so the counts can be compared across measures. A run
+    that is excluded for two reasons counts once.
+  - **Pairing.** Every speed (`ms`) and cost (`usd`) measure lists `pairedWith` measures from the quality, rework,
+    policy and user categories, so that a faster or cheaper result is always read with its effect on quality.
+    A test checks this for every catalogue entry.
+  - **Cache limits.** `OutcomeFactsCache` holds 2000 finished entries (the least recently used goes first). A
+    run is read only when it has settled (`SETTLE_MS`, 2 minutes after `finishedAt`), at most once per run folder,
+    run id and `updatedAt`, and calls that come while the read runs share it. The read uses the same guards as the
+    SLO input: no links (`O_NOFOLLOW`) and no file over `MAX_EVIDENCE_BYTES` (16 MiB). The cache keeps the facts,
+    never the events. The manifest and the incomplete marker are checked on every call, so a late file shows up.
+  - **Owners.** The definition texts and the owners are a proposal, reviewed by the owner in the pull request.
+- **Push log.** The pre-push hook already appends `<branch>\t<remote url>` to `FACTORY_PUSH_LOG` before its checks, so a
+  refused push is logged too. `pushLogFor` returns that file also when telemetry is on and the protected-branch or
+  secret-scan hook is installed. Hook installation is unchanged on purpose: `core.hooksPath` replaces the repository's
+  own git hooks, so turning it on for telemetry would change every run in every repository.
 - **Privacy.** `privacy.ts` (`privateTelemetry`) runs three checks, all closed. `id` and `runId` must not
   change under `scrub` (`identity`). Each redactable label is checked on its own with the stored credentials
   and `help.sensitive_patterns`; a label that changes is removed and listed in `redacted`. The canonical line is
@@ -748,8 +849,8 @@ the evidence and nothing depends on it.
   `emitTelemetry` validates, checks and writes each event, and never throws. A drop is counted and each reason
   (`invalid`, `privacy`, `identity`, `write`) is logged once, in fixed words, through `DROP_WORDS`.
   `resetTelemetry` is for tests.
-- **Wiring.** `runFlow` and `resumeRun` call `configureTelemetry` right after the config is loaded; the server does
-  it after `readConfig()` and on every reload. With `telemetry.local: false` nothing is opened and no folder is made.
+- **Wiring.** `runFlow` and `resumeRun` call `configureTelemetry` right after the config is loaded; `scf watch` does
+  it right after `loadConfig()` (with its log line); the server does it after `readConfig()` and on every reload. With `telemetry.local: false` nothing is opened and no folder is made.
 - **OTLP exporter (#586, part 3 of #155).** `otlp.ts` sends the same events as OTLP/HTTP JSON logs. It is made
   only when `telemetry.otlp.enabled` is true and has an endpoint, and it gets only events that passed the schema
   and the privacy check, so it adds no new field. `otlpLogsRequest` maps each event to a log record: the time as

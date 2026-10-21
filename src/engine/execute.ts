@@ -12,12 +12,14 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { claimAfterResolve } from "./release-claim.js";
 import { readRunOutputs } from "./run-outputs.js";
 import { shortEnv,shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
-import type { Actor, StepIdentity } from "../evidence/identity.js";
+import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } from "../evidence/identity.js";
+import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
-import { drainPushLog, pushLogFile, repositoryFact, type RunPolicy } from "./policy-hooks.js";
+import { drainPushLog, pushLogFile, repositoryFact, type PolicyDenied, type RunPolicy } from "./policy-hooks.js";
 import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 
 /** Shell commands may only template trusted values; task and outputs go via env. */
@@ -57,7 +59,7 @@ export interface Engine {
   summary: RunSummary;
   config: Config;
   baseEnv: Record<string, string>;
-  /** The bot's name and token (asked once per run). Only for steps that keep the machine's login. */
+  /** The bot's name and token (asked once per run). Only for steps that keep the machine's login. Not fetched up front when a mandatory policy cannot be used. */
   botEnv: () => Promise<Record<string, string>>;
   /** Whether this run may take the hotfix path (see hotfixState); "off" when unset. */
   hotfix?: "on" | "off" | "other";
@@ -80,7 +82,7 @@ export interface Engine {
   decision?: ApprovalDecision & { stepId: string };
   /** Writes the evidence events of the run; it never throws. Absent: no evidence is written. */
   evidence?: RunRecorder;
-  /** Asks the baseline and the configured policy packs at the boundaries of the run (observe mode); always there for a run started by the engine. */
+  /** Asks the baseline and the configured policy packs at the boundaries of the run (observe mode; a mandatory pack that cannot be used denies privileged boundaries, see `refuseByPolicy`); always there for a run started by the engine. */
   policy?: RunPolicy;
   /** Evidence only: who asked for this start or resume (and so who decided at an approval step). */
   actor?: Actor;
@@ -92,7 +94,7 @@ export interface ApprovalDecision {
   note?: string;
 }
 
-export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "skills" | "skillCatalogue">;
+export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue">;
 
 export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">): Record<string, string> {
   const hotfix = engine.hotfix ?? "off";
@@ -136,12 +138,29 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     skills_digest: res.skills?.digest ?? "",
     visit,
   };
+  if (!scope.prefix) {
+    try {
+      const line = claimAfterResolve({ flow: engine.summary.flow, stepId: step.id, ok: res.ok, runDir: engine.summary.runDir, runId: engine.summary.runId, vars: scope.ctx.vars });
+      if (line) engine.log(line);
+    } catch (e) {
+      engine.log(`  release commit claim failed: ${(e as Error).message}`);
+    }
+  }
   const outputs = readRunOutputs(engine.summary.runDir, engine.log);
   if (outputs) engine.summary.outputs = { ...engine.summary.outputs, ...outputs };
   engine.save();
   engine.evidence?.stepEnded(rec);
   const identity = stepIdentity(step, scope.prefix, visit);
-  engine.policy?.pushes(identity, drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit)));
+  const pushed = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
+  engine.policy?.pushes(identity, pushed);
+  for (const p of pushed) {
+    emitLiveTelemetry("delivery", "delivery.push_attempted", {
+      runId: engine.summary.runId,
+      step: identity,
+      ...(p.repository && RepositorySchema.safeParse(p.repository).success ? { repository: p.repository } : {}),
+      ...(GitIdentitySchema.shape.branch.safeParse(p.branch).success ? { branch: p.branch } : {}),
+    });
+  }
   engine.policy?.at(
     "step.after",
     {
@@ -159,9 +178,14 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   return rec;
 }
 
-/** Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG); undefined when the folder can't be made. */
+/**
+ * Where the pre-push hook logs the pushes of this visit of a step (FACTORY_PUSH_LOG). Undefined without policy packs,
+ * unless telemetry is on and the protected-branch/secret-scan hook is installed anyway; the hook is never installed for this.
+ * Also undefined when the folder can't be made.
+ */
 export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">, visit: number): string | undefined {
-  if (!engine.policy) return undefined;
+  const hook = engine.config.protected_branches.length > 0 || engine.config.secret_scan;
+  if (!engine.policy && !(telemetryEnabled() && hook)) return undefined;
   const file = pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit);
   try {
     mkdirSync(dirname(file), { recursive: true });
@@ -175,6 +199,14 @@ export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">,
 export function beginStep(engine: Engine, scope: Scope, step: Pick<Step, "id" | "type">, identity: StepIdentity): void {
   engine.evidence?.stepStarted(identity);
   engine.policy?.at("step.before", { repository: repositoryFact(scope.ctx.vars), step: step.id }, identity);
+}
+
+/** A mandatory policy cannot be used at a privileged boundary: the step is refused and the run ends there (`on_failure` is not followed). */
+export function refuseByPolicy(engine: Engine, step: StepIdentity, denied: PolicyDenied): StepResult {
+  engine.accessFailed = true;
+  if (denied.denial) engine.evidence?.stepDenied(step, denied.denial);
+  engine.log(`    ! ${denied.reason}`);
+  return { ok: false, output: denied.reason, error: denied.reason };
 }
 
 /** Log file of the step that runs after `historyLength` finished steps. */
@@ -217,14 +249,16 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       const holds = access?.kind === "token" || access?.kind === "app" || access?.kind === "key";
       const iso = stepIsolation(engine, ctx.vars, holds);
       if (iso && "refused" in iso) return refuse(iso.refused);
-      // The step works in the repository's checkout, with a sign-in or without one (policy: observe only).
-      engine.policy?.repository(stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1), {
+      // The step works in the repository's checkout, with a sign-in or without one (policy: a mandatory policy that cannot be used stops it).
+      const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
+      const asked = engine.policy?.repository(identity, {
         repository: repositoryFact(ctx.vars),
         step: step.id,
         credential: holds ? "repository" : !iso ? "machine" : "none",
         isolated: Boolean(iso),
         shippedFlow: engine.hotfix === "on" ? true : undefined,
       });
+      if (asked?.denied) return refuseByPolicy(engine, identity, asked.denied);
       const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
       if (pushLog) env.FACTORY_PUSH_LOG = pushLog;
       if (!iso) Object.assign(env, await engine.botEnv()); // nothing is made yet, so a throw leaves nothing behind

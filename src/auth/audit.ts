@@ -49,6 +49,9 @@ export const EVENT_ACTIONS = [
   "help-ask",
   "help-delete",
   "help-export",
+  "policy-restore",
+  "policy-break-glass-start",
+  "policy-break-glass-end",
 ] as const;
 export type EventAction = (typeof EVENT_ACTIONS)[number];
 export const TARGET_MAX = 255;

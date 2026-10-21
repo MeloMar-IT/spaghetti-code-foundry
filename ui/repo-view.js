@@ -9,7 +9,8 @@ import {
   appBlock, connectionLines, connectionStatus, fillRuns, installLink, keyBlock, loadActiveRuns, loadFailed,
   newKey, readyView, remove, repoDialog, repoWebUrl, test,
 } from "./repos.js";
-import { loadingState, staleNote } from "./states.js";
+import { outcomesSection } from "./outcomes.js";
+import { errorState, explainError, loadingState, staleNote } from "./states.js";
 
 export const NO_REPO = "No such repository.";
 
@@ -100,10 +101,37 @@ function danger(ctx) {
     h("button", { class: "danger", "data-action": "remove", onClick: ctx.act.remove }, "Remove"));
 }
 
+/** The lower-case GitHub "owner/name" of an address, read like the server does (https, ssh, "git@host:path", "owner/name"; repeated ".git" dropped); "" for another host. */
+export function githubOf(url) {
+  const t = String(url ?? "").trim();
+  let host;
+  let path;
+  const schemed = /^(?:https|ssh):\/\/(?:[^@/:]+@)?([^/:@]+)(?::\d+)?\/(.+)$/i.exec(t);
+  const scp = /^git@([^\s:/@]+):\/?(.+)$/i.exec(t);
+  if (schemed) [, host, path] = schemed;
+  else if (scp) [, host, path] = scp;
+  else if (/^[^\s/:@]+\/[^\s/:@]+$/.test(t)) [host, path] = ["github.com", t];
+  if (!host || host.toLowerCase() !== "github.com") return "";
+  path = path.replace(/\/$/, "");
+  while (path.length > 4 && /\.git$/i.test(path) && !/\/\.git$/i.test(path)) path = path.slice(0, -4);
+  path = path.toLowerCase();
+  return /^[a-z0-9][a-z0-9-]{0,38}\/[a-z0-9._-]{1,100}$/.test(path) && !path.endsWith("/.") && !path.endsWith("/..") && path !== "owner/repo" ? path : "";
+}
+
+const outcomesNote = (what, e, retry) =>
+  errorState(explainError(e, { what: `Could not load ${what}.`, safe: "The rest of the page is shown." }), { onRetry: retry });
+
+function outcomes(ctx) {
+  const name = githubOf(ctx.repo.url);
+  if (!name) return h("p", { class: "muted" }, "Outcomes are measured for GitHub repositories only.");
+  return ctx.part(`outcomes:${name}`, () => outcomesSection({ load: api.outcomes, note: outcomesNote, repo: name, admin: ctx.viewerAdmin, embedded: true })).el;
+}
+
 /** The sections of the view, in order: { id, title, tone?, show(ctx), draw(ctx) }. "danger" stays last; new sections go before it. */
 export const SECTIONS = [
   { id: "overview", title: "Overview", show: () => true, draw: overview },
   { id: "connection", title: "Connection", show: () => true, draw: connection },
+  { id: "outcomes", title: "Outcomes", show: () => true, draw: outcomes },
   { id: "danger", title: "Dangerous actions", tone: "fail", show: () => true, draw: danger },
 ];
 
@@ -114,10 +142,16 @@ const OWN = { load: async (id) => ({ repo: (await api.repos()).find((r) => r.id 
  * The view of one repository (`#/repos/:id`). `onName` gets the name once loaded; `nav` changes the address.
  * `source.load(id)` resolves { repo, foreign?, extra?, back? } (`foreign`: another account's repository, so only what an
  * admin may do there is offered; `back`: { label, href }); the source may also have `foreign(repo)`, `back(repo)` and `keep` (record keys that the answer of the
- * authentication call, which lacks them, must not drop). `attention` says what needs attention. Returns a cleanup.
+ * authentication call, which lacks them, must not drop). Sections get `ctx.viewerAdmin` (the viewer's own role, unlike `ctx.admin`)
+ * and `ctx.part(key, make)` (the same object for a key on every redraw). `attention` says what needs attention. Returns a cleanup.
  */
 export async function renderRepo(main, { id, admin = false, readOnly = false, onName, nav = (hash) => { location.hash = hash; }, sections = SECTIONS, source = OWN, attention = repoAttention } = {}) {
   const mine = ++generation;
+  const parts = new Map(); // pieces that keep their state over redraws, by key
+  const part = (key, make) => {
+    if (!parts.has(key)) parts.set(key, make());
+    return parts.get(key);
+  };
   let seq = 0; // only the newest fetch draws
   const state = { repo: null, extra: undefined, options: undefined, at: null, stale: false, notice: null, testError: undefined, runs: undefined, pending: null };
   const live = () => mine === generation && onRepo(id);
@@ -203,7 +237,7 @@ export async function renderRepo(main, { id, admin = false, readOnly = false, on
     const asAdmin = foreign ? repo.account?.role === "admin" : admin;
     const att = attention(repo, { admin: asAdmin, options: state.options });
     const setRepo = (row) => { if (row?.id === state.repo?.id) state.repo = row; };
-    const ctx = { repo, admin: asAdmin, readOnly, options: state.options, runs: state.runs, testError: state.testError, att, act, foreign, extra: state.extra, reload, once, setRepo };
+    const ctx = { repo, admin: asAdmin, readOnly, options: state.options, runs: state.runs, testError: state.testError, att, act, foreign, extra: state.extra, reload, once, setRepo, viewerAdmin: admin, part };
     mount(main,
       pageHeader({ title: repoName(repo), back: state.back ?? source.back?.(repo) ?? BACK, meta: [pill(att)] }),
       state.stale ? staleNote(state.at, { failed: true, onRetry: reload }) : null,

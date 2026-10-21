@@ -57,6 +57,10 @@ try {
       throw new Error(`the settings cannot be read, so the names of secret variables are not known: ${e.message.split("\n")[0]}`);
     }
     const plan = JSON.parse(readFileSync(planFile, "utf8"));
+    if (plan.skip) {
+      console.log(`skipped: ${plan.skip}`);
+      process.exit(0);
+    }
     const stop = new AbortController();
     for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, () => stop.abort());
     const ok = await runRelease({

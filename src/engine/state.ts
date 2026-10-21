@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
@@ -28,6 +29,10 @@ export interface StepRecord {
   /** The effort the agent step ran with, when one was set (by the flow or by the analyst). Absent on older runs. */
   effort?: string;
   tokens?: { input: number; output: number };
+  /** Tool calls of this agent step and the time they took (whole ms), added up over all tries. Claude steps only; absent on Codex, shell and older runs. */
+  tools?: { calls: number; totalMs: number; maxMs: number };
+  /** The largest input of one model turn (input + cache read + cache creation tokens), the largest over all tries. Claude steps only; absent on Codex, shell and older runs. */
+  contextTokens?: number;
   /** The agent hit a usage/rate limit and no fallback model could take over. */
   limited?: boolean;
   /** The AI service could not be reached at all (the limit flag is set so the run pauses). */
@@ -356,6 +361,17 @@ export function loadRun(runsDir: string, runId: string): RunSummary | undefined 
   const p = runFile(join(runsDir, runId));
   if (!existsSync(p)) return undefined;
   return JSON.parse(readFileSync(p, "utf8")) as RunSummary;
+}
+
+/** Like loadRun, but reads with fs/promises so the event loop stays free. A missing run.json gives undefined. */
+export async function loadRunAsync(runsDir: string, runId: string): Promise<RunSummary | undefined> {
+  if (!/^[\w-]+$/.test(runId)) return undefined;
+  try {
+    return JSON.parse(await readFile(runFile(join(runsDir, runId)), "utf8")) as RunSummary;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw e;
+  }
 }
 
 export function listRunIds(runsDir: string): string[] {

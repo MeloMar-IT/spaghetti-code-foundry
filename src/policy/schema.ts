@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { PolicyIdentitySchema, RelativePathSchema, RunIdSchema, Sha256Schema, StepIdSchema, TimeSchema } from "../evidence/identity.js";
 import { ReasonCodeSchema, RuleReasonCodeSchema, type ReasonCode } from "./reasons.js";
-import { POLICY_DECISION_VERSION, POLICY_INPUT_VERSION, POLICY_PACK_VERSION } from "./version.js";
+import { POLICY_DECISION_VERSION, POLICY_INPUT_VERSION, POLICY_PACK_VERSION, type POLICY_PACK_VERSIONS } from "./version.js";
 
 /**
  * The three policy contracts. Types and schemas only: nothing here reads a file, asks a model or looks at a clock.
@@ -163,7 +163,7 @@ const slug = (what: string) => z.string().regex(/^[a-z0-9][a-z0-9._-]{0,99}$/, `
 const unique = <T>(list: readonly T[]) => new Set(list).size === list.length;
 
 /** One rule: at these boundaries, when these conditions hold, this is the outcome and this is why. */
-export const PolicyRuleSchema = z
+export const PolicyRuleV1Schema = z
   .object({
     /** The name of the rule inside its pack: unique there, and not given to another rule in a later version. */
     id: slug("a rule id"),
@@ -174,30 +174,41 @@ export const PolicyRuleSchema = z
     reasonCode: RuleReasonCodeSchema,
   })
   .strict();
+
+/** A rule of a version 2 pack: a rule of version 1, and it may have its own mode. A rule without mode has the mode of its pack. */
+export const PolicyRuleSchema = PolicyRuleV1Schema.extend({ mode: z.enum(MODES).optional() }).strict();
 export type PolicyRule = z.infer<typeof PolicyRuleSchema>;
+
+/** The pack object of one version of the format, built from the rule of that version. */
+const packSchema = <V extends number, R extends z.ZodType<{ id: string }>>(version: V, rule: R) =>
+  z
+    .object({
+      version: z.literal(version),
+      policy: PolicyIdentitySchema,
+      mode: z.enum(MODES),
+      rules: z.array(rule).max(MAX_RULES),
+      defaultOutcome: z.enum(["allow", "deny"]),
+    })
+    .strict()
+    .superRefine((pack, ctx) => {
+      const seen = new Set<string>();
+      pack.rules.forEach((r, i) => {
+        if (seen.has(r.id)) ctx.addIssue({ code: "custom", path: ["rules", i, "id"], message: "the same rule id is used twice" });
+        seen.add(r.id);
+      });
+    });
+
+/** A pack of version 1: no rule has a mode. It is read and hashed as written, never rewritten to version 2. */
+export const PolicyPackV1Schema = packSchema(1, PolicyRuleV1Schema);
 
 /**
  * One version of one policy. `version` is the version of this format; `policy` is the id of the pack and the version
  * its author gave its contents (the same pair evidence carries). The rules are read from the first to the last and the
  * first one that applies decides; `defaultOutcome` decides when none does.
  */
-export const PolicyPackSchema = z
-  .object({
-    version: z.literal(POLICY_PACK_VERSION),
-    policy: PolicyIdentitySchema,
-    mode: z.enum(MODES),
-    rules: z.array(PolicyRuleSchema).max(MAX_RULES),
-    defaultOutcome: z.enum(["allow", "deny"]),
-  })
-  .strict()
-  .superRefine((pack, ctx) => {
-    const seen = new Set<string>();
-    pack.rules.forEach((rule, i) => {
-      if (seen.has(rule.id)) ctx.addIssue({ code: "custom", path: ["rules", i, "id"], message: "the same rule id is used twice" });
-      seen.add(rule.id);
-    });
-  });
-export type PolicyPack = z.infer<typeof PolicyPackSchema>;
+export const PolicyPackSchema = packSchema(POLICY_PACK_VERSION, PolicyRuleSchema);
+/** A pack of any version this build reads: a version 1 rule fits, since the mode of a rule is optional. */
+export type PolicyPack = Omit<z.infer<typeof PolicyPackSchema>, "version"> & { version: (typeof POLICY_PACK_VERSIONS)[number] };
 
 /** One question. `runId` says which run asks; `facts` is everything a rule may look at. */
 export const PolicyInputSchema = z
@@ -211,9 +222,9 @@ export const PolicyInputSchema = z
 export type PolicyInput = z.infer<typeof PolicyInputSchema>;
 
 /** Reasons that are not the work of a rule, so a decision with one of them names no rule. */
-export const NO_RULE_REASONS: readonly ReasonCode[] = ["policy.no-rule-matched", "policy.invalid", "policy.unavailable"];
-/** Reasons for which no pack was read, so a decision with one of them has no pack hash. */
-export const NO_PACK_REASONS: readonly ReasonCode[] = ["policy.invalid", "policy.unavailable"];
+export const NO_RULE_REASONS: readonly ReasonCode[] = ["policy.no-rule-matched", "policy.invalid", "policy.unavailable", "policy.break-glass"];
+/** Reasons for which no pack was read or used, so a decision with one of them has no pack hash. */
+export const NO_PACK_REASONS: readonly ReasonCode[] = ["policy.invalid", "policy.unavailable", "policy.break-glass"];
 /** Reasons that always deny. */
 export const DENY_ONLY_REASONS: readonly ReasonCode[] = ["policy.input-incomplete", "policy.invalid", "policy.unavailable"];
 
@@ -227,7 +238,7 @@ export const PolicyDecisionSchema = z
     policy: PolicyIdentitySchema,
     /** The SHA-256 of the pack in its canonical form. Absent only when no pack could be read (see NO_PACK_REASONS). */
     packSha256: Sha256Schema.optional(),
-    /** The mode of the pack: whether this decision is to be acted on or only recorded. */
+    /** The mode of the rule that decided, or of the pack when the rule has none or no rule decided: whether this decision is to be acted on or only recorded. */
     mode: z.enum(MODES),
     /** The moment in the run the question was about (the `boundary` of the input). */
     boundary: z.enum(BOUNDARIES),
@@ -247,6 +258,10 @@ export const PolicyDecisionSchema = z
     if (!NO_RULE_REASONS.includes(d.reasonCode) && d.rule === undefined) add("rule", "is missing: this reason code comes from a rule");
     if (NO_PACK_REASONS.includes(d.reasonCode) !== (d.packSha256 === undefined)) add("packSha256", "is absent exactly when the pack could not be read");
     if (DENY_ONLY_REASONS.includes(d.reasonCode) && d.outcome !== "deny") add("outcome", 'must be "deny" with this reason code');
+    if (d.reasonCode === "policy.break-glass") {
+      if (d.outcome !== "warn") add("outcome", 'must be "warn" with this reason code');
+      if (d.mode !== "enforce") add("mode", 'must be "enforce" with this reason code');
+    }
     if (d.reasonCode === "policy.no-rule-matched" && d.outcome !== "allow" && d.outcome !== "deny") add("outcome", 'must be "allow" or "deny" when no rule matched');
   });
 export type PolicyDecision = z.infer<typeof PolicyDecisionSchema>;

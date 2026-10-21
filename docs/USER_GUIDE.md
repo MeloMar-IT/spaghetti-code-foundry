@@ -216,6 +216,8 @@ The flow `release-build` builds the release files of any repository on the Found
 
 **Start it.** By hand: `scf run release-build --repo <owner/name> [--ref <branch, tag or sha>]`. `--repo` takes `owner/name` when no folder of that name exists here; it sets the variable `github_repo`. `--ref` sets the variable `ref` (default `main`). In the web UI, start `release-build` and fill in the repository and the ref. The flow clones the repository and resolves the ref to one commit. It finds the recipe for that commit (see the next paragraph). A repository without a recipe fails at once with "this repository has no release-build recipe", and the message says whether the repository is registered in the Foundry.
 
+**Or automatically.** A schedule watcher with the option `release_build` starts this flow by itself after each new commit on main (see [Sources](#sources)). Those runs skip a commit that was built, skipped or seen before, and say so in the run log.
+
 **Where the recipe comes from.** The file `.factory/release-build.yaml` at the commit wins. When the commit has no such file, the recipe stored in the Foundry settings of the repository is used: an admin sets it on the admin page (Administration → All repositories, **Edit**) or with `PUT /api/admin/repos/<id>/settings`, field `releaseRecipe`. Use it for a repository that should not contain a Foundry file. The run summary says which one was used: `recipe: .factory/release-build.yaml` or `recipe: stored in the Foundry settings`. The repository is matched by `owner/name` in any letter case, with or without `.git`. If the repository is registered under two accounts with different stored recipes, the run fails and an admin must keep one. Only an admin can store a recipe, and a stored recipe runs commands on the Foundry machine just like a file in the repository, so store only what you would commit.
 **Who may build which ref.** An admin may build any ref. A user may build only the repository's default branch: its `mainBranch` setting, else `main`. For any other ref, a branch, a tag or a commit id (even one that is on the default branch), the server refuses the start with a 403 that names the ref. This also holds for a published flow that fixes the ref. An admin who starts a run as a user (`likeUser`) follows the user rule.
 
@@ -436,7 +438,7 @@ Home asks again every 30 seconds.
 - **Owner (admins):** an item that has a run shows the owner's name, `deleted user` when the account is gone, and nothing otherwise. Users see no owner name.
 - **Order:** the item that holds back the most stories comes first, then the one that waits longest. Items are grouped by repository.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
-- **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. Runs of older versions have no record of who started them and are treated like watcher runs.
+- **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. A failed automatic release build (see [Sources](#sources)) is titled "Build failed — open the run" and links to its run; Dismiss works as for other failed runs. Runs of older versions have no record of who started them and are treated like watcher runs.
 - **Answer and approve here:** for an item of a watcher, buttons next to the GitHub link do the work. **Show questions** has **Accept all recommendations** (only for questions asked up front) and **Answer…** (a box per question; each needs an answer, and **Use recommendation** fills one in visibly). **Show plan**, **Show split** and **Show request** show the risk and **Approve** / **Reject** (say what to change). A failed item has **Retry** and **Retry with a hint…**. Each action is a normal comment on the issue under the Foundry's GitHub login, signed with your name, so replying on GitHub still works. Approve and reject need write access for that login. The item then shows under **Done — continuing**.
 - **Dismiss** hides an item. It stays hidden until its situation changes (a new question, a new approval, a new failure). **Show again** at the bottom brings all dismissed items back. Watcher errors cannot be dismissed. Dismissals are kept in `your-turn.json` in the data folder.
 - **No refresh needed:** the page updates every 5 seconds. When you come back from a GitHub link, the watcher checks GitHub at once. An answer you give elsewhere shows at the next watcher check.
@@ -454,7 +456,7 @@ When you open the app after a break of 30 minutes or more, a strip under the hea
 
 - **Stories done:** the run succeeded and committed the story.
 - **Merged into develop:** the run pushed the story to `develop`. This counts even if a later step failed. A story shows under one of these two lines, from its newest run.
-- **Releases to main:** a release pull request or the rolling Foundry pull request was merged. Other pull requests do not count.
+- **Releases to main:** a release pull request or the rolling Foundry pull request was merged. Other pull requests do not count. A successful automatic release build (see [Sources](#sources)) counts here too, as "release files uploaded" (or "release files uploaded 2 times"), with a link to its draft release.
 - **Failed:** runs that failed. A run that a newer run of the same issue replaced, or that was interrupted, is left out.
 - **Newly waiting for you:** items that started to wait for you since your last visit. The line links to **Needs you** on Home.
 - **Only the newest five** of each line are listed, followed by "+N more".
@@ -1197,8 +1199,9 @@ $ scf evidence verify 20260131-120000-ab12
 
 ### Policy packs in observe mode
 
-A policy pack is a set of rules that is asked at the important moments of a run. In this version the
-answers are only recorded: a run never stops or changes because of a pack.
+A policy pack is a set of rules that is asked at the important moments of a run. The answers are
+recorded, and a run does not stop because of them, with one exception: a mandatory pack that cannot be
+read or evaluated stops the steps that sign in or write (see [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read)).
 
 - **The baseline.** The Foundry has a built-in pack, `foundry.baseline`. It is asked at every boundary of
   every run, with no setting. Its version is the Foundry's version. It has four rules:
@@ -1224,6 +1227,11 @@ answers are only recorded: a run never stops or changes because of a pack.
   A repository key is `owner/name` in lower case. Each list has at most 20 ids, with no id twice in
   a list. Only `mode: observe` is accepted. A pack in `enforce` mode is refused for now. The settings are
   not in the web interface; an older build rejects the `policy` key.
+- **Pack format.** A pack has `version: 2` (a version 1 pack is still read, and it is never rewritten).
+  Each rule may have its own `mode`: a rule with `mode: observe` is observed while the pack is in
+  `observe`, and a rule without `mode` takes the pack's mode. A rule with `mode: enforce`, or a pack in
+  `enforce`, is refused when the pack is loaded or restored. A `mode` on a rule of a version 1 pack is refused.
+  The baseline writes `mode: observe` on every rule.
 - **Which answer counts.** For each boundary the Foundry takes the most restrictive answer of all packs
   (from least to most restrictive: `allow`, `warn`, `require_approval`, `deny`). On a tie the higher layer wins:
   `mandatory`, then `repositories`, then `packs`. A repository pack can only make things stricter: it
@@ -1240,9 +1248,10 @@ answers are only recorded: a run never stops or changes because of a pack.
   ```
 
   Each answer is also an event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
-- **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack is logged as
-  `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. The run's
-  result is the same as without the pack.
+- **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack (the pack or one of its rules) is logged as
+  `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. For a
+  repository or optional pack, the run's result is the same as without the pack. For a mandatory pack,
+  see [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read).
 - **Pushes.** The Foundry's pre-push hook records each pushed branch, the number of secrets its scan
   found and whether git can find a committer identity. The baseline is asked at `push` only when the
   hook is there: when a branch is protected, the secret scan is on, or packs are configured. With both
@@ -1254,12 +1263,115 @@ answers are only recorded: a run never stops or changes because of a pack.
   An older build cannot read the evidence of a run that has `policy.decided` events, so keep this build
   for those runs.
 
+#### When the mandatory policy cannot be read
+
+A mandatory pack is one in `policy.mandatory`, or the built-in baseline. If that pack is missing, linked,
+not a plain file, not valid JSON, has another id, is set to `mode: enforce` (on the pack or on a rule), is too large, or cannot be
+evaluated, the Foundry stops the steps that need trust. It does not carry on quietly.
+
+- **What is stopped.** A step that signs in to the repository with the machine's login or a stored
+  repository token, an agent step that writes, and an approval that is used. Everything else runs as
+  before: the start and end of a run, the steps before and after each step, pushes, steps with no
+  sign-in, and the workspace. An isolated read-only agent step and an isolated shell step without
+  `repo_access` run too. An isolated agent step that writes is stopped.
+- **What is not stopped.** A broken or missing pack in `policy.repositories` or `policy.packs` never stops
+  a step. A valid mandatory pack whose rule denies is only recorded.
+- **What you see.** The run ends `failed` and the step does not run, unless an admin's
+  [break-glass](#break-glass) is active. `on_failure` is not followed. The error and the log say:
+
+  ```text
+  mandatory policy org-overlay cannot be used (policy.unavailable): repository.access is denied
+  ```
+
+  The live log also has the load line (`! policy org-overlay: … — recorded as policy.unavailable; this
+  mandatory policy denies steps with a sign-in and writing agents`), and the policy line of the step ends
+  with `— enforced: the step is stopped`. The evidence has a `step.denied` event with the policy's id and
+  version `unknown`, and it still verifies. No token is fetched when the run starts, so a run that is
+  stopped this way does not use the bot's sign-in.
+- **What to do.** Fix the file in `policies/<id>.json` (it must be a plain file with valid JSON, the same
+  id, and `mode: observe`), or remove the id from `policy.mandatory` in `config.yaml` if the overlay is
+  no longer wanted. A run reads the packs when it starts or resumes, so start the run again after the fix.
+
+#### Restore the last-known-good copy
+
+Each time a run starts, the Foundry saves a copy of every valid mandatory overlay in the data folder, at
+`policies/last-known-good/<id>.json`. The folder is private (mode 0700) and the file is 0600. The copy is
+written in one step, so a crash never leaves a half-written file. The baseline, repository packs and
+optional packs get no copy. An invalid overlay keeps the copy from the last valid start. If a copy cannot
+be saved, the run logs `! policy <id>: the last-known-good copy could not be saved` and goes on.
+
+To put the copy back when `policies/<id>.json` is broken:
+
+1. Run `scf policy restore <id>`. For example, `scf policy restore org-overlay`.
+2. The command checks the copy before it touches `policies/`. It refuses, and writes nothing, when the id
+   is not valid or is `foundry.baseline`, when there is no copy, when the copy is a link or not a plain
+   file, when its SHA-256 does not match the stored one (it was changed), when it is over 1 MiB as compact
+   JSON, or when `policies/<id>.json` is a folder.
+3. If `policies/<id>.json` is valid, the command also refuses. Add `--force` to replace it:
+   `scf policy restore org-overlay --force`.
+4. The copy is written as compact JSON and replaces `policies/<id>.json` with one rename. The file that was
+   there is kept as `policies/<id>.json.replaced-<time>`, for example `org-overlay.json.replaced-2026-10-20T10-11-12Z`.
+   A second backup in the same second gets `-1`, `-2` and so on. An earlier backup is never overwritten.
+5. The command prints `✔ restored policy org-overlay (sha256 …)` and, when a file was kept,
+   `  kept the replaced file as policies/<name>`. It exits 0. A refusal prints `✘` and the reason, and exits 1.
+   The messages do not show the data-folder path or the file contents.
+6. Start the run again. The restore is written to `audit.jsonl` as `policy-restore`, with `result: "ok"`.
+   A refusal after the lock is taken is written as `result: "failed"`. A refused id writes no line.
+
+The SHA-256 check catches a change made by mistake. It is not a signature: someone who can write to
+`policies/` can change the copy and its hash together. Restore only from a copy you trust, and keep the
+`.replaced-<time>` files until you no longer need them.
+
+#### Break-glass
+
+A break-glass is a short, audited exception for a mandatory-policy outage: the policy cannot be used, but
+privileged work must go on until it is fixed. Use it only when the fix cannot wait. It is not a way around
+a policy that works: a rule that denies (for example `secret.detected`) still denies while a break-glass is
+active, and so does any other layer's pack.
+
+- **When it applies.** Only a denial of a privileged step by a mandatory pack that cannot be loaded or
+  evaluated, as described in [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read):
+  the code is `policy.unavailable` or `policy.invalid`. The steps it covers are the ones that step stops: a
+  sign-in with the machine's login or a stored repository token, a writing agent step, and an approval that
+  is used. A denial that has no recorded decision is not covered.
+- **Start it.** On the server machine, give a reason and a duration:
+
+  ```bash
+  scf policy break-glass --reason "org-overlay broken, fix in progress" --for 2h
+  ```
+
+  The reason is required: up to 200 characters, no control characters or line break, and no credential-like
+  text. The duration is required, from `1m` to `4h`. A start is refused while a break-glass is active. If the
+  file has expired, the start first writes the expiry line.
+- **End it early.** `scf policy break-glass --end` ends the active break-glass now and writes its audit line.
+  It exits 1 when none is active.
+- **Limits.** There is no API route and no `config.yaml` key: the record can only be changed on the server
+  machine. A file that is not valid, or is a link, is not an active break-glass, so the steps stay denied.
+- **What changes.** For each covered step, the decision is `warn` with reason `policy.break-glass` instead of
+  `deny`, and the step goes on. The live log has the line `! policy: break-glass active until <expiresAt>
+  (<reason>) — <pack> <code> allowed`, and the policy line of the step ends with `— break-glass: the step goes
+  on`. The evidence has a `policy.decided` event with `outcome: warn`, `reasonCode: policy.break-glass`, version
+  `unknown` and no pack hash, and it verifies. No `step.denied` event is written for that step. The decision
+  must be recorded in the evidence first; if it cannot be, the step is denied as before.
+- **What the server shows.** The server checks the record at startup and once a minute. While the break-glass
+  is active, it logs `! policy: break-glass active until <t> (<reason>) — a mandatory policy that cannot be used
+  does not stop privileged steps` at the first check, for each new break-glass, and every 15 minutes.
+- **What is audited.** Starting writes `policy-break-glass-start` to `audit.jsonl` (the expiry time as the
+  target, the reason as the detail). Ending writes `policy-break-glass-end` with the detail `ended`, `expired`
+  or `invalid`. The reason is only in the audit and the log lines, never in run evidence.
+- **How it ends.** At the expiry time, the next read of the record, or the server's check, writes the
+  `expired` line and removes the record. The server logs `policy: break-glass ended (expired)`, and from then
+  on the steps are denied again: the Foundry fails closed by itself, nothing needs to be reset. A break-glass
+  that is ended with `--end` is logged as `policy: break-glass ended` by the server's next check. If the policy
+  is still broken, the steps that need trust stay stopped. Fix or restore the policy first when you can; see
+  [Restore the last-known-good copy](#restore-the-last-known-good-copy).
+
 ### Lifecycle telemetry
 
 The Foundry writes one short telemetry line for each important fact of a run: a run starting or
 ending, a step starting, retrying, failing or finishing, a model being routed, a policy decision, a
-tool call, a push, a pull request and a watcher check. You can read these lines to see what the
-Foundry does, without opening each run folder.
+tool call, a push, a pull request, a watcher check and the measures of a run that has ended. You can read
+these lines to see what the Foundry does, without opening each run folder.
 
 - **What is recorded.** Names, ids, numbers, times and outcomes. Never a prompt, a model's output, the
   arguments of a tool, an error text, a file's content or a credential. The format has no free-text
@@ -1285,6 +1397,22 @@ Foundry does, without opening each run folder.
   written is not stored. The first time each kind of drop happens, the log shows one line such as
   `! telemetry: the telemetry file could not be written; events are dropped until it can`. The line never
   shows a value.
+- **Push attempts.** A push is recorded only where the protected-branch or secret-scan hook runs, or where a
+  policy pack is set. Those are the only places where the Foundry checks the pushes of a step. A push is an
+  attempt, not a confirmed delivery: a refused push is recorded too, and a step can write that log itself.
+  The repository is shown only for a GitHub remote.
+- **Tool calls.** `tool.called` holds the tool's name only, never its arguments. It is written for Claude
+  Code steps only; Codex steps give none. It also gets `durationMs`, the time from the call to its result.
+  A call that never got a result has no duration.
+- **Run measures.** When a run ends (succeeded, failed or cancelled), one `run.measured` line holds its
+  numbers, and no text: the duration and queue time, the steps, retries, tokens, cost and denials, the largest
+  context of a model turn and the time the tools took, the stops, resumes and approvals (with their waiting
+  times), the policy outcomes, and whether the pull request was delivered. A number that the run does not
+  have is left out. A run that is only stopped or waiting gets no line until it ends. The owner of each
+  measure is an admin or the repository owner, and each one informs a detector or a setting; these are fixed
+  in the code and are not in the web interface.
+- **Watchers.** A watcher records each check (ok, or failed without the error text), each queued run and
+  each pull-request feedback run. `scf watch` writes these too.
 
 #### Send the events to an OpenTelemetry collector
 
@@ -1601,6 +1729,8 @@ running (see [Keep it running](#keep-it-running)). GitHub access uses the `gh` C
 For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h`, `7d`; or set
 **Once a day at** `17:00` with a time zone.
 
+**Build release files after each release.** A schedule watcher has the checkbox **Build release files after each release** (option `release_build`, default off). When it is on, the watcher looks at the head of main at every check, and at least every 5 minutes. A new commit that has a recipe (the file `.factory/release-build.yaml` at the commit, or the recipe stored in the Foundry settings) gives one `release-build` run of the newest commit on main, which then uploads the files to a draft release (see [Build release files on this machine](#build-release-files-on-this-machine)). A new commit without a recipe is only recorded: nothing is built. The first check after you switch the option on only remembers the current commit, so nothing is built for it. Several moves before a build starts give one build, of the newest commit; a queued build is never cancelled. A commit is never built twice, also after a restart: the record is in `release-builds/` in the data folder. A failed build is not retried; start it by hand. A build you start by hand does not count as recorded, so the watcher may build that commit once more. Switching the option off and on keeps the record, so a commit pushed meanwhile is built at the next check.
+
 **Options of an issues watcher.** The form has three groups, collapsed by default; each control shows its default and one sentence on what it does. Only issues watchers show them.
 
 - **Labels:** labels that go first (default `bug`), a text for each status label (working, done, needs info, waiting, failed; default is the Foundry's own name), and labels to remove when a run succeeds.
@@ -1688,6 +1818,11 @@ log; none calls an AI or GitHub.
 | Restart overdue | a new version is installed and the server has not restarted | major | more than 2 hours |
 | Develop is red | the tests after a merge into develop failed one after the other | critical | 2 in a row, looking back 24 hours |
 | Slow step | a step took much longer than its usual time (the times kept for estimates; needs 3 earlier runs and more than 2 minutes) | minor | more than 3 times, 3 times in 24 hours |
+| Policy service failed | policy decisions said the policy was unavailable or invalid (`policy.unavailable`, `policy.invalid`) | major | 1 decision in the last hour |
+| Evidence not finalized | a run ended more than 2 minutes ago with `evidence.jsonl` but no `evidence.json`, or its stream was marked incomplete | major | 1 run in the last 24 hours |
+| Step latency p95 | the p95 of a step's durations, per repository, flow and step, is above the limit (approval and flow steps are not counted) | minor | p95 above 60 minutes, from at least 5 visits, in the last 24 hours |
+| Repeated tool denial | the same tool was refused again and again in one repository | minor | 3 times in the last 24 hours |
+| Abnormal output | a step's output tokens are above 5 times the median of that flow and step, and above 20000 tokens (the median needs 5 visits) | minor | in the last 24 hours |
 | Self-update failed | an update failed and the old version keeps running (major); the new version did not start healthy, the Foundry could not go back, or `self-update.json` cannot be read (critical) | major / critical | always (only when a self-update was tried) |
 
 *Critical* means work has stopped, *major* means work is slowed or wrong, *minor* means wrong but
@@ -1712,6 +1847,11 @@ monitor:
   restart_overdue: { hours: 2 }
   develop_red: { failures: 2, within_hours: 24 }
   slow_step: { factor: 3, times: 3, within_hours: 24 }
+  policy_service_failure: { decisions: 1, within_hours: 1 }
+  evidence_finalization: { runs: 1, within_hours: 24 }
+  step_latency_p95: { minutes: 60, min_visits: 5, within_hours: 24 }
+  repeated_tool_denial: { times: 3, within_hours: 24 }
+  abnormal_output: { factor: 5, min_tokens: 20000, min_samples: 5, within_hours: 24 }
 ```
 
 **What is never a finding:** a run that waits for a person (approval or questions), a usage limit
@@ -1732,6 +1872,14 @@ Notes:
 - Slow step compares with the newest 500 succeeded runs that finished before the last
   `within_hours`, rebuilt about once an hour.
 - The monitor keeps running while a new version waits for the server to restart.
+- The five service-level detectors (policy service failed, evidence not finalized, step latency
+  p95, repeated tool denial, abnormal output) read only local files: `run.json` and the evidence
+  files of the runs in their window. They never read telemetry, so they work with telemetry off or
+  with no collector reachable. Evidence files over 16 MiB are not read; such a run is measured from
+  its `run.json` alone. Each one has an owner: an admin, or the repository owner for the two about
+  tools and output. Their windows are judged by the time of each observation (a decision, the end
+  of a step visit). Evidence not finalized is the only one that looks at ended runs, and only
+  after a settle time of 2 minutes.
 
 Findings are kept in `monitor-findings.json` in the data folder and survive a restart. Each has a
 detector, a fingerprint (the same problem gives the same one), a severity, one sentence, the
@@ -1939,9 +2087,11 @@ happens to each problem.
   the monitor is off, is not running, or no repository is set. The API answers 409 when the
   monitor is off or not running, or the finding has a story, is muted, used its two tries, is
   gone or has no repository; 502 when GitHub fails.
-- **Detectors.** Each detector is listed with what it looks for, its threshold numbers, when it
-  last found something and whether it is muted. Change a number and press **Save**; this changes
-  the setting `monitor.<detector>` like the Settings page.
+- **Detectors.** Each detector is listed with what it looks for, its owner, its threshold, its
+  window, its next action, when it last found something and whether it is muted. The owner is
+  **admin** or **repository owner**; a detector without an owner shows an empty cell. The threshold,
+  window and next action are sentences from the server, and they follow the numbers you set. Change
+  a number and press **Save**; this changes the setting `monitor.<detector>` like the Settings page.
 - **Thresholds and settings.** The Detectors table has one number field per threshold of each
   detector. Below the Mutes, the **Monitor settings** section holds two groups. **Bug stories**: the
   repository (`report_to`), the limits per day and per check, the quiet time after a start and the
@@ -2051,6 +2201,7 @@ watchers:
 | `comment_on_failure` | On by default: post the failure reason and output on the issue |
 | `status_comment` | On by default: keep one status comment on every issue the watcher follows (see "The status comment") |
 | `owner` | Only for watchers in `config.yaml`: the e-mail of the account that owns the watcher's runs and may read and approve them. Empty: the first admin. It must be an account. A watcher of a repository uses the repository's owner |
+| `release_build` | Schedule watchers only. `true`: after each new commit on main that has a release-build recipe, build the release files once (see [Sources](#sources)). Default `false` |
 
 **The issue list.** Each issue watcher check reads the repository's issue list once: open and closed issues, newest first, 100 per GitHub call, at most 2,000 issues (20 calls). Watchers of the same repository share that read. The dependency check uses this list. The Foundry keeps the title, state, labels, links and dependencies of each issue, but no issue text, in the data folder (`issue-lists/`). If the list has more than 2,000 issues, the stored list is marked as cut and older issues are not seen by the dependency check. If the read fails, the check uses the previous way of reading open issues and logs the reason.
 
@@ -3270,6 +3421,8 @@ Errors from the server show in the dialog in plain words. A failed removal shows
 method shows "Needs authentication" for a user. An admin can also choose "The server's own access". The page
 has no per-repository settings. An admin sets them on the **Repositories** page.
 
+**Outcomes on the repository view.** The repository view (`#/repos/<id>`) has an **Outcomes** section on both displays, for a GitHub repository. It is the same card as on the Dashboard (see [Outcomes](#outcomes)), for that one repository: the repository is fixed, and you choose the **Flow** and the window (7, 30 or 90 days). The measures and their definitions are the same. You see only what you may see: no **Cost per successful run**, no **Returning users**, and for a user no model route or policy version filter. A measure that is read with an admin-only measure says how many are left out ("… for admins only"). A repository on another host shows "Outcomes are measured for GitHub repositories only." If the card cannot load, it says "Could not load the outcomes." with **Retry**; the rest of the page still works. The card reads `GET /api/outcomes?repo=<owner/name>`.
+
 **The Repositories page (admin).** An admin has one Repositories page with a switch: **Mine** (`#/repos`),
 **All** (`#/all-repos`) and **Credentials** (`#/credentials`, see below); a user never gets **All** or **Credentials**. **All** lists the repositories of all accounts with the
 Owner column (name and e-mail, "blocked" for a blocked owner, "Unknown account" when the account is gone), the
@@ -3489,6 +3642,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs` | yes | yes | list runs that are not archived (a user sees their own); `?archived=1` lists the archived ones; `q`, `repo`, `flow`, `status` and `since` narrow the list before the 200-run cap |
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
+| `GET /api/outcomes` | yes | yes | the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
@@ -5561,6 +5715,109 @@ the steps where runs fail most, and eval results. If one part cannot be loaded, 
 A server that waits to restart shows in the
 [health line](#the-health-line), not on the Dashboard.
 
+### Outcomes
+
+The **Outcomes** card sits on the Dashboard after **Cost per day**. It shows the ten outcome
+measures of the runs you can see, for one window: 7, 30 or 90 days (default 30). Each speed or
+cost measure leads a group with the measures to read it with, so a faster number is never shown
+without its quality, rework, policy and user numbers. Measures that are left over are under
+**Other measures**.
+
+**Filters.** **Repository** and **Flow** are always there. **Model route** and **Policy version**
+appear only for an admin. Each change of a filter loads the card again; the rest of the Dashboard
+does not wait for it.
+
+**Each row** shows:
+
+- **Value** — `—` when there is no value. Minutes or hours for a time, a percentage for a share, dollars for a cost.
+- **Counted** — how many it counts: runs, work items or accounts, as the definition says.
+- **Left out** — how many runs were not counted (see the exclusions below).
+- **Owner** — `admin` or `repository owner`. Only an admin sees the admin measures.
+- **Decision** — what the number is used for, and the detector or setting it belongs to.
+- **Definition and exclusions** — a disclosure with the same text as the server gives. It is
+  `OUTCOME_DEFINITIONS` in `src/outcomes.ts`.
+
+A user sees only the measures they may see: no **Cost per successful run** and no **Returning users**.
+
+If the card cannot load, it says "Could not load the outcomes." with **Retry**, and the rest of the
+Dashboard is shown. With no data, a measure with no value shows `—` with its **Counted** and
+**Left out** numbers, so you can see how many runs were not counted. If the answer has no measures
+at all, the card says "No outcome measures yet." and shows no table; the filters stay, so you can
+pick another repository, flow or window.
+
+**The ten measures.** Each entry gives the owner, what it is read with, what it counts, the
+definition, and what is not counted.
+
+- **Issue to pull request** (speed, time; owner: repository owner; counts work items). Read with
+  First-pass test success, Rework after delivery, Policy blocks and Returning users. Decision:
+  whether work gets from an issue to a pull request fast enough, or needs more slots or fewer
+  steps (setting `concurrency`).
+  - *Definition:* The median time from the first queueing or start of a GitHub issue's runs to the
+    end of the first run that delivered it. A run delivers when it succeeded and a push policy
+    decision did not deny it.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Runs without an issue. Issues delivered before the window. Refinement runs.
+- **First-pass test success** (quality, share; owner: repository owner; counts runs). Read with
+  Issue to pull request and Cost per successful run. Decision: whether the tests pass on the first
+  try, or the build steps need better instructions (detector `same-step-failing`).
+  - *Definition:* The share of runs whose first test run (not a baseline run before the work) passed.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Runs with no test result, such as plan-only flows. Refinement runs.
+- **Merge rate (pushed work)** (quality, share; owner: repository owner; counts work items). Read
+  with Issue to pull request and Rework after delivery. Decision: whether a flow delivers the work
+  it starts. Merges done by hand on GitHub are not seen (detector `unexplained-failure`).
+  - *Definition:* The share of work items, in flows that push, that a run delivered. A run delivers
+    when it succeeded and a push policy decision did not deny it.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Flows that never push in the window. Runs that work on no issue, pull request or CI run. Refinement runs.
+- **Rework after delivery** (rework, count; owner: repository owner; counts work items). Read with
+  Merge rate, Issue to pull request and Cost per successful run. Decision: whether delivered work
+  comes back, so the review steps must be stricter (setting: review steps of the flow).
+  - *Definition:* The number of work items delivered in the window that a later run worked on again
+    before the end of the window.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Later runs without readable evidence. Items delivered outside the window. Refinement runs.
+- **Policy blocks** (policy, count; owner: admin; counts runs). Read with Issue to pull request,
+  Approval latency and Cost per successful run. Decision: whether an observed policy pack is ready
+  to enforce, or would block too much (setting `policy.packs`).
+  - *Definition:* The number of runs that a policy stopped at least once. The details also give the
+    denials that observed packs would have made.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Refinement runs.
+- **Evidence completeness** (quality, share; owner: admin; counts runs). Read with Resumes and Cost
+  per successful run. Decision: whether every run leaves complete evidence before more work is
+  trusted to the Foundry (detector `evidence-finalization`).
+  - *Definition:* The share of runs with an evidence file that also have the final manifest and are
+    not marked incomplete.
+  - *Not counted:* Runs without an evidence file. Refinement runs.
+- **Resumes** (rework, count; owner: admin; counts runs). Read with Issue to pull request and Cost
+  per successful run. Decision: whether runs stop and restart too often (detector `restart-loop`).
+  - *Definition:* The number of times the runs of the window were resumed. The details give the share
+    of runs resumed at least once.
+  - *Not counted:* Refinement runs.
+- **Approval latency** (speed, time; owner: repository owner; counts runs). Read with First-pass
+  test success, Rework after delivery, Policy blocks and Returning users. Decision: whether people
+  decide approvals fast enough, or a flow has approval steps it does not need (setting: approval
+  steps of the flow).
+  - *Definition:* The mean time from the moment a run waited for an approval to the decision.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Runs with no approval are not counted. Refinement runs.
+- **Cost per successful run** (cost, dollars; owner: admin; counts runs). Read with First-pass test
+  success, Rework after delivery, Policy blocks and Returning users. Decision: whether the money
+  spent buys finished work, and the daily budget fits (setting `daily_budget_usd`).
+  - *Definition:* The cost of all runs of the window, failed ones included, divided by the number of
+    runs that succeeded.
+  - *Not counted:* Refinement runs. No value when no run succeeded.
+- **Returning users** (user, count; owner: admin; admin only; counts accounts). Read with Issue to
+  pull request and Cost per successful run. Decision: whether people keep using the Foundry before
+  it is rolled out further (setting: user accounts).
+  - *Definition:* The number of accounts that started a run that ended in the window and one that
+    ended in the window before it. Only counts are given, never an account.
+  - *Not counted:* Runs without an owner. Refinement runs.
+
+The card reads `GET /api/outcomes`; its query and who may send which filter are in the API table
+under **Roles and permissions** in section 7.
+
 ### Evals
 
 An eval suite runs sample tasks through one or more flows and models and scores them, so you
@@ -5717,6 +5974,9 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
 | `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
+| `scf policy restore <id> [--force]` | Put back the last-known-good copy of a mandatory policy overlay as `policies/<id>.json`. A valid file is only replaced with `--force`; the replaced file is kept as `<id>.json.replaced-<time>` ([Restore the last-known-good copy](#restore-the-last-known-good-copy)) |
+| `scf policy break-glass --reason "<text>" --for <n>m\|<n>h` | Start a time-limited, audited break-glass record in the data folder. The reason is required (up to 200 characters, no credential-like text) and so is the duration (1 minute to 4 hours). A start while one is active is refused. While it is active, a privileged step that a broken mandatory policy would stop goes on ([Break-glass](#break-glass)) |
+| `scf policy break-glass --end` | End the active break-glass now and write its audit line. Exit 1 when none is active. The steps it let go on are denied again ([Break-glass](#break-glass)) |
 
 **Plan records.** When `issue-plan` posts a plan, the Foundry saves a small plan record in
 `<data folder>/skill-plans/`. It holds the skill request, the plan comment ID and hash, the HEAD
@@ -6387,6 +6647,11 @@ These are the names as they appear in the log and in mutes. The thresholds are i
 - `restart-overdue` (major): a new version is installed and the server has not restarted.
 - `develop-red` (critical): the tests after a merge into `develop` fail one after the other.
 - `slow-step` (minor): a step took much longer than usual.
+- `policy-service-failure` (major): policy decisions said the policy was unavailable or invalid.
+- `evidence-finalization` (major): a run ended but its evidence has no `evidence.json`, or its stream stopped.
+- `step-latency-p95` (minor): the p95 of a step's durations is above the limit.
+- `repeated-tool-denial` (minor): the same tool was refused again and again in one repository.
+- `abnormal-output` (minor): a step wrote far more output than is usual for that step.
 - `self-update` (major or critical): an update failed.
 - `detector-failed`: a detector crashed, so its problem is not checked.
 
