@@ -10,7 +10,7 @@ import { randomTmp, writeTmp } from "./policy-store.js";
 
 /**
  * The break-glass record: a time-limited, audited note that an administrator started on the server machine with
- * `scf policy break-glass`. This module only writes, reads, ends and audits it; no run looks at it yet.
+ * `scf policy break-glass`. This module writes, reads, ends and audits it; runs use it through RunPolicy (policy-hooks.ts) and the server watches it.
  */
 
 export const BREAK_GLASS_FILE = "policy-break-glass.json";
@@ -188,7 +188,37 @@ export function activeBreakGlass(home: string = dataHome(), now: Date = new Date
   return undefined;
 }
 
-const lockMessage = "another scf command holds the data-folder lock; try again";
+export const BREAK_GLASS_WATCH_MS = 60_000;
+export const BREAK_GLASS_REMIND_MS = 15 * 60_000;
+
+/** The server's watch on the record in the data folder: call the returned tick at startup and every minute. Never throws. */
+export function breakGlassWatch(log: (line: string) => void, now: () => Date = () => new Date()): () => void {
+  let shown: { startedAt: string; at: number } | undefined;
+  return () => {
+    try {
+      const t = now();
+      const r = readBreakGlass(dataHome(), t);
+      if (r.state === "active") {
+        if (!shown || shown.startedAt !== r.record.startedAt || t.getTime() - shown.at >= BREAK_GLASS_REMIND_MS) {
+          log(`! policy: break-glass active until ${r.record.expiresAt} (${r.record.reason}) — a mandatory policy that cannot be used does not stop privileged steps`);
+          shown = { startedAt: r.record.startedAt, at: t.getTime() };
+        }
+      } else if (r.state === "expired") {
+        if (endExpiredBreakGlass(t)) {
+          log("policy: break-glass ended (expired)");
+          shown = undefined;
+        }
+      } else if (shown) {
+        log("policy: break-glass ended");
+        shown = undefined;
+      }
+    } catch {
+      // the watch never stops the server
+    }
+  };
+}
+
+const lockMessage ="another scf command holds the data-folder lock; try again";
 
 function osUser(): string {
   try {

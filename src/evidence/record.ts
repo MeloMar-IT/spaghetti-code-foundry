@@ -102,18 +102,19 @@ export class RunRecorder {
    * Makes the event and writes it. A problem while making it stops the stream like a failed write. The same event is
    * also given to telemetry, with the same time, even when the evidence stream has stopped.
    */
-  private put(make: () => EvidenceEventBody | undefined, time?: string): void {
+  private put(make: () => EvidenceEventBody | undefined, time?: string): boolean {
     let body: EvidenceEventBody | undefined;
     try {
       body = make();
     } catch (e) {
       this.stream.stop(e);
-      return;
+      return false;
     }
-    if (!body) return;
+    if (!body) return false;
     const at = time ?? new Date().toISOString();
     const written = this.stream.append(body, at);
     if (telemetryEnabled()) emitTelemetry(telemetryFromEvidence(this.stream.runId, body, written, at, this.repository));
+    return written !== undefined;
   }
 
   /** `queuedAt`: when the job was put in the queue. A new run has no folder then, so the event is written now with that time. */
@@ -203,9 +204,9 @@ export class RunRecorder {
     this.stream.stop(e);
   }
 
-  /** A policy pack decided at a boundary. `step` is given exactly for the boundaries that are about a step. */
-  policyDecided(decision: PolicyDecision, step?: StepIdentity): void {
-    this.put(() => ({ type: "policy.decided", decision, ...(step ? { step } : {}) }), decision.evaluatedAt);
+  /** A policy pack decided at a boundary. `step` is given exactly for the boundaries that are about a step. True when the event is in the evidence. */
+  policyDecided(decision: PolicyDecision, step?: StepIdentity): boolean {
+    return this.put(() => ({ type: "policy.decided", decision, ...(step ? { step } : {}) }), decision.evaluatedAt);
   }
 
   /** The end of one visit: a `step.denied` for every tool the agent was refused, then `step.completed` or `step.failed`. */

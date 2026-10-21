@@ -1271,8 +1271,8 @@ evaluated, the Foundry stops the steps that need trust. It does not carry on qui
   `repo_access` run too. An isolated agent step that writes is stopped.
 - **What is not stopped.** A broken or missing pack in `policy.repositories` or `policy.packs` never stops
   a step. A valid mandatory pack whose rule denies is only recorded.
-- **What you see.** The run ends `failed` and the step does not run. `on_failure` is not followed. The
-  error and the log say:
+- **What you see.** The run ends `failed` and the step does not run, unless an admin's
+  [break-glass](#break-glass) is active. `on_failure` is not followed. The error and the log say:
 
   ```text
   mandatory policy org-overlay cannot be used (policy.unavailable): repository.access is denied
@@ -1316,6 +1316,50 @@ To put the copy back when `policies/<id>.json` is broken:
 The SHA-256 check catches a change made by mistake. It is not a signature: someone who can write to
 `policies/` can change the copy and its hash together. Restore only from a copy you trust, and keep the
 `.replaced-<time>` files until you no longer need them.
+
+#### Break-glass
+
+A break-glass is a short, audited exception for a mandatory-policy outage: the policy cannot be used, but
+privileged work must go on until it is fixed. Use it only when the fix cannot wait. It is not a way around
+a policy that works: a rule that denies (for example `secret.detected`) still denies while a break-glass is
+active, and so does any other layer's pack.
+
+- **When it applies.** Only a denial of a privileged step by a mandatory pack that cannot be loaded or
+  evaluated, as described in [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read):
+  the code is `policy.unavailable` or `policy.invalid`. The steps it covers are the ones that step stops: a
+  sign-in with the machine's login or a stored repository token, a writing agent step, and an approval that
+  is used. A denial that has no recorded decision is not covered.
+- **Start it.** On the server machine, give a reason and a duration:
+
+  ```bash
+  scf policy break-glass --reason "org-overlay broken, fix in progress" --for 2h
+  ```
+
+  The reason is required: up to 200 characters, no control characters or line break, and no credential-like
+  text. The duration is required, from `1m` to `4h`. A start is refused while a break-glass is active. If the
+  file has expired, the start first writes the expiry line.
+- **End it early.** `scf policy break-glass --end` ends the active break-glass now and writes its audit line.
+  It exits 1 when none is active.
+- **Limits.** There is no API route and no `config.yaml` key: the record can only be changed on the server
+  machine. A file that is not valid, or is a link, is not an active break-glass, so the steps stay denied.
+- **What changes.** For each covered step, the decision is `warn` with reason `policy.break-glass` instead of
+  `deny`, and the step goes on. The live log has the line `! policy: break-glass active until <expiresAt>
+  (<reason>) — <pack> <code> allowed`, and the policy line of the step ends with `— break-glass: the step goes
+  on`. The evidence has a `policy.decided` event with `outcome: warn`, `reasonCode: policy.break-glass`, version
+  `unknown` and no pack hash, and it verifies. No `step.denied` event is written for that step. The decision
+  must be recorded in the evidence first; if it cannot be, the step is denied as before.
+- **What the server shows.** The server checks the record at startup and once a minute. While the break-glass
+  is active, it logs `! policy: break-glass active until <t> (<reason>) — a mandatory policy that cannot be used
+  does not stop privileged steps` at the first check, for each new break-glass, and every 15 minutes.
+- **What is audited.** Starting writes `policy-break-glass-start` to `audit.jsonl` (the expiry time as the
+  target, the reason as the detail). Ending writes `policy-break-glass-end` with the detail `ended`, `expired`
+  or `invalid`. The reason is only in the audit and the log lines, never in run evidence.
+- **How it ends.** At the expiry time, the next read of the record, or the server's check, writes the
+  `expired` line and removes the record. The server logs `policy: break-glass ended (expired)`, and from then
+  on the steps are denied again: the Foundry fails closed by itself, nothing needs to be reset. A break-glass
+  that is ended with `--end` is logged as `policy: break-glass ended` by the server's next check. If the policy
+  is still broken, the steps that need trust stay stopped. Fix or restore the policy first when you can; see
+  [Restore the last-known-good copy](#restore-the-last-known-good-copy).
 
 ### Lifecycle telemetry
 
@@ -5926,8 +5970,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
 | `scf policy restore <id> [--force]` | Put back the last-known-good copy of a mandatory policy overlay as `policies/<id>.json`. A valid file is only replaced with `--force`; the replaced file is kept as `<id>.json.replaced-<time>` ([Restore the last-known-good copy](#restore-the-last-known-good-copy)) |
-| `scf policy break-glass --reason "<text>" --for <n>m\|<n>h` | Start a time-limited, audited break-glass record in the data folder. The reason is required (up to 200 characters, no credential-like text) and so is the duration (1 minute to 4 hours). A start while one is active is refused. It has no effect on runs yet |
-| `scf policy break-glass --end` | End the active break-glass now and write its audit line. Exit 1 when none is active. It has no effect on runs yet |
+| `scf policy break-glass --reason "<text>" --for <n>m\|<n>h` | Start a time-limited, audited break-glass record in the data folder. The reason is required (up to 200 characters, no credential-like text) and so is the duration (1 minute to 4 hours). A start while one is active is refused. While it is active, a privileged step that a broken mandatory policy would stop goes on ([Break-glass](#break-glass)) |
+| `scf policy break-glass --end` | End the active break-glass now and write its audit line. Exit 1 when none is active. The steps it let go on are denied again ([Break-glass](#break-glass)) |
 
 **Plan records.** When `issue-plan` posts a plan, the Foundry saves a small plan record in
 `<data folder>/skill-plans/`. It holds the skill request, the plan comment ID and hash, the HEAD

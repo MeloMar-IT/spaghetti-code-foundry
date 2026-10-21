@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { PolicyIdentitySchema, ReasonCodeSchema as EvidenceReasonCodeSchema } from "../src/evidence/identity.js";
 import { parseEvidenceEvent } from "../src/evidence/parse.js";
 import { DenialSchema } from "../src/evidence/schema.js";
@@ -168,7 +169,7 @@ describe("reason codes", () => {
     expect([...REASON_CODES].sort()).toEqual([
       "approval.required", "branch.hotfix-exception", "branch.protected", "budget.daily-exceeded", "budget.run-exceeded", "budget.step-exceeded",
       "credential.scope-exceeded", "exception.granted", "flow.retired", "identity.missing", "issue.closed", "output.limit-exceeded", "path.forbidden",
-      "policy.input-incomplete", "policy.invalid", "policy.no-rule-matched", "policy.unavailable", "repository.not-allowed", "sandbox.required",
+      "policy.break-glass", "policy.input-incomplete", "policy.invalid", "policy.no-rule-matched", "policy.unavailable", "repository.not-allowed", "sandbox.required",
       "secret.detected", "timeout.exceeded", "tool.not-allowed", "workspace.admin-only",
     ]);
   });
@@ -340,6 +341,23 @@ describe("PolicyDecision", () => {
     expect(failure(() => parsePolicyDecision({ ...unread, outcome: "allow" })).issues[0]!.path).toBe("outcome");
     expect(failure(() => parsePolicyDecision({ ...unread, packSha256: H })).issues[0]!.path).toBe("packSha256");
     expect(failure(() => parsePolicyDecision({ ...unread, rule: "r" })).issues[0]!.path).toBe("rule");
+  });
+
+  it("accepts a break-glass decision only as an enforced warning with no pack hash and no rule", () => {
+    const glass = { version: 1, policy: { id: "org", version: "unknown" }, mode: "enforce", boundary: "agent.write", inputSha256: H, outcome: "warn", reasonCode: "policy.break-glass", evaluatedAt: T };
+    expect(parsePolicyDecision(glass).reasonCode).toBe("policy.break-glass");
+    expect(failure(() => parsePolicyDecision({ ...glass, outcome: "deny" })).issues[0]!.path).toBe("outcome");
+    expect(failure(() => parsePolicyDecision({ ...glass, outcome: "allow" })).issues[0]!.path).toBe("outcome");
+    expect(failure(() => parsePolicyDecision({ ...glass, mode: "observe" })).issues[0]!.path).toBe("mode");
+    expect(failure(() => parsePolicyDecision({ ...glass, packSha256: H })).issues[0]!.path).toBe("packSha256");
+    expect(failure(() => parsePolicyDecision({ ...glass, rule: "r" })).issues[0]!.path).toBe("rule");
+  });
+
+  it("is refused by an older build: its closed list of codes lacks policy.break-glass", () => {
+    const old = z.enum(REASON_CODES.filter((c) => c !== "policy.break-glass") as [string, ...string[]]);
+    expect(old.safeParse("policy.break-glass").success).toBe(false);
+    const glass = { version: 1, policy: { id: "org", version: "unknown" }, mode: "enforce", boundary: "agent.write", inputSha256: H, outcome: "warn", reasonCode: "policy.future-code", evaluatedAt: T };
+    expect(failure(() => parsePolicyDecision(glass)).code).toBe("invalid");
   });
 });
 

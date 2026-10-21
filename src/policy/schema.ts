@@ -211,9 +211,9 @@ export const PolicyInputSchema = z
 export type PolicyInput = z.infer<typeof PolicyInputSchema>;
 
 /** Reasons that are not the work of a rule, so a decision with one of them names no rule. */
-export const NO_RULE_REASONS: readonly ReasonCode[] = ["policy.no-rule-matched", "policy.invalid", "policy.unavailable"];
-/** Reasons for which no pack was read, so a decision with one of them has no pack hash. */
-export const NO_PACK_REASONS: readonly ReasonCode[] = ["policy.invalid", "policy.unavailable"];
+export const NO_RULE_REASONS: readonly ReasonCode[] = ["policy.no-rule-matched", "policy.invalid", "policy.unavailable", "policy.break-glass"];
+/** Reasons for which no pack was read or used, so a decision with one of them has no pack hash. */
+export const NO_PACK_REASONS: readonly ReasonCode[] = ["policy.invalid", "policy.unavailable", "policy.break-glass"];
 /** Reasons that always deny. */
 export const DENY_ONLY_REASONS: readonly ReasonCode[] = ["policy.input-incomplete", "policy.invalid", "policy.unavailable"];
 
@@ -247,6 +247,10 @@ export const PolicyDecisionSchema = z
     if (!NO_RULE_REASONS.includes(d.reasonCode) && d.rule === undefined) add("rule", "is missing: this reason code comes from a rule");
     if (NO_PACK_REASONS.includes(d.reasonCode) !== (d.packSha256 === undefined)) add("packSha256", "is absent exactly when the pack could not be read");
     if (DENY_ONLY_REASONS.includes(d.reasonCode) && d.outcome !== "deny") add("outcome", 'must be "deny" with this reason code');
+    if (d.reasonCode === "policy.break-glass") {
+      if (d.outcome !== "warn") add("outcome", 'must be "warn" with this reason code');
+      if (d.mode !== "enforce") add("mode", 'must be "enforce" with this reason code');
+    }
     if (d.reasonCode === "policy.no-rule-matched" && d.outcome !== "allow" && d.outcome !== "deny") add("outcome", 'must be "allow" or "deny" when no rule matched');
   });
 export type PolicyDecision = z.infer<typeof PolicyDecisionSchema>;
