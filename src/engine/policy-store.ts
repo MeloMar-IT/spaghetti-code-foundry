@@ -23,10 +23,10 @@ export const lastKnownGoodFile = (home: string, id: string): string => join(home
 const idSchema = PolicyIdentitySchema.shape.id;
 const validId = (id: string): boolean => idSchema.safeParse(id).success && id !== BASELINE_POLICY_ID;
 const realFolder = (path: string): boolean => lstatSync(path).isDirectory();
-const randomTmp = (dir: string, name: string): string => join(dir, `.${name}.${randomBytes(6).toString("hex")}.tmp`);
+export const randomTmp = (dir: string, name: string): string => join(dir, `.${name}.${randomBytes(6).toString("hex")}.tmp`);
 
 /** Opens `tmp` (new, mode 0600) and writes `text` to it. */
-function writeTmp(tmp: string, text: string): void {
+export function writeTmp(tmp: string, text: string): void {
   const fd = openSync(tmp, "wx", 0o600);
   try {
     fchmodSync(fd, 0o600);

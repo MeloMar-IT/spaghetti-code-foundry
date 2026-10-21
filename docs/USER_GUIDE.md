@@ -5924,6 +5924,8 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
 | `scf policy restore <id> [--force]` | Put back the last-known-good copy of a mandatory policy overlay as `policies/<id>.json`. A valid file is only replaced with `--force`; the replaced file is kept as `<id>.json.replaced-<time>` ([Restore the last-known-good copy](#restore-the-last-known-good-copy)) |
+| `scf policy break-glass --reason "<text>" --for <n>m\|<n>h` | Start a time-limited, audited break-glass record in the data folder. The reason is required (up to 200 characters, no credential-like text) and so is the duration (1 minute to 4 hours). A start while one is active is refused. It has no effect on runs yet |
+| `scf policy break-glass --end` | End the active break-glass now and write its audit line. Exit 1 when none is active. It has no effect on runs yet |
 
 **Plan records.** When `issue-plan` posts a plan, the Foundry saves a small plan record in
 `<data folder>/skill-plans/`. It holds the skill request, the plan comment ID and hash, the HEAD
