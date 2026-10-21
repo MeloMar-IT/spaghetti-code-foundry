@@ -148,6 +148,22 @@ describe("restorePolicy", () => {
     expect(listing().some((n) => n.includes(".replaced-"))).toBe(false);
   });
 
+  it("restores a version 2 copy, and refuses a copy that is enforce on the pack or on a rule", () => {
+    const v2 = { ...coverPack("org"), version: 2 } as PolicyPack;
+    writeCopy(v2);
+    writeFileSync(active(), "{ nope");
+    expect(restorePolicy("org", { force: true }).ok).toBe(true);
+    expect("pack" in loadPolicyPacks(["org"], home)[0]!).toBe(true);
+
+    const ruleEnforce = { ...v2, rules: v2.rules.map((r, i) => (i === 0 ? { ...r, mode: "enforce" as const } : r)) } as PolicyPack;
+    for (const bad of [ruleEnforce, { ...v2, mode: "enforce" } as PolicyPack]) {
+      writeCopy(bad);
+      writeFileSync(active(), "{ nope");
+      expect(restorePolicy("org", { force: true })).toEqual({ ok: false, reason: expect.stringMatching(/is not valid: .*mode enforce/) });
+      expect(readFileSync(active(), "utf8")).toBe("{ nope");
+    }
+  });
+
   it("needs --force to replace a valid file", () => {
     saveOrg();
     const other = JSON.stringify({ ...coverPack("org"), policy: { id: "org", version: "2" } });

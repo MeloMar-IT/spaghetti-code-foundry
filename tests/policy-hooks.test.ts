@@ -40,6 +40,19 @@ describe("loadPolicyPacks", () => {
     expect(loaded("p1")).toEqual({ id: "p1", pack: pack() });
   });
 
+  it("reads a version 2 pack with an observe rule or no rule mode, and refuses a rule in enforce", () => {
+    const v2 = (mode?: "observe" | "enforce"): PolicyPack => {
+      const p = pack({ version: 2 });
+      return mode ? { ...p, rules: [{ ...p.rules[0]!, mode }] } : p;
+    };
+    writePack(home, "p1", v2());
+    expect(detail(loaded("p1"))).toBe("pack");
+    writePack(home, "p1", v2("observe"));
+    expect(detail(loaded("p1"))).toBe("pack");
+    writePack(home, "p1", v2("enforce"));
+    expect(detail(loaded("p1"))).toEqual(["policy.invalid", "rule any-step has mode enforce, which is not supported yet: set its mode to observe or leave it out"]);
+  });
+
   it("says unavailable for a missing file, a link and a folder", () => {
     expect(detail(loaded("nope"))).toEqual(["policy.unavailable", "no file policies/nope.json"]);
     mkdirSync(join(home, "policies"), { recursive: true });

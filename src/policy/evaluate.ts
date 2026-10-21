@@ -99,8 +99,8 @@ function test(rule: PolicyRule, facts: Facts): RuleResult {
  * does not have cannot be judged, and the answer is then "deny" with `policy.input-incomplete` and the id of that
  * rule: an unknown never allows. When no rule applies, `defaultOutcome` decides with `policy.no-rule-matched`.
  *
- * `mode` is copied from the pack and changes nothing in the answer: in `observe` the same decision is made and the
- * caller only records it.
+ * `mode` is the mode of the rule that decided, or the mode of the pack when that rule has none or no rule decided. It
+ * changes nothing in the answer: in `observe` the same decision is made and the caller only records it.
  *
  * Throws PolicySchemaError when the pack, the input or the time is not valid: nothing is decided on bad data.
  */
@@ -114,7 +114,6 @@ export function evaluatePolicy(pack: PolicyPack, input: PolicyInput, evaluatedAt
     version: POLICY_DECISION_VERSION,
     policy: { id: p.policy.id, version: p.policy.version },
     packSha256: sha256Hex(canonicalJson(p)),
-    mode: p.mode,
     boundary: i.boundary,
     inputSha256: sha256Hex(canonicalJson(i)),
   } as const;
@@ -123,9 +122,9 @@ export function evaluatePolicy(pack: PolicyPack, input: PolicyInput, evaluatedAt
     const result = test(rule, i.facts);
     if (result === "does-not-apply") continue;
     const answer = result === "applies" ? ({ outcome: rule.outcome, reasonCode: rule.reasonCode } as const) : ({ outcome: "deny", reasonCode: "policy.input-incomplete" } as const);
-    return parsePolicyDecision({ ...head, ...answer, rule: rule.id, evaluatedAt });
+    return parsePolicyDecision({ ...head, mode: rule.mode ?? p.mode, ...answer, rule: rule.id, evaluatedAt });
   }
-  return parsePolicyDecision({ ...head, outcome: p.defaultOutcome, reasonCode: "policy.no-rule-matched", evaluatedAt });
+  return parsePolicyDecision({ ...head, mode: p.mode, outcome: p.defaultOutcome, reasonCode: "policy.no-rule-matched", evaluatedAt });
 }
 
 /** The policy identity evidence carries for a decision: the id and the version of the pack that decided. */
@@ -133,7 +132,7 @@ export const policyIdentityOf = (decision: Pick<PolicyDecision, "policy">): Poli
 
 /**
  * The `denial` of a `step.denied` evidence event for a decision; undefined when the decision did not refuse anything:
- * any outcome but "deny", or a pack in `observe` mode (it only says what it would have done). `tool` is the tool the
+ * any outcome but "deny", or a decision in `observe` mode (it only says what it would have done). `tool` is the tool the
  * question was about, when it was about one.
  */
 export function policyDenial(decision: PolicyDecision, tool?: string): Denial | undefined {

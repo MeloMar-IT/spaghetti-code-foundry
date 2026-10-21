@@ -9,7 +9,7 @@ import { BASELINE_POLICY_ID } from "../policy/baseline.js";
 import { policyPackSha256 } from "../policy/evaluate.js";
 import { parsePolicyPack } from "../policy/parse.js";
 import type { PolicyPack } from "../policy/schema.js";
-import { loadPolicyPacks, MAX_PACK_BYTES, POLICY_FOLDER, readPolicyFile } from "./policy-hooks.js";
+import { enforceProblem, loadPolicyPacks, MAX_PACK_BYTES, POLICY_FOLDER, readPolicyFile } from "./policy-hooks.js";
 
 /**
  * The last-known-good copy of each mandatory overlay: saved at every start of a run for a pack that loaded, and put back
@@ -108,7 +108,9 @@ export function readLastKnownGood(id: string, home: string): LastKnownGoodRead {
     const record = LastKnownGoodSchema.parse(JSON.parse(read.text));
     pack = parsePolicyPack(record.pack);
     stored = record.policyPackSha256;
-    if (record.id !== id || pack.policy.id !== id || pack.mode !== "observe") return no(`${what} is not valid`);
+    if (record.id !== id || pack.policy.id !== id) return no(`${what} is not valid`);
+    const enforce = enforceProblem(pack);
+    if (enforce) return no(`${what} is not valid: ${enforce}`);
   } catch {
     return no(`${what} is not valid`);
   }

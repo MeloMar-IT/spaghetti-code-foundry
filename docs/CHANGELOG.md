@@ -4,6 +4,14 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Policy 4a (#628): each rule of a policy pack can have its own `mode` (`observe` or `enforce`), so one control can move to block mode without moving the whole pack. Pack format version 2; version 1 packs are still read. Part 1 of 5 of #144. **Enforce is still refused when a pack is loaded or restored**, so nothing is blocked yet.
+  - **Format.** `PolicyRuleSchema` has an optional `mode`. `POLICY_PACK_VERSION` is 2, and `POLICY_PACK_VERSIONS` is `[1, 2]`. `parsePolicyPack` reads version 1 with `PolicyPackV1Schema` (no rule `mode`; a rule `mode` in a version 1 pack is refused). A version 1 pack keeps its exact `policyPackSha256`: it is hashed as written, never rewritten to version 2. Version 3 is refused.
+  - **Decisions.** A rule's decision, and its `policy.input-incomplete`, takes the rule's `mode`, else the pack's. `policy.no-rule-matched` takes the pack's `mode`. The decision version is not bumped.
+  - **Loading.** `enforceProblem` (`src/engine/policy-hooks.ts`) refuses a pack when the pack or any rule is `enforce`, in `loadOne` and in the last-known-good restore (`src/engine/policy-store.ts`), with the rule id in the detail.
+  - **Baseline.** `baselinePack` is version 2 and writes `mode: "observe"` on every rule. Its decisions do not change.
+  - **Docs.** `docs/DESIGN.md` ("Policy contracts"), `docs/USER_GUIDE.md` ("Pack format").
+  - **Code.** Changed `src/policy/schema.ts`, `version.ts`, `parse.ts`, `evaluate.ts`, `baseline.ts`, `src/engine/policy-hooks.ts` and `src/engine/policy-store.ts`.
+  - **Tests.** Changed `tests/policy-contracts.test.ts` (version 1 reading and hash, rule mode over pack mode, unknown rule field and mode refused, version 3 refused), `tests/policy-hooks.test.ts`, `tests/policy-restore.test.ts` and `tests/policy-compose.test.ts`.
 - Telemetry 3d (#620): the repository view has an **Outcomes** section for a GitHub repository, for its owner and for an admin. It shows the outcome measures of that repository for 7, 30 or 90 days, with a flow filter, the same pairs and definitions as the Dashboard. A user never sees cost, returning users, or the model and policy filters; a pair with admin-only measures says how many are left out. If the card cannot load, it shows "Could not load the outcomes." with Retry; the rest of the page still works. Part 4 of 4 of #157.
   - **Docs.** `docs/USER_GUIDE.md` ("Outcomes on the repository view" in the repository section; the Outcomes chapter is unchanged).
   - **Code.** Changed `ui/outcomes.js` (`outcomesSection` takes `repo`, `admin` and `embedded`; new `adminOnlyText`; a group counts its `hidden` measures) and `ui/repo-view.js` (`githubOf`, the Outcomes section, `ctx.viewerAdmin` and `ctx.part`). `ui/outcomes.js` does not import `ui/dashboard.js`.

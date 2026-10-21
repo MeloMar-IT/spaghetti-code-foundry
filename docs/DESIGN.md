@@ -266,7 +266,10 @@ numbers and pure functions.
   carries as its policy identity. `mode` is `observe` (decisions are only recorded) or `enforce`.
   `rules` are read from the first to the last; `defaultOutcome` (`allow` or `deny`) decides when no
   rule applies.
-- **A rule** has an `id`, the `boundaries` it is about, `when`, an `outcome` and a `reasonCode`.
+- **A rule** has an `id`, the `boundaries` it is about, `when`, an `outcome` and a `reasonCode`. From
+  version 2 it may also have its own `mode` (`observe` or `enforce`). A decision takes the `mode` of the
+  rule that decided, or the pack's `mode` when the rule has none; `policy.input-incomplete` of a rule
+  takes that rule's mode, and `policy.no-rule-matched` takes the pack's mode.
   `when` has at most one condition per fact, and all of them must hold: `in` or `notIn` with
   patterns for a text (`*` stands for any characters, nothing else is special), `in` or `notIn` with
   fixed values for a choice, `anyIn` for the changed paths, `over` for a number (more than, never
@@ -302,6 +305,15 @@ numbers and pure functions.
   `enforce` mode. Every reason code fits the evidence format.
 - **Versions.** Each contract has its own number in `version.ts`. A record with another version is
   refused with one sentence. Every object refuses unknown fields, so a new field means a new version.
+  The pack format is version 2 (`POLICY_PACK_VERSION`). `parsePolicyPack` also reads version 1, with
+  `PolicyPackV1Schema` (no rule `mode`, so a `mode` on a rule of a version 1 pack is refused). A version 1
+  pack is read and hashed as written, never rewritten to version 2, so its `policyPackSha256` does not
+  change. Any other version is refused. The decision format (`POLICY_DECISION_VERSION`) did not change:
+  its `mode` already existed.
+- **Enforce is refused at load time.** `parsePolicyPack` accepts `enforce` on a pack or a rule, since a
+  pack built in memory may use it. `loadOne` (`loadPolicyPacks`) and the last-known-good restore refuse a
+  pack in which the pack or any rule is in `enforce` (`enforceProblem` in `policy-hooks.ts`).
+
 ### Policy hooks in observe mode
 
 `src/engine/policy-hooks.ts` asks the configured policy packs at the boundaries of a run (#142). It
