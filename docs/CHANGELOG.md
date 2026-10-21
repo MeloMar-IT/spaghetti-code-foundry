@@ -4,6 +4,15 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Policy 3c-1 (#625): `scf policy break-glass` starts, ends and audits a time-limited break-glass record. Part 1 of 2 of #583. **The break-glass has no effect on runs yet**: no step is allowed to go on because of it. Part 2 will use it during a mandatory-policy outage.
+  - **Start.** `scf policy break-glass --reason "<text>" --for <n>m|<n>h` writes `policy-break-glass.json` in the data folder (file 0600, written by a temp file and one rename). The reason is required, up to 200 characters, with no control characters or newline and no credential-like text. The duration is required, `1m` to `4h`. A start while a break-glass is active is refused. A start over an expired file first writes the expiry end line. If the start line cannot be written, the file is removed again.
+  - **End.** `scf policy break-glass --end` removes the file and writes the end line with `ended`. An expired file gets `expired`, and an invalid file or link is removed with `invalid`. A folder at the path is refused, and a missing record prints `✘ no break-glass is active` and exits 1.
+  - **Expiry.** The first reader after the expiry time (`activeBreakGlass`, on the data folder) writes exactly one `policy-break-glass-end` line with `expired` and removes the file, under the auth lock.
+  - **Audit.** New actions `policy-break-glass-start` (`target: expiresAt`, `detail: reason`) and `policy-break-glass-end` (`target: expiresAt`, `detail: ended|expired|invalid`), with `by: "cli"`. The reason is only in the audit line and log lines, never in run evidence. The data-folder move copies `policy-break-glass.json` byte for byte.
+  - **No API and no config.** There is no API route and no `config.yaml` key. The record can only be changed on the server machine.
+  - **Code.** New `src/engine/policy-break-glass.ts` (`readBreakGlass`, `activeBreakGlass`, `startBreakGlass`, `endBreakGlass`, `endExpiredBreakGlass`). Changed `src/engine/policy-cli.ts` (`policyCommand`, `POLICY_USAGE`), `src/cli.ts`, `src/engine/policy-store.ts` (`writeAtomic`, `randomTmp` and `writeTmp` exported), `src/auth/audit.ts`, `ui/audit.js` and `src/home-migrate.ts`.
+  - **Tests.** New `tests/policy-break-glass.test.ts` (the checks, start, end, the expiry line, every read state and the CLI output). `tests/ui-audit.test.ts` counts 43 actions.
+  - Docs: `docs/USER_GUIDE.md` (the command table), this entry.
 - Telemetry 3b (#618): `GET /api/outcomes` answers the outcome measures for one window, with filters and access rules. Part 2 of 4 of #157.
   - **Query.** `repo`, `flow`, `model` (`agent:provider:model`), `policy` (`id@version`) and `days` (a whole number from 1 to 90, default 30). A wrong value answers 400. `model` and `policy` are admin only: a user who sends them gets 403, and a malformed value gets 400 first.
   - **Answer.** `{ window: { from, to, days }, filters, values: { repos, flows, models?, policies? }, measures, definitions }`. `values.repos` and `values.flows` come from the runs the caller may see, as on `/api/run-filters`. `models` and `policies` are only for an admin.
