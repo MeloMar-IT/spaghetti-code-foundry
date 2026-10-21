@@ -4,7 +4,9 @@
  */
 
 /** The version of the policy pack format (the file an administrator writes). */
-export const POLICY_PACK_VERSION = 1;
+export const POLICY_PACK_VERSION = 2;
+/** Every version of the pack format this build reads, oldest first. A pack of an older version is read and hashed as written. */
+export const POLICY_PACK_VERSIONS = [1, 2] as const;
 /** The version of the policy input format (what is asked). */
 export const POLICY_INPUT_VERSION = 1;
 /** The version of the policy decision format (what was answered). */

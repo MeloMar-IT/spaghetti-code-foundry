@@ -1227,6 +1227,11 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   A repository key is `owner/name` in lower case. Each list has at most 20 ids, with no id twice in
   a list. Only `mode: observe` is accepted. A pack in `enforce` mode is refused for now. The settings are
   not in the web interface; an older build rejects the `policy` key.
+- **Pack format.** A pack has `version: 2` (a version 1 pack is still read, and it is never rewritten).
+  Each rule may have its own `mode`: a rule with `mode: observe` is observed while the pack is in
+  `observe`, and a rule without `mode` takes the pack's mode. A rule with `mode: enforce`, or a pack in
+  `enforce`, is refused when the pack is loaded or restored. A `mode` on a rule of a version 1 pack is refused.
+  The baseline writes `mode: observe` on every rule.
 - **Which answer counts.** For each boundary the Foundry takes the most restrictive answer of all packs
   (from least to most restrictive: `allow`, `warn`, `require_approval`, `deny`). On a tie the higher layer wins:
   `mandatory`, then `repositories`, then `packs`. A repository pack can only make things stricter: it
@@ -1243,7 +1248,7 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   ```
 
   Each answer is also an event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
-- **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack is logged as
+- **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack (the pack or one of its rules) is logged as
   `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. For a
   repository or optional pack, the run's result is the same as without the pack. For a mandatory pack,
   see [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read).
@@ -1261,7 +1266,7 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
 #### When the mandatory policy cannot be read
 
 A mandatory pack is one in `policy.mandatory`, or the built-in baseline. If that pack is missing, linked,
-not a plain file, not valid JSON, has another id, is set to `mode: enforce`, is too large, or cannot be
+not a plain file, not valid JSON, has another id, is set to `mode: enforce` (on the pack or on a rule), is too large, or cannot be
 evaluated, the Foundry stops the steps that need trust. It does not carry on quietly.
 
 - **What is stopped.** A step that signs in to the repository with the machine's login or a stored

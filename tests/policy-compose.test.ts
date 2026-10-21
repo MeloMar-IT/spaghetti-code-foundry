@@ -111,16 +111,18 @@ describe("the baseline", () => {
     expect(BASELINE_PACK.policy.id).toBe(BASELINE_POLICY_ID);
     expect(BASELINE_POLICY_ID).toBe("foundry.baseline");
     expect(BASELINE_PACK.mode).toBe("observe");
+    expect(BASELINE_PACK.version).toBe(2);
+    expect(BASELINE_PACK.rules.map((r) => r.mode)).toEqual(BASELINE_PACK.rules.map(() => "observe"));
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
     expect(BASELINE_PACK.policy.version).toBe(pkg.version);
     expect(baselinePack("x").policy.version).toBe("x");
   });
 
   it("fires each rule with its facts", () => {
-    expect(ask(BASELINE_PACK, "push", { secretsFound: 2, commitIdentity: true })).toMatchObject({ outcome: "deny", reasonCode: "secret.detected", rule: "secret-detected" });
-    expect(ask(BASELINE_PACK, "push", { secretsFound: 0, commitIdentity: false })).toMatchObject({ outcome: "deny", reasonCode: "identity.missing", rule: "identity-missing" });
-    expect(ask(BASELINE_PACK, "agent.write", { owner: "user", sandboxed: false })).toMatchObject({ outcome: "deny", reasonCode: "sandbox.required" });
-    expect(ask(BASELINE_PACK, "run.start", { owner: "user", workspace: "inplace" })).toMatchObject({ outcome: "deny", reasonCode: "workspace.admin-only" });
+    expect(ask(BASELINE_PACK, "push", { secretsFound: 2, commitIdentity: true })).toMatchObject({ mode: "observe", outcome: "deny", reasonCode: "secret.detected", rule: "secret-detected" });
+    expect(ask(BASELINE_PACK, "push", { secretsFound: 0, commitIdentity: false })).toMatchObject({ mode: "observe", outcome: "deny", reasonCode: "identity.missing", rule: "identity-missing" });
+    expect(ask(BASELINE_PACK, "agent.write", { owner: "user", sandboxed: false })).toMatchObject({ mode: "observe", outcome: "deny", reasonCode: "sandbox.required" });
+    expect(ask(BASELINE_PACK, "run.start", { owner: "user", workspace: "inplace" })).toMatchObject({ mode: "observe", outcome: "deny", reasonCode: "workspace.admin-only" });
   });
 
   it("allows what is fine and says when a fact is missing", () => {

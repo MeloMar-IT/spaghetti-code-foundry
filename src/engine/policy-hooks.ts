@@ -17,7 +17,7 @@ import { userAccount } from "./isolation.js";
 import type { RunSummary } from "./state.js";
 
 /**
- * The baseline and the policy packs asked at the boundaries of a run, in observe mode: every decision is logged and
+ * The baseline and the policy packs (and their rules) asked at the boundaries of a run, in observe mode: every decision is logged and
  * recorded as evidence, and nothing in the run changes because of it. The one exception is fail closed: a pack in the
  * mandatory layer that cannot be loaded or evaluated denies the privileged boundaries (see `privilegedBoundary`).
  * The one way out is an active break-glass (#626): it turns that denial into a recorded `warn`, but only when the
@@ -112,8 +112,16 @@ function loadOne(id: string, home: string): LoadedPack {
     return invalid(id, e instanceof PolicySchemaError ? (e.message.split("\n")[0] ?? "not valid") : "not valid");
   }
   if (pack.policy.id !== id) return invalid(id, `the file is for policy ${pack.policy.id}`);
-  if (pack.mode !== "observe") return invalid(id, `mode ${pack.mode} is not supported yet: set mode to observe`);
+  const problem = enforceProblem(pack);
+  if (problem) return invalid(id, problem);
   return { id, pack };
+}
+
+/** Why a pack cannot be used yet: the pack or one of its rules is in enforce mode. Undefined when everything is observe. */
+export function enforceProblem(pack: PolicyPack): string | undefined {
+  if (pack.mode !== "observe") return `mode ${pack.mode} is not supported yet: set mode to observe`;
+  const rule = pack.rules.find((r) => r.mode === "enforce");
+  return rule ? `rule ${rule.id} has mode enforce, which is not supported yet: set its mode to observe or leave it out` : undefined;
 }
 
 /** Reads <home>/policies/<id>.json for each id. Never throws; the detail names no machine path and no file content. */

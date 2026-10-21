@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parsePolicyPack } from "./parse.js";
 import type { PolicyPack } from "./schema.js";
+import { POLICY_PACK_VERSION } from "./version.js";
 
 /**
  * The baseline pack: built in, owned by the Foundry, asked at every boundary of every run in observe mode.
@@ -15,15 +16,15 @@ export const BASELINE_POLICY_ID = "foundry.baseline";
 /** The baseline pack for a given version (pure). */
 export function baselinePack(version: string): PolicyPack {
   return {
-    version: 1,
+    version: POLICY_PACK_VERSION,
     policy: { id: BASELINE_POLICY_ID, version },
     mode: "observe",
     defaultOutcome: "allow",
     rules: [
-      { id: "secret-detected", boundaries: ["push"], when: { secretsFound: { over: 0 } }, outcome: "deny", reasonCode: "secret.detected" },
-      { id: "identity-missing", boundaries: ["push"], when: { commitIdentity: false }, outcome: "deny", reasonCode: "identity.missing" },
-      { id: "sandbox-required", boundaries: ["agent.write"], when: { owner: { in: ["user"] }, sandboxed: false }, outcome: "deny", reasonCode: "sandbox.required" },
-      { id: "workspace-admin-only", boundaries: ["run.start"], when: { owner: { in: ["user"] }, workspace: { in: ["inplace"] } }, outcome: "deny", reasonCode: "workspace.admin-only" },
+      { id: "secret-detected", boundaries: ["push"], when: { secretsFound: { over: 0 } }, outcome: "deny", reasonCode: "secret.detected", mode: "observe" },
+      { id: "identity-missing", boundaries: ["push"], when: { commitIdentity: false }, outcome: "deny", reasonCode: "identity.missing", mode: "observe" },
+      { id: "sandbox-required", boundaries: ["agent.write"], when: { owner: { in: ["user"] }, sandboxed: false }, outcome: "deny", reasonCode: "sandbox.required", mode: "observe" },
+      { id: "workspace-admin-only", boundaries: ["run.start"], when: { owner: { in: ["user"] }, workspace: { in: ["inplace"] } }, outcome: "deny", reasonCode: "workspace.admin-only", mode: "observe" },
     ],
   } as PolicyPack;
 }
