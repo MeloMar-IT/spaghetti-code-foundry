@@ -47,6 +47,16 @@ export function checkedRun(scheduler: ApiContext["scheduler"], dirName: string, 
   return s && s.runId === dirName ? s : undefined;
 }
 
+/** Like checkedRun, but the run.json is read with fs/promises. Any error gives undefined. */
+export async function checkedRunAsync(scheduler: ApiContext["scheduler"], dirName: string, owner?: string): Promise<RunSummary | undefined> {
+  try {
+    const s = await scheduler.getAsync(dirName);
+    return s && s.runId === dirName && (!owner || s.owner === owner) ? s : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The newest 200 runs of one archive state (of one account when `owner` is given), the list the records are built from. */
 export function runsListFor(ctx: ApiContext, owner?: string, archived = false): RunSummary[] {
   return ctx.scheduler.briefs()
