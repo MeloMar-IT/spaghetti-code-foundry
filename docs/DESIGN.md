@@ -236,7 +236,8 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   `run.failed`, `run.completed`) and eight for a step (`step.started`, `step.routed`, `step.retried`,
   `step.denied`, `step.approved`, `step.failed`, `step.completed`), with `step.profiled` (the tool
   profile of one try, see "Tool profiles") from version 3, and `policy.decided` from version 2
-  (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"). `prevHash` and `hash` come
+  (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"), and `repo.operation` from
+  version 4 (one repository operation of the broker, see "Repository broker"). `prevHash` and `hash` come
   together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -589,6 +590,75 @@ can be made to hold of that (#146). Every agent step works out one profile befor
   12 characters of the hash. Profile ids, versions, rules, Zod messages and exception texts are never
   echoed, so a profile cannot make a line look like a limit, an outage or a sign-in error to the
   classifiers in `targets.ts`.
+
+### Repository broker
+
+`src/engine/repo-broker.ts` and `src/engine/repo-request.ts` (#633, part 1 of 3 of #149) carry out
+one repository operation on the server: `clone`, `fetch`, `branch`, `commit`, `push`,
+`pull-request` and `status` (`REPO_OPERATIONS`). This part is a library only: no agent calls it yet,
+so a run's behaviour does not change.
+
+- **Request.** `RepoRequestSchema` is strict and discriminated on `op`. Unknown fields are refused.
+  Branch names follow `git check-ref-format --branch` (checked in code, at most 255 characters); a
+  commit message or PR body is 1–5000 characters with no NUL; a title is 1–256 characters on one line.
+  A request never names a repository, URL or remote.
+- **Target.** Always the run's `github_repo` variable, resolved on the server. The URL is the stored
+  sign-in's (`repoAccess`), otherwise `https://github.com/<owner>/<name>.git`. A missing or
+  placeholder repository is refused (`no-target`).
+- **Checks, in order** (`brokerRequest(ctx, request, grant)`): 1. validate the request; 2. the target;
+  3. the tool profile (`checkToolCall` with the repository as target); 4. pick the credential;
+  5. the workspace's git settings; 6. the commit identity; 7. policy; 8. run the operation; 9. record
+  one `repo.operation` event. The result is `{ outcome: "done" | "failed" | "refused", refusal?, output, pullRequest? }`.
+- **Refusals** (`REPO_REFUSALS`): `invalid-request`, `no-target`, `not-in-profile`,
+  `approval-required`, `deploy-key`, `no-credential`, `unsafe-git-settings`, `policy`, `not-empty`.
+  A profile `deny` or `require_approval` also records `step.denied` through `toolCallDenial`. A policy
+  denial goes through `refuseByPolicy`.
+- **Credential.** The narrowest one available, never wider than the grant's `credential`:
+  - `none`: no sign-in.
+  - `repository`: only the repository's own stored sign-in. A GitHub App gives a fresh installation
+    token limited to the repository and to the operation's permissions (`APP_PERMISSIONS`):
+    `contents: read` for clone and fetch, `contents: write` for push, `pull_requests: write` for a
+    pull request. A stored token is used as it is. A deploy key is refused (`deploy-key`). No stored
+    sign-in is refused (`no-credential`).
+  - `machine`: the repository's stored sign-in first. Only for a run that is not isolated does it fall
+    back to the bot: a repository-limited `config.github_app` token with the same permissions, otherwise
+    `bot.gh_token_env`.
+  - Local operations (`branch`, `commit`, `status`) never get a credential.
+  - `installationTokenInfo` takes an optional `permissions`, sent in the request and part of the
+    cache key. `appTokenAccess` passes it on.
+- **Processes.** Every `git` and `gh` process runs with an argument list, never through a shell.
+  Network operations get `repoTokenEnv`: HTTPS only, no terminal or credential-manager prompts,
+  `GH_PROMPT_DISABLED=1`, and a new empty `GH_CONFIG_DIR` removed in `finally`. Without a credential
+  they get the same settings with no helper. A user's run uses `shortEnv`. The commit identity is the
+  run's own (`stepIsolation(...).who`, otherwise the identity names).
+  - clone: `git clone -q -- <url> .`, only into an empty folder.
+  - fetch: `git fetch --no-tags --no-recurse-submodules -- <url> +refs/heads/<b|*>:refs/remotes/origin/<b|*>`.
+  - push: `git push --recurse-submodules=no -- <url> HEAD:refs/heads/<branch>`. Never forced.
+  - pull request: `gh pr create --repo <repo> --head … --base … --title …`, with `--draft` if asked and
+    the body on stdin (`--body-file -`).
+  - commit: `git add -A`, then `git commit -q --no-gpg-sign -m <message>`. With nothing staged it is
+    `done` with "nothing to commit".
+  - branch: `git checkout -q -B <name> [origin/<from>]`. status: `git status --porcelain=v1 --branch`.
+- **Git settings.** Before an operation in an existing checkout, `git config --list --null` runs with
+  `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_COUNT=0`. A key outside
+  `ALLOWED_GIT_SETTINGS` refuses the operation. The allowlist is `core.{repositoryformatversion,
+  filemode, bare, logallrefupdates, ignorecase, precomposeunicode, symlinks}`, `remote.origin.{url,fetch}`,
+  `branch.<name>.{remote,merge}` and `user.{name,email}`. So an agent-written `http.proxy`,
+  `http.sslVerify`, `include.*`, `url.*.insteadOf`, `filter.*` or `core.fsmonitor` cannot redirect
+  traffic or read a token. The engine's own `GIT_CONFIG_*` entries (`core.hooksPath`, so the
+  pre-push hook still runs) come first, and the credential settings come after them.
+- **Policy.** Before the operation the engine asks `repository.access` (`tool`, `credential`,
+  `isolated`). A push also asks `push` (with `branch` and `commitIdentity`). A `deny` refuses with
+  `policy`. `RunPolicy.repository()` is not called, so the step's own push facts do not change.
+- **Output.** Never holds a token. The issued token is redacted as `runShell` redacts its pinned
+  secrets, and stderr is scanned with the token and key guards. The output is cut to the grant's
+  `outputCapBytes`.
+- **Evidence.** `repo.operation` (evidence version 4): `step`, `operation` (or `unknown`), `repository?`,
+  `branch?`, `credential`, `policy?` (the combined outcome when policy was asked), `outcome`,
+  `refusal?` (exactly when the outcome is `refused`) and `pullRequest?` (only a done pull request).
+  `RunRecorder.repoOperation()` writes it. Telemetry maps it to `tool.called` with outcome `ok`,
+  `failed` or `denied`, and cause `policy` or `tool` when refused. A done push also emits
+  `delivery.push_attempted`.
 
 ### The evidence stream
 

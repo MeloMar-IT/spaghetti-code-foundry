@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { appJwt, identityEnv } from "../src/engine/guards.js";
+import { appTokenAccess } from "../src/engine/repo-access.js";
 import { liveLogFile } from "../src/engine/state.js";
 import { runFlow } from "../src/engine/runner.js";
 import { classifyFailure } from "../src/failure.js";
@@ -144,6 +145,28 @@ describe("installationToken", () => {
     expect(fake.calls).toHaveLength(2); // the fresh one was not kept
     await installationToken(app(), "77", { repository: "app" });
     expect(fake.calls).toHaveLength(2);
+  });
+  it("sends the permissions in the body, with and without a repository", async () => {
+    await installationToken(app(), "77", { repository: "app", permissions: { contents: "read" } });
+    expect(fake.calls[0]!.body).toEqual({ repositories: ["app"], permissions: { contents: "read" } });
+    await installationToken(app(), "77", { permissions: { pull_requests: "write" } });
+    expect(fake.calls[1]!.body).toEqual({ permissions: { pull_requests: "write" } });
+  });
+  it("caches per permission set, whatever the order of its names", async () => {
+    await installationToken(app(), "77", { repository: "app", permissions: { contents: "read" } });
+    await installationToken(app(), "77", { repository: "app", permissions: { contents: "write" } });
+    await installationToken(app(), "77", { repository: "app" });
+    expect(fake.calls).toHaveLength(3);
+    await installationToken(app(), "77", { repository: "app", permissions: { contents: "read" } });
+    expect(fake.calls).toHaveLength(3);
+    await installationToken(app(), "77", { repository: "app", permissions: { contents: "read", issues: "write" } });
+    await installationToken(app(), "77", { repository: "app", permissions: { issues: "write", contents: "read" } });
+    expect(fake.calls).toHaveLength(4);
+  });
+  it("appTokenAccess passes the permissions through", async () => {
+    const t = await appTokenAccess({ kind: "app", installationId: "77", url: "https://github.com/acme/app.git", github: "acme/app" }, cfg({ github_app: fake.config() }), 20_000, { contents: "write" });
+    expect(t.ok).toBe(true);
+    expect(fake.calls[0]!.body).toEqual({ repositories: ["app"], permissions: { contents: "write" } });
   });
   it("limited is true for 429 and for 403 with no requests left, false for a plain 403", () => {
     const res = (status: number, headers: Record<string, string> = {}) => ({ status, headers: new Headers(headers) });

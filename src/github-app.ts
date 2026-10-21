@@ -80,12 +80,17 @@ async function call(url: string, init: RequestInit, timeoutMs?: number): Promise
 
 const cache = new Map<string, { token: string; expires: number }>();
 
+/** The permissions an installation token is limited to, e.g. `{ contents: "read" }`. */
+export type AppPermissions = Record<string, "read" | "write">;
+
 export interface TokenOpts {
   /** Limit the token to this repository (its name, without the owner). */
   repository?: string;
   /** Ask GitHub even when a token is cached. */
   fresh?: boolean;
   timeoutMs?: number;
+  /** Limit the token to these permissions (part of the cache key). */
+  permissions?: AppPermissions;
 }
 
 /** Is this answer GitHub's request limit? 429, or 403 with no requests left. */
@@ -99,14 +104,24 @@ export async function installationToken(app: AppCredentials, installationId: str
 
 /** Like `installationToken`, with the time the token ends (ms). A `fresh` token is not cached: it goes to one step only. */
 export async function installationTokenInfo(app: AppCredentials, installationId: string, opts: TokenOpts = {}): Promise<{ token: string; expires: number }> {
-  const key = `${app.app_id}/${installationId}/${opts.repository ?? ""}`;
+  const perms = opts.permissions
+    ? Object.entries(opts.permissions)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([k, v]) => `${k}:${v}`)
+        .join(",")
+    : "";
+  const key = `${app.app_id}/${installationId}/${opts.repository ?? ""}/${perms}`;
   const hit = cache.get(key);
   if (!opts.fresh && hit && hit.expires - Date.now() > 5 * 60_000) return hit;
   const jwt = jwtFor(app);
   const res = await call(
     `${API}/app/installations/${encodeURIComponent(installationId)}/access_tokens`,
-    opts.repository
-      ? { method: "POST", headers: { ...headers(jwt), "content-type": "application/json" }, body: JSON.stringify({ repositories: [opts.repository] }) }
+    opts.repository || opts.permissions
+      ? {
+          method: "POST",
+          headers: { ...headers(jwt), "content-type": "application/json" },
+          body: JSON.stringify({ ...(opts.repository ? { repositories: [opts.repository] } : {}), ...(opts.permissions ? { permissions: opts.permissions } : {}) }),
+        }
       : { method: "POST", headers: headers(jwt) },
     opts.timeoutMs,
   );

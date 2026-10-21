@@ -6,6 +6,7 @@ import { parseEvidenceEventLine } from "../src/evidence/parse.js";
 import { actorOf, isTestStep, RunRecorder, stepIdentity, targetModel } from "../src/evidence/record.js";
 import { EvidenceStream, evidenceEventId, hashPlainFile } from "../src/evidence/stream.js";
 import { sha256Hex } from "../src/evidence/identity.js";
+import { EVIDENCE_EVENT_VERSION } from "../src/evidence/version.js";
 import type { StepRecord } from "../src/engine/state.js";
 
 const USER = "0b8f6a0e-5a52-4a4e-9a57-0f2f3f1f7c11";
@@ -32,7 +33,7 @@ describe("EvidenceStream", () => {
     const first = s.append({ type: "run.created", flow: { name: "f" }, by: { kind: "cli" } }, "2026-01-31T12:00:00.000Z");
     s.append({ type: "run.started" });
     s.append({ type: "step.started", step });
-    expect(first).toMatchObject({ version: 3, id: "ev-000000", seq: 0, runId: "r1", time: "2026-01-31T12:00:00.000Z", type: "run.created" });
+    expect(first).toMatchObject({ version: EVIDENCE_EVENT_VERSION, id: "ev-000000", seq: 0, runId: "r1", time: "2026-01-31T12:00:00.000Z", type: "run.created" });
     const text = readFileSync(file(), "utf8");
     expect(text.endsWith("\n")).toBe(true);
     expect(text.split("\n")).toHaveLength(4);
