@@ -5664,6 +5664,109 @@ the steps where runs fail most, and eval results. If one part cannot be loaded, 
 A server that waits to restart shows in the
 [health line](#the-health-line), not on the Dashboard.
 
+### Outcomes
+
+The **Outcomes** card sits on the Dashboard after **Cost per day**. It shows the ten outcome
+measures of the runs you can see, for one window: 7, 30 or 90 days (default 30). Each speed or
+cost measure leads a group with the measures to read it with, so a faster number is never shown
+without its quality, rework, policy and user numbers. Measures that are left over are under
+**Other measures**.
+
+**Filters.** **Repository** and **Flow** are always there. **Model route** and **Policy version**
+appear only for an admin. Each change of a filter loads the card again; the rest of the Dashboard
+does not wait for it.
+
+**Each row** shows:
+
+- **Value** — `—` when there is no value. Minutes or hours for a time, a percentage for a share, dollars for a cost.
+- **Counted** — how many it counts: runs, work items or accounts, as the definition says.
+- **Left out** — how many runs were not counted (see the exclusions below).
+- **Owner** — `admin` or `repository owner`. Only an admin sees the admin measures.
+- **Decision** — what the number is used for, and the detector or setting it belongs to.
+- **Definition and exclusions** — a disclosure with the same text as the server gives. It is
+  `OUTCOME_DEFINITIONS` in `src/outcomes.ts`.
+
+A user sees only the measures they may see: no **Cost per successful run** and no **Returning users**.
+
+If the card cannot load, it says "Could not load the outcomes." with **Retry**, and the rest of the
+Dashboard is shown. With no data, a measure with no value shows `—` with its **Counted** and
+**Left out** numbers, so you can see how many runs were not counted. If the answer has no measures
+at all, the card says "No outcome measures yet." and shows no table; the filters stay, so you can
+pick another repository, flow or window.
+
+**The ten measures.** Each entry gives the owner, what it is read with, what it counts, the
+definition, and what is not counted.
+
+- **Issue to pull request** (speed, time; owner: repository owner; counts work items). Read with
+  First-pass test success, Rework after delivery, Policy blocks and Returning users. Decision:
+  whether work gets from an issue to a pull request fast enough, or needs more slots or fewer
+  steps (setting `concurrency`).
+  - *Definition:* The median time from the first queueing or start of a GitHub issue's runs to the
+    end of the first run that delivered it. A run delivers when it succeeded and a push policy
+    decision did not deny it.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Runs without an issue. Issues delivered before the window. Refinement runs.
+- **First-pass test success** (quality, share; owner: repository owner; counts runs). Read with
+  Issue to pull request and Cost per successful run. Decision: whether the tests pass on the first
+  try, or the build steps need better instructions (detector `same-step-failing`).
+  - *Definition:* The share of runs whose first test run (not a baseline run before the work) passed.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Runs with no test result, such as plan-only flows. Refinement runs.
+- **Merge rate (pushed work)** (quality, share; owner: repository owner; counts work items). Read
+  with Issue to pull request and Rework after delivery. Decision: whether a flow delivers the work
+  it starts. Merges done by hand on GitHub are not seen (detector `unexplained-failure`).
+  - *Definition:* The share of work items, in flows that push, that a run delivered. A run delivers
+    when it succeeded and a push policy decision did not deny it.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Flows that never push in the window. Runs that work on no issue, pull request or CI run. Refinement runs.
+- **Rework after delivery** (rework, count; owner: repository owner; counts work items). Read with
+  Merge rate, Issue to pull request and Cost per successful run. Decision: whether delivered work
+  comes back, so the review steps must be stricter (setting: review steps of the flow).
+  - *Definition:* The number of work items delivered in the window that a later run worked on again
+    before the end of the window.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Later runs without readable evidence. Items delivered outside the window. Refinement runs.
+- **Policy blocks** (policy, count; owner: admin; counts runs). Read with Issue to pull request,
+  Approval latency and Cost per successful run. Decision: whether an observed policy pack is ready
+  to enforce, or would block too much (setting `policy.packs`).
+  - *Definition:* The number of runs that a policy stopped at least once. The details also give the
+    denials that observed packs would have made.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Refinement runs.
+- **Evidence completeness** (quality, share; owner: admin; counts runs). Read with Resumes and Cost
+  per successful run. Decision: whether every run leaves complete evidence before more work is
+  trusted to the Foundry (detector `evidence-finalization`).
+  - *Definition:* The share of runs with an evidence file that also have the final manifest and are
+    not marked incomplete.
+  - *Not counted:* Runs without an evidence file. Refinement runs.
+- **Resumes** (rework, count; owner: admin; counts runs). Read with Issue to pull request and Cost
+  per successful run. Decision: whether runs stop and restart too often (detector `restart-loop`).
+  - *Definition:* The number of times the runs of the window were resumed. The details give the share
+    of runs resumed at least once.
+  - *Not counted:* Refinement runs.
+- **Approval latency** (speed, time; owner: repository owner; counts runs). Read with First-pass
+  test success, Rework after delivery, Policy blocks and Returning users. Decision: whether people
+  decide approvals fast enough, or a flow has approval steps it does not need (setting: approval
+  steps of the flow).
+  - *Definition:* The mean time from the moment a run waited for an approval to the decision.
+  - *Not counted:* Runs without readable evidence (older runs, or a file that is missing, too large or a link).
+    Runs with no approval are not counted. Refinement runs.
+- **Cost per successful run** (cost, dollars; owner: admin; counts runs). Read with First-pass test
+  success, Rework after delivery, Policy blocks and Returning users. Decision: whether the money
+  spent buys finished work, and the daily budget fits (setting `daily_budget_usd`).
+  - *Definition:* The cost of all runs of the window, failed ones included, divided by the number of
+    runs that succeeded.
+  - *Not counted:* Refinement runs. No value when no run succeeded.
+- **Returning users** (user, count; owner: admin; admin only; counts accounts). Read with Issue to
+  pull request and Cost per successful run. Decision: whether people keep using the Foundry before
+  it is rolled out further (setting: user accounts).
+  - *Definition:* The number of accounts that started a run that ended in the window and one that
+    ended in the window before it. Only counts are given, never an account.
+  - *Not counted:* Runs without an owner. Refinement runs.
+
+The card reads `GET /api/outcomes`; its query and who may send which filter are in the API table
+under **Roles and permissions** in section 7.
+
 ### Evals
 
 An eval suite runs sample tasks through one or more flows and models and scores them, so you

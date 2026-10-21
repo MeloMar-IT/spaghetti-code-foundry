@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { OUTCOME_DEFINITIONS } from "../src/outcomes.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -91,10 +92,12 @@ describe("states", () => {
   };
   const info = { spentToday: 1, dailyBudget: 5, costLimits: true };
   const evals = [{ suite: "suite-a", startedAt: "2026-10-01T09:00:00.000Z", summary: [{ variant: "v1", runs: 2, passRate: 1, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }, { variant: "v2", runs: 4, passRate: 0.5, qualityRate: 1, skills: { runs: 4, selectionRate: 1, contextRate: 0.75, activationRate: 0.5 }, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }] }];
-  const URLS = ["/api/stats", "/api/info", "/api/evals", "/api/watchers", "/api/runs", "/api/clarity"];
+  const URLS = ["/api/stats", "/api/info", "/api/evals", "/api/watchers", "/api/runs", "/api/clarity", "/api/outcomes"];
   const NAMES: Record<string, string> = {
     "/api/stats": "the statistics", "/api/info": "today's spending", "/api/evals": "evals", "/api/watchers": "the watchers", "/api/runs": "the runs", "/api/clarity": "your turn in numbers",
+    "/api/outcomes": "the outcomes",
   };
+  const outcomes = { values: { repos: ["acme/app"], flows: [] }, definitions: OUTCOME_DEFINITIONS, measures: OUTCOME_DEFINITIONS.map((d) => ({ id: d.id, value: null, detail: {}, counted: 0, excluded: 1 })) };
   let hits: string[];
   let held: Promise<void> | undefined;
   const install = (fail: string[]) => {
@@ -108,7 +111,7 @@ describe("states", () => {
       const body: Record<string, unknown> = {
         "/api/stats": stats, "/api/info": info, "/api/evals": evals,
         "/api/watchers": [{ id: "w1", source: "issues", github_repo: "o/a", label: "go", enabled: true, state: { name: "running" }, status: { id: "w1", lastActions: [] } }],
-        "/api/runs": [], "/api/clarity": null,
+        "/api/runs": [], "/api/clarity": null, "/api/outcomes": outcomes,
       };
       return reply(body[path]);
     };
@@ -192,10 +195,10 @@ describe("states", () => {
     expect(values).toEqual(["$1.00", "—", "—", "0"]);
   });
 
-  it("when all six calls fail, every part is named and each note has Retry", async () => {
+  it("when all seven calls fail, every part is named and each note has Retry", async () => {
     const main = await render(URLS);
     const notes = errors(main);
-    expect(notes).toHaveLength(6);
+    expect(notes).toHaveLength(7);
     for (const url of URLS) expect(notes.some((n) => n.textContent.includes(`Could not load ${NAMES[url]}.`))).toBe(true);
     expect(notes.every((n) => n.all("button").some((b) => b.textContent === "Retry"))).toBe(true);
   });
