@@ -3372,6 +3372,8 @@ Errors from the server show in the dialog in plain words. A failed removal shows
 method shows "Needs authentication" for a user. An admin can also choose "The server's own access". The page
 has no per-repository settings. An admin sets them on the **Repositories** page.
 
+**Outcomes on the repository view.** The repository view (`#/repos/<id>`) has an **Outcomes** section on both displays, for a GitHub repository. It is the same card as on the Dashboard (see [Outcomes](#outcomes)), for that one repository: the repository is fixed, and you choose the **Flow** and the window (7, 30 or 90 days). The measures and their definitions are the same. You see only what you may see: no **Cost per successful run**, no **Returning users**, and for a user no model route or policy version filter. A measure that is read with an admin-only measure says how many are left out ("… for admins only"). A repository on another host shows "Outcomes are measured for GitHub repositories only." If the card cannot load, it says "Could not load the outcomes." with **Retry**; the rest of the page still works. The card reads `GET /api/outcomes?repo=<owner/name>`.
+
 **The Repositories page (admin).** An admin has one Repositories page with a switch: **Mine** (`#/repos`),
 **All** (`#/all-repos`) and **Credentials** (`#/credentials`, see below); a user never gets **All** or **Credentials**. **All** lists the repositories of all accounts with the
 Owner column (name and e-mail, "blocked" for a blocked owner, "Unknown account" when the account is gone), the

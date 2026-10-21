@@ -131,7 +131,7 @@ const show = async (r: any, opts: object = {}) => {
 describe("the admin view", () => {
   it("draws the sections in order, with Transfer inside the danger section", async () => {
     await show(rec());
-    expect(ids()).toEqual(["overview", "connection", "branches", "run-settings", "release-recipe", "watchers", "danger"]);
+    expect(ids()).toEqual(["overview", "connection", "outcomes", "branches", "run-settings", "release-recipe", "watchers", "danger"]);
     expect(button(section("danger"), "Transfer")).toBeDefined();
     expect(button(section("danger"), "Remove")).toBeDefined();
     expect(section("branches").textContent).toContain("develop");
@@ -157,7 +157,7 @@ describe("the admin view", () => {
     const r = rec();
     all = [r];
     await view.renderRepo(main(), { id: r.id, nav: () => {} });
-    expect(ids()).toEqual(["overview", "connection", "danger"]);
+    expect(ids()).toEqual(["overview", "connection", "outcomes", "danger"]);
     expect(gets.filter((u) => u.startsWith("/api/admin/") || u.startsWith("/api/watchers") || u.startsWith("/api/flows"))).toEqual([]);
   });
 

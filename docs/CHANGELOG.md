@@ -4,6 +4,10 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Telemetry 3d (#620): the repository view has an **Outcomes** section for a GitHub repository, for its owner and for an admin. It shows the outcome measures of that repository for 7, 30 or 90 days, with a flow filter, the same pairs and definitions as the Dashboard. A user never sees cost, returning users, or the model and policy filters; a pair with admin-only measures says how many are left out. If the card cannot load, it shows "Could not load the outcomes." with Retry; the rest of the page still works. Part 4 of 4 of #157.
+  - **Docs.** `docs/USER_GUIDE.md` ("Outcomes on the repository view" in the repository section; the Outcomes chapter is unchanged).
+  - **Code.** Changed `ui/outcomes.js` (`outcomesSection` takes `repo`, `admin` and `embedded`; new `adminOnlyText`; a group counts its `hidden` measures) and `ui/repo-view.js` (`githubOf`, the Outcomes section, `ctx.viewerAdmin` and `ctx.part`). `ui/outcomes.js` does not import `ui/dashboard.js`.
+  - **Tests.** New `tests/ui-repo-outcomes.test.ts` (user and admin sessions). Changed `tests/ui-outcomes.test.ts`, `tests/ui-repo-view.test.ts` and `tests/ui-repo-admin-sections.test.ts`.
 - Telemetry 3c (#619): an **Outcomes** card on the Dashboard shows the ten outcome measures for 7, 30 or 90 days, each speed or cost measure next to the measures to read it with. Part 3 of 4 of #157.
   - **Card.** Filters for repository, flow and window; model route and policy version for an admin only. A change of filter loads `GET /api/outcomes` again and redraws only the card. Each row shows the value (`—` when there is none), how many it counts, how many runs were left out, the owner, the decision and a "Definition and exclusions" disclosure with the server's text.
   - **Failure.** If the answer cannot be loaded, the card shows "Could not load the outcomes." with Retry; the rest of the Dashboard still works.
