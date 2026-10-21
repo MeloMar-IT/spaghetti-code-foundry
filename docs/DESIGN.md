@@ -288,7 +288,8 @@ numbers and pure functions.
   `budget.daily-exceeded`, `sandbox.required`, `workspace.admin-only`, `repository.not-allowed`,
   `credential.scope-exceeded`, `identity.missing`, `tool.not-allowed`, `issue.closed`,
   `flow.retired`, `approval.required`, `exception.granted`. Codes only the evaluation gives:
-  `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`.
+  `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`. The code
+  only the break-glass gives: `policy.break-glass` (a `warn` in `enforce` mode, see "Break-glass" below).
 - **`evaluatePolicy(pack, input, evaluatedAt)`** gives one decision and is deterministic: no file,
   network, model, clock or randomness; the caller gives the time. A rule that does not name the
   boundary of the input is passed over. The first rule whose conditions all hold decides. A rule
@@ -305,7 +306,7 @@ numbers and pure functions.
 
 `src/engine/policy-hooks.ts` asks the configured policy packs at the boundaries of a run (#142). It
 is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` holds the last-known-good copies and the restore. A decision changes a run in one case only: fail closed
-(below). Otherwise packs run in observe mode.
+(below), which an active break-glass can turn into a recorded `warn` (see "Break-glass"). Otherwise packs run in observe mode.
 
 - **Where the questions come from.** The engine asks, so a flow cannot leave a boundary out: `runner.ts`
   asks `run.start`, `repository.access` (before a workspace is made), `approval.consume` and
@@ -364,6 +365,22 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   checks at `approval.consume` and records no `step.approved`. `RunPolicy.mandatoryUnusable` stops the
   run from fetching the bot token up front. No push check is needed: `push` is not privileged, and the
   sign-in was already refused at `repository.access`.
+- **Break-glass (#626).** `runPolicy` passes `RunPolicy` a reader, `() => activeBreakGlass(home ?? dataHome())`
+  (`breakGlass` option; the default `() => undefined` fails closed). `RunPolicy.outage(id, decision, boundary)`
+  is called for each mandatory pack's decision, in `decide` and in the `catch` path of `at`. It acts only on
+  an `enforce` `deny` with `policy.unavailable` or `policy.invalid`, and only when the run has a recorder. Then
+  the reader is asked; a throw or `undefined` keeps the denial. The replacement is `warn` with
+  `policy.break-glass`, the same policy id, version `unknown`, the input hash of the denial, and no pack hash
+  or rule. `at` keeps it only after `report` has recorded it: `RunRecorder.policyDecided` returns whether the
+  event was written (`put` too). If it was not, the original denial stands, `denied` is set and the log says
+  so. Rule decisions, the other layers and the other boundaries never call the reader. The run log line is
+  `! policy: break-glass active until …`, and the policy line ends with `— break-glass: the step goes on`.
+  `PolicyDecisionSchema` accepts `policy.break-glass` only with `outcome: "warn"` and `mode: "enforce"`, and
+  `NO_RULE_REASONS` and `NO_PACK_REASONS` include it. The decision version is unchanged, so an older build
+  refuses a run that has it. `breakGlassWatch(log, now)` (`policy-break-glass.ts`) is the server's watch: it runs
+  at startup and every 60 s on an unref'd timer, logs while a record is active (first check, a new `startedAt`,
+  every 15 minutes), writes the `expired` line through `endExpiredBreakGlass` on expiry and logs when the record
+  is gone. It never throws. Counting break-glass decisions in the SLO input (`slo-input.ts`) is not done yet.
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.

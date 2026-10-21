@@ -36,6 +36,7 @@ export const ENGINE_REASONS = {
   "policy.input-incomplete": "A rule needed a fact the input did not have, so the action is denied.",
   "policy.invalid": "The pack could not be read, so the action is denied.",
   "policy.unavailable": "The pack could not be loaded, so the action is denied.",
+  "policy.break-glass": "A mandatory pack could not be used, but an admin's break-glass is active, so the action goes on with a warning.",
 } as const;
 
 export type RuleReasonCode = keyof typeof RULE_REASONS;

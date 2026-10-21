@@ -427,6 +427,7 @@ describe("fail closed", () => {
   it("keeps the text of the engine reasons", () => {
     expect(ENGINE_REASONS["policy.unavailable"]).toBe("The pack could not be loaded, so the action is denied.");
     expect(ENGINE_REASONS["policy.invalid"]).toBe("The pack could not be read, so the action is denied.");
+    expect(ENGINE_REASONS["policy.break-glass"]).toBe("A mandatory pack could not be used, but an admin's break-glass is active, so the action goes on with a warning.");
   });
 });
 
