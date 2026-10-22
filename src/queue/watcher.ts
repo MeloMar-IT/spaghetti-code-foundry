@@ -7,7 +7,7 @@ import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
 import { commentReads, extraWaitingIssues, EXTRA_READS_PER_CHECK, EXTRA_READ_MEMO_MS, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs, type CommentReads } from "./waiting-issues.js";
-import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, listOpenIssuesByLabelPages, setLabels, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
+import { canWrite, commentOnIssue, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, listOpenIssuesByLabelPages, setLabels, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
@@ -20,6 +20,7 @@ import { freshIssueList } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
+import { notCodeStop, parkedComment, wantsPark } from "./park.js";
 
 /** Status labels the watcher puts on issues. Remove one to have the issue picked up again. */
 export const STATUS_LABELS = {
@@ -884,6 +885,7 @@ export class Watcher {
       onSlow: (n) => this.slowUntil.set(n, Date.now() + SLOW_READ_MS),
     });
     const unknown = new Set<number>(); // issues whose comments could not be read in this check
+    const quietNow = new Set<number>(); // issues parked (or a park refused) in this check: no status comment change
     const questionCount = (comments: Comment[]) => countQuestions([...comments].reverse().find(asked)?.body);
 
     const overLimit = (isFirst: boolean) => started >= this.cfg.max_per_tick && !isFirst;
@@ -931,8 +933,15 @@ export class Watcher {
       let answeredEarly = false;
       if (status === this.L.needsInfo && !run && !mixed) {
         const comments = await reads.read(n);
+        alive();
         if (!comments) { unknown.add(n); holds.push({ ...this.held("questions", issue), byLabel: true }); continue; }
         const answers = commentsAfter(comments, asked);
+        const parked = answers.length ? await this.parkOnRequest(n, answers, undefined, alive) : undefined;
+        if (parked) {
+          quietNow.add(n); offNow.delete(n); delete track.labelOff;
+          if (parked === "parked") tracked.splice(tracked.indexOf(track), 1);
+          continue;
+        }
         if (!answers.length && !(await this.takeDefaults(n, comments))) {
           holds.push({ ...this.held("questions", issue, { questions: questionCount(comments) }), since: [...comments].reverse().find(asked)?.createdAt });
           continue;
@@ -1025,7 +1034,12 @@ export class Watcher {
           // A run that waits for the person, behind another story: when it is answered, nothing is needed from the
           // person any more. The label says working; the run resumes when the lock is free.
           const comments = await reads.read(n);
+          alive();
           if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
+          if (askedRun) {
+            const parked = await this.parkOnRequest(n, commentsAfter(comments, asked), run, alive);
+            if (parked) { quietNow.add(n); offNow.delete(n); delete track.labelOff; continue; }
+          }
           const answered = askedRun ? commentsAfter(comments, asked).length > 0 : !!(await this.findDecision(run.runId, comments));
           if (answered) {
             if (status !== this.L.working) {
@@ -1091,8 +1105,13 @@ export class Watcher {
         const asks = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo;
         const decides = !resumable && run.status === "waiting";
         const late = asks || decides ? await reads.read(n) : [];
+        alive();
         if (!late) unknown.add(n);
         const lateAnswers = asks && late ? commentsAfter(late, asked) : [];
+        if (lateAnswers.length) {
+          const parked = await this.parkOnRequest(n, lateAnswers, run, alive);
+          if (parked) { quietNow.add(n); offNow.delete(n); delete track.labelOff; continue; }
+        }
         const lateDecision = decides && late ? await this.findDecision(run.runId, late) : undefined;
         const holder = steppedAsideFor(run);
         if (isFirst && holder && !paused) { firstWaits.add(holder); track.claims = holder; }
@@ -1146,10 +1165,16 @@ export class Watcher {
         this.act(`#${n} label → ${label}`);
       } else if (status === this.L.needsInfo && run?.status === "stopped") {
         const comments = await reads.read(n);
+        alive();
         if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
         const answers = commentsAfter(comments, asked);
+        if (answers.length) {
+          const parked = await this.parkOnRequest(n, answers, run, alive);
+          if (parked) { quietNow.add(n); offNow.delete(n); delete track.labelOff; continue; }
+        }
         // auto_defaults: nobody answered yet, so the recommendations are taken (only when the run can go on now).
-        const auto = !answers.length && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
+        // A "not a coding task" stop is not answered with defaults: it needs a person (the planner_questions hold stays).
+        const auto = !answers.length && !notCodeStop(run) && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
         if ((answers.length || auto) && !overLimit(isFirst)) {
           await setLabels(this.repo, n, this.L.working, this.allStatus);
           this.resume(n, run.runId, auto ? "answered with the recommendations (auto_defaults)" : `answered by @${answers[0]!.author.login}`, undefined, true, first);
@@ -1217,7 +1242,7 @@ export class Watcher {
     this.status.pausedBy = paused ? { number: paused.number, url: paused.url, title: paused.title, createdAt: paused.createdAt } : undefined;
     this.tracked = tracked;
     this.labelOff = offNow;
-    const quiet = [...new Set([...holds.filter((h) => h.byLabel && h.issue !== undefined).map((h) => h.issue!), ...unknown])];
+    const quiet = [...new Set([...holds.filter((h) => h.byLabel && h.issue !== undefined).map((h) => h.issue!), ...unknown, ...quietNow])];
     if (this.cfg.status_comment) await this.reportStatus(runs, holds, tracked, closed, !tidyError && closedWhole && whole, () => mine === this.tickToken && !this.stopped, quiet);
     // The closed-issue scan is part of the check: its failure is the check's error.
     if (statesError) throw new Error(`checking closed issues: ${errorLine(statesError.message)}`); // first: this prefix is the contract
@@ -1415,6 +1440,68 @@ export class Watcher {
     }
   }
 
+  /** May this comment's author decide (approve, reject, park)? An app has no user: its own comment (gh says so) counts as written with write access. */
+  private async mayDecide(c: Comment): Promise<boolean> {
+    return (c.viewerDidAuthor === true && ghActsAsApp()) || (await canWrite(this.repo, c.author.login));
+  }
+
+  /** Work of this issue that is queued or running (also a queued job that has no run file yet). */
+  private workOf(n: number): boolean {
+    const q = this.d.scheduler.queue();
+    if (q.pending.some((p) => p.githubRepo === this.repo && p.issue === String(n))) return true;
+    return q.active.some((a) => { const v = this.d.scheduler.get(a.runId)?.vars; return v?.github_repo === this.repo && v.issue === String(n); });
+  }
+
+  /**
+   * /park, or a "do not build" answer to a NOT_CODE stop, among `answers` (oldest first). The first one from someone
+   * with write access parks the issue. undefined: no such request (the answers are ordinary answers).
+   * "refused": nothing was parked (work for the issue is queued or running again, or the labels could not be removed);
+   * nothing is changed on GitHub and the run is not marked parked.
+   */
+  private async parkOnRequest(n: number, answers: Comment[], run: RunSummary | undefined, alive: () => void): Promise<"parked" | "refused" | undefined> {
+    const notCode = !!run && notCodeStop(run);
+    const id = this.cfg.id;
+    const still = () => {
+      try { alive(); } catch (e) {
+        this.d.log(`[${id}] #${n} not parked: ${errorLine((e as Error).message)}; nothing changed`);
+        throw e;
+      }
+    };
+    still();
+    let by: string | undefined;
+    for (const c of answers) {
+      if (!wantsPark(c.body, notCode)) continue;
+      const ok = await this.mayDecide(c);
+      still();
+      if (ok) { by = c.author.login; break; }
+      this.act(`#${n} ignored /park from @${c.author.login} (no write access)`);
+    }
+    if (by === undefined) return undefined;
+    // No await between this check and setParked: work queued during the permission read is seen here.
+    if (this.workOf(n) || (run && !this.d.scheduler.setParked(run.runId))) {
+      this.act(`#${n} /park by @${by} not done: ${run ? `run ${run.runId} is` : "work for it is"} queued or running again; labels and comments unchanged`);
+      return "refused";
+    }
+    const remove = [...new Set([this.cfg.label, ...this.allStatus])];
+    let removed = false;
+    for (let i = 0; i < 2 && !removed; i++) {
+      try { await setLabels(this.repo, n, undefined, remove); removed = true; } catch (e) {
+        this.d.log(`[${id}] #${n} parking: removing the labels failed: ${errorLine((e as Error).message)}`);
+      }
+    }
+    if (!removed) {
+      // The trigger label would read as "added again" and start the story over: take the mark back; the next check tries again.
+      if (run) this.d.scheduler.clearParked(run.runId);
+      this.act(`#${n} /park by @${by} not done: the labels could not be removed; it is tried again at the next check`);
+      return "refused";
+    }
+    await commentOnIssue(this.repo, n, parkedComment(this.cfg.label, run?.runId)).catch((e: Error) => {
+      this.d.log(`[${id}] ! #${n} parked, but the comment could not be posted: ${errorLine(e.message)}`);
+    });
+    this.act(`#${n} parked by @${by}${run ? ` → run ${run.runId} is parked` : ""} · labels removed`);
+    return "parked";
+  }
+
   /** First /approve or /reject after the run's approval request, from someone with write access. */
   private async findDecision(runId: string, comments: Comment[]) {
     const after = commentsAfter(comments, (c) => c.body.includes(`run=${runId} approval`));
@@ -1422,7 +1509,7 @@ export class Watcher {
       const m = APPROVE_RE.exec(c.body);
       if (!m) continue;
       // An app has no user: its own comment (gh says so) counts as written with write access.
-      if (!(c.viewerDidAuthor === true && ghActsAsApp()) && !(await canWrite(this.repo, c.author.login))) {
+      if (!(await this.mayDecide(c))) {
         this.act(`ignored /${m[1]} from @${c.author.login} (no write access)`);
         continue;
       }

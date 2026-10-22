@@ -321,6 +321,16 @@ export function setRunParked(runDir: string, at: string): boolean {
   });
 }
 
+/** Takes the parked mark off a run again (a park that could not be finished). Changes nothing else. Returns true when the file was replaced. Never throws. */
+export function clearRunParked(runDir: string): boolean {
+  return rewriteRunMark(runDir, (s) => {
+    if (typeof s.parkedAt !== "string") return undefined;
+    const next = { ...s };
+    delete next.parkedAt;
+    return next;
+  });
+}
+
 /** The reason of a run cancelled while it was stopped: it sets this cancel apart from an aborted running run, which a watcher resumes. */
 export const STOPPED_CANCEL_REASON = "cancelled by user while stopped";
 export const isStoppedCancel = (reason?: string): boolean => reason === STOPPED_CANCEL_REASON;

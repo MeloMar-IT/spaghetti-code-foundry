@@ -672,6 +672,9 @@ const REPORTS: Record<ReportKind, Pick<NextStep, "who" | "action" | "why">> = {
 /** firstLine() of the fixed record of a report kind. */
 export function reportFirst(kind: ReportKind): string { return firstLine(REPORTS[kind]); }
 
+/** The line added to a "not a coding task" comment (FACTORY_PARK_HINT). */
+export const PARK_HINT = "Reply **/park** to keep this issue open but out of the build queue, or answer to have it planned again.";
+
 /** Step environment: FACTORY_NEXT_<KIND> and FACTORY_FIRST_<KIND> for every comment kind, plus FACTORY_FIRST_<REPORT> for every report kind and FACTORY_FIRST_NOTHING. */
 export function nextStepEnv(): Record<string, string> {
   return {
@@ -681,6 +684,7 @@ export function nextStepEnv(): Record<string, string> {
     ])),
     ...Object.fromEntries(REPORT_KINDS.map((k) => [`FACTORY_FIRST_${k.toUpperCase()}`, reportFirst(k)])),
     FACTORY_FIRST_NOTHING: firstLine(nextStep("running")),
+    FACTORY_PARK_HINT: PARK_HINT,
   };
 }
 
