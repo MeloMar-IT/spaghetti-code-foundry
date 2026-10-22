@@ -283,12 +283,19 @@ export function selfEnv(): Record<string, string> {
 
 export { appJwt };
 
-/** Env for acting as the bot: git author/committer and the token gh (and git via gh) uses. */
-export async function identityEnv(config: Config): Promise<Record<string, string>> {
+/** The bot's commit name and e-mail only (no token); never throws. */
+export function botIdentityEnv(config: Pick<Config, "bot">): Record<string, string> {
   const env: Record<string, string> = {};
-  const { name, email, gh_token_env } = config.bot;
+  const { name, email } = config.bot;
   if (name) env.GIT_AUTHOR_NAME = env.GIT_COMMITTER_NAME = name;
   if (email) env.GIT_AUTHOR_EMAIL = env.GIT_COMMITTER_EMAIL = email;
+  return env;
+}
+
+/** Env for acting as the bot: git author/committer and the token gh (and git via gh) uses. */
+export async function identityEnv(config: Config): Promise<Record<string, string>> {
+  const env: Record<string, string> = { ...botIdentityEnv(config) };
+  const { gh_token_env } = config.bot;
   if (config.github_app?.installation_id) env.GH_TOKEN = await installationToken(config.github_app, config.github_app.installation_id);
   else if (gh_token_env) {
     const t = process.env[gh_token_env];

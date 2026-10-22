@@ -116,7 +116,7 @@ describe("Codex steps and the personal Codex setup", () => {
   });
 
   it("a login step sees no ambient credential variable", async () => {
-    const s = await run(step("a", "agent: codex,", "SHOWALLENV\nSHOWVARS GIT_CONFIG_GLOBAL HOME CODEX_HOME"));
+    const s = await run(step("a", "agent: codex,", "SHOWALLENV\nSHOWVARS GIT_CONFIG_GLOBAL HOME CODEX_HOME GIT_ALLOW_PROTOCOL"));
     expect(s.status, s.reason).toBe("succeeded");
     const out = get(s, "a").output;
     const names = /env: (.*)/.exec(out)![1]!.split(" ");
@@ -124,12 +124,16 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(names).not.toContain("SCF_CANARY_SECRET");
     expect(names).not.toContain("SSH_AUTH_SOCK");
     expect(out).toContain("GIT_CONFIG_GLOBAL=/dev/null");
+    expect(out).toContain("GIT_ALLOW_PROTOCOL=file");
     expect(out).toContain(`HOME=${s.runDir}/home\n`);
     expect(out).toContain(`CODEX_HOME=${s.runDir}/home/.codex`);
   });
 
   it("a key step has no login; OPENAI_API_KEY alone is not a Codex key", async () => {
     process.env.CODEX_API_KEY = "k".repeat(20);
+    const shown = await run(step("v", "agent: codex,", "SHOWVARS GIT_ALLOW_PROTOCOL GH_TOKEN"));
+    expect(get(shown, "v").output).toContain("GIT_ALLOW_PROTOCOL=file");
+    expect(get(shown, "v").output).toContain("GH_TOKEN=(unset)");
     const t = await run(step("k", "agent: codex,"));
     expect(get(t, "k").output).toContain("login=no");
     expect(get(t, "k").output).toContain(`${CLEAN(t.runDir)} login=no env=no`);
@@ -184,15 +188,16 @@ describe("Codex steps and the personal Codex setup", () => {
     expect(log(s)).not.toContain("    ! ");
   });
 
-  it("isolate_agents: false on a CLI run runs Codex exactly as before", async () => {
-    const s = await run(step("a", "agent: codex,", "SHOWCODEXHOME\nSHOWVARS GH_TOKEN"), { isolate_agents: false });
+  it("isolate_agents: false on a CLI run: Codex keeps its personal folder, and still gets no token", async () => {
+    const s = await run(step("a", "agent: codex,", "SHOWCODEXHOME\nSHOWVARS GH_TOKEN GIT_ALLOW_PROTOCOL"), { isolate_agents: false });
     expect(s.status, s.reason).toBe("succeeded");
     const a = get(s, "a");
     expect(a.output).not.toContain(FLAG);
     expect(a.output).not.toContain("<instructions>");
     expect(a.output).not.toContain("mcp_servers={}");
     expect(a.output).toContain(`codex_home=${personal} config=read mcp=canary`);
-    expect(a.output).toContain("GH_TOKEN=ghp_canary");
+    expect(a.output).toContain("GH_TOKEN=(unset)");
+    expect(a.output).toContain("GIT_ALLOW_PROTOCOL=file");
     expect(log(s).replace(/^.*· tools: .*$/gm, "")).not.toContain("Codex:");
   });
 

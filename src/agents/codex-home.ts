@@ -155,7 +155,8 @@ export function prepareCleanCodex(o: PrepareCleanCodex): CleanCodex | { refused:
     env = { ...env, CODEX_HOME: made.CODEX_HOME, HOME: made.HOME };
     if (!o.short) env = shortEnv(env, o.config, { agent: "codex", kind: o.kind });
     cleanEnv = true;
-    if (!o.isolated) env = { ...env, ...noMachineSignIn(o.config, made.GH_CONFIG_DIR) };
+    // an agent session: network git only through the broker, so only the file protocol
+    if (!o.isolated) env = { ...env, ...noMachineSignIn(o.config, made.GH_CONFIG_DIR), GIT_ALLOW_PROTOCOL: "file" };
   }
   if (login) {
     const lent = lendCodexLogin(o.runDir, o.personal);

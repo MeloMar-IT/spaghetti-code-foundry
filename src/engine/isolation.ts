@@ -98,12 +98,52 @@ export function noMachineSignIn(config: Pick<Config, "bot">, ghDir: string): Rec
 }
 
 /**
+ * Where the next `GIT_CONFIG_KEY_<n>` entry goes. A valid `GIT_CONFIG_COUNT` (digits, at most 1000) is used as it is;
+ * a negative, non-numeric or huge one is replaced by the number of contiguous keys from 0, so a bad count from
+ * `agent_env` can never cancel the entries we append (git reads every entry up to the count).
+ */
+export function nextConfigIndex(env: Record<string, string | undefined>): number {
+  const raw = env.GIT_CONFIG_COUNT;
+  if (raw !== undefined && /^\d+$/.test(raw)) {
+    const n = Number.parseInt(raw, 10);
+    if (n <= 1000) return n;
+  }
+  let i = 0;
+  while (env[`GIT_CONFIG_KEY_${i}`] !== undefined) i++;
+  return i;
+}
+
+/** The env that takes every Git and GitHub sign-in away from an agent step; the machine's git settings stay. Applied after agent_env. `undefined` removes an inherited variable. Environment only, not an OS sandbox. */
+export function agentNoSignInEnv(config: Pick<Config, "bot">, ghDir: string, env: Record<string, string | undefined>): Record<string, string | undefined> {
+  const tokens: Record<string, string | undefined> = {};
+  for (const name of tokenVarNames(config)) tokens[name] = undefined;
+  const n = nextConfigIndex(env);
+  return {
+    ...tokens,
+    SSH_AUTH_SOCK: undefined,
+    GIT_SSH: undefined,
+    GIT_SSH_COMMAND: undefined,
+    SSH_ASKPASS: undefined,
+    GIT_CONFIG_PARAMETERS: undefined,
+    GH_CONFIG_DIR: ghDir,
+    GH_PROMPT_DISABLED: "1",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "",
+    GCM_INTERACTIVE: "never",
+    GIT_ALLOW_PROTOCOL: "file",
+    GIT_CONFIG_COUNT: String(n + 1),
+    [`GIT_CONFIG_KEY_${n}`]: "credential.helper",
+    [`GIT_CONFIG_VALUE_${n}`]: "",
+  };
+}
+
+/**
  * The env that makes a step act without the machine's login: no token, an empty `gh` folder, git without the machine's
  * settings, helpers, ssh agent and keys, no prompts, and the commit name. Added after the engine's own GIT_CONFIG entries
  * (core.hooksPath stays). `undefined` removes an inherited variable. This is the environment only, not an OS sandbox.
  */
 export function isolationEnv(env: Record<string, string | undefined>, config: Pick<Config, "bot">, ghDir: string, who: CommitIdentity): Record<string, string | undefined> {
-  const n = Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10) || 0;
+  const n = nextConfigIndex(env);
   return {
     ...noMachineSignIn(config, ghDir),
     GIT_TRACE: undefined,

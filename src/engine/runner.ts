@@ -109,6 +109,11 @@ export function learningsFile(vars: Record<string, string>, repo: string, accoun
 }
 
 /** The variables of a run: the flow's defaults, then the folder's own settings (not for an empty workspace), then the given ones. */
+/** True when a step of the flow gets the bot's token: a shell step, or a sub-flow (its steps are not known yet). */
+function flowUsesBot(flow: Flow): boolean {
+  return flow.steps.some((s) => s.type === "shell" || s.type === "flow");
+}
+
 export function effectiveVars(flow: Flow, repo: string, given: Record<string, string> = {}, log?: (msg: string) => void): Record<string, string> {
   let repoVars: Record<string, string> = {};
   try {
@@ -259,7 +264,7 @@ async function drive(
   };
   const lf = learningsFile(summary.vars, summary.repo, userAccount(summary.owner));
 
-  // The bot's name and token, asked once per run; only steps that keep the machine's login get them.
+  // The bot's name and token, asked once per run; only shell steps get the token (agent steps get the name only).
   let botOnce: Promise<Record<string, string>> | undefined;
   const botEnv = () => (botOnce ??= identityEnv(config).catch((e) => ((botOnce = undefined), Promise.reject(e))));
   const task = taskWithAnswers(summary);
@@ -277,9 +282,10 @@ async function drive(
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes),
       ...selfEnv(),
     };
-    // fails before any step, as before, when the run starts with the machine's login — unless a mandatory policy
-    // cannot be used: then every step with that login is denied, and no token is fetched at all
-    if (!stepIsolated(summary.owner, summary.vars.github_repo) && !policy.mandatoryUnusable) await botEnv();
+    // fails before any step, as before, when the run starts with the machine's login and has a step that uses the token
+    // (shell, or a sub-flow whose steps are not known yet) — unless a mandatory policy cannot be used: then every step
+    // with that login is denied, and no token is fetched at all
+    if (!stepIsolated(summary.owner, summary.vars.github_repo) && !policy.mandatoryUnusable && flowUsesBot(summary.flowDef)) await botEnv();
   } catch (e) {
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: summary.state.next, lastOutput: "" });
   }

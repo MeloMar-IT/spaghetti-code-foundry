@@ -2218,9 +2218,11 @@ project's build and test commands (`./gradlew`, `mvn`, `npm`, `pytest`, `go test
 `make`) and read-only git commands — so it can check its own work and, for example, regenerate
 test fixtures. Pushing is never allowed. If the build needs environment settings (such as
 `JAVA_HOME`), put them in the `agent_env` variable: `KEY=value` pairs separated by `;` or new
-lines. `PATH`, tokens and the Foundry's own variables can't be set this way. In a run that never
-uses the machine's login (see "What runs sign in with"), names that start with `GH_`, `GITHUB_`,
-`GIT_`, `SSH_` or `XDG_`, and `LC_ALL`, are ignored too.
+lines. `PATH`, tokens and the Foundry's own variables can't be set this way. An agent step never signs in
+(see "What an agent step can reach"), so a token variable, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and
+`GIT_ALLOW_PROTOCOL` set here are replaced for the agent. In a run that never uses the machine's
+login (see "What runs sign in with"), names that start with `GH_`, `GITHUB_`, `GIT_`, `SSH_` or
+`XDG_`, and `LC_ALL`, are ignored too.
 
 ### Bug stories go first
 
@@ -3027,7 +3029,8 @@ No notification and no `notify.command` is sent for a run whose issue is known t
 **Bot identity** — by default commits and comments are made as you. Set a bot name/email and a
 token (or a GitHub App) to make them as a bot instead. In a run that never uses the machine's login
 (every user's run, and an admin's run on a repository with a stored sign-in) the bot's token is never
-used; the bot name and e-mail are, else the name and e-mail of the run's owner.
+used; the bot name and e-mail are, else the name and e-mail of the run's owner. An agent step never
+gets the bot's token, in any run; a shell step gets it when the run uses the machine's login.
 
 **GitHub App** — one app for the whole Foundry. It lets users connect a repository without a personal
 token (the method "GitHub App" on My repositories). Set it up once:
@@ -3334,7 +3337,15 @@ show as "n runs ahead of you", without ids.
 
 **What runs sign in with.** In a run you own, every step marked `repo_access` signs in to the repository named by `github_repo` with the sign-in you chose for it, and nothing else: not the bot's token, not the server's `gh` login or git settings. Other steps and the agents never get it.
 
-**Runs that never use the machine's login.** Every run owned by a user is isolated, and so is an admin's run on a repository with a stored sign-in (a token, a deploy key or the GitHub App). In such a run **no step** acts with the server's login, the bot's token or the Mac's git identity. Every step, agents and shell steps without `repo_access` too, has no `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or bot token, an empty `gh` folder of its own, no git settings or credential helpers of the machine, no ssh agent and no ssh keys of the account, and no prompts. Only a step marked `repo_access` gets the repository's own credential. An admin's run on a repository with the method "none", one that is not in the list, or a local folder is **not** isolated: the machine's login and the bot's token work as before.
+**Runs that never use the machine's login.** Every run owned by a user is isolated, and so is an admin's run on a repository with a stored sign-in (a token, a deploy key or the GitHub App). In such a run **no step** acts with the server's login, the bot's token or the Mac's git identity. Every step, agents and shell steps without `repo_access` too, has no `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or bot token, an empty `gh` folder of its own, no git settings or credential helpers of the machine, no ssh agent and no ssh keys of the account, and no prompts. Only a step marked `repo_access` gets the repository's own credential. An admin's run on a repository with the method "none", one that is not in the list, or a local folder is **not** isolated: shell steps keep the machine's login and the bot's token as before.
+
+**What an agent step can reach.** In every run, an agent step (Claude or Codex) never signs in to Git or GitHub:
+- it has no `GH_TOKEN`, no other token variable, no ssh agent or keys, and no `gh` login; its `gh` folder is empty and removed after the step;
+- git may use only the `file` protocol for network work, so an agent cannot clone or push over https with the machine's login;
+- it keeps the bot's commit name. In an admin's run on the machine's HOME it also keeps the machine's global git settings; in a user's run, and in a Codex clean folder, it does not;
+- repository work goes to `repo_ops` (the broker carries it out after the step) or to a shell step.
+
+**Limit:** for an admin's run without an OS sandbox this is the environment only. A determined agent could still reach the machine's keychain or the `gh` folder of the account. The OS sandbox of a user's run holds that.
 - **Commit name.** Commits in these runs use the bot name and e-mail from Settings when they are set (each on its own), else the name and e-mail of the account that owns the run. If the account was deleted and the bot name and e-mail are not both set, the step ends with "the account that owns this run could not be found, so its commits have no name": set the bot name and e-mail in Settings, then resume the run.
 - **After the upgrade.** An unflagged step or an agent in these runs can no longer call `gh` or the remote. The machine's git settings (signing, aliases, proxy) are not used; if you need a proxy or a certificate file, list `HTTPS_PROXY` or `SSL_CERT_FILE` in `step_env.pass` (see "Environment of the steps").
 - **Environment of the steps.** A step of a run owned by a user does not get the server's environment. A shell step gets `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `LANG`, `LANGUAGE`, `LC_ALL`, `TZ` and `TERM`, the Foundry's own `FACTORY_…` variables, and the names an admin lists. An agent step gets the same plus what its own agent and provider need (for example `ANTHROPIC_API_KEY` for Claude on an Anthropic provider, `OPENAI_API_KEY` for Codex on OpenAI); keys of other providers are not passed. Admin runs are unchanged.
