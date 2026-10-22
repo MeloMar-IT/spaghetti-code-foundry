@@ -2213,6 +2213,27 @@ started again by itself; the overview says "cancelled — nothing to do". To sta
 and add the trigger label, or resume the run on its page. Stopped runs that wait for a release or
 a code area are not parked.
 
+**Park with a reply.** If the planner says the issue is not a coding task, reply **/park** on the
+issue to keep it open but out of the build queue. You can also answer with one line that says
+**keep it open**, **keep it open but out of the build queue**, **do not build**, **don't build** or
+**park it** (a final `.` or `!` is fine; other text on the line means it is an ordinary answer).
+Those phrases count only for a "not a coding task" stop. `/park` works on any question the Foundry
+asks, including the questions asked up front for a batch. A reply that says **keep it open** on a
+"needs more information" stop is an ordinary answer, so the run continues.
+
+- **Who.** Only someone with write access to the repository. Anyone else's `/park` is ignored, and
+  the reply counts as an answer.
+- **What it removes.** The trigger label and the Foundry status labels. The Foundry then posts a
+  comment that says the issue is parked and how to bring it back, and the run is marked parked (the
+  overview shows "parked — not tracked by a watcher"). Nothing is changed on GitHub when the Foundry
+  cannot park the issue at that moment, for example while work for it is queued or running again, or
+  when the labels cannot be removed. The Foundry tries again at the next check.
+- **Auto-answers.** Recommendations (`/defaults`, auto_defaults) are never taken for a "not a coding
+  task" stop: that question waits for you, or for `/park`.
+- **Bring it back.** Add the trigger label again: the story starts over with a new run. Or resume
+  the stopped run on its page. A resume clears the parked mark and the run continues; the labels
+  stay off, so the watcher does not relabel the issue.
+
 More options are set in `~/.spaghetti-code-foundry/config.yaml` (the form keeps them when you edit the
 watcher). This is the watcher for the [one-label pipeline](#the-label-pipeline-one-label--plan--code--one-pull-request):
 
@@ -2538,7 +2559,7 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   later; the label stays `Factory_working`.
 - **The Foundry isn't running.** Watchers only run while `scf ui` / `scf serve` runs.
 - **It has an excluded label** such as `geni`.
-- **The story is parked.** Its trigger label was removed while its run waited for your answers, or the run was cancelled while stopped. Nothing is asked of you and nothing runs: the overview says "parked — not tracked by a watcher". Add the trigger label again to start the story over (see [How issue watchers use labels](#how-issue-watchers-use-labels)).
+- **The story is parked.** Its trigger label was removed while its run waited for your answers, you replied `/park` (or a "do not build" line to a "not a coding task" stop), or the run was cancelled while stopped. Nothing is asked of you and nothing runs: the overview says "parked — not tracked by a watcher". Add the trigger label again to start the story over (see [How issue watchers use labels](#how-issue-watchers-use-labels)).
 - **The issue was closed on GitHub, but its run is still working.** The
   line says so and links to the run page. Cancel the run there if the work is no longer wanted;
   if the issue was closed by the run itself (report, split, merge) you see nothing.

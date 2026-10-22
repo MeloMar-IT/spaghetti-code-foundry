@@ -234,6 +234,7 @@ describe("label-driven issue pipeline", () => {
     expect(runOf("issue-plan", "1")?.status).toBe("stopped");
     expect(gh.ghLog()).toContain(heading);
     const sent = gh.comments().find((c) => c.body.includes(heading))!;
+    expect(sent.body.includes("Reply **/park** to keep this issue open")).toBe(status === "NOT_CODE");
     expect(first(sent.body)).toBe(commentFirst("planner_questions"));
     expect(closing(sent.body)).toEqual([`_${commentText("planner_questions")}_`, expect.stringMatching(/^<!-- claude-factory run=\S+ [\w-]+ -->$|^<!-- claude-factory run=\S+ -->$/)]);
     expect(gh.ghLog()).toMatch(/issue edit 1 .*--add-label Factory_needs_info/);

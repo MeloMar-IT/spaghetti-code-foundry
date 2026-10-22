@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { cancelStoppedRun, cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, clearRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -356,6 +356,12 @@ export class Scheduler {
     const summary = this.get(runId);
     if (summary) for (const fn of [...(this.recent.get(runId)?.listeners ?? []), ...(this.pendingListeners.get(runId) ?? [])]) fn({ type: "update", summary });
     return true;
+  }
+
+  /** Takes the parked mark off again (a park that could not be finished on GitHub). Refuses a run that is queued or active. */
+  clearParked(runId: string): boolean {
+    if (this.isActive(runId) || this.isQueued(runId)) return false;
+    return clearRunParked(join(this.o.runsDir, runId));
   }
 
   /**
