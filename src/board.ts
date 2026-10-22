@@ -128,7 +128,7 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
   const picked = new Map<string, BoardSource>();
   for (const s of sources) {
     if (!s.next.issue || !s.next.repo) continue;
-    const key = `${s.next.repo}#${s.next.issue}`;
+    const key = `${s.next.repo}#${s.next.issue}`.toLowerCase();
     const have = picked.get(key);
     if (!have) { picked.set(key, s); continue; }
     const better = needsUser(s.next) !== needsUser(have.next) ? needsUser(s.next) : (s.rank ?? 1) < (have.rank ?? 1);
@@ -151,7 +151,7 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
     }
     const showStep = progress && n.kind !== "done" && s.run?.runId === n.runId;
     cards.set(key, {
-      key, issue: n.issue!, title: n.title || ticketTitle(s.run), column, next: n,
+      key: `${n.repo}#${n.issue}`, issue: n.issue!, title: n.title || ticketTitle(s.run), column, next: n,
       ...(showStep ? { step: stepText(progress) } : {}),
       runId: n.runId ?? s.runId,
       after: [...new Set((n.blockers ?? []).map((b) => b.issue))].sort((a, b) => a - b),
@@ -173,7 +173,7 @@ export function buildBoard(sources: BoardSource[], o: { now?: Date; repos?: stri
       const b = todo.pop()!;
       if (b.issue === card.issue || seen.has(b.issue)) continue;
       seen.add(b.issue);
-      todo.push(...(b.next?.blockers ?? cards.get(`${repo}#${b.issue}`)?.next.blockers ?? []));
+      todo.push(...(b.next?.blockers ?? cards.get(`${repo}#${b.issue}`.toLowerCase())?.next.blockers ?? []));
     }
     card.chain = [...seen].sort((a, b) => a - b);
   }

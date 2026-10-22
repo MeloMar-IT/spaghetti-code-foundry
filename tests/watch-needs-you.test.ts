@@ -6,6 +6,9 @@ import { saveRun, type RunSummary } from "../src/engine/state.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { StatusComments, type StatusView } from "../src/queue/status-comment.js";
 import { Watcher } from "../src/queue/watcher.js";
+import { allNext } from "../src/server/next.js";
+import type { ApiContext } from "../src/server/server.js";
+import { turnFor } from "../src/server/your-turn.js";
 import { claudeBin, fakeGithub, oldFlowFor } from "./helpers/fake-github.js";
 
 const T = "claude-factory";
@@ -51,12 +54,12 @@ describe("Needs you lists every issue with a waiting label (#653)", () => {
     process.env.FAKE_GH_ISSUES = JSON.stringify(list.map(([number, labels, state]) => ({ number, title: `issue ${number}`, state: state ?? "OPEN", labels: labels.map((name) => ({ name })) })));
   };
   const comments = (...c: unknown[]) => { process.env.FAKE_GH_COMMENTS = JSON.stringify({ comments: c }); };
-  const plant = (n: number, status: RunSummary["status"], over: Record<string, unknown> = {}, retired = false) => {
-    const runDir = join(gh.tmp, "runs", `r${n}`);
+  const plant = (n: number, status: RunSummary["status"], over: Record<string, unknown> = {}, retired = false, id = `r${n}`) => {
+    const runDir = join(gh.tmp, "runs", id);
     mkdirSync(runDir, { recursive: true });
     const flow = retired ? "gone" : oldFlowFor({});
     saveRun({
-      runId: `r${n}`, flow, flowDef: { name: flow, steps: [] }, task: "t", vars: { github_repo: "acme/app", issue: String(n) }, repo: retired ? "/x" : gh.tmp, status, runDir,
+      runId: id, flow, flowDef: { name: flow, steps: [] }, task: "t", vars: { github_repo: "acme/app", issue: String(n) }, repo: retired ? "/x" : gh.tmp, status, runDir,
       reason: status === "stopped" ? 'stopped at step "ask_for_info"' : undefined,
       startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:01:00.000Z", totalCostUsd: 0, history: [],
       state: { next: "ask_for_info", steps: {}, visits: {} },
@@ -209,5 +212,41 @@ describe("Needs you lists every issue with a waiting label (#653)", () => {
     expect(holdOf(w, 110)?.next.runId).toBeUndefined();
     expect(w.tracked.find((t) => t.issue === 110)?.runId).toBeUndefined();
     expect(holdOf(w, 109)).toBeUndefined();
+  });
+
+  describe("two watchers see one issue (#654)", () => {
+    const SOON = new Date("2026-01-03T00:00:00Z");
+    const ctxOf = (ws: Watcher[]) => ({
+      config: () => ({ ...config, watchers: ws.map((w) => w.cfg) }),
+      scheduler,
+      watchers: { tracked: () => ws.map((w) => ({ watcher: w.cfg, status: w.status, issues: w.tracked })), statuses: () => [] },
+    }) as unknown as ApiContext;
+    const two = async () => {
+      issues([4, ["la", ASKS]]);
+      comments(question);
+      plant(4, "stopped", { vars: { github_repo: "acme/app", issue: "4", trigger_label: "la" } }, false, "r4a");
+      plant(4, "stopped", { flow: "removed-flow", repo: "/x", startedAt: "2026-01-02T00:00:00.000Z", finishedAt: "2026-01-02T00:01:00.000Z" }, false, "r4x");
+      const wa = watcher({ id: "a", label: "la" });
+      const wb = watcher({ id: "b", label: "lb" });
+      await wa.tick();
+      await wb.tick();
+      return { wa, wb };
+    };
+    const forIssue4 = (ctx: ApiContext) => turnFor(ctx, SOON).data.groups.flatMap((g) => g.items).filter((i) => i.next.issue === 4);
+
+    it.each([["a first", false], ["b first", true]])("shows one item, with the run of the watcher that links it (%s)", async (_n, flip) => {
+      const { wa, wb } = await two();
+      const ctx = ctxOf(flip ? [wb, wa] : [wa, wb]);
+      const found = forIssue4(ctx);
+      expect(found).toHaveLength(1);
+      expect(found[0]!.next.runId).toBe("r4a");
+      expect(allNext(ctx).issues.filter((n) => n.issue === 4)).toHaveLength(1);
+    });
+    it("shows the retired run when no watcher lists the issue from its label", async () => {
+      const { wa } = await two();
+      wa.tracked.length = 0;
+      wa.status.holds = [];
+      expect(forIssue4(ctxOf([wa])).map((i) => i.next.runId)).toContain("r4x");
+    });
   });
 });

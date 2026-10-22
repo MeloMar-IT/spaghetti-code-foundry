@@ -815,12 +815,12 @@ steps:
     const out = allNext(stub);
     expect(out.watchers.map((n) => n.kind).sort()).toEqual(["release", "watcher_error"]);
     expect(out.watchers.find((n) => n.kind === "watcher_error")!.where.url).toBe("#/watchers");
-    expect(out.issues).toHaveLength(2); // #4 is tracked by two watchers: one record, the one that is not done
+    expect(out.issues).toHaveLength(2); // #4 is tracked by two watchers: one record, the first watcher's
     expect(out.issues.find((n) => n.issue === 3)!.text).toBe(hold.next.text);
-    expect(out.issues.find((n) => n.issue === 4)!.kind).toBe("starting");
+    expect(out.issues.find((n) => n.issue === 4)!.kind).toBe("done");
 
     stub.restart = { why: "data_folder", since: "x" };
-    expect(allNext(stub).issues.find((n) => n.issue === 4)!.kind).toBe("restart");
+    expect(allNext(stub).issues.find((n) => n.issue === 4)!.kind).toBe("done"); // the kept record is done: a restart does not change it
 
     const dir = join(tmp, "arearun");
     mkdirSync(join(dir, "logs"), { recursive: true });
