@@ -1,6 +1,66 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Comment } from "../src/github.js";
-import { commentReads } from "../src/queue/waiting-issues.js";
+import type { RunSummary } from "../src/engine/state.js";
+import { commentReads, openQuestion, waitingLabelOf, waitsAs } from "../src/queue/waiting-issues.js";
+
+const L = { needsInfo: "factory:needs-info", waiting: "factory:waiting-approval" };
+
+describe("waitingLabelOf", () => {
+  it("prefers needs-info, then waiting-approval, whatever the order", () => {
+    expect(waitingLabelOf(["T", L.needsInfo], L)).toBe(L.needsInfo);
+    expect(waitingLabelOf([L.needsInfo, "factory:done"], L)).toBe(L.needsInfo);
+    expect(waitingLabelOf(["factory:done", L.waiting], L)).toBe(L.waiting);
+    expect(waitingLabelOf([L.waiting, L.needsInfo], L)).toBe(L.needsInfo);
+    expect(waitingLabelOf([L.needsInfo, L.waiting], L)).toBe(L.needsInfo);
+    expect(waitingLabelOf(["T", "factory:done"], L)).toBeUndefined();
+    expect(waitingLabelOf([], L)).toBeUndefined();
+  });
+});
+
+describe("waitsAs", () => {
+  const run = (over: Partial<RunSummary> = {}) => ({
+    runId: "r1", flow: "issue-gitflow", repo: process.cwd(), status: "stopped", reason: 'stopped at step "ask_for_info"', history: [], ...over,
+  }) as unknown as RunSummary;
+  const retired = { flow: "no-such-flow", repo: "/nowhere" };
+  it("needs-info: a stopped run that asks questions", () => {
+    expect(waitsAs(run(), L.needsInfo, L)).toBe(true);
+    expect(waitsAs(run(), L.waiting, L)).toBe(false);
+  });
+  it("needs-info: not when parked, retired, paused, stepped aside or stopped elsewhere", () => {
+    expect(waitsAs(run({ parkedAt: "2026-01-01T00:00:00Z" }), L.needsInfo, L)).toBe(false);
+    expect(waitsAs(run(retired), L.needsInfo, L)).toBe(false);
+    expect(waitsAs(run({ reason: 'daily budget reached — stopped at step "ask_for_info"' }), L.needsInfo, L)).toBe(false);
+    expect(waitsAs(run({ reason: 'stopped at step "wait_for_area"', history: [{ id: "claim_areas", output: "waiting for run r2 (x)" }] as never }), L.needsInfo, L)).toBe(false);
+    expect(waitsAs(run({ reason: 'stopped at step "ask"' }), L.needsInfo, L)).toBe(false);
+  });
+  it("waiting-approval: a waiting run that is not retired", () => {
+    expect(waitsAs(run({ status: "waiting", reason: undefined }), L.waiting, L)).toBe(true);
+    expect(waitsAs(run({ status: "waiting", reason: undefined }), L.needsInfo, L)).toBe(false);
+    expect(waitsAs(run({ status: "waiting", reason: undefined, ...retired }), L.waiting, L)).toBe(false);
+  });
+  it("an unknown label never matches", () => {
+    expect(waitsAs(run(), "factory:done", L)).toBe(false);
+  });
+});
+
+describe("openQuestion", () => {
+  const bot = (body: string, createdAt = "2026-01-01T00:00:00Z") => ({ author: { login: "bot" }, body: `${body} <!-- claude-factory run=r1 -->`, createdAt }) as Comment;
+  const human = { author: { login: "marcel" }, body: "ok", createdAt: "2026-01-01T02:00:00Z" } as Comment;
+  const status = { author: { login: "bot" }, body: "status\n<!-- claude-factory status -->", createdAt: "2026-01-01T03:00:00Z" } as Comment;
+  it("counts the questions of the newest bot comment", () => {
+    expect(openQuestion([bot("**Q1.** a")])).toEqual({ questions: 1, since: "2026-01-01T00:00:00Z" });
+    expect(openQuestion([bot("**Q1.** a"), bot("**Q1.** a\n**Q2.** b", "2026-01-01T01:00:00Z")])).toEqual({ questions: 2, since: "2026-01-01T01:00:00Z" });
+    expect(openQuestion([bot("no markers")])?.questions).toBe(0);
+  });
+  it("skips a status comment", () => {
+    expect(openQuestion([bot("**Q1.** a"), status])?.questions).toBe(1);
+  });
+  it("is undefined after a human comment, with only a status comment, or without comments", () => {
+    expect(openQuestion([bot("**Q1.** a"), human])).toBeUndefined();
+    expect(openQuestion([status])).toBeUndefined();
+    expect(openQuestion([])).toBeUndefined();
+  });
+});
 
 const c = (body: string) => ({ body }) as unknown as Comment;
 

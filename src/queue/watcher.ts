@@ -6,7 +6,7 @@ import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
-import { commentReads } from "./waiting-issues.js";
+import { commentReads, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs } from "./waiting-issues.js";
 import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
@@ -182,21 +182,11 @@ const firstMeta = (first?: { storyAt?: string }) => (first ? { priority: true, .
 
 const APPROVE_RE = /^\s*\/(approve|reject)\b[ \t]*(.*)$/im;
 
-/** Stopped for a reason that clears by itself: daily budget, or a `wait_*` step (e.g. waiting for a PR merge). */
 /** The hidden mark of a `/defaults` comment the watcher wrote itself (auto_defaults), and how many it writes per issue. */
 const AUTO_DEFAULTS_MARK = "<!-- spaghetti-code-foundry auto-defaults -->";
 const AUTO_DEFAULTS_MAX = 2;
 
-/** Stepped aside for a busy code area (stopped at wait_for_area): the run that holds the area. */
-export function steppedAsideFor(s: RunSummary): string | undefined {
-  if (s.status !== "stopped" || !/stopped at step "(?:[\w-]+\/)*wait_for_area"/.test(s.reason ?? "")) return undefined;
-  const out = [...s.history].reverse().find((h) => h.id === "claim_areas")?.output ?? "";
-  return /^waiting for run (\S+) \(/m.exec(out)?.[1];
-}
-
-function isPaused(s: RunSummary): boolean {
-  return isUserBudgetStop(s.reason) || /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "");
-}
+export { steppedAsideFor };
 
 /** Usage limits reset after a while; try a limited run again at most every 30 minutes. */
 export { LIMIT_RETRY_MS };
@@ -648,8 +638,9 @@ export class Watcher {
         const remove = s.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus;
         await setLabels(this.repo, issue, label, remove).catch(() => {});
         if (label === this.L.failed && this.cfg.comment_on_failure) await this.commentFailure(issue, s).catch(() => {});
-        const why = s.reason ? explainError(s.reason) : undefined;
-        this.act(`#${issue} → ${s.status}${why ? ` (${why.what}: ${why.why})` : ""} · $${s.totalCostUsd.toFixed(3)} · label → ${label ?? "none"}`);
+        const asks = s.status === "stopped" && asksQuestions(s);
+        const why = !asks && s.reason ? explainError(s.reason) : undefined;
+        this.act(`#${issue} → ${s.status}${asks ? " (asks questions)" : why ? ` (${why.what}: ${why.why})` : ""} · $${s.totalCostUsd.toFixed(3)} · label → ${label ?? "none"}`);
       });
     }).catch(() => {}); // prepare() can reject (no sign-in); the next check reconciles the labels
   }
@@ -717,6 +708,11 @@ export class Watcher {
   /** A hold for an issue whose run exists. */
   private heldRun(issue: Issue, run: RunSummary, extra: Parameters<typeof runNextStep>[1] = {}): Hold {
     return toHold(runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, retired: flowRetired(run), ...extra }));
+  }
+
+  /** A hold from a waiting label alone (no run waits that way): listed as waiting for you, nothing changes. */
+  private labelHold(issue: Issue, open?: { questions: number; since?: string }): Hold {
+    return { ...this.held("questions", issue, open?.questions ? { questions: open.questions } : {}), byLabel: true, ...(open?.since ? { since: open.since } : {}) };
   }
 
   private async tickIssues(mine: number, checkStartedAt: number) {
@@ -817,7 +813,10 @@ export class Watcher {
       alive();
       const n = issue.number;
       if (issue.labels.some((l) => excluded.has(l.name))) continue;
-      const status = issue.labels.map((l) => l.name).find((l) => this.allStatus.includes(l));
+      const names = issue.labels.map((l) => l.name);
+      const status = names.find((l) => this.allStatus.includes(l));
+      const wl = waitingLabelOf(names, this.L);
+      const mixed = !!wl && names.some((l) => l !== wl && this.allStatus.includes(l));
       // The newest run may be older than the cap of latestRuns(): then the uncapped index finds it.
       let run = runs.get(String(n));
       if (!run) {
@@ -845,7 +844,7 @@ export class Watcher {
 
       // Questions asked up front (no run yet): wait for an answer, then start like a new issue.
       let answeredEarly = false;
-      if (status === this.L.needsInfo && !run) {
+      if (status === this.L.needsInfo && !run && !mixed) {
         const comments = await reads.read(n);
         if (!comments) { unknown.add(n); holds.push({ ...this.held("questions", issue), byLabel: true }); continue; }
         const answers = commentsAfter(comments, asked);
@@ -856,16 +855,44 @@ export class Watcher {
         answeredEarly = true;
       }
       // A run that is working (running or queued, e.g. approved or resumed in the UI): the label says so.
-      if (run && (this.d.scheduler.isActive(run.runId) || this.d.scheduler.isQueued(run.runId))) {
-        if (status && status !== this.L.working) {
+      // A queued job counts too when a waiting label sits next to another status label (it may have no run file yet).
+      const workingRun = !!run && (this.d.scheduler.isActive(run.runId) || this.d.scheduler.isQueued(run.runId));
+      if (workingRun || (mixed && queuedId !== undefined)) {
+        // Mixed labels: the label goes to working whatever the order (the first status label may be working already).
+        if (mixed || (status && status !== this.L.working)) {
           await setLabels(this.repo, n, this.L.working, this.allStatus);
           this.act(`#${n} label → ${this.L.working} (its run is working)`);
-          this.labelWhenDone(n, run.runId);
+          this.labelWhenDone(n, workingRun ? run!.runId : queuedId!);
         }
-        const areaWait = run.status === "running" ? this.d.areaWait?.(run) : undefined;
-        if (areaWait) holds.push(this.heldRun(issue, run, { areaWait }));
-        const claim = isFirst ? steppedAsideFor(run) ?? areaWait?.runId : undefined;
-        if (claim) { firstWaits.add(claim); track.claims = claim; }
+        if (workingRun) {
+          const areaWait = run!.status === "running" ? this.d.areaWait?.(run!) : undefined;
+          if (areaWait) holds.push(this.heldRun(issue, run!, { areaWait }));
+          const claim = isFirst ? steppedAsideFor(run!) ?? areaWait?.runId : undefined;
+          if (claim) { firstWaits.add(claim); track.claims = claim; }
+        }
+        continue;
+      }
+      // A waiting label next to another status label: listed as waiting for you; no label, /defaults, comment, resume or run.
+      if (mixed) {
+        const linked = run && waitsAs(run, wl!, this.L) ? run : undefined;
+        const comments = await reads.read(n);
+        if (!comments) unknown.add(n);
+        if (linked) holds.push({ ...this.heldRun(issue, linked, linked.status === "stopped" && comments ? { questions: questionCount(comments) } : {}), byLabel: true });
+        else holds.push(this.labelHold(issue, comments && openQuestion(comments)));
+        continue;
+      }
+      // A waiting label alone on a run of a retired flow: nothing is changed or resumed (also when the run is parked).
+      if (wl && run && flowRetired(run)) {
+        const comments = await reads.read(n);
+        if (!comments) unknown.add(n);
+        holds.push(this.labelHold(issue, comments && openQuestion(comments)));
+        continue;
+      }
+      // A waiting-approval label alone whose run does not wait: a label hold, before the parked cleanup can start replacement work.
+      if (wl === this.L.waiting && !(run && waitsAs(run, wl, this.L))) {
+        const comments = await reads.read(n);
+        if (!comments) unknown.add(n);
+        holds.push(this.labelHold(issue, comments && openQuestion(comments)));
         continue;
       }
       // A run parked while the label was gone, or cancelled while it was stopped: nothing continues it, and a new run replaces it.
@@ -897,10 +924,18 @@ export class Watcher {
           continue;
         }
       }
+      // A needs-info label alone on a stopped run that does not ask: nothing is changed or resumed.
+      // (A succeeded run is still relabelled.)
+      if (wl === this.L.needsInfo && run?.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo && !waitsAs(run, wl, this.L)) {
+        const comments = await reads.read(n);
+        if (!comments) unknown.add(n);
+        holds.push(this.labelHold(issue, comments && openQuestion(comments)));
+        continue;
+      }
       if (this.d.scheduler.isLocked(this.lockFor(n))) {
         const blockingRun =this.cfg.one_at_a_time ? this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId : undefined;
-        const askedRun = this.cfg.one_at_a_time && run?.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo && (status === this.L.needsInfo || status === this.L.working);
-        const decidingRun = this.cfg.one_at_a_time && run?.status === "waiting" && (status === this.L.waiting || status === this.L.working);
+        const askedRun = this.cfg.one_at_a_time && !!run && waitsAs(run, this.L.needsInfo, this.L) && (status === this.L.needsInfo || status === this.L.working);
+        const decidingRun = this.cfg.one_at_a_time && !!run && waitsAs(run, this.L.waiting, this.L) && (status === this.L.waiting || status === this.L.working);
         if (run && (askedRun || decidingRun)) {
           // A run that waits for the person, behind another story: when it is answered, nothing is needed from the
           // person any more. The label says working; the run resumes when the lock is free.
