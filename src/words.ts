@@ -96,6 +96,7 @@ const GLOSSARY: Record<NextKind, Words> = {
       : "Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it."),
   },
   parked: { status: "parked — not tracked by a watcher", help: "The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run." },
+  epic: { status: "epic — its stories are built one by one", help: "The issue has the epic label or a list of stories, so the Foundry builds its stories and starts no run for the epic itself. Nothing to do — if it is not an epic, remove the epic label or the list of stories." },
   failed: {
     status: (f) => (f.user && f.limit ? "stopped — the administrator's limit was reached" : "failed"),
     help: (f) => {

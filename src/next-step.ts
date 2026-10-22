@@ -10,7 +10,7 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked";
+  | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic";
 
 export type NextWho = "You" | "Foundry" | "Another story" | "A time limit" | "Something is wrong";
 
@@ -224,6 +224,7 @@ function blockerClause(b: BlockerInfo): string {
     case "release": return n.until ? `which waits for the ${n.until}` : "which waits for the release pull request";
     case "issue_closed": return "which is closed";
     case "parked": return "which is parked";
+    case "epic": return "which is an epic";
     case "failed": return "which failed";
     case "interrupted": case "stopped": case "cancelled": return "which is stopped";
     default: return "which is to be done";
@@ -584,6 +585,11 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       why = `${ref} is parked: it has no trigger label, so no watcher follows it`;
       say = "nothing to do, add the trigger label again to start the story over";
       action = "Nothing — the story is parked";
+      break;
+    case "epic":
+      why = `${ref} is an epic: its stories are built one by one, not the epic itself`;
+      say = "nothing to do; if it is not an epic, remove the epic label or the list of stories";
+      action = "Nothing — its stories are built one by one";
       break;
     case "done":
       why = "It is done";
