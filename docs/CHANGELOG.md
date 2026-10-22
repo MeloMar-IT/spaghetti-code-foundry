@@ -4,6 +4,12 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Delivery 1a (#649): a versioned, signed delivery contract format, built and checked as pure functions. Part 1 of 2 of #162, part of #133. **Library only: nothing in a run writes a contract yet**, so runs behave as before.
+  - **Contract.** `DeliveryContractSchema` (`src/delivery/schema.ts`, version 1, strict): the run, sequence and supersession, the pull request, the commit, the dependency locks and CI workflows at the commit (SHA-256 and git blob id), required checks, the evidence head (count and terminal hash), artifacts, provenance and the fixed list of seven stop conditions. Lists are sorted and each key appears once.
+  - **Build and verify.** `buildDeliveryContract` (`src/delivery/contract.ts`) is pure: the same facts give the same canonical bytes and digest in any order. `verifyDeliveryContract` never throws and returns the first fault: `unreadable`, `wrong-version`, `signature-missing`, `signature-bad`, `wrong-key`, or `evidence-head-mismatch`.
+  - **Signature.** OpenSSH `SSHSIG` (Ed25519, SHA-512, namespace `scf-delivery-contract`) in plain Node, in `src/delivery/sshsig.ts`. `readSigningKey` takes only an unencrypted Ed25519 key (OpenSSH or PKCS#8 PEM). A signature made here is accepted by `ssh-keygen -Y verify`.
+  - **Docs.** `docs/DESIGN.md` ("Delivery contract").
+  - **Tests.** New `tests/delivery-contract.test.ts` and `tests/delivery-sshsig.test.ts`. The `ssh-keygen` checks are skipped when `/usr/bin/ssh-keygen` is missing.
 - Policy 4a (#628): each rule of a policy pack can have its own `mode` (`observe` or `enforce`), so one control can move to block mode without moving the whole pack. Pack format version 2; version 1 packs are still read. Part 1 of 5 of #144. **Enforce is still refused when a pack is loaded or restored**, so nothing is blocked yet.
   - **Format.** `PolicyRuleSchema` has an optional `mode`. `POLICY_PACK_VERSION` is 2, and `POLICY_PACK_VERSIONS` is `[1, 2]`. `parsePolicyPack` reads version 1 with `PolicyPackV1Schema` (no rule `mode`; a rule `mode` in a version 1 pack is refused). A version 1 pack keeps its exact `policyPackSha256`: it is hashed as written, never rewritten to version 2. Version 3 is refused.
   - **Decisions.** A rule's decision, and its `policy.input-incomplete`, takes the rule's `mode`, else the pack's. `policy.no-rule-matched` takes the pack's `mode`. The decision version is not bumped.
