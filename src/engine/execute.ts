@@ -256,7 +256,6 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         step: step.id,
         credential: holds ? "repository" : !iso ? "machine" : "none",
         isolated: Boolean(iso),
-        shippedFlow: engine.hotfix === "on" ? true : undefined,
       });
       if (asked?.denied) return refuseByPolicy(engine, identity, asked.denied);
       const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);

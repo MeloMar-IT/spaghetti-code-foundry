@@ -284,6 +284,29 @@ steps:
     expect(decided(s).every((e) => e.decision.reasonCode === "policy.invalid")).toBe(true);
   });
 
+  it("records the run's baseline: another repository, a remote that is not on GitHub, a protected branch", async () => {
+    const other = join(tmp, "github.com", "acme", "other.git");
+    mkdirSync(join(tmp, "github.com", "acme"), { recursive: true });
+    git(tmp, "init", "-q", "--bare", other);
+    const config = ConfigSchema.parse({ protected_branches: ["main"], bot: { name: "Bot", email: "bot@example.com" }, policy: { packs: [] } });
+    const s = await runFlow(parseFlow(`
+name: baseline
+workspace: inplace
+steps:
+  - {id: elsewhere, type: shell, run: "git push -q '${other}' HEAD:refs/heads/feat"}
+  - {id: local, type: shell, run: "${pushes("feat")}"}
+  - {id: protect, type: shell, run: "${pushes("main")}"}
+`), { task: "t", repo, runsDir, claudeBin, config, vars: { github_repo: "Acme/Widgets" } });
+    expect(s.status).toBe("failed");
+    const pushed = baseline(s).filter((e) => e.decision.boundary === "push");
+    expect(pushed.map((e) => [e.step?.id, e.decision.reasonCode])).toEqual([
+      ["elsewhere", "repository.not-allowed"],
+      ["local", "policy.no-rule-matched"],
+      ["protect", "branch.protected"],
+    ]);
+    expect(baseline(s).some((e) => e.decision.reasonCode === "policy.input-incomplete")).toBe(false);
+  });
+
   it("asks for a built-in flow too", async () => {
     // a `gh` that fails: the clone step ends the run, and the hooks have been called before it
     const bin = join(tmp, "bin");
@@ -298,6 +321,7 @@ steps:
       const t = at(s);
       expect(t.slice(0, 4)).toEqual(["run.start", "step.before:clone", "repository.access:clone", "step.after:clone"]);
       expect(decided(s)[0]!.decision).toMatchObject({ boundary: "run.start", mode: "observe" });
+      expect(baseline(s).some((e) => e.decision.reasonCode === "policy.input-incomplete" || e.decision.reasonCode === "credential.scope-exceeded")).toBe(false);
     } finally {
       process.env.PATH = path;
     }

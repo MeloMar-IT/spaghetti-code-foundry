@@ -97,12 +97,23 @@ const canonical = (flow: Flow): string => stringifySorted(Object.fromEntries(Obj
 const stringifySorted = (v: unknown): string =>
   JSON.stringify(v,(_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as object).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
 
-let shipped: string | undefined;
-function shippedGitflow(): string | undefined {
-  if (shipped !== undefined) return shipped;
-  const file = join(flowDir("builtin", ""), `${HOTFIX_FLOW}.yaml`);
-  if (!existsSync(file)) return undefined;
-  return (shipped = canonical(parseFlow(readFileSync(file, "utf8"), file)));
+const shippedCache = new Map<string, string | null>();
+
+/** Is this flow a built-in flow of that name, exactly as shipped? Fails closed to false. */
+export function isShippedFlow(flow: Pick<Flow, "name"> | undefined): boolean {
+  try {
+    const name = flow?.name;
+    if (typeof name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) return false;
+    let want = shippedCache.get(name);
+    if (want === undefined) {
+      const file = join(flowDir("builtin", ""), `${name}.yaml`);
+      want = existsSync(file) ? canonical(parseFlow(readFileSync(file, "utf8"), file)) : null;
+      shippedCache.set(name, want);
+    }
+    return want !== null && canonical(flow as Flow) === want;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -113,8 +124,7 @@ function shippedGitflow(): string | undefined {
 export function hotfixState(flow: Flow, config: Pick<Config, "hotfix_to_main">): "on" | "off" | "other" {
   if (!config.hotfix_to_main) return "off";
   try {
-    const want = shippedGitflow();
-    return want !== undefined && flow.name === HOTFIX_FLOW && canonical(flow) === want ? "on" : "other";
+    return flow.name === HOTFIX_FLOW && isShippedFlow(flow) ? "on" : "other";
   } catch {
     return "other";
   }

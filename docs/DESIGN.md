@@ -339,8 +339,9 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   or configured packs (`protectedBranchEnv(…, observe)`). A run with both guards off and no packs keeps
   the hook out, so its pushes are not observed. `RunPolicy.observesPushes` says whether the hook is there,
   and the baseline's `push` rules are asked only then.
-- **Facts.** `baseFacts` gives the run's repository, flow, workspace and owner; each boundary adds its
-  own. `policyFacts` keeps only the values that pass their schema in `FactsSchema`; a value that does not
+- **Facts.** `baseFacts` gives the run's repository, flow, workspace and owner; `runPolicy` adds `shippedFlow`
+  from `isShippedFlow` (`guards.ts`: true only for an unchanged built-in flow of that name, false on any error),
+  so it reaches every boundary. Each boundary adds its own. `policyFacts` keeps only the values that pass their schema in `FactsSchema`; a value that does not
   is left out, never changed. The repository is lower case, and the placeholder `owner/repo` is no fact.
 - **Packs.** `loadPolicyPacks` reads `<data folder>/policies/<id>.json` with `O_NOFOLLOW` and
   `O_NONBLOCK`, only as a plain file of at most 1 MiB. A pack that is missing, linked, not a file,
@@ -353,6 +354,28 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   the first layer that names it. `combineDecisions` picks the most restrictive outcome; a tie goes to the
   higher layer, and a tie inside one layer to the first pack. So a repository pack cannot relax a
   baseline deny, and the answer does not depend on the order of the lists.
+- **Baseline controls.** `baselineControls(config, run)` (`baseline.ts`, pure) reads `protected_branches` and
+  `secret_scan` the way the pre-push hook does: entries are split on space, tab and new line, and empty entries
+  and duplicates are dropped. A pattern the evaluator cannot match exactly (`? [ ] \`, other spaces, control
+  characters, over 255 characters) goes to `leftOut`, never to a looser rule. The `repository` is kept only when
+  the facts schema accepts it. `baselinePack(version, controls)` puts the protected branches in chunks of
+  `MAX_PATTERNS` (100) rules, `branch-protected`, `branch-protected-2`, …; the hotfix exception chunks come
+  first, then the deny chunks, so no pattern is dropped. Rule order is `branch-hotfix-exception` (only for the
+  shipped hotfix flow), `branch-protected`, `secret-detected` (only when the scan is on), `identity-missing`,
+  `repository-not-allowed` (only with a known repository), the sandbox and workspace rules, and
+  `credential-scope-exceeded`. The branch rules come first because the hook checks the branch before it scans:
+  a push refused for a protected branch has no secret count, so `secret-detected` must not decide it.
+  `repository-not-allowed` comes after the secret and identity rules, so every push decided by them keeps its
+  decision. The hotfix exception is only allowed for `issue-gitflow` / `push_main` with `shippedFlow: true`,
+  and is safe with `hotfix_to_main` off because `push_main` exits before pushing unless `FACTORY_HOTFIX=on`.
+  Scan off: the hook never gives a count, so the secret rule is not in the pack; no zero count is invented.
+- **Unknown push repository.** `runBaseline` also builds `pushWithoutRepository` (the same pack without the
+  repository rule). `RunPolicy.decide` uses it at `push` only when the input has no `repository`. Such a
+  decision records that pack's hash. The repository is never guessed.
+- **Construction failure.** `baselineEntry(version, controls)` returns a `LayeredPack`. If the baseline cannot
+  be built (too many rules or a bad version), it is a `policy.invalid` mandatory entry, so the fail-closed path
+  of "Fail closed" applies at privileged boundaries. There is no silent fallback to a weaker pack.
+  `BASELINE_PACK` (the four legacy rules) is still the pack of the build without run controls.
 - **Baseline.** `src/policy/baseline.ts` builds `foundry.baseline`. The Foundry owns it: its version is
   the package version, and admins can only add overlays. It is always in the list of packs, so a run
   always asks it. The file's only read is `package.json`, once, for that version; it is the one file
