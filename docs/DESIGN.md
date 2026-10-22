@@ -832,6 +832,51 @@ are `skipped`):
   own canonical form and hashes: valid, a changed event, a missing file, and an old run without
   evidence.
 
+### Delivery contract
+
+`src/delivery/` defines the delivery contract (#649, part 1 of 2 of #162, part of #133): a versioned,
+signed statement of what a pull request was handed over with, fixed at one moment. This part is a
+library only: only types, schemas and pure functions. Nothing in a run writes a contract yet.
+
+- **Contract** (`DeliveryContractSchema`, `schema.ts`): version 1, strict, every object refuses
+  unknown fields. It holds `runId`, `sequence` (1, 2, …), `supersedes` (the SHA-256 of the previous
+  contract; set exactly when `sequence` is above 1), `repository`, `pullRequest`, `commit` (`sha`,
+  `branch`), `dependencyLock` (each lock file at the commit with its path and SHA-256, and one SHA-256
+  of that list; an empty list when there is none), `ciWorkflows` (each file under `.github/workflows/`
+  with its git blob id), `requiredChecks`, `evidence` (`path`, `count`, `terminalHash` of the chain at
+  that moment), `artifacts` (name and optional SHA-256), `provenance` (`required`) and `stopConditions`.
+- **Stop conditions.** A fixed list in version 1, in this order: `commit-changed`, `lock-changed`,
+  `workflow-changed`, `required-check-failed` (a required check is missing or did not pass),
+  `evidence-unverified`, `signature-unverified`, `superseded`. The schema refuses any other list.
+- **Order.** Every list is sorted by UTF-16 code unit and holds each key once; the schema refuses an
+  unsorted or repeated list. The lock hash must be the hash of the lock files.
+- **Build** (`buildDeliveryContract(facts)`, `contract.ts`): pure. It uses no clock, no file and no
+  randomness, sorts the lists itself, copies only the known fields and throws `DeliveryContractError`
+  (with the path and message of each issue) for bad facts. The same facts in any order give the same
+  bytes.
+- **Bytes and digest.** `deliveryContractText` is `canonicalJson` of the contract. `contractDigest` is
+  the SHA-256 of those UTF-8 bytes. A verifier also refuses a text that is not in this canonical form.
+- **Signature** (`sshsig.ts`): the OpenSSH `SSHSIG` format, in plain Node (no dependency, no child
+  process): Ed25519, SHA-512, the namespace `scf-delivery-contract`, armoured output. `signDeliveryContract`
+  signs the text. `ssh-keygen -Y verify` accepts what is written here, and the tests check that
+  (skipped when `/usr/bin/ssh-keygen` is missing).
+  - `readSigningKey(text)` reads one unencrypted Ed25519 key, in OpenSSH form or as a PKCS#8 PEM. An
+    encrypted key, an RSA, EC or DSA key, or anything else is refused with a reason.
+  - `publicKeyLine(key)` gives `ssh-ed25519 AAAA…`.
+  - `verifySshSignature(message, armoured, publicKeyLine, namespace)` never throws. It checks the
+    signature against the key inside it first, then against the trusted key.
+- **Verify** (`verifyDeliveryContract(text, sigText, publicKey, eventsText?)`): never throws. It returns
+  the first fault in this order: `unreadable` (not JSON, not an object, not canonical, or not valid),
+  `wrong-version`, `signature-missing`, `signature-bad`, `wrong-key`, and `evidence-head-mismatch`
+  (only when the events are given). The head check reads the first `count` events of the chain and
+  passes when the event at `count - 1` has the contract's `terminalHash`, so events added later do not
+  break it. A passing result carries the contract and its digest.
+- **Not yet.** No run writes a contract, no server or UI reads one, and no check of a pull request
+  runs against the stop conditions. Those are the next part of #162.
+- **Tests.** `tests/delivery-contract.test.ts` (order, golden text, every byte of the text, the order
+  of faults, the head check) and `tests/delivery-sshsig.test.ts` (round trips, every character of the
+  signature, refused keys, the real `ssh-keygen`). Both are unit tests: no server, no git, no run.
+
 ---
 
 ### Telemetry
