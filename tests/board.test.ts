@@ -148,6 +148,7 @@ describe("columnOf", () => {
     ["unwatched cancelled", rec("cancelled"), "your_turn"],
     ["watched cancelled", rec("cancelled", { watched: true }), "queued"],
     ["parked", rec("parked"), undefined],
+    ["epic", rec("epic"), undefined],
     ["cancelled while stopped", rec("cancelled", { ended: true }), undefined],
     ["failed", rec("failed"), "failed"],
     ["done", rec("done"), "done"],

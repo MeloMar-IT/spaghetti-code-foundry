@@ -70,7 +70,7 @@ export const KIND_SEMANTIC = {
   questions: "waiting", planner_questions: "waiting", approve_plan: "waiting", approve_split: "waiting", approval: "waiting",
   monitor_needs_you: "waiting", dependency: "waiting", one_at_a_time: "waiting", area_lock: "waiting", queued: "waiting", release: "waiting",
   stopped: "waiting", bug_first: "waiting",
-  cancelled: "disabled", superseded: "disabled", issue_closed: "disabled", parked: "disabled",
+  cancelled: "disabled", superseded: "disabled", issue_closed: "disabled", parked: "disabled", epic: "disabled",
 };
 export const semanticOf = (kind) => (Object.hasOwn(KIND_SEMANTIC, kind) ? KIND_SEMANTIC[kind] : "neutral");
 

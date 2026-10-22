@@ -85,8 +85,36 @@ function storiesOf(lines: string[], valid: (n: number) => boolean): number[] {
   return [...found].sort((a, b) => a - b);
 }
 
+/** The rule for a number named in an issue: a real issue number that is not the issue itself. */
+const validFor = (self: number) => (n: number): boolean => Number.isInteger(n) && n >= 1 && n <= MAX_NUMBER && n !== self;
+const EPIC_LINE = /^\*\*Epic:\*\* #([1-9]\d*)\s*$/m;
+const PARENT_LINE = /^[ \t]*(?:\*\*)?Parent:(?:\*\*)?[ \t]*#([1-9]\d*)\b/im;
+export const EPIC_LABEL = "epic";
+
+/** The stories an issue body lists (the same rule as `toRecord`), sorted. */
+export function storiesIn(body: string, number: number): number[] {
+  return storiesOf(plainLines(body ?? ""), validFor(number));
+}
+
+/**
+ * Is this issue an epic, whose stories are built one by one? Yes with the `epic` label (exactly; `epic: Foo` is not it),
+ * or with a Stories heading whose section lists another issue. A bare task list does not count, and neither does an
+ * issue with its own `**Epic:** #N` or `Parent: #N` line (a story).
+ */
+export function isTrackingEpic(issue: { number: number; body?: string | null; labels?: readonly ({ name?: string } | string)[] }): boolean {
+  if ((issue.labels ?? []).some((l) => (typeof l === "string" ? l : l.name ?? "").trim().toLowerCase() === EPIC_LABEL)) return true;
+  const lines = plainLines(issue.body ?? "");
+  const text = lines.join("\n");
+  const valid = validFor(issue.number);
+  for (const re of [EPIC_LINE, PARENT_LINE]) {
+    const m = re.exec(text);
+    if (m && valid(Number(m[1]))) return false;
+  }
+  return lines.some((l) => STORIES_HEAD.test(l)) && storiesOf(lines, valid).length > 0;
+}
+
 export function toRecord(issue: RestIssue, ctx: RecordContext): IssueRecord {
-  const valid = (n: number) => Number.isInteger(n) && n >= 1 && n <= MAX_NUMBER && n !== issue.number;
+  const valid = validFor(issue.number);
   const lines = plainLines(issue.body ?? "");
   const text = lines.join("\n");
   const pick = (re: RegExp): number | undefined => {
@@ -97,9 +125,9 @@ export function toRecord(issue: RestIssue, ctx: RecordContext): IssueRecord {
   const r: IssueRecord = { number: issue.number, title: issue.title, state: issue.state === "closed" ? "closed" : "open", labels, createdAt: issue.created_at, dependsOn: [] };
   if (issue.state_reason) r.stateReason = issue.state_reason;
   if (issue.closed_at) r.closedAt = issue.closed_at;
-  const epic = pick(/^\*\*Epic:\*\* #([1-9]\d*)\s*$/m);
+  const epic = pick(EPIC_LINE);
   if (epic !== undefined) r.epic = epic;
-  const parent = pick(/^[ \t]*(?:\*\*)?Parent:(?:\*\*)?[ \t]*#([1-9]\d*)\b/im);
+  const parent = pick(PARENT_LINE);
   if (parent !== undefined) r.parent = parent;
   const partOf = pick(/^[ \t]*Part(?:[ \t]+\d+[ \t]+of[ \t]+\d+)?[ \t]+of[ \t]+#([1-9]\d*)\b/im);
   if (partOf !== undefined) r.partOf = partOf;

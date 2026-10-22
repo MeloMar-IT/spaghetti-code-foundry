@@ -16,7 +16,7 @@ import { LABEL_WORDS } from "../words.js";
 import { RELEASE_BUILD_FLOW, RELEASE_BUILD_SUBMISSION_VAR, RELEASE_BUILD_VAR } from "../release/auto-build.js";
 import { dependencies, openDependencies } from "./deps.js";
 import { checkReleaseBuild, mainBranchOf, releaseCheckEvery } from "./release-trigger.js";
-import { freshIssueList } from "./issue-list.js";
+import { freshIssueList, isTrackingEpic } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
@@ -458,6 +458,23 @@ export class Watcher {
       if (!m.has(s.vars[key]!)) m.set(s.vars[key]!, s);
     }
     return m;
+  }
+
+  /**
+   * Does a run of any flow for this issue work or wait in the queue? Checks the queued and the running jobs by run id,
+   * so an old resumed run outside the newest runs counts too (a queued resume has no issue in queue()).
+   */
+  private issueBusy(n: number, run?: RunSummary): boolean {
+    const sch = this.d.scheduler;
+    if (run && (sch.isActive(run.runId) || sch.isQueued(run.runId))) return true;
+    const q = sch.queue();
+    if (q.pending.some((p) => p.githubRepo === this.repo && p.issue === String(n))) return true;
+    // Every run of every flow for this issue (the uncapped brief index), and the queued or running jobs by run id.
+    const ids = [
+      ...sch.briefs().filter((b) => b.githubRepo === this.repo && b.issue === String(n)).map((b) => b.dirName),
+      ...q.pending.map((p) => p.runId), ...q.active.map((a) => a.runId),
+    ];
+    return ids.some((id) => sch.isActive(id) || sch.isQueued(id));
   }
 
   /** The folder of the newest run of this watcher's flow per issue, found without a cap (the brief index covers every run). */
@@ -926,6 +943,25 @@ export class Watcher {
       // A job of this watcher that is queued follows the label: it goes first, or goes back when the label is gone.
       const own = pending.find((p) => p.runId === (queuedId ?? run?.runId) && (p.source === `watcher ${this.cfg.id} issue #${n}` || /^ui (resume|approve|reject|answer)$/.test(p.source ?? "")));
       if (own) this.d.scheduler.setPriority(own.runId, isFirst, issue.createdAt);
+
+      // An epic: its stories are built one by one; the epic itself starts no run and asks nothing.
+      // Work in any flow for this issue (running or queued) is left alone.
+      if (queuedId === undefined && isTrackingEpic(issue) && !this.issueBusy(n, run)) {
+        const leftover = names.filter((l) => this.allStatus.includes(l) && l !== this.L.done);
+        if (leftover.length) {
+          await setLabels(this.repo, n, undefined, leftover);
+          alive();
+          this.act(`#${n} is an epic → label ${leftover.join(", ")} removed`);
+        }
+        // The edit above waited: work may have started for this issue meanwhile.
+        if (run && !run.parkedAt && asksQuestions(run) && !this.issueBusy(n, run)) {
+          if (this.d.scheduler.setParked(run.runId)) this.act(`#${n} is an epic → run ${run.runId} is parked, nothing waits for it`);
+          else this.d.log(`[${this.cfg.id}] ! #${n} is an epic, but run ${run.runId} could not be parked`);
+        }
+        offNow.delete(n); delete track.labelOff;
+        holds.push(this.held("epic", issue));
+        continue;
+      }
 
       // Questions asked up front (no run yet): wait for an answer, then start like a new issue.
       let answeredEarly = false;

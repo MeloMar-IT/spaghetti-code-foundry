@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withGhEnv, type RestIssue } from "../src/github.js";
 import { dependencies } from "../src/queue/deps.js";
 import {
-  dropIssueList, freshIssueList, issueListsDir, readIssueList, recordContext, saveIssueList, storedIssueListRepos, toRecord, type IssueRecord,
+  dropIssueList, freshIssueList, isTrackingEpic, issueListsDir, storiesIn, readIssueList, recordContext, saveIssueList, storedIssueListRepos, toRecord, type IssueRecord,
 } from "../src/queue/issue-list.js";
 import { fakeGithub } from "./helpers/fake-github.js";
 
@@ -315,5 +315,38 @@ describe("freshIssueList", () => {
     release();
     await Promise.all([a, b]);
     expect(readIssueList("o/r")).toBeDefined();
+  });
+});
+
+describe("storiesIn and isTrackingEpic", () => {
+  const epic = (body?: string | null, labels: string[] = [], number = 5) => isTrackingEpic({ number, body, labels: labels.map((name) => ({ name })) });
+  it("storiesIn lists the stories of the section, or the task list", () => {
+    expect(storiesIn("### Stories\n- #12\n- [ ] #11\n### Other\n- #77", 5)).toEqual([11, 12]);
+    expect(storiesIn("- [ ] #3 a\n- [x] #2 b", 5)).toEqual([2, 3]);
+    expect(storiesIn("## Stories\n- #5", 5)).toEqual([]);
+  });
+  it("storiesIn follows the rule of toRecord", () => {
+    for (const body of ["## Stories\n- #12\n- #5", "- [ ] #3\n- [ ] #9999999999", "nothing", "```\n## Stories\n- #4\n```"]) {
+      expect(storiesIn(body, 5)).toEqual(withBody(body).stories ?? []);
+    }
+  });
+  it("is an epic with the epic label or a stories list", () => {
+    expect(epic("", ["epic"])).toBe(true);
+    expect(isTrackingEpic({ number: 5, labels: ["Epic"] })).toBe(true);
+    expect(isTrackingEpic({ number: 5, labels: [" EPIC "] })).toBe(true);
+    expect(epic("## Stories\n- #12")).toBe(true);
+    expect(epic("**User stories**\n- #4")).toBe(true);
+    expect(epic("**Epic:** #7", ["epic"])).toBe(true);
+  });
+  it("is not an epic otherwise", () => {
+    expect(epic("- [ ] #12 docs follow-up")).toBe(false);
+    expect(epic("## Stories\n- #5")).toBe(false);
+    expect(epic("", ["epic: Foo"])).toBe(false);
+    expect(epic("", ["epic: 7"])).toBe(false);
+    expect(epic("## Stories")).toBe(false);
+    expect(epic("```\n## Stories\n- #12\n```")).toBe(false);
+    expect(epic("**Epic:** #7\n## Stories\n- #12")).toBe(false);
+    expect(epic("Parent: #7\n## Stories\n- #12")).toBe(false);
+    expect(epic(undefined)).toBe(false);
   });
 });

@@ -1062,6 +1062,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | cancelled | Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it. |
 | cancelled — nothing to do | Someone cancelled the run while it was stopped, so nothing continues it. Nothing to do — resume it on its page if you still want the work. |
 | parked — not tracked by a watcher | The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run. |
+| epic — its stories are built one by one | The issue has the epic label or a list of stories, so the Foundry builds its stories and starts no run for the epic itself. Nothing to do — if it is not an epic, remove the epic label or the list of stories. |
 | failed | A step failed and the run could not go on. Fix the cause if needed, then start over or resume the run at the failed step. When the Foundry itself failed: The Foundry itself failed, not the code: a blocked command, a marker it could not read or a broken setting. Follow the suggested fix, then start over or resume the run. |
 | watcher error | The watcher could not do its check, so its issues do not move. Look at the error on the Watchers page and fix the cause, it then tries again at the next check. |
 | bug stories stopped | The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page. |
@@ -2273,6 +2274,17 @@ lines. `PATH`, tokens and the Foundry's own variables can't be set this way. An 
 `GIT_ALLOW_PROTOCOL` set here are replaced for the agent. In a run that never uses the machine's
 login (see "What runs sign in with"), names that start with `GH_`, `GITHUB_`, `GIT_`, `SSH_` or
 `XDG_`, and `LC_ALL`, are ignored too.
+
+**Epics.** An issue with the trigger label that is an **epic** gets no run of its own and asks no questions.
+Its stories are built one by one instead. An issue is an epic when it has the `epic` label, or when
+it has a **Stories** heading followed by a list of other issues. A bare checklist (`- [ ] #12`) does
+not make an epic, so an ordinary story with a list of related issues still runs. An issue with its
+own `**Epic:** #N` or `Parent: #N` line is a story, never an epic. The watcher shows the epic with
+the status **epic — its stories are built one by one** (see [Words the Foundry uses](#words-the-foundry-uses)).
+
+If the issue is an epic by mistake, remove the `epic` label or the list of stories. At the next check
+the watcher builds it like any other story. A run that was stopped with questions for an epic is
+parked and its waiting labels are removed, so the epic does not stay in **Needs you**.
 
 ### Bug stories go first
 
