@@ -96,3 +96,27 @@ export function openQuestion(comments: readonly Comment[]): { questions: number;
   }
   return undefined;
 }
+
+/** At most this many comment reads for needs-info extras per check. */
+export const EXTRA_READS_PER_CHECK = 20;
+/** A successful read of an extra is remembered for this long. */
+export const EXTRA_READ_MEMO_MS = 10 * 60_000;
+
+/** Open issues with a waiting label that are not in `listed`, once each, sorted by number (the watcher's extras). */
+export function extraWaitingIssues(
+  all: readonly { number: number; title: string; state?: string | null; labels: readonly ({ name?: string } | string)[] }[],
+  listed: ReadonlySet<number>, L: WaitingLabels, excluded: ReadonlySet<string>,
+): { number: number; title: string; label: string }[] {
+  const taken = new Set<number>();
+  const out: { number: number; title: string; label: string }[] = [];
+  for (const i of all) {
+    if (listed.has(i.number) || taken.has(i.number)) continue;
+    taken.add(i.number);
+    if (String(i.state ?? "open").toLowerCase() === "closed") continue;
+    const names = i.labels.map((l) => (typeof l === "string" ? l : l.name ?? ""));
+    if (names.some((n) => excluded.has(n))) continue;
+    const label = waitingLabelOf(names, L);
+    if (label) out.push({ number: i.number, title: i.title, label });
+  }
+  return out.sort((a, b) => a.number - b.number);
+}
