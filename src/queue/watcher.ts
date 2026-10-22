@@ -6,8 +6,8 @@ import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
-import { commentReads, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs } from "./waiting-issues.js";
-import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
+import { commentReads, extraWaitingIssues, EXTRA_READS_PER_CHECK, EXTRA_READ_MEMO_MS, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs, type CommentReads } from "./waiting-issues.js";
+import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, listOpenIssuesByLabelPages, setLabels, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
@@ -170,6 +170,8 @@ export interface TrackedIssue {
   claims?: string;
   /** The status label has not fitted the newest run for `checks` checks in a row (for the monitor). `label` is the key, e.g. "working". */
   labelOff?: { checks: number; label: string; run: string };
+  /** Listed only because of its waiting label (not in the trigger list): never changed. */
+  extra?: true;
 }
 
 /** Does the issue carry one of the priority labels? GitHub label names ignore case. */
@@ -255,6 +257,12 @@ export class Watcher {
   private slowUntil = new Map<number, number>();
   /** Pages of 100 issues the issue list read takes at most per check. */
   issueListPages = 20;
+  /** Pages of the waiting-label query, per label, taken at most per check when the issue list is cut. */
+  waitingListPages = 10;
+  private waitingPages = new Map<string, Map<number, RestIssue[]>>();
+  private waitingCursor = new Map<string, number>();
+  /** Comment reads of needs-info extras: when, whether it worked, and the open question. */
+  private readMemo = new Map<number, { at: number; ok: boolean; open?: { questions: number; since?: string } }>();
   private kickAgain = false;
   private setupDone = false;
   private stopped = false;
@@ -715,6 +723,82 @@ export class Watcher {
     return { ...this.held("questions", issue, open?.questions ? { questions: open.questions } : {}), byLabel: true, ...(open?.since ? { since: open.since } : {}) };
   }
 
+  /** The open issues with a waiting label from the label query: a few pages per check, continuing where the last check stopped. */
+  private async waitingFromLabels(alive: () => void): Promise<RestIssue[]> {
+    for (const label of new Set([this.L.needsInfo, this.L.waiting])) {
+      let r: Awaited<ReturnType<typeof listOpenIssuesByLabelPages>>;
+      try {
+        r = await listOpenIssuesByLabelPages(this.repo, label, { fromPage: this.waitingCursor.get(label) ?? 1, pages: this.waitingListPages, timeoutMs: 30_000 });
+      } catch (e) {
+        alive();
+        this.d.log(`[${this.cfg.id}] ! waiting label ${label}: ${errorLine((e as Error).message)}`);
+        continue;
+      }
+      alive();
+      const m = this.waitingPages.get(label) ?? new Map<number, RestIssue[]>();
+      for (const [p, list] of r.pages) m.set(p, list);
+      if (r.next === 1) {
+        const last = Math.max(...r.pages.keys());
+        for (const p of [...m.keys()]) if (p > last) m.delete(p);
+      }
+      this.waitingPages.set(label, m);
+      this.waitingCursor.set(label, r.next);
+    }
+    return [...this.waitingPages.values()].flatMap((m) => [...m.values()].flat());
+  }
+
+  /** Open issues with a waiting label outside the trigger list: listed under Needs you, never changed (#653). */
+  private async addExtras(o: { listed: Set<number>; whole?: Issue[]; excluded: Set<string>; reads: CommentReads; holds: Hold[]; tracked: TrackedIssue[]; alive: () => void }) {
+    type Row = { number: number; title: string; state?: string | null; labels: ({ name?: string } | string)[] };
+    let all: Row[];
+    if (o.whole) {
+      all = o.whole;
+      this.waitingPages.clear();
+      this.waitingCursor.clear();
+    } else all = await this.waitingFromLabels(o.alive);
+    const labelNamesOf = (i: Row) => i.labels.map((l) => (typeof l === "string" ? l : l.name ?? ""));
+    const byNo = new Map(all.map((i) => [i.number, i]));
+    const newest = new Map<string, RunBrief>(); // the newest run of each issue of this repository, in any flow
+    for (const b of this.d.scheduler.briefs()) {
+      if (b.githubRepo !== this.repo || !b.issue || newest.has(b.issue)) continue;
+      newest.set(b.issue, b);
+    }
+    const kept: { number: number; title: string; label: string; linked?: RunSummary }[] = [];
+    for (const e of extraWaitingIssues(all, o.listed, this.L, o.excluded)) {
+      const b = newest.get(String(e.number));
+      const found = b ? this.d.scheduler.get(b.dirName) : undefined;
+      const run = found && b && found.runId === b.dirName ? found : undefined;
+      const triggered = labelNamesOf(byNo.get(e.number)!).includes(this.cfg.label);
+      if (run?.parkedAt && !triggered) continue;
+      kept.push({ ...e, ...(run && waitsAs(run, e.label, this.L) ? { linked: run } : {}) });
+    }
+    const asking = kept.filter((e) => e.label === this.L.needsInfo);
+    const askNo = new Set(asking.map((e) => e.number));
+    for (const n of [...this.readMemo.keys()]) if (!askNo.has(n)) this.readMemo.delete(n);
+    const now = Date.now();
+    const fresh = (n: number) => { const m = this.readMemo.get(n); return !!m && m.ok && now - m.at < EXTRA_READ_MEMO_MS; };
+    // Never read first, then the oldest attempt. A failed attempt counts as an attempt, so it does not block the others.
+    const order = asking.filter((e) => !fresh(e.number)).sort((a, b) => (this.readMemo.get(a.number)?.at ?? -1) - (this.readMemo.get(b.number)?.at ?? -1) || a.number - b.number);
+    let count = 0;
+    for (const e of order) {
+      if (count >= EXTRA_READS_PER_CHECK || o.reads.exhausted) break;
+      if (!o.reads.canRead(e.number)) continue; // slow right now: the next one gets the read
+      o.alive();
+      const c = await o.reads.read(e.number);
+      count++;
+      this.readMemo.set(e.number, c ? { at: Date.now(), ok: true, open: openQuestion(c) } : { at: Date.now(), ok: false });
+    }
+    const open = (n: number) => (fresh(n) ? this.readMemo.get(n)?.open : undefined);
+    o.alive();
+    for (const e of kept) {
+      const issue: Issue = { number: e.number, title: e.title, labels: [] };
+      const q = e.label === this.L.needsInfo ? open(e.number) : undefined;
+      if (e.linked) o.holds.push({ ...this.heldRun(issue, e.linked, e.linked.status === "stopped" && q ? { questions: q.questions } : {}), byLabel: true });
+      else o.holds.push(this.labelHold(issue, q));
+      o.tracked.push({ issue: e.number, title: e.title, ...(e.linked ? { runId: e.linked.runId } : {}), extra: true });
+    }
+  }
+
   private async tickIssues(mine: number, checkStartedAt: number) {
     // A check that was given up (timeout) must not start runs or store holds next to a newer check.
     // `mine` is the token of the tick itself, so a check whose sign-in or setup outlasted the timeout is already given up here.
@@ -734,6 +818,7 @@ export class Watcher {
     } else {
       this.d.log(`[${this.cfg.id}] ! issue list: ${list.error}`);
     }
+    const wholeList = list.ok && !list.cut ? everyIssue : undefined; // before openDepsOf can replace everyIssue
     const whole = issues.length < 100;
     const prioLabels = this.cfg.priority_labels.filter((l) => l.trim());
     // The list is cut at 100 and has no order we can use: ask for the bug stories on their own, so none is missed.
@@ -1117,6 +1202,9 @@ export class Watcher {
     await this.checkIssueStates(issues, alive).catch((e: Error) => { statesError = e; });
     // After the states: an issue known to be closed is not asked about again.
     await this.parkUntracked(issues, everyIssue, alive);
+    // After parking: a run parked in this check does not list its issue as an extra.
+    alive();
+    await this.addExtras({ listed: new Set(issues.map((i) => i.number)), whole: wholeList, excluded, reads, holds, tracked, alive });
     if (paused && !holds.some((x) => x.next.kind === "release")) holds.unshift(this.held("release", undefined, { pr: paused }));
     alive();
     const before = new Map((this.status.holds ?? []).map((h) => [holdKey(h), h.seen]));

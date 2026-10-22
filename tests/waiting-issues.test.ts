@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Comment } from "../src/github.js";
 import type { RunSummary } from "../src/engine/state.js";
-import { commentReads, openQuestion, waitingLabelOf, waitsAs } from "../src/queue/waiting-issues.js";
+import { commentReads, extraWaitingIssues, openQuestion, waitingLabelOf, waitsAs } from "../src/queue/waiting-issues.js";
 
 const L = { needsInfo: "factory:needs-info", waiting: "factory:waiting-approval" };
 
@@ -147,5 +147,23 @@ describe("commentReads", () => {
       onSlow: () => { throw new Error("callback"); },
     });
     expect(await bad.read(1)).toBeUndefined();
+  });
+});
+
+describe("extraWaitingIssues", () => {
+  const issue = (number: number, labels: ({ name?: string } | string)[], state?: string | null) => ({ number, title: `t${number}`, state, labels });
+  const none = new Set<string>();
+
+  it("picks needs-info and waiting-approval issues, once each, sorted by number", () => {
+    const all = [issue(9, [L.waiting]), issue(3, [{ name: "x" }]), issue(5, [L.waiting, L.needsInfo]), issue(5, [L.waiting]), issue(2, [{ name: L.needsInfo }])];
+    expect(extraWaitingIssues(all, new Set(), L, none)).toEqual([
+      { number: 2, title: "t2", label: L.needsInfo },
+      { number: 5, title: "t5", label: L.needsInfo },
+      { number: 9, title: "t9", label: L.waiting },
+    ]);
+  });
+  it("leaves out listed, closed and excluded issues", () => {
+    const all = [issue(1, [L.needsInfo]), issue(2, [L.needsInfo], "closed"), issue(3, [L.needsInfo], "CLOSED"), issue(4, [L.needsInfo, "skip"]), issue(5, [L.needsInfo], "OPEN"), issue(6, [L.needsInfo], null)];
+    expect(extraWaitingIssues(all, new Set([1]), L, new Set(["skip"])).map((i) => i.number)).toEqual([5, 6]);
   });
 });

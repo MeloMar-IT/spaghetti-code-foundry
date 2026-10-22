@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { closeIssue, listAllIssues, listNewestIssues, listOpenIssues, updateIssue } from "../src/github.js";
+import { closeIssue, listAllIssues, listNewestIssues, listOpenIssues, listOpenIssuesByLabelPages, updateIssue } from "../src/github.js";
 import { fakeGithub, type FakeIssue } from "./helpers/fake-github.js";
 
 let gh: ReturnType<typeof fakeGithub>;
@@ -174,5 +174,69 @@ describe("updateIssue", () => {
       expect(l).not.toContain("Secret title");
       expect(l).not.toContain("Secret body");
     }
+  });
+});
+
+describe("listOpenIssuesByLabelPages", () => {
+  const L = "factory:needs-info";
+  const labelled = (n: number): FakeIssue => issue(n, { labels: [{ name: L }] });
+  const set250 = () => gh.setBugIssues([...Array.from({ length: 250 }, (_, i) => labelled(i * 2 + 1)), ...Array.from({ length: 5 }, (_, i) => issue(i * 2 + 2))]);
+
+  it("reads the pages asked for, oldest first, and says where to go on", async () => {
+    set250();
+    const at = gh.ghLog().length;
+    const r = await listOpenIssuesByLabelPages("o/r", L, { fromPage: 1, pages: 2 });
+    expect([...r.pages.keys()]).toEqual([1, 2]);
+    expect(r.pages.get(1)).toHaveLength(100);
+    expect(r.pages.get(2)).toHaveLength(100);
+    expect(r.pages.get(1)![0]!.number).toBe(1);
+    expect(r.pages.get(1)!.every((i) => i.labels.some((l) => (l as { name: string }).name === L))).toBe(true);
+    expect(r.next).toBe(3);
+    const calls = listCalls(at);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toContain("labels=factory%3Aneeds-info");
+    expect(calls[0]).toContain("state=open");
+    expect(calls[0]).toContain("direction=asc");
+  });
+  it("a short page is the end: next is 1", async () => {
+    set250();
+    const at = gh.ghLog().length;
+    const r = await listOpenIssuesByLabelPages("o/r", L, { fromPage: 3, pages: 2 });
+    expect([...r.pages.keys()]).toEqual([3]);
+    expect(r.pages.get(3)).toHaveLength(50);
+    expect(r.next).toBe(1);
+    expect(listCalls(at)).toHaveLength(1);
+  });
+  it("exactly 100 issues: next is 2, and the empty page 2 is kept", async () => {
+    gh.setBugIssues(many(100, () => ({ labels: [{ name: L }] })));
+    const first = await listOpenIssuesByLabelPages("o/r", L, { fromPage: 1, pages: 1 });
+    expect(first.next).toBe(2);
+    const second = await listOpenIssuesByLabelPages("o/r", L, { fromPage: 2, pages: 1 });
+    expect(second.pages.get(2)).toEqual([]);
+    expect(second.next).toBe(1);
+  });
+  it("leaves out closed issues and pull requests", async () => {
+    gh.setBugIssues([labelled(1), { ...labelled(2), state: "closed" }, { ...labelled(3), pull_request: {} }, labelled(4)]);
+    const r = await listOpenIssuesByLabelPages("o/r", L, { fromPage: 1, pages: 1 });
+    expect(r.pages.get(1)!.map((i) => i.number)).toEqual([1, 4]);
+  });
+  it("a failing later page keeps the pages before it, and the next check starts at the failed page", async () => {
+    gh.setBugIssues([...Array.from({ length: 150 }, (_, i) => labelled(i + 1)), { ...labelled(151), title: undefined } as unknown as FakeIssue]);
+    const r = await listOpenIssuesByLabelPages("o/r", L, { fromPage: 1, pages: 2 });
+    expect([...r.pages.keys()]).toEqual([1]);
+    expect(r.pages.get(1)).toHaveLength(100);
+    expect(r.next).toBe(2);
+  });
+  it("rejects a bad page count, a bad start, a failing call and a malformed issue", async () => {
+    for (const pages of [0, 1.5]) await expect(listOpenIssuesByLabelPages("o/r", L, { fromPage: 1, pages })).rejects.toThrow(/pages/);
+    for (const fromPage of [0, 1.5]) await expect(listOpenIssuesByLabelPages("o/r", L, { fromPage, pages: 1 })).rejects.toThrow(/fromPage/);
+    process.env.FAKE_GH_FAIL_API = "list";
+    try {
+      await expect(listOpenIssuesByLabelPages("o/r", L, { fromPage: 1, pages: 1 })).rejects.toThrow();
+    } finally {
+      delete process.env.FAKE_GH_FAIL_API;
+    }
+    gh.setBugIssues([{ ...labelled(1), title: undefined } as unknown as FakeIssue]);
+    await expect(listOpenIssuesByLabelPages("o/r", L, { fromPage: 1, pages: 1 })).rejects.toThrow(/not well formed/);
   });
 });
