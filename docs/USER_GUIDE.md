@@ -1204,11 +1204,23 @@ recorded, and a run does not stop because of them, with one exception: a mandato
 read or evaluated stops the steps that sign in or write (see [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read)).
 
 - **The baseline.** The Foundry has a built-in pack, `foundry.baseline`. It is asked at every boundary of
-  every run, with no setting. Its version is the Foundry's version. It has four rules:
-  - a push that would add secrets is denied (`secret.detected`);
+  every run, with no setting. Its version is the Foundry's version. It is built for each run from
+  `protected_branches`, `secret_scan` and the run's repository. Its rules, in order:
+  - a push of the shipped hotfix flow's `push_main` to a protected branch is allowed (`branch.hotfix-exception`);
+  - a push to a protected branch is denied (`branch.protected`), with the patterns of `protected_branches`;
+  - a push that would add secrets is denied (`secret.detected`); this rule is left out when `secret_scan: false`;
   - a push without a committer name and e-mail that git can find is denied (`identity.missing`);
+  - a push to a repository other than the run's is denied (`repository.not-allowed`); this rule is left out
+    when the run has no repository;
   - an agent write by a user without a sandbox is denied (`sandbox.required`);
-  - an in-place run by a user is denied (`workspace.admin-only`).
+  - an in-place run by a user is denied (`workspace.admin-only`);
+  - a user's run that gets the machine's credential is denied (`credential.scope-exceeded`).
+
+  All of them are observed only. Protected branch patterns with `?`, `[`, `]` or `\`, or longer than 255
+  characters, cannot be matched the way the hook matches them, so they are not in the baseline. The run
+  logs one `!` line for them. The hook still blocks those pushes, and they show as `policy.input-incomplete`.
+  A push to a remote that is not on GitHub is not asked about the repository. The pack's hash (`packSha256`)
+  depends on these settings and on the run, so two runs with different settings have different hashes.
 
   Nothing else is built in. The id `foundry.baseline` is reserved: `policy.packs`, `policy.mandatory`
   and `policy.repositories` refuse it.
@@ -1257,8 +1269,8 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   hook is there: when a branch is protected, the secret scan is on, or packs are configured. With both
   guards off and no packs, there is no hook and pushes are not observed. The hook still refuses pushes to
   protected branches and pushes the secret scan rejects; it never blocks a push for an observation.
-- **Without the secret scan,** a push gets `policy.input-incomplete` for the secret rule, since the number
-  of secrets is not known.
+- **Without the secret scan** (`secret_scan: false`), the secret rule is not in the baseline, since the number
+  of secrets is never known. Pushes are then decided by the other rules, with no `policy.input-incomplete` for it.
 - **Evidence format.** It is unchanged since #142. The baseline adds `policy.decided` events to every run.
   An older build cannot read the evidence of a run that has `policy.decided` events, so keep this build
   for those runs.

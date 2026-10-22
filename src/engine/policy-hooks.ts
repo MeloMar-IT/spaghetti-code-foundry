@@ -5,7 +5,8 @@ import type { Config } from "../config.js";
 import type { StepIdentity } from "../evidence/identity.js";
 import type { Denial } from "../evidence/schema.js";
 import type { RunRecorder } from "../evidence/record.js";
-import { BASELINE_PACK, BASELINE_POLICY_ID } from "../policy/baseline.js";
+import { BASELINE_POLICY_ID, BASELINE_VERSION, baselineControls, runBaseline, type BaselineControls } from "../policy/baseline.js";
+import { HOTFIX_FLOW, isShippedFlow } from "./guards.js";
 import { combineDecisions, layeredPackIds, type Layer, type LayeredDecision } from "../policy/compose.js";
 import { parsePolicyDecision, parsePolicyPack } from "../policy/parse.js";
 import { evaluatePolicy, policyDenial, policyInputSha256 } from "../policy/evaluate.js";
@@ -30,7 +31,7 @@ export const MAX_PACK_BYTES = 1 << 20;
 export const UNKNOWN_POLICY_VERSION = "unknown";
 
 export type LoadedPack =
-  | { id: string; pack: PolicyPack }
+  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push whose repository is not known. */ pushWithoutRepository?: PolicyPack }
   | { id: string; problem: "policy.unavailable" | "policy.invalid"; detail: string };
 
 export type LayeredPack = LoadedPack & { layer: Layer };
@@ -153,7 +154,7 @@ export function repositoryFact(vars: Record<string, string> | undefined): string
   return name && name !== "owner/repo" ? name : undefined;
 }
 
-/** The facts every boundary of this run has (repository, flow, workspace, owner). */
+/** The facts every boundary of this run has (repository, flow, workspace, owner); `runPolicy` adds `shippedFlow`. */
 export function baseFacts(summary: Pick<RunSummary, "vars" | "flow" | "flowDef" | "owner">): Facts {
   return policyFacts({
     repository: repositoryFact(summary.vars),
@@ -355,7 +356,7 @@ export class RunPolicy {
     for (const p of pushed) {
       this.at(
         "push",
-        { step: step.id, credential: known.credential, isolated: known.isolated, shippedFlow: known.shippedFlow, repository: p.repository, branch: p.branch, secretsFound: p.secretsFound, commitIdentity: p.commitIdentity },
+        { step: step.id, credential: known.credential, isolated: known.isolated, repository: p.repository, branch: p.branch, secretsFound: p.secretsFound, commitIdentity: p.commitIdentity },
         step,
       );
     }
@@ -364,7 +365,8 @@ export class RunPolicy {
   private decide(loaded: LayeredPack, input: PolicyInput, mode: Mode): PolicyDecision {
     const at = this.now();
     if ("problem" in loaded) return this.noPack(loaded.id, loaded.problem, input, mode, at);
-    return evaluatePolicy(loaded.pack, input, at);
+    const pack = input.boundary === "push" && input.facts.repository === undefined && loaded.pushWithoutRepository ? loaded.pushWithoutRepository : loaded.pack;
+    return evaluatePolicy(pack, input, at);
   }
 
   private noPack(id: string, reasonCode: NoPackCode, input: PolicyInput, mode: Mode, at = this.now()): PolicyDecision {
@@ -422,13 +424,38 @@ export class RunPolicy {
   }
 }
 
+/** The mandatory baseline entry of a run. Never throws: a baseline that cannot be built is a `policy.invalid` entry (no weaker fallback). */
+export function baselineEntry(version: string, controls: BaselineControls): LayeredPack {
+  try {
+    const { pack, pushWithoutRepository } = runBaseline(version, controls);
+    return { layer: "mandatory", id: BASELINE_POLICY_ID, pack, ...(pushWithoutRepository ? { pushWithoutRepository } : {}) };
+  } catch (e) {
+    return { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, e instanceof PolicySchemaError ? (e.message.split("\n")[0] ?? "could not be built") : "could not be built") };
+  }
+}
+
 /**
- * The policy of one start of a run: always there, with the baseline first. Files are read only for the packs that are
+ * The policy of one start of a run: always there, with the baseline first, built from the settings and the run
+ * (protected branches, secret scan, repository, shipped flow). Files are read only for the packs that are
  * configured. The baseline is asked at `push` only when the pre-push hook is installed (see `observesPushes`).
- * Logs one "!" line per pack that could not be loaded.
+ * Logs one "!" line per pack that could not be loaded, and one for patterns the baseline cannot hold.
  */
-export function runPolicy(summary: RunSummary, config: Pick<Config, "policy">, log: (line: string) => void, evidence?: RunRecorder, home?: string): RunPolicy {
-  const base = baseFacts(summary);
+export function runPolicy(
+  summary: RunSummary,
+  config: Pick<Config, "policy"> & Partial<Pick<Config, "protected_branches" | "secret_scan">>,
+  log: (line: string) => void,
+  evidence?: RunRecorder,
+  home?: string,
+): RunPolicy {
+  const shipped = isShippedFlow(summary.flowDef);
+  const base = policyFacts({ ...baseFacts(summary), shippedFlow: shipped });
+  const { controls, leftOut } = baselineControls(config, { repository: base.repository, shippedHotfixFlow: shipped && summary.flowDef?.name === HOTFIX_FLOW });
+  if (leftOut.length) {
+    const shown = leftOut.slice(0, 10).map((p) => JSON.stringify(p)).join(", ");
+    log(`! policy ${BASELINE_POLICY_ID}: protected branch patterns ${shown}${leftOut.length > 10 ? ` and ${leftOut.length - 10} more` : ""} cannot be expressed in the baseline (? [ ] \\, other spaces or control characters, or over 255 characters) and are not in it — the hook still blocks them`);
+  }
+  const entry = baselineEntry(BASELINE_VERSION, controls);
+  if ("problem" in entry) log(`! policy ${entry.id}: ${entry.detail} — recorded as ${entry.problem}; this mandatory policy denies steps with a sign-in and writing agents`);
   const ids = layeredPackIds({ mandatory: config.policy?.mandatory, repositories: config.policy?.repositories, packs: config.policy?.packs }, base.repository);
   const loaded = ids.length
     ? loadPolicyPacks(
@@ -442,6 +469,6 @@ export function runPolicy(summary: RunSummary, config: Pick<Config, "policy">, l
       log(`! policy ${p.id}: ${p.detail} — recorded as ${p.problem}; ${tail}`);
     } else if (ids[i]!.layer === "mandatory") saveLastKnownGood(home ?? dataHome(), p.id, p.pack, log);
   });
-  const packs: LayeredPack[] = [{ layer: "mandatory", id: BASELINE_POLICY_ID, pack: BASELINE_PACK }, ...loaded.map((l, i) => ({ ...l, layer: ids[i]!.layer }))];
+  const packs: LayeredPack[] = [entry,...loaded.map((l, i) => ({ ...l, layer: ids[i]!.layer }))];
   return new RunPolicy({ runId: summary.runId, packs, base, log, evidence, observesPushes: ids.length > 0, breakGlass: () => activeBreakGlass(home ?? dataHome()) });
 }

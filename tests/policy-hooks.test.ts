@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { protectedBranchEnv } from "../src/engine/guards.js";
-import { baseFacts, deniedReason, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
+import { readFileSync } from "node:fs";
+import { parseFlow } from "../src/flow/load.js";
+import { policyInputSha256, policyPackSha256 } from "../src/policy/evaluate.js";
+import { BASELINE_VERSION, NO_BASELINE_CONTROLS, baselinePack } from "../src/policy/baseline.js";
+import type { PolicyDecision } from "../src/policy/schema.js";
+import { baselineEntry, baseFacts, deniedReason, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
 import { ENGINE_REASONS } from "../src/policy/reasons.js";
 import { DenialSchema } from "../src/evidence/schema.js";
 import { BASELINE_PACK, BASELINE_POLICY_ID } from "../src/policy/baseline.js";
@@ -441,6 +446,110 @@ describe("fail closed", () => {
     expect(ENGINE_REASONS["policy.unavailable"]).toBe("The pack could not be loaded, so the action is denied.");
     expect(ENGINE_REASONS["policy.invalid"]).toBe("The pack could not be read, so the action is denied.");
     expect(ENGINE_REASONS["policy.break-glass"]).toBe("A mandatory pack could not be used, but an admin's break-glass is active, so the action goes on with a warning.");
+  });
+});
+
+describe("the baseline of a run", () => {
+  const flowOf = (name: string) => parseFlow(readFileSync(`flows/${name}.yaml`, "utf8"), `flows/${name}.yaml`);
+  const gitflow = () => flowOf("issue-gitflow");
+  const summary = (flowDef: unknown, flow = "issue-gitflow") => ({ runId: "r", vars: { github_repo: "Acme/Widgets" }, flow, flowDef, owner: undefined }) as never;
+  const make = (cfg: object, flowDef: unknown = gitflow(), flow?: string) => {
+    const lines: string[] = [];
+    const policy = runPolicy(summary(flowDef, flow), ConfigSchema.parse({ policy: { packs: [] }, ...cfg }), (l) => lines.push(l), undefined, home);
+    return { policy, lines };
+  };
+  /** The baseline decision for one push of a step. */
+  const pushed = (policy: RunPolicy, step: string, p: { branch: string; repository?: string; secretsFound?: number; commitIdentity?: boolean }) => {
+    const id = { id: step, visit: 1, type: "shell" } as const;
+    policy.repository(id, { credential: "none" });
+    const seen: PolicyDecision[] = [];
+    const at = policy.at.bind(policy);
+    policy.at = (b, f, s) => {
+      const a = at(b, f, s);
+      if (b === "push") seen.push(a.decisions[0]!.decision);
+      return a;
+    };
+    policy.pushes(id, [p]);
+    policy.at = at;
+    return seen[0]!;
+  };
+  const own = { repository: "acme/widgets", secretsFound: 0, commitIdentity: true };
+
+  it("records the hotfix exception, protected branches and other repositories for the shipped gitflow", () => {
+    const { policy } = make({ protected_branches: ["main"] });
+    expect(pushed(policy, "push_main", { branch: "main", ...own }).reasonCode).toBe("branch.hotfix-exception");
+    expect(pushed(policy, "other", { branch: "main", ...own }).reasonCode).toBe("branch.protected");
+    expect(pushed(policy, "x", { branch: "feat", ...own, repository: "acme/other" }).reasonCode).toBe("repository.not-allowed");
+    expect(pushed(policy, "x", { branch: "feat", ...own, repository: undefined }).reasonCode).toBe("policy.no-rule-matched");
+  });
+
+  it("uses the variant pack hash for a push without a repository", () => {
+    const { policy } = make({ protected_branches: ["main"] });
+    const controls = { protectedBranches: ["main"], secretScan: true, shippedHotfixFlow: true };
+    expect(pushed(policy, "x", { branch: "feat", ...own, repository: undefined }).packSha256).toBe(policyPackSha256(baselinePack(BASELINE_VERSION, controls)));
+    expect(pushed(policy, "x", { branch: "feat", ...own }).packSha256).toBe(policyPackSha256(baselinePack(BASELINE_VERSION, { ...controls, repository: "acme/widgets" })));
+  });
+
+  it("decides pushes with the secret scan off and for flow names the fact cannot hold", () => {
+    const off = make({ protected_branches: ["main"], secret_scan: false });
+    const noScan = { repository: "acme/widgets", commitIdentity: true };
+    expect(pushed(off.policy, "x", { branch: "feat", ...noScan, repository: "acme/other" }).reasonCode).toBe("repository.not-allowed");
+    expect(pushed(off.policy, "x", { branch: "feat", ...noScan }).reasonCode).toBe("policy.no-rule-matched");
+    expect(pushed(off.policy, "x", { branch: "feat", commitIdentity: true }).reasonCode).toBe("policy.no-rule-matched");
+    expect(pushed(off.policy, "other", { branch: "main", ...noScan }).reasonCode).toBe("branch.protected");
+    const odd = make({ protected_branches: ["main"], secret_scan: false }, { name: "My flow" }, "My flow");
+    expect(pushed(odd.policy, "x", { branch: "main", ...noScan }).reasonCode).toBe("branch.protected");
+    for (const repository of ["acme/other", "acme/widgets", undefined]) {
+      expect(pushed(odd.policy, "x", { branch: "feat", ...noScan, repository }).reasonCode).not.toBe("policy.input-incomplete");
+    }
+  });
+
+  it("gives a changed flow no exception", () => {
+    const changed = gitflow();
+    changed.steps = changed.steps.slice(1);
+    const { policy } = make({ protected_branches: ["main"] }, changed);
+    expect(pushed(policy, "push_main", { branch: "main", ...own }).reasonCode).toBe("branch.protected");
+  });
+
+  it("logs patterns it cannot express once, quoted", () => {
+    const { lines } = make({ protected_branches: ["release/?", "a\u0007b"] });
+    const bang = lines.filter((l) => l.startsWith("! policy foundry.baseline: protected branch patterns"));
+    expect(bang).toHaveLength(1);
+    expect(bang[0]).toContain('"release/?"');
+    expect(bang[0]).toContain('"a\\u0007b"');
+    expect(bang[0]).not.toContain("\u0007");
+  });
+
+  it("records a user with the machine credential and does not stop it", () => {
+    const policy = new RunPolicy({ runId: "r", packs: [baselineEntry(BASELINE_VERSION, NO_BASELINE_CONTROLS)], base: { owner: "user" }, log: () => undefined, now: () => T });
+    const answer = policy.repository(STEP, { credential: "machine" });
+    expect(answer.denied).toBeUndefined();
+    expect(answer.decisions[0]!.decision).toMatchObject({ outcome: "deny", reasonCode: "credential.scope-exceeded" });
+  });
+
+  it("has shippedFlow as a base fact at run.start", () => {
+    const { policy } = make({}, { name: "mine", workspace: "worktree" }, "mine");
+    const facts = { repository: "acme/widgets", flow: "mine", workspace: "worktree", owner: "none", shippedFlow: false } as const;
+    expect(policy.at("run.start").decisions[0]!.decision.inputSha256).toBe(policyInputSha256({ version: 1, boundary: "run.start", runId: "r", facts }));
+  });
+
+  it("does not throw for a config without the baseline settings", () => {
+    expect(() => runPolicy(summary(undefined), { policy: { packs: [] } } as never, () => undefined, undefined, home)).not.toThrow();
+  });
+
+  it("fails closed when the baseline cannot be built, and break-glass applies", () => {
+    const entry = baselineEntry("bad version!", NO_BASELINE_CONTROLS);
+    expect(entry).toMatchObject({ layer: "mandatory", id: BASELINE_POLICY_ID, problem: "policy.invalid" });
+    const policy = new RunPolicy({ runId: "r", packs: [entry], base: {}, log: () => undefined, now: () => T });
+    expect(policy.repository(STEP, { credential: "machine" }).denied?.reason).toBe(deniedReason(BASELINE_POLICY_ID, "policy.invalid", "repository.access"));
+    expect(policy.repository(STEP, { credential: "none" }).denied).toBeUndefined();
+    expect(policy.at("agent.write", { step: "build", isolated: false, sandboxed: false }, STEP).denied).toBeDefined();
+    const glass = { version: 1, reason: "outage", startedAt: "2026-01-31T11:30:00.000Z", expiresAt: "2026-01-31T13:00:00.000Z", actor: { kind: "cli", osUser: "admin" } } as never;
+    const evidence = { policyDecided: vi.fn(() => true), incomplete: vi.fn() } as unknown as RunRecorder;
+    const open = new RunPolicy({ runId: "r", packs: [entry], base: {}, log: () => undefined, evidence, now: () => T, breakGlass: () => glass });
+    const answer = open.repository(STEP, { credential: "machine" });
+    expect(answer.denied).toBeUndefined();
+    expect(answer.decisions[0]!.decision.reasonCode).toBe("policy.break-glass");
   });
 });
 
