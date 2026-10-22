@@ -6,6 +6,7 @@ import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
+import { commentReads } from "./waiting-issues.js";
 import { canWrite, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, setLabels, withGhEnv, type Comment, type Issue } from "../github.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
@@ -147,6 +148,8 @@ export interface Hold {
   since?: string;
   /** When this server first saw the hold; starts again after a restart. */
   seen?: string;
+  /** Built from the label alone: the comments could not be read in this check. */
+  byLabel?: true;
 }
 
 const holdKey = (h: Hold) => `${h.issue ?? ""}|${h.next.kind}|${h.next.runId ?? ""}`;
@@ -204,6 +207,8 @@ function retryLimitAfter(s: RunSummary): boolean {
 /** Direct confirmations (gh issue view) per check that an issue lost its trigger label, and how long a "no" is remembered. */
 const PARK_CHECKS_PER_TICK = 10;
 const PARK_RECHECK_MS = 10 * 60_000;
+/** How long an issue whose comment read timed out is listed from its label before it is read again. */
+const SLOW_READ_MS = 10 * 60_000;
 
 /** The status label a run's issue should carry; none for a run cancelled while it was stopped (nothing continues it). */
 function labelFor(s: RunSummary, L: LabelNames): string | undefined {
@@ -252,6 +257,12 @@ export class Watcher {
   private tickToken = 0;
   /** A check that takes longer is given up, so "Check now" and the next check work again (gh has no timeout). */
   checkTimeoutMs = 10 * 60_000;
+  /** Time limit of one comment read. */
+  commentReadMs = 15_000;
+  /** Time all comment reads of one check share. */
+  commentBudgetMs = 120_000;
+  /** Issues whose comment read used its whole time limit, and until when they are not read again. */
+  private slowUntil = new Map<number, number>();
   /** Pages of 100 issues the issue list read takes at most per check. */
   issueListPages = 20;
   private kickAgain = false;
@@ -783,6 +794,15 @@ export class Watcher {
     const toCheck: Issue[] = [];
     // The status comment is ours too, but it is not a question or an approval request: it never ends the wait.
     const asked = (c: Comment) => isBot(c) && !isStatusComment(c);
+    const nowMs = Date.now();
+    for (const [k, t] of this.slowUntil) if (t <= nowMs) this.slowUntil.delete(k);
+    const reads = commentReads({
+      read: (n, t) => issueComments(this.repo, n, t),
+      perReadMs: this.commentReadMs, budgetMs: this.commentBudgetMs,
+      skip: (n) => (this.slowUntil.get(n) ?? 0) > Date.now(),
+      onSlow: (n) => this.slowUntil.set(n, Date.now() + SLOW_READ_MS),
+    });
+    const unknown = new Set<number>(); // issues whose comments could not be read in this check
     const questionCount = (comments: Comment[]) => countQuestions([...comments].reverse().find(asked)?.body);
 
     const overLimit = (isFirst: boolean) => started >= this.cfg.max_per_tick && !isFirst;
@@ -826,7 +846,8 @@ export class Watcher {
       // Questions asked up front (no run yet): wait for an answer, then start like a new issue.
       let answeredEarly = false;
       if (status === this.L.needsInfo && !run) {
-        const comments = await issueComments(this.repo, n);
+        const comments = await reads.read(n);
+        if (!comments) { unknown.add(n); holds.push({ ...this.held("questions", issue), byLabel: true }); continue; }
         const answers = commentsAfter(comments, asked);
         if (!answers.length && !(await this.takeDefaults(n, comments))) {
           holds.push({ ...this.held("questions", issue, { questions: questionCount(comments) }), since: [...comments].reverse().find(asked)?.createdAt });
@@ -883,7 +904,8 @@ export class Watcher {
         if (run && (askedRun || decidingRun)) {
           // A run that waits for the person, behind another story: when it is answered, nothing is needed from the
           // person any more. The label says working; the run resumes when the lock is free.
-          const comments = await issueComments(this.repo, n);
+          const comments = await reads.read(n);
+          if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
           const answered = askedRun ? commentsAfter(comments, asked).length > 0 : !!(await this.findDecision(run.runId, comments));
           if (answered) {
             if (status !== this.L.working) {
@@ -946,9 +968,12 @@ export class Watcher {
           (run.status === "stopped" && isUserBudgetStop(run.reason) && budgetLeft && this.budgetLeftFor(run.owner)) ||
           (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
           (run.status === "stopped" && isPaused(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
-        const lateAnswers = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo
-          ? commentsAfter(await issueComments(this.repo, n), asked) : [];
-        const lateDecision = !resumable && run.status === "waiting" ? await this.findDecision(run.runId, await issueComments(this.repo, n)) : undefined;
+        const asks = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo;
+        const decides = !resumable && run.status === "waiting";
+        const late = asks || decides ? await reads.read(n) : [];
+        if (!late) unknown.add(n);
+        const lateAnswers = asks && late ? commentsAfter(late, asked) : [];
+        const lateDecision = decides && late ? await this.findDecision(run.runId, late) : undefined;
         const holder = steppedAsideFor(run);
         if (isFirst && holder && !paused) { firstWaits.add(holder); track.claims = holder; }
         if (resumable && !isFirst && holder && firstWaits.has(holder)) {
@@ -980,6 +1005,8 @@ export class Watcher {
             started++;
             if (isFirst) firstStarted++;
           }
+        } else if (!late) {
+          // The comments could not be read: change nothing, say nothing (it is listed from its label).
         } else if (!resumable && labelFor(run, this.L) !== this.L.working) {
           await setLabels(this.repo, n, labelFor(run, this.L), this.allStatus);
           this.act(`#${n} label → ${labelFor(run, this.L)}`);
@@ -998,7 +1025,8 @@ export class Watcher {
         await setLabels(this.repo, n, label, run.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus);
         this.act(`#${n} label → ${label}`);
       } else if (status === this.L.needsInfo && run?.status === "stopped") {
-        const comments = await issueComments(this.repo, n);
+        const comments = await reads.read(n);
+        if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
         const answers = commentsAfter(comments, asked);
         // auto_defaults: nobody answered yet, so the recommendations are taken (only when the run can go on now).
         const auto = !answers.length && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
@@ -1018,7 +1046,9 @@ export class Watcher {
           holds.push(limited(issue, run.runId));
         }
       } else if (status === this.L.waiting && run?.status === "waiting") {
-        const decision = await this.findDecision(run.runId, await issueComments(this.repo, n));
+        const comments = await reads.read(n);
+        if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
+        const decision = await this.findDecision(run.runId, comments);
         if (decision) {
           await setLabels(this.repo, n, this.L.working, this.allStatus);
           this.resume(n, run.runId, `${decision.approved ? "approved" : "rejected"} by @${decision.by}`, decision, true, first);
@@ -1041,6 +1071,7 @@ export class Watcher {
     }
     // An issue that was answered but cannot start (dependency, release, budget, limit, busy watcher) needs nothing
     // from the person: the needs-info label goes, as the status comment says. Without a run nothing is lost.
+    if (reads.exhausted) this.d.log(`[${this.cfg.id}] comment reads: the time for this check is used up, the other issues are listed from their labels`);
     let labelError: Error | undefined;
     await this.dropAnsweredLabels(issues, runs, holds, alive).catch((e: Error) => { labelError = e; });
     let tidyError: Error | undefined;
@@ -1063,7 +1094,8 @@ export class Watcher {
     this.status.pausedBy = paused ? { number: paused.number, url: paused.url, title: paused.title, createdAt: paused.createdAt } : undefined;
     this.tracked = tracked;
     this.labelOff = offNow;
-    if (this.cfg.status_comment) await this.reportStatus(runs, holds, tracked, closed, !tidyError && closedWhole && whole, () => mine === this.tickToken && !this.stopped);
+    const quiet = [...new Set([...holds.filter((h) => h.byLabel && h.issue !== undefined).map((h) => h.issue!), ...unknown])];
+    if (this.cfg.status_comment) await this.reportStatus(runs, holds, tracked, closed, !tidyError && closedWhole && whole, () => mine === this.tickToken && !this.stopped, quiet);
     // The closed-issue scan is part of the check: its failure is the check's error.
     if (statesError) throw new Error(`checking closed issues: ${errorLine(statesError.message)}`); // first: this prefix is the contract
     if (tidyError) throw new Error(`tidying closed issues: ${errorLine(tidyError.message)}`);
@@ -1117,11 +1149,11 @@ export class Watcher {
   }
 
   /** Tells the shared writer what this check saw. Never throws, and does not touch Recent activity. */
-  private async reportStatus(runs: Map<string, RunSummary>, holds: Hold[], tracked: TrackedIssue[], closed: { issue: number; title: string }[], complete: boolean, alive: () => boolean) {
+  private async reportStatus(runs: Map<string, RunSummary>, holds: Hold[], tracked: TrackedIssue[], closed: { issue: number; title: string }[], complete: boolean, alive: () => boolean, quiet: number[]) {
     try {
       let all: RunSummary[] | undefined; // loaded at most once per check
       await this.statusComments.report(this.cfg.id, {
-        id: this.cfg.id, label: this.cfg.label, failedLabel: this.L.failed, tracked, holds, closed, complete,
+        id: this.cfg.id, label: this.cfg.label, failedLabel: this.L.failed, tracked, holds, closed, complete, quiet,
         scheduler: this.d.scheduler, areaWait: this.d.areaWait,
         lastRunId: (n) => runs.get(String(n))?.runId,
         releaseAt: (run) => releaseAtFor(this.d.watchers?.() ?? [], run, (all ??= this.d.scheduler.list(1000))),
