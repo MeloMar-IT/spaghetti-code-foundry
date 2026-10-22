@@ -120,6 +120,8 @@ export interface ClaudeRunOptions {
   sandboxProfile?: string;
   /** Sandbox Claude's bash tool (writes limited to the workspace). */
   sandbox?: boolean;
+  /** Folders outside the workspace the agent may write (the request folder of a step with repo_ops): added to its folders and to its bash sandbox. */
+  writableDirs?: string[];
   /** Load no MCP servers (keeps the prompt small for local models). */
   noMcp?: boolean;
   /** Skip the user's personal setup: MCP servers, user settings (hooks, plugins, env), skills. */
@@ -245,6 +247,7 @@ export function buildClaudeArgs(o: ClaudeRunOptions): string[] {
   const system = [o.isolated ? FACTORY_AGENT_NOTE : "", o.systemPrompt ?? ""].filter(Boolean).join("\n\n");
   if (system) args.push("--append-system-prompt", system);
   if (o.resumeSessionId) args.push("--resume", o.resumeSessionId);
+  for (const dir of o.writableDirs ?? []) args.push("--add-dir", dir);
   if (o.maxBudgetUsd) args.push("--max-budget-usd", String(o.maxBudgetUsd));
   // Pushing is a flow decision (shell steps + protected-branch hook), never Claude's.
   args.push("--disallowedTools", "Bash(git push*)");
@@ -252,7 +255,7 @@ export function buildClaudeArgs(o: ClaudeRunOptions): string[] {
   if (o.noMcp || strict) args.push("--strict-mcp-config");
   if (strict) args.push("--setting-sources", "project,local", "--disable-slash-commands");
   const settings = {
-    ...(o.sandbox ? { sandbox: { enabled: true, autoAllowBashIfSandboxed: true } } : {}),
+    ...(o.sandbox ? { sandbox: { enabled: true, autoAllowBashIfSandboxed: true, ...(o.writableDirs?.length ? { filesystem: { allowWrite: o.writableDirs } } : {}) } } : {}),
     ...(o.tools ? { disableAllHooks: true } : {}),
   };
   if (Object.keys(settings).length) args.push("--settings", JSON.stringify(settings));

@@ -58,6 +58,8 @@ export interface CodexRunOptions {
   clean?: boolean;
   /** No network in Codex's own sandbox (only `workspace-write` has the setting): pushing and other outbound calls are not possible. */
   noNetwork?: boolean;
+  /** More folders `workspace-write` may write (the request folder of a step with repo_ops). */
+  writableRoots?: string[];
 }
 
 /** What an isolated Codex session is told about its setup. */
@@ -130,6 +132,7 @@ export function buildCodexArgs(o: CodexRunOptions): string[] {
   args.push("-c", `sandbox_mode=${toml(o.sandbox)}`, "-c", `approval_policy=${toml("never")}`);
   if (o.reviewer || o.clean) args.push("-c", "mcp_servers={}", "-c", "features.codex_hooks=false");
   if (o.noNetwork && o.sandbox === "workspace-write") args.push("-c", "sandbox_workspace_write.network_access=false");
+  if (o.writableRoots?.length && o.sandbox === "workspace-write") args.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify(o.writableRoots)}`);
   if (o.model) args.push("-m", o.model);
   if (o.effort) args.push("-c", `model_reasoning_effort=${toml(o.effort === "max" ? "xhigh" : o.effort)}`);
   if (o.localProvider) args.push("-c", `model_provider=${toml(o.localProvider)}`);

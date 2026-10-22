@@ -1554,6 +1554,14 @@ without it the Foundry's own access is used, not your repository's token.** If t
 in a marked step, the run ends there and `on_failure` is not followed. A call you tolerate on
 purpose must send its error output to `/dev/null`, because a refusal on stderr fails the step.
 
+**Repository operations asked by an agent (`repo_ops`).** An agent step can list the operations it may
+ask for: `clone`, `fetch`, `branch`, `commit`, `push`, `pull-request` and `status`. The agent writes its
+requests to a file the Foundry names for it, and the Foundry carries them out after the step has succeeded,
+with the sign-in of the run (the repository's own in an isolated run). The agent never gets a sign-in.
+Requests run in order and stop at the first one that does not succeed; that fails the step. A denial by the policy ends the run. Each result is logged and
+added to the step's output under "Repository operations". A step with `repo_ops` cannot be a reviewer
+step or part of a parallel step. The format is in the flow guide, "claude — an agent step".
+
 ### Controlling the path
 
 Steps run top to bottom. Each step can change that:
