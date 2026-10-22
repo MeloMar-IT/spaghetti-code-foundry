@@ -157,6 +157,18 @@ export type ToolProfileIdentity = z.infer<typeof ToolProfileIdentitySchema>;
 /** Kinds that never run with a sign-in: the agent's own file, web and other tools. */
 export const NO_CREDENTIAL_KINDS: readonly ToolKind[] = ["files", "web", "builtin"];
 
+/** The longest description of a tool. */
+export const MAX_TOOL_DESCRIPTION = 1000;
+/** Text without control characters, except a line break and a tab. */
+// eslint-disable-next-line no-control-regex
+const DESCRIPTION_RE = /^[^\u0000-\u0008\u000b-\u001f\u007f]+$/;
+/** What each tool is for, by tool name (`<kind>.<operation>`, e.g. `shell.run`). */
+export const ToolDescriptionsSchema = z.record(
+  z.string().regex(/^[a-z]+\.[a-z-]+$/, "must be a tool name such as shell.run"),
+  z.string().min(1).max(MAX_TOOL_DESCRIPTION, `must be at most ${MAX_TOOL_DESCRIPTION} characters`).regex(DESCRIPTION_RE, "must not hold control characters"),
+);
+export type ToolDescriptions = z.infer<typeof ToolDescriptionsSchema>;
+
 /**
  * One version of one tool profile. `version` is the version of this format; `profile` is the id of the profile and the
  * version its author gave the contents. `grants` is everything that is allowed; with no grant, nothing is.
@@ -166,9 +178,15 @@ export const ToolProfileSchema = z
     version: z.literal(TOOL_PROFILE_VERSION),
     profile: ToolProfileIdentitySchema,
     grants: z.array(ToolGrantSchema).max(MAX_GRANTS),
+    /** Optional. Part of the hash only when it holds an entry, so a profile without descriptions keeps its hash. */
+    descriptions: ToolDescriptionsSchema.optional(),
   })
   .strict()
   .superRefine((p, ctx) => {
+    const granted = new Set(p.grants.flatMap((g) => g.operations.map((op) => `${g.kind}.${op}`)));
+    if (Object.keys(p.descriptions ?? {}).some((name) => !granted.has(name))) {
+      ctx.addIssue({ code: "custom", path: ["descriptions"], message: "names a tool the profile does not grant" });
+    }
     const seen = new Map<string, number>();
     p.grants.forEach((g, i) => {
       g.operations.forEach((op, j) => {

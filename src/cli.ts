@@ -94,7 +94,9 @@ Usage:
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
-  scf policy restore <id> [--force]              Put back the last-known-good copy of a mandatory policy overlay
+  scf components [kind]                          Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector
+  scf components record [kind]                   Give new hashes of tool profiles, model routes and context selectors a version
+  scf policy restore <id> [--force]             Put back the last-known-good copy of a mandatory policy overlay
   scf policy break-glass --reason "<text>" --for <n>m|<n>h   Start a time-limited, audited break-glass (no effect on runs yet)
   scf policy break-glass --end                 End the break-glass
   scf evidence verify <run-id> [--json]          Check the evidence of a run: manifest, chain of events, named files
@@ -276,7 +278,8 @@ async function main(argv: string[]): Promise<number> {
 
   // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, `score …` and `effect …`
   // write only into skill-evaluations/ and skill-effects/, and `release publish …` only into skill-releases/, all through claimHomeWrite: they run without choosing or moving the data folder.
-  if (!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
+  // `scf components` only reads; `components record` writes only promotions/versions.json, through withAuthLock (claimHomeWrite).
+  if (cmd !== "components" && !(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
@@ -606,6 +609,11 @@ async function main(argv: string[]): Promise<number> {
     case "monitor": {
       const { monitorCommand } = await import("./monitor/cli.js");
       return monitorCommand(positionals.slice(1), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "components": {
+      const { componentsCommand } = await import("./promotion/cli.js");
+      return componentsCommand(positionals.slice(1), (line) => void process.stdout.write(line + "\n"));
     }
 
     case "policy": {

@@ -39,7 +39,7 @@ export function writeTmp(tmp: string, text: string): void {
 }
 
 /** A temp file with a random name, then one rename; the temp file is gone on every path. */
-function writeAtomic(file: string, text: string): void {
+export function writeAtomic(file: string, text: string): void {
   const tmp = randomTmp(dirname(file), basename(file));
   try {
     writeTmp(tmp, text);
