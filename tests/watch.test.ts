@@ -1255,7 +1255,11 @@ describe("watcher", () => {
     issues([8, "factory:waiting-approval"]);
     before = gh.ghLog().length;
     await w.tick();
-    expect(gh.ghLog().slice(before)).toMatch(/issue edit 8 .*--add-label factory:failed/);
+    // A waiting-approval label next to a run that does not wait is listed as waiting for the owner, not changed.
+    expect(gh.ghLog().slice(before)).not.toMatch(/issue edit 8 /);
+    const hold = w.status.holds?.find((h) => h.issue === 8);
+    expect(hold).toMatchObject({ byLabel: true, next: { kind: "questions" } });
+    expect(hold?.next.runId).toBeUndefined();
   });
 
   it("reports an issue closed on GitHub while its run works, and changes nothing", async () => {

@@ -4,6 +4,10 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Watchers (#652): a waiting label (needs-info or waiting-approval) makes an issue show as waiting for you, whatever the label order and whether or not another status label is next to it. The watcher does not relabel, comment on, resume or start such an issue unless its run really waits that way. A lone waiting-approval label with no run, or with a failed or succeeded run, is not relabeled; the issue is listed from its label. A run of a removed or retired flow is never linked, so no answer or `/approve` resumes it. A stopped run that asks questions reads `(asks questions)` in the activity line. Part 2 of 4 of #621.
+  - **Code.** Changed `src/queue/waiting-issues.ts` (`waitingLabelOf`, `waitsAs`, `openQuestion`, `isPaused` and `steppedAsideFor` moved here; `watcher.ts` re-exports `steppedAsideFor`) and `src/queue/watcher.ts` (mixed labels, the lone-label guards, the `one_at_a_time` lock uses `waitsAs`, the activity line).
+  - **Tests.** New `tests/watch-waiting-labels.test.ts`. Changed `tests/waiting-issues.test.ts`, `tests/watch.test.ts`, `tests/deliver.test.ts` and `tests/watch-comment-reads.test.ts`.
+  - **Docs.** `docs/USER_GUIDE.md` ("How issue watchers use labels").
 - Watchers (#651): a comment read has a time limit (15 s each, 2 min per check). A read that fails or times out changes nothing: no label, no `/defaults`, no run, no status comment update. The issue is listed from its label. An issue whose read timed out is not read again for 10 minutes. Part 1 of 4 of #621.
   - **Code.** New `src/queue/waiting-issues.ts` (`commentReads`, one reader per check). Changed `src/queue/watcher.ts` (the five read sites, `Hold.byLabel`, the quiet list) and `src/queue/status-comment.ts` (`StatusView.quiet`, `statusTargets` skips quiet issues).
   - **Tests.** New `tests/waiting-issues.test.ts` and `tests/watch-comment-reads.test.ts`. Changed `tests/status-comment.test.ts`.

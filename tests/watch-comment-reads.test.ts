@@ -54,7 +54,7 @@ describe("a comment read that does not work changes nothing", () => {
     const runDir = join(gh.tmp, "runs", "r1");
     mkdirSync(runDir, { recursive: true });
     saveRun({
-      runId: "r1", flow: oldFlowFor({}), flowDef: { name: oldFlowFor({}), steps: [] }, task: "t", vars: { github_repo: "acme/app", issue: "4" }, repo: "/x", status, runDir,
+      runId: "r1", flow: oldFlowFor({}), flowDef: { name: oldFlowFor({}), steps: [] }, task: "t", vars: { github_repo: "acme/app", issue: "4" }, repo: gh.tmp, status, runDir,
       reason: status === "stopped" ? 'stopped at step "ask_for_info"' : undefined,
       startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:01:00.000Z", totalCostUsd: 0, history: [],
       state: { next: "ask_for_info", steps: {}, visits: {} },

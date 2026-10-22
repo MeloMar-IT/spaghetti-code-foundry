@@ -2197,8 +2197,8 @@ request, the budget, the limit of new stories per check or a story that is runni
 removed at the next check, so the issue looks like every other story that waits. When the release
 pull request holds it, the thing to do (merge it) is on that pull request. A run that asked, was
 answered and cannot continue yet shows `factory:working`. The label comes back only for new,
-unanswered questions. A waiting label on an issue that has no run is left alone: remove the label
-to start the issue.
+unanswered questions. A waiting label on an issue that has no run, or next to another status label, is not changed; the
+issue is listed under **Needs you** as waiting for you. Remove the label to start it.
 
 **Parked stories.** To park a story, remove its Foundry labels (or only the trigger label). A run
 that stopped with questions, or was cancelled while it was stopped, is then parked at the next
