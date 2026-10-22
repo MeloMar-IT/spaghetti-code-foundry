@@ -1366,6 +1366,41 @@ active, and so does any other layer's pack.
   is still broken, the steps that need trust stay stopped. Fix or restore the policy first when you can; see
   [Restore the last-known-good copy](#restore-the-last-known-good-copy).
 
+### Versions of the components
+
+`scf components [kind]` prints each part of the Foundry that a promotion can name, with its version and
+a SHA-256 hash of its contents:
+
+```
+COMPONENT flow my-flow v0 sha256:<64 hex digits>
+COMPONENT model-routes default v1 sha256:<64 hex digits>
+COMPONENT policy-pack foundry.baseline <version> sha256:<64 hex digits> builtin
+```
+
+The kinds are `flow`, `policy-pack`, `tool-profile`, `model-routes` and `context-selector`. Pass one kind to
+list only that kind. The command reads the Foundry home only and changes nothing; it exits 1 when a
+component is a problem.
+
+- **Where each part comes from.** Flows are the `.yaml` files in `flows/`. Policy packs are `policies/<id>.json`.
+  Tool profiles are `tool-profiles/<id>.yaml` and context selectors are `context-selectors/<id>.yaml`. Both
+  folders are optional. The model routes are the `router` settings of `config.yaml`. A context selector file
+  holds the settings that `selectContext` reads; no run uses them yet.
+- **Built-ins.** The built-in flows and the built-in baseline pack are listed too, and end with ` builtin`.
+  They are never counted or recorded.
+- **Versions.** A flow's version is its `publish.version` when it is published, and `0` when not; a new
+  published number alone does not change its hash. A policy pack's version is the `version` of its policy.
+  A tool profile, the model routes and a context selector are counted: the version is the place of their
+  hash among the different hashes seen so far. Going back to an earlier definition gives its old number.
+- **Recording.** A counted component whose hash is not recorded prints `v-` and ` unrecorded`. Run
+  `scf components record [kind]` to give the new hashes their version. It writes only
+  `promotions/versions.json`, and only when something is new. Do not edit that file by hand: the command
+  refuses a file it cannot read, and it never overwrites one. A `promotions` folder that is a link is refused.
+- **Same content, same hash.** The hash does not depend on key order or on YAML comments. A tool profile may
+  have a `descriptions` map, one text per granted tool; it is part of the hash only when it has an entry, so
+  a profile without it keeps its hash.
+- **Problems.** A file that cannot be read or checked gives one `! <kind> <id>: <reason>` line. The reason
+  never shows the file's content or its place on the disk. The other components still print.
+
 ### Lifecycle telemetry
 
 The Foundry writes one short telemetry line for each important fact of a run: a run starting or
@@ -5941,6 +5976,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
+| `scf components [kind]` / `scf components record [kind]` | Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
 | `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
