@@ -7,6 +7,7 @@ import { issueRank, issueRecord } from "../issue-record.js";
 import { runIssueState } from "../issue-states.js";
 import { nextStep, releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "../next-step.js";
 import { flowExists, flowRetired } from "../run-gate.js";
+import { needsUser } from "../your-turn.js";
 import { labelNames, parseInterval, type Hold, type WatcherStatus } from "../queue/watcher.js";
 import type { WatcherConfig } from "../config.js";
 import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
@@ -343,9 +344,29 @@ export function userWords(n: NextStep): NextStep {
 /** The time a run's record is about: since when it waits, or when it ended. */
 export const runSince = (run: RunSummary): string => run.waiting?.since ?? run.finishedAt ?? run.startedAt;
 
+export type IssueEntry = Entry & { key: string; rank: number; runId?: string; priority?: boolean; extra?: true };
+
+/** One entry per issue (repository case ignored): an ordinary listing before an extra, then one that needs you, else the first watcher's. Keeps the place of the first. */
+export function oneIssueEach<T extends { key: string; next: NextStep; extra?: true }>(list: T[]): T[] {
+  const out: T[] = [];
+  const at = new Map<string, number>();
+  for (const e of list) {
+    const k = e.key.toLowerCase();
+    const i = at.get(k);
+    if (i === undefined) {
+      at.set(k, out.length);
+      out.push(e);
+      continue;
+    }
+    const have = out[i]!;
+    const better = !!e.extra !== !!have.extra ? !e.extra : needsUser(e.next) && !needsUser(have.next);
+    if (better) out[i] = e;
+  }
+  return out;
+}
+
 /**
- * Every record the server knows: itself, the watchers, every issue a watcher tracks (one per
- * watcher) and a function for the runs. `list` is the loaded runs.
+ * Every record the server knows: itself, the watchers, every tracked issue (once) and a function for the runs. `list` is the loaded runs.
  */
 export function collectNext(ctx: ApiContext, list: RunSummary[], forUser = false) {
   const next = nextFor(ctx, list, forUser);
@@ -375,7 +396,7 @@ export function collectNext(ctx: ApiContext, list: RunSummary[], forUser = false
 
   const byRun = new Map(list.map((r) => [r.runId, r]));
   const live = new Set([...q.active.map((a) => a.runId), ...q.pending.map((p) => p.runId)]);
-  const issues: (Entry & { key: string; rank: number; runId?: string; priority?: boolean })[] = [];
+  const issues: IssueEntry[] = [];
   for (const t of tracked) {
     for (const i of t.issues) {
       const base = { repo: t.watcher.github_repo, issue: i.issue, title: i.title, runId: i.runId };
@@ -400,7 +421,7 @@ export function collectNext(ctx: ApiContext, list: RunSummary[], forUser = false
         const fresh = RETIRED_REPLACES.has(e.next.kind) ? next(run) : undefined;
         e = { ...e, next: fresh?.retired ? fresh : { ...e.next, retired: true as const } };
       }
-      issues.push({ ...e, watcher: t.watcher.id, runId: i.runId, key: `${base.repo}#${i.issue}`, rank: issueRank(isLive, !!i.done), priority: i.priority });
+      issues.push({ ...e, watcher: t.watcher.id, runId: i.runId, key: `${base.repo}#${i.issue}`, rank: issueRank(isLive, !!i.done), priority: i.priority, ...(i.extra ? { extra: true as const } : {}) });
     }
   }
 
@@ -413,7 +434,7 @@ export function collectNext(ctx: ApiContext, list: RunSummary[], forUser = false
     return out;
   };
 
-  return { server, watchers, issues, runs, next };
+  return { server, watchers, issues: oneIssueEach(issues), runs, next };
 }
 
 /** The newest runs plus the run of every tracked issue. */
@@ -432,7 +453,7 @@ export function knownRuns(ctx: ApiContext, limit = 200): RunSummary[] {
 /** Records for the server, the watchers, every tracked issue and every run. */
 export function allNext(ctx: ApiContext): { server: NextStep[]; watchers: NextStep[]; issues: NextStep[]; runs: NextStep[] } {
   const c = collectNext(ctx, ctx.scheduler.list(Infinity)); // every record, not just the newest runs
-  // One record per issue: a running one first, a finished one last; the first watcher wins a tie.
+  // collectNext keeps one record per issue already; the rank pick stays: a running one first, a finished one last; the first watcher wins a tie.
   const picked = new Map<string, { rank: number; rec: NextStep }>();
   for (const i of c.issues) {
     const have = picked.get(i.key);

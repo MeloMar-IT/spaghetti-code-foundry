@@ -36,7 +36,7 @@ export function boardSources(ctx: ApiContext, now = new Date(), forUser = false)
   const sources: BoardSource[] = [];
   const covered = new Map<string, number>(); // story → index of its source
   for (const i of c.issues) {
-    covered.set(i.key, sources.length);
+    covered.set(i.key.toLowerCase(), sources.length);
     const id = i.next.runId;
     sources.push({
       next: i.next, run: id ? byRun.get(id) ?? ctx.scheduler.get(id) : undefined,
@@ -44,8 +44,11 @@ export function boardSources(ctx: ApiContext, now = new Date(), forUser = false)
     });
   }
 
+  // A run a tracked listing names is that listing's to show: the record chosen for the story keeps its decision.
+  const listed = new Set(ctx.watchers.tracked().flatMap((t) => t.issues.map((i) => i.runId)).filter((id): id is string => !!id));
   // A live run newer than what the watcher last saw takes the story over (its snapshot is stale until its next check).
   const takesOver = (key: string, runId: string) => {
+    if (listed.has(runId)) return false;
     const at = covered.get(key);
     const have = at === undefined ? undefined : sources[at];
     return !!have && have.rank !== 0 && have.next.runId !== runId && have.runId !== runId;
@@ -65,7 +68,7 @@ export function boardSources(ctx: ApiContext, now = new Date(), forUser = false)
     const run = byRun.get(b.runId) ?? ctx.scheduler.get(b.runId);
     const story = run && storyOf(run);
     if (!run || !story) continue;
-    const key = `${story.repo}#${story.issue}`;
+    const key = `${story.repo}#${story.issue}`.toLowerCase();
     if (covered.has(key) && !(live && takesOver(key, run.runId))) continue;
     const have = chosen.get(key);
     if (have && (have.live || !live)) continue;
@@ -89,7 +92,7 @@ export function boardSources(ctx: ApiContext, now = new Date(), forUser = false)
   for (const p of q.pending) {
     const n = p.issue && /^\d+$/.test(p.issue) ? Number(p.issue) : undefined;
     if (p.kind !== "run" || !p.githubRepo || p.githubRepo === "owner/repo" || n === undefined) continue;
-    const key = `${p.githubRepo}#${n}`;
+    const key = `${p.githubRepo}#${n}`.toLowerCase();
     if (ctx.scheduler.get(p.runId)) continue;
     const at = covered.get(key);
     // the board is an admin view: a budget hold names the amount

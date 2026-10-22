@@ -126,7 +126,7 @@ export function onTurn(c: Candidate, items: { key: string; next: NextStep }[]): 
     const m = i.next;
     if (c.key && i.key === c.key) return true;
     if (n.runId && m.runId === n.runId) return true;
-    if (n.issue !== undefined && m.issue === n.issue && m.repo === n.repo) return true;
+    if (n.issue !== undefined && m.issue === n.issue && m.repo.toLowerCase() === n.repo.toLowerCase()) return true;
     return n.kind === "release" && !!n.where.url && m.kind === "release" && m.where.url === n.where.url;
   });
 }
