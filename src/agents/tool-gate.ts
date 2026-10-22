@@ -60,8 +60,8 @@ export function stepToolSettings(step: ClaudeStep, scope: Pick<Scope, "flow">, e
     boxed: o.boxed,
     noTools: false,
     mcpServers: !claudeIsolated(engine.config.isolate_agents, o.isolated, undefined, step.skill_role === "reviewer"),
-    credential: o.isolated ? "none" : "machine",
-    ...(ops ? { repoOps: [...ops] } : {}),
+    credential: "none",
+    ...(ops ? { repoOps: [...ops], repoCredential: o.isolated ? ("repository" as const) : ("machine" as const) } : {}),
   };
 }
 

@@ -1254,8 +1254,22 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   helper reset (appended after the engine's own `GIT_CONFIG_*` entries, so `core.hooksPath` stays), and sets
   the commit name from `commitIdentity()` (bot name and e-mail from Settings, field by field, else
   `getUser(owner)`). With no identity the step is refused (`NO_COMMIT_IDENTITY`). `engine.botEnv()` gives the
-  bot's token and name once per run, only to steps that keep the machine's login. In agent steps
-  `agentEnv(spec, true)` ignores `ISOLATED_AGENT_ENV` names, Claude agents are always isolated
+  bot's token and name once per run, only to shell steps that keep the machine's login; it is fetched up
+  front only when the flow has a shell or sub-flow step (`flowUsesBot()` in `src/engine/runner.ts`).
+  Agent steps (#635) never get the token, in any run: `runOn` (`src/agents/run.ts`) builds their env as
+  `botIdentityEnv()` (the bot's name and e-mail, `src/engine/guards.ts`), then `agent_env`, then
+  `agentNoSignInEnv()`, which removes every token variable, the ssh variables and `GIT_CONFIG_PARAMETERS`,
+  sets an empty `gh` folder, no prompts, `GIT_ALLOW_PROTOCOL=file` and a credential helper reset.
+  `agentNoSignInEnv()` leaves `GIT_CONFIG_GLOBAL` alone, so an admin's agent on the machine's HOME keeps the
+  machine's global git config. An isolated step adds `isolationEnv()` on top, with `file` replacing
+  `https:file`. The clean Codex folder of an admin run adds `GIT_ALLOW_PROTOCOL=file` on top of
+  `noMachineSignIn()` (`src/agents/codex-home.ts`). `nextConfigIndex()` picks the index of the appended
+  `GIT_CONFIG_*` entries: a bad `GIT_CONFIG_COUNT` from `agent_env` is replaced by the number of contiguous
+  keys, so the helper reset is always read. The broker's credential ceiling for `repo_ops` is
+  `repoCredential` in the tool profile (`machine` or `repository`); the agent's own `credential` is `none`.
+  This is the environment only, the same limit as above: in an admin run without an OS sandbox an agent
+  can still reach the machine's keychain or `~/.config/gh`.
+  In agent steps `agentEnv(spec, true)` ignores `ISOLATED_AGENT_ENV` names, Claude agents are always isolated
   (`--strict-mcp-config`), and a token variable is never an anthropic-compatible provider key. Since #304
   and #305 a user's run is also held by an OS sandbox profile (`os-sandbox.ts`); its agent steps get their
   own agent folders in the run folder and sign in by a token variable only (`src/agents/boxed.ts`).

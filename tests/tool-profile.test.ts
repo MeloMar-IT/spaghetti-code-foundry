@@ -508,6 +508,17 @@ describe("today's flow settings as a generated profile", () => {
     expect(p.grants.every((g) => g.approval === "none" && g.timeoutMs === null && g.maxConcurrent === null && g.outputCapBytes === null && g.dataClassification === "restricted")).toBe(true);
   });
 
+  it("repoCredential carries the broker's ceiling while the agent itself has none", () => {
+    const grantsOf = (s: Partial<LegacyToolSettings>) => legacyToolProfile(settings({ permissionMode: "bypassPermissions", repoOps: ["push"], ...s })).profile.grants;
+    const viaCeiling = grantsOf({ credential: "none", repoCredential: "machine" });
+    expect(viaCeiling.filter((g) => g.kind === "git" || g.kind === "github").map((g) => g.credential)).toEqual(["machine"]);
+    expect(viaCeiling.find((g) => g.kind === "shell")?.credential).toBe("none");
+    expect(grantsOf({ credential: "none" }).find((g) => g.kind === "git")?.credential).toBe("repository");
+    expect(grantsOf({ credential: "machine" }).find((g) => g.kind === "git")?.credential).toBe("machine");
+    const a = legacyToolProfile(settings({ allowedTools: ["Read"] })).profile;
+    expect(toolProfileSha256(a)).toBe(toolProfileSha256(legacyToolProfile(settings({ allowedTools: ["Read"], repoCredential: undefined })).profile));
+  });
+
   it("a rule without a meaning in a profile grants nothing and is reported", () => {
     const rules = ["Edit(/etc/**)", "Edit(~/notes/**)", "Edit(src/*.ts)", "Edit(../x)", "Bash()", "Bash(a\nb)", "WebFetch(https://example.com)", "WebSearch(cats)", "mcp__tracker__get_issue", "not a rule", "", "Edit(src/*.ts)"];
     const out = legacyToolProfile(settings({ permissionMode: "dontAsk", allowedTools: rules }));

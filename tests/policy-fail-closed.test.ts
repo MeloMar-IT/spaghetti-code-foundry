@@ -67,10 +67,12 @@ const STEPS: Array<[string, string, string]> = [["shell", SHELL, "ran.txt"], ["a
 
 describe("a mandatory policy that cannot be used", () => {
   for (const [what, code, setup] of FAILURES) {
-    it.each(STEPS)(`${what}: denies the %s step`, async (_kind, yaml, effect) => {
+    it.each(STEPS)(`${what}: denies the %s step`, async (kind, yaml, effect) => {
+      // an agent step has no sign-in of its own, so it is stopped where it would write
+      const boundary = kind === "agent" ? "agent.write" : "repository.access";
       setup("org");
       const s = await start(yaml, cfg({ mandatory: ["org"] }));
-      const reason = deniedReason("org", code, "repository.access");
+      const reason = deniedReason("org", code, boundary);
       expect(s.status).toBe("failed");
       expect(existsSync(join(repo, effect))).toBe(false);
       expect(existsSync(join(repo, "b.txt"))).toBe(false);
@@ -83,16 +85,16 @@ describe("a mandatory policy that cannot be used", () => {
       expect(d[0]).toMatchObject({ step: { id: "a" }, denial: { kind: "policy", policy: { id: "org", version: "unknown" }, reasonCode: code } });
       const at = orgDecisions(s);
       expect(at.find((e) => e.decision.boundary === "run.start")?.decision.mode).toBe("observe");
-      expect(at.find((e) => e.decision.boundary === "repository.access" && e.step?.id === "a")?.decision).toMatchObject({ mode: "enforce", outcome: "deny", reasonCode: code });
+      expect(at.find((e) => e.decision.boundary === boundary && e.step?.id === "a")?.decision).toMatchObject({ mode: "enforce", outcome: "deny", reasonCode: code });
       expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
     });
   }
 
-  it.each(STEPS)("fetches no bot token before the denial: %s", async (_kind, yaml) => {
+  it.each(STEPS)("fetches no bot token before the denial: %s", async (kind, yaml) => {
     delete process.env.FACTORY_TEST_NO_SUCH_TOKEN;
     const s = await start(yaml, cfg({ mandatory: ["org"] }, { bot: { gh_token_env: "FACTORY_TEST_NO_SUCH_TOKEN" } }));
     expect(s.status).toBe("failed");
-    expect(s.history[0]).toMatchObject({ id: "a", accessFailed: true, error: deniedReason("org", "policy.unavailable", "repository.access") });
+    expect(s.history[0]).toMatchObject({ id: "a", accessFailed: true, error: deniedReason("org", "policy.unavailable", kind === "agent" ? "agent.write" : "repository.access") });
     expect(denied(s)).toHaveLength(1);
     expect(verifyRunEvidence(s.runDir, s.runId).status).toBe("verified");
   });

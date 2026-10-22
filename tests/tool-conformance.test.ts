@@ -352,7 +352,11 @@ describe("what a refusal says", () => {
     expect(r.session.source).toBe("generated");
     expect(r.mapping).toEqual(r.today);
     expect(r.today).toEqual({ claudeSandbox: false, codexSandbox: stepCodexSandbox(stepOf({ permission_mode: "plan" }), scope, false) });
-    expect(stepToolSettings(stepOf(), scope, { config }, { boxed: true, isolated: false })).toMatchObject({ boxed: true, sandbox: false, credential: "machine", permissionMode: "acceptEdits" });
+    expect(stepToolSettings(stepOf(), scope, { config }, { boxed: true, isolated: false })).toMatchObject({ boxed: true, sandbox: false, credential: "none", permissionMode: "acceptEdits" });
+    const withOps = stepOf({ repo_ops: ["push"] } as never);
+    expect(stepToolSettings(withOps, scope, { config }, { boxed: false, isolated: false })).toMatchObject({ credential: "none", repoCredential: "machine" });
+    expect(stepToolSettings(withOps, scope, { config }, { boxed: false, isolated: true })).toMatchObject({ credential: "none", repoCredential: "repository" });
+    expect(stepToolSettings(stepOf(), scope, { config }, { boxed: false, isolated: false })).not.toHaveProperty("repoCredential");
   });
 
   it("uses only fixed words in the lines and the refusals of a target", () => {

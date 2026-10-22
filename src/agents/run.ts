@@ -4,7 +4,7 @@ import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from ".
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, pushLogFor, refuseByPolicy, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
-import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
+import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
@@ -16,7 +16,7 @@ import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
-import { TOOLS_DIR } from "../engine/guards.js";
+import { TOOLS_DIR, botIdentityEnv } from "../engine/guards.js";
 import { render } from "../engine/template.js";
 import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
 import { discoverJavaHome, javaStandIn } from "./java-gate.js";
@@ -41,25 +41,27 @@ type Iso = { who: CommitIdentity };
 type Ran = StepResult & { final?: boolean };
 
 async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate): Promise<Ran> {
-  // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
+  // Both agents get the same environment: no token and no Git or GitHub sign-in, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine);
   const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
   if (pushLog) base.FACTORY_PUSH_LOG = pushLog;
-  const ghDir = iso ? ghConfigDir() : undefined;
+  const ghDir = ghConfigDir();
   try {
     const extra = agentEnv(scope.ctx.vars.agent_env, Boolean(iso));
     // A boxed step signs in by the server's token variable only: a key a flow brings in `agent_env` is ignored.
     const dropped = boxed ? dropLoginVars(extra, providerKeyVars(engine.config)) : [];
     if (dropped.length) engine.log(`    · agent_env: ${dropped.join(", ")} ignored — a user's run signs in with the server's key only`);
-    let env: Record<string, string | undefined> = iso
-      ? { ...base, ...extra, ...isolationEnv(base, engine.config, ghDir!, iso.who) }
-      : { ...base, ...(await engine.botEnv()), ...extra };
+    // agent_env first, then the sign-in removal, so agent_env cannot put a token, the gh folder or a protocol back
+    let env: Record<string, string | undefined> = { ...base, ...botIdentityEnv(engine.config), ...extra };
+    env = { ...env, ...agentNoSignInEnv(engine.config, ghDir, env) };
+    // an agent gets only the file protocol: isolationEnv also serves shell steps, which keep https:file
+    if (iso) env = { ...env, ...isolationEnv(env, engine.config, ghDir, iso.who), GIT_ALLOW_PROTOCOL: "file" };
     // The request file of a repo_ops step (made fresh for every try); any other step has no such variable.
     env = { ...env, ...repoRequestsEnv(engine, scope, step) };
     // A user's run gets only the short environment plus what this agent and provider need (see short-env.ts).
     const short = shortEnvRun(engine.summary.owner);
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
-    if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, iso ? tokenVarNames(engine.config) : []) };
+    if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, tokenVarNames(engine.config)) };
     // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder.
     if (!boxed) env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir, env.JAVA_HOME) };
     let profile: string | undefined;
@@ -95,7 +97,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     }
     return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, ...gate });
   } finally {
-    if (ghDir) removeGhConfigDir(ghDir);
+    removeGhConfigDir(ghDir);
   }
 }
 
@@ -443,8 +445,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
   let fallbackFrom: string | undefined;
   const repository = repositoryFact(scope.ctx.vars);
-  // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: a mandatory policy that cannot be used stops it).
-  const access = engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
+  // The agent works in the repository's checkout, and never has a sign-in of its own; repository work goes through the broker or a shell step (policy: a mandatory policy that cannot be used stops it).
+  const access = engine.policy?.repository(identity, { repository, step: step.id, credential: "none", isolated: iso !== undefined });
   if (access?.denied) return refuseByPolicy(engine, identity, access.denied);
   // One tool profile per step: the same for Claude and Codex, and for every try. A declared profile the step cannot stay within is refused before an agent is picked.
   const resolved: StepProfile | { refused: string; event: StepProfiledFields } = resolveStepProfile(step, scope, engine, { boxed, isolated: iso !== undefined });

@@ -38,6 +38,8 @@ export const LegacyToolSettingsSchema = z
     credential: z.enum(CREDENTIALS),
     /** The repository operations the step may ask the broker for (`repo_ops`). The agent itself is given none of them. */
     repoOps: z.array(z.enum(REPO_OPERATIONS)).optional(),
+    /** The broker's credential ceiling for the `repo_ops` grants, when it differs from `credential` (the agent itself has none). Absent: `machine` if `credential` is `machine`, else `repository`. */
+    repoCredential: z.enum(["machine", "repository"]).optional(),
   })
   .strict()
   .refine((s) => !(s.sandbox && s.boxed), { path: ["sandbox"], message: "must be false when boxed is true: the sandbox of the run holds the step" });
@@ -153,7 +155,7 @@ export function legacyToolProfile(settings: LegacyToolSettings): LegacyToolProfi
   if (servers.length) give("mcp", "call", servers, { credential: s.credential });
   for (const op of new Set(s.repoOps ?? [])) {
     const t = repoToolOf(op);
-    give(t.kind, t.operation, ["*"], { credential: s.credential === "machine" ? "machine" : "repository" });
+    give(t.kind, t.operation, ["*"], { credential: s.repoCredential ?? (s.credential === "machine" ? "machine" : "repository") });
   }
   return { profile: assembleToolProfile(LEGACY_PROFILE_IDENTITY, entries), unmapped };
 }
