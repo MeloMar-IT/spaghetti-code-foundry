@@ -9,7 +9,7 @@ import { FACTORY_HOME } from "../flow/load.js";
 import { claimRunStart } from "../home.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { CANNOT_READ, hideKeyVars, redactText, requireRedaction } from "../credentials/redact.js";
-import type { Flow, Step } from "../flow/schema.js";
+import { stepRepoOps, type Flow, type Step } from "../flow/schema.js";
 import { notifyRun } from "../notify.js";
 import {
   applyChecks,
@@ -565,7 +565,8 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       } catch (e) {
         res = { ok: false, output: "", error: (e as Error).message };
       }
-      res = applyChecks(step, res);
+      // a step with repo_ops was checked before its requests ran (repo-requests.ts)
+      if (!(step.type === "claude" && stepRepoOps(step))) res = applyChecks(step, res);
     }
     if (top) summary.stepStartedAt = undefined; // recordStep saves it
     res = { ...res, output: redactText(res.output), ...(res.error === undefined ? {} : { error: redactText(res.error) }) };

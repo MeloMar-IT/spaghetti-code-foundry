@@ -15,6 +15,7 @@ import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
+import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
 import { TOOLS_DIR } from "../engine/guards.js";
 import { render } from "../engine/template.js";
 import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
@@ -53,6 +54,8 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     let env: Record<string, string | undefined> = iso
       ? { ...base, ...extra, ...isolationEnv(base, engine.config, ghDir!, iso.who) }
       : { ...base, ...(await engine.botEnv()), ...extra };
+    // The request file of a repo_ops step (made fresh for every try); any other step has no such variable.
+    env = { ...env, ...repoRequestsEnv(engine, scope, step) };
     // A user's run gets only the short environment plus what this agent and provider need (see short-env.ts).
     const short = shortEnvRun(engine.summary.owner);
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
@@ -86,6 +89,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
           agentBin: bin,
           userRead: engine.config.sandbox.user_read,
           workspaceReadOnly: readOnly,
+          requestsDir: env.FACTORY_REPO_REQUESTS ? dirname(env.FACTORY_REPO_REQUESTS) : undefined,
         }),
       );
     }
@@ -270,6 +274,11 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   if (t.agent === "codex") logSkills();
 
   if (t.agent === "codex") {
+    if (env.FACTORY_REPO_REQUESTS && !boxed && o.mapping.codexSandbox === "read-only") {
+      const refused = "repo_ops needs a Codex session that can write the request file; a read-only session outside the run sandbox cannot";
+      engine.log(`    ! repo: ${refused}`);
+      return { ok: false, output: refused, error: refused, final: true };
+    }
     const builtinUrl = BUILTIN_PROVIDERS[t.providerName]?.base_url;
     let r: Awaited<ReturnType<typeof runCodex>>;
     try {
@@ -289,6 +298,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
         ignoreUserConfig: mode === "off" ? undefined : false,
         clean: Boolean(clean),
         noNetwork: Boolean(clean && !clean.push),
+        writableRoots: env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : undefined,
         effort,
       });
     } finally {
@@ -326,6 +336,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     allowedTools: step.allowed_tools ?? d.allowed_tools,
     maxBudgetUsd: caps.length ? Math.max(0.01, Math.min(...caps)) : undefined,
     sandbox: sandboxed,
+    writableDirs: env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : undefined,
     noMcp: local,
     isolated: isolatedSession,
     effort,
@@ -469,7 +480,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     }
     const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile });
     seen(r);
-    if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
+    if (r.ok || engine.signal?.aborted || final) return await applyRepoRequests({ engine, scope, step, identity, logFile, profile: resolved.session.profile }, { ...r, ...tries() });
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.
     if (isTransientError(r.error, r.output) && !isAuthError(r.error, r.output) && blips < TRANSIENT_RETRIES.length) {

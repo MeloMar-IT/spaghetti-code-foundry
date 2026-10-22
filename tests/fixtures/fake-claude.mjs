@@ -14,8 +14,9 @@
 // For "What is asked of you now: ready" it answers every item under "## The items to judge" (lines "- <id>: …") as met, about the "what".
 // For "What is asked of you now: split" it answers two ways (`step` and `rule`) built from the lines `- C<n>: ` of the acceptance criteria of the talk.
 // For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
+// "REQUEST <json>" appends the line to $FACTORY_REPO_REQUESTS (a repository request for the broker; nothing when the variable is unset).
 // Probes for the OS sandbox tests: "READ <path>", "CHILD READ <path>", "CHILD WRITE <path> <text>" (see the lines above).
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const probeRead = (p) => (statSync(p).isDirectory() ? readdirSync(p).length : readFileSync(p).length);
@@ -56,6 +57,8 @@ for (const line of prompt.split("\n")) {
     writeFileSync(w[1], w[2]);
     emit({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id }] } });
   }
+  const rq = line.match(/^REQUEST (.*)$/);
+  if (rq && process.env.FACTORY_REPO_REQUESTS) appendFileSync(process.env.FACTORY_REPO_REQUESTS, `${rq[1]}\n`);
   const s = line.match(/^SAY (.*)$/);
   if (s) result = s[1];
   if (line === "SHOWPROMPT") result = `args=${args.join(" ")}`; // the PROMPT<<…>> part is appended below

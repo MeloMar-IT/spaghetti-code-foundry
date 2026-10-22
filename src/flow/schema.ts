@@ -2,6 +2,7 @@ import { z } from "zod";
 import { FLOW_SKILL_MODES, SkillIdSchema, STEP_SKILL_MODES, STEP_SKILL_ROLES } from "../skills/schema.js";
 import { RESOLVE_RANGE } from "../skills/resolve-rules.js";
 import { varEnvName } from "../engine/template.js";
+import { REPO_OPERATIONS, type RepoOperation } from "../engine/repo-request.js";
 
 /** Reserved transition targets. Anything else must be a step id. */
 /** next: following step · end: succeed · fail: fail · stop: halt as "stopped" (needs a human). */
@@ -187,8 +188,19 @@ export const ClaudeStepSchema = z
     skill_role: z.enum(STEP_SKILL_ROLES).optional(),
     /** The skill block of this session: catalog (a planner step; read-only), selected (the locked skills, default) or off (no block; the lock is still verified). */
     skills: z.enum(STEP_SKILL_MODES).optional(),
+    /** Repository operations the agent may ask the engine for (carried out after the step by the broker). */
+    repo_ops: z
+      .array(z.enum(REPO_OPERATIONS))
+      .min(1)
+      .refine((a) => new Set(a).size === a.length, "must not list an operation twice")
+      .optional(),
   })
   .strict();
+
+/** The repository operations of a step; never for a reviewer (a stored run may hold an older, unchecked flow). */
+export function stepRepoOps(step: Pick<ClaudeStep, "repo_ops" | "skill_role">): readonly RepoOperation[] | undefined {
+  return step.skill_role === "reviewer" || !step.repo_ops?.length ? undefined : step.repo_ops;
+}
 
 export const ShellStepSchema = z
   .object({
@@ -315,6 +327,7 @@ export function checkStepRefs(steps: AnyStep[], known: Set<string>, addIssue: (p
     if (s.type === "shell" && s.repo_access && s.sandbox) {
       addIssue(["steps", i, "repo_access"], "a step with repo_access cannot also have sandbox: true");
     }
+    if (s.type === "claude" && s.repo_ops && s.skill_role === "reviewer") addIssue(["steps", i, "repo_ops"], "a reviewer step cannot have repo_ops");
     if (s.type === "claude" && s.resume) {
       const t = byId.get(s.resume);
       if (!t || t.type !== "claude") addIssue(["steps", i, "resume"], `resume must reference a claude step, got "${s.resume}"`);
@@ -325,6 +338,7 @@ export function checkStepRefs(steps: AnyStep[], known: Set<string>, addIssue: (p
         if (!t) addIssue(["steps", i, "steps", j], `unknown step "${ref}"`);
         else if (t.type !== "claude" && t.type !== "shell") addIssue(["steps", i, "steps", j], `parallel can only run claude or shell steps`);
         else if (ref === s.id) addIssue(["steps", i, "steps", j], `a parallel step cannot run itself`);
+        else if (t.type === "claude" && t.repo_ops) addIssue(["steps", i, "steps", j], `"${ref}" has repo_ops, so it cannot be listed in a parallel step`);
         else if (t.type === "shell" && t.repo_access) addIssue(["steps", i, "steps", j], `"${ref}" has repo_access, so it cannot be listed in a parallel step`);
       });
     }
