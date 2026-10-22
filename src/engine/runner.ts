@@ -36,6 +36,7 @@ import { removeSignInDir } from "./repo-access.js";
 import { markRunning, sweepRunning, unmarkRunning } from "./running.js";
 import { answerRoom, appendLiveLog, isStoppedCancel, loadRun, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
+import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { prepareWorkspace } from "./workspace.js";
@@ -69,6 +70,8 @@ interface CommonOptions {
   queuedAt?: string;
   /** Evidence only: who cancelled the run, asked when it ends as cancelled. */
   cancelledBy?: () => Actor | undefined;
+  /** Optional classifier of untrusted content (tests only; the server sets none). It can only raise risk, quarantine or require approval. */
+  outputClassifier?: OutputClassifier;
 }
 
 export interface RunOptions extends CommonOptions {
@@ -206,6 +209,11 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   if (!from) throw new Error("nothing to resume");
   if (!summary.flowDef.steps.some((s) => s.id === from)) throw new Error(`unknown step "${from}"`);
 
+  // Only a person (an account or the command line) resuming from the held step approves the content it waits for; any other resume holds it again.
+  if (summary.heldContent && summary.heldContent.step === from && isPersonActor(opts.actor)) {
+    summary.approvedContent = [...(summary.approvedContent ?? []), ...summary.heldContent.sha256].slice(-200);
+    summary.heldContent = undefined;
+  }
   const decision = opts.decision && summary.waiting ? { ...opts.decision, stepId: summary.waiting.stepId } : undefined;
   Object.assign(summary, { status: "running" as RunStatus, reason: undefined, failureNote: undefined, finishedAt: undefined, archivedAt: undefined, archivedBy: undefined, parkedAt: undefined, resumes: (summary.resumes ?? 0) + 1, resumeLog: [...(summary.resumeLog ?? []), { at: new Date().toISOString(), from }].slice(-50) });
   summary.pid = process.pid;
@@ -319,6 +327,7 @@ async function drive(
     evidence,
     policy,
     actor: opts.actor,
+    classifier: opts.outputClassifier,
     remainingBudget: () => {
       const left = [
         runCap !== undefined ? runCap - summary.totalCostUsd : undefined,
@@ -578,6 +587,13 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     res = { ...res, output: redactText(res.output), ...(res.error === undefined ? {} : { error: redactText(res.error) }) };
     recordStep(step, scope, engine, res, startedAt, logFile, visit);
     lastOutput = res.output;
+    if (res.held && top) {
+      // Content waits for a person: stop here, keep the hold in run.json, and run this step again on resume.
+      summary.heldContent = { step: step.id, sha256: res.held };
+      visits[step.id] = visit - 1;
+      setNext(step.id);
+      return { outcome: "stopped", reason: res.error ?? "content needs a person's approval", next: step.id, lastOutput };
+    }
     if (res.limited) {
       visits[step.id] = visit - 1; // try again from here; a limit is not a real attempt
       setNext(step.id);
