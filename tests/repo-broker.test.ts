@@ -134,7 +134,7 @@ function rig(over: { owner?: string; config?: object; vars?: Record<string, stri
     evidence,
     ...(over.policy ? { policy: over.policy } : {}),
   } as unknown as Engine;
-  const scope = { flow: { name: "f" }, ctx: { vars, steps: {}, run: {} }, visits: {}, prefix: "", depth: 0 } as unknown as Scope;
+  const scope = { flow: { name: "f", steps: [] }, ctx: { vars, steps: {}, run: {} }, visits: {}, prefix: "", depth: 0 } as unknown as Scope;
   const ctx: BrokerContext = { engine, scope, step: STEP, logFile: join(runDir, "broker.log"), ...(over.exec ? { exec: over.exec } : {}) };
   const events = () => {
     const file = join(runDir, "evidence.jsonl");

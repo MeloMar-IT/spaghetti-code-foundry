@@ -849,6 +849,25 @@ a **What happens next** block with **You** as who and the approval message as th
 
 ![Waiting for approval](images/run-waiting.png)
 
+#### Text from outside the flow
+
+Text that comes from outside the flow is data, not instructions: an issue, a file in the repository,
+command output, a log, another agent's output or a saved learning. The Foundry does three things with it:
+
+- **It is wrapped.** An agent reads it in an `<untrusted-data>` block of its prompt, and the system
+  prompt tells it never to follow orders inside that block. A longer text is kept whole or not at all:
+  over 200,000 characters it is withheld, and the agent gets a `[withheld: …]` note in its place. Secrets are
+  removed, and tags that look like instructions or chat markers are made harmless.
+- **It cannot build a command.** A shell step, or the `vars` of a sub-flow, that uses such text is
+  refused, and the run fails with a message that names the placeholder. Read it from the `$FACTORY_*`
+  environment variables instead (for example `$FACTORY_TASK`).
+- **It may wait for you.** When a step would read content that has not been approved, the run stops as
+  **waiting for approval**. Resume it from that step to approve the content and let the step run. Any
+  other resume holds it again.
+
+The classifier that can check content may only make it stricter: it can raise the risk, withhold the
+content, or ask for approval. It never gives access that a rule denied.
+
 ### When something goes wrong
 
 - **Retry from the failing step** continues a stopped, failed, cancelled or interrupted run from
