@@ -236,7 +236,8 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   `run.failed`, `run.completed`) and eight for a step (`step.started`, `step.routed`, `step.retried`,
   `step.denied`, `step.approved`, `step.failed`, `step.completed`), with `step.profiled` (the tool
   profile of one try, see "Tool profiles") from version 3, and `policy.decided` from version 2
-  (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"). `prevHash` and `hash` come
+  (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"), and `repo.operation` from
+  version 4 (one repository operation of the broker, see "Repository broker"). `prevHash` and `hash` come
   together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -338,8 +339,9 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   or configured packs (`protectedBranchEnv(…, observe)`). A run with both guards off and no packs keeps
   the hook out, so its pushes are not observed. `RunPolicy.observesPushes` says whether the hook is there,
   and the baseline's `push` rules are asked only then.
-- **Facts.** `baseFacts` gives the run's repository, flow, workspace and owner; each boundary adds its
-  own. `policyFacts` keeps only the values that pass their schema in `FactsSchema`; a value that does not
+- **Facts.** `baseFacts` gives the run's repository, flow, workspace and owner; `runPolicy` adds `shippedFlow`
+  from `isShippedFlow` (`guards.ts`: true only for an unchanged built-in flow of that name, false on any error),
+  so it reaches every boundary. Each boundary adds its own. `policyFacts` keeps only the values that pass their schema in `FactsSchema`; a value that does not
   is left out, never changed. The repository is lower case, and the placeholder `owner/repo` is no fact.
 - **Packs.** `loadPolicyPacks` reads `<data folder>/policies/<id>.json` with `O_NOFOLLOW` and
   `O_NONBLOCK`, only as a plain file of at most 1 MiB. A pack that is missing, linked, not a file,
@@ -352,6 +354,28 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   the first layer that names it. `combineDecisions` picks the most restrictive outcome; a tie goes to the
   higher layer, and a tie inside one layer to the first pack. So a repository pack cannot relax a
   baseline deny, and the answer does not depend on the order of the lists.
+- **Baseline controls.** `baselineControls(config, run)` (`baseline.ts`, pure) reads `protected_branches` and
+  `secret_scan` the way the pre-push hook does: entries are split on space, tab and new line, and empty entries
+  and duplicates are dropped. A pattern the evaluator cannot match exactly (`? [ ] \`, other spaces, control
+  characters, over 255 characters) goes to `leftOut`, never to a looser rule. The `repository` is kept only when
+  the facts schema accepts it. `baselinePack(version, controls)` puts the protected branches in chunks of
+  `MAX_PATTERNS` (100) rules, `branch-protected`, `branch-protected-2`, …; the hotfix exception chunks come
+  first, then the deny chunks, so no pattern is dropped. Rule order is `branch-hotfix-exception` (only for the
+  shipped hotfix flow), `branch-protected`, `secret-detected` (only when the scan is on), `identity-missing`,
+  `repository-not-allowed` (only with a known repository), the sandbox and workspace rules, and
+  `credential-scope-exceeded`. The branch rules come first because the hook checks the branch before it scans:
+  a push refused for a protected branch has no secret count, so `secret-detected` must not decide it.
+  `repository-not-allowed` comes after the secret and identity rules, so every push decided by them keeps its
+  decision. The hotfix exception is only allowed for `issue-gitflow` / `push_main` with `shippedFlow: true`,
+  and is safe with `hotfix_to_main` off because `push_main` exits before pushing unless `FACTORY_HOTFIX=on`.
+  Scan off: the hook never gives a count, so the secret rule is not in the pack; no zero count is invented.
+- **Unknown push repository.** `runBaseline` also builds `pushWithoutRepository` (the same pack without the
+  repository rule). `RunPolicy.decide` uses it at `push` only when the input has no `repository`. Such a
+  decision records that pack's hash. The repository is never guessed.
+- **Construction failure.** `baselineEntry(version, controls)` returns a `LayeredPack`. If the baseline cannot
+  be built (too many rules or a bad version), it is a `policy.invalid` mandatory entry, so the fail-closed path
+  of "Fail closed" applies at privileged boundaries. There is no silent fallback to a weaker pack.
+  `BASELINE_PACK` (the four legacy rules) is still the pack of the build without run controls.
 - **Baseline.** `src/policy/baseline.ts` builds `foundry.baseline`. The Foundry owns it: its version is
   the package version, and admins can only add overlays. It is always in the list of packs, so a run
   always asks it. The file's only read is `package.json`, once, for that version; it is the one file
@@ -396,6 +420,19 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
+- **Explanations and repeats (#145).** `src/policy/explain.ts` (pure) turns a recorded decision into plain text
+  at display time, so the evidence format is unchanged. Every sentence comes from a closed list: the reason
+  text (`reasons.ts`) and `NEXT_ACTIONS`, picked by `nextActionCode` from the outcome, mode, reason code and the
+  policy id (the baseline is told apart from other packs for `policy.unavailable` and `policy.invalid`). The
+  engine's `logDecision` (`policy-hooks.ts`) writes the decision line for each answer. The `  Why: … What to do: …`
+  line follows the first answer of a key (policy id and version, layer, boundary, outcome, reason code, mode and
+  rule); a repeat carries `· seen N times, first at …, now …`. The key counts in
+  `RunPolicy.seen` for one start of the run (at most 1,000 keys; past the cap a key is not counted). `policyDecisionsOf`
+  (`evidence-view.ts`) reads the `policy.decided` events through `readEvidenceChain` and folds them with
+  `groupPolicyDecisions`: groups of at most 100 (the rest counted in `omittedGroups`), up to 10 step names each, and
+  `complete` false when the chain, the tail, the incomplete marker or the verifier says the events are not whole.
+  A user's answer leaves out `rule` and `packSha256`; `user-view.ts` rebuilds the log lines of a user the same way
+  (only the known shapes pass, and a line that does not match is left out). `ui/run-evidence.js` shows the list.
 - **Baseline always asked, files only when configured.** With no packs in any list, `runPolicy` still
   returns a `RunPolicy` that asks the baseline at every boundary. It reads no file (`loadPolicyPacks` runs
   only for listed ids). Without packs the hook is added only for a guard, so pushes are observed only
@@ -602,6 +639,75 @@ can be made to hold of that (#146). Every agent step works out one profile befor
   echoed, so a profile cannot make a line look like a limit, an outage or a sign-in error to the
   classifiers in `targets.ts`.
 
+### Repository broker
+
+`src/engine/repo-broker.ts` and `src/engine/repo-request.ts` (#633, part 1 of 3 of #149) carry out
+one repository operation on the server: `clone`, `fetch`, `branch`, `commit`, `push`,
+`pull-request` and `status` (`REPO_OPERATIONS`). This part is a library only: no agent calls it yet,
+so a run's behaviour does not change.
+
+- **Request.** `RepoRequestSchema` is strict and discriminated on `op`. Unknown fields are refused.
+  Branch names follow `git check-ref-format --branch` (checked in code, at most 255 characters); a
+  commit message or PR body is 1–5000 characters with no NUL; a title is 1–256 characters on one line.
+  A request never names a repository, URL or remote.
+- **Target.** Always the run's `github_repo` variable, resolved on the server. The URL is the stored
+  sign-in's (`repoAccess`), otherwise `https://github.com/<owner>/<name>.git`. A missing or
+  placeholder repository is refused (`no-target`).
+- **Checks, in order** (`brokerRequest(ctx, request, grant)`): 1. validate the request; 2. the target;
+  3. the tool profile (`checkToolCall` with the repository as target); 4. pick the credential;
+  5. the workspace's git settings; 6. the commit identity; 7. policy; 8. run the operation; 9. record
+  one `repo.operation` event. The result is `{ outcome: "done" | "failed" | "refused", refusal?, output, pullRequest? }`.
+- **Refusals** (`REPO_REFUSALS`): `invalid-request`, `no-target`, `not-in-profile`,
+  `approval-required`, `deploy-key`, `no-credential`, `unsafe-git-settings`, `policy`, `not-empty`.
+  A profile `deny` or `require_approval` also records `step.denied` through `toolCallDenial`. A policy
+  denial goes through `refuseByPolicy`.
+- **Credential.** The narrowest one available, never wider than the grant's `credential`:
+  - `none`: no sign-in.
+  - `repository`: only the repository's own stored sign-in. A GitHub App gives a fresh installation
+    token limited to the repository and to the operation's permissions (`APP_PERMISSIONS`):
+    `contents: read` for clone and fetch, `contents: write` for push, `pull_requests: write` for a
+    pull request. A stored token is used as it is. A deploy key is refused (`deploy-key`). No stored
+    sign-in is refused (`no-credential`).
+  - `machine`: the repository's stored sign-in first. Only for a run that is not isolated does it fall
+    back to the bot: a repository-limited `config.github_app` token with the same permissions, otherwise
+    `bot.gh_token_env`.
+  - Local operations (`branch`, `commit`, `status`) never get a credential.
+  - `installationTokenInfo` takes an optional `permissions`, sent in the request and part of the
+    cache key. `appTokenAccess` passes it on.
+- **Processes.** Every `git` and `gh` process runs with an argument list, never through a shell.
+  Network operations get `repoTokenEnv`: HTTPS only, no terminal or credential-manager prompts,
+  `GH_PROMPT_DISABLED=1`, and a new empty `GH_CONFIG_DIR` removed in `finally`. Without a credential
+  they get the same settings with no helper. A user's run uses `shortEnv`. The commit identity is the
+  run's own (`stepIsolation(...).who`, otherwise the identity names).
+  - clone: `git clone -q -- <url> .`, only into an empty folder.
+  - fetch: `git fetch --no-tags --no-recurse-submodules -- <url> +refs/heads/<b|*>:refs/remotes/origin/<b|*>`.
+  - push: `git push --recurse-submodules=no -- <url> HEAD:refs/heads/<branch>`. Never forced.
+  - pull request: `gh pr create --repo <repo> --head … --base … --title …`, with `--draft` if asked and
+    the body on stdin (`--body-file -`).
+  - commit: `git add -A`, then `git commit -q --no-gpg-sign -m <message>`. With nothing staged it is
+    `done` with "nothing to commit".
+  - branch: `git checkout -q -B <name> [origin/<from>]`. status: `git status --porcelain=v1 --branch`.
+- **Git settings.** Before an operation in an existing checkout, `git config --list --null` runs with
+  `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` and `GIT_CONFIG_COUNT=0`. A key outside
+  `ALLOWED_GIT_SETTINGS` refuses the operation. The allowlist is `core.{repositoryformatversion,
+  filemode, bare, logallrefupdates, ignorecase, precomposeunicode, symlinks}`, `remote.origin.{url,fetch}`,
+  `branch.<name>.{remote,merge}` and `user.{name,email}`. So an agent-written `http.proxy`,
+  `http.sslVerify`, `include.*`, `url.*.insteadOf`, `filter.*` or `core.fsmonitor` cannot redirect
+  traffic or read a token. The engine's own `GIT_CONFIG_*` entries (`core.hooksPath`, so the
+  pre-push hook still runs) come first, and the credential settings come after them.
+- **Policy.** Before the operation the engine asks `repository.access` (`tool`, `credential`,
+  `isolated`). A push also asks `push` (with `branch` and `commitIdentity`). A `deny` refuses with
+  `policy`. `RunPolicy.repository()` is not called, so the step's own push facts do not change.
+- **Output.** Never holds a token. The issued token is redacted as `runShell` redacts its pinned
+  secrets, and stderr is scanned with the token and key guards. The output is cut to the grant's
+  `outputCapBytes`.
+- **Evidence.** `repo.operation` (evidence version 4): `step`, `operation` (or `unknown`), `repository?`,
+  `branch?`, `credential`, `policy?` (the combined outcome when policy was asked), `outcome`,
+  `refusal?` (exactly when the outcome is `refused`) and `pullRequest?` (only a done pull request).
+  `RunRecorder.repoOperation()` writes it. Telemetry maps it to `tool.called` with outcome `ok`,
+  `failed` or `denied`, and cause `policy` or `tool` when refused. A done push also emits
+  `delivery.push_attempted`.
+
 ### The evidence stream
 
 Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
@@ -647,7 +753,8 @@ Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
 - **API.** `GET /api/runs/:id/evidence` (rule `own`, `src/server/evidence-view.ts`) builds its
   answer from `verifyRunEvidence` and the manifest on each call and never throws; it sends
   references, not file content, and a user's answer leaves out models, policies and account ids
-  and goes through `hidePaths`. It adds nothing to the engine.
+  and goes through `hidePaths`. It adds nothing to the engine. A user's answer also leaves out the rule and the
+  pack hash of each policy decision (`policyDecisions`, see "Policy hooks in observe mode").
 - **Stopped means stopped.** The first problem also leaves an empty mark, `evidence.incomplete`,
   in the run folder. While it is there no start of the run continues the stream and the run gets
   no manifest (#136). Nothing removes it.
@@ -761,6 +868,51 @@ are `skipped`):
 - **Fixtures.** `tests/fixtures/evidence-runs.ts` writes four runs from fixed content, with its
   own canonical form and hashes: valid, a changed event, a missing file, and an old run without
   evidence.
+
+### Delivery contract
+
+`src/delivery/` defines the delivery contract (#649, part 1 of 2 of #162, part of #133): a versioned,
+signed statement of what a pull request was handed over with, fixed at one moment. This part is a
+library only: only types, schemas and pure functions. Nothing in a run writes a contract yet.
+
+- **Contract** (`DeliveryContractSchema`, `schema.ts`): version 1, strict, every object refuses
+  unknown fields. It holds `runId`, `sequence` (1, 2, …), `supersedes` (the SHA-256 of the previous
+  contract; set exactly when `sequence` is above 1), `repository`, `pullRequest`, `commit` (`sha`,
+  `branch`), `dependencyLock` (each lock file at the commit with its path and SHA-256, and one SHA-256
+  of that list; an empty list when there is none), `ciWorkflows` (each file under `.github/workflows/`
+  with its git blob id), `requiredChecks`, `evidence` (`path`, `count`, `terminalHash` of the chain at
+  that moment), `artifacts` (name and optional SHA-256), `provenance` (`required`) and `stopConditions`.
+- **Stop conditions.** A fixed list in version 1, in this order: `commit-changed`, `lock-changed`,
+  `workflow-changed`, `required-check-failed` (a required check is missing or did not pass),
+  `evidence-unverified`, `signature-unverified`, `superseded`. The schema refuses any other list.
+- **Order.** Every list is sorted by UTF-16 code unit and holds each key once; the schema refuses an
+  unsorted or repeated list. The lock hash must be the hash of the lock files.
+- **Build** (`buildDeliveryContract(facts)`, `contract.ts`): pure. It uses no clock, no file and no
+  randomness, sorts the lists itself, copies only the known fields and throws `DeliveryContractError`
+  (with the path and message of each issue) for bad facts. The same facts in any order give the same
+  bytes.
+- **Bytes and digest.** `deliveryContractText` is `canonicalJson` of the contract. `contractDigest` is
+  the SHA-256 of those UTF-8 bytes. A verifier also refuses a text that is not in this canonical form.
+- **Signature** (`sshsig.ts`): the OpenSSH `SSHSIG` format, in plain Node (no dependency, no child
+  process): Ed25519, SHA-512, the namespace `scf-delivery-contract`, armoured output. `signDeliveryContract`
+  signs the text. `ssh-keygen -Y verify` accepts what is written here, and the tests check that
+  (skipped when `/usr/bin/ssh-keygen` is missing).
+  - `readSigningKey(text)` reads one unencrypted Ed25519 key, in OpenSSH form or as a PKCS#8 PEM. An
+    encrypted key, an RSA, EC or DSA key, or anything else is refused with a reason.
+  - `publicKeyLine(key)` gives `ssh-ed25519 AAAA…`.
+  - `verifySshSignature(message, armoured, publicKeyLine, namespace)` never throws. It checks the
+    signature against the key inside it first, then against the trusted key.
+- **Verify** (`verifyDeliveryContract(text, sigText, publicKey, eventsText?)`): never throws. It returns
+  the first fault in this order: `unreadable` (not JSON, not an object, not canonical, or not valid),
+  `wrong-version`, `signature-missing`, `signature-bad`, `wrong-key`, and `evidence-head-mismatch`
+  (only when the events are given). The head check reads the first `count` events of the chain and
+  passes when the event at `count - 1` has the contract's `terminalHash`, so events added later do not
+  break it. A passing result carries the contract and its digest.
+- **Not yet.** No run writes a contract, no server or UI reads one, and no check of a pull request
+  runs against the stop conditions. Those are the next part of #162.
+- **Tests.** `tests/delivery-contract.test.ts` (order, golden text, every byte of the text, the order
+  of faults, the head check) and `tests/delivery-sshsig.test.ts` (round trips, every character of the
+  signature, refused keys, the real `ssh-keygen`). Both are unit tests: no server, no git, no run.
 
 ---
 
@@ -1116,8 +1268,22 @@ say "nothing — it continues by itself" when that is true; use one vocabulary
   helper reset (appended after the engine's own `GIT_CONFIG_*` entries, so `core.hooksPath` stays), and sets
   the commit name from `commitIdentity()` (bot name and e-mail from Settings, field by field, else
   `getUser(owner)`). With no identity the step is refused (`NO_COMMIT_IDENTITY`). `engine.botEnv()` gives the
-  bot's token and name once per run, only to steps that keep the machine's login. In agent steps
-  `agentEnv(spec, true)` ignores `ISOLATED_AGENT_ENV` names, Claude agents are always isolated
+  bot's token and name once per run, only to shell steps that keep the machine's login; it is fetched up
+  front only when the flow has a shell or sub-flow step (`flowUsesBot()` in `src/engine/runner.ts`).
+  Agent steps (#635) never get the token, in any run: `runOn` (`src/agents/run.ts`) builds their env as
+  `botIdentityEnv()` (the bot's name and e-mail, `src/engine/guards.ts`), then `agent_env`, then
+  `agentNoSignInEnv()`, which removes every token variable, the ssh variables and `GIT_CONFIG_PARAMETERS`,
+  sets an empty `gh` folder, no prompts, `GIT_ALLOW_PROTOCOL=file` and a credential helper reset.
+  `agentNoSignInEnv()` leaves `GIT_CONFIG_GLOBAL` alone, so an admin's agent on the machine's HOME keeps the
+  machine's global git config. An isolated step adds `isolationEnv()` on top, with `file` replacing
+  `https:file`. The clean Codex folder of an admin run adds `GIT_ALLOW_PROTOCOL=file` on top of
+  `noMachineSignIn()` (`src/agents/codex-home.ts`). `nextConfigIndex()` picks the index of the appended
+  `GIT_CONFIG_*` entries: a bad `GIT_CONFIG_COUNT` from `agent_env` is replaced by the number of contiguous
+  keys, so the helper reset is always read. The broker's credential ceiling for `repo_ops` is
+  `repoCredential` in the tool profile (`machine` or `repository`); the agent's own `credential` is `none`.
+  This is the environment only, the same limit as above: in an admin run without an OS sandbox an agent
+  can still reach the machine's keychain or `~/.config/gh`.
+  In agent steps `agentEnv(spec, true)` ignores `ISOLATED_AGENT_ENV` names, Claude agents are always isolated
   (`--strict-mcp-config`), and a token variable is never an anthropic-compatible provider key. Since #304
   and #305 a user's run is also held by an OS sandbox profile (`os-sandbox.ts`); its agent steps get their
   own agent folders in the run folder and sign in by a token variable only (`src/agents/boxed.ts`).

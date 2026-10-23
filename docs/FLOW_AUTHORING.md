@@ -172,8 +172,31 @@ A run is **not** checked against `var_info`. Values from `--var`, from `.claude-
   sandbox: true                     # optional: agent's shell commands may only write inside the workspace
   skill_role: reviewer              # optional: give this read-only step compact review checks from the run's skills (coder is the default)
   skills: selected                  # optional: catalog | selected (default) | off; see "Skills" below
+  repo_ops: [commit, status]        # optional: repository operations the agent may ask the engine for (clone, fetch, branch, commit, push, pull-request, status)
 ```
 
+- `repo_ops`: the agent may ask the engine for these repository operations; the agent never runs
+  them with a credential itself. Give a unique list of names from `clone`, `fetch`, `branch`,
+  `commit`, `push`, `pull-request`, `status`. Not on a reviewer step or a step listed in a `parallel` step.
+  A request for an operation that the step does not list is refused, and the step fails.
+- **The request file.** A step with `repo_ops` gets `$FACTORY_REPO_REQUESTS` (and `$SCF_REPO_REQUESTS`),
+  a file in the run's folder. The agent appends one JSON object per line, for example:
+
+  ```text
+  {"op":"commit","message":"Add the parser tests"}
+  {"op":"status"}
+  ```
+
+  Fields: `branch` (fetch, push), `name` and `from` (branch), `message` (commit), `head`, `base`,
+  `title`, `body` and `draft` (pull-request). Unknown fields are refused. A request never names a
+  repository, URL or remote: the target is always the run's repository. The file is removed before
+  every try, so only the last try's requests count.
+- **When requests run.** After the final try, only when the step has succeeded (its checks included).
+  The engine reads the file once, at most 64 KiB and 20 requests, and only a plain file. It carries
+  out the requests in order and stops at the first one that does not succeed: the step fails and the
+  later requests are not carried out. A line that is not JSON is `invalid-request`. A policy denial ends the run.
+- **Results.** Each result is logged and added to the step output under `## Repository operations`.
+  A step with no `repo_ops` ignores any file in the run's folder.
 - The step **output** is the agent's final answer. It succeeds unless the agent errors (or
   `pass_if`/`fail_if` say otherwise).
 - **Read-only steps** (plan, review): `permission_mode: dontAsk` with

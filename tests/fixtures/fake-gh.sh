@@ -6,6 +6,7 @@
 # "pr edit --add-reviewer <handle>" only records the handle in $FAKE_GH_LOG.reviewers.json ({url: [handles]}); "pr view --json reviewRequests,reviews"
 # answers from it ($FAKE_GH_REVIEWERS_FAIL=1 makes that view fail).
 # $FAKE_GH_AUTH_LOG=<file>: every call appends one line, tab separated: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN (each "-" when unset),
+# $FAKE_GH_LIST_LIMIT=<n>: "issue list" (not --search, not --state closed) returns at most the first n issues.
 # "host" when GH_CONFIG_DIR is unset (else the number of entries in that folder), and the arguments.
 if [ -n "$FAKE_GH_AUTH_LOG" ]; then
   if [ -z "${GH_CONFIG_DIR+x}" ]; then cfg=host; else cfg=$(ls -A "$GH_CONFIG_DIR" 2>/dev/null | wc -l | tr -d ' '); fi
@@ -69,16 +70,18 @@ case "$all" in
     api_fail list
     # A real page= parameter (not the one inside per_page=): filter by state=open, sort by number (direction=desc: highest first), slice.
     # state=all: starts with the issues of $FAKE_GH_ISSUES_BY_REPO[owner/name] (from the path), else $FAKE_GH_ISSUES, in the REST shape,
+    # labels=a,b does the same merge, keeps only issues that carry every label, then applies state=open.
     # then adds the bug issues above whose number is not there yet, unchanged (so a test can plant a malformed one).
     case "$all" in *"?page="*|*"&page="*)
       node -e 'const fs=require("fs");const f=process.argv[1];const a=process.argv[2];const q=new URLSearchParams(a.slice(a.indexOf("?")+1));
 let l=process.env.FAKE_GH_BUG_ISSUES?JSON.parse(process.env.FAKE_GH_BUG_ISSUES):fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];
-if(q.get("state")==="open")l=l.filter(x=>x.state==="open");
-if(q.get("state")==="all"){const repo=a.slice(6).split("/").slice(0,2).join("/");let base=[];
+if(q.get("state")==="all"||q.get("labels")){const repo=a.slice(6).split("/").slice(0,2).join("/");let base=[];
 try{const by=process.env.FAKE_GH_ISSUES_BY_REPO?JSON.parse(process.env.FAKE_GH_ISSUES_BY_REPO)[repo]:undefined;base=by!==undefined?by:JSON.parse(process.env.FAKE_GH_ISSUES||"[]")}catch(e){base=[]}
 if(!Array.isArray(base))base=[];
 base=base.map(x=>({number:x.number,title:x.title,body:x.body,labels:x.labels||[],state:String(x.state||"open").toLowerCase(),state_reason:null,closed_at:null,created_at:x.createdAt||"2026-01-01T00:00:00Z",html_url:"https://github.com/"+repo+"/issues/"+x.number}));
 const have=new Set(base.map(x=>x.number));l=[...base,...l.filter(x=>!have.has(x&&x.number))]}
+if(q.get("labels")){const w=q.get("labels").split(",");l=l.filter(x=>w.every(n=>(x&&Array.isArray(x.labels)?x.labels:[]).some(y=>(typeof y==="string"?y:y&&y.name)===n)))}
+if(q.get("state")==="open")l=l.filter(x=>x.state==="open");
 const dir=q.get("direction")==="desc"?-1:1;l=l.slice().sort((x,y)=>dir*(((x&&x.number)||0)-((y&&y.number)||0)));const pp=Number(q.get("per_page")||30),p=Number(q.get("page"));console.log(JSON.stringify(l.slice((p-1)*pp,p*pp)))' "$FAKE_GH_LOG.issues.json" "$2"
       exit 0 ;;
     esac
@@ -261,7 +264,7 @@ case "$1 $2" in
                    *) if [ -n "$FAKE_GH_LABEL_FILTER" ]; then
                         lab=""; prev=""; for a in "$@"; do [ "$prev" = "--label" ] && lab="$a"; prev="$a"; done
                         node -e 'const l=JSON.parse(process.env.FAKE_GH_ISSUES||"[]"),w=process.argv[1];process.stdout.write(JSON.stringify(w?l.filter(i=>(i.labels||[]).some(y=>y.name===w)):l))' "$lab"
-                      else printf '%s' "${FAKE_GH_ISSUES:-[]}"; fi ;; esac ;;
+                      else printf '%s' "${FAKE_GH_ISSUES:-[]}"; fi | { if [ -n "$FAKE_GH_LIST_LIMIT" ]; then node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify(JSON.parse(s).slice(0,Number(process.argv[1])))))' "$FAKE_GH_LIST_LIMIT"; else cat; fi; } ;; esac ;;
   "pr list")     case "$*" in *"--state merged"*) printf '%s' "${FAKE_GH_MERGED_PRS:-[]}"; exit 0 ;; esac
                  if [ -n "$FAKE_GH_PRS" ]; then printf '%s' "$FAKE_GH_PRS"; elif [ -f "$FAKE_GH_LOG.prs.json" ]; then
                    # --head <branch> keeps the PRs of that branch, --limit <n> the first n of them (the order of the file).

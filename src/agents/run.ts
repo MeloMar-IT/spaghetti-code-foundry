@@ -4,7 +4,7 @@ import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from ".
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import { DEFAULT_PERMISSION_MODE, pushLogFor, refuseByPolicy, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
-import { type CommitIdentity, ISOLATED_AGENT_ENV, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
+import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
@@ -15,8 +15,10 @@ import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
-import { TOOLS_DIR } from "../engine/guards.js";
-import { render } from "../engine/template.js";
+import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
+import { TOOLS_DIR, botIdentityEnv } from "../engine/guards.js";
+import { boundAgentPrompt, boundEnv, classifyBound, stepTypesOf, UntrustedRefusal, type BoundPrompt, type OutputLabel } from "../engine/untrusted.js";
+import { GuardError } from "../help/guard.js";
 import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
 import { discoverJavaHome, javaStandIn } from "./java-gate.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
@@ -40,23 +42,27 @@ type Iso = { who: CommitIdentity };
 type Ran = StepResult & { final?: boolean };
 
 async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate): Promise<Ran> {
-  // Both agents get the same environment; an isolated step has no token, an empty gh folder of its own and the commit name.
-  const base = stepEnv(scope, engine);
+  // Both agents get the same environment: no token and no Git or GitHub sign-in, an empty gh folder of its own and the commit name.
+  const base = stepEnv(scope, engine, undefined, { bound: (e) => boundEnv(e, { stepTypes: stepTypesOf(scope.flow), quarantined: gate.bounded.quarantined, patterns: engine.config.help.sensitive_patterns }) });
   const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
   if (pushLog) base.FACTORY_PUSH_LOG = pushLog;
-  const ghDir = iso ? ghConfigDir() : undefined;
+  const ghDir = ghConfigDir();
   try {
     const extra = agentEnv(scope.ctx.vars.agent_env, Boolean(iso));
     // A boxed step signs in by the server's token variable only: a key a flow brings in `agent_env` is ignored.
     const dropped = boxed ? dropLoginVars(extra, providerKeyVars(engine.config)) : [];
     if (dropped.length) engine.log(`    · agent_env: ${dropped.join(", ")} ignored — a user's run signs in with the server's key only`);
-    let env: Record<string, string | undefined> = iso
-      ? { ...base, ...extra, ...isolationEnv(base, engine.config, ghDir!, iso.who) }
-      : { ...base, ...(await engine.botEnv()), ...extra };
+    // agent_env first, then the sign-in removal, so agent_env cannot put a token, the gh folder or a protocol back
+    let env: Record<string, string | undefined> = { ...base, ...botIdentityEnv(engine.config), ...extra };
+    env = { ...env, ...agentNoSignInEnv(engine.config, ghDir, env) };
+    // an agent gets only the file protocol: isolationEnv also serves shell steps, which keep https:file
+    if (iso) env = { ...env, ...isolationEnv(env, engine.config, ghDir, iso.who), GIT_ALLOW_PROTOCOL: "file" };
+    // The request file of a repo_ops step (made fresh for every try); any other step has no such variable.
+    env = { ...env, ...repoRequestsEnv(engine, scope, step) };
     // A user's run gets only the short environment plus what this agent and provider need (see short-env.ts).
     const short = shortEnvRun(engine.summary.owner);
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
-    if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, iso ? tokenVarNames(engine.config) : []) };
+    if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, tokenVarNames(engine.config)) };
     // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder.
     if (!boxed) env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir, env.JAVA_HOME) };
     let profile: string | undefined;
@@ -86,12 +92,13 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
           agentBin: bin,
           userRead: engine.config.sandbox.user_read,
           workspaceReadOnly: readOnly,
+          requestsDir: env.FACTORY_REPO_REQUESTS ? dirname(env.FACTORY_REPO_REQUESTS) : undefined,
         }),
       );
     }
     return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, ...gate });
   } finally {
-    if (ghDir) removeGhConfigDir(ghDir);
+    removeGhConfigDir(ghDir);
   }
 }
 
@@ -101,6 +108,8 @@ interface Gate {
   mapping: SessionMapping;
   /** The tool profile of the session (it decides whether Codex may push). `profile` below is the OS sandbox profile. */
   toolProfile: ToolProfile;
+  /** The prompt with its data blocks, and the system prompt with the data note (see untrusted.ts). */
+  bounded: BoundPrompt;
 }
 
 interface WithOptions extends Gate {
@@ -257,8 +266,8 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     else engine.log(`    · skill context: ${attach.state} ${keys} (${attach.attachedBytes} bytes, about ${attach.attachedEstimatedTokens} tokens)${attach.state === "reloaded" ? (t.agent === "codex" && resumeId ? ": the full block is sent again" : ": new session") : ""}`);
   };
   const common = {
-    prompt: withSkillPayload(withSkillPayload(render(step.prompt, ctx), attach?.text ?? ""), o.catalogue?.text ?? ""),
-    systemPrompt: step.system_prompt ? render(step.system_prompt, ctx) : undefined,
+    prompt: withSkillPayload(withSkillPayload(o.bounded.prompt, attach?.text ?? ""), o.catalogue?.text ?? ""),
+    systemPrompt: o.bounded.system,
     cwd: engine.summary.workdir!,
     logFile,
     timeoutMs,
@@ -270,6 +279,11 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   if (t.agent === "codex") logSkills();
 
   if (t.agent === "codex") {
+    if (env.FACTORY_REPO_REQUESTS && !boxed && o.mapping.codexSandbox === "read-only") {
+      const refused = "repo_ops needs a Codex session that can write the request file; a read-only session outside the run sandbox cannot";
+      engine.log(`    ! repo: ${refused}`);
+      return { ok: false, output: refused, error: refused, final: true };
+    }
     const builtinUrl = BUILTIN_PROVIDERS[t.providerName]?.base_url;
     let r: Awaited<ReturnType<typeof runCodex>>;
     try {
@@ -289,6 +303,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
         ignoreUserConfig: mode === "off" ? undefined : false,
         clean: Boolean(clean),
         noNetwork: Boolean(clean && !clean.push),
+        writableRoots: env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : undefined,
         effort,
       });
     } finally {
@@ -326,6 +341,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     allowedTools: step.allowed_tools ?? d.allowed_tools,
     maxBudgetUsd: caps.length ? Math.max(0.01, Math.min(...caps)) : undefined,
     sandbox: sandboxed,
+    writableDirs: env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : undefined,
     noMcp: local,
     isolated: isolatedSession,
     effort,
@@ -432,8 +448,8 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
   let fallbackFrom: string | undefined;
   const repository = repositoryFact(scope.ctx.vars);
-  // The agent works in the repository's checkout, with the machine's login or without a sign-in (policy: a mandatory policy that cannot be used stops it).
-  const access = engine.policy?.repository(identity, { repository, step: step.id, credential: iso ? "none" : "machine", isolated: iso !== undefined });
+  // The agent works in the repository's checkout, and never has a sign-in of its own; repository work goes through the broker or a shell step (policy: a mandatory policy that cannot be used stops it).
+  const access = engine.policy?.repository(identity, { repository, step: step.id, credential: "none", isolated: iso !== undefined });
   if (access?.denied) return refuseByPolicy(engine, identity, access.denied);
   // One tool profile per step: the same for Claude and Codex, and for every try. A declared profile the step cannot stay within is refused before an agent is picked.
   const resolved: StepProfile | { refused: string; event: StepProfiledFields } = resolveStepProfile(step, scope, engine, { boxed, isolated: iso !== undefined });
@@ -443,6 +459,18 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     engine.accessFailed = true;
     return { ok: false, output: resolved.refused, error: resolved.refused };
   }
+  // Deterministic bounding of everything from outside the policy; a refusal here is a denial like the ones above.
+  let bounded: BoundPrompt;
+  try {
+    bounded = boundAgentPrompt(step, scope.ctx, { stepTypes: stepTypesOf(scope.flow), patterns: config.help.sensitive_patterns });
+  } catch (e) {
+    if (!(e instanceof UntrustedRefusal || e instanceof GuardError)) throw e;
+    engine.log(`    ! ${e.message}`);
+    engine.accessFailed = true;
+    return { ok: false, output: e.message, error: e.message };
+  }
+  const memo = new Map<string, OutputLabel>();
+  const heldFor = !scope.prefix && engine.summary.heldContent?.step === step.id ? engine.summary.heldContent.sha256 : undefined;
   for (;;) {
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
     const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
@@ -467,9 +495,21 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       engine.accessFailed = true;
       return { ok: false, output: gated.refused, error: gated.refused, ...tries() };
     }
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile });
+    // After every deterministic denial: the optional classifier, then the hold for a person's approval.
+    const classified = await classifyBound(bounded, { classifier: engine.classifier, approved: engine.summary.approvedContent, heldFor, stepId: step.id, memo });
+    if (classified.items.length) engine.log(`    · ${classified.items.length} data block${classified.items.length === 1 ? "" : "s"}, highest risk ${classified.labels.reduce((m, l) => (l.risk === "high" || (l.risk === "elevated" && m === "low") ? l.risk : m), "low" as OutputLabel["risk"])}, ${classified.quarantined.size} quarantined`);
+    if (classified.held) {
+      const reason = classified.held.reason;
+      engine.log(`    ! ${reason}`);
+      if (scope.depth > 0) {
+        engine.accessFailed = true;
+        return { ok: false, output: reason, error: reason, ...tries() };
+      }
+      return { ok: false, output: reason, error: reason, held: classified.held.sha256, ...tries() };
+    }
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified });
     seen(r);
-    if (r.ok || engine.signal?.aborted || final) return { ...r, ...tries() };
+    if (r.ok || engine.signal?.aborted || final) return await applyRepoRequests({ engine, scope, step, identity, logFile, profile: resolved.session.profile }, { ...r, ...tries() });
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.
     if (isTransientError(r.error, r.output) && !isAuthError(r.error, r.output) && blips < TRANSIENT_RETRIES.length) {

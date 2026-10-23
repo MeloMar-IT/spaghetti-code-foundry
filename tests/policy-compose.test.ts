@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { BASELINE_PACK, BASELINE_POLICY_ID, baselinePack } from "../src/policy/baseline.js";
+import { BASELINE_PACK, BASELINE_POLICY_ID, NO_BASELINE_CONTROLS, baselinePack, legacyBaselinePack } from "../src/policy/baseline.js";
 import { combineDecisions, layeredPackIds, type Layer, type LayeredDecision } from "../src/policy/compose.js";
 import { evaluatePolicy } from "../src/policy/evaluate.js";
 import { parsePolicyPack } from "../src/policy/parse.js";
@@ -115,7 +115,8 @@ describe("the baseline", () => {
     expect(BASELINE_PACK.rules.map((r) => r.mode)).toEqual(BASELINE_PACK.rules.map(() => "observe"));
     const pkg = JSON.parse(readFileSync("package.json", "utf8")) as { version: string };
     expect(BASELINE_PACK.policy.version).toBe(pkg.version);
-    expect(baselinePack("x").policy.version).toBe("x");
+    expect(legacyBaselinePack("x").policy.version).toBe("x");
+    expect(baselinePack("x", NO_BASELINE_CONTROLS).policy.version).toBe("x");
   });
 
   it("fires each rule with its facts", () => {

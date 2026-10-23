@@ -163,12 +163,17 @@ export function turnFor(ctx: ApiContext, now = new Date()) {
     ...c.issues.map((i) => i.next.runId),
     ...tracked.flatMap((t) => [...t.issues.map((i) => i.runId), ...(t.status.holds ?? []).map((h) => h.next.runId)]),
   ]);
+  // Stories a watcher lists from a waiting label (every watcher, before one record per issue is kept): that listing speaks for their runs.
+  const labelStories = new Set(tracked.flatMap((t) => t.issues
+    .filter((i) => i.extra || (t.status.holds ?? []).some((h) => h.issue === i.issue && h.byLabel))
+    .map((i) => `${t.watcher.github_repo}#${i.issue}`.toLowerCase())));
   const cutoff = now.getTime() - RECENT_MS;
   let evalIds: Set<string> | undefined;
   for (const b of ctx.scheduler.briefs()) {
     const recent = Date.parse(b.finishedAt ?? b.startedAt) >= cutoff;
     if (!(b.status === "waiting" || ((b.status === "failed" || b.status === "stopped") && recent))) continue;
     if (covered.has(b.runId)) continue;
+    if (b.githubRepo && b.issue && labelStories.has(`${b.githubRepo}#${b.issue}`.toLowerCase())) continue;
     const origin = runOrigin(b.source);
     if (origin === "eval" || origin === "refinement") continue;
     if (origin === "unknown" && (evalIds ??= evalRunIds()).has(b.runId)) continue; // an eval run of an older version

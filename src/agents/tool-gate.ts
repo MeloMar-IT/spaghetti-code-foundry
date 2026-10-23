@@ -1,4 +1,4 @@
-import { readOnlyStep, type ClaudeStep } from "../flow/schema.js";
+import { readOnlyStep, stepRepoOps, type ClaudeStep } from "../flow/schema.js";
 import { DEFAULT_PERMISSION_MODE, type Engine, type Scope } from "../engine/execute.js";
 import type { CodexSandbox } from "../steps/codex.js";
 import type { EvidenceEventBody } from "../evidence/stream.js";
@@ -52,6 +52,7 @@ export function codexIsolated(o: { source?: string; isolateAgents: boolean; isol
 /** The tool settings one agent step runs with, from the step, the flow defaults and the server settings. */
 export function stepToolSettings(step: ClaudeStep, scope: Pick<Scope, "flow">, engine: Pick<Engine, "config">, o: { boxed: boolean; isolated: boolean }): LegacyToolSettings {
   const d = scope.flow.defaults;
+  const ops = stepRepoOps(step);
   return {
     permissionMode: step.permission_mode ?? d.permission_mode ?? DEFAULT_PERMISSION_MODE,
     allowedTools: step.allowed_tools ?? d.allowed_tools ?? [],
@@ -59,7 +60,8 @@ export function stepToolSettings(step: ClaudeStep, scope: Pick<Scope, "flow">, e
     boxed: o.boxed,
     noTools: false,
     mcpServers: !claudeIsolated(engine.config.isolate_agents, o.isolated, undefined, step.skill_role === "reviewer"),
-    credential: o.isolated ? "none" : "machine",
+    credential: "none",
+    ...(ops ? { repoOps: [...ops], repoCredential: o.isolated ? ("repository" as const) : ("machine" as const) } : {}),
   };
 }
 

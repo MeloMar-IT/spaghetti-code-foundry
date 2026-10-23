@@ -7,8 +7,9 @@ import { claudeProviderEnv, type Target } from "../src/agents/targets.js";
 import { addRepo, hasStoredSignIn, listRepos } from "../src/auth/repos.js";
 import { createUser, deleteUser, updateUser } from "../src/auth/users.js";
 import { type Config, ConfigSchema } from "../src/config.js";
-import { NO_COMMIT_IDENTITY } from "../src/engine/guards.js";
-import { commitIdentity, isolationEnv, stepIsolated, tokenVarNames } from "../src/engine/isolation.js";
+import { execFileSync } from "node:child_process";
+import { NO_COMMIT_IDENTITY, botIdentityEnv } from "../src/engine/guards.js";
+import { agentNoSignInEnv, commitIdentity, isolationEnv, nextConfigIndex, stepIsolated, tokenVarNames } from "../src/engine/isolation.js";
 import { runFlow } from "../src/engine/runner.js";
 import { explainFailure } from "../src/failure-explain.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -65,7 +66,7 @@ const noneRepo = (owner: { id: string }, url = "acme/app") => addRepo(owner.id, 
 
 const SHOW = TOKEN_NAMES.map((n) => `${n}=\${${n}:-unset}`).join(" ");
 const PLAIN = `echo "${SHOW} sock=\${SSH_AUTH_SOCK:-unset} global=\${GIT_CONFIG_GLOBAL:-unset} prompt=\${GIT_TERMINAL_PROMPT:-unset} dir=$GH_CONFIG_DIR"`;
-const SHOWVARS = `SHOWVARS ${TOKEN_NAMES.join(" ")} SSH_AUTH_SOCK GIT_CONFIG_GLOBAL GIT_TERMINAL_PROMPT\nSHOWGHDIR`;
+const SHOWVARS = `SHOWVARS ${TOKEN_NAMES.join(" ")} SSH_AUTH_SOCK GIT_CONFIG_GLOBAL GIT_TERMINAL_PROMPT GIT_ALLOW_PROTOCOL\nSHOWGHDIR`;
 
 describe("the pure functions", () => {
   it("stepIsolated: users always, admins only with a stored sign-in, fail closed", async () => {
@@ -114,6 +115,49 @@ describe("the pure functions", () => {
     expect(tokenVarNames(ConfigSchema.parse({ bot: { gh_token_env: "SCF_X" } }))).toEqual(expect.arrayContaining(["SCF_X", "FACTORY_X"]));
   });
 
+  it("botIdentityEnv gives the name and e-mail only and never throws", () => {
+    expect(botIdentityEnv(ConfigSchema.parse({ bot: { name: "N", email: "e@x", gh_token_env: "NOT_SET_FOR_TEST" } }))).toEqual({ GIT_AUTHOR_NAME: "N", GIT_COMMITTER_NAME: "N", GIT_AUTHOR_EMAIL: "e@x", GIT_COMMITTER_EMAIL: "e@x" });
+    expect(botIdentityEnv(ConfigSchema.parse({ bot: { name: "N" }, github_app: { app_id: "1", private_key_path: "/x", installation_id: "2" } }))).toEqual({ GIT_AUTHOR_NAME: "N", GIT_COMMITTER_NAME: "N" });
+    expect(botIdentityEnv(ConfigSchema.parse({}))).toEqual({});
+  });
+
+  it("nextConfigIndex uses a valid count and repairs an invalid one", () => {
+    expect(nextConfigIndex({})).toBe(0);
+    expect(nextConfigIndex({ GIT_CONFIG_COUNT: "2" })).toBe(2);
+    for (const bad of ["-1", "junk", "1e3", "99999"]) {
+      expect(nextConfigIndex({ GIT_CONFIG_COUNT: bad, GIT_CONFIG_KEY_0: "a.b" }), bad).toBe(1);
+      expect(nextConfigIndex({ GIT_CONFIG_COUNT: bad }), bad).toBe(0);
+    }
+  });
+
+  it("agentNoSignInEnv removes the sign-ins, keeps the machine's git settings and appends the helper reset", () => {
+    const c = ConfigSchema.parse({ bot: { gh_token_env: "FACTORY_X" } });
+    const e = agentNoSignInEnv(c, "/g", { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath" });
+    for (const n of [...tokenVarNames(c), "SCF_X", "SSH_AUTH_SOCK", "GIT_SSH", "GIT_SSH_COMMAND", "SSH_ASKPASS", "GIT_CONFIG_PARAMETERS"]) {
+      expect(n in e, n).toBe(true);
+      expect(e[n], n).toBeUndefined();
+    }
+    expect(e).toMatchObject({ GH_CONFIG_DIR: "/g", GIT_ALLOW_PROTOCOL: "file", GIT_ASKPASS: "", GCM_INTERACTIVE: "never", GH_PROMPT_DISABLED: "1", GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_1: "credential.helper", GIT_CONFIG_VALUE_1: "" });
+    for (const k of ["GIT_CONFIG_KEY_0", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "GIT_AUTHOR_NAME", "GIT_COMMITTER_EMAIL"]) expect(k in e, k).toBe(false);
+    const bad = agentNoSignInEnv(c, "/g", { GIT_CONFIG_COUNT: "-1", GIT_CONFIG_KEY_0: "core.hooksPath" });
+    expect(bad).toMatchObject({ GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_1: "credential.helper" });
+    expect(Object.keys(bad).some((k) => k.endsWith("_-1"))).toBe(false);
+  });
+
+  it("the empty credential helper is the last one git reads, also after a bad count", () => {
+    const home = join(gh.tmp, "githome");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, ".gitconfig"), "[credential]\n\thelper = store\n");
+    const c = ConfigSchema.parse({});
+    for (const given of [{ GIT_CONFIG_COUNT: "-1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: "/dev/null" }, { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: "/dev/null" }]) {
+      const merged = { ...given, ...agentNoSignInEnv(c, join(home, "gh"), given) };
+      const env: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: home, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" };
+      for (const [k, v] of Object.entries(merged)) if (v !== undefined) env[k] = v;
+      const o = execFileSync("git", ["config", "--get-all", "credential.helper"], { env, encoding: "utf8" });
+      expect(o.endsWith("\n\n"), JSON.stringify(o)).toBe(true);
+    }
+  });
+
   it("isolationEnv appends to the git config entries and removes tokens, the agent and ssh", () => {
     const e = isolationEnv({ GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath" }, ConfigSchema.parse({ bot: { gh_token_env: "X" } }), "/g", { name: "N", email: "e@x" });
     expect(e.GIT_CONFIG_COUNT).toBe("4");
@@ -145,15 +189,14 @@ describe("a provider key", () => {
   });
 });
 
-describe("a provider key in an admin run that keeps the machine's login", { timeout: 60_000 }, () => {
-  it("may still be a token variable", async () => {
+describe("a provider key in an admin run", { timeout: 60_000 }, () => {
+  it("never is a token variable, also in an admin run", async () => {
     noneRepo(admin);
     process.env.PROVIDER_KEY_FOR_TEST = "pk";
     const config = cfg({ providers: { gh: { kind: "anthropic-compatible", base_url: "http://127.0.0.1:1", api_key_env: "BOT_TOKEN_FOR_TEST" } } });
     const s = await go(flowOf(agent("a", "SHOWENV", "    model: gh:m\n")), { owner: admin.id, config });
     delete process.env.PROVIDER_KEY_FOR_TEST;
-    // the provider's key reaches the agent (it is not "none"), and its value is now hidden in the output like a stored credential
-    expect(out(s, "a")).toContain("token=[redacted]");
+    expect(out(s, "a")).toContain("token=none");
     expect(out(s, "a")).not.toContain(BOT);
   });
 });
@@ -177,6 +220,7 @@ describe("a user run", { timeout: 60_000 }, () => {
       expect(o, id).toContain("SSH_AUTH_SOCK=(unset)");
       expect(o, id).toContain("GIT_CONFIG_GLOBAL=/dev/null");
       expect(o, id).toContain("GIT_TERMINAL_PROMPT=0");
+      expect(o, id).toContain("GIT_ALLOW_PROTOCOL=file");
     }
     expect(out(s, "marked")).toMatch(/^GH_TOKEN=\[redacted\] GITHUB_TOKEN=unset GH_ENTERPRISE_TOKEN=unset BOT_TOKEN_FOR_TEST=unset sock=unset /);
     expect(readdirSync(tmpdir()).filter((f) => f.startsWith("scf-gh-") && existsSync(join(tmpdir(), f, "hosts.yml")))).toEqual([]);
@@ -191,6 +235,15 @@ describe("a user run", { timeout: 60_000 }, () => {
       expect(out(s, "agent")).toContain("gh_dir=empty");
       expect(out(s, "agent")).toContain("BOT_TOKEN_FOR_TEST=(unset)");
     }
+  });
+
+  it("isolated shell steps keep https; both agents get only file", async () => {
+    tokenRepo(user);
+    const flow = flowOf(`${sh("plain", 'echo "p=$GIT_ALLOW_PROTOCOL"')}${agent("agent", "SHOWVARS GIT_ALLOW_PROTOCOL")}${agent("codexagent", "SHOWVARS GIT_ALLOW_PROTOCOL", "    model: codex:gpt-5\n")}`);
+    const s = await go(flow, { owner: user.id });
+    expect(s.status, s.reason).toBe("succeeded");
+    expect(out(s, "plain")).toBe("p=https:file");
+    for (const id of ["agent", "codexagent"]) expect(out(s, id), id).toContain("GIT_ALLOW_PROTOCOL=file");
   });
 
   it("does not need the bot's token variable to exist", async () => {
@@ -236,7 +289,43 @@ describe("a user run", { timeout: 60_000 }, () => {
 });
 
 describe("an admin run", { timeout: 60_000 }, () => {
-  it("keeps the machine's login on a repository without a stored sign-in", async () => {
+  it("gives an agent step no sign-in, no ssh and an empty gh folder of its own, and keeps the machine's git settings and the bot's name", async () => {
+    noneRepo(admin);
+    const flow = flowOf(agent("a", `SHOWVARS ${TOKEN_NAMES.join(" ")} SSH_AUTH_SOCK GIT_ALLOW_PROTOCOL GIT_CONFIG_GLOBAL GIT_ASKPASS GIT_AUTHOR_NAME GH_CONFIG_DIR\nSHOWGHDIR`));
+    const s = await go(flow, { owner: admin.id, config: cfg({ bot: { gh_token_env: "BOT_TOKEN_FOR_TEST", name: "The Bot", email: "bot@example.com" } }) });
+    const o = out(s, "a");
+    for (const n of TOKEN_NAMES) expect(o).toContain(`${n}=(unset)`);
+    expect(o).toContain("SSH_AUTH_SOCK=(unset)");
+    expect(o).toContain("GIT_ALLOW_PROTOCOL=file");
+    expect(o).toContain("GIT_CONFIG_GLOBAL=(unset)");
+    expect(o).toContain("GIT_AUTHOR_NAME=The Bot");
+    expect(o).toContain("gh_dir=empty");
+    const dir = /GH_CONFIG_DIR=(\S+)/.exec(o)![1]!;
+    expect(dir).not.toBe(process.env.GH_CONFIG_DIR);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  it("agent_env cannot put a token, the gh folder, a helper or another protocol back; a bad config count is repaired", async () => {
+    noneRepo(admin);
+    const flow = flowOf(agent("a", "SHOWVARS GH_ENTERPRISE_TOKEN GIT_ALLOW_PROTOCOL GH_CONFIG_DIR GIT_ASKPASS GIT_CONFIG_COUNT JAVA_HOME"), "github_repo: acme/app, agent_env: 'GH_ENTERPRISE_TOKEN=x; GIT_ALLOW_PROTOCOL=https:file; GH_CONFIG_DIR=/srv; GIT_ASKPASS=/x; GIT_CONFIG_COUNT=-1; JAVA_HOME=/opt/jdk'");
+    const o = out(await go(flow, { owner: admin.id }), "a");
+    expect(o).toContain("GH_ENTERPRISE_TOKEN=(unset)");
+    expect(o).toContain("GIT_ALLOW_PROTOCOL=file");
+    expect(o).not.toContain("GH_CONFIG_DIR=/srv");
+    expect(o).toMatch(/GIT_ASKPASS=\s/);
+    expect(o).toMatch(/GIT_CONFIG_COUNT=\d+\b/);
+    expect(o).toContain("JAVA_HOME=/opt/jdk");
+  });
+
+  it("runs a flow with only agent steps without the bot's token variable", async () => {
+    noneRepo(admin);
+    delete process.env.BOT_TOKEN_FOR_TEST;
+    const s = await go(flowOf(agent("a", "SHOWGH")), { owner: admin.id });
+    expect(s.status, s.reason).toBe("succeeded");
+    expect(out(s, "a")).toContain("gh_token=none");
+  });
+
+  it("keeps the machine's login for shell steps only", async () => {
     noneRepo(admin);
     for (const [vars, github] of [[{ github_repo: "acme/app" }, "acme/app"], [{ github_repo: "acme/unlisted" }, "acme/unlisted"], [{ github_repo: "" }, ""]] as const) {
       const s = await go(flowOf(`${sh("plain", `echo "$GH_TOKEN|$GH_CONFIG_DIR|$SSH_AUTH_SOCK|\${GIT_CONFIG_GLOBAL-unset}|$GIT_AUTHOR_NAME"`)}${agent("agent", "SHOWGH")}`, `github_repo: "${github}"`), {
@@ -245,7 +334,7 @@ describe("an admin run", { timeout: 60_000 }, () => {
         config: cfg({ bot: { gh_token_env: "BOT_TOKEN_FOR_TEST", name: "The Bot", email: "bot@example.com" } }),
       });
       expect(out(s, "plain")).toBe(`${BOT}|${process.env.GH_CONFIG_DIR}|/tmp/agent.sock|unset|The Bot`);
-      expect(out(s, "agent")).toContain("gh_token=other");
+      expect(out(s, "agent")).toContain("gh_token=none");
     }
   });
 

@@ -6,7 +6,9 @@ import {
 } from "../evidence/identity.js";
 import { FlowIdentitySchema, RUN_EVENT_TYPES, type EvidenceEvent } from "../evidence/schema.js";
 import { evidenceEventId, type EvidenceEventBody } from "../evidence/stream.js";
+import { repoToolOf } from "../engine/repo-request.js";
 import { BOUNDARIES, MODES, OUTCOMES } from "../policy/schema.js";
+import { toolNameOf } from "../tool-profile/resolve.js";
 
 /**
  * The telemetry event: one lifecycle fact as one line, with labels, numbers and ids only. There is no free-text
@@ -203,6 +205,18 @@ function parts(body: EvidenceEventBody): { kind: TelemetryKind; name: string; fi
       const { policy, boundary, mode, outcome, reasonCode } = body.decision;
       return { kind: "policy", name: type, fields: { ...(body.step ? { step: body.step } : {}), decision: { policy, boundary, mode, outcome, reasonCode } } };
     }
+    case "repo.operation": {
+      const tool = body.operation === "unknown" ? undefined : repoToolOf(body.operation);
+      const fields: Draft = {
+        step: body.step,
+        tool: { name: tool ? toolNameOf(tool.kind, tool.operation) : "repo.unknown" },
+        outcome: body.outcome === "done" ? "ok" : body.outcome === "failed" ? "failed" : "denied",
+        ...(body.refusal ? { cause: body.refusal === "policy" ? ("policy" as const) : ("tool" as const) } : {}),
+        ...(body.branch ? { branch: body.branch } : {}),
+        ...(body.pullRequest ? { pullRequest: { repository: body.pullRequest.repository, number: body.pullRequest.number } } : {}),
+      };
+      return { kind: "tool", name: "tool.called", fields, repository: repoOf({ repository: body.repository }) };
+    }
     default: {
       const never: never = body;
       void never;
@@ -239,6 +253,11 @@ export function telemetryFromEvidence(runId: string, body: EvidenceEventBody, wr
         pullRequest: { repository: body.pullRequest.repository, number: body.pullRequest.number },
         outcome: "ok",
       } as Draft);
+    }
+    if (body.type === "repo.operation" && body.operation === "push" && body.outcome === "done") {
+      // a tm: id carries no `evidence` field
+      const { evidence: _evidence, ...plain } = common(tmId());
+      out.push({ ...plain, runId, kind: "delivery", name: "delivery.push_attempted", step: body.step, ...(body.branch ? { branch: body.branch } : {}) } as Draft);
     }
     return out as TelemetryEvent[];
   } catch {

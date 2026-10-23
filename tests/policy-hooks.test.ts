@@ -2,9 +2,15 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { userLogLine } from "../src/server/user-view.js";
 import { ConfigSchema } from "../src/config.js";
 import { protectedBranchEnv } from "../src/engine/guards.js";
-import { baseFacts, deniedReason, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
+import { readFileSync } from "node:fs";
+import { parseFlow } from "../src/flow/load.js";
+import { policyInputSha256, policyPackSha256 } from "../src/policy/evaluate.js";
+import { BASELINE_VERSION, NO_BASELINE_CONTROLS, baselinePack } from "../src/policy/baseline.js";
+import type { PolicyDecision } from "../src/policy/schema.js";
+import { baselineEntry, baseFacts, deniedReason, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
 import { ENGINE_REASONS } from "../src/policy/reasons.js";
 import { DenialSchema } from "../src/evidence/schema.js";
 import { BASELINE_PACK, BASELINE_POLICY_ID } from "../src/policy/baseline.js";
@@ -16,6 +22,7 @@ import { coverPack, writePack } from "./fixtures/policy-pack.js";
 
 const H = "1".repeat(64);
 const T = "2026-01-31T12:00:00.000Z";
+const WARN_WHY = "  Why: The step printed more than its output limit. What to do: Nothing to do: this policy only observes. In block mode the step would go on with this warning.";
 const STEP = { id: "build", visit: 1, type: "shell", parent: "outer" } as const;
 let home: string;
 beforeEach(() => {
@@ -121,7 +128,9 @@ describe("RunPolicy", () => {
     expect(answer.combined).toBe(answer.decisions[0]);
     expect(lines).toEqual([
       "· policy p1 1 [optional] · step.before outer/build: warn (output.limit-exceeded, rule any-step) · wins — observe only, nothing was stopped",
+      WARN_WHY,
       "· policy p2 7 [optional] · step.before outer/build: warn (output.limit-exceeded, rule any-step) — observe only, nothing was stopped",
+      WARN_WHY,
     ]);
     expect(policyDecided).toHaveBeenCalledTimes(2);
     expect(policyDecided).toHaveBeenCalledWith(out[0], STEP);
@@ -133,7 +142,7 @@ describe("RunPolicy", () => {
     const policy = new RunPolicy({ runId: "run-1", packs: [{ layer: "mandatory", id: "p1", pack: pack() }], base: { flow: "f" }, log: (l) => lines.push(l), now: () => T });
     const { decisions, combined } = policy.at("step.before", { step: "build" });
     expect(combined).toBe(decisions[0]);
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
     expect(lines[0]).toContain(" [mandatory] · ");
     expect(lines[0]).not.toContain("wins");
   });
@@ -227,7 +236,8 @@ describe("runPolicy and the config", () => {
     expect(answer.decisions).toHaveLength(1);
     expect(answer.decisions[0]).toMatchObject({ layer: "mandatory", decision: { policy: { id: BASELINE_POLICY_ID }, outcome: "allow" } });
     expect(answer.combined).toBe(answer.decisions[0]);
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("Nothing to do.");
     expect(lines[0]).toMatch(/^· policy foundry\.baseline \S+ \[mandatory\] · run\.start: allow /);
     expect(lines[0]).not.toContain("wins");
     expect(policy.observesPushes).toBe(false);
@@ -441,6 +451,189 @@ describe("fail closed", () => {
     expect(ENGINE_REASONS["policy.unavailable"]).toBe("The pack could not be loaded, so the action is denied.");
     expect(ENGINE_REASONS["policy.invalid"]).toBe("The pack could not be read, so the action is denied.");
     expect(ENGINE_REASONS["policy.break-glass"]).toBe("A mandatory pack could not be used, but an admin's break-glass is active, so the action goes on with a warning.");
+  });
+});
+
+describe("the baseline of a run", () => {
+  const flowOf = (name: string) => parseFlow(readFileSync(`flows/${name}.yaml`, "utf8"), `flows/${name}.yaml`);
+  const gitflow = () => flowOf("issue-gitflow");
+  const summary = (flowDef: unknown, flow = "issue-gitflow") => ({ runId: "r", vars: { github_repo: "Acme/Widgets" }, flow, flowDef, owner: undefined }) as never;
+  const make = (cfg: object, flowDef: unknown = gitflow(), flow?: string) => {
+    const lines: string[] = [];
+    const policy = runPolicy(summary(flowDef, flow), ConfigSchema.parse({ policy: { packs: [] }, ...cfg }), (l) => lines.push(l), undefined, home);
+    return { policy, lines };
+  };
+  /** The baseline decision for one push of a step. */
+  const pushed = (policy: RunPolicy, step: string, p: { branch: string; repository?: string; secretsFound?: number; commitIdentity?: boolean }) => {
+    const id = { id: step, visit: 1, type: "shell" } as const;
+    policy.repository(id, { credential: "none" });
+    const seen: PolicyDecision[] = [];
+    const at = policy.at.bind(policy);
+    policy.at = (b, f, s) => {
+      const a = at(b, f, s);
+      if (b === "push") seen.push(a.decisions[0]!.decision);
+      return a;
+    };
+    policy.pushes(id, [p]);
+    policy.at = at;
+    return seen[0]!;
+  };
+  const own = { repository: "acme/widgets", secretsFound: 0, commitIdentity: true };
+
+  it("records the hotfix exception, protected branches and other repositories for the shipped gitflow", () => {
+    const { policy } = make({ protected_branches: ["main"] });
+    expect(pushed(policy, "push_main", { branch: "main", ...own }).reasonCode).toBe("branch.hotfix-exception");
+    expect(pushed(policy, "other", { branch: "main", ...own }).reasonCode).toBe("branch.protected");
+    expect(pushed(policy, "x", { branch: "feat", ...own, repository: "acme/other" }).reasonCode).toBe("repository.not-allowed");
+    expect(pushed(policy, "x", { branch: "feat", ...own, repository: undefined }).reasonCode).toBe("policy.no-rule-matched");
+  });
+
+  it("uses the variant pack hash for a push without a repository", () => {
+    const { policy } = make({ protected_branches: ["main"] });
+    const controls = { protectedBranches: ["main"], secretScan: true, shippedHotfixFlow: true };
+    expect(pushed(policy, "x", { branch: "feat", ...own, repository: undefined }).packSha256).toBe(policyPackSha256(baselinePack(BASELINE_VERSION, controls)));
+    expect(pushed(policy, "x", { branch: "feat", ...own }).packSha256).toBe(policyPackSha256(baselinePack(BASELINE_VERSION, { ...controls, repository: "acme/widgets" })));
+  });
+
+  it("decides pushes with the secret scan off and for flow names the fact cannot hold", () => {
+    const off = make({ protected_branches: ["main"], secret_scan: false });
+    const noScan = { repository: "acme/widgets", commitIdentity: true };
+    expect(pushed(off.policy, "x", { branch: "feat", ...noScan, repository: "acme/other" }).reasonCode).toBe("repository.not-allowed");
+    expect(pushed(off.policy, "x", { branch: "feat", ...noScan }).reasonCode).toBe("policy.no-rule-matched");
+    expect(pushed(off.policy, "x", { branch: "feat", commitIdentity: true }).reasonCode).toBe("policy.no-rule-matched");
+    expect(pushed(off.policy, "other", { branch: "main", ...noScan }).reasonCode).toBe("branch.protected");
+    const odd = make({ protected_branches: ["main"], secret_scan: false }, { name: "My flow" }, "My flow");
+    expect(pushed(odd.policy, "x", { branch: "main", ...noScan }).reasonCode).toBe("branch.protected");
+    for (const repository of ["acme/other", "acme/widgets", undefined]) {
+      expect(pushed(odd.policy, "x", { branch: "feat", ...noScan, repository }).reasonCode).not.toBe("policy.input-incomplete");
+    }
+  });
+
+  it("gives a changed flow no exception", () => {
+    const changed = gitflow();
+    changed.steps = changed.steps.slice(1);
+    const { policy } = make({ protected_branches: ["main"] }, changed);
+    expect(pushed(policy, "push_main", { branch: "main", ...own }).reasonCode).toBe("branch.protected");
+  });
+
+  it("logs patterns it cannot express once, quoted", () => {
+    const { lines } = make({ protected_branches: ["release/?", "a\u0007b"] });
+    const bang = lines.filter((l) => l.startsWith("! policy foundry.baseline: protected branch patterns"));
+    expect(bang).toHaveLength(1);
+    expect(bang[0]).toContain('"release/?"');
+    expect(bang[0]).toContain('"a\\u0007b"');
+    expect(bang[0]).not.toContain("\u0007");
+  });
+
+  it("records a user with the machine credential and does not stop it", () => {
+    const policy = new RunPolicy({ runId: "r", packs: [baselineEntry(BASELINE_VERSION, NO_BASELINE_CONTROLS)], base: { owner: "user" }, log: () => undefined, now: () => T });
+    const answer = policy.repository(STEP, { credential: "machine" });
+    expect(answer.denied).toBeUndefined();
+    expect(answer.decisions[0]!.decision).toMatchObject({ outcome: "deny", reasonCode: "credential.scope-exceeded" });
+  });
+
+  it("has shippedFlow as a base fact at run.start", () => {
+    const { policy } = make({}, { name: "mine", workspace: "worktree" }, "mine");
+    const facts = { repository: "acme/widgets", flow: "mine", workspace: "worktree", owner: "none", shippedFlow: false } as const;
+    expect(policy.at("run.start").decisions[0]!.decision.inputSha256).toBe(policyInputSha256({ version: 1, boundary: "run.start", runId: "r", facts }));
+  });
+
+  it("does not throw for a config without the baseline settings", () => {
+    expect(() => runPolicy(summary(undefined), { policy: { packs: [] } } as never, () => undefined, undefined, home)).not.toThrow();
+  });
+
+  it("fails closed when the baseline cannot be built, and break-glass applies", () => {
+    const entry = baselineEntry("bad version!", NO_BASELINE_CONTROLS);
+    expect(entry).toMatchObject({ layer: "mandatory", id: BASELINE_POLICY_ID, problem: "policy.invalid" });
+    const policy = new RunPolicy({ runId: "r", packs: [entry], base: {}, log: () => undefined, now: () => T });
+    expect(policy.repository(STEP, { credential: "machine" }).denied?.reason).toBe(deniedReason(BASELINE_POLICY_ID, "policy.invalid", "repository.access"));
+    expect(policy.repository(STEP, { credential: "none" }).denied).toBeUndefined();
+    expect(policy.at("agent.write", { step: "build", isolated: false, sandboxed: false }, STEP).denied).toBeDefined();
+    const glass = { version: 1, reason: "outage", startedAt: "2026-01-31T11:30:00.000Z", expiresAt: "2026-01-31T13:00:00.000Z", actor: { kind: "cli", osUser: "admin" } } as never;
+    const evidence = { policyDecided: vi.fn(() => true), incomplete: vi.fn() } as unknown as RunRecorder;
+    const open = new RunPolicy({ runId: "r", packs: [entry], base: {}, log: () => undefined, evidence, now: () => T, breakGlass: () => glass });
+    const answer = open.repository(STEP, { credential: "machine" });
+    expect(answer.denied).toBeUndefined();
+    expect(answer.decisions[0]!.decision.reasonCode).toBe("policy.break-glass");
+  });
+});
+
+describe("explaining decisions in the log", () => {
+  const glass = { version: 1, reason: "outage", startedAt: "2026-01-31T11:30:00.000Z", expiresAt: "2026-01-31T13:00:00.000Z", actor: { kind: "cli", osUser: "admin" } } as never;
+  const broken = (id = "mand"): LoadedPack => ({ id, problem: "policy.unavailable", detail: "no file" });
+  const build = (packs: LoadedPack[], evidence: unknown, times: string[] = [T]) => {
+    const lines: string[] = [];
+    let i = 0;
+    const policy = new RunPolicy({ runId: "r", packs: packs.map((p) => ({ layer: "mandatory" as const, ...p })), base: {}, log: (l) => lines.push(l), evidence: evidence as RunRecorder, now: () => times[Math.min(i++, times.length - 1)]!, breakGlass: () => glass });
+    return { policy, lines };
+  };
+
+  it("groups a repeated decision with its count and first time, and explains it once", () => {
+    const { policy, lines } = build([{ id: "p1", pack: pack() }], undefined, ["2026-01-31T12:00:00.000Z", "2026-01-31T12:05:00.000Z"]);
+    policy.at("step.before", { step: "build" }, STEP);
+    policy.at("step.before", { step: "build" }, STEP);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).not.toContain("seen");
+    expect(lines[1]).toMatch(/^  Why: /);
+    expect(lines[2]).toMatch(/ · seen 2 times, first at 2026-01-31T12:00:00.000Z, now 2026-01-31T12:05:00.000Z$/);
+  });
+
+  it("explains an allow once, and counts its repeats", () => {
+    const { policy, lines } = build([{ id: "p1", pack: pack({ rules: [] }) }], undefined);
+    policy.at("run.start");
+    policy.at("run.start");
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toContain("What to do: Nothing to do.");
+    expect(lines[2]).toContain(" · seen 2 times, first at ");
+  });
+
+  it("tells the fix for a mandatory file pack and for the baseline", () => {
+    const { policy, lines } = build([broken()], undefined);
+    policy.repository(STEP, { credential: "machine" });
+    expect(lines[0]).toMatch(/: deny \(policy\.unavailable\) — enforced: the step is stopped$/);
+    expect(lines[1]).toContain("scf policy restore");
+    const b = build([{ ...baselineEntry("bad version!", NO_BASELINE_CONTROLS) }], undefined);
+    b.policy.repository(STEP, { credential: "machine" });
+    expect(b.lines[1]).toContain("check the protected branch and secret scan settings");
+    expect(b.lines[1]).not.toContain("restore");
+  });
+
+  it.each([
+    ["returns false", () => false],
+    ["throws", () => { throw new Error("disk"); }],
+  ])("logs the enforced denial when the break-glass record %s", (_n, record) => {
+    const { policy, lines } = build([broken()], { policyDecided: vi.fn(record), incomplete: vi.fn() });
+    const answer = policy.repository(STEP, { credential: "machine" });
+    expect(answer.denied).toBeDefined();
+    expect(lines.some((l) => l.includes("break-glass: the step goes on"))).toBe(false);
+    const deny = lines.filter((l) => l.startsWith("· policy"));
+    expect(deny).toHaveLength(1);
+    expect(deny[0]).toContain(": deny (policy.unavailable) — enforced: the step is stopped");
+    expect(lines.some((l) => l.includes("scf policy restore"))).toBe(true);
+    const shown = lines.map(userLogLine).filter(Boolean);
+    expect(shown).toHaveLength(2);
+    expect(shown[0]).toContain("deny (policy.unavailable)");
+  });
+
+  it("explains an unavailable baseline at a nonprivileged boundary as observed, not stopped", () => {
+    const entry = baselineEntry("bad version!", NO_BASELINE_CONTROLS);
+    const lines: string[] = [];
+    const policy = new RunPolicy({ runId: "r", packs: [entry], base: {}, log: (l) => lines.push(l), now: () => T });
+    const d = policy.at("run.start").decisions[0]!.decision;
+    expect(d).toMatchObject({ mode: "observe", outcome: "deny", reasonCode: "policy.invalid" });
+    expect(lines[0]).toContain("· policy foundry.baseline");
+    expect(lines[0]).toContain("deny (policy.invalid) — observe only, nothing was stopped");
+    expect(lines[1]).toContain("Nothing was stopped: this policy only observes.");
+    expect(lines[1]).not.toContain("The step was stopped");
+    expect(lines[1]).not.toMatch(/restore|file/);
+  });
+
+  it("logs the warn, its explanation and the break-glass line when the record is kept", () => {
+    const { policy, lines } = build([broken()], { policyDecided: vi.fn(() => true), incomplete: vi.fn() });
+    expect(policy.repository(STEP, { credential: "machine" }).denied).toBeUndefined();
+    expect(lines[0]).toContain("warn (policy.break-glass) — break-glass: the step goes on");
+    expect(lines[1]).toContain("under an administrator's break-glass");
+    expect(lines[2]).toMatch(/^! policy: break-glass active/);
   });
 });
 

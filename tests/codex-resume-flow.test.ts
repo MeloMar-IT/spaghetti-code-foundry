@@ -51,7 +51,7 @@ describe("Codex resume and the Codex folder", () => {
     expect(a.codexHome).toMatch(/^personal:[0-9a-f]{12}$/);
     expect(b.codexHome).toBe(a.codexHome);
     // the template value reached the process
-    expect(b.output).toContain(`again ${a.codexHome}`);
+    expect(b.output).toMatch(new RegExp(`again \\n<untrusted-data source="steps.first.codex_home"[^>]*>\\n${a.codexHome}\\n</untrusted-data>`));
     const file = join(s.runDir, "run.json");
     const saved = JSON.parse(readFileSync(file, "utf8"));
     expect(saved.state.steps.first.codex_home).toBe(a.codexHome);

@@ -82,6 +82,8 @@ export interface StatusView {
   lastRunId: (issue: number) => string | undefined;
   /** "HH:MM" of the scheduled release a finished run waits for. */
   releaseAt?: (run: RunSummary) => string | undefined;
+  /** Issues whose comments could not be read in this check: their status comment is left as it is. */
+  quiet?: number[];
 }
 
 export interface StatusTarget {
@@ -99,6 +101,7 @@ export interface StatusTarget {
 /** The text every issue should have now: one per issue, from the view that knows the most. */
 export function statusTargets(repo: string, views: StatusView[], known: ReadonlyMap<number, { owners: string[] }>, all: boolean): StatusTarget[] {
   const best = new Map<number, StatusTarget>();
+  const quiet = new Set(views.flatMap((v) => v.quiet ?? []));
   for (const v of views) {
     const { pending, active } = v.scheduler.queue();
     const get = (id: string): RunSummary | undefined => {
@@ -114,6 +117,7 @@ export function statusTargets(repo: string, views: StatusView[], known: Readonly
     if (all) for (const [n, k] of known) if (!seen.has(n) && k.owners.includes(v.id)) seen.add(n), list.push({ issue: n, title: "" });
 
     for (const { issue: n, title, tracked: t } of list) {
+      if (quiet.has(n)) continue;
       const issueUrl = `https://github.com/${repo}/issues/${n}`;
       const data: NextData = { watched: true, issueUrl };
       const runId = t ? t.runId : pending.find((p) => p.githubRepo === repo && p.issue === String(n))?.runId ?? v.lastRunId(n);

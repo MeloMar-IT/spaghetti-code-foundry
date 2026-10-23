@@ -508,6 +508,17 @@ describe("today's flow settings as a generated profile", () => {
     expect(p.grants.every((g) => g.approval === "none" && g.timeoutMs === null && g.maxConcurrent === null && g.outputCapBytes === null && g.dataClassification === "restricted")).toBe(true);
   });
 
+  it("repoCredential carries the broker's ceiling while the agent itself has none", () => {
+    const grantsOf = (s: Partial<LegacyToolSettings>) => legacyToolProfile(settings({ permissionMode: "bypassPermissions", repoOps: ["push"], ...s })).profile.grants;
+    const viaCeiling = grantsOf({ credential: "none", repoCredential: "machine" });
+    expect(viaCeiling.filter((g) => g.kind === "git" || g.kind === "github").map((g) => g.credential)).toEqual(["machine"]);
+    expect(viaCeiling.find((g) => g.kind === "shell")?.credential).toBe("none");
+    expect(grantsOf({ credential: "none" }).find((g) => g.kind === "git")?.credential).toBe("repository");
+    expect(grantsOf({ credential: "machine" }).find((g) => g.kind === "git")?.credential).toBe("machine");
+    const a = legacyToolProfile(settings({ allowedTools: ["Read"] })).profile;
+    expect(toolProfileSha256(a)).toBe(toolProfileSha256(legacyToolProfile(settings({ allowedTools: ["Read"], repoCredential: undefined })).profile));
+  });
+
   it("a rule without a meaning in a profile grants nothing and is reported", () => {
     const rules = ["Edit(/etc/**)", "Edit(~/notes/**)", "Edit(src/*.ts)", "Edit(../x)", "Bash()", "Bash(a\nb)", "WebFetch(https://example.com)", "WebSearch(cats)", "mcp__tracker__get_issue", "not a rule", "", "Edit(src/*.ts)"];
     const out = legacyToolProfile(settings({ permissionMode: "dontAsk", allowedTools: rules }));
@@ -522,6 +533,32 @@ describe("today's flow settings as a generated profile", () => {
     const codex = unenforceable(coder, CODEX_CAPABILITIES).map((g) => `${g.kind}:${g.restriction}`);
     expect(codex).toEqual(["files:limit-targets", "shell:deny-kind", "git:deny-kind", "github:deny-kind", "web:deny-kind"]);
     expect(unenforceable(coder, CLAUDE_CODE_CAPABILITIES)).toEqual([]);
+  });
+
+  it("grants the broker the repo_ops of a step, on the run's repository, and nothing without them", () => {
+    const git = (s: Partial<LegacyToolSettings>) => legacyToolProfile(settings(s)).profile.grants.filter((g) => g.kind === "git" || g.kind === "github");
+    const machine = git({ credential: "machine", repoOps: ["commit", "status", "push"] });
+    expect(machine).toHaveLength(1);
+    expect(machine[0]).toMatchObject({ kind: "git", operations: ["status", "commit", "push"], targets: ["*"], credential: "machine" });
+    const p = legacyToolProfile(settings({ credential: "machine", repoOps: ["commit", "status", "push"] })).profile;
+    expect(checkToolCall(p, { kind: "git", operation: "push", target: "acme/app" }).outcome).toBe("allow");
+    expect(git({ credential: "none", repoOps: ["fetch"] })[0]).toMatchObject({ credential: "repository" });
+    expect(git({ repoOps: ["pull-request"] })[0]).toMatchObject({ kind: "github", operations: ["pull-request.write"], targets: ["*"] });
+    for (const s of [settings(), settings({ repoOps: undefined })]) {
+      const profile = legacyToolProfile(s).profile;
+      expect(profile.grants.some((g) => g.kind === "git" || g.kind === "github")).toBe(false);
+      expect(checkToolCall(profile, { kind: "git", operation: "push", target: "acme/app" }).outcome).toBe("deny");
+    }
+  });
+
+  it("keeps the hash of a profile without repo_ops", () => {
+    // taken from the generator before repo_ops existed
+    expect(toolProfileSha256(legacyToolProfile(settings()).profile)).toBe("3fa42abd0ba5e9aa31cee43bc25fe063463a9fcd71d9a1716b8b5d37cfb1f175");
+    expect(toolProfileSha256(legacyToolProfile(settings({ permissionMode: "bypassPermissions", mcpServers: true, credential: "machine" })).profile)).toBe("6529c45f5cd0e639fcfbc62a2f5d5502938ac685b9f2f52d7617d7dd4de84ef0");
+  });
+
+  it("refuses an unknown repo_ops name", () => {
+    expect(paths(() => legacyToolProfile(settings({ repoOps: ["nope"] as any })))).toEqual(["settings.repoOps.0"]);
   });
 
   it("refuses settings that are not valid", () => {

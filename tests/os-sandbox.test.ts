@@ -160,6 +160,13 @@ describe("sandboxProfile", () => {
 describe("sandboxProfile for an agent step", () => {
   const writes = (t: string) => lines(t).filter((l) => l.startsWith("(allow file-write*"));
 
+  it("workspaceReadOnly also writes in the request folder of a repo_ops step, and nowhere else new", () => {
+    const text = sandboxProfile({ ...base, workspaceReadOnly: true, requestsDir: "/Users/mac/.data/runs/r1/repo-requests" }, same);
+    expect(writes(text)).toContain('(allow file-write* (subpath "/Users/mac/.data/runs/r1/repo-requests"))');
+    expect(writes(text).filter((l) => l.includes("(subpath"))).toHaveLength(3);
+    expect(writes(sandboxProfile({ ...base, workspaceReadOnly: true }, same)).join("\n")).not.toContain("repo-requests");
+  });
+
   it("workspaceReadOnly writes only in home and tmp of the run folder, and still denies the server's files", () => {
     const text = sandboxProfile({ ...base, workspaceReadOnly: true }, same);
     expect(writes(text)).toEqual([

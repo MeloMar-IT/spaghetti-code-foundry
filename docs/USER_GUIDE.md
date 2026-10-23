@@ -437,6 +437,9 @@ Home asks again every 30 seconds.
 - **The monitor:** admins also see an item when the circuit breaker stopped bug stories, and one item per finding that needs a person (two bug stories did not fix it). That item shows the sentence, the evidence and links to the two stories. It cannot be dismissed; it goes when you press **Try again** or mute the finding on the Watchers page (Administration → Watchers; see "Two tries, then a person").
 - **Owner (admins):** an item that has a run shows the owner's name, `deleted user` when the account is gone, and nothing otherwise. Users see no owner name.
 - **Order:** the item that holds back the most stories comes first, then the one that waits longest. Items are grouped by repository.
+- **Comments that cannot be read:** an issue whose comments cannot be read in time is listed from its label alone, with no number of questions.
+- **Every waiting label counts.** The issue is listed also past the first 100 issues, also next to another status label, and also without the trigger label unless its run is parked. An answered issue stays listed until its label goes. No status comment is written on it.
+- **One item per issue.** When several watchers list the same issue (the repository name is not case-sensitive), Your turn shows one item. It is the ordinary listing before an extra one, then the one that needs you, then the first watcher's. A waiting-label issue does not also get a separate item for its older runs.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
 - **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. A failed automatic release build (see [Sources](#sources)) is titled "Build failed — open the run" and links to its run; Dismiss works as for other failed runs. Runs of older versions have no record of who started them and are treated like watcher runs.
 - **Answer and approve here:** for an item of a watcher, buttons next to the GitHub link do the work. **Show questions** has **Accept all recommendations** (only for questions asked up front) and **Answer…** (a box per question; each needs an answer, and **Use recommendation** fills one in visibly). **Show plan**, **Show split** and **Show request** show the risk and **Approve** / **Reject** (say what to change). A failed item has **Retry** and **Retry with a hint…**. Each action is a normal comment on the issue under the Foundry's GitHub login, signed with your name, so replying on GitHub still works. Approve and reject need write access for that login. The item then shows under **Done — continuing**.
@@ -823,8 +826,9 @@ its description, or the kind of step when the flow gives none.
   commits, the approvals, the tests, the pull request and the files. A failed check names the
   event or file, says what is wrong and what to do next. **Check again** reloads the record, and
   **Export evidence** downloads `evidence-<run-id>.json` (the same answer as the API, see
-  "Evidence of a run"). A user sees file counts and no paths; models, policy denials and paths
-  are for administrators. The export never holds the content of a transcript or a log.
+  "Evidence of a run"). A user sees file counts and no paths; models and paths are for administrators.
+  A user sees the **Policy decisions** of the run (see "Policy packs in observe mode") without the rule
+  and the pack's hash, which are for administrators. The export never holds the content of a transcript or a log.
 
 - **Changes** — the complete diff the run made, including uncommitted work.
 
@@ -845,6 +849,25 @@ An **approval** step pauses the run until a person decides. Approve or reject in
 a **What happens next** block with **You** as who and the approval message as the reason.
 
 ![Waiting for approval](images/run-waiting.png)
+
+#### Text from outside the flow
+
+Text that comes from outside the flow is data, not instructions: an issue, a file in the repository,
+command output, a log, another agent's output or a saved learning. The Foundry does three things with it:
+
+- **It is wrapped.** An agent reads it in an `<untrusted-data>` block of its prompt, and the system
+  prompt tells it never to follow orders inside that block. A longer text is kept whole or not at all:
+  over 200,000 characters it is withheld, and the agent gets a `[withheld: …]` note in its place. Secrets are
+  removed, and tags that look like instructions or chat markers are made harmless.
+- **It cannot build a command.** A shell step, or the `vars` of a sub-flow, that uses such text is
+  refused, and the run fails with a message that names the placeholder. Read it from the `$FACTORY_*`
+  environment variables instead (for example `$FACTORY_TASK`).
+- **It may wait for you.** When a step would read content that has not been approved, the run stops as
+  **waiting for approval**. Resume it from that step to approve the content and let the step run. Any
+  other resume holds it again.
+
+The classifier that can check content may only make it stricter: it can raise the risk, withhold the
+content, or ask for approval. It never gives access that a rule denied.
 
 ### When something goes wrong
 
@@ -1059,6 +1082,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | cancelled | Someone cancelled the run. A watched issue resumes by itself at the next check, any other run you resume on its page if you still want it. |
 | cancelled — nothing to do | Someone cancelled the run while it was stopped, so nothing continues it. Nothing to do — resume it on its page if you still want the work. |
 | parked — not tracked by a watcher | The issue no longer has the trigger label, so no watcher follows it and nothing continues the run. Nothing to do — add the trigger label again and the story starts over with a new run. |
+| epic — its stories are built one by one | The issue has the epic label or a list of stories, so the Foundry builds its stories and starts no run for the epic itself. Nothing to do — if it is not an epic, remove the epic label or the list of stories. |
 | failed | A step failed and the run could not go on. Fix the cause if needed, then start over or resume the run at the failed step. When the Foundry itself failed: The Foundry itself failed, not the code: a blocked command, a marker it could not read or a broken setting. Follow the suggested fix, then start over or resume the run. |
 | watcher error | The watcher could not do its check, so its issues do not move. Look at the error on the Watchers page and fix the cause, it then tries again at the next check. |
 | bug stories stopped | The monitor stopped making bug stories, because many new problems appeared at once or its fixes kept failing. Look at what went wrong, then switch bug stories on again on the Watchers page. |
@@ -1204,11 +1228,24 @@ recorded, and a run does not stop because of them, with one exception: a mandato
 read or evaluated stops the steps that sign in or write (see [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read)).
 
 - **The baseline.** The Foundry has a built-in pack, `foundry.baseline`. It is asked at every boundary of
-  every run, with no setting. Its version is the Foundry's version. It has four rules:
-  - a push that would add secrets is denied (`secret.detected`);
+  every run, with no setting. Its version is the Foundry's version. **The Foundry owns it**: an administrator
+  cannot change, replace or remove it; an administrator can only add stricter packs next to it. It is built for each run from
+  `protected_branches`, `secret_scan` and the run's repository. Its rules, in order:
+  - a push of the shipped hotfix flow's `push_main` to a protected branch is allowed (`branch.hotfix-exception`);
+  - a push to a protected branch is denied (`branch.protected`), with the patterns of `protected_branches`;
+  - a push that would add secrets is denied (`secret.detected`); this rule is left out when `secret_scan: false`;
   - a push without a committer name and e-mail that git can find is denied (`identity.missing`);
+  - a push to a repository other than the run's is denied (`repository.not-allowed`); this rule is left out
+    when the run has no repository;
   - an agent write by a user without a sandbox is denied (`sandbox.required`);
-  - an in-place run by a user is denied (`workspace.admin-only`).
+  - an in-place run by a user is denied (`workspace.admin-only`);
+  - a user's run that gets the machine's credential is denied (`credential.scope-exceeded`).
+
+  All of them are observed only. Protected branch patterns with `?`, `[`, `]` or `\`, or longer than 255
+  characters, cannot be matched the way the hook matches them, so they are not in the baseline. The run
+  logs one `!` line for them. The hook still blocks those pushes, and they show as `policy.input-incomplete`.
+  A push to a remote that is not on GitHub is not asked about the repository. The pack's hash (`packSha256`)
+  depends on these settings and on the run, so two runs with different settings have different hashes.
 
   Nothing else is built in. The id `foundry.baseline` is reserved: `policy.packs`, `policy.mandatory`
   and `policy.repositories` refuse it.
@@ -1234,20 +1271,35 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   The baseline writes `mode: observe` on every rule.
 - **Which answer counts.** For each boundary the Foundry takes the most restrictive answer of all packs
   (from least to most restrictive: `allow`, `warn`, `require_approval`, `deny`). On a tie the higher layer wins:
-  `mandatory`, then `repositories`, then `packs`. A repository pack can only make things stricter: it
-  cannot allow what the baseline denies.
+  `mandatory`, then `repositories`, then `packs`. Inside one layer, a tie goes to the first pack. A repository
+  pack can only make things stricter: it cannot allow what the baseline denies. The answer does not depend on
+  the order of the lists.
 - **When it is asked.** The start of the run; before the workspace is made; before a step starts in the
   repository's checkout; before and after every step (also the steps inside a parallel step or a
   sub-flow); before a write-capable agent step; for each push a step makes; when an approval is used;
   and when the run succeeded. This is the same for built-in and custom flows.
+- **Observe and block mode.** A pack and each rule are in `observe` mode: the answer is recorded and
+  nothing is stopped, except as described under [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read).
+  `block` mode (a rule or pack in `enforce`) is **not available yet**: such a pack or rule is refused when it is
+  loaded or restored. Until then, a `deny` in a pack is only a record, and the line says `observe only, nothing was stopped`.
 - **What you see.** Every run has a line in the live log for each answer, at each boundary, also when no
   pack is configured. The line names the layer, and the answer that counts has ` · wins`. For example:
 
   ```text
   · policy foundry.baseline 0.1.0 [mandatory] · push: deny (secret.detected, rule secret-detected) · wins — observe only, nothing was stopped
+    Why: The new commits contain something that looks like a secret. What to do: Nothing was stopped: this policy only observes. In block mode the step would be stopped.
   ```
 
+  The `Why:` line (with `What to do:`) follows the first time a decision with the same policy, layer, boundary,
+  outcome, reason code, mode and rule is seen in a start of the run. A repeat of it is not hidden: its own line
+  ends with `· seen N times, first at <time>, now <time>`, so the count and the times stay in the log. The
+  same decision at another step counts too. The log shows a user the outcome, the reason, the reason code, the
+  policy id and version, and what to do; the layer, the rule and ` · wins` are for administrators.
   Each answer is also an event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
+  The evidence view of the run shows **Policy decisions**: one entry per kind of decision, with the outcome,
+  the reason, what to do, the number of times with the first and last time, and the steps (at most 10 are
+  named; the rest are counted). Older runs with no decisions say "No policy decisions recorded". When the
+  event record cannot be read whole, the list says it may be short.
 - **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack (the pack or one of its rules) is logged as
   `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. For a
   repository or optional pack, the run's result is the same as without the pack. For a mandatory pack,
@@ -1257,8 +1309,8 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   hook is there: when a branch is protected, the secret scan is on, or packs are configured. With both
   guards off and no packs, there is no hook and pushes are not observed. The hook still refuses pushes to
   protected branches and pushes the secret scan rejects; it never blocks a push for an observation.
-- **Without the secret scan,** a push gets `policy.input-incomplete` for the secret rule, since the number
-  of secrets is not known.
+- **Without the secret scan** (`secret_scan: false`), the secret rule is not in the baseline, since the number
+  of secrets is never known. Pushes are then decided by the other rules, with no `policy.input-incomplete` for it.
 - **Evidence format.** It is unchanged since #142. The baseline adds `policy.decided` events to every run.
   An older build cannot read the evidence of a run that has `policy.decided` events, so keep this build
   for those runs.
@@ -1365,6 +1417,41 @@ active, and so does any other layer's pack.
   that is ended with `--end` is logged as `policy: break-glass ended` by the server's next check. If the policy
   is still broken, the steps that need trust stay stopped. Fix or restore the policy first when you can; see
   [Restore the last-known-good copy](#restore-the-last-known-good-copy).
+
+### Versions of the components
+
+`scf components [kind]` prints each part of the Foundry that a promotion can name, with its version and
+a SHA-256 hash of its contents:
+
+```
+COMPONENT flow my-flow v0 sha256:<64 hex digits>
+COMPONENT model-routes default v1 sha256:<64 hex digits>
+COMPONENT policy-pack foundry.baseline <version> sha256:<64 hex digits> builtin
+```
+
+The kinds are `flow`, `policy-pack`, `tool-profile`, `model-routes` and `context-selector`. Pass one kind to
+list only that kind. The command reads the Foundry home only and changes nothing; it exits 1 when a
+component is a problem.
+
+- **Where each part comes from.** Flows are the `.yaml` files in `flows/`. Policy packs are `policies/<id>.json`.
+  Tool profiles are `tool-profiles/<id>.yaml` and context selectors are `context-selectors/<id>.yaml`. Both
+  folders are optional. The model routes are the `router` settings of `config.yaml`. A context selector file
+  holds the settings that `selectContext` reads; no run uses them yet.
+- **Built-ins.** The built-in flows and the built-in baseline pack are listed too, and end with ` builtin`.
+  They are never counted or recorded.
+- **Versions.** A flow's version is its `publish.version` when it is published, and `0` when not; a new
+  published number alone does not change its hash. A policy pack's version is the `version` of its policy.
+  A tool profile, the model routes and a context selector are counted: the version is the place of their
+  hash among the different hashes seen so far. Going back to an earlier definition gives its old number.
+- **Recording.** A counted component whose hash is not recorded prints `v-` and ` unrecorded`. Run
+  `scf components record [kind]` to give the new hashes their version. It writes only
+  `promotions/versions.json`, and only when something is new. Do not edit that file by hand: the command
+  refuses a file it cannot read, and it never overwrites one. A `promotions` folder that is a link is refused.
+- **Same content, same hash.** The hash does not depend on key order or on YAML comments. A tool profile may
+  have a `descriptions` map, one text per granted tool; it is part of the hash only when it has an entry, so
+  a profile without it keeps its hash.
+- **Problems.** A file that cannot be read or checked gives one `! <kind> <id>: <reason>` line. The reason
+  never shows the file's content or its place on the disk. The other components still print.
 
 ### Lifecycle telemetry
 
@@ -1553,6 +1640,14 @@ and the blocks of the library are already marked. **Flows you wrote yourself tha
 without it the Foundry's own access is used, not your repository's token.** If the sign-in fails
 in a marked step, the run ends there and `on_failure` is not followed. A call you tolerate on
 purpose must send its error output to `/dev/null`, because a refusal on stderr fails the step.
+
+**Repository operations asked by an agent (`repo_ops`).** An agent step can list the operations it may
+ask for: `clone`, `fetch`, `branch`, `commit`, `push`, `pull-request` and `status`. The agent writes its
+requests to a file the Foundry names for it, and the Foundry carries them out after the step has succeeded,
+with the sign-in of the run (the repository's own in an isolated run). The agent never gets a sign-in.
+Requests run in order and stop at the first one that does not succeed; that fails the step. A denial by the policy ends the run. Each result is logged and
+added to the step's output under "Repository operations". A step with `repo_ops` cannot be a reviewer
+step or part of a parallel step. The format is in the flow guide, "claude — an agent step".
 
 ### Controlling the path
 
@@ -2141,8 +2236,8 @@ request, the budget, the limit of new stories per check or a story that is runni
 removed at the next check, so the issue looks like every other story that waits. When the release
 pull request holds it, the thing to do (merge it) is on that pull request. A run that asked, was
 answered and cannot continue yet shows `factory:working`. The label comes back only for new,
-unanswered questions. A waiting label on an issue that has no run is left alone: remove the label
-to start the issue.
+unanswered questions. A waiting label on an issue that has no run, or next to another status label, is not changed; the
+issue is listed under **Needs you** as waiting for you. Remove the label to start it.
 
 **Parked stories.** To park a story, remove its Foundry labels (or only the trigger label). A run
 that stopped with questions, or was cancelled while it was stopped, is then parked at the next
@@ -2153,6 +2248,27 @@ with a new run, which the overview then follows; the old stopped run does not bl
 started again by itself; the overview says "cancelled — nothing to do". To start it again, remove
 and add the trigger label, or resume the run on its page. Stopped runs that wait for a release or
 a code area are not parked.
+
+**Park with a reply.** If the planner says the issue is not a coding task, reply **/park** on the
+issue to keep it open but out of the build queue. You can also answer with one line that says
+**keep it open**, **keep it open but out of the build queue**, **do not build**, **don't build** or
+**park it** (a final `.` or `!` is fine; other text on the line means it is an ordinary answer).
+Those phrases count only for a "not a coding task" stop. `/park` works on any question the Foundry
+asks, including the questions asked up front for a batch. A reply that says **keep it open** on a
+"needs more information" stop is an ordinary answer, so the run continues.
+
+- **Who.** Only someone with write access to the repository. Anyone else's `/park` is ignored, and
+  the reply counts as an answer.
+- **What it removes.** The trigger label and the Foundry status labels. The Foundry then posts a
+  comment that says the issue is parked and how to bring it back, and the run is marked parked (the
+  overview shows "parked — not tracked by a watcher"). Nothing is changed on GitHub when the Foundry
+  cannot park the issue at that moment, for example while work for it is queued or running again, or
+  when the labels cannot be removed. The Foundry tries again at the next check.
+- **Auto-answers.** Recommendations (`/defaults`, auto_defaults) are never taken for a "not a coding
+  task" stop: that question waits for you, or for `/park`.
+- **Bring it back.** Add the trigger label again: the story starts over with a new run. Or resume
+  the stopped run on its page. A resume clears the parked mark and the run continues; the labels
+  stay off, so the watcher does not relabel the issue.
 
 More options are set in `~/.spaghetti-code-foundry/config.yaml` (the form keeps them when you edit the
 watcher). This is the watcher for the [one-label pipeline](#the-label-pipeline-one-label--plan--code--one-pull-request):
@@ -2210,9 +2326,22 @@ project's build and test commands (`./gradlew`, `mvn`, `npm`, `pytest`, `go test
 `make`) and read-only git commands — so it can check its own work and, for example, regenerate
 test fixtures. Pushing is never allowed. If the build needs environment settings (such as
 `JAVA_HOME`), put them in the `agent_env` variable: `KEY=value` pairs separated by `;` or new
-lines. `PATH`, tokens and the Foundry's own variables can't be set this way. In a run that never
-uses the machine's login (see "What runs sign in with"), names that start with `GH_`, `GITHUB_`,
-`GIT_`, `SSH_` or `XDG_`, and `LC_ALL`, are ignored too.
+lines. `PATH`, tokens and the Foundry's own variables can't be set this way. An agent step never signs in
+(see "What an agent step can reach"), so a token variable, `GH_CONFIG_DIR`, `SSH_AUTH_SOCK` and
+`GIT_ALLOW_PROTOCOL` set here are replaced for the agent. In a run that never uses the machine's
+login (see "What runs sign in with"), names that start with `GH_`, `GITHUB_`, `GIT_`, `SSH_` or
+`XDG_`, and `LC_ALL`, are ignored too.
+
+**Epics.** An issue with the trigger label that is an **epic** gets no run of its own and asks no questions.
+Its stories are built one by one instead. An issue is an epic when it has the `epic` label, or when
+it has a **Stories** heading followed by a list of other issues. A bare checklist (`- [ ] #12`) does
+not make an epic, so an ordinary story with a list of related issues still runs. An issue with its
+own `**Epic:** #N` or `Parent: #N` line is a story, never an epic. The watcher shows the epic with
+the status **epic — its stories are built one by one** (see [Words the Foundry uses](#words-the-foundry-uses)).
+
+If the issue is an epic by mistake, remove the `epic` label or the list of stories. At the next check
+the watcher builds it like any other story. A run that was stopped with questions for an epic is
+parked and its waiting labels are removed, so the epic does not stay in **Needs you**.
 
 ### Bug stories go first
 
@@ -2466,7 +2595,7 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   later; the label stays `Factory_working`.
 - **The Foundry isn't running.** Watchers only run while `scf ui` / `scf serve` runs.
 - **It has an excluded label** such as `geni`.
-- **The story is parked.** Its trigger label was removed while its run waited for your answers, or the run was cancelled while stopped. Nothing is asked of you and nothing runs: the overview says "parked — not tracked by a watcher". Add the trigger label again to start the story over (see [How issue watchers use labels](#how-issue-watchers-use-labels)).
+- **The story is parked.** Its trigger label was removed while its run waited for your answers, you replied `/park` (or a "do not build" line to a "not a coding task" stop), or the run was cancelled while stopped. Nothing is asked of you and nothing runs: the overview says "parked — not tracked by a watcher". Add the trigger label again to start the story over (see [How issue watchers use labels](#how-issue-watchers-use-labels)).
 - **The issue was closed on GitHub, but its run is still working.** The
   line says so and links to the run page. Cancel the run there if the work is no longer wanted;
   if the issue was closed by the run itself (report, split, merge) you see nothing.
@@ -3019,7 +3148,8 @@ No notification and no `notify.command` is sent for a run whose issue is known t
 **Bot identity** — by default commits and comments are made as you. Set a bot name/email and a
 token (or a GitHub App) to make them as a bot instead. In a run that never uses the machine's login
 (every user's run, and an admin's run on a repository with a stored sign-in) the bot's token is never
-used; the bot name and e-mail are, else the name and e-mail of the run's owner.
+used; the bot name and e-mail are, else the name and e-mail of the run's owner. An agent step never
+gets the bot's token, in any run; a shell step gets it when the run uses the machine's login.
 
 **GitHub App** — one app for the whole Foundry. It lets users connect a repository without a personal
 token (the method "GitHub App" on My repositories). Set it up once:
@@ -3326,7 +3456,15 @@ show as "n runs ahead of you", without ids.
 
 **What runs sign in with.** In a run you own, every step marked `repo_access` signs in to the repository named by `github_repo` with the sign-in you chose for it, and nothing else: not the bot's token, not the server's `gh` login or git settings. Other steps and the agents never get it.
 
-**Runs that never use the machine's login.** Every run owned by a user is isolated, and so is an admin's run on a repository with a stored sign-in (a token, a deploy key or the GitHub App). In such a run **no step** acts with the server's login, the bot's token or the Mac's git identity. Every step, agents and shell steps without `repo_access` too, has no `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or bot token, an empty `gh` folder of its own, no git settings or credential helpers of the machine, no ssh agent and no ssh keys of the account, and no prompts. Only a step marked `repo_access` gets the repository's own credential. An admin's run on a repository with the method "none", one that is not in the list, or a local folder is **not** isolated: the machine's login and the bot's token work as before.
+**Runs that never use the machine's login.** Every run owned by a user is isolated, and so is an admin's run on a repository with a stored sign-in (a token, a deploy key or the GitHub App). In such a run **no step** acts with the server's login, the bot's token or the Mac's git identity. Every step, agents and shell steps without `repo_access` too, has no `GH_TOKEN`, `GITHUB_TOKEN`, `GH_ENTERPRISE_TOKEN` or bot token, an empty `gh` folder of its own, no git settings or credential helpers of the machine, no ssh agent and no ssh keys of the account, and no prompts. Only a step marked `repo_access` gets the repository's own credential. An admin's run on a repository with the method "none", one that is not in the list, or a local folder is **not** isolated: shell steps keep the machine's login and the bot's token as before.
+
+**What an agent step can reach.** In every run, an agent step (Claude or Codex) never signs in to Git or GitHub:
+- it has no `GH_TOKEN`, no other token variable, no ssh agent or keys, and no `gh` login; its `gh` folder is empty and removed after the step;
+- git may use only the `file` protocol for network work, so an agent cannot clone or push over https with the machine's login;
+- it keeps the bot's commit name. In an admin's run on the machine's HOME it also keeps the machine's global git settings; in a user's run, and in a Codex clean folder, it does not;
+- repository work goes to `repo_ops` (the broker carries it out after the step) or to a shell step.
+
+**Limit:** for an admin's run without an OS sandbox this is the environment only. A determined agent could still reach the machine's keychain or the `gh` folder of the account. The OS sandbox of a user's run holds that.
 - **Commit name.** Commits in these runs use the bot name and e-mail from Settings when they are set (each on its own), else the name and e-mail of the account that owns the run. If the account was deleted and the bot name and e-mail are not both set, the step ends with "the account that owns this run could not be found, so its commits have no name": set the bot name and e-mail in Settings, then resume the run.
 - **After the upgrade.** An unflagged step or an agent in these runs can no longer call `gh` or the remote. The machine's git settings (signing, aliases, proxy) are not used; if you need a proxy or a certificate file, list `HTTPS_PROXY` or `SSL_CERT_FILE` in `step_env.pass` (see "Environment of the steps").
 - **Environment of the steps.** A step of a run owned by a user does not get the server's environment. A shell step gets `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `TMP`, `TEMP`, `LANG`, `LANGUAGE`, `LC_ALL`, `TZ` and `TERM`, the Foundry's own `FACTORY_…` variables, and the names an admin lists. An agent step gets the same plus what its own agent and provider need (for example `ANTHROPIC_API_KEY` for Claude on an Anthropic provider, `OPENAI_API_KEY` for Codex on OpenAI); keys of other providers are not passed. Admin runs are unchanged.
@@ -3654,7 +3792,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note; 409 for a closed issue, as for resume |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
-| `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policies and account ids); `state` is `not_available` for a run without a manifest |
+| `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest |
 | `GET /api/runs/:id/transcript/:n` | yes | no | the transcript of a step |
 | `GET /api/next` | yes | no | what happens next, for all runs |
 | `GET /api/health` | yes | no | server health |
@@ -5933,6 +6071,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
+| `scf components [kind]` / `scf components record [kind]` | Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
 | `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |

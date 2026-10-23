@@ -109,6 +109,9 @@ const InputSchema = z
     taskMaxAgeSeconds: z.number().int().min(1).max(CONTEXT_MAX_AGE_SECONDS_LIMIT).nullable().default(null),
   })
   .strict();
+/** The settings of a selector that can be kept in a file. Only `scf components` uses it so far (#153). */
+export const ContextSelectorSettingsSchema = InputSchema.pick({ rules: true, budget: true, classification: true, maxClassification: true, consumers: true, taskMaxAgeSeconds: true }).strict();
+export type ContextSelectorSettings = z.output<typeof ContextSelectorSettingsSchema>;
 export type SelectContextInput = z.input<typeof InputSchema> & { snapshot: RepositorySnapshot };
 
 /** The input of the selector is not valid. The message names fields, never values. */

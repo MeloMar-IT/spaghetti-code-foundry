@@ -64,7 +64,12 @@ export function assembleToolProfile(identity: ToolProfileIdentity, entries: read
 }
 
 /** The canonical form of a profile (see assembleToolProfile). Two profiles that grant the same have the same form. */
-export const normalizeToolProfile = (profile: ToolProfile): ToolProfile => assembleToolProfile(parseToolProfile(profile).profile, operationGrants(profile));
+export function normalizeToolProfile(profile: ToolProfile): ToolProfile {
+  const p = parseToolProfile(profile);
+  const base = assembleToolProfile(p.profile, operationGrants(p));
+  // Descriptions count only when there is one: a profile without them keeps the hash it always had.
+  return p.descriptions && Object.keys(p.descriptions).length > 0 ? { ...base, descriptions: { ...p.descriptions } } : base;
+}
 
 /** The SHA-256 of a profile: of the canonical JSON of its canonical form, so the order it was written in does not count. */
 export const toolProfileSha256 = (profile: ToolProfile): string => sha256Hex(canonicalJson(normalizeToolProfile(profile)));

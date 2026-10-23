@@ -15,9 +15,10 @@ function lookup(ctx: TemplateContext, path: string): unknown {
  * Render {{path.to.value}} placeholders.
  * - `allowed` restricts which top-level roots may be referenced (used to keep
  *   untrusted text like step output out of shell commands).
+ * - `each` sees every value found (path and text) and returns what goes in its place.
  * - A step that has not run yet renders as "" so loops can reference later steps.
  */
-export function render(template: string, ctx: TemplateContext, allowed?: readonly string[]): string {
+export function render(template: string, ctx: TemplateContext, allowed?: readonly string[], each?: (path: string, text: string) => string): string {
   return template.replace(PLACEHOLDER, (_m, path: string) => {
     const root = path.split(".")[0]!;
     if (allowed && !allowed.includes(root)) {
@@ -31,8 +32,14 @@ export function render(template: string, ctx: TemplateContext, allowed?: readonl
       if (root === "steps") return "";
       throw new Error(`unknown template variable {{${path}}}`);
     }
-    return typeof v === "object" ? JSON.stringify(v) : String(v);
+    const text = typeof v === "object" ? JSON.stringify(v) : String(v);
+    return each ? each(path, text) : text;
   });
+}
+
+/** The paths of the {{placeholders}} in a template. */
+export function placeholders(template: string): string[] {
+  return [...template.matchAll(PLACEHOLDER)].map((m) => m[1]!);
 }
 
 const envSuffix = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, "_");

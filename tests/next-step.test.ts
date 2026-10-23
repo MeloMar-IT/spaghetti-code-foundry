@@ -26,7 +26,9 @@ describe("comment sentences", () => {
       "FACTORY_FIRST_MERGE_PR", "FACTORY_FIRST_MERGE_RELEASE", "FACTORY_FIRST_NOTHING", "FACTORY_FIRST_OPEN_PR", "FACTORY_FIRST_PLANNER_QUESTIONS", "FACTORY_FIRST_QUESTIONS",
       "FACTORY_FIRST_SHIPS", "FACTORY_FIRST_START_CODING", "FACTORY_FIRST_START_PARTS",
       "FACTORY_NEXT_APPROVAL", "FACTORY_NEXT_APPROVE_PLAN", "FACTORY_NEXT_APPROVE_SPLIT", "FACTORY_NEXT_PLANNER_QUESTIONS", "FACTORY_NEXT_QUESTIONS",
+      "FACTORY_PARK_HINT",
     ]);
+    expect(env.FACTORY_PARK_HINT).toContain("/park");
     expect(env.FACTORY_FIRST_NOTHING).toBe(firstLine(nextStep("running")));
     for (const k of COMMENT_KINDS) {
       const f = env[`FACTORY_FIRST_${k.toUpperCase()}`]!;
@@ -137,6 +139,7 @@ describe("next-step records, one per kind", () => {
     ["daily_budget", data, "A time limit", "Nothing — it continues by itself", ISSUE],
     ["release", { ...data, pr: { number: 99, url: "https://github.com/acme/app/pull/99" } }, "You", "Merge the release pull request #99", "https://github.com/acme/app/pull/99"],
     ["failed", data, "Something is wrong", "Look at the steps and the log on the run page, then remove the `factory:failed` label to start over, or resume the run on its page to continue at the failed step", ISSUE],
+    ["epic", data, "Foundry", "Nothing — its stories are built one by one", ISSUE],
     ["restart", {}, "Foundry", "Nothing — it continues by itself", "#/watchers"],
     ["watcher_error", { reason: "gh failed" }, "Something is wrong", "Look at Error details on the Watchers page", "#/watchers"],
     ["closed_elsewhere", {}, "You", "Cancel the run if the work is no longer wanted", "#/runs/r1"],
@@ -214,6 +217,15 @@ describe("next-step records, one per kind", () => {
     expect(dep(nextStep("release", { issue: 88 }, { releaseAt: "17:00" }))).toBe("#89 waits for #88, which waits for the 17:00 release");
   });
 
+  it("says how to undo a wrong epic match, also as a blocker", () => {
+    const n = nextStep("epic", { repo: "acme/app", issue: 7, title: "t" }, { watched: true, issueUrl: ISSUE });
+    expect(n.who).toBe("Foundry");
+    expect(n.where.label).toBe("Issue #7");
+    expect(n.text).toContain("remove the epic label or the list of stories");
+    expect(n.status).toBe(statusName("epic"));
+    expect(nextStep("dependency", { issue: 8 }, { blockers: [{ issue: 7, next: n }] }).why).toContain("#7, which is an epic");
+  });
+
   it("uses no banned word in any record", () => {
     const variants: [NextKind, Parameters<typeof nextStep>[2]][] = [
       ...cases.map((c) => [c[0], c[1]] as [NextKind, Parameters<typeof nextStep>[2]]),
@@ -247,7 +259,7 @@ describe("next-step records, one per kind", () => {
   });
 
   it("has a kind in the table for every kind", () => {
-    expect(new Set(cases.map((c) => c[0])).size).toBe(29);
+    expect(new Set(cases.map((c) => c[0])).size).toBe(30);
   });
 
   it("says why a closed issue and a silent watcher need attention", () => {

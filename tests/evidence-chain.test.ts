@@ -8,6 +8,7 @@ import { buildRunEvidence, flowDefinitionHash, NotFinalizable, terminalStatus } 
 import { sha256Hex } from "../src/evidence/identity.js";
 import { RunEvidenceSchema, type EvidenceEvent } from "../src/evidence/schema.js";
 import { EvidenceStream } from "../src/evidence/stream.js";
+import { EVIDENCE_EVENT_VERSION } from "../src/evidence/version.js";
 
 /**
  * Golden vectors. The canonical texts are written out here by hand, and their hashes were made outside this code
@@ -102,12 +103,12 @@ describe("the hash chain", () => {
     written.forEach((line, i) => {
       const { hash, ...rest } = JSON.parse(line) as Record<string, unknown>;
       expect(line).toBe(canonicalJson({ ...rest, hash }));
-      expect(rest.version).toBe(3);
+      expect(rest.version).toBe(EVIDENCE_EVENT_VERSION);
       expect(hash).toBe(eventHash(rest));
       const old = JSON.parse(LINES[i]!) as Record<string, unknown>;
       const { hash: _h, prevHash: _p, ...oldRest } = old;
       const { prevHash: _q, ...newRest } = rest;
-      expect(newRest).toEqual({ ...oldRest, version: 3 });
+      expect(newRest).toEqual({ ...oldRest, version: EVIDENCE_EVENT_VERSION });
     });
     expect(last?.hash).toBe((JSON.parse(written[3]!) as { hash: string }).hash);
     expect(readEvidenceChain(written, "run-1")).toMatchObject({ ok: true, terminalHash: last?.hash });
@@ -141,7 +142,7 @@ describe("the hash chain", () => {
       ["an empty line", [LINES[0]!, "", ...LINES.slice(1)], 2, "not-json"],
       ["an array", ["[]"], 1, "not-json"],
       ["an unknown field", swap(0, '"seq":0', '"secret":"x","seq":0'), 1, "invalid"],
-      ["a newer version", swap(0, '"version":1', '"version":4'), 1, "unsupported-version"],
+      ["a newer version", swap(0, '"version":1', '"version":5'), 1, "unsupported-version"],
       ["another run", chained([{ type: "run.started" }], "run-2"), 1, "order"],
       ["no hashes", ['{"id":"ev-000000","runId":"run-1","seq":0,"time":"2026-01-31T12:00:00.000Z","type":"run.started","version":1}'], 1, "unchained"],
     ];

@@ -566,7 +566,7 @@ steps:
 `);
     expect(s.history[0]!.output).toContain("make test");
     expect(s.history[0]!.output).toContain("running db");
-    expect(s.history[1]!.output).toContain("Known issues: - tests need a running db");
+    expect(s.history[1]!.output).toMatch(/Known issues: \n<untrusted-data source="learnings"[^>]*>\n- tests need a running db/);
   });
 });
 

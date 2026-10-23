@@ -226,7 +226,7 @@ describe("deliver pipeline", () => {
     expect(done.history.find((h) => h.id === "approve_plan")!.output).toContain("approved by marcel: keep it small");
   });
 
-  it("fixes a waiting label when the run was approved elsewhere (e.g. in the UI)", async () => {
+  it("leaves a lone waiting label alone when the run was approved elsewhere (e.g. in the UI)", async () => {
     process.env.FAKE_RISK = "85";
     issues([5, ["Factory_go"]]);
     const w = watcher();
@@ -239,9 +239,11 @@ describe("deliver pipeline", () => {
     await settle();
     expect(runOf("issue-deliver", "5")!.status).toBe("succeeded");
     issues([5, ["Factory_go", "Factory_waiting"]]);
+    const before = gh.ghLog().length;
     await w.tick();
     await settle();
-    expect(gh.ghLog()).toMatch(/gh issue edit 5 .*--remove-label Factory_waiting.*--remove-label Factory_go.*--add-label Factory_done/);
+    // The waiting label does not match the run, but it is listed as waiting for the owner, not changed.
+    expect(gh.ghLog().slice(before)).not.toMatch(/gh issue edit 5 /);
   });
 
   const SPLIT = (risk: number, agreed = false) => [

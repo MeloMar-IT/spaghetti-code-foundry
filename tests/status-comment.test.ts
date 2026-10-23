@@ -203,6 +203,18 @@ describe("statusTargets", () => {
     expect(t.final).toBe(false);
   });
 
+  it("makes no target for an issue that any view lists as quiet", () => {
+    const a = view({ id: "a", tracked: [t7({ issue: 4 }), t7({ issue: 5 })], quiet: [4] });
+    const b = view({ id: "b", tracked: [t7({ issue: 4 })] });
+    expect(statusTargets(REPO, [a, b], new Map(), true).map((t) => t.issue)).toEqual([5]);
+  });
+
+  it("makes no final target for a known issue that is quiet", () => {
+    const quiet = view({ quiet: [9] });
+    expect(statusTargets(REPO, [quiet], known(9), true)).toEqual([]);
+    expect(statusTargets(REPO, [view()], known(9), true)).toHaveLength(1);
+  });
+
   describe("an issue that is gone", () => {
     const gone = (r: RunSummary | undefined, over: Partial<StatusView> = {}) =>
       view({ scheduler: sched({ runs: r ? [r] : [], active: r?.status === "running" ? [r.runId] : [] }), lastRunId: () => r?.runId, ...over });

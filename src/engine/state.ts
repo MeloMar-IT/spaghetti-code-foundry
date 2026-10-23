@@ -9,6 +9,7 @@ import type { CanonicalSelectionRecord } from "../skills/run-canonical.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
 import type { RunSkillPlan } from "../skills/run-plan.js";
 import type { SessionToolGrant } from "../skills/tool-policy.js";
+import type { OutputLabel } from "./untrusted.js";
 
 export type RunStatus = "running" | "succeeded" | "failed" | "cancelled" | "stopped" | "waiting";
 
@@ -47,6 +48,10 @@ export interface StepRecord {
   skills?: { grant?: SessionToolGrant; loaded: string[]; omitted?: string[]; bytes: number; estimatedTokens: number; role?: "reviewer"; state?: "loaded" | "reloaded" | "reused"; digest?: string; attachedBytes?: number; attachedEstimatedTokens?: number };
   /** A skill catalogue was put before this step's prompt: counts only, never the text. `hidden`: skills left out only because they are not pinned. */
   skillCatalogue?: { entries: number; omitted: number; estimatedTokens: number; hidden?: number; /** Skills with the same text, offered once: `id@version` only. */ mirrors?: { kept: string; collapsed: string[] }[]; mirrorsOmitted?: number; choices?: AppliedChoice[]; choicesOmitted?: number; choicesSource?: { pins: { commit: string; blob: string } }; canonical?: CanonicalSelectionRecord[]; /** Owner catalogue descriptions the agent saw, with their release. */ descriptions?: { skill: string; text: string; from: "skill-selections"; release: string }[]; descriptionsOmitted?: number };
+  /** What the output of this step is: source, trust class, content type, size, hash, who may read it, risk (see untrusted.ts). Absent on older runs. */
+  label?: OutputLabel;
+  /** The step did not run: the content hashes it waits for a person to approve. Absent on older runs. */
+  held?: string[];
   startedAt: string;
   durationMs: number;
   logFile: string;
@@ -124,6 +129,10 @@ export interface RunSummary {
   planCheck?: RunPlanCheck;
   /** Values a step handed on in `<run dir>/outputs.json` (see run-outputs.ts), e.g. `release_url` and `release_tag` of release-build. Absent on older runs. */
   outputs?: Record<string, string>;
+  /** The run stopped at this step because content it reads needs a person's approval (sha256 of each content). Only a resume by a person from that step approves it. Absent on older runs and when nothing is held. */
+  heldContent?: { step: string; sha256: string[] };
+  /** Content hashes a person approved on resume (the newest 200). Absent on older runs. */
+  approvedContent?: string[];
   /** When the run was archived (taken out of the default list). Absent: not archived. */
   archivedAt?: string;
   /** The id of the account that archived it. Never shown to a user. */
@@ -318,6 +327,16 @@ export function setRunParked(runDir: string, at: string): boolean {
   return rewriteRunMark(runDir, (s) => {
     if ((s.status !== "stopped" && s.status !== "cancelled") || typeof s.parkedAt === "string") return undefined;
     return { ...s, parkedAt: at };
+  });
+}
+
+/** Takes the parked mark off a run again (a park that could not be finished). Changes nothing else. Returns true when the file was replaced. Never throws. */
+export function clearRunParked(runDir: string): boolean {
+  return rewriteRunMark(runDir, (s) => {
+    if (typeof s.parkedAt !== "string") return undefined;
+    const next = { ...s };
+    delete next.parkedAt;
+    return next;
   });
 }
 

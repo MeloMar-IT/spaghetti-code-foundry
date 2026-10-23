@@ -11,7 +11,7 @@ import {
  */
 
 /** Steps from older event versions. 1 → 2 and 2 → 3 only set the version: each added an event type, no field changed. */
-export const EVENT_MIGRATIONS: EvidenceMigrations = { 1: (old) => ({ ...old, version: 2 }), 2: (old) => ({ ...old, version: 3 }) };
+export const EVENT_MIGRATIONS: EvidenceMigrations = { 1: (old) => ({ ...old, version: 2 }), 2: (old) => ({ ...old, version: 3 }), 3: (old) => ({ ...old, version: 4 }) };
 /** Steps from older manifest versions. */
 export const MANIFEST_MIGRATIONS: EvidenceMigrations = {};
 

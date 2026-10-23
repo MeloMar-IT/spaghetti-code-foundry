@@ -20,7 +20,8 @@ import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } fr
 import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
 import { drainPushLog, pushLogFile, repositoryFact, type PolicyDenied, type RunPolicy } from "./policy-hooks.js";
-import { outputEnvName, render, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
+import { outputEnvName, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
+import { boundEnv, capEnvValue, labelOutput, renderTrusted, stepTypesOf, trustOf, type OutputClassifier } from "./untrusted.js";
 
 /** Shell commands may only template trusted values; task and outputs go via env. */
 export const SHELL_TEMPLATE_ROOTS = ["vars", "workdir", "run"] as const;
@@ -86,6 +87,8 @@ export interface Engine {
   policy?: RunPolicy;
   /** Evidence only: who asked for this start or resume (and so who decided at an approval step). */
   actor?: Actor;
+  /** Optional content classifier (tests only; the server sets none). It can only raise risk, quarantine or require approval. */
+  classifier?: OutputClassifier;
 }
 
 export interface ApprovalDecision {
@@ -94,16 +97,19 @@ export interface ApprovalDecision {
   note?: string;
 }
 
-export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue">;
+export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held">;
 
-export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">): Record<string, string> {
+export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o: { bound?: (env: Record<string, string>) => Record<string, string> } = {}): Record<string, string> {
   const hotfix = engine.hotfix ?? "off";
   // Never inherited from the server's own environment: only pushAllowEnv() can set it, for one step.
   const env: Record<string, string> = { ...engine.baseEnv, FACTORY_HOTFIX: hotfix, FACTORY_PUSH_ALLOW: "" };
   if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix));
   for (const [k, v] of Object.entries(scope.ctx.vars)) env[varEnvName(k)] = v;
-  for (const [id, s] of Object.entries(scope.ctx.steps)) env[outputEnvName(id)] = String(s.output ?? "");
-  return withScfAliases(env);
+  for (const [id, s] of Object.entries(scope.ctx.steps)) env[outputEnvName(id)] = capEnvValue(String(s.output ?? ""), `steps.${id}.output`);
+  // Every consumer gets untrusted values scrubbed (secrets and configured patterns) before the step's own credentials are
+  // added by the callers. An agent step may also quarantine them (`bound`). The SCF_ aliases get the same values.
+  const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
+  return withScfAliases(o.bound ? o.bound(scrubbed) : scrubbed);
 }
 
 export function historySummary(summary: RunSummary): string {
@@ -112,10 +118,17 @@ export function historySummary(summary: RunSummary): string {
     .join("\n");
 }
 
+/** The label of a step's output, saved with its record. */
+function outputLabel(step: Step, scope: Scope, res: StepResult): StepRecord["label"] {
+  const path = `steps.${step.id}.output`;
+  return labelOutput(res.output, { path, kind: trustOf(path, stepTypesOf(scope.flow)).kind ?? "log", step: step.id, stepType: step.type }, { timedOut: res.error === "timed out" });
+}
+
 /** Store a finished step in history and in the scope's template context. */
 export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number): StepRecord {
   const rec: StepRecord = {
     id: scope.prefix + step.id,
+    label: outputLabel(step, scope, res),
     type: step.type,
     visit,
     startedAt: startedAt.toISOString(),
@@ -256,7 +269,6 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         step: step.id,
         credential: holds ? "repository" : !iso ? "machine" : "none",
         isolated: Boolean(iso),
-        shippedFlow: engine.hotfix === "on" ? true : undefined,
       });
       if (asked?.denied) return refuseByPolicy(engine, identity, asked.denied);
       const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
@@ -320,7 +332,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           );
         }
         r = await runShell({
-          command: render(step.run, ctx, SHELL_TEMPLATE_ROOTS),
+          command: renderTrusted(step.run, ctx, stepTypesOf(scope.flow), SHELL_TEMPLATE_ROOTS),
           cwd: engine.summary.workdir!,
           env: stepEnvVars,
           sandboxProfile: sandboxProfileText,
@@ -388,6 +400,12 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         }),
       );
       const failed = results.filter((r) => !r.res.ok).map((r) => r.id);
+      // A hold needs a person at this step; inside a parallel step it cannot be kept, so the run ends here (on_failure is not followed).
+      if (results.some((r) => r.res.held)) {
+        engine.accessFailed = true;
+        const reason = "content held for approval inside a parallel step; run that step outside the parallel block";
+        return { ok: false, output: reason, error: reason };
+      }
       return {
         ok: failed.length === 0,
         output: results.map((r) => `## ${r.id}\n${r.res.output}`).join("\n\n"),
@@ -402,7 +420,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         return { ok: false, output: "", error: `sub-flow "${flow.name}" contains approval steps; put approvals in the parent flow` };
       }
       const vars = { ...flow.vars, ...ctx.vars };
-      for (const [k, v] of Object.entries(step.vars ?? {})) vars[k] = render(v, ctx, SHELL_TEMPLATE_ROOTS);
+      for (const [k, v] of Object.entries(step.vars ?? {})) vars[k] = renderTrusted(v, ctx, stepTypesOf(scope.flow), SHELL_TEMPLATE_ROOTS);
       const subScope: Scope = {
         flow,
         ctx: { ...ctx, vars, steps: {}, run: { ...ctx.run } },

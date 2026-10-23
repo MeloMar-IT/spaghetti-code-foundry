@@ -335,16 +335,43 @@ async function listPage(repo: string, query: string, timeoutMs?: number): Promis
   return { issues: list.filter((i) => !i.pull_request), full: list.length >= 100 };
 }
 
+/** One page of the issue list for a query (without page=), as GitHub gave it. `check` runs on every element. */
+async function readIssuePage(repo: string, query: string, page: number, timeoutMs?: number, check?: (v: unknown) => void): Promise<(RestIssue & { pull_request?: unknown })[]> {
+  const out = (await gh(["api", `repos/${repo}/issues?${query}&page=${page}`], undefined, timeoutMs)).trim();
+  const list = (out ? JSON.parse(out) : []) as (RestIssue & { pull_request?: unknown })[];
+  if (!Array.isArray(list)) throw new Error("GitHub gave an answer that is not a list of issues");
+  if (check) for (const v of list) check(v);
+  return list;
+}
+
+/**
+ * Open issues with one label, oldest first, 100 per page: `pages` pages from `fromPage` on. Every page read is kept.
+ * `next` is 1 after a short page (the end), else the page after the last one read. A failing first page rejects; a later
+ * one returns the pages before it, and `next` is the failed page, so the next check starts there. A label name with a comma is not supported.
+ */
+export async function listOpenIssuesByLabelPages(repo: string, label: string, o: { fromPage: number; pages: number; timeoutMs?: number }): Promise<{ pages: Map<number, RestIssue[]>; next: number }> {
+  if (!Number.isInteger(o.pages) || o.pages < 1) throw new Error("pages must be a whole number of 1 or more");
+  if (!Number.isInteger(o.fromPage) || o.fromPage < 1) throw new Error("fromPage must be a whole number of 1 or more");
+  const query = `labels=${encodeURIComponent(label)}&state=open&per_page=100&sort=created&direction=asc`;
+  const pages = new Map<number, RestIssue[]>();
+  for (let p = o.fromPage; p < o.fromPage + o.pages; p++) {
+    let list: (RestIssue & { pull_request?: unknown })[];
+    try {
+      list = await readIssuePage(repo, query, p, o.timeoutMs, checkIssue);
+    } catch (e) {
+      if (pages.size === 0) throw e;
+      return { pages, next: p };
+    }
+    pages.set(p, list.filter((i) => !i.pull_request));
+    if (list.length < 100) return { pages, next: 1 };
+  }
+  return { pages, next: o.fromPage + o.pages };
+}
+
 /** Pages of the issue list for a query (without page=): pull requests left out. `check` runs on every element first, the sentinel page too. */
 async function pagedIssues(repo: string, query: string, o: { pages: number; timeoutMs?: number }, check?: (v: unknown) => void): Promise<{ issues: RestIssue[]; cut: boolean }> {
   if (!Number.isInteger(o.pages) || o.pages < 1) throw new Error("pages must be a whole number of 1 or more");
-  const readPage = async (page: number) => {
-    const out = (await gh(["api", `repos/${repo}/issues?${query}&page=${page}`], undefined, o.timeoutMs)).trim();
-    const list = (out ? JSON.parse(out) : []) as (RestIssue & { pull_request?: unknown })[];
-    if (!Array.isArray(list)) throw new Error("GitHub gave an answer that is not a list of issues");
-    if (check) for (const v of list) check(v);
-    return list;
-  };
+  const readPage = (page: number) => readIssuePage(repo, query, page, o.timeoutMs, check);
   const issues: RestIssue[] = [];
   for (let p = 1; p <= o.pages; p++) {
     const list = await readPage(p);

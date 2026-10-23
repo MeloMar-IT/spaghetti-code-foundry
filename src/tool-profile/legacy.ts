@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PERMISSION_MODES } from "../flow/schema.js";
+import { REPO_OPERATIONS, repoToolOf } from "../engine/repo-request.js";
 import { CREDENTIALS } from "../policy/schema.js";
 import type { SkillToolProfile } from "../skills/schema.js";
 import { invalid, parseToolProfile } from "./parse.js";
@@ -35,6 +36,10 @@ export const LegacyToolSettingsSchema = z
     mcpServers: z.boolean(),
     /** The sign-in the session runs with. */
     credential: z.enum(CREDENTIALS),
+    /** The repository operations the step may ask the broker for (`repo_ops`). The agent itself is given none of them. */
+    repoOps: z.array(z.enum(REPO_OPERATIONS)).optional(),
+    /** The broker's credential ceiling for the `repo_ops` grants, when it differs from `credential` (the agent itself has none). Absent: `machine` if `credential` is `machine`, else `repository`. */
+    repoCredential: z.enum(["machine", "repository"]).optional(),
   })
   .strict()
   .refine((s) => !(s.sandbox && s.boxed), { path: ["sandbox"], message: "must be false when boxed is true: the sandbox of the run holds the step" });
@@ -78,7 +83,8 @@ function shellPatterns(spec: string): string[] | undefined {
  * - `plan` gives nothing but reading; `noTools` gives no tool of the agent at all;
  * - only `bypassPermissions` without any sandbox reaches files outside the workspace;
  * - the other tools of the agent program are not limited by any setting of today, so they are all granted.
- * No setting of today gives an agent a Git or GitHub operation, so none is granted: pushing is a decision of the flow.
+ * No setting gives an agent itself a Git or GitHub operation: pushing is a decision of the flow. Only `repo_ops` grants the
+ * repository broker operations on the run's own repository (target `*`), carried out by the engine after the step.
  * No setting limits one call, asks for approval or classifies data, so every grant has no limit, no approval and the
  * highest data class. The time limit of a step stays a limit of the step.
  *
@@ -147,6 +153,10 @@ export function legacyToolProfile(settings: LegacyToolSettings): LegacyToolProfi
   }
   const servers = !s.mcpServers || plan ? [] : all ? ["*"] : mcp;
   if (servers.length) give("mcp", "call", servers, { credential: s.credential });
+  for (const op of new Set(s.repoOps ?? [])) {
+    const t = repoToolOf(op);
+    give(t.kind, t.operation, ["*"], { credential: s.repoCredential ?? (s.credential === "machine" ? "machine" : "repository") });
+  }
   return { profile: assembleToolProfile(LEGACY_PROFILE_IDENTITY, entries), unmapped };
 }
 

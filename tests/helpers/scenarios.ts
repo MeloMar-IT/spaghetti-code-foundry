@@ -21,7 +21,7 @@ export const run = (runId: string, over: Record<string, unknown> = {}) => ({
   state: { next: null, steps: {}, visits: {} }, totalCostUsd: 0, ...over,
 }) as never as RunSummary;
 
-export type Tracked = { watcher: unknown; status: Record<string, unknown>; issues: { issue: number; title: string; runId?: string }[] };
+export type Tracked = { watcher: unknown; status: Record<string, unknown>; issues: { issue: number; title: string; runId?: string; extra?: true }[] };
 
 /** What the stub context knows. */
 export interface World {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
-import { grantPush, hotfixState, protectedBranchEnv, pushAllowEnv, selfBuild, selfContains } from "../src/engine/guards.js";
+import { grantPush, hotfixState, isShippedFlow, protectedBranchEnv, pushAllowEnv, selfBuild, selfContains } from "../src/engine/guards.js";
 import { runFlow } from "../src/engine/runner.js";
 import { parseFlow } from "../src/flow/load.js";
 import type { Flow } from "../src/flow/schema.js";
@@ -77,6 +77,20 @@ describe("the pre-push hook", () => {
     });
     expect(late.status).not.toBe(0);
     expect(quiet(tmp + "/remote.git", "rev-parse", "--verify", "main").status).not.toBe(0);
+  });
+});
+
+describe("isShippedFlow", () => {
+  it("is true for unchanged built-in flows", () => {
+    expect(isShippedFlow(shipped())).toBe(true);
+    expect(isShippedFlow(parseFlow(readFileSync("flows/daily-pr.yaml", "utf8"), "flows/daily-pr.yaml"))).toBe(true);
+  });
+
+  it("is false for a changed copy, an unknown or unsafe name, and nothing", () => {
+    const changed = shipped();
+    changed.steps = changed.steps.slice(1);
+    expect(isShippedFlow(changed)).toBe(false);
+    for (const f of [{ name: "nope" }, { name: "../x" }, { name: "My flow" }, undefined, {}]) expect(isShippedFlow(f as never)).toBe(false);
   });
 });
 

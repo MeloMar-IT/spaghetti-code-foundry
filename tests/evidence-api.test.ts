@@ -65,7 +65,7 @@ describe("GET /api/runs/:id/evidence", () => {
       expect(a.path.startsWith("/")).toBe(false);
       expect(a.sha256).toMatch(/^[0-9a-f]{64}$/);
     }
-    expect(Object.keys(v).sort()).toEqual(["artifacts", "manifest", "runId", "state", "verification"]);
+    expect(Object.keys(v).sort()).toEqual(["artifacts", "manifest", "policyDecisions", "runId", "state", "verification"]);
   });
 
   it("gives a user no models, no policies, no account ids and no folder of the machine", async () => {
@@ -88,6 +88,36 @@ describe("GET /api/runs/:id/evidence", () => {
     expect(user.manifest?.approvals).toEqual([{ step: { id: "ok", visit: 1, type: "approval" }, time: m.finishedAt, decision: "approved", by: { kind: "user" } }]);
     const text = sent(s, false);
     for (const hidden of [account, "some-model", home, s.runDir, repo]) expect(text).not.toContain(hidden);
+  });
+
+  it("lists the policy decisions as groups: admins get the rule and the pack hash, users do not", async () => {
+    const s = await run(PLAIN);
+    const admin = runEvidenceView(s, true).policyDecisions;
+    const user = runEvidenceView(s, false).policyDecisions;
+    expect(admin.complete).toBe(true);
+    expect(admin.total).toBeGreaterThan(0);
+    expect(admin.groups.length).toBeGreaterThan(0);
+    expect(admin.groups.every((g) => g.policy.id === "foundry.baseline" && g.packSha256 !== undefined)).toBe(true);
+    expect(admin.groups.reduce((n, g) => n + g.count, 0) + admin.omittedGroups).toBeGreaterThanOrEqual(admin.total);
+    expect(user.total).toBe(admin.total);
+    expect(user.groups.length).toBeLessThanOrEqual(admin.groups.length);
+    for (const g of user.groups) {
+      expect(g).not.toHaveProperty("rule");
+      expect(g).not.toHaveProperty("packSha256");
+      expect(g.reason.length).toBeGreaterThan(0);
+      expect(g.next.length).toBeGreaterThan(0);
+    }
+    expect(sent(s, false)).not.toContain('"rule"');
+    expect(sent(s, false)).not.toContain("packSha256");
+  });
+
+  it("answers an empty, complete list for a run older than evidence, and an incomplete one when the events are gone", async () => {
+    const old = await run(PLAIN);
+    for (const n of EVIDENCE) rmSync(join(old.runDir, n), { force: true });
+    expect(runEvidenceView(old, true).policyDecisions).toEqual({ groups: [], total: 0, omittedGroups: 0, complete: true });
+    const lost = await run(PLAIN);
+    rmSync(join(lost.runDir, "evidence.jsonl"));
+    expect(runEvidenceView(lost, true).policyDecisions).toEqual({ groups: [], total: 0, omittedGroups: 0, complete: false });
   });
 
   it("never holds a stored secret, the task or the output of a step", async () => {
