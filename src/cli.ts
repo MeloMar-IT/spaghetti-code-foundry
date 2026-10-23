@@ -18,7 +18,7 @@ import { startServer } from "./server/server.js";
 import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
-import { runEval } from "./evals.js";
+import { controlsReportText, runEval } from "./evals.js";
 import { Scheduler } from "./queue/scheduler.js";
 import { DEFAULT_FLOWS, Watcher } from "./queue/watcher.js";
 import { installService, serviceStatus, uninstallService } from "./service.js";
@@ -538,6 +538,7 @@ async function main(argv: string[]): Promise<number> {
         const skillRows = report.summary.map((s) => `${s.variant.padEnd(34)} ${pct(s.qualityRate ?? s.passRate)} ${pct(s.skills?.selectionRate)} ${pct(s.skills?.contextRate)} ${pct(s.skills?.activationRate)}`);
         process.stdout.write(`\n${"variant".padEnd(34)} ${"quality".padStart(10)} ${"selection".padStart(10)} ${"context".padStart(10)} ${"activation".padStart(10)}\n${skillRows.join("\n")}\n`);
       }
+      process.stdout.write(controlsReportText(report));
       process.stdout.write(`\nreport: ${file}\n`);
       return 0;
     }
