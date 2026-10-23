@@ -45,10 +45,10 @@ const BODIES: Record<string, unknown>[] = [
 ];
 
 /** The lines of a chain for these event bodies, and the hash of the last one. */
-export function fixtureChain(bodies: Record<string, unknown>[] = BODIES, runId = FIXTURE_RUN_ID): { lines: string[]; terminalHash: string } {
+export function fixtureChain(bodies: Record<string, unknown>[] = BODIES, runId = FIXTURE_RUN_ID, version = 1): { lines: string[]; terminalHash: string } {
   let prev: string | null = null;
   const lines = bodies.map((body, seq) => {
-    const event: Record<string, unknown> = { version: 1, id: `ev-${String(seq).padStart(6, "0")}`, seq, runId, ...body, prevHash: prev };
+    const event: Record<string, unknown> = { version, id: `ev-${String(seq).padStart(6, "0")}`, seq, runId, ...body, prevHash: prev };
     prev = sha(canon(event));
     return canon({ ...event, hash: prev });
   });

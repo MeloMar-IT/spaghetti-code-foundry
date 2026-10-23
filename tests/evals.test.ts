@@ -27,7 +27,7 @@ models: [haiku, opus]
 cases:
   - {name: writes, repo: fixture, task: "WRITE ok.txt yes", check: "test -f ok.txt"}
   - {name: forgets, repo: fixture, task: "SAY nothing", check: "test -f ok.txt"}
-  - {name: no-check, repo: fixture, task: "SAY done"}
+  - {name: no-check, repo: fixture, task: "SAY done", controls: {evidence: {}, prohibited_output: ["NEVER_PRINTED_\\\\d+"]}}
 `);
 });
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
@@ -65,6 +65,10 @@ describe("evals", () => {
       expect(s.qualityRate).toBe(s.passRate);
     }
     expect(report.results.every((r) => r.skills === undefined)).toBe(true);
+    const checked = report.results.filter((r) => r.case === "no-check");
+    expect(checked.every((r) => r.controls?.ok === true && r.passed)).toBe(true);
+    expect(report.results.filter((r) => r.case !== "no-check").every((r) => r.controls === undefined)).toBe(true);
+    for (const s of report.summary) expect(s.controls).toEqual({ runs: 1, okRate: 1, policyConformanceRate: 1, evidenceCompletenessRate: 1 });
   });
 
   it("refuses a case whose skill is both selected and absent", () => {

@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { z } from "zod";
 import type { Config } from "./config.js";
+import { ControlsExpectSchema, evaluateControls, readControlsInput, type ControlsResult } from "./eval-controls.js";
 import type { RunSummary } from "./engine/state.js";
 import { FACTORY_HOME, loadFlow } from "./flow/load.js";
 import type { Flow } from "./flow/schema.js";
@@ -23,6 +24,8 @@ const CaseSchema = z
     check: z.string().optional(),
     /** Skill checks: skills that must be selected or absent, and the context budget. Reported apart from the check. */
     skills: SkillExpectSchema.optional(),
+    /** Control checks: policy decisions, tools, privileges, evidence and output the run must (not) show. */
+    controls: ControlsExpectSchema.optional(),
   })
   .strict();
 
@@ -52,6 +55,8 @@ export interface EvalResult {
   quality?: boolean;
   /** Selection, context and activation verdicts. Only for cases with `skills`. */
   skills?: SkillEvalResult;
+  /** Control verdicts. Only for cases with `controls`; `passed` needs `controls.ok`. */
+  controls?: ControlsResult;
   checkOutput?: string;
   costUsd: number;
   tokens: number;
@@ -66,6 +71,8 @@ export interface VariantSummary {
   qualityRate?: number;
   /** Rates over the results that have skill checks. Absent when the variant has none. */
   skills?: { runs: number; selectionRate: number; contextRate: number; activationRate: number };
+  /** Rates over the results that have control checks. Absent when the variant has none. */
+  controls?: { runs: number; okRate: number; policyConformanceRate: number; evidenceCompletenessRate: number };
   avgCostUsd: number;
   avgTokens: number;
   avgMinutes: number;
@@ -128,7 +135,7 @@ function prepareRepo(spec: string, suiteDir: string, cache: Map<string, string>)
   return dir;
 }
 
-function summarize(results: EvalResult[]): VariantSummary[] {
+export function summarize(results: EvalResult[]): VariantSummary[] {
   const by = new Map<string, EvalResult[]>();
   for (const r of results) by.set(r.variant, [...(by.get(r.variant) ?? []), r]);
   const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -136,6 +143,7 @@ function summarize(results: EvalResult[]): VariantSummary[] {
   const rate = (rs: EvalResult[], f: (r: EvalResult) => boolean) => round(rs.filter(f).length / rs.length, 3);
   return [...by].map(([variant, rs]): VariantSummary => {
     const withSkills = rs.filter((r) => r.skills);
+    const withControls = rs.filter((r) => r.controls);
     return {
     variant,
     runs: rs.length,
@@ -147,12 +155,29 @@ function summarize(results: EvalResult[]): VariantSummary[] {
       contextRate: rate(withSkills, (r) => r.skills!.context.ok),
       activationRate: rate(withSkills, (r) => r.skills!.activation.ok),
     } } : {}),
+    ...(withControls.length ? { controls: {
+      runs: withControls.length,
+      okRate: rate(withControls, (r) => r.controls!.ok),
+      policyConformanceRate: rate(withControls, (r) => r.controls!.policyOk),
+      evidenceCompletenessRate: rate(withControls, (r) => r.controls!.evidenceOk),
+    } } : {}),
     avgCostUsd: round(avg(rs.map((r) => r.costUsd))),
     avgTokens: Math.round(avg(rs.map((r) => r.tokens ?? 0))),
     avgMinutes: round(avg(rs.map((r) => r.minutes)), 2),
     avgFixLoops: round(avg(rs.map((r) => r.fixLoops)), 2),
     };
   });
+}
+
+/** The controls table and the first mismatch of each failed result, for `scf eval`. Empty when no result has controls. */
+export function controlsReportText(report: Pick<EvalReport, "results" | "summary">): string {
+  const rows = report.summary.filter((v) => v.controls);
+  if (!rows.length) return "";
+  const pct = (n: number) => `${Math.round(n * 100)}%`.padStart(10);
+  const head = `${"variant".padEnd(34)} ${"controls".padStart(10)} ${"policy".padStart(10)} ${"evidence".padStart(10)}`;
+  const lines = rows.map((v) => `${v.variant.padEnd(34)} ${pct(v.controls!.okRate)} ${pct(v.controls!.policyConformanceRate)} ${pct(v.controls!.evidenceCompletenessRate)}`);
+  const failed = report.results.filter((r) => r.controls && !r.controls.ok).map((r) => `✘ ${r.variant} · ${r.case}#${r.attempt} · ${r.controls!.firstMismatch?.message ?? "controls failed"}`);
+  return `\n${head}\n${lines.join("\n")}\n${failed.length ? `${failed.join("\n")}\n` : ""}`;
 }
 
 export async function runEval(o: {
@@ -197,15 +222,16 @@ export async function runEval(o: {
             checkOutput = r.output.slice(-2000);
           }
           const skills = c.skills ? evaluateSkillRun(s, c.skills) : undefined;
-          const passed = quality && (skills?.ok ?? true);
+          const controls = c.controls ? evaluateControls(readControlsInput(s, c.controls, config), c.controls) : undefined;
+          const passed = quality && (skills?.ok ?? true) && (controls?.ok ?? true);
           const res: EvalResult = {
-            variant: flow.name, case: c.name, attempt, runId, status: s.status, passed, quality, ...(skills ? { skills } : {}), checkOutput,
+            variant: flow.name, case: c.name, attempt, runId, status: s.status, passed, quality, ...(skills ? { skills } : {}), ...(controls ? { controls } : {}), checkOutput,
             costUsd: s.totalCostUsd,
             tokens: s.history.reduce((n, h) => n + (h.tokens ? h.tokens.input + h.tokens.output : 0), 0),
             minutes: s.finishedAt ? (new Date(s.finishedAt).getTime() - new Date(s.startedAt).getTime()) / 60_000 : 0,
             fixLoops: s.history.reduce((n, h) => n + (h.visit > 1 ? 1 : 0), 0),
           };
-          o.log(`${passed ? "✔" : "✘"} ${flow.name} · ${c.name}#${attempt} · ${s.status} · $${s.totalCostUsd.toFixed(3)} · run ${runId}${skills ? ` · selection ${skills.selection.ok ? "✔" : "✘"} · context ${skills.context.ok ? "✔" : "✘"} · activation ${skills.activation.ok ? "✔" : "✘"} (${skills.activation.status})` : ""}`);
+          o.log(`${passed ? "✔" : "✘"} ${flow.name} · ${c.name}#${attempt} · ${s.status} · $${s.totalCostUsd.toFixed(3)} · run ${runId}${skills ? ` · selection ${skills.selection.ok ? "✔" : "✘"} · context ${skills.context.ok ? "✔" : "✘"} · activation ${skills.activation.ok ? "✔" : "✘"} (${skills.activation.status})` : ""}${controls ? ` · controls ${controls.ok ? "✔" : "✘"}` : ""}`);
           return res;
         })());
       }

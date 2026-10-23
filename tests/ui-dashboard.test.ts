@@ -91,7 +91,7 @@ describe("states", () => {
     byFlow: [], byRepo: [{ repo: "acme/app", runs: 1, costUsd: 1 }], byUser: [], failingSteps: [], loops: [],
   };
   const info = { spentToday: 1, dailyBudget: 5, costLimits: true };
-  const evals = [{ suite: "suite-a", startedAt: "2026-10-01T09:00:00.000Z", summary: [{ variant: "v1", runs: 2, passRate: 1, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }, { variant: "v2", runs: 4, passRate: 0.5, qualityRate: 1, skills: { runs: 4, selectionRate: 1, contextRate: 0.75, activationRate: 0.5 }, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }] }];
+  const evals = [{ suite: "suite-a", startedAt: "2026-10-01T09:00:00.000Z", summary: [{ variant: "v1", runs: 2, passRate: 1, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }, { variant: "v2", runs: 4, passRate: 0.5, qualityRate: 1, skills: { runs: 4, selectionRate: 1, contextRate: 0.75, activationRate: 0.5 }, controls: { runs: 4, okRate: 0.5, policyConformanceRate: 1, evidenceCompletenessRate: 0.75 }, avgCostUsd: 0.1, avgTokens: 1000, avgMinutes: 2, avgFixLoops: 0 }] }];
   const URLS = ["/api/stats", "/api/info", "/api/evals", "/api/watchers", "/api/runs", "/api/clarity", "/api/outcomes"];
   const NAMES: Record<string, string> = {
     "/api/stats": "the statistics", "/api/info": "today's spending", "/api/evals": "evals", "/api/watchers": "the watchers", "/api/runs": "the runs", "/api/clarity": "your turn in numbers",
@@ -173,6 +173,8 @@ describe("states", () => {
     expect(main.all("th").some((t) => t.textContent === "Quality")).toBe(true);
     const cells = main.all("td").map((t) => t.textContent);
     expect(cells).toContain("selection 100% · context 75% · activation 50%");
+    expect(main.all("th").some((t) => t.textContent === "Controls")).toBe(true);
+    expect(cells).toContain("ok 50% · policy 100% · evidence 75%");
     expect(cells).toContain("—");
   });
 
