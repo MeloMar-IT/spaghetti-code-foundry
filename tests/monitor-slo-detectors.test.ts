@@ -168,9 +168,9 @@ describe("abnormal-output", () => {
 });
 
 describe("detector info", () => {
-  it("names the five detectors with owner, threshold, window and next action", () => {
+  it("names the six detectors with owner, threshold, window and next action", () => {
     const info = detectorInfo(config);
-    const owners: Record<string, string> = { "policy-service-failure": "admin", "evidence-finalization": "admin", "step-latency-p95": "admin", "repeated-tool-denial": "repository owner", "abnormal-output": "repository owner" };
+    const owners: Record<string, string> = { "policy-service-failure": "admin", "evidence-finalization": "admin", "step-latency-p95": "admin", "repeated-tool-denial": "repository owner", "abnormal-output": "repository owner", "waiting-unlisted": "admin" };
     for (const [name, owner] of Object.entries(owners)) {
       const d = info.find((x) => x.name === name)!;
       expect(d.slo, name).toMatchObject({ owner });
@@ -179,7 +179,8 @@ describe("detector info", () => {
       expect(d.slo!.action.length, name).toBeGreaterThan(0);
       expect(ALL_DETECTORS.map((x) => x.name)).toContain(name);
     }
-    expect(info.filter((d) => d.slo)).toHaveLength(5);
+    expect(info.filter((d) => d.slo)).toHaveLength(6);
+    expect(info.find((d) => d.name === "waiting-unlisted")!.slo!.window).toContain("2 checks");
   });
   it("follows the settings, and is absent without a config", () => {
     const info = detectorInfo(withConfig({ step_latency_p95: { minutes: 90 }, abnormal_output: { within_hours: 48 } }));

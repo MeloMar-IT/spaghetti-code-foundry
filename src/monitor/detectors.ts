@@ -42,6 +42,8 @@ export interface DetectorInput {
   areaLocks?: AreaLock[];
   /** When a job last started (or the scheduler was created). */
   lastStart?: string;
+  /** Open issues with a waiting label that Needs you does not list; undefined: not known (then nothing is judged). */
+  unlisted?: WaitingUnlisted[];
   /** Set while the server waits to restart. */
   restart?: { why: "new_version" | "data_folder" | "settings"; since: string };
   /** Usual step times from older succeeded runs. */
@@ -53,6 +55,9 @@ export interface DetectorInput {
   /** The evidence files of the runs that ended within the SLO windows. */
   evidence?: EvidenceState[];
 }
+
+/** An open issue with a waiting label that Needs you did not list; `since`: when the monitor first saw it so. */
+export interface WaitingUnlisted { watcher: string; repo: string; issue: number; label: "needs-info" | "waiting-approval"; since: string }
 
 /** Who acts on a finding, and what it says about the limit, the window and the next step. */
 export interface Slo {
