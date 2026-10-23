@@ -116,7 +116,8 @@ describe("Settings → Ask SCF", () => {
   it("sits between User runs and Notifications", async () => {
     const t = cardTitles((await render({})).main);
     expect(t.indexOf("Ask SCF")).toBe(t.indexOf("User runs") + 1);
-    expect(t.indexOf("Notifications")).toBe(t.indexOf("Ask SCF") + 1);
+    expect(t.indexOf("Delivery")).toBe(t.indexOf("Ask SCF") + 1);
+    expect(t.indexOf("Notifications")).toBe(t.indexOf("Delivery") + 1);
   });
 
   it("saves the switch and a number and keeps the private patterns and accounts", async () => {
@@ -140,6 +141,22 @@ describe("Settings → Ask SCF", () => {
   it("shows the hint of the redesign switch", async () => {
     const { main } = await render({});
     expect(cardOf(main, "Redesign").textContent).toContain("Takes effect at once.");
+  });
+});
+
+describe("Settings → Delivery", () => {
+  it("saves the switch and keeps the per-repository requirements", async () => {
+    const repositories = { "acme/app": { provenance: true } };
+    const { main, puts } = await render({}, "127.0.0.1", 200, { delivery: { ...ConfigSchema.parse({}).delivery, repositories } });
+    const card = main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "Delivery")!;
+    const sw = card.all("input").find((i) => i.attrs.type === "checkbox") as any;
+    sw.checked = true;
+    sw.fire("change", { target: sw });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].delivery.provenance).toBe(true);
+    expect(puts[0].delivery.repositories).toEqual(repositories);
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
   });
 });
 

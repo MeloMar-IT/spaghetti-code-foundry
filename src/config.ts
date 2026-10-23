@@ -344,6 +344,20 @@ const policyIds = () =>
     .refine((l) => new Set(l).size === l.length, "names the same pack twice")
     .refine((l) => !l.includes(BASELINE_POLICY_ID), `${BASELINE_POLICY_ID} is built in and always asked: leave it out`);
 
+/** A list of at most 500 names (checks, artifacts): each trimmed, 1–200 characters, no control character, each once. */
+const deliveryNames = () =>
+  z
+    .array(
+      z
+        .string()
+        .trim()
+        .min(1, "must not be empty")
+        .max(200, "at most 200 characters")
+        .refine((s) => !/[\u0000-\u001f\u007f]/.test(s), "has a control character"),
+    )
+    .max(500)
+    .refine((l) => new Set(l).size === l.length, "names the same entry twice");
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -673,6 +687,26 @@ export const ConfigSchema = z
         repositories: z
           .record(z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9_.-]{1,100}$/, 'must be a repository as "owner/name" in lower case'), policyIds())
           .refine((r) => Object.keys(r).length <= 20, "at most 20 repositories")
+          .default({}),
+      })
+      .strict()
+      .prefault({}),
+    /** Delivery contracts written at pull-request creation: the signing key and what a contract requires (installation-wide, then per repository). Read from issue 3 on. */
+    delivery: z
+      .object({
+        signing_key_path: z
+          .string()
+          .refine((p) => isAbsolute(p), "must be an absolute path")
+          .optional(),
+        required_checks: deliveryNames().default([]),
+        artifacts: deliveryNames().default([]),
+        provenance: z.boolean().default(false),
+        repositories: z
+          .record(
+            z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9_.-]{1,100}$/, 'must be a repository as "owner/name" in lower case'),
+            z.object({ required_checks: deliveryNames().optional(), artifacts: deliveryNames().optional(), provenance: z.boolean().optional() }).strict(),
+          )
+          .refine((r) => Object.keys(r).length <= 50, "at most 50 repositories")
           .default({}),
       })
       .strict()

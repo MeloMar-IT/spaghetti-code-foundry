@@ -165,6 +165,45 @@ describe.skipIf(!basic)("a user's shell step in the OS sandbox", () => {
     expect(JSON.parse(readFileSync(join(two.runDir, "release", "plan.json"), "utf8"))).toEqual({ sha, skip: "this commit was handled before" });
   });
 
+  it("cannot read the delivery keys, also a key made while the step runs and with user_read over the data folder", async () => {
+    const data = process.env.FACTORY_HOME!;
+    const keys = join(data, "delivery-keys");
+    mkdirSync(keys, { mode: 0o700 });
+    writeFileSync(join(keys, "signing-key"), "OLD-KEY-SECRET", { mode: 0o600 });
+    writeFileSync(join(data, "plain.txt"), "DATA-OK");
+    const runId = "20261023-000000-dk01";
+    const runDir = join(runs(), runId);
+    const cfg = ConfigSchema.parse({ protected_branches: [], sandbox: { user_read: [resolve("tests/fixtures"), data, ...(hereGit ? [resolve(hereGit, "..")] : [])] } });
+    const cmd =
+      `echo WORKSPACE-OK > "$FACTORY_WORKDIR/w.txt"; touch "{{run.dir}}/started"; i=0; while [ ! -f "{{run.dir}}/go" ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; ` +
+      `cat "${keys}/signing-key"; cat "${keys}/signing-key.new"; cat "$FACTORY_WORKDIR/w.txt"; cat "${data}/plain.txt"; echo end`;
+    const ac = new AbortController();
+    const p = runFlow(flowOf(cmd), { task: "idea", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app" }, config: cfg, owner: user.id, runId, signal: ac.signal });
+    let failed: unknown;
+    p.catch((e) => {
+      failed = e;
+    });
+    let done = false;
+    try {
+      for (let i = 0; i < 1000 && !failed && !existsSync(join(runDir, "started")); i++) await new Promise((r) => setTimeout(r, 20));
+      expect(existsSync(join(runDir, "started")), "the step did not start").toBe(true);
+      writeFileSync(join(keys, "signing-key.new"), "NEW-KEY-SECRET", { mode: 0o600 });
+      writeFileSync(join(runDir, "go"), "");
+      const s = await p;
+      done = true;
+      const text = out(s);
+      expect(text).not.toContain("OLD-KEY-SECRET");
+      expect(text).not.toContain("NEW-KEY-SECRET");
+      expect(text).toContain("WORKSPACE-OK");
+      expect(text).toContain("DATA-OK");
+      expect(text).toContain("end");
+      expect(text).toMatch(/Operation not permitted/);
+    } finally {
+      if (!done) ac.abort();
+      await p.catch(() => {});
+    }
+  });
+
   it("records whether a profile nests (for #305): a step that starts sandbox-exec itself", async () => {
     const s = await go(flowOf(`/usr/bin/sandbox-exec -p "(version 1)(allow default)" /usr/bin/true; echo "nested=$?"`), user.id);
     // sandbox-exec cannot apply a second profile inside a sandbox: it fails (non-zero). #305 must not start an agent's own sandbox inside this one.
