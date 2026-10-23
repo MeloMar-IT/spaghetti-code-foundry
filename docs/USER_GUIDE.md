@@ -1418,6 +1418,48 @@ active, and so does any other layer's pack.
   is still broken, the steps that need trust stay stopped. Fix or restore the policy first when you can; see
   [Restore the last-known-good copy](#restore-the-last-known-good-copy).
 
+### Delivery settings and the signing key
+
+A delivery contract is written when a pull request is created, and it is signed with a key. The
+settings for it are in the **Delivery** card of Settings, or in `config.yaml`:
+
+```yaml
+delivery:
+  signing_key_path: /Users/me/.spaghetti-code-foundry/delivery-keys/signing-key
+  required_checks: [test, lint]          # CI checks a contract requires
+  artifacts: [sbom.json]                 # artifacts a contract requires
+  provenance: false                      # whether a contract requires provenance
+  repositories:                          # per repository; each key is optional
+    acme/app:
+      required_checks: [test, e2e]
+      artifacts: [sbom.json, coverage.xml]
+      provenance: true
+```
+
+- **Signing key.** An absolute path to an unencrypted Ed25519 key. It must be in the folder
+  `delivery-keys` of the data folder (`~/.spaghetti-code-foundry` by default). Without a key, contracts
+  are unsigned.
+- **Required checks, artifacts and provenance.** Each applies from the next step. A list holds at most
+  500 names; each name is 1 to 200 characters, has no control character and is given once. A repository
+  is written as `owner/name` in lower case, and at most 50 repositories can have their own settings.
+- **Per-repository settings** are only in `config.yaml`; the Settings page does not show them.
+- **Nothing reads these settings yet.** The delivery contract that uses them comes in a later release, so
+  saving them changes no run today. The key folder is already protected by the sandbox rule above.
+
+**Set up the key.** Make the folder with owner-only access, then create the key in it:
+
+```sh
+mkdir -m 700 <data>/delivery-keys && ssh-keygen -t ed25519 -N "" -f <data>/delivery-keys/signing-key
+```
+
+Here `<data>` is the data folder. Then set `signing_key_path` to the new `signing-key` file.
+
+**Who can read the key.** A sandboxed step (a shell step or an agent step of a user's run, on macOS with the
+OS sandbox) cannot read anything in `delivery-keys`, also not a key added or rotated while the step runs.
+The rule is added after every rule that allows reads, so a `sandbox.user_read` path that covers the data
+folder does not open it. An admin's run, a run without the OS sandbox and a step in Docker can read the
+key if the account running the Foundry can. Keep the folder's access to that account only.
+
 ### Versions of the components
 
 `scf components [kind]` prints each part of the Foundry that a promotion can name, with its version and

@@ -6,7 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createUser } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
 import { evaluationLimits, OUTBOUND_REFUSED, READ_DENY_REFUSED, setEvaluationLimits } from "../src/engine/eval-limits.js";
-import { installDir, ownDir, readPlainFile, resetSandboxCache, SANDBOX_FOLDER_FAILED, SANDBOX_REFUSED, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep, type SandboxPaths } from "../src/engine/os-sandbox.js";
+import { DELIVERY_KEYS_DIR, installDir, ownDir, RUN_DELIVERY_DIR, readPlainFile, resetSandboxCache, SANDBOX_FOLDER_FAILED, SANDBOX_REFUSED, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep, type SandboxPaths } from "../src/engine/os-sandbox.js";
 import { spawnTarget } from "../src/steps/process.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
 
@@ -188,8 +188,50 @@ describe("sandboxProfile for an agent step", () => {
     expect(text).toContain('(allow file-read* (literal "/Users/mac/.local/lib/node_modules/@anthropic-ai/claude-code/cli.js"))');
     expect(text).toContain('(allow file-read* (subpath "/Users/mac/.local/lib/node_modules/@anthropic-ai/claude-code"))');
     expect(text).toContain('(allow file-read-metadata (literal "/Users/mac/.local/bin"))');
-    const lastDeny = Math.max(...lines(text).map((l, i) => (l.startsWith("(deny file-read*") ? i : -1)));
+    const lastDeny = Math.max(...lines(text).map((l, i) => (l.startsWith("(deny file-read*") && !l.includes("/delivery-keys") ? i : -1)));
     expect(at(text, 'literal "/Users/mac/.local/bin/claude"')).toBeGreaterThan(at(text, lines(text)[lastDeny]!));
+    expect(readable(text, "/Users/mac/.local/bin/claude")).toBe(true);
+  });
+
+  describe("delivery keys", () => {
+    const keys = "/Users/mac/.data/delivery-keys";
+    const lastAllow = (t: string) => Math.max(...lines(t).map((l, i) => (l.startsWith("(allow file-read") ? i : -1)));
+
+    it("exports the folder names", () => {
+      expect(DELIVERY_KEYS_DIR).toBe("delivery-keys");
+      expect(RUN_DELIVERY_DIR).toBe("delivery");
+    });
+
+    it("denies writes to the contract folder of the run, after the evidence line", () => {
+      const t = sandboxProfile(base, same);
+      const line = '(deny file-write* (subpath "/Users/mac/.data/runs/r1/delivery"))';
+      expect(at(t, line)).toBeGreaterThan(at(t, "(deny file-write* (literal \"/Users/mac/.data/runs/r1/evidence"));
+    });
+
+    it("denies reading the key folder with no settings at all", () => {
+      const t = sandboxProfile(base, same);
+      expect(t).toContain(`(deny file-read* (subpath "${keys}"))`);
+      expect(readable(t, `${keys}/signing-key`)).toBe(false);
+    });
+
+    it("keeps the deny after every allow, whatever user_read and the programs say", () => {
+      const t = sandboxProfile({ ...base, userRead: ["/Users/mac/.data", "/"], programs: ["/Users/mac/.data/bin/node"], agentProgram: "/Users/mac/.data/bin/claude", workspaceReadOnly: true }, same);
+      expect(lines(t).indexOf(`(deny file-read* (subpath "${keys}"))`)).toBeGreaterThan(lastAllow(t));
+      expect(readable(t, `${keys}/new-key`)).toBe(false);
+      expect(readable(t, "/Users/mac/.data/other")).toBe(true);
+      expect(readable(t, "/Users/mac/.data/bin/claude")).toBe(true);
+    });
+
+    it("also denies the real path of a linked folder, and copes with a missing one", () => {
+      const linked = sandboxProfile(base, (p) => (p === keys ? "/Volumes/k/delivery-keys" : p));
+      expect(linked).toContain(`(deny file-read* (subpath "${keys}"))`);
+      expect(linked).toContain('(deny file-read* (subpath "/Volumes/k/delivery-keys"))');
+      const missing = sandboxProfile(base, (p) => {
+        if (p === keys) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+        return p;
+      });
+      expect(lines(missing).filter((l) => l.includes("delivery-keys"))).toHaveLength(1);
+    });
   });
 
   it("without an agent program the profile is the one built today", () => {

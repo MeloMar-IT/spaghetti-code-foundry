@@ -116,7 +116,9 @@ describe("what is described", () => {
     expect(isCovered("monitoring")).toBe(false);
     for (const k of ["ui.redesign", "help.enabled", "default_model", "router.fallback"]) expect(isCovered(k), k).toBe(true);
     for (const k of ["help.disabled_accounts", "help.pilot_accounts", "help.sensitive_patterns", "providers", "router.rules"]) expect(isCovered(k), k).toBe(false);
-    expect(described).toHaveLength(126);
+    for (const k of ["delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance"]) expect(isCovered(k), k).toBe(true);
+    expect(isCovered("delivery.repositories")).toBe(false);
+    expect(described).toHaveLength(130);
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {
@@ -203,6 +205,7 @@ describe("the advertised ranges are the schema's", () => {
   const TABLE = new Set([
     "step_env.pass", "step_env.agent_pass", "sandbox.user_read", "skills.roots", "skills.releases.approved", "skills.releases.keys",
     "skills.catalogue.include", "skills.selection.include", "skills.catalogue.exclude", "skills.selection.exclude", "skills.selection.exclusive", "skills.unresolved.high_risk",
+    "delivery.required_checks", "delivery.artifacts",
   ]);
 
   it("list limits: exactly maxItems are accepted, one more is not", () => {
