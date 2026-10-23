@@ -44,6 +44,53 @@ const notFinal = { ...absent, verification: { status: "not-finalized", verified:
 const rowLabels = (m: any) => m.rows.map((r: any) => r.label);
 const FORBIDDEN = ["logs/", "evidence.jsonl", "evidence.json", "run.json", "evidence.diff", UUID];
 
+const SHA2 = "c".repeat(64);
+const group = (over: any = {}): any => ({
+  policy: { id: "foundry.baseline", version: "0.1.0" }, boundary: "push", outcome: "deny", mode: "observe", reasonCode: "secret.detected",
+  reason: "The new commits contain something that looks like a secret.", nextCode: "observe-deny", next: "Nothing was stopped: this policy only observes.",
+  count: 1, firstAt: "2026-01-01T10:00:00Z", lastAt: "2026-01-01T10:00:00Z", steps: ["code"], moreSteps: 0, rule: "no-secrets", packSha256: SHA2, ...over,
+});
+const withDecisions = (groups: any[], over: any = {}): any => ({ ...verified(true), policyDecisions: { groups, total: groups.length, omittedGroups: 0, complete: true, ...over } });
+
+describe("the policy decisions of the evidence record", () => {
+  it("describes a group of one and a group of three, an allow included", () => {
+    const m = mod.evidenceRecordModel(withDecisions([group(), group({ outcome: "allow", mode: "observe", reasonCode: "policy.no-rule-matched", nextCode: "none", next: "Nothing to do.", count: 3, lastAt: "2026-01-01T10:05:00Z", steps: ["a", "b"], moreSteps: 2, rule: undefined, packSha256: undefined })]), { admin: true });
+    expect(m.decisions).toHaveLength(2);
+    expect(m.decisions[0].head).toBe("Denied (observe only) at push · foundry.baseline 0.1.0 · secret.detected");
+    expect(m.decisions[0].why).toBe("The new commits contain something that looks like a secret.");
+    expect(m.decisions[0].next).toBe("What to do: Nothing was stopped: this policy only observes.");
+    expect(m.decisions[0].when).toMatch(/^Once, .* · Steps: code$/);
+    expect(m.decisions[0].extra).toBe(`Rule no-secrets · pack ${SHA2.slice(0, 12)}`);
+    expect(m.decisions[1].head).toContain("Allowed (observe only)");
+    expect(m.decisions[1].when).toMatch(/^3 times, .* to .* · Steps: a, b and 2 more$/);
+    expect(m.decisions[1].extra).toBeUndefined();
+  });
+  it("names a break-glass", () => {
+    const m = mod.evidenceRecordModel(withDecisions([group({ outcome: "warn", mode: "enforce", reasonCode: "policy.break-glass" })]), { admin: true });
+    expect(m.decisions[0].head).toContain("Warning (break-glass)");
+  });
+  it("never shows a user the rule or the hash", () => {
+    const m = mod.evidenceRecordModel(withDecisions([group()]), { admin: false });
+    expect(m.decisions).toHaveLength(1);
+    expect(JSON.stringify(m)).not.toContain("no-secrets");
+    expect(JSON.stringify(m)).not.toContain(SHA2.slice(0, 12));
+  });
+  it("shows the decisions while the run is not finished and when there is no manifest", () => {
+    const m = mod.evidenceRecordModel({ ...notFinal, policyDecisions: { groups: [group()], total: 1, omittedGroups: 0, complete: true } }, { admin: false, ended: false });
+    expect(m.decisions).toHaveLength(1);
+  });
+  it("notes the groups left out and an incomplete list", () => {
+    const m = mod.evidenceRecordModel(withDecisions([group()], { omittedGroups: 4, complete: false }), { admin: false });
+    expect(m.decisionsNote).toBe("4 more kinds of decisions are not shown; the run's log has every one. The event record is not whole, so this list may be short.");
+    expect(mod.evidenceRecordModel(withDecisions([group()]), { admin: false }).decisionsNote).toBe("");
+  });
+  it("has an empty state and tolerates a view without the field", () => {
+    expect(mod.NO_DECISIONS).toBe("No policy decisions recorded");
+    expect(mod.evidenceRecordModel(withDecisions([]), { admin: true }).decisions).toEqual([]);
+    expect(mod.evidenceRecordModel(verified(true), { admin: true }).decisions).toEqual([]);
+  });
+});
+
 describe("evidenceRecordModel", () => {
   it("shows an administrator everything in order", () => {
     const m = mod.evidenceRecordModel(verified(true), { admin: true });

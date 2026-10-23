@@ -9,6 +9,7 @@ import { BASELINE_POLICY_ID, BASELINE_VERSION, baselineControls, runBaseline, ty
 import { HOTFIX_FLOW, isShippedFlow } from "./guards.js";
 import { combineDecisions, layeredPackIds, type Layer, type LayeredDecision } from "../policy/compose.js";
 import { parsePolicyDecision, parsePolicyPack } from "../policy/parse.js";
+import { explanationLine, logNote } from "../policy/explain.js";
 import { evaluatePolicy, policyDenial, policyInputSha256 } from "../policy/evaluate.js";
 import { FactsSchema, type Boundary, type FactName, type Facts, type Mode, type PolicyDecision, type PolicyInput, type PolicyPack } from "../policy/schema.js";
 import { POLICY_INPUT_VERSION, PolicySchemaError } from "../policy/version.js";
@@ -228,6 +229,7 @@ export function drainPushLog(file: string): ObservedPush[] {
   return out;
 }
 
+const MAX_SEEN_KEYS = 1000;
 const stepName =(s: StepIdentity) => (s.parent ? `${s.parent}/${s.id}` : s.id);
 
 export class RunPolicy {
@@ -244,6 +246,8 @@ export class RunPolicy {
   /** A mandatory pack could not be loaded: privileged steps will be denied, so the runner does not fetch the bot's token up front. */
   readonly mandatoryUnusable: boolean;
   private readonly breakGlass: () => BreakGlass | undefined;
+  /** How often each decision came in this start of the run, for the "seen" suffix of the log. Capped. */
+  private readonly seen = new Map<string, { count: number; first: string }>();
 
   constructor(o: { breakGlass?: () => BreakGlass | undefined; runId: string; packs: LayeredPack[]; base: Facts; log: (line: string) => void; evidence?: RunRecorder; now?: () => string; observesPushes?: boolean }) {
     this.observesPushes = o.observesPushes ?? false;
@@ -317,11 +321,13 @@ export class RunPolicy {
     for (const ld of decisions) {
       let recorded = false;
       try {
-        recorded = this.report(ld, step, decisions.length > 1 && ld === combined);
+        recorded = this.evidence?.policyDecided(ld.decision, step) ?? false;
       } catch (e) {
         this.fail(e);
       }
       const g = glass.get(ld);
+      // the log shows what really happened: a break-glass that could not be recorded is logged as the enforced denial
+      if (!g || recorded) this.logDecision(ld, step, decisions.length > 1 && ld === combined);
       if (!g) continue;
       if (recorded) {
         this.log(`! policy: break-glass active until ${g.bg.expiresAt} (${g.bg.reason}) — ${g.id} ${g.original.reasonCode} allowed`);
@@ -329,6 +335,7 @@ export class RunPolicy {
       }
       // the override needs its audit record: without it the original denial stands
       this.log(`! policy ${g.id}: the break-glass decision could not be recorded — ${boundary} is denied`);
+      this.logDecision({ layer: ld.layer, decision: g.original }, step, false);
       const reason = deniedReason(g.id, g.original.reasonCode as NoPackCode, boundary);
       try {
         const denial = policyDenial(g.original);
@@ -412,10 +419,18 @@ export class RunPolicy {
     }
   }
 
-  private report(ld: LayeredDecision, step: StepIdentity | undefined, wins: boolean): boolean {
+  /** Logs one decision line; the first time a decision is seen, a "Why" line follows; a repeat carries a count and the first time. */
+  private logDecision(ld: LayeredDecision, step: StepIdentity | undefined, wins: boolean): void {
     const d = ld.decision;
-    this.log(`· policy ${d.policy.id} ${d.policy.version} [${ld.layer}] · ${d.boundary}${step ? ` ${stepName(step)}` : ""}: ${d.outcome} (${d.reasonCode}${d.rule ? `, rule ${d.rule}` : ""})${wins ? " · wins" : ""} ${d.reasonCode === "policy.break-glass" ? "— break-glass: the step goes on" : d.mode === "enforce" ? "— enforced: the step is stopped" : "— observe only, nothing was stopped"}`);
-    return this.evidence?.policyDecided(d, step) ?? false;
+    const key = JSON.stringify([d.policy.id, d.policy.version, ld.layer, d.boundary, d.outcome, d.reasonCode, d.mode, d.rule ?? null]);
+    const before = this.seen.get(key);
+    let suffix = "";
+    if (before) {
+      before.count++;
+      suffix = ` · seen ${before.count} times, first at ${before.first}, now ${d.evaluatedAt}`;
+    } else if (this.seen.size < MAX_SEEN_KEYS) this.seen.set(key, { count: 1, first: d.evaluatedAt });
+    this.log(`· policy ${d.policy.id} ${d.policy.version} [${ld.layer}] · ${d.boundary}${step ? ` ${stepName(step)}` : ""}: ${d.outcome} (${d.reasonCode}${d.rule ? `, rule ${d.rule}` : ""})${wins ? " · wins" : ""} — ${logNote(d)}${suffix}`);
+    if (!before) this.log(explanationLine(d));
   }
 
   private fail(e: unknown): void {

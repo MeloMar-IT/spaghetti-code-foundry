@@ -420,6 +420,19 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
+- **Explanations and repeats (#145).** `src/policy/explain.ts` (pure) turns a recorded decision into plain text
+  at display time, so the evidence format is unchanged. Every sentence comes from a closed list: the reason
+  text (`reasons.ts`) and `NEXT_ACTIONS`, picked by `nextActionCode` from the outcome, mode, reason code and the
+  policy id (the baseline is told apart from other packs for `policy.unavailable` and `policy.invalid`). The
+  engine's `logDecision` (`policy-hooks.ts`) writes the decision line for each answer. The `  Why: … What to do: …`
+  line follows the first answer of a key (policy id and version, layer, boundary, outcome, reason code, mode and
+  rule); a repeat carries `· seen N times, first at …, now …`. The key counts in
+  `RunPolicy.seen` for one start of the run (at most 1,000 keys; past the cap a key is not counted). `policyDecisionsOf`
+  (`evidence-view.ts`) reads the `policy.decided` events through `readEvidenceChain` and folds them with
+  `groupPolicyDecisions`: groups of at most 100 (the rest counted in `omittedGroups`), up to 10 step names each, and
+  `complete` false when the chain, the tail, the incomplete marker or the verifier says the events are not whole.
+  A user's answer leaves out `rule` and `packSha256`; `user-view.ts` rebuilds the log lines of a user the same way
+  (only the known shapes pass, and a line that does not match is left out). `ui/run-evidence.js` shows the list.
 - **Baseline always asked, files only when configured.** With no packs in any list, `runPolicy` still
   returns a `RunPolicy` that asks the baseline at every boundary. It reads no file (`loadPolicyPacks` runs
   only for listed ids). Without packs the hook is added only for a guard, so pushes are observed only
@@ -740,7 +753,8 @@ Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
 - **API.** `GET /api/runs/:id/evidence` (rule `own`, `src/server/evidence-view.ts`) builds its
   answer from `verifyRunEvidence` and the manifest on each call and never throws; it sends
   references, not file content, and a user's answer leaves out models, policies and account ids
-  and goes through `hidePaths`. It adds nothing to the engine.
+  and goes through `hidePaths`. It adds nothing to the engine. A user's answer also leaves out the rule and the
+  pack hash of each policy decision (`policyDecisions`, see "Policy hooks in observe mode").
 - **Stopped means stopped.** The first problem also leaves an empty mark, `evidence.incomplete`,
   in the run folder. While it is there no start of the run continues the stream and the run gets
   no manifest (#136). Nothing removes it.

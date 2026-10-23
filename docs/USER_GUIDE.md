@@ -826,8 +826,9 @@ its description, or the kind of step when the flow gives none.
   commits, the approvals, the tests, the pull request and the files. A failed check names the
   event or file, says what is wrong and what to do next. **Check again** reloads the record, and
   **Export evidence** downloads `evidence-<run-id>.json` (the same answer as the API, see
-  "Evidence of a run"). A user sees file counts and no paths; models, policy denials and paths
-  are for administrators. The export never holds the content of a transcript or a log.
+  "Evidence of a run"). A user sees file counts and no paths; models and paths are for administrators.
+  A user sees the **Policy decisions** of the run (see "Policy packs in observe mode") without the rule
+  and the pack's hash, which are for administrators. The export never holds the content of a transcript or a log.
 
 - **Changes** — the complete diff the run made, including uncommitted work.
 
@@ -1227,7 +1228,8 @@ recorded, and a run does not stop because of them, with one exception: a mandato
 read or evaluated stops the steps that sign in or write (see [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read)).
 
 - **The baseline.** The Foundry has a built-in pack, `foundry.baseline`. It is asked at every boundary of
-  every run, with no setting. Its version is the Foundry's version. It is built for each run from
+  every run, with no setting. Its version is the Foundry's version. **The Foundry owns it**: an administrator
+  cannot change, replace or remove it; an administrator can only add stricter packs next to it. It is built for each run from
   `protected_branches`, `secret_scan` and the run's repository. Its rules, in order:
   - a push of the shipped hotfix flow's `push_main` to a protected branch is allowed (`branch.hotfix-exception`);
   - a push to a protected branch is denied (`branch.protected`), with the patterns of `protected_branches`;
@@ -1269,20 +1271,35 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   The baseline writes `mode: observe` on every rule.
 - **Which answer counts.** For each boundary the Foundry takes the most restrictive answer of all packs
   (from least to most restrictive: `allow`, `warn`, `require_approval`, `deny`). On a tie the higher layer wins:
-  `mandatory`, then `repositories`, then `packs`. A repository pack can only make things stricter: it
-  cannot allow what the baseline denies.
+  `mandatory`, then `repositories`, then `packs`. Inside one layer, a tie goes to the first pack. A repository
+  pack can only make things stricter: it cannot allow what the baseline denies. The answer does not depend on
+  the order of the lists.
 - **When it is asked.** The start of the run; before the workspace is made; before a step starts in the
   repository's checkout; before and after every step (also the steps inside a parallel step or a
   sub-flow); before a write-capable agent step; for each push a step makes; when an approval is used;
   and when the run succeeded. This is the same for built-in and custom flows.
+- **Observe and block mode.** A pack and each rule are in `observe` mode: the answer is recorded and
+  nothing is stopped, except as described under [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read).
+  `block` mode (a rule or pack in `enforce`) is **not available yet**: such a pack or rule is refused when it is
+  loaded or restored. Until then, a `deny` in a pack is only a record, and the line says `observe only, nothing was stopped`.
 - **What you see.** Every run has a line in the live log for each answer, at each boundary, also when no
   pack is configured. The line names the layer, and the answer that counts has ` · wins`. For example:
 
   ```text
   · policy foundry.baseline 0.1.0 [mandatory] · push: deny (secret.detected, rule secret-detected) · wins — observe only, nothing was stopped
+    Why: The new commits contain something that looks like a secret. What to do: Nothing was stopped: this policy only observes. In block mode the step would be stopped.
   ```
 
+  The `Why:` line (with `What to do:`) follows the first time a decision with the same policy, layer, boundary,
+  outcome, reason code, mode and rule is seen in a start of the run. A repeat of it is not hidden: its own line
+  ends with `· seen N times, first at <time>, now <time>`, so the count and the times stay in the log. The
+  same decision at another step counts too. The log shows a user the outcome, the reason, the reason code, the
+  policy id and version, and what to do; the layer, the rule and ` · wins` are for administrators.
   Each answer is also an event `policy.decided` in `evidence.jsonl` (see [Evidence of a run](#evidence-of-a-run)).
+  The evidence view of the run shows **Policy decisions**: one entry per kind of decision, with the outcome,
+  the reason, what to do, the number of times with the first and last time, and the steps (at most 10 are
+  named; the rest are counted). Older runs with no decisions say "No policy decisions recorded". When the
+  event record cannot be read whole, the list says it may be short.
 - **When a pack cannot be used.** A missing, unreadable, linked, invalid or `enforce` pack (the pack or one of its rules) is logged as
   `! policy <id>: …`, and the run gets a `policy.unavailable` or `policy.invalid` decision. For a
   repository or optional pack, the run's result is the same as without the pack. For a mandatory pack,
@@ -3775,7 +3792,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/runs/:id/reject` | yes | own runs | reject a run, with a note; 409 for a closed issue, as for resume |
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
-| `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policies and account ids); `state` is `not_available` for a run without a manifest |
+| `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest |
 | `GET /api/runs/:id/transcript/:n` | yes | no | the transcript of a step |
 | `GET /api/next` | yes | no | what happens next, for all runs |
 | `GET /api/health` | yes | no | server health |

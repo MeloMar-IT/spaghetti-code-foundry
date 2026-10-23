@@ -13,6 +13,9 @@ export const KIND_LABELS = { log: "a step log", transcript: "a step transcript",
 export const ACTOR_LABELS = { user: "a signed-in user", cli: "the command line", watcher: "a watcher", system: "the Foundry" };
 export const NO_TESTS = "No test results recorded";
 export const NO_POLICIES = "No policy denials recorded";
+export const NO_DECISIONS = "No policy decisions recorded";
+export const OUTCOME_LABELS = { allow: "Allowed", warn: "Warning", require_approval: "Needs approval", deny: "Denied" };
+export const MODE_LABELS = { observe: "observe only", enforce: "enforced" };
 
 const LIVE = ["queued", "running", "waiting", "stopped"];
 const TONES = { verified: "ok", failed: "fail", "not-finalized": "warn", absent: "neutral" };
@@ -105,6 +108,36 @@ function fileLines(view, admin) {
   return [`${n} ${n === 1 ? "file" : "files"}: ${parts}`];
 }
 
+/** The policy decisions of the view as lines of text. A user never gets the rule or the pack hash, even if the view has them. */
+function decisionsOf(view, admin) {
+  const pd = view?.policyDecisions;
+  const out = { decisions: [], decisionsNote: "" };
+  if (!pd || typeof pd !== "object") return out;
+  out.decisions = list(pd.groups).map((g) => {
+    const mode = g.reasonCode === "policy.break-glass" ? "break-glass" : (MODE_LABELS[g.mode] ?? String(g.mode ?? ""));
+    const outcome = OUTCOME_LABELS[g.outcome] ?? String(g.outcome ?? "");
+    const at = (t) => timeText(t) || String(t ?? "");
+    const n = Number(g.count) || 0;
+    const steps = list(g.steps);
+    const more = Number(g.moreSteps) || 0;
+    const stepText = steps.length ? ` · Steps: ${steps.join(", ")}${more ? ` and ${more} more` : ""}` : "";
+    const when = `${n <= 1 ? `Once, ${at(g.firstAt)}` : `${n} times, ${at(g.firstAt)} to ${at(g.lastAt)}`}${stepText}`;
+    const extra = admin && (g.rule || g.packSha256) ? [g.rule && `Rule ${g.rule}`, g.packSha256 && `pack ${String(g.packSha256).slice(0, 12)}`].filter(Boolean).join(" · ") : "";
+    return {
+      head: `${outcome} (${mode}) at ${g.boundary} · ${g.policy?.id} ${g.policy?.version} · ${g.reasonCode}`,
+      why: String(g.reason ?? ""),
+      next: `What to do: ${g.next ?? ""}`,
+      when,
+      ...(extra ? { extra } : {}),
+    };
+  });
+  const notes = [];
+  if (Number(pd.omittedGroups) > 0) notes.push(`${pd.omittedGroups} more kinds of decisions are not shown; the run's log has every one.`);
+  if (pd.complete === false) notes.push("The event record is not whole, so this list may be short.");
+  out.decisionsNote = notes.join(" ");
+  return out;
+}
+
 /**
  * Pure. view: the answer of GET /api/runs/:id/evidence (or undefined). ended: false while the run is queued, running,
  * waiting or stopped. A user never gets models, policies, paths or account ids, even if the view has them.
@@ -112,7 +145,7 @@ function fileLines(view, admin) {
 export function evidenceRecordModel(view, { admin = false, ended = true, runId = view?.runId ?? "" } = {}) {
   const v = view?.verification;
   const status = v && VERIFY_LABELS[v.status] ? v.status : "absent";
-  const model = { tone: TONES[status], label: VERIFY_LABELS[status], text: "", rows: [], failure: null };
+  const model = { tone: TONES[status], label: VERIFY_LABELS[status], text: "", rows: [], failure: null, ...decisionsOf(view, admin) };
   const f = v?.failure;
   if (status === "verified") {
     const n = list(v.missingOptional).length;
@@ -216,7 +249,7 @@ export function evidenceRecordSection({ load, admin = false, runId, save = saveF
       key = sKey;
       mount(statusEl, loaded ? [h("span", { class: `pill ${PILL[m.tone]}` }, m.label), " ", m.text] : "");
     }
-    const bKey = error ? `error:${error.what}` : loaded ? JSON.stringify([m.rows, m.failure]) : "loading";
+    const bKey = error ? `error:${error.what}` : loaded ? JSON.stringify([m.rows, m.failure, m.decisions, m.decisionsNote]) : "loading";
     if (bKey === bodyKey) return;
     bodyKey = bKey;
     if (error) mount(body, errorState(error, { onRetry: () => reload().catch(() => {}), focus: "evidence-retry" }));
@@ -228,6 +261,11 @@ export function evidenceRecordSection({ load, admin = false, runId, save = saveF
           h("h4", { id: `${uid}-f` }, "Verification failed"),
           h("p", { class: "wrap-anywhere" }, `${m.failure.where} ${m.failure.what}.`),
           h("p", { class: "wrap-anywhere" }, h("b", {}, "What to do: "), m.failure.next)) : null,
+        h("h4", {}, "Policy decisions"),
+        m.decisions.length
+          ? h("ul", { class: "flush" }, m.decisions.map((d) => h("li", { class: "wrap-anywhere" }, h("b", {}, d.head), h("br"), d.why, h("br"), d.next, h("br"), d.when, d.extra ? [h("br"), d.extra] : null)))
+          : h("p", { class: "muted" }, NO_DECISIONS),
+        m.decisionsNote ? h("p", { class: "muted" }, m.decisionsNote) : null,
       ]);
     }
   }

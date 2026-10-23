@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { nextStep, runNextStep } from "../src/next-step.js";
 import type { ServerOptions, startServer } from "../src/server/server.js";
+import { explanationLine } from "../src/policy/explain.js";
 import { USER_ERROR, answerBlock, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
@@ -688,5 +689,30 @@ describe("archive mark in the user view", () => {
     expect(v.archivedAt).toBe("2026-02-02T00:00:00.000Z");
     expect(JSON.stringify(v)).not.toContain("u9");
     expect("archivedAt" in userRun({ ...run, archivedAt: undefined })).toBe(false);
+  });
+});
+
+describe("userLogLine and policy decisions", () => {
+  const WARN = "· policy p1 1.2 [optional] · step.before outer/build: warn (output.limit-exceeded, rule any-step) · wins — observe only, nothing was stopped";
+  it("rebuilds a decision line without layer, rule and wins", () => {
+    expect(userLogLine(WARN)).toBe("· policy p1 1.2 · step.before outer/build: warn (output.limit-exceeded) — observe only, nothing was stopped");
+  });
+  it("keeps an allow line and the seen suffix", () => {
+    const seen = " · seen 3 times, first at 2026-01-31T12:00:00.000Z, now 2026-01-31T12:09:00.000Z";
+    expect(userLogLine(`· policy foundry.baseline 0.1.0 [mandatory] · run.start: allow (policy.no-rule-matched) — observe only, nothing was stopped${seen}`)).toBe(
+      `· policy foundry.baseline 0.1.0 · run.start: allow (policy.no-rule-matched) — observe only, nothing was stopped${seen}`,
+    );
+  });
+  it("drops a line with an unknown code, boundary or note", () => {
+    expect(userLogLine(WARN.replace("output.limit-exceeded", "made.up-code"))).toBeUndefined();
+    expect(userLogLine(WARN.replace("step.before", "step.later"))).toBeUndefined();
+    expect(userLogLine(WARN.replace("observe only, nothing was stopped", "all fine /secret/path"))).toBeUndefined();
+    expect(userLogLine(`${WARN} /extra`)).toBeUndefined();
+  });
+  it("lets a Why line through only when both texts are on the lists", () => {
+    const why = explanationLine({ outcome: "warn", mode: "observe", reasonCode: "output.limit-exceeded", policy: { id: "p1" } });
+    expect(userLogLine(why)).toBe(why);
+    expect(userLogLine(why.replace("printed", "wrote"))).toBeUndefined();
+    expect(userLogLine(`${why} Secret.`)).toBeUndefined();
   });
 });

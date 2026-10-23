@@ -2,6 +2,9 @@ import { isRefinementRun, REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { explainError } from "../errors.js";
 import type { RunStatus, RunSummary } from "../engine/state.js";
+import { isExplanationLine, LOG_NOTES } from "../policy/explain.js";
+import { REASON_CODES } from "../policy/reasons.js";
+import { BOUNDARIES } from "../policy/schema.js";
 import { usesTask } from "../flow/publish.js";
 import { REFINE_ROUND_FLOW } from "../flow/usage.js";
 import { trackingWatcher, type NextStep } from "../next-step.js";
@@ -182,8 +185,19 @@ const START_FAILURES: RegExp[] = [
   /^this run was created by an older version of Spaghetti Code Foundry and can't be resumed$/,
 ];
 
+const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const POLICY_LINE = new RegExp(
+  `^· policy ([a-z0-9][a-z0-9._-]{0,99}) ([A-Za-z0-9][A-Za-z0-9._+-]{0,63}) \\[(?:mandatory|repository|optional)\\] · ([a-z.]+)(?: ([\\w./-]+))?: (allow|warn|require_approval|deny) \\(([a-z0-9.-]+)(?:, rule [a-z0-9._-]+)?\\)(?: · wins)? — (${LOG_NOTES.map(escapeRe).join("|")})((?: · seen \\d+ times, first at \\S+, now \\S+)?)$`,
+);
+
 /** One anchored pattern and one rebuild function per known shape of a log line; the first match wins. A rebuild returns the line without what a user may not see. */
 const LOG_SHAPES: [RegExp, (m: RegExpExecArray) => string | undefined][] = [
+  // A policy decision: outcome, code, policy id and version. Layer, rule and "wins" are for admins and are left out.
+  [POLICY_LINE, (m) => {
+    if (!(BOUNDARIES as readonly string[]).includes(m[3]!) || !(REASON_CODES as readonly string[]).includes(m[6]!)) return undefined;
+    return `· policy ${m[1]} ${m[2]} · ${m[3]}${m[4] ? ` ${m[4]}` : ""}: ${m[5]} (${m[6]}) — ${m[7]}${m[8] ?? ""}`;
+  }],
+  [/^  Why: /, (m) => (isExplanationLine(m.input) ? m.input : undefined)],
   [/^run ([\w-]+) · flow (\S+) · (.*?)(?: \(branch (\S+)\))?$/, (m) => `run ${m[1]} · flow ${m[2]}${m[4] ? ` (branch ${m[4]})` : ""}`],
   [/^↻ resuming run ([\w-]+) at "([\w./-]+)"(?: \((approved|rejected)\))?$/, (m) => `↻ resuming run ${m[1]} at "${m[2]}"${m[3] ? ` (${m[3]})` : ""}`],
   [/^▶ ([\w./-]+) \((claude|shell|approval|parallel|flow)(?:, visit (\d+))?\)$/, (m) => `▶ ${m[1]} (${userType(m[2]!)}${m[3] ? `, visit ${m[3]}` : ""})`],
