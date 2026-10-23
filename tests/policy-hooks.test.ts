@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { userLogLine } from "../src/server/user-view.js";
 import { ConfigSchema } from "../src/config.js";
 import { protectedBranchEnv } from "../src/engine/guards.js";
 import { readFileSync } from "node:fs";
@@ -21,6 +22,7 @@ import { coverPack, writePack } from "./fixtures/policy-pack.js";
 
 const H = "1".repeat(64);
 const T = "2026-01-31T12:00:00.000Z";
+const WARN_WHY = "  Why: The step printed more than its output limit. What to do: Nothing to do: this policy only observes. In block mode the step would go on with this warning.";
 const STEP = { id: "build", visit: 1, type: "shell", parent: "outer" } as const;
 let home: string;
 beforeEach(() => {
@@ -126,7 +128,9 @@ describe("RunPolicy", () => {
     expect(answer.combined).toBe(answer.decisions[0]);
     expect(lines).toEqual([
       "· policy p1 1 [optional] · step.before outer/build: warn (output.limit-exceeded, rule any-step) · wins — observe only, nothing was stopped",
+      WARN_WHY,
       "· policy p2 7 [optional] · step.before outer/build: warn (output.limit-exceeded, rule any-step) — observe only, nothing was stopped",
+      WARN_WHY,
     ]);
     expect(policyDecided).toHaveBeenCalledTimes(2);
     expect(policyDecided).toHaveBeenCalledWith(out[0], STEP);
@@ -138,7 +142,7 @@ describe("RunPolicy", () => {
     const policy = new RunPolicy({ runId: "run-1", packs: [{ layer: "mandatory", id: "p1", pack: pack() }], base: { flow: "f" }, log: (l) => lines.push(l), now: () => T });
     const { decisions, combined } = policy.at("step.before", { step: "build" });
     expect(combined).toBe(decisions[0]);
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
     expect(lines[0]).toContain(" [mandatory] · ");
     expect(lines[0]).not.toContain("wins");
   });
@@ -232,7 +236,8 @@ describe("runPolicy and the config", () => {
     expect(answer.decisions).toHaveLength(1);
     expect(answer.decisions[0]).toMatchObject({ layer: "mandatory", decision: { policy: { id: BASELINE_POLICY_ID }, outcome: "allow" } });
     expect(answer.combined).toBe(answer.decisions[0]);
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain("Nothing to do.");
     expect(lines[0]).toMatch(/^· policy foundry\.baseline \S+ \[mandatory\] · run\.start: allow /);
     expect(lines[0]).not.toContain("wins");
     expect(policy.observesPushes).toBe(false);
@@ -550,6 +555,85 @@ describe("the baseline of a run", () => {
     const answer = open.repository(STEP, { credential: "machine" });
     expect(answer.denied).toBeUndefined();
     expect(answer.decisions[0]!.decision.reasonCode).toBe("policy.break-glass");
+  });
+});
+
+describe("explaining decisions in the log", () => {
+  const glass = { version: 1, reason: "outage", startedAt: "2026-01-31T11:30:00.000Z", expiresAt: "2026-01-31T13:00:00.000Z", actor: { kind: "cli", osUser: "admin" } } as never;
+  const broken = (id = "mand"): LoadedPack => ({ id, problem: "policy.unavailable", detail: "no file" });
+  const build = (packs: LoadedPack[], evidence: unknown, times: string[] = [T]) => {
+    const lines: string[] = [];
+    let i = 0;
+    const policy = new RunPolicy({ runId: "r", packs: packs.map((p) => ({ layer: "mandatory" as const, ...p })), base: {}, log: (l) => lines.push(l), evidence: evidence as RunRecorder, now: () => times[Math.min(i++, times.length - 1)]!, breakGlass: () => glass });
+    return { policy, lines };
+  };
+
+  it("groups a repeated decision with its count and first time, and explains it once", () => {
+    const { policy, lines } = build([{ id: "p1", pack: pack() }], undefined, ["2026-01-31T12:00:00.000Z", "2026-01-31T12:05:00.000Z"]);
+    policy.at("step.before", { step: "build" }, STEP);
+    policy.at("step.before", { step: "build" }, STEP);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).not.toContain("seen");
+    expect(lines[1]).toMatch(/^  Why: /);
+    expect(lines[2]).toMatch(/ · seen 2 times, first at 2026-01-31T12:00:00.000Z, now 2026-01-31T12:05:00.000Z$/);
+  });
+
+  it("explains an allow once, and counts its repeats", () => {
+    const { policy, lines } = build([{ id: "p1", pack: pack({ rules: [] }) }], undefined);
+    policy.at("run.start");
+    policy.at("run.start");
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toContain("What to do: Nothing to do.");
+    expect(lines[2]).toContain(" · seen 2 times, first at ");
+  });
+
+  it("tells the fix for a mandatory file pack and for the baseline", () => {
+    const { policy, lines } = build([broken()], undefined);
+    policy.repository(STEP, { credential: "machine" });
+    expect(lines[0]).toMatch(/: deny \(policy\.unavailable\) — enforced: the step is stopped$/);
+    expect(lines[1]).toContain("scf policy restore");
+    const b = build([{ ...baselineEntry("bad version!", NO_BASELINE_CONTROLS) }], undefined);
+    b.policy.repository(STEP, { credential: "machine" });
+    expect(b.lines[1]).toContain("check the protected branch and secret scan settings");
+    expect(b.lines[1]).not.toContain("restore");
+  });
+
+  it.each([
+    ["returns false", () => false],
+    ["throws", () => { throw new Error("disk"); }],
+  ])("logs the enforced denial when the break-glass record %s", (_n, record) => {
+    const { policy, lines } = build([broken()], { policyDecided: vi.fn(record), incomplete: vi.fn() });
+    const answer = policy.repository(STEP, { credential: "machine" });
+    expect(answer.denied).toBeDefined();
+    expect(lines.some((l) => l.includes("break-glass: the step goes on"))).toBe(false);
+    const deny = lines.filter((l) => l.startsWith("· policy"));
+    expect(deny).toHaveLength(1);
+    expect(deny[0]).toContain(": deny (policy.unavailable) — enforced: the step is stopped");
+    expect(lines.some((l) => l.includes("scf policy restore"))).toBe(true);
+    const shown = lines.map(userLogLine).filter(Boolean);
+    expect(shown).toHaveLength(2);
+    expect(shown[0]).toContain("deny (policy.unavailable)");
+  });
+
+  it("explains an unavailable baseline at a nonprivileged boundary as observed, not stopped", () => {
+    const entry = baselineEntry("bad version!", NO_BASELINE_CONTROLS);
+    const lines: string[] = [];
+    const policy = new RunPolicy({ runId: "r", packs: [entry], base: {}, log: (l) => lines.push(l), now: () => T });
+    const d = policy.at("run.start").decisions[0]!.decision;
+    expect(d).toMatchObject({ mode: "observe", outcome: "deny", reasonCode: "policy.invalid" });
+    expect(lines[0]).toContain("· policy foundry.baseline");
+    expect(lines[0]).toContain("deny (policy.invalid) — observe only, nothing was stopped");
+    expect(lines[1]).toContain("Nothing was stopped: this policy only observes.");
+    expect(lines[1]).not.toContain("The step was stopped");
+    expect(lines[1]).not.toMatch(/restore|file/);
+  });
+
+  it("logs the warn, its explanation and the break-glass line when the record is kept", () => {
+    const { policy, lines } = build([broken()], { policyDecided: vi.fn(() => true), incomplete: vi.fn() });
+    expect(policy.repository(STEP, { credential: "machine" }).denied).toBeUndefined();
+    expect(lines[0]).toContain("warn (policy.break-glass) — break-glass: the step goes on");
+    expect(lines[1]).toContain("under an administrator's break-glass");
+    expect(lines[2]).toMatch(/^! policy: break-glass active/);
   });
 });
 
