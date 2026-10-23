@@ -56,7 +56,8 @@ import { userRoutes } from "./api-users.js";
 import { logRing } from "../monitor/monitor.js";
 import { authorize, findRule } from "./permissions.js";
 import { sinceRoutes } from "./since.js";
-import { yourTurnRoutes } from "./your-turn.js";
+import { turnFor, yourTurnRoutes } from "./your-turn.js";
+import { listedIssues } from "../your-turn.js";
 import { USER_ERROR, movedText } from "./user-view.js";
 import { turnActionRoutes } from "./turn-actions.js";
 import { READ_ONLY, asParam, viewAsRoutes, viewRunning, viewedUser } from "./view-as.js";
@@ -226,7 +227,10 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     if (opts.watchers === false || ctx.restart) return void refreshStored();
     watchers.sync();
   };
-  const watchers = new WatcherManager({ scheduler, runsDir: opts.runsDir, repo: opts.repo, config: () => effective, areaWait, log, serverLog: ring.lines, restart: () => ctx.restart, startedAt: new Date(), beforeSync: refreshStored });
+  const watchers = new WatcherManager({ scheduler, runsDir: opts.runsDir, repo: opts.repo, config: () => effective, areaWait, log, serverLog: ring.lines, restart: () => ctx.restart,
+    // Read on every monitor check; files only. It must never throw into the monitor, not even before ctx exists.
+    needsYou: () => { try { return listedIssues(turnFor(ctx).all); } catch { return undefined; } },
+    startedAt: new Date(), beforeSync: refreshStored });
   const ctx: ApiContext = {
     opts,
     diagLog: sink,

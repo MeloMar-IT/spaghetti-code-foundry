@@ -9,9 +9,9 @@ import { FACTORY_HOME } from "../flow/load.js";
 import type { RateReading } from "../github.js";
 import { parseInterval, type TrackedIssue, type WatcherStatus } from "../queue/watcher.js";
 import type { Scheduler } from "../queue/scheduler.js";
-import { runDetectors, type ActiveRun, type AreaLock, type Detector, type DetectorInput, type LogLine } from "./detectors.js";
+import { runDetectors, type ActiveRun, type AreaLock, type Detector, type DetectorInput, type LogLine, type WaitingUnlisted } from "./detectors.js";
 import { loadUpdateState, type UpdateState } from "../self-update-state.js";
-import { decideBreaker, failedFixes, forgetSkip, isStoryRun, keepEarlier, storyKeys, withoutStoryRuns, type FixFailure } from "./breaker.js";
+import { type Seen, decideBreaker, failedFixes, forgetSkip, isStoryRun, keepEarlier, storyKeys, withoutStoryRuns, type FixFailure } from "./breaker.js";
 import { checkFixes, fixCommitOf, fixRunsOf, type FixEvent } from "./fix.js";
 import { findingsFile, loadFindings, readFindings, type Finding, mergeFindings, saveFindings } from "./findings.js";
 import { describeEntry, inQuietTime, loadGuard, openBreaker, storiesState, writeLog, type Loaded } from "./guard.js";
@@ -21,6 +21,7 @@ import { withStory } from "./state.js";
 import { SloInputCache, sloLookbackHours } from "./slo-input.js";
 import { markerHash } from "./story.js";
 import { ALL_DETECTORS } from "./work-detectors.js";
+import { unlistedCandidates, UnlistedTracker, type RunState } from "./unlisted.js";
 
 export interface MonitorDeps {
   scheduler: Pick<Scheduler, "briefs" | "get" | "queue"> & Partial<Pick<Scheduler, "briefsAsync" | "lastStart">>;
@@ -34,6 +35,8 @@ export interface MonitorDeps {
   /** Runs before the detectors of every check (the manager reads the request limit here). */
   beforeCheck?: () => Promise<void>;
   log: (msg: string) => void;
+  /** The issues Needs you lists now (dismissed ones too). Undefined or a throw: not known, so the waiting-unlisted detector stays quiet. */
+  needsYou?: () => readonly { repo: string; issue: number }[] | undefined;
   /** Writes bug stories for findings that last (only when `report_to` is set). */
   reporter?: Pick<Reporter, "report"> & Partial<Pick<Reporter, "storyNow">>;
   /** For tests. */
@@ -155,6 +158,7 @@ export class Monitor {
   private fixRuns = new Map<string, "none" | number>();
   /** Area lock key → when the monitor first saw it without a running owner. */
   private orphans = new Map<string, string>();
+  private unlisted = new UnlistedTracker();
   /** When the server last woke up from a sleep (as far as the monitor saw). */
   private wokeAt?: string;
   private slo = new SloInputCache();
@@ -278,7 +282,7 @@ export class Monitor {
       // A queued story job is not looked at either; the active jobs stay, they fill the slots.
       queue: { ...queue, pending: queue.pending.filter((p) => !isStoryRun({ githubRepo: p.githubRepo, issue: p.issue }, stories)) }, monitorId: this.cfg.id,
       ...(this.wokeAt ? { wokeAt: this.wokeAt } : {}),
-      active: seen.active, areaLocks: this.areaLocks(start, activeIds, seen.locks), lastStart: this.d.scheduler.lastStart?.(), restart: this.d.restart?.(), history,
+      active: seen.active, areaLocks: this.areaLocks(start, activeIds, seen.locks), unlisted: this.waitingUnlisted(start, briefs, seen.watchers, stories), lastStart: this.d.scheduler.lastStart?.(), restart: this.d.restart?.(), history,
       update: (this.d.selfUpdate ?? loadUpdateState)(), measures: sloIn.measures, evidence: sloIn.evidence,
     });
     const merged = mergeFindings(stored.findings, found, start);
@@ -424,6 +428,32 @@ export class Monitor {
       if (left.some((b) => this.fixRuns.get(b.dirName) !== "none")) pending.add(f.fingerprint);
     }
     return { findings: out, pending };
+  }
+
+  /** Open issues with a waiting label that Needs you does not list (see unlisted.ts). Never throws. */
+  private waitingUnlisted(now: Date, briefs: RunBrief[], watchers: Seen["watchers"], stories: Set<string>): WaitingUnlisted[] | undefined {
+    let listed: readonly { repo: string; issue: number }[] | undefined;
+    try { listed = this.d.needsYou?.(); } catch { listed = undefined; }
+    let newest: Map<string, RunBrief> | undefined; // briefs are newest first
+    const runState = (repo: string, issue: number): RunState => {
+      if (!newest) {
+        newest = new Map();
+        for (const b of briefs) {
+          const k = b.githubRepo && b.issue ? `${b.githubRepo.toLowerCase()}#${b.issue}` : undefined;
+          if (k && !newest.has(k)) newest.set(k, b);
+        }
+      }
+      const b = newest.get(`${repo.toLowerCase()}#${issue}`);
+      if (!b) return "none";
+      try {
+        const r = this.d.scheduler.get(b.dirName);
+        if (!r || r.runId !== b.dirName) return "unknown";
+        return r.parkedAt ? "parked" : "open";
+      } catch {
+        return "unknown";
+      }
+    };
+    return this.unlisted.build(now, () => unlistedCandidates({ watchers, listed: listed!, stories, runState }), listed);
   }
 
   /**

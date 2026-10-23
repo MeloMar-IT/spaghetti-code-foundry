@@ -235,6 +235,16 @@ export function onHome(turn: { data: YourTurn; all: readonly HomeItem[] }, at: {
     });
 }
 
+/** Every repository and issue the items stand for (next and the members of a grouped release item); dismissed items too. */
+export function listedIssues(all: readonly HomeItem[]): { repo: string; issue: number }[] {
+  const out: { repo: string; issue: number }[] = [];
+  for (const i of all) {
+    if (i.next.issue !== undefined) out.push({ repo: i.next.repo, issue: i.next.issue });
+    for (const m of i.members ?? []) if (m.issue !== undefined) out.push({ repo: m.repo, issue: m.issue });
+  }
+  return out;
+}
+
 /** A schedule watcher's daily time ("HH:MM") in its own time zone (default: this machine's). */
 export interface ReleaseTime { at: string; timezone?: string }
 

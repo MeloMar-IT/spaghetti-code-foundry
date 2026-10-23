@@ -389,11 +389,60 @@ describe("slow step", () => {
   });
 });
 
+describe("waiting label not under Needs you", () => {
+  const cfg = (over: Record<string, unknown> = {}) => WatcherSchema.parse({ id: "w", github_repo: "acme/app", every: "5m", ...over });
+  const ok = { id: "w", lastActions: [], lastOk: ago(MIN) } as never;
+  const item = (issue: number, since: number, over: Record<string, unknown> = {}) => ({ watcher: "w", repo: "acme/app", issue, label: "needs-info" as const, since: ago(since), ...over });
+  const go = (over: Partial<DetectorInput> = {}) => find("waiting-unlisted", { watchers: [{ cfg: cfg(), status: ok }], unlisted: [item(12, 11 * MIN)], ...over });
+
+  it("fires after the grace time", () => {
+    const out = go();
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      fingerprint: "waiting-unlisted|w", severity: "minor", about: "foundry", repo: "acme/app",
+      evidence: { counts: { issues: 1 }, watchers: ["w"], lines: ["#12: needs-info, not under Needs you for 11 minutes"] },
+    });
+  });
+  it("is quiet inside the grace time (2 × every)", () => {
+    expect(go({ unlisted: [item(12, 10 * MIN)] })).toEqual([]);
+    expect(go({ watchers: [{ cfg: cfg({ every: "10m" }), status: ok }] })).toEqual([]);
+  });
+  it("is quiet for the watcher's state and the server's state", () => {
+    expect(go({ watchers: [{ cfg: cfg(), status: { ...(ok as object), lastError: "x" } as never }] })).toEqual([]);
+    expect(go({ watchers: [{ cfg: cfg(), status: { id: "w", lastActions: [] } as never }] })).toEqual([]);
+    expect(go({ watchers: [{ cfg: cfg({ enabled: false }), status: ok }] })).toEqual([]);
+    expect(go({ watchers: [] })).toEqual([]);
+    expect(go({ watchers: [{ cfg: cfg({ every: "nonsense" }), status: ok }] })).toEqual([]);
+    expect(go({ asleep: true })).toEqual([]);
+    expect(go({ restart: { why: "new_version", since: ago(MIN) } })).toEqual([]);
+    expect(go({ unlisted: undefined })).toEqual([]);
+  });
+  it("starts the clock again after a wake-up", () => {
+    expect(go({ unlisted: [item(12, 60 * MIN)], wokeAt: ago(2 * MIN) })).toEqual([]);
+  });
+  it("makes one finding for seven issues, with five lines in order and no titles", () => {
+    const out = go({ unlisted: [7, 3, 5, 1, 6, 2, 4].map((i) => item(i, 20 * MIN)) });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.evidence.counts).toMatchObject({ issues: 7, minutes: 20 });
+    expect(out[0]!.evidence.lines).toHaveLength(5);
+    expect(out[0]!.evidence.lines![0]).toMatch(/^#1:/);
+    expect(out[0]!.evidence.lines![4]).toMatch(/^#5:/);
+  });
+  it("makes one finding per watcher and names waiting-approval", () => {
+    const out = go({
+      watchers: [{ cfg: cfg(), status: ok }, { cfg: cfg({ id: "v", github_repo: "acme/other" }), status: { ...(ok as object), id: "v" } as never }],
+      unlisted: [item(1, 20 * MIN, { label: "waiting-approval" }), item(2, 20 * MIN, { watcher: "v", repo: "acme/other" })],
+    });
+    expect(out.map((f) => f.fingerprint)).toEqual(["waiting-unlisted|w", "waiting-unlisted|v"]);
+    expect(out[0]!.evidence.lines![0]).toContain("waiting-approval");
+  });
+});
+
 describe("descriptions", () => {
   it("every detector has a unique name and a description of two sentences, at most 240 characters", () => {
     const info = detectorInfo();
-    expect(info).toHaveLength(21); // 19 (with the 5 SLO detectors), the self-update detector and the skill source check
-    expect(new Set(info.map((d) => d.name)).size).toBe(21);
+    expect(info).toHaveLength(22); // 20 (with the 5 SLO detectors), the self-update detector and the skill source check
+    expect(new Set(info.map((d) => d.name)).size).toBe(22);
     expect(info.map((d) => d.name)).toContain("skill-source-check");
     expect(info.map((d) => d.name)).toContain("detector-failed");
     for (const d of info) {

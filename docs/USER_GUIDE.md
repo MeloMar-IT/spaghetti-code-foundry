@@ -1908,6 +1908,7 @@ log; none calls an AI or GitHub.
 | Stuck run | a running run wrote nothing to its log for longer than its step's timeout plus a margin (no timeout: 120 minutes) | major | timeout + 10 minutes |
 | Same step keeps failing | the same step of the same flow ended runs as failed for different issues | major | 3 issues in 24 hours |
 | Label and run disagree | an issue's status label does not match its newest run | major | more than 3 checks |
+| Waiting label not listed | an open issue carries a waiting label (needs-info, waiting-approval) but Needs you does not list it; epics, excluded labels, the monitor's own bug stories are left out; a parked run is left out unless the issue has the trigger label, and an unreadable run is always left out | minor | longer than 2 checks of its watcher |
 | Lock without owner | a code-area lock or a run lock is held by a run that is not running | major | more than 10 minutes |
 | Queue not moving | jobs are queued, slots are free, and nothing started | critical | 15 minutes |
 | Restart overdue | a new version is installed and the server has not restarted | major | more than 2 hours |
@@ -6781,6 +6782,7 @@ These are the names as they appear in the log and in mutes. The thresholds are i
 - `stuck-run` (major): a running run wrote nothing to its log for too long.
 - `same-step-failing` (major): the same step ended runs as failed for different issues.
 - `label-mismatch` (major): an issue's status label does not match its newest run.
+- `waiting-unlisted` (minor): an open issue has a waiting label, but Needs you does not list it.
 - `orphan-lock` (major): a lock is held by a run that is not running.
 - `queue-stalled` (critical): jobs are queued, slots are free, and nothing starts.
 - `restart-overdue` (major): a new version is installed and the server has not restarted.
