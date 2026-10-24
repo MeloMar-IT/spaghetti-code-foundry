@@ -2368,7 +2368,7 @@ watchers:
 | `status_labels` | Your own names for the status labels above |
 | `remove_on_done` | Labels to remove when a run succeeds (e.g. the trigger label) |
 | `one_at_a_time` | Never run two of this watcher's runs at once |
-| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are closed (or have a `dependency_done_labels` label) |
+| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
 | `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
@@ -2644,10 +2644,15 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
 - **It needs you:** a question (`Factory_needs_info`), a risky plan (`Factory_waiting`) or an
   error (`Factory_ERROR`).
 - **It waits for another issue.** If the issue has a **Depends on** (or **Blocked by**) line or
-  section, it starts only when those issues are done — closed, or `Factory_done` (in the Foundry
-  pull request). You can name them as `#72` or by title (`Story 4 — Download the update safely`).
+  section, it starts only when those issues are done — closed, or `Factory_done` (in a gitflow
+  flow, where `develop_branch` is set; it is set after the merge into develop, but a hotfix can
+  finish while develop is behind). You can name them as `#72` or by title (`Story 4 — Download the
+  update safely`).
   So you can put `Factory_go` on a whole chain at once; each story is planned and coded on top of
   the code of the one before it.
+  A story that has stopped (questions, approval, usage limit, budget) also waits there: it is not
+  resumed and gets no automatic answers until its dependencies are done. Then it continues by
+  itself, with the reason "its dependencies are done" in the activity log.
 - **Another issue is being built.** One issue at a time per repository; the rest start after it.
 - **New issues are being checked for questions** (a few minutes, once per batch).
 - **The usage limit or the daily budget is reached.** Runs pause and continue by themselves

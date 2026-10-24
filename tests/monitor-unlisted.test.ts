@@ -82,6 +82,18 @@ describe("unlistedCandidates", () => {
     const first = [{ cfg: cfg({ id: "a", exclude_labels: ["factory:needs-info"] }), status: ok() }, two[1]!];
     expect(run([rec(1)], { watchers: first }).map((c) => c.watcher)).toEqual(["b"]);
   });
+  it("skips an issue some watcher holds for its dependencies, in either watcher order and for any repo case", () => {
+    const dep = (issue: number, kind = "dependency") => ({ holds: [{ issue, next: { kind } }] });
+    const holder = { cfg: cfg({ id: "a", github_repo: "ACME/app" }), status: ok(dep(1)) };
+    const other = { cfg: cfg({ id: "b" }), status: ok() };
+    expect(numbers(run([rec(1), rec(2)], { watchers: [holder, other] }))).toEqual([2]);
+    expect(numbers(run([rec(1), rec(2)], { watchers: [other, holder] }))).toEqual([2]);
+  });
+  it("keeps an issue whose hold is of another kind or belongs to another issue", () => {
+    const w = (h: object) => [{ cfg: cfg(), status: ok(h) }];
+    expect(numbers(run([rec(1)], { watchers: w({ holds: [{ issue: 1, next: { kind: "questions" } }] }) }))).toEqual([1]);
+    expect(numbers(run([rec(1)], { watchers: w({ holds: [{ issue: 2, next: { kind: "dependency" } }] }) }))).toEqual([1]);
+  });
   it("returns [] and does not throw when read or runState throws", () => {
     const boom = () => { throw new Error("x"); };
     expect(unlistedCandidates({ watchers: [{ cfg: cfg(), status: ok() }], listed: [], stories: new Set(), runState: () => "none", read: boom })).toEqual([]);

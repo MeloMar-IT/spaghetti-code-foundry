@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
@@ -36,6 +36,7 @@ describe("a comment read that does not work changes nothing", () => {
     delete process.env.FAKE_GH_FAIL;
     delete process.env.FAKE_GH_COMMENTS;
     delete process.env.FAKE_GH_PERMISSION;
+    for (const k of ["FAKE_GH_LABEL_FILTER", "FAKE_GH_ISSUES", "FAKE_GH_FAIL_API", "FAKE_GH_HOLD", "FAKE_GH_HOLD_ON"]) delete process.env[k];
     gh.restore();
   });
 
@@ -46,11 +47,11 @@ describe("a comment read that does not work changes nothing", () => {
       scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, log: () => {}, statusComments: sc,
     });
   };
-  const issues = (...list: [number, string[], string?][]) => {
-    process.env.FAKE_GH_ISSUES = JSON.stringify(list.map(([number, labels, body]) => ({ number, title: `issue ${number}`, state: "OPEN", labels: labels.map((name) => ({ name })), body })));
+  const issues = (...list: [number, string[], string?, string?][]) => {
+    process.env.FAKE_GH_ISSUES = JSON.stringify(list.map(([number, labels, body, state]) => ({ number, title: `issue ${number}`, state: state ?? "OPEN", labels: labels.map((name) => ({ name })), body })));
   };
   const comments = (...c: unknown[]) => { process.env.FAKE_GH_COMMENTS = JSON.stringify({ comments: c }); };
-  const plant = (status: "stopped" | "waiting") => {
+  const plant = (status: "stopped" | "waiting", over: Record<string, unknown> = {}) => {
     const runDir = join(gh.tmp, "runs", "r1");
     mkdirSync(runDir, { recursive: true });
     saveRun({
@@ -59,6 +60,7 @@ describe("a comment read that does not work changes nothing", () => {
       startedAt: "2026-01-01T00:00:00.000Z", finishedAt: "2026-01-01T00:01:00.000Z", totalCostUsd: 0, history: [],
       state: { next: "ask_for_info", steps: {}, visits: {} },
       ...(status === "waiting" ? { waiting: { stepId: "approve", message: "ready", since: "2026-01-01T00:01:00.000Z" } } : {}),
+      ...over,
     } as unknown as RunSummary);
   };
   const log = () => gh.ghLog();
@@ -211,6 +213,119 @@ describe("a comment read that does not work changes nothing", () => {
       await w.tick();
       expect(hold4(w)?.next.kind).toBe("questions");
       expect(log()).not.toMatch(/issue edit 4 .*--remove-label/);
+    });
+  });
+
+  describe("a resume waits for its dependencies (#674)", () => {
+    const DEP = "### Depends on\n#7\n";
+    const resumed = () => submit.mock.calls.filter((c) => (c[0] as { kind: string }).kind === "resume").length;
+    const asked = (dep: [number, string[], string?, string?] = [7, []]) => { issues([4, [TRIGGER, ASKS], DEP], dep); comments(question, answer); };
+    beforeEach(() => { process.env.FAKE_GH_LABEL_FILTER = "1"; });
+
+    it("answered: held, label to working, no slot used; resumes when the dependency is closed", async () => {
+      plant("stopped");
+      issues([4, [TRIGGER, ASKS], DEP], [5, [TRIGGER]], [7, []]); comments(question, answer);
+      const w = watcher({ max_per_tick: 1 });
+      await w.tick();
+      expect(resumed()).toBe(0);
+      expect(submit).toHaveBeenCalledTimes(1);
+      expect(submit).toHaveBeenCalledWith(expect.objectContaining({ kind: "run" }), expect.anything());
+      expect(hold4(w)).toMatchObject({ next: { kind: "dependency", runId: "r1" } });
+      expect(w.status.holds?.find((h) => h.issue === 5)).toBeUndefined();
+      expect(log()).toContain(`--add-label ${WORKING}`);
+      issues([4, [TRIGGER, WORKING], DEP], [7, [], undefined, "CLOSED"]);
+      await w.tick();
+      expect(resumed()).toBe(1);
+      expect(w.status.lastActions.join("\n")).toContain("#4 its dependencies are done → resuming run r1");
+    });
+
+    it("auto_defaults with a run: no /defaults, the needs-info label stays", async () => {
+      plant("stopped"); issues([4, [TRIGGER, ASKS], DEP], [7, []]); comments(question);
+      const w = watcher({ auto_defaults: true });
+      await w.tick();
+      expect(log()).not.toContain("comment on #4");
+      expect(submit).not.toHaveBeenCalled();
+      expect(hold4(w)?.next.kind).toBe("dependency");
+      expect(log()).not.toContain(`--remove-label ${ASKS}`);
+    });
+
+    it("auto_defaults with no run: no /defaults, no start, the label stays", async () => {
+      issues([4, [TRIGGER, ASKS], DEP], [7, []]); comments(question);
+      const w = watcher({ auto_defaults: true });
+      await w.tick();
+      expect(log()).not.toContain("comment on #4");
+      expect(submit).not.toHaveBeenCalled();
+      expect(hold4(w)).toMatchObject({ next: { kind: "dependency" } });
+      expect(hold4(w)?.next.runId).toBeUndefined();
+      expect(log()).not.toContain(`--remove-label ${ASKS}`);
+    });
+
+    it("without auto_defaults the questions need a person: the run's own hold", async () => {
+      plant("stopped"); issues([4, [TRIGGER, ASKS], DEP], [7, []]); comments(question);
+      const w = watcher({ auto_defaults: false });
+      await w.tick();
+      expect(hold4(w)?.next.kind).not.toBe("dependency");
+      expect(submit).not.toHaveBeenCalled();
+    });
+
+    it("usage limit with the working label: held, not resumed", async () => {
+      plant("stopped", { reason: "usage limit reached", finishedAt: "2026-01-01T00:01:00.000Z" });
+      issues([4, [TRIGGER, WORKING], DEP], [7, []]);
+      const w = watcher();
+      await w.tick();
+      expect(submit).not.toHaveBeenCalled();
+      expect(hold4(w)?.next.kind).toBe("dependency");
+    });
+
+    it("approved with the waiting label: held, label to working", async () => {
+      plant("waiting"); issues([4, [TRIGGER, WAITING], DEP], [7, []]); comments(request, approve);
+      const w = watcher();
+      await w.tick();
+      expect(submit).not.toHaveBeenCalled();
+      expect(hold4(w)?.next.kind).toBe("dependency");
+      expect(log()).toContain(`--add-label ${WORKING}`);
+    });
+
+    it("the done label counts as done only with a develop branch", async () => {
+      plant("stopped"); asked([7, ["factory:done"]]);
+      await watcher({ vars: { develop_branch: "develop" } }).tick();
+      expect(resumed()).toBe(1);
+      submit.mockClear();
+      const w = watcher();
+      await w.tick();
+      expect(resumed()).toBe(0);
+      expect(hold4(w)?.next.kind).toBe("dependency");
+    });
+
+    it("wait_for_dependencies off: resumes at once", async () => {
+      plant("stopped"); asked();
+      await watcher({ wait_for_dependencies: false }).tick();
+      expect(resumed()).toBe(1);
+    });
+
+    describe("a check that is given up while it reads the dependencies", () => {
+      const given = async (labels: string[]) => {
+        const hold = join(gh.tmp, "hold");
+        writeFileSync(hold, "");
+        process.env.FAKE_GH_HOLD = hold;
+        process.env.FAKE_GH_HOLD_ON = "--state all";
+        process.env.FAKE_GH_FAIL_API = "list";
+        plant("stopped");
+        issues([4, labels, DEP], [7, [], undefined, "CLOSED"]); comments(question, answer);
+        const w = watcher();
+        w.checkTimeoutMs = 4000;
+        await w.tick();
+        expect(w.status.lastError).toMatch(/given up/);
+        rmSync(hold);
+        await vi.waitFor(() => expect(log()).toContain("--state all"), { timeout: 10_000 });
+        await vi.waitFor(() => expect(existsSync(hold)).toBe(false));
+        await new Promise((r) => setTimeout(r, 400));
+        expect(submit).not.toHaveBeenCalled();
+        expect(log()).not.toContain("issue edit 4");
+        expect(log()).not.toContain("comment on #4");
+      };
+      it("working label, answered: nothing is resumed", async () => { await given([TRIGGER, WORKING]); });
+      it("needs-info label, answered: nothing is relabelled or resumed", async () => { await given([TRIGGER, ASKS]); });
     });
   });
 

@@ -25,6 +25,12 @@ export function unlistedCandidates(o: {
     const listedKeys = new Set(o.listed.map((l) => storyKey(l.repo, l.issue)));
     const lists = new Map<string, RepoIssueList | undefined>();
     const taken = new Set<string>();
+    // Issues any eligible watcher holds for their dependencies: the waiting label stays on purpose.
+    const depHeld = new Set<string>();
+    for (const { cfg, status } of o.watchers) {
+      if (cfg.source !== "issues" || !cfg.enabled || !cfg.github_repo || !status.lastOk || status.lastError) continue;
+      for (const h of status.holds ?? []) if (h.issue !== undefined && h.next.kind === "dependency") depHeld.add(storyKey(cfg.github_repo, h.issue));
+    }
     const out: UnlistedCandidate[] = [];
     for (const { cfg, status } of o.watchers) {
       if (cfg.source !== "issues" || !cfg.enabled || !cfg.github_repo || !status.lastOk || status.lastError) continue;
@@ -49,7 +55,7 @@ export function unlistedCandidates(o: {
         const found = waitingLabelOf(r.labels, L);
         if (!found || r.labels.some((l) => excluded.has(l))) continue;
         const k = storyKey(repo, r.number);
-        if (listedKeys.has(k) || o.stories.has(k) || taken.has(k)) continue;
+        if (depHeld.has(k) || listedKeys.has(k) || o.stories.has(k) || taken.has(k)) continue;
         const state = o.runState(repo, r.number);
         if (state === "unknown" || (state === "parked" && !r.labels.includes(cfg.label))) continue;
         taken.add(k);

@@ -75,12 +75,27 @@ export function dependencies(body: string, self: number, all: DepIssue[], titleL
   return [...found].sort((a, b) => a - b);
 }
 
-/** Dependencies that are not done yet: still open, and without one of the done labels. */
-export function openDependencies(deps: number[], all: DepIssue[], doneLabels: string[]): number[] {
-  return deps.filter((n) => {
-    const i = all.find((x) => x.number === n);
-    if (!i) return false; // unknown issue (other repo, typo): don't block on it
-    if (i.state && i.state.toUpperCase() !== "OPEN") return false;
-    return !(i.labels ?? []).some((l) => doneLabels.includes(l.name));
-  });
+/** When a "Depends on" issue counts as done. */
+export interface DoneRule {
+  /** dependency_done_labels of the watcher */
+  doneLabels: readonly string[];
+  /** the watcher's done label; counts only with gitflow */
+  doneLabel?: string;
+  /** the flow merges into a develop branch (develop_branch set): the done label is a completion signal there */
+  gitflow?: boolean;
+}
+
+/** Is this dependency done: closed, a done label, or (gitflow) the watcher's done label. An unknown issue counts as done. */
+export function dependencyDone(issue: DepIssue | undefined, rule: DoneRule): boolean {
+  if (!issue) return true; // unknown issue (other repo, typo): don't block on it
+  if (issue.state && issue.state.toUpperCase() !== "OPEN") return true;
+  const names = (issue.labels ?? []).map((l) => l.name);
+  if (names.some((l) => rule.doneLabels.includes(l))) return true;
+  return !!rule.gitflow && !!rule.doneLabel && names.includes(rule.doneLabel);
+}
+
+/** Dependencies that are not done yet. A string list is the old form: { doneLabels }. */
+export function openDependencies(deps: number[], all: DepIssue[], done: readonly string[] | DoneRule): number[] {
+  const rule: DoneRule = Array.isArray(done) ? { doneLabels: done as readonly string[] } : (done as DoneRule);
+  return deps.filter((n) => !dependencyDone(all.find((x) => x.number === n), rule));
 }
