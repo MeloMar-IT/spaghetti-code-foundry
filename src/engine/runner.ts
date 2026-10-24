@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
 import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
@@ -57,6 +57,8 @@ interface CommonOptions {
   runsDir: string;
   claudeBin?: string;
   codexBin?: string;
+  /** Evals only: folders put first on the PATH of every step (a suite's fake `gh`). */
+  pathPrefix?: string[];
   signal?: AbortSignal;
   log?: (msg: string) => void;
   /** Called whenever run.json is written. */
@@ -290,6 +292,7 @@ async function drive(
       ...nextStepEnv(),
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes),
       ...selfEnv(),
+      ...(opts.pathPrefix?.length ? { PATH: [...opts.pathPrefix, process.env.PATH ?? ""].join(delimiter) } : {}),
     };
     // fails before any step, as before, when the run starts with the machine's login and has a step that uses the token
     // (shell, or a sub-flow whose steps are not known yet) — unless a mandatory policy cannot be used: then every step

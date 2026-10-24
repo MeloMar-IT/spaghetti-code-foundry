@@ -13,6 +13,7 @@ import type { EvidenceEvent, RunEvidence } from "./evidence/schema.js";
 import { evidenceIncomplete, readPlainBytes } from "./evidence/stream.js";
 import { verifyRunEvidence, type VerifyResult } from "./evidence/verify.js";
 import { EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE } from "./evidence/version.js";
+import type { OutputLabel, Signal } from "./engine/untrusted.js";
 import { loadFlow } from "./flow/load.js";
 import type { Flow } from "./flow/schema.js";
 import { BOUNDARIES, OUTCOMES } from "./policy/schema.js";
@@ -24,8 +25,10 @@ import { declaredToolProfile, mapSessionSettings, toolSession, type ToolSession 
 // a source the check needs and cannot read in full is a mismatch, never a pass.
 
 export const EVIDENCE_FIELDS = ["git", "models", "policies", "approvals", "tests", "artifacts", "diff", "pullRequest"] as const satisfies readonly (keyof RunEvidence)[];
-export const CONTROL_KINDS = ["policy", "tools", "privileges", "evidence", "output"] as const;
-export type ControlKind = (typeof CONTROL_KINDS)[number];
+export const CONTROL_KINDS = ["policy", "tools", "privileges", "evidence", "output", "untrusted"] as const;
+/** The signals of `engine/untrusted.ts`, listed here because importing that module at load time makes an import cycle (tests compare the two). */
+export const CONTROL_SIGNALS = ["orders", "policy-tag", "secret-removed", "oversize", "timed-out", "classifier", "classifier-error", "held"] as const satisfies readonly Signal[];
+export type ControlKind =(typeof CONTROL_KINDS)[number];
 
 const toolEntryOk = (s: string): boolean => {
   const [kind, ...rest] = s.split(".");
@@ -52,6 +55,11 @@ export const ControlsExpectSchema = z
     max_privileges: z.object({ credential: z.enum(CREDENTIAL_ORDER).optional(), sandbox: z.literal("required").optional() }).strict().optional(),
     evidence: z.object({ fields: z.array(z.enum(EVIDENCE_FIELDS)).default([]) }).strict().optional(),
     prohibited_output: z.array(z.string().min(1).max(500).refine(regexOk, "must be a valid regular expression")).max(50).optional(),
+    untrusted: z
+      .array(z.object({ step: z.string().max(200).regex(/^[\w-]+(\/[\w-]+)*$/), signals: z.array(z.enum(CONTROL_SIGNALS)).max(10).optional() }).strict())
+      .min(1)
+      .max(50)
+      .optional(),
   })
   .strict();
 export type ControlsExpect = z.infer<typeof ControlsExpectSchema>;
@@ -98,6 +106,9 @@ export interface ControlsInput extends ScanSink {
   profiles: ProfileUse[];
   verify?: VerifyResult;
   manifest?: RunEvidence;
+  /** The step records of the run. Only read when `untrusted` is declared. */
+  records?: { id: string; label?: OutputLabel; held?: string[] }[];
+  heldContent?: { step: string; sha256: string[] };
 }
 
 const MAX_LOG_BYTES = 20 * 1024 * 1024;
@@ -105,7 +116,7 @@ const listed = (items: string[]): string => items.slice(0, 10).join(", ") + (ite
 
 // ---- reading ----
 
-type RunLike = Pick<RunSummary, "runId" | "runDir" | "flowDef" | "toolProfile" | "outputs"> & Partial<Pick<RunSummary, "repo" | "workdir">>;
+type RunLike = Pick<RunSummary, "runId" | "runDir" | "flowDef" | "toolProfile" | "outputs"> & Partial<Pick<RunSummary, "repo" | "workdir" | "history" | "heldContent">>;
 
 /** Reads the uncommitted and new files of a workspace (the stored diff holds only the commits). Injected by tests. */
 export type WorkspaceReader = (workdir: string, max: number) => ScanSink;
@@ -207,6 +218,11 @@ export function readControlsInput(run: RunLike, expect: ControlsExpect, config: 
           input.profiles.push({ step: at, sha12: e.profile.sha256.slice(0, 12), ...(e.agent ? { agent: e.agent } : {}), resolved: resolveProfile(e, run, config) });
         }
       }
+    }
+    if (expect.untrusted) {
+      // a sub-flow step's record already carries its path in `id` (`sub/issue`), with the sub-flow in `parent`
+      input.records = (run.history ?? []).map((h) => ({ id: h.id, ...(h.label ? { label: h.label } : {}), ...(h.held ? { held: h.held } : {}) }));
+      if (run.heldContent) input.heldContent = run.heldContent;
     }
     if (expect.evidence) input.verify = verifyRunEvidence(run.runDir, run.runId);
     if (expect.prohibited_output) readOutput(run, manifest, o.maxLogBytes ?? MAX_LOG_BYTES, input, o.readWorkspace ?? readWorkspaceFiles);
@@ -378,13 +394,32 @@ function checkOutput(input: ControlsInput, patterns: string[]): Found {
   return undefined;
 }
 
-/** Pure: the verdict of every declared assertion; `firstMismatch` follows the order policy, tools, privileges, evidence, output. */
+function checkUntrusted(input: ControlsInput, expect: NonNullable<ControlsExpect["untrusted"]>): Found {
+  const records = input.records ?? [];
+  const held = new Set([...(input.heldContent?.sha256 ?? []), ...records.flatMap((r) => r.held ?? [])]);
+  for (const x of expect) {
+    const want = `step ${x.step} labelled untrusted${x.signals?.length ? ` (${x.signals.join(", ")})` : ""} or held`;
+    const at = records.filter((r) => r.id === x.step);
+    if (!at.length) return mismatch("untrusted", want, "no record of it");
+    for (const r of at) {
+      const l = r.label;
+      if (!l) return mismatch("untrusted", want, "no label");
+      if (held.has(l.sha256)) continue;
+      if (l.trust !== "untrusted") return mismatch("untrusted", want, `trust ${l.trust}`);
+      if ((x.signals ?? []).some((sg) => !l.signals.includes(sg))) return mismatch("untrusted", want, `signals ${l.signals.length ? l.signals.join(", ") : "none"}`);
+    }
+  }
+  return undefined;
+}
+
+/** Pure: the verdict of every declared assertion; `firstMismatch` follows the order policy, tools, privileges, evidence, output, untrusted. */
 export function evaluateControls(input: ControlsInput, expect: ControlsExpect): ControlsResult {
   const policy = expect.policy ? checkPolicy(input, expect.policy) : undefined;
   const tools = expect.allowed_tools ? checkTools(input, expect.allowed_tools) : undefined;
   const privileges = expect.max_privileges ? checkPrivileges(input, expect.max_privileges) : undefined;
   const evidence = expect.evidence ? checkEvidence(input, expect.evidence) : undefined;
   const output = expect.prohibited_output ? checkOutput(input, expect.prohibited_output) : undefined;
-  const firstMismatch = policy ?? tools ?? privileges ?? evidence ?? output;
+  const untrusted = expect.untrusted ? checkUntrusted(input, expect.untrusted) : undefined;
+  const firstMismatch = policy ?? tools ?? privileges ?? evidence ?? output ?? untrusted;
   return { ok: !firstMismatch, policyOk: !policy, evidenceOk: !evidence, ...(firstMismatch ? { firstMismatch } : {}) };
 }
