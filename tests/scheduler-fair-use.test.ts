@@ -104,6 +104,54 @@ describe("scheduler fair use", () => {
     }
   });
 
+  it("a schedule chore has its own lane: no story slot, before stories, one chore at a time", async () => {
+    setCap("load", { runs: 1, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+    try {
+      concurrency = 1;
+      mk();
+      s.submit(job(), { source: "story-1", owner: A });
+      const story2 = s.submit(job(), { source: "story-2", owner: A });
+      expect(active()).toEqual(["story-1"]);
+      // every story slot is taken and the cap is reached: the release starts anyway, ahead of the queued story
+      s.submit(job(), { source: "watcher rel-a schedule", owner: A, lockKey: "acme/a#chore:rel-a" });
+      expect(active()).toEqual(["story-1", "watcher rel-a schedule"]);
+      expect(pending().map((p) => p.runId)).toEqual([story2]);
+      // a second chore waits for the first one (one at a time on the whole machine) and is not marked as capped
+      const rel2 = s.submit(job(), { source: "watcher rel-b schedule", owner: B, lockKey: "acme/b#chore:rel-b" });
+      expect(pending().find((p) => p.runId === rel2)).not.toHaveProperty("capped");
+      expect(active()).not.toContain("watcher rel-b schedule");
+      // the chore does not take the story's place: when story-1 ends, story-2 starts although the chore still runs
+      await finish("story-1");
+      setCap("load", undefined);
+      await waitFor(() => active().includes("story-2"));
+      // when the first chore ends, the next one starts
+      await finish("watcher rel-a schedule");
+      await waitFor(() => active().includes("watcher rel-b schedule"));
+    } finally {
+      setCap("load", undefined);
+    }
+  });
+
+  it("a chore is not counted for runs per day and is held only by the daily budget of its account", () => {
+    mk({ startedToday: () => 9, spentTodayBy: (id) => (id === B ? 5 : 0) });
+    limits[A] = { maxRunsPerDay: 1, maxConcurrent: 1 };
+    limits[B] = { dailyBudgetUsd: 1 };
+    concurrency = 3;
+    // B's budget is spent: its chore waits, and does not hold back A's chore behind it
+    const held = s.submit(job(), { source: "watcher rel-b schedule", owner: B });
+    // A is over its runs of the day, but a chore is not counted
+    s.submit(job(), { source: "watcher rel-a schedule", owner: A });
+    expect(active()).toEqual(["watcher rel-a schedule"]);
+    expect(s.isQueued(held)).toBe(true);
+  });
+
+  it("starts no chore with a concurrency of 0", () => {
+    mk();
+    concurrency = 0;
+    const id = s.submit(job(), { source: "watcher rel-a schedule", owner: A });
+    expect(s.isQueued(id)).toBe(true);
+  });
+
   it("a helper's cap holds back new runs only: a run that already started is resumed past it", async () => {
     // a stopped run on disk, as after a restart; it may hold the turn to merge that the others wait for
     const runDir = join(tmp, "runs", "stopped-1");
