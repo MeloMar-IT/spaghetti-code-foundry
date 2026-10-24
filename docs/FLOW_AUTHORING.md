@@ -437,6 +437,10 @@ the first two problems when you save; the rest is up to you.
 
 See `docs/THREAT_MODEL.md` for what is protected and what is still open.
 
+## Outputs
+
+A step may write `outputs.json` in the run folder (`{{run.dir}}`): a JSON object of short string values, with keys of lowercase letters, digits and `_` (at most 20 keys, 2,000 characters a value, 64 KB in all). The engine copies it into `run.json` as `outputs`. Keys that are not set stay as they were. The built-in `pull_request` output is the URL of the pull request a run opened or found: the `open-pr` block and the daily release's `release_pr` step record it with `node "$FACTORY_TOOLS/pr-output" "{{run.dir}}" "$url" || true`. The tool takes the last non-empty line of the URL, accepts only a `https://github.com/<owner>/<repo>/pull/<number>` address, and always exits 0. A problem is printed to stderr as `pr-output: <reason>`, and an existing `outputs.json` that is not valid is left as it was. Use the same call in your own shell step when a later step must know which pull request the run delivers. Report it best-effort, so that a reporting failure does not fail the step.
+
 ## Templates and environment variables
 
 In `prompt`, `message` and `vars` values, `{{…}}` placeholders are replaced:
