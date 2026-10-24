@@ -12,6 +12,7 @@ import { BASELINE_VERSION, NO_BASELINE_CONTROLS, baselinePack } from "../src/pol
 import type { PolicyDecision } from "../src/policy/schema.js";
 import { baselineEntry, baseFacts, deniedReason, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
 import { ENGINE_REASONS } from "../src/policy/reasons.js";
+import { baselineLimits } from "../src/engine/policy-limits.js";
 import { DenialSchema } from "../src/evidence/schema.js";
 import { BASELINE_PACK, BASELINE_POLICY_ID } from "../src/policy/baseline.js";
 import { parseEvidenceEvent } from "../src/evidence/parse.js";
@@ -490,7 +491,7 @@ describe("the baseline of a run", () => {
 
   it("uses the variant pack hash for a push without a repository", () => {
     const { policy } = make({ protected_branches: ["main"] });
-    const controls = { protectedBranches: ["main"], secretScan: true, shippedHotfixFlow: true };
+    const controls = { protectedBranches: ["main"], secretScan: true, shippedHotfixFlow: true, limits: baselineLimits(gitflow(), ConfigSchema.parse({})) };
     expect(pushed(policy, "x", { branch: "feat", ...own, repository: undefined }).packSha256).toBe(policyPackSha256(baselinePack(BASELINE_VERSION, controls)));
     expect(pushed(policy, "x", { branch: "feat", ...own }).packSha256).toBe(policyPackSha256(baselinePack(BASELINE_VERSION, { ...controls, repository: "acme/widgets" })));
   });

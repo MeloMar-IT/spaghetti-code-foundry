@@ -10,6 +10,7 @@ import {
   runBaseline,
   type BaselineControls,
 } from "../src/policy/baseline.js";
+import { baselineEntry } from "../src/engine/policy-hooks.js";
 import { evaluatePolicy, policyPackSha256 } from "../src/policy/evaluate.js";
 import type { Boundary, Facts } from "../src/policy/schema.js";
 
@@ -118,5 +119,90 @@ describe("decisions", () => {
 
   it("pins the hotfix names to guards.ts", () => {
     expect(BASELINE_HOTFIX).toEqual({ flow: HOTFIX_FLOW, step: HOTFIX_PUSH_STEP });
+  });
+});
+
+describe("the limit rules of the baseline", () => {
+  const LIMITS = {
+    output: [{ limit: 1000, steps: ["a"] }],
+    timeout: [
+      { limit: 1000, steps: ["a"] },
+      { limit: 5000, steps: ["c"] },
+    ],
+    stepBudget: [{ limit: 2, steps: ["a"] }],
+    runBudget: 10,
+    dailyBudget: 20,
+  };
+  const C: BaselineControls = { ...NO_BASELINE_CONTROLS, limits: LIMITS };
+  const facts = (over: Facts = {}): Facts => ({ step: "a", outputBytes: 0, elapsedMs: 0, stepCostUsd: 0, runCostUsd: 0, dailyCostUsd: 0, ...over });
+  const afterIds = (c: BaselineControls) => ids(c).slice(ids(NO_BASELINE_CONTROLS).length);
+
+  it("adds the rules after credential-scope-exceeded, in order, observe only and at step.after", () => {
+    expect(afterIds(C)).toEqual(["output-limit-exceeded", "timeout-exceeded", "timeout-exceeded-2", "budget-step-exceeded", "budget-run-exceeded", "budget-daily-exceeded"]);
+    const added = baselinePack("1", C).rules.slice(-6);
+    expect(added.every((r) => r.mode === "observe" && r.boundaries.join() === "step.after")).toBe(true);
+    expect(added.map((r) => r.outcome)).toEqual(["warn", "deny", "deny", "deny", "deny", "deny"]);
+  });
+
+  it("fires just over each limit and not at it", () => {
+    const cases: [Facts, string, string][] = [
+      [{ outputBytes: 1001 }, "output.limit-exceeded", "output-limit-exceeded"],
+      [{ elapsedMs: 1001 }, "timeout.exceeded", "timeout-exceeded"],
+      [{ stepCostUsd: 2.01 }, "budget.step-exceeded", "budget-step-exceeded"],
+      [{ runCostUsd: 10.01 }, "budget.run-exceeded", "budget-run-exceeded"],
+      [{ dailyCostUsd: 20.01 }, "budget.daily-exceeded", "budget-daily-exceeded"],
+    ];
+    for (const [over, reason, rule] of cases) {
+      expect(ask(C, "step.after", facts(over))).toMatchObject({ reason, rule });
+    }
+    expect(ask(C, "step.after", facts({ outputBytes: 1000, elapsedMs: 1000, stepCostUsd: 2, runCostUsd: 10, dailyCostUsd: 20 })).reason).toBe("policy.no-rule-matched");
+  });
+
+  it("applies the step rules to the listed steps only, and the run and daily rules to every step", () => {
+    expect(ask(C, "step.after", facts({ step: "zzz", outputBytes: 9999, elapsedMs: 9999, stepCostUsd: 99 })).reason).toBe("policy.no-rule-matched");
+    expect(ask(C, "step.after", facts({ step: "c", elapsedMs: 1001 })).reason).toBe("policy.no-rule-matched");
+    expect(ask(C, "step.after", facts({ step: "zzz", runCostUsd: 11 })).reason).toBe("budget.run-exceeded");
+    expect(ask(C, "step.after", facts({ step: "zzz", dailyCostUsd: 21 })).reason).toBe("budget.daily-exceeded");
+  });
+
+  it("splits more than 100 steps with one limit into chunks", () => {
+    const steps = Array.from({ length: 250 }, (_, i) => `s${i + 1}`);
+    const c = { ...NO_BASELINE_CONTROLS, limits: { timeout: [{ limit: 1000, steps }] } };
+    expect(afterIds(c)).toEqual(["timeout-exceeded", "timeout-exceeded-2", "timeout-exceeded-3"]);
+    expect(ask(c, "step.after", { step: "s250", elapsedMs: 2000 })).toMatchObject({ reason: "timeout.exceeded", rule: "timeout-exceeded-3" });
+  });
+
+  it("drops bad step ids and bad numbers", () => {
+    const c = {
+      ...NO_BASELINE_CONTROLS,
+      limits: {
+        timeout: [
+          { limit: 1000, steps: ["a".repeat(129), "a b", "x*", "ok", "ok"] },
+          { limit: Number.NaN, steps: ["n"] },
+          { limit: -1, steps: ["m"] },
+          { limit: Number.POSITIVE_INFINITY, steps: ["i"] },
+          { limit: 7, steps: ["a b"] },
+        ],
+        runBudget: Number.NaN,
+        dailyBudget: -1,
+      },
+    };
+    expect(afterIds(c)).toEqual(["timeout-exceeded"]);
+    expect((baselinePack("1", c).rules.at(-1)!.when as { step: { in: string[] } }).step.in).toEqual(["ok"]);
+  });
+
+  it("has the same rules as before without limits, and asks no more facts", () => {
+    expect(ids({ ...NO_BASELINE_CONTROLS, limits: {} })).toEqual(ids(NO_BASELINE_CONTROLS));
+    expect(ask(NO_BASELINE_CONTROLS, "step.after", { step: "a" }).reason).toBe("policy.no-rule-matched");
+  });
+
+  it("refuses a baseline of more than 500 rules, clearly", () => {
+    const timeout = Array.from({ length: 600 }, (_, i) => ({ limit: 1000 + i, steps: [`s${i}`] }));
+    expect(() => runBaseline("1", { ...NO_BASELINE_CONTROLS, limits: { timeout } })).toThrow(/would have \d+ rules, more than 500/);
+    const entry = baselineEntry("1", { ...NO_BASELINE_CONTROLS, limits: { timeout } });
+    expect(entry).toMatchObject({ layer: "mandatory", problem: "policy.invalid" });
+    expect((entry as { detail: string }).detail).toMatch(/would have \d+ rules, more than 500/);
+    const fine = { ...NO_BASELINE_CONTROLS, limits: { timeout: timeout.slice(0, 400) } };
+    expect(() => runBaseline("1", fine)).not.toThrow();
   });
 });

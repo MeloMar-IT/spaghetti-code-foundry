@@ -327,3 +327,74 @@ steps:
     }
   });
 });
+
+describe("the limit rules of the baseline in a run", () => {
+  const stepAfter = (s: Pick<RunSummary, "runDir">, id: string, parent?: string) =>
+    baseline(s).filter((e) => e.decision.boundary === "step.after" && e.step?.id === id && e.step?.parent === parent);
+
+  it("records a step over its time limit, judges a sub-flow step by its own flow, and gives the daily fact", async () => {
+    mkdirSync(join(repo, ".claude-factory", "flows"), { recursive: true });
+    writeFileSync(
+      join(repo, ".claude-factory", "flows", "inner.yaml"),
+      "name: inner\nsteps:\n  - {id: slow, type: shell, run: sleep 0.3}\n  - {id: late, type: shell, run: sleep 1, timeout_sec: 0.1}\n",
+    );
+    const config = ConfigSchema.parse({ protected_branches: [], policy: { packs: [] }, daily_budget_usd: 1000 });
+    const s = await start(
+      `
+name: outer
+workspace: inplace
+steps:
+  - {id: slow, type: shell, run: sleep 1, timeout_sec: 0.1, on_failure: next}
+  - {id: quick, type: shell, run: echo Q}
+  - {id: build, type: flow, flow: inner, on_failure: next}
+`,
+      config,
+    );
+    const code = (id: string, parent?: string) => stepAfter(s, id, parent).map((e) => e.decision.reasonCode);
+    expect(code("slow")).toEqual(["timeout.exceeded"]);
+    expect(code("quick")).toEqual(["policy.no-rule-matched"]);
+    expect(code("slow", "build")).toEqual(["policy.no-rule-matched"]);
+    expect(code("late", "build")).toEqual(["timeout.exceeded"]);
+    expect(baseline(s).some((e) => e.decision.reasonCode === "policy.input-incomplete")).toBe(false);
+    expect(live(s)).toMatch(/· policy foundry\.baseline .* step\.after build\/late: deny \(timeout\.exceeded, rule timeout-exceeded\).*observe only/);
+  });
+
+  it("warns for a shell step that prints over the default output cap, and not at it", async () => {
+    const config = ConfigSchema.parse({ protected_branches: [], policy: { packs: [] } });
+    const s = await start(
+      `
+name: out
+workspace: inplace
+steps:
+  - {id: over, type: shell, run: "head -c 20001 /dev/zero | tr '\\\\0' x"}
+  - {id: exact, type: shell, run: "head -c 20000 /dev/zero | tr '\\\\0' x"}
+`,
+      config,
+    );
+    expect(stepAfter(s, "over").map((e) => e.decision.reasonCode)).toEqual(["output.limit-exceeded"]);
+    expect(stepAfter(s, "exact").map((e) => e.decision.reasonCode)).toEqual(["policy.no-rule-matched"]);
+  });
+
+  it("counts only the final attempt of an agent step", async () => {
+    writePack(process.env.FACTORY_HOME!, "limits", {
+      version: 1,
+      policy: { id: "limits", version: "1" },
+      mode: "observe",
+      defaultOutcome: "allow",
+      rules: [{ id: "slow", boundaries: ["step.after"], when: { step: { in: ["b"] }, elapsedMs: { over: 700 } }, outcome: "deny", reasonCode: "timeout.exceeded" }],
+    });
+    const s = await start(
+      `
+name: retry
+workspace: inplace
+steps:
+  - {id: b, type: claude, prompt: "CLAUDE_SLOW_ONCE"}
+`,
+      cfg(["limits"]),
+    );
+    expect(s.status).toBe("succeeded");
+    expect(s.history.find((h) => h.id === "b")!.durationMs).toBeGreaterThanOrEqual(1000);
+    const mine = decided(s).filter((e) => e.decision.policy.id === "limits" && e.decision.boundary === "step.after" && e.step?.id === "b");
+    expect(mine.map((e) => e.decision.reasonCode)).toEqual(["policy.no-rule-matched"]);
+  });
+});

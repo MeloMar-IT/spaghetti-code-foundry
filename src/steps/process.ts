@@ -11,7 +11,15 @@ export interface ProcessResult {
   aborted: boolean;
 }
 
+/** Filled by runProcess whenever it settles, also when it rejects: how long the process ran and how many bytes it printed. */
+export interface ProcessMeter {
+  ms?: number;
+  printedBytes?: number;
+}
+
 export interface ProcessOptions {
+  /** Filled when the process settles (see ProcessMeter). */
+  meter?: ProcessMeter;
   cwd: string;
   env?: NodeJS.ProcessEnv;
   stdin?: string;
@@ -62,6 +70,10 @@ function mergeEnv(overrides: NodeJS.ProcessEnv = {}, clean = false): NodeJS.Proc
 /** Spawn a process, tee stdout/stderr into a log file, and collect output. */
 export function runProcess(cmd: string, args: string[], opts: ProcessOptions): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
+    if (opts.meter) {
+      opts.meter.ms = undefined;
+      opts.meter.printedBytes = undefined;
+    }
     // fail before anything starts when the stored credentials cannot be read
     let current: () => Redactor;
     try {
@@ -85,6 +97,14 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       stdio: ["pipe", "pipe", "pipe"],
       ...(opts.ownGroup ? { detached: true } : {}),
     });
+    const began = Date.now();
+    let printed = 0;
+    const measure = () => {
+      if (opts.meter) {
+        opts.meter.ms = Date.now() - began;
+        opts.meter.printedBytes = printed;
+      }
+    };
     // a signal to the child, or to its whole group when it has one
     const signalTree = (sig: NodeJS.Signals) => {
       try {
@@ -150,8 +170,14 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       logFilter.write(text);
       filter.write(text);
     };
-    child.stdout.on("data", (buf: Buffer) => feed(outFilter, outDecoder.write(buf)));
-    child.stderr.on("data", (buf: Buffer) => feed(errFilter, errDecoder.write(buf)));
+    child.stdout.on("data", (buf: Buffer) => {
+      printed += buf.length;
+      feed(outFilter, outDecoder.write(buf));
+    });
+    child.stderr.on("data", (buf: Buffer) => {
+      printed += buf.length;
+      feed(errFilter, errDecoder.write(buf));
+    });
 
     const cleanup = () => {
       clearTimeout(timer);
@@ -159,6 +185,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     };
     child.on("error", (err) => {
       cleanup();
+      measure();
       log.end();
       reject(new Error(`failed to start "${cmd}": ${err.message}`));
     });
@@ -170,6 +197,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       errFilter.end();
       logFilter.end();
       if (opts.onLine && pending.trim()) opts.onLine(pending);
+      measure();
       if (logError) {
         log.end();
         return reject(new Error(`could not write the log file (${logError.code ?? "error"})`));

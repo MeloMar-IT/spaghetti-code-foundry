@@ -1,7 +1,8 @@
 import { dockerCommand } from "../engine/guards.js";
-import { runProcess } from "./process.js";
+import { runProcess, type ProcessMeter } from "./process.js";
 
-const MAX_OUTPUT = 20_000;
+/** Characters of shell output the engine keeps when a step sets no `max_output`. */
+export const DEFAULT_MAX_OUTPUT = 20_000;
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;?]*[ -\/]*[@-~]/g;
 
@@ -42,6 +43,8 @@ export async function runShell(o: {
   cleanEnv?: boolean;
   /** Hold the command in this `sandbox-exec` profile (not used with a Docker image: the container holds it). */
   sandboxProfile?: string;
+  /** Filled with the process time and the bytes it printed (see ProcessMeter). */
+  meter?: ProcessMeter;
 }):Promise<ShellRunResult> {
   const env: NodeJS.ProcessEnv = { ...NO_COLOR_ENV, ...o.env };
   let cmd = "/bin/sh";
@@ -63,9 +66,10 @@ export async function runShell(o: {
     ownGroup: o.ownGroup,
     cleanEnv: o.cleanEnv,
     sandboxProfile: o.dockerImage ? undefined : o.sandboxProfile,
+    meter: o.meter,
   });
   // Keep the tail: that's where test failures and stack traces usually are.
-  const keep = o.maxOutput ?? MAX_OUTPUT;
+  const keep = o.maxOutput ?? DEFAULT_MAX_OUTPUT;
   const fullOut = (res.stdout + res.stderr).replace(ANSI, "");
   const fullErr = res.stderr.replace(ANSI, "");
   const output = fullOut.slice(-keep);

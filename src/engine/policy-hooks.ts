@@ -6,7 +6,9 @@ import type { StepIdentity } from "../evidence/identity.js";
 import type { Denial } from "../evidence/schema.js";
 import type { RunRecorder } from "../evidence/record.js";
 import { BASELINE_POLICY_ID, BASELINE_VERSION, baselineControls, runBaseline, type BaselineControls } from "../policy/baseline.js";
+import type { Flow } from "../flow/schema.js";
 import { HOTFIX_FLOW, isShippedFlow } from "./guards.js";
+import { baselineLimits, NO_STEP_LIMITS, scopedPacks, stepLimits } from "./policy-limits.js";
 import { combineDecisions, layeredPackIds, type Layer, type LayeredDecision } from "../policy/compose.js";
 import { parsePolicyDecision, parsePolicyPack } from "../policy/parse.js";
 import { explanationLine, logNote } from "../policy/explain.js";
@@ -25,6 +27,8 @@ import type { RunSummary } from "./state.js";
  * The one way out is an active break-glass (#626): it turns that denial into a recorded `warn`, but only when the
  * decision can be written to the run's evidence. Nothing here throws into the engine.
  * The baseline is built in and always asked; it is asked at `push` only when the pre-push hook is installed.
+ * Its limit rules (output, time, cost) are per flow: a step of a sub-flow is asked against a baseline built from its own
+ * flow's limits (`subFlow`), at every boundary. A root baseline that cannot be built is never replaced.
  */
 
 export const POLICY_FOLDER = "policies";
@@ -249,7 +253,13 @@ export class RunPolicy {
   /** How often each decision came in this start of the run, for the "seen" suffix of the log. Capped. */
   private readonly seen = new Map<string, { count: number; first: string }>();
 
-  constructor(o: { breakGlass?: () => BreakGlass | undefined; runId: string; packs: LayeredPack[]; base: Facts; log: (line: string) => void; evidence?: RunRecorder; now?: () => string; observesPushes?: boolean }) {
+  /** Builds the baseline entry for a sub-flow (its own step limits), or without step limits when no scope is given. */
+  private readonly scopedBaseline?: (scope?: { flow: Flow; depth: number }) => LayeredPack;
+  /** The scoped baseline of each sub-flow, by the parent prefix of its steps. */
+  private readonly scoped = new Map<string, LayeredPack>();
+  private fallbackEntry?: LayeredPack;
+
+  constructor(o: { scopedBaseline?: (scope?: { flow: Flow; depth: number }) => LayeredPack; breakGlass?: () => BreakGlass | undefined; runId: string; packs: LayeredPack[]; base: Facts; log: (line: string) => void; evidence?: RunRecorder; now?: () => string; observesPushes?: boolean }) {
     this.observesPushes = o.observesPushes ?? false;
     this.mandatoryUnusable = o.packs.some((p) => p.layer === "mandatory" && "problem" in p);
     this.runId = o.runId;
@@ -259,6 +269,35 @@ export class RunPolicy {
     this.evidence = o.evidence;
     this.now = o.now ?? (() => new Date().toISOString());
     this.breakGlass = o.breakGlass ?? (() => undefined);
+    this.scopedBaseline = o.scopedBaseline;
+  }
+
+  /**
+   * A sub-flow starts under `parent` (the prefix of its step ids, without the closing slash): its steps are asked against a
+   * baseline with the limits of that flow. Never throws; a baseline that cannot be built is logged and denies the privileged
+   * boundaries of that sub-flow's steps.
+   */
+  subFlow(parent: string, flow: Flow, depth: number): void {
+    if (!this.scopedBaseline) return;
+    let entry: LayeredPack;
+    try {
+      entry = this.scopedBaseline({ flow, depth });
+    } catch {
+      entry = { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, "could not be built") };
+    }
+    this.scoped.set(parent, entry);
+    if ("problem" in entry) this.log(`! policy ${entry.id}: sub-flow ${parent}: ${entry.detail} — this mandatory policy denies steps with a sign-in and writing agents in this sub-flow`);
+  }
+
+  /** The packs to ask for one step: the root's, or with the sub-flow's baseline swapped in. */
+  private packsFor(step?: StepIdentity): readonly LayeredPack[] {
+    if (step?.parent === undefined || !this.scopedBaseline) return this.packs;
+    try {
+      this.fallbackEntry ??= this.scopedBaseline();
+      return scopedPacks(this.packs, this.scoped.get(step.parent) ?? this.fallbackEntry);
+    } catch {
+      return this.packs;
+    }
   }
 
   /**
@@ -284,7 +323,7 @@ export class RunPolicy {
       const first = this.packs.find((p) => p.layer === "mandatory");
       return privileged && first ? { decisions, denied: { reason: deniedReason(first.id, "policy.invalid", boundary) } } : { decisions };
     }
-    for (const loaded of this.packs) {
+    for (const loaded of this.packsFor(step)) {
       const mode: Mode = loaded.layer === "mandatory" && privilegedBoundary(boundary, input.facts) ? "enforce" : "observe";
       try {
         const raw = this.decide(loaded, input, mode);
@@ -453,23 +492,31 @@ export function baselineEntry(version: string, controls: BaselineControls): Laye
  * The policy of one start of a run: always there, with the baseline first, built from the settings and the run
  * (protected branches, secret scan, repository, shipped flow). Files are read only for the packs that are
  * configured. The baseline is asked at `push` only when the pre-push hook is installed (see `observesPushes`).
+ * Its limit rules come from the flow and the config (`baselineLimits`); a sub-flow gets its own (see `RunPolicy.subFlow`).
  * Logs one "!" line per pack that could not be loaded, and one for patterns the baseline cannot hold.
  */
 export function runPolicy(
   summary: RunSummary,
-  config: Pick<Config, "policy"> & Partial<Pick<Config, "protected_branches" | "secret_scan">>,
+  config: Pick<Config, "policy"> & Partial<Pick<Config, "protected_branches" | "secret_scan" | "cost_limits" | "daily_budget_usd">>,
   log: (line: string) => void,
   evidence?: RunRecorder,
   home?: string,
 ): RunPolicy {
   const shipped = isShippedFlow(summary.flowDef);
   const base = policyFacts({ ...baseFacts(summary), shippedFlow: shipped });
-  const { controls, leftOut } = baselineControls(config, { repository: base.repository, shippedHotfixFlow: shipped && summary.flowDef?.name === HOTFIX_FLOW });
+  let limits: ReturnType<typeof baselineLimits> | undefined;
+  let limitsFailed = false;
+  try {
+    limits = baselineLimits(summary.flowDef, config);
+  } catch {
+    limitsFailed = true; // the baseline is then invalid: no weaker fallback
+  }
+  const { controls, leftOut } = baselineControls(config, { repository: base.repository, shippedHotfixFlow: shipped && summary.flowDef?.name === HOTFIX_FLOW, ...(limits ? { limits } : {}) });
   if (leftOut.length) {
     const shown = leftOut.slice(0, 10).map((p) => JSON.stringify(p)).join(", ");
     log(`! policy ${BASELINE_POLICY_ID}: protected branch patterns ${shown}${leftOut.length > 10 ? ` and ${leftOut.length - 10} more` : ""} cannot be expressed in the baseline (? [ ] \\, other spaces or control characters, or over 255 characters) and are not in it — the hook still blocks them`);
   }
-  const entry = baselineEntry(BASELINE_VERSION, controls);
+  const entry: LayeredPack = limitsFailed ? { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, "its limits could not be read") } : baselineEntry(BASELINE_VERSION, controls);
   if ("problem" in entry) log(`! policy ${entry.id}: ${entry.detail} — recorded as ${entry.problem}; this mandatory policy denies steps with a sign-in and writing agents`);
   const ids = layeredPackIds({ mandatory: config.policy?.mandatory, repositories: config.policy?.repositories, packs: config.policy?.packs }, base.repository);
   const loaded = ids.length
@@ -485,5 +532,7 @@ export function runPolicy(
     } else if (ids[i]!.layer === "mandatory") saveLastKnownGood(home ?? dataHome(), p.id, p.pack, log);
   });
   const packs: LayeredPack[] = [entry,...loaded.map((l, i) => ({ ...l, layer: ids[i]!.layer }))];
-  return new RunPolicy({ runId: summary.runId, packs, base, log, evidence, observesPushes: ids.length > 0, breakGlass: () => activeBreakGlass(home ?? dataHome()) });
+  const scopedBaseline = (s?: { flow: Flow; depth: number }): LayeredPack =>
+    baselineEntry(BASELINE_VERSION, { ...controls, limits: { ...limits, ...(s ? stepLimits(s.flow, s.depth, config) : NO_STEP_LIMITS) } });
+  return new RunPolicy({ runId: summary.runId, packs, base, log, evidence, observesPushes: ids.length > 0, breakGlass: () => activeBreakGlass(home ?? dataHome()), scopedBaseline });
 }

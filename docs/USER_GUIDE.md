@@ -1239,7 +1239,23 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
     when the run has no repository;
   - an agent write by a user without a sandbox is denied (`sandbox.required`);
   - an in-place run by a user is denied (`workspace.admin-only`);
-  - a user's run that gets the machine's credential is denied (`credential.scope-exceeded`).
+  - a user's run that gets the machine's credential is denied (`credential.scope-exceeded`);
+  - a shell step whose output is over its limit gets a warning (`output.limit-exceeded`). Every shell step
+    has a limit: 20,000 by default; the `check_round` step of `refine-round` has 150,000, and the `risk_gate`
+    step of `issue-deliver` and `issue-gitflow` has 60,000. The output is counted in bytes, so a warning can come
+    before the output is cut;
+  - a step that runs longer than its timeout is denied (`timeout.exceeded`). The limit is the step's
+    `timeout_sec`, or the flow's default. It covers shell and agent steps;
+  - a step whose cost is over its step budget is denied (`budget.step-exceeded`). The limit is the step's
+    `max_budget_usd`, or the flow's default. These budget rules need `cost_limits` (not `false`);
+  - a run whose cost is over the flow's `max_cost_usd` is denied (`budget.run-exceeded`);
+  - a run whose day's cost is over `daily_budget_usd` is denied (`budget.daily-exceeded`).
+
+  The limit rules exist only when their limit is in effect, and a rule is only for the steps that have that
+  limit. A sub-flow step is judged by the limits of its own flow. `elapsedMs` is the process time of the
+  final attempt of an agent step, not the time of its earlier retries. If a baseline has more than 500
+  rules, for example from very many distinct limits, it is `policy.invalid`: for the whole run, or only for
+  the steps of that sub-flow. Then the steps that sign in or write are stopped, as described below.
 
   All of them are observed only. Protected branch patterns with `?`, `[`, `]` or `\`, or longer than 255
   characters, cannot be matched the way the hook matches them, so they are not in the baseline. The run

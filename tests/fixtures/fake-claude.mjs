@@ -95,6 +95,13 @@ if (prompt.includes("CLAUDE_OVERLOADED")) {
   emit({ type: "result", subtype: "success", is_error: true, result: "API Error: 529 overloaded_error", session_id: "s", total_cost_usd: 0, num_turns: 1 });
   process.exit(1);
 }
+// CLAUDE_SLOW_ONCE: the first call in a folder sleeps a second, then answers "overloaded" (the engine retries); later calls answer as usual.
+if (prompt.includes("CLAUDE_SLOW_ONCE") && !existsSync(".fake-claude-slow")) {
+  writeFileSync(".fake-claude-slow", "1");
+  await new Promise((r) => setTimeout(r, 1000));
+  emit({ type: "result", subtype: "success", is_error: true, result: "API Error: 529 overloaded_error", session_id: "s", total_cost_usd: 0, num_turns: 1 });
+  process.exit(1);
+}
 if (prompt.includes("CLAUDE_LIMIT")) {
   emit({ type: "result", subtype: "success", is_error: true, result: "You've hit your limit · resets 3:50pm (Europe/Amsterdam)", session_id: "s", total_cost_usd: 0, num_turns: 1 });
   process.exit(1);
