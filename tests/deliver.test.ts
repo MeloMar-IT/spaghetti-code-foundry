@@ -616,6 +616,7 @@ describe("generated issue flows", () => {
     for (const f of ["issue-code-daily", "issue-deliver", "issue-gitflow"]) expect(run(f, "report")).toContain("run=$FACTORY_RUN_ID -->");
     expect(run("pr-feedback", "reply")).toContain("run=$FACTORY_RUN_ID -->");
     expect(run("release-daily", "release_pr")).toContain("run=$FACTORY_RUN_ID daily -->");
+    expect(run("release-daily", "release_pr")).toContain('"$FACTORY_TOOLS/pr-output"');
     expect(run("release-daily", "release_pr")).toContain("run=$FACTORY_RUN_ID release -->");
     expect(run("daily-pr", "report")).toContain("run=$FACTORY_RUN_ID daily -->");
   });
