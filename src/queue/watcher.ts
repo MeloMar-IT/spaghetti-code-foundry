@@ -599,12 +599,16 @@ export class Watcher {
   /** Run the chore when the last one started at least `every` ago (survives restarts). */
   private async tickChore() {
     const last = this.d.scheduler.list(1000).find((s) => s.vars?.chore_watcher === this.cfg.id);
+    let choreDay: string | undefined;
     if (this.cfg.at) {
-      // Once a day at `at` (caught up later that day if the Mac was off at that time).
+      // Once a day at `at` (caught up later that day if the Mac was off at that time). A chore belongs to the day it was
+      // queued for (`chore_day`), not the day it started: one that waited in the queue past midnight does not take the
+      // next day's turn. Older runs without `chore_day` count by their start day, as before.
       const now = minutesNow(this.cfg.timezone);
       const [hh, mm] = this.cfg.at.split(":").map(Number) as [number, number];
       if (now.minutes < hh * 60 + mm) return;
-      if (last && minutesNow(this.cfg.timezone, new Date(last.startedAt)).day === now.day) return;
+      if (last && (last.vars?.chore_day ?? minutesNow(this.cfg.timezone, new Date(last.startedAt)).day) === now.day) return;
+      choreDay = now.day;
     } else {
       const every = parseInterval(this.cfg.every);
       // 5% slack so timer jitter doesn't skip a whole period.
@@ -615,7 +619,7 @@ export class Watcher {
     const { flow } = loadFlow(this.flowName(), this.d.repo);
     const runId = this.queue({
       kind: "run", flow, repo: this.d.repo, task: this.cfg.task ?? "",
-      vars: { ...this.cfg.vars, github_repo: this.repo, chore_watcher: this.cfg.id },
+      vars: { ...this.cfg.vars, github_repo: this.repo, chore_watcher: this.cfg.id, ...(choreDay ? { chore_day: choreDay } : {}) },
     }, { lockKey, source: `watcher ${this.cfg.id} schedule` });
     this.act(`scheduled chore → run ${runId}`);
   }

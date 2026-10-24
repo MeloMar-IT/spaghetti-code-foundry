@@ -9,6 +9,15 @@ import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
 import { isRefinementRun } from "../auth/run-owner.js";
+
+/**
+ * A schedule chore of a watcher (the daily release, the daily report): `watcher <id> schedule`. Chores have their own lane:
+ * they use no story slot and go before stories, one chore at a time on the whole machine. They run no agent, so they cost
+ * nothing; their only load is one test run, which still waits for a test slot.
+ */
+export const isChoreRun = (source?: string): boolean => typeof source === "string" && /^watcher \S+ schedule$/.test(source);
+/** Runs that use no story slot: architect runs of a refinement session and schedule chores. */
+const ownLane = (source?: string): boolean => isRefinementRun(source) || isChoreRun(source);
 import { runIdsStartedToday } from "./usage.js";
 import type { Actor } from "../evidence/identity.js";
 import { actorOf } from "../evidence/record.js";
@@ -434,7 +443,7 @@ export class Scheduler {
           ...(priority ? { priority: true as const } : {}),
           ...(limit ? { limit } : {}),
           // nothing but a helper's cap keeps this new run waiting: on purpose, not a queue that stands still
-          ...(capFull && job.kind === "run" && !isRefinementRun(source) && !blocker && !limit ? { capped: true as const } : {}),
+          ...(capFull && job.kind === "run" && !ownLane(source) && !blocker && !limit ? { capped: true as const } : {}),
           ...(!priority && !limit && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
           flow: job.kind === "run" ? job.flow.name : undefined,
@@ -451,11 +460,12 @@ export class Scheduler {
   /**
    * The slots the running jobs use. An architect run of a refinement session uses none: a person waits for it, it only
    * reads, and the account's own lock lets one of its architect runs work at a time. It starts past the configured number
-   * and past a helper's cap, so a busy factory does not keep a person waiting.
+   * and past a helper's cap, so a busy factory does not keep a person waiting. A schedule chore uses none either (see
+   * isChoreRun).
    */
   private slotsInUse(): number {
     let n = 0;
-    for (const a of this.active.values()) if (!isRefinementRun(a.queued.source)) n++;
+    for (const a of this.active.values()) if (!ownLane(a.queued.source)) n++;
     return n;
   }
 
@@ -642,8 +652,8 @@ export class Scheduler {
       }
       return l;
     };
-    // Architect runs use a slot but are not counted as new runs of the day.
-    const countable = (q: QueuedJob) => q.job.kind === "run" && !isRefinementRun(q.source);
+    // Architect runs and chores are not counted as new runs of the day.
+    const countable = (q: QueuedJob) => q.job.kind === "run" && !ownLane(q.source);
     const activeOf = (acc: string) => [...this.active.values()].filter((a) => (a.account ?? a.summary?.owner) === acc).length;
     const groupActive = (g: string) => [...this.active.values()].filter((a) => a.group === g).length;
     let briefs: RunBrief[] | undefined;
@@ -700,9 +710,22 @@ export class Scheduler {
       this.start(q, account, group);
     }
 
+    // Then one schedule chore at a time on the whole machine, in queue order (the order of their scheduled times). A chore
+    // takes no story slot and does not wait for stories or a helper's cap; only its lock, the account's state and the
+    // account's daily budget hold it. A concurrency of 0 (nothing starts) holds it too.
+    if (limit >= 1 && ![...this.active.values()].some((a) => isChoreRun(a.queued.source))) {
+      const q = this.pending.find((p) => isChoreRun(p.source) && !locked(p) && !held(p) && limitOf(p) !== "budget");
+      if (q) {
+        const account = accountOf(q);
+        this.pending.splice(this.pending.indexOf(q), 1);
+        this.lastStartOf.set(account ?? "", ++this.startSeq);
+        this.start(q, account, account ?? "");
+      }
+    }
+
     while (this.slotsInUse() < limit) {
       const full = this.slotsInUse() >= capped;
-      const ready = this.pending.filter((q) => !isRefinementRun(q.source) && !locked(q) && !held(q) && !limitOf(q) && !(full && q.job.kind === "run"));
+      const ready = this.pending.filter((q) => !ownLane(q.source) && !locked(q) && !held(q) && !limitOf(q) && !(full && q.job.kind === "run"));
       if (!ready.length) break;
       // priority block first, then the group with the fewest active runs, then the oldest last start, then queue order
       const pool = ready.some((q) => q.priority) ? ready.filter((q) => q.priority) : ready;
