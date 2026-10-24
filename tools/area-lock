@@ -17,7 +17,7 @@
 // Env: FACTORY_VAR_GITHUB_REPO (locks are per repository), SCF_LOCK_DIR / FACTORY_LOCK_DIR (default
 // <data folder>/locks). The data folder is SCF_HOME, else FACTORY_HOME, else ~/.spaghetti-code-foundry
 // (or ~/.claude-factory while that is the only one that exists and has not been moved).
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -113,6 +113,14 @@ if (cmd === "acquire") {
   if (!areas.length) areas = [`@run:${runId}`]; // nothing that needs a lock
   const deadline = Date.now() + waitSec * 1000;
   let told = "";
+  // While it waits, <run dir>/area-wait.json says so (the server tells a stuck wait from real work by it).
+  const waitFile = join(runDir, "area-wait.json");
+  const clearWait = () => {
+    try {
+      rmSync(waitFile, { force: true });
+    } catch {}
+  };
+  process.on("exit", clearWait);
   for (;;) {
     const blocker = await withMutex(() => {
       const others = locks().filter((l) => l.runId !== runId);
@@ -123,13 +131,20 @@ if (cmd === "acquire") {
       return undefined;
     });
     if (!blocker) {
+      clearWait();
       console.log(`LOCKED: ${areas.join(", ")}`);
       process.exit(0);
     }
     const msg = `waiting for run ${blocker.runId} (${blocker.areas.join(", ")})`;
     if (msg !== told) console.log(msg);
     told = msg;
+    try {
+      const tmp = `${waitFile}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify({ runId, waitingFor: blocker.runId, areas: blocker.areas, at: new Date().toISOString() }));
+      renameSync(tmp, waitFile);
+    } catch {}
     if (Date.now() > deadline) {
+      clearWait();
       console.log(`TIMEOUT: ${msg}`);
       process.exit(1);
     }

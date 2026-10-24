@@ -287,6 +287,12 @@ describe("queue not moving", () => {
     expect(find("queue-stalled", { queue: q([job()]), lastStart: ago(16 * MIN), config: withConfig({ queue_stalled: { minutes: 30 } }) })).toEqual([]);
   });
 
+  it("is quiet while a restart waits, and still fires without it", () => {
+    const input = { queue: q([job()]), lastStart: ago(HOUR) };
+    expect(find("queue-stalled", input)).toHaveLength(1);
+    expect(find("queue-stalled", { ...input, restart: { why: "new_version", since: ago(MIN) } })).toEqual([]);
+  });
+
   it("is quiet with full slots, when every job waits for a lock, after a recent start, a recent job, or when asleep", () => {
     const old = ago(HOUR);
     expect(find("queue-stalled", { queue: q([job()], 2), lastStart: old })).toEqual([]);

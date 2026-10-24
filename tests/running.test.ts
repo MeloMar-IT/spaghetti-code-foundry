@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,7 +7,7 @@ import { createUser } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
 import { resetSandboxCache, SANDBOX_REFUSED } from "../src/engine/os-sandbox.js";
 import { runFlow, resumeRun } from "../src/engine/runner.js";
-import { markRunning, sweepRunning, unmarkRunning } from "../src/engine/running.js";
+import { markRunning, sweepRunning, sweepStaleRunning, unmarkRunning } from "../src/engine/running.js";
 import { parseFlow } from "../src/flow/load.js";
 import { claudeBin } from "./helpers/fake-github.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
@@ -118,6 +118,127 @@ describe("sweepRunning", () => {
     put("c.json", { runId: "ended", runDir: join(runsDir(), "ended"), areas: ["z"], marker: true });
     sweepRunning(runsDir());
     expect(readdirSync(join(lock(), "repo")).sort()).toEqual(["b.json", "c.json"]);
+  });
+});
+
+describe("sweepStaleRunning", () => {
+  const runsDir = () => join(lock(), "runs");
+  const run = (id: string, o: { status?: string; pid?: number; bad?: boolean; ageMs?: number } = {}) => {
+    mkdirSync(join(runsDir(), id), { recursive: true });
+    const f = join(runsDir(), id, "run.json");
+    writeFileSync(f, o.bad ? "{ nope" : JSON.stringify({ status: o.status ?? "running", pid: o.pid ?? 999999 }));
+    if (o.ageMs) {
+      const t = new Date(Date.now() - o.ageMs);
+      utimesSync(f, t, t);
+    }
+  };
+  const put = (name: string, body: object) => {
+    mkdirSync(join(lock(), "repo"), { recursive: true });
+    writeFileSync(join(lock(), "repo", name), JSON.stringify(body));
+  };
+  const left = () => readdirSync(join(lock(), "repo")).sort();
+
+  it("at start removes markers of dead, own, old-boot, unreadable and missing runs and keeps active and live ones", () => {
+    run("dead");
+    run("own", { pid: process.pid });
+    run("oldboot", { pid: process.ppid, ageMs: 3600_000 });
+    run("broken", { bad: true });
+    run("active");
+    run("live", { pid: process.ppid });
+    for (const id of ["dead", "own", "oldboot", "broken", "missing", "active", "live"]) markRunning(id);
+    const res = sweepStaleRunning(runsDir(), (id) => id === "active", { atStart: true, bootMs: Date.now() });
+    expect(markers().sort()).toEqual(["active", "live"]);
+    expect(res.markers.sort()).toEqual(["broken", "dead", "missing", "oldboot", "own"]);
+  });
+
+  it("keeps a run.json that cannot be read while the server runs", () => {
+    run("broken", { bad: true });
+    markRunning("broken");
+    expect(sweepStaleRunning(runsDir(), () => false, { atStart: false }).markers).toEqual([]);
+    expect(markers()).toEqual(["broken"]);
+  });
+
+  it("frees the locks of removed runs and lists them; keeps the others", () => {
+    run("dead");
+    run("active");
+    run("elsewhere-dead");
+    markRunning("dead");
+    put("a.json", { runId: "dead", runDir: join(runsDir(), "dead"), areas: ["x", "y"], marker: true });
+    put("b.json", { runId: "active", runDir: join(runsDir(), "active"), areas: ["z"], marker: true });
+    put("c.json", { runId: "elsewhere-dead", runDir: join(runsDir(), "elsewhere-dead"), areas: ["w"] });
+    put("d.json", { runId: "notmine", runDir: "/nowhere", areas: ["v"] });
+    const res = sweepStaleRunning(runsDir(), (id) => id === "active", { atStart: false });
+    expect(left()).toEqual(["b.json", "d.json"]);
+    expect(res.locks.map((l) => [l.runId, l.repo, l.areas]).sort()).toEqual([
+      ["dead", "repo", ["x", "y"]],
+      ["elsewhere-dead", "repo", ["w"]],
+    ]);
+  });
+
+  it("leaves pipes, links, forged run dirs and ../ alone", () => {
+    execFileSync("mkfifo", [join(lock(), "evil.json")]);
+    mkdirSync(join(lock(), "repo"), { recursive: true });
+    execFileSync("mkfifo", [join(lock(), "repo", "evil.json")]);
+    writeFileSync(join(lock(), "target"), JSON.stringify({ runId: "dead", marker: true }));
+    symlinkSync(join(lock(), "target"), join(lock(), "repo", "link.json"));
+    run("live", { pid: process.ppid });
+    const elsewhere = join(lock(), "elsewhere");
+    mkdirSync(elsewhere);
+    writeFileSync(join(elsewhere, "run.json"), JSON.stringify({ status: "failed" }));
+    put("forged.json", { runId: "live", runDir: elsewhere, areas: ["x"] });
+    put("dots.json", { runId: "../elsewhere", runDir: elsewhere, areas: ["x"] });
+    sweepStaleRunning(runsDir(), () => false, { atStart: true, bootMs: Date.now() - 3600_000 });
+    expect(left()).toEqual(["dots.json", "evil.json", "forged.json", "link.json"]);
+  });
+
+  it("lets a waiting area-lock take over from a dead run", () => {
+    run("r1");
+    markRunning("r1");
+    const tool = resolve("tools/area-lock");
+    const al = (...args: string[]) => {
+      try {
+        return execFileSync("node", [tool, "acquire", ...args, "--wait-sec", "0"], { env: { ...process.env, FACTORY_VAR_GITHUB_REPO: "acme/app", AREA_LOCK_POLL_MS: "10" }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      } catch (e) {
+        return String((e as { stdout?: string }).stdout);
+      }
+    };
+    expect(al("r1", join(runsDir(), "r1"), "@develop")).toContain("LOCKED");
+    expect(al("r2", join(runsDir(), "r2"), "@develop")).toContain("TIMEOUT");
+    sweepStaleRunning(runsDir(), () => false);
+    expect(al("r2", join(runsDir(), "r2"), "@develop")).toContain("LOCKED");
+  });
+});
+
+describe("area-lock wait file", () => {
+  const tool = resolve("tools/area-lock");
+  const env = { ...process.env, FACTORY_VAR_GITHUB_REPO: "acme/app", AREA_LOCK_POLL_MS: "50" };
+  const until = async (ok: () => boolean) => {
+    const end = Date.now() + 10_000;
+    while (!ok() && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+    expect(ok()).toBe(true);
+  };
+  const exit = (c: ChildProcess) => new Promise<number | null>((r) => c.on("close", r));
+
+  it("exists while it waits for another run, and is gone on LOCKED and on TIMEOUT", async () => {
+    const runs = join(lock(), "runs");
+    mkdirSync(join(runs, "r1"), { recursive: true });
+    mkdirSync(join(runs, "r2"), { recursive: true });
+    writeFileSync(join(runs, "r1", "run.json"), JSON.stringify({ status: "running" }));
+    execFileSync("node", [tool, "acquire", "r1", join(runs, "r1"), "@develop", "--wait-sec", "0"], { env });
+    const wait = join(runs, "r2", "area-wait.json");
+    const c = spawn("node", [tool, "acquire", "r2", join(runs, "r2"), "@develop", "--wait-sec", "5"], { env, stdio: "ignore" });
+    const done = exit(c);
+    await until(() => existsSync(wait) && JSON.parse(readFileSync(wait, "utf8")).waitingFor === "r1");
+    writeFileSync(join(runs, "r1", "run.json"), JSON.stringify({ status: "failed" }));
+    expect(await done).toBe(0);
+    expect(existsSync(wait)).toBe(false);
+
+    // r2 holds it now; r3 times out
+    writeFileSync(join(runs, "r2", "run.json"), JSON.stringify({ status: "running" }));
+    mkdirSync(join(runs, "r3"), { recursive: true });
+    const t = spawn("node", [tool, "acquire", "r3", join(runs, "r3"), "@develop", "--wait-sec", "0.3"], { env, stdio: "ignore" });
+    expect(await exit(t)).toBe(1);
+    expect(existsSync(join(runs, "r3", "area-wait.json"))).toBe(false);
   });
 });
 

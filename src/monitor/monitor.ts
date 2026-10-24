@@ -158,6 +158,14 @@ export class Monitor {
   private fixRuns = new Map<string, "none" | number>();
   /** Area lock key → when the monitor first saw it without a running owner. */
   private orphans = new Map<string, string>();
+  /** Repositories whose locks the server freed since the last saved check, with the number of the latest notice for each. */
+  private freed = new Map<string, number>();
+  private freedNotices = 0;
+
+  /** The server freed locks of these repositories: their `orphan-lock` findings are closed at the next check that reads the locks afterwards. */
+  locksFreed(repos: string[]): void {
+    for (const r of repos) this.freed.set(r, ++this.freedNotices);
+  }
   private unlisted = new UnlistedTracker();
   /** When the server last woke up from a sleep (as far as the monitor saw). */
   private wokeAt?: string;
@@ -271,6 +279,8 @@ export class Monitor {
     });
     const history = await this.usual(briefs, start, config);
     const activeIds = queue.active.map((a) => a.runId);
+    // Taken just before the locks are read: a lock freed before this point is not in the list the detectors see.
+    const freedNow = new Map(this.freed);
     const seen = withoutStoryRuns(
       { runs: allRuns, active: allActive, watchers: this.d.watchers(), locks: readAreaLocks() },
       stories,
@@ -285,7 +295,7 @@ export class Monitor {
       active: seen.active, areaLocks: this.areaLocks(start, activeIds, seen.locks), unlisted: this.waitingUnlisted(start, briefs, seen.watchers, stories), lastStart: this.d.scheduler.lastStart?.(), restart: this.d.restart?.(), history,
       update: (this.d.selfUpdate ?? loadUpdateState)(), measures: sloIn.measures, evidence: sloIn.evidence,
     });
-    const merged = mergeFindings(stored.findings, found, start);
+    const merged = mergeFindings(stored.findings, found, start, new Set([...freedNow.keys()].map((r) => `orphan-lock|area|${r}`)));
     let findings = merged.findings;
     const guard = this.d.guard;
     let failed: FixFailure[] = [];
@@ -306,6 +316,8 @@ export class Monitor {
       if (loaded.ok && !loaded.data.breaker?.open) findings = forgetSkip(findings, "breaker");
     }
     saveFindings(findings, file);
+    // Acknowledged only once saved (a failed check keeps them). A notice that came in during the check has a newer number and stays.
+    for (const [r, n] of freedNow) if (this.freed.get(r) === n) this.freed.delete(r);
     for (const x of failed) {
       writeLog({ event: "fix-failed", detector: x.finding.detector, fingerprint: x.finding.fingerprint, repo: x.repo, issue: x.issue, count: x.count }, { now: start, onError: guard?.onLogError });
       this.act(describeEntry({ event: "fix-failed", detector: x.finding.detector, issue: x.issue, count: x.count }));
