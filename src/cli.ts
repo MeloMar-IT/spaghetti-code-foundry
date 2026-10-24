@@ -18,7 +18,7 @@ import { startServer } from "./server/server.js";
 import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
-import { controlsReportText, runEval } from "./evals.js";
+import { controlsReportText, runEval, runSafetyEvals } from "./evals.js";
 import { Scheduler } from "./queue/scheduler.js";
 import { DEFAULT_FLOWS, Watcher } from "./queue/watcher.js";
 import { installService, serviceStatus, uninstallService } from "./service.js";
@@ -40,6 +40,8 @@ Usage:
   scf reject <run-id> [--note "..."] [--force]   Reject it (the flow's on_failure path runs)
   scf eval <suite.yaml> [--flows a,b] [--models sonnet,codex,ollama:qwen3-coder]
                                                  Benchmark flows/agents/models on sample tasks
+                                                 (--claude-bin, --codex-bin, --gh-bin use other programs)
+  scf eval safety [--claude-bin p] [--gh-bin p]  Run the offline safety suites in evals/safety; ends with 1 when a case fails
   scf eval help [--live]                         Check Ask SCF against its fixed scenarios; no model is called
                                                  (--live: ask the model of help.model; each scenario costs a turn)
   scf clean [--older-than 7] [--purge] [--include-paused] [--dry-run] [--evidence-older-than days]
@@ -222,6 +224,9 @@ async function main(argv: string[]): Promise<number> {
       ref: { type: "string" },
       var: { type: "string", short: "v", multiple: true },
       "runs-dir": { type: "string" },
+      "claude-bin": { type: "string" },
+      "codex-bin": { type: "string" },
+      "gh-bin": { type: "string" },
       reason: { type: "string" },
       replacement: { type: "string" },
       global: { type: "boolean" },
@@ -511,7 +516,19 @@ async function main(argv: string[]): Promise<number> {
     }
 
     case "eval": {
-      if (!arg) throw new Error("usage: scf eval <suite.yaml> [--flows a,b] [--models sonnet,opus]\n       scf eval help [--live]");
+      if (!arg) throw new Error("usage: scf eval <suite.yaml> [--flows a,b] [--models sonnet,opus] [--claude-bin p] [--codex-bin p] [--gh-bin p]\n       scf eval safety [--claude-bin p] [--codex-bin p] [--gh-bin p]\n       scf eval help [--live]");
+      const bins = {
+        claudeBin: values["claude-bin"] ? resolve(values["claude-bin"]) : undefined,
+        codexBin: values["codex-bin"] ? resolve(values["codex-bin"]) : undefined,
+        ghBin: values["gh-bin"] ? resolve(values["gh-bin"]) : undefined,
+      };
+      if (arg === "safety") {
+        // Offline suites with fake programs; ends with 1 when a case fails or a suite cannot run.
+        const r = await runSafetyEvals({ runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")), config: loadConfig(), ...bins, log: (m) => process.stdout.write(m + "\n") });
+        process.stdout.write(`\n${r.text}`);
+        if (r.files.length) process.stdout.write(`\nreports: ${r.files.join(", ")}\n`);
+        return r.failed ? 1 : 0;
+      }
       if (arg === "help") {
         // The scenario evaluation of Ask SCF. Without --live no model is called: every scenario has a fixed answer.
         const { runHelpEval, stubModel, liveModel, reportText, saveHelpEval } = await import("./server/help-evals.js");
@@ -528,6 +545,7 @@ async function main(argv: string[]): Promise<number> {
         config: loadConfig(),
         flowsFilter: split(values.flows),
         modelsOverride: split(values.models),
+        ...bins,
         log: (m) => process.stdout.write(m + "\n"),
       });
       const rows = report.summary.map((s) =>

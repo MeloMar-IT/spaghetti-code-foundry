@@ -163,6 +163,58 @@ describe("evidence and output on typed input", () => {
   });
 });
 
+describe("untrusted", () => {
+  const label = (o: Record<string, unknown> = {}) => ({ trust: "untrusted", signals: ["orders"], sha256: H, ...o }) as never;
+  const rec = (id: string, l?: unknown, held?: string[]) => ({ id, ...(l ? { label: l as never } : {}), ...(held ? { held } : {}) });
+  const check = (expect_: unknown, o: Partial<ControlsInput>) => evaluateControls(input(o), parse({ untrusted: expect_ }));
+
+  it("is read by the schema: signals, sub-flow paths and nothing else", () => {
+    expect(() => parse({ untrusted: [{ step: "issue", signals: ["orders"] }, { step: "build/code" }] })).not.toThrow();
+    for (const bad of [[], [{ step: "a", signals: ["nope"] }], [{ step: "a b" }], [{ step: "a", extra: 1 }]]) {
+      expect(() => parse({ untrusted: bad })).toThrow();
+    }
+  });
+  it("lists the signals of the engine", async () => {
+    const { SIGNALS } = await import("../src/engine/untrusted.js");
+    const { CONTROL_SIGNALS } = await import("../src/eval-controls.js");
+    expect([...CONTROL_SIGNALS]).toEqual([...SIGNALS]);
+  });
+  it("passes a step labelled untrusted with the signals", () => {
+    expect(check([{ step: "issue", signals: ["orders"] }], { records: [rec("issue", label())] }).ok).toBe(true);
+  });
+  it("names what it saw otherwise", () => {
+    const want = "untrusted: expected step issue labelled untrusted (orders) or held, saw ";
+    const e = [{ step: "issue", signals: ["orders"] }];
+    expect(check(e, { records: [rec("issue", label({ trust: "operator" }))] }).firstMismatch?.message).toBe(`${want}trust operator`);
+    expect(check(e, { records: [rec("issue", label({ signals: [] }))] }).firstMismatch?.message).toBe(`${want}signals none`);
+    expect(check(e, { records: [rec("other", label())] }).firstMismatch?.message).toBe(`${want}no record of it`);
+    expect(check(e, { records: [rec("issue")] }).firstMismatch?.message).toBe(`${want}no label`);
+    expect(check(e, {}).ok).toBe(false);
+  });
+  it("passes held content, from the run or from a record, even with another trust class", () => {
+    const l = label({ trust: "operator", signals: [] });
+    expect(check([{ step: "issue" }], { records: [rec("issue", l)], heldContent: { step: "issue", sha256: [H] } }).ok).toBe(true);
+    expect(check([{ step: "issue" }], { records: [rec("issue", l, [H])] }).ok).toBe(true);
+  });
+  it("needs every visit of the step to pass", () => {
+    expect(check([{ step: "issue" }], { records: [rec("issue", label()), rec("issue", label({ trust: "policy" }))] }).firstMismatch?.message).toContain("trust policy");
+  });
+  it("comes last in the order of the checks", () => {
+    const i = input({ texts: [{ source: "diff", text: "bad" }], records: [rec("issue")] });
+    const r = evaluateControls(i, parse({ untrusted: [{ step: "issue" }], prohibited_output: ["bad"] }));
+    expect(r.firstMismatch?.kind).toBe("output");
+  });
+  it("is read from a run only when declared", () => {
+    const run = { runId: FIXTURE_RUN_ID, runDir: "/nonexistent", flowDef: FlowSchema.parse({ name: "d", steps: [{ id: "a", type: "shell", run: "true" }] }), outputs: {}, history: [{ id: "sub/issue", parent: "sub", label: label(), held: [H] }] as never, heldContent: { step: "issue", sha256: [H] } };
+    const none = readControlsInput(run, parse({ evidence: {} }), config);
+    expect(none.records).toBeUndefined();
+    expect(none.heldContent).toBeUndefined();
+    const some = readControlsInput(run, parse({ untrusted: [{ step: "sub/issue" }] }), config);
+    expect(some.records?.[0]).toMatchObject({ id: "sub/issue", held: [H] });
+    expect(some.heldContent).toEqual({ step: "issue", sha256: [H] });
+  });
+});
+
 describe("reading a synthetic run folder", () => {
   let dir: string;
   beforeEach(() => {
