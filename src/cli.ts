@@ -102,6 +102,7 @@ Usage:
   scf policy break-glass --reason "<text>" --for <n>m|<n>h   Start a time-limited, audited break-glass (no effect on runs yet)
   scf policy break-glass --end                 End the break-glass
   scf evidence verify <run-id> [--json]          Check the evidence of a run: manifest, chain of events, named files
+  scf delivery validate --contract f --signature f --public-key k …   Check a delivery contract against the checked-out commit (for CI)
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
   scf login | logout | whoami                    Sign the command line in to a running Foundry
   scf <area> <action> … [--json]                 Everything the web interface can do, as commands. Areas: runs, turn,
@@ -207,6 +208,10 @@ function report(s: RunSummary): number {
 async function main(argv: string[]): Promise<number> {
   dropEmptyHomeVars();
   mirrorEnvPrefixes();
+  if (argv[0] === "delivery") {
+    const { deliveryCommand } = await import("./delivery/cli.js");
+    return deliveryCommand(argv.slice(1), { out: (s) => void process.stdout.write(s), err: (s) => void process.stderr.write(s) });
+  }
   // Commands that talk to a running Foundry (scf login, scf runs list, …) take their own options; the rest work on files.
   {
     const { remoteCommand } = await import("./remote/cli.js");
