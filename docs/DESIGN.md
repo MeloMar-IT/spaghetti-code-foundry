@@ -376,6 +376,36 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   be built (too many rules or a bad version), it is a `policy.invalid` mandatory entry, so the fail-closed path
   of "Fail closed" applies at privileged boundaries. There is no silent fallback to a weaker pack.
   `BASELINE_PACK` (the four legacy rules) is still the pack of the build without run controls.
+- **Limit rules (#630).** `limitRules` (`baseline.ts`) adds, after `credential-scope-exceeded`, the observe
+  rules `output-limit-exceeded` (warn, `outputBytes`), `timeout-exceeded` and `timeout-exceeded-2`… (deny,
+  `elapsedMs`), `budget-step-exceeded` (deny, `stepCostUsd`), `budget-run-exceeded` (deny, `runCostUsd`) and
+  `budget-daily-exceeded` (deny, `dailyCostUsd`). Each is only at `step.after`. `policy-limits.ts` builds the
+  groups from `stepLimits(flow, depth, config)`: steps with the same value share one group, in order of first
+  appearance, and the groups are chunked by `MAX_PATTERNS` (100) rules, so `-1`, `-2`, … The output group uses
+  `stepMaxOutput ?? DEFAULT_MAX_OUTPUT` (20,000) for every shell step; claude steps have no output rule. Timeouts
+  cover claude and shell steps; budgets cover claude steps and need `cost_limits !== false`. Values that are
+  not finite positive numbers, and ids that are too long or not plain tokens, are dropped in `limitRules`. The
+  run-wide budget rules come from `flow.limits.max_cost_usd` and `daily_budget_usd`. A rule is only added when its
+  limit is in effect, so the rule ids of a run without limits are the same as before.
+  - **Cap.** `runBaseline` throws `PolicySchemaError` when the baseline would have more than `MAX_RULES` (500)
+    rules; `baselineEntry` turns that into `policy.invalid` with that detail, so the fail-closed path applies.
+    About 490 distinct limit values are needed to reach it.
+  - **Scopes.** `RunPolicy.subFlow(parent, flow, depth)` (called by `execute.ts` after a sub-flow's scope is
+    built; it never throws) builds the sub-flow's baseline from the root controls with that flow's limits, and
+    stores it under the parent step id. `at()` asks `scopedPacks(packs, entry)` at every boundary of a step whose
+    `parent` is set. The scoped entry replaces the root baseline, but a root that is invalid is kept, so a
+    failed root never becomes a valid scope. A sub-flow that fails is logged once (`! policy foundry.baseline:
+    sub-flow …`) and denies its privileged steps. A scope with no registration uses a fallback baseline with
+    no per-step limits. The hash is per scope and is recorded with each decision.
+  - **Meter.** `ProcessMeter` (`process.ts`) holds `ms` (from spawn to `close`, after stdio is drained) and
+    `printedBytes` (the UTF-8 bytes of the kept output). It is set on every exit path: a normal close, a timeout,
+    a spawn `error`, a failed log write and a rejected call. The caller owns it, so the values survive a rejected
+    promise. `runAgentStep` clears it before each attempt, so only the final attempt is recorded.
+  - **Bytes and characters.** The output rule counts bytes, so with non-ASCII output a warning can come before the
+    engine's character cut. Limits use `over` (strictly greater); a value exactly at its limit gives no rule.
+  - **Missing facts.** `stepCostUsd` and `outputBytes` are always given at `step.after`. The missing-fact check
+    (`input-incomplete`) runs first, so a rule that needs a fact the step did not produce is not silently skipped. `dailyCostUsd` is
+    given only when a daily budget is in effect (`Engine.dailyCostUsd`, read in a `try`; on a throw it is absent).
 - **Baseline.** `src/policy/baseline.ts` builds `foundry.baseline`. The Foundry owns it: its version is
   the package version, and admins can only add overlays. It is always in the list of packs, so a run
   always asks it. The file's only read is `package.json`, once, for that version; it is the one file

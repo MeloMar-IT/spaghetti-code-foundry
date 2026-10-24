@@ -5,6 +5,7 @@ import { loadFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
 import { runAgentStep } from "../agents/run.js";
 import type { Target } from "../agents/targets.js";
+import type { ProcessMeter } from "../steps/process.js";
 import { runShell } from "../steps/shell.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { KEY_UNREADABLE } from "../auth/repos.js";
@@ -72,6 +73,8 @@ export interface Engine {
   signal?: AbortSignal;
   /** Set once a budget is used up and a free fallback exists: all agent steps run there. */
   budgetFallback?: Target;
+  /** Today's spend in US dollars, for the policy's daily budget rule. Only set when a daily budget is in effect. */
+  dailyCostUsd?: () => number;
   log: (msg: string) => void;
   save: () => void;
   /** Remaining budget in USD for the next claude call (undefined = unlimited). */
@@ -125,7 +128,7 @@ function outputLabel(step: Step, scope: Scope, res: StepResult): StepRecord["lab
 }
 
 /** Store a finished step in history and in the scope's template context. */
-export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number): StepRecord {
+export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number, meter?: ProcessMeter): StepRecord {
   const rec: StepRecord = {
     id: scope.prefix + step.id,
     label: outputLabel(step, scope, res),
@@ -174,14 +177,24 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       ...(GitIdentitySchema.shape.branch.safeParse(p.branch).success ? { branch: p.branch } : {}),
     });
   }
+  let daily: number | undefined;
+  try {
+    daily = engine.dailyCostUsd?.();
+  } catch {
+    daily = undefined;
+  }
+  // A process step counts only the final attempt's process time (no setup, no retries); a shell step counts what it printed, also when the call was rejected.
+  const measured = step.type === "claude" || step.type === "shell";
   engine.policy?.at(
     "step.after",
     {
       repository: repositoryFact(scope.ctx.vars),
       step: step.id,
-      elapsedMs: Math.max(0, Math.round(rec.durationMs)),
-      stepCostUsd: typeof res.costUsd === "number" ? res.costUsd : undefined,
+      outputBytes: step.type === "shell" && meter?.printedBytes !== undefined ? meter.printedBytes : Buffer.byteLength(res.output ?? "", "utf8"),
+      elapsedMs: Math.max(0, Math.round(measured ? (meter?.ms ?? 0) : rec.durationMs)),
+      stepCostUsd: res.costUsd ?? 0,
       runCostUsd: engine.summary.totalCostUsd,
+      dailyCostUsd: daily,
     },
     identity,
   );
@@ -232,7 +245,7 @@ export function newLogFile(engine: Engine, id: string): string {
 }
 
 /** Execute a claude, shell, parallel or flow step (approvals are handled by the loop). */
-export async function executeStep(step: Step, scope: Scope, engine: Engine, logFile: string): Promise<StepResult> {
+export async function executeStep(step: Step, scope: Scope, engine: Engine, logFile: string, meter?: ProcessMeter): Promise<StepResult> {
   const d = scope.flow.defaults;
   const timeoutSec = step.timeout_sec ?? d.timeout_sec;
   const timeoutMs = timeoutSec ? timeoutSec * 1000 : undefined;
@@ -241,7 +254,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
 
   switch (step.type) {
     case "claude":
-      return runAgentStep(step, scope, engine, logFile, timeoutMs);
+      return runAgentStep(step, scope, engine, logFile, timeoutMs, meter);
 
     case "shell": {
       const image = scope.flow.sandbox.docker_image ?? engine.config.sandbox.docker_image;
@@ -347,6 +360,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           scan: tokenAccess ? tokenRefused : keyAccess ? keyRefused : undefined,
           maxOutput: stepMaxOutput(step, scope.depth, scope.flow.name),
           ownGroup: Boolean(tokenAccess || keyAccess),
+          meter,
         });
       } catch (e) {
         thrown = e;
@@ -388,14 +402,15 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           const started = new Date();
           const lf = newLogFile(engine, scope.prefix + id);
           beginStep(engine, scope, sub, stepIdentity(sub, scope.prefix, visit));
+          const meter: ProcessMeter = {};
           let res: StepResult;
           try {
-            res = await executeStep(sub, scope, engine, lf);
+            res = await executeStep(sub, scope, engine, lf, meter);
           } catch (e) {
             res = { ok: false, output: "", error: (e as Error).message };
           }
           res = applyChecks(sub, res);
-          recordStep(sub, scope, engine, res, started, lf, visit);
+          recordStep(sub, scope, engine, res, started, lf, visit, meter);
           return { id, res };
         }),
       );
@@ -428,6 +443,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         prefix: `${scope.prefix}${step.id}/`,
         depth: scope.depth + 1,
       };
+      engine.policy?.subFlow(subScope.prefix.slice(0, -1), flow, subScope.depth);
       engine.log(`  ↳ sub-flow ${flow.name}`);
       const r = await engine.runLoop(subScope, null);
       const ok = r.outcome === "succeeded";
