@@ -65,6 +65,17 @@ export const signDeliveryContract = (text: string, key: KeyObject): string => si
 export type DeliveryVerifyFault = "unreadable" | "wrong-version" | "signature-missing" | "signature-bad" | "wrong-key" | "evidence-head-mismatch";
 export type DeliveryVerifyResult = { ok: true; contract: DeliveryContract; digest: string } | { ok: false; fault: DeliveryVerifyFault; message: string };
 
+/** Why the events do not contain the contract's evidence head (the event at `count - 1` with the contract's hash); undefined when they do. */
+export function evidenceHeadProblem(eventsText: string, contract: Pick<DeliveryContract, "evidence" | "runId">): string | undefined {
+  const { count, terminalHash } = contract.evidence;
+  const { lines } = splitEvidenceLines(eventsText);
+  if (lines.length < count) return "the events have fewer events than the contract";
+  const chain = readEvidenceChain(lines.slice(0, count), contract.runId);
+  if (!chain.ok) return `line ${chain.line} of the events is not a chain`;
+  if (chain.terminalHash !== terminalHash) return "the event at count - 1 does not have the contract's hash";
+  return undefined;
+}
+
 /**
  * Checks a contract text and its signature against the trusted public key line (`ssh-ed25519 AAAA…`).
  * `eventsText`, when given, is the evidence file: its event at `count - 1` must have the contract's `terminalHash`
@@ -95,12 +106,8 @@ export function verifyDeliveryContract(text: string, sigText: string | undefined
       return check.fault === "wrong-key" || check.fault === "public-key" ? no("wrong-key", "the contract is not signed by the trusted key") : no("signature-bad", "the signature does not verify");
     }
     if (eventsText !== undefined) {
-      const { count, terminalHash } = contract.evidence;
-      const { lines } = splitEvidenceLines(eventsText);
-      if (lines.length < count) return no("evidence-head-mismatch", "the events have fewer events than the contract");
-      const chain = readEvidenceChain(lines.slice(0, count), contract.runId);
-      if (!chain.ok) return no("evidence-head-mismatch", `line ${chain.line} of the events is not a chain`);
-      if (chain.terminalHash !== terminalHash) return no("evidence-head-mismatch", "the event at count - 1 does not have the contract's hash");
+      const problem = evidenceHeadProblem(eventsText, contract);
+      if (problem) return no("evidence-head-mismatch", problem);
     }
     return { ok: true, contract, digest: contractDigest(text) };
   } catch {

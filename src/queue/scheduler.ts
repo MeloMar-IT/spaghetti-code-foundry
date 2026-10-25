@@ -838,6 +838,7 @@ export class Scheduler {
       pathPrefix: this.o.pathPrefix,
       signal: a.controller.signal,
       config: this.o.config(),
+      deliverySettings: () => this.o.config().delivery,
       log: (raw: string) => {
         const line = redactText(raw);
         a.lines.push(line);
