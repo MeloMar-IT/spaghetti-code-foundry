@@ -64,6 +64,7 @@ export async function runShell(o: {
     logFile: o.logFile,
     pinnedSecrets: o.pinnedSecrets,
     ownGroup: o.ownGroup,
+    groupKill: true,
     cleanEnv: o.cleanEnv,
     sandboxProfile: o.dockerImage ? undefined : o.sandboxProfile,
     meter: o.meter,

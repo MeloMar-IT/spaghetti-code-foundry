@@ -27,6 +27,8 @@ import { dirname } from "node:path";
 import { buildStamp, restartOnNewBuild, supervise } from "./supervise.js";
 import { confirmStart, startGuard } from "./self-update-state.js";
 import { SelfUpdater } from "./self-update.js";
+import { stuckRuns } from "./server/stuck-runs.js";
+import { withSignal } from "./release/git.js";
 import { configureTelemetry, exitAfterTelemetry } from "./telemetry/telemetry.js";
 import { dropEmptyHomeVars, prepareDataHome, watchDataHome } from "./home.js";
 
@@ -304,15 +306,19 @@ async function main(argv: string[]): Promise<number> {
       if (!isFolder && !looksLikeGithubRepo(values.repo!)) throw new Error(`repo not found: ${repo}`);
       const { flow } = loadFlow(arg, isFolder ? repo : process.cwd());
       const target = runTarget({ repoArg: values.repo, ref: values.ref, vars: parseVars(values.var), cwd: process.cwd(), workspace: flow.workspace });
-      const summary = await runFlow(flow, {
-        task: task?.trim() ?? "",
-        repo: target.repo,
-        runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
-        vars: target.vars,
-        source: "cli",
-        log: (m) => process.stdout.write(m + "\n"),
+      // Ctrl+C cancels the run, which stops the step's process group (a detached group gets no Ctrl+C of its own)
+      return withSignal(async (signal) => {
+        const summary = await runFlow(flow, {
+          task: task?.trim() ?? "",
+          repo: target.repo,
+          runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")),
+          vars: target.vars,
+          source: "cli",
+          signal,
+          log: (m) => process.stdout.write(m + "\n"),
+        });
+        return report(summary);
       });
-      return report(summary);
     }
 
     case "resume":
@@ -336,15 +342,18 @@ async function main(argv: string[]): Promise<number> {
           if (gate.unchecked) process.stdout.write("could not check on GitHub whether the issue is closed — continuing\n");
         }
       }
-      const summary = await resumeRun({
-        runId: arg,
-        runsDir,
-        from: cmd === "resume" ? values.from : undefined,
-        decision: cmd === "resume" ? undefined : { approved: cmd === "approve", by: process.env.USER ?? "cli", note: values.note },
-        actor: { kind: "cli" },
-        log: (m) => process.stdout.write(m + "\n"),
+      return withSignal(async (signal) => {
+        const summary = await resumeRun({
+          runId: arg,
+          runsDir,
+          from: cmd === "resume" ? values.from : undefined,
+          decision: cmd === "resume" ? undefined : { approved: cmd === "approve", by: process.env.USER ?? "cli", note: values.note },
+          actor: { kind: "cli" },
+          signal,
+          log: (m) => process.stdout.write(m + "\n"),
+        });
+        return report(summary);
       });
-      return report(summary);
     }
 
     case "flows": {
@@ -488,14 +497,26 @@ async function main(argv: string[]): Promise<number> {
       const drain = () => {
         ctx.restart = { why: "new_version", since: new Date().toISOString() };
         ctx.scheduler.drain();
-        ctx.watchers.drain(); // watchers start again with the new version; the monitor keeps watching the wait
+        // the watchers keep running (holds stay fresh, Retry works); nothing they queue starts before the restart
       };
-      const updater = new SelfUpdater({ config: () => ctx.config().self_update, idle: queueIdle, drain, beforeExit: () => beforeExit(), log: ctx.opts.log ?? log });
+      const updater = new SelfUpdater({
+        config: () => ctx.config().self_update,
+        idle: queueIdle,
+        drain,
+        beforeExit: () => beforeExit(),
+        log: ctx.opts.log ?? log,
+        stuck: () => {
+          const s = stuckRuns(ctx.scheduler);
+          return { runs: s.runs, all: s.active > 0 && s.runs.length === s.active };
+        },
+        interrupt: (ids) => ctx.scheduler.interrupt(ids),
+      });
       const beforeExit = () => {
         updater.stop();
         ctx.watchers.stopAll();
       };
       // a step of the updater runs in its own process group: it must not outlive the server
+      // (the groups of shell steps are killed by the exit hook in steps/process.ts)
       for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); void exitAfterTelemetry(code); });
       // other restarts wait while the updater builds
       const idle = () => queueIdle() && !updater.busy();

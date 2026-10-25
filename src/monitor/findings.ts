@@ -142,7 +142,8 @@ export interface Merged {
 const byLastSeen = (a: Finding, b: Finding) => Date.parse(a.lastSeen) - Date.parse(b.lastSeen);
 
 /** Pure. Joins what a check found with what is stored. */
-export function mergeFindings(stored: Finding[], found: FindingInput[], now: Date): Merged {
+/** `resolved`: fingerprints known to be fixed (e.g. the server freed the lock); an open one that is not found now is gone at once, not after GONE_AFTER_MS. */
+export function mergeFindings(stored: Finding[], found: FindingInput[], now: Date, resolved?: ReadonlySet<string>): Merged {
   const at = now.toISOString();
   const t = now.getTime();
   const old = new Map(stored.map((f) => [f.fingerprint, f]));
@@ -173,7 +174,7 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
     } else if (f.detector === "skill-source-check") {
       // Not a detector of the monitor: the skill source sweeper opens, refreshes and clears these findings itself.
       out.push(f);
-    } else if (age >= GONE_AFTER_MS) {
+    } else if (age >= GONE_AFTER_MS || resolved?.has(f.fingerprint)) {
       const g = { ...f, gone: true, streak: 0, ...(f.report ? { missedAt: at } : {}) };
       gone.push(g);
       out.push(g);

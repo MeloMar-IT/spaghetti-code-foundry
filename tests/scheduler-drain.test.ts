@@ -1,8 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { RESTART_INTERRUPTED } from "../src/engine/running.js";
 import { parseFlow } from "../src/flow/load.js";
 import { Scheduler, type Job } from "../src/queue/scheduler.js";
 
@@ -60,4 +61,70 @@ describe("Scheduler.drain", () => {
     expect(s.queue().active.map((a) => a.runId)).toEqual([id]);
     await s.idle();
   });
+});
+
+describe("Scheduler.interrupt", () => {
+  const dirs: string[] = [];
+  afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
+  const BG = `name: bg
+workspace: inplace
+steps:
+  - id: a
+    type: shell
+    run: |
+      sh -c 'trap "" TERM; echo $$ > child.pid; sleep 60' >/dev/null 2>&1 &
+      sleep 60
+`;
+  const setup = () => {
+    const tmp = mkdtempSync(join(tmpdir(), "interrupt-"));
+    dirs.push(tmp);
+    const repo = join(tmp, "repo");
+    mkdirSync(repo);
+    const config = () => ({ ...ConfigSchema.parse({}), concurrency: 1 });
+    const s = new Scheduler({ runsDir: join(tmp, "runs"), queueFile: join(tmp, "queue.json"), config });
+    const id = s.submit({ kind: "run", flow: parseFlow(BG), task: "t", repo, vars: {} }, { source: "ui" });
+    return { s, id, repo };
+  };
+  const waitFor = async (ok: () => boolean) => {
+    const end = Date.now() + 15_000;
+    while (!ok() && Date.now() < end) await sleep(20);
+    expect(ok()).toBe(true);
+  };
+  const pidIn = (repo: string) => (existsSync(join(repo, "child.pid")) ? Number(readFileSync(join(repo, "child.pid"), "utf8").trim()) : 0);
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("stops the run as interrupted, with its child processes dead when it returns", async () => {
+    const { s, id, repo } = setup();
+    await waitFor(() => pidIn(repo) > 0);
+    const pid = pidIn(repo);
+    expect(await s.interrupt([id])).toBe(true);
+    expect(alive(pid)).toBe(false);
+    expect(s.isActive(id)).toBe(false);
+    const run = s.get(id)!;
+    expect(run.status).toBe("cancelled");
+    expect(run.reason).toBe(RESTART_INTERRUPTED);
+    expect(run.state.next).toBe("a");
+  }, 30_000);
+
+  it("an unknown id counts as done", async () => {
+    const { s, id, repo } = setup();
+    expect(await s.interrupt(["nope"])).toBe(true);
+    await waitFor(() => pidIn(repo) > 0);
+    expect(await s.interrupt([id])).toBe(true);
+  }, 30_000);
+
+  it("a normal cancel keeps its own reason", async () => {
+    const { s, id, repo } = setup();
+    await waitFor(() => pidIn(repo) > 0);
+    s.cancel(id);
+    await s.idle();
+    expect(s.get(id)!.reason).toBe('cancelled during step "a"');
+  }, 30_000);
 });

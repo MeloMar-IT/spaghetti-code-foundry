@@ -34,6 +34,8 @@ export interface ProcessOptions {
   pinnedSecrets?: string[];
   /** Run in a process group of its own and kill the whole group when the process ends (steps that hold a credential). */
   ownGroup?: boolean;
+  /** Run in a process group of its own and signal the whole group on cancel and timeout (not when the process ends). A kill waits until the group is gone. */
+  groupKill?: boolean;
   /** Start from nothing instead of the server's environment: only `env` is passed (a user's run, see short-env.ts). */
   cleanEnv?: boolean;
   /** Start the command inside `/usr/bin/sandbox-exec` with this profile (a shell step of a user's run, see os-sandbox.ts). */
@@ -67,6 +69,34 @@ function mergeEnv(overrides: NodeJS.ProcessEnv = {}, clean = false): NodeJS.Proc
   return env;
 }
 
+/** Process groups of running steps that must not outlive this process (see runProcess, `groupKill`). */
+const liveGroups = new Set<number>();
+let exitHook = false;
+
+/** SIGKILL to every live process group of a step; returns how many. Runs when this process exits (a Ctrl+C no longer reaches a detached group). */
+export function killLiveGroups(): number {
+  let n = 0;
+  for (const pid of liveGroups) {
+    try {
+      process.kill(-pid, "SIGKILL");
+      n++;
+    } catch {
+      // already gone
+    }
+  }
+  liveGroups.clear();
+  return n;
+}
+
+const groupAlive = (pid: number): boolean => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+};
+
 /** Spawn a process, tee stdout/stderr into a log file, and collect output. */
 export function runProcess(cmd: string, args: string[], opts: ProcessOptions): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
@@ -90,13 +120,21 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     }
     const log = createWriteStream(opts.logFile, { flags: "a" });
     let logError: NodeJS.ErrnoException | undefined;
+    const grouped = Boolean(opts.ownGroup || opts.groupKill);
     const target = spawnTarget(cmd, args, opts.sandboxProfile);
     const child = spawn(target.cmd, target.args, {
       cwd: opts.cwd,
       env: mergeEnv(opts.env, opts.cleanEnv),
       stdio: ["pipe", "pipe", "pipe"],
-      ...(opts.ownGroup ? { detached: true } : {}),
+      ...(grouped ? { detached: true } : {}),
     });
+    if (grouped && child.pid) {
+      liveGroups.add(child.pid);
+      if (!exitHook) {
+        exitHook = true;
+        process.on("exit", killLiveGroups);
+      }
+    }
     const began = Date.now();
     let printed = 0;
     const measure = () => {
@@ -108,7 +146,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     // a signal to the child, or to its whole group when it has one
     const signalTree = (sig: NodeJS.Signals) => {
       try {
-        if (opts.ownGroup && child.pid) process.kill(-child.pid, sig);
+        if (grouped && child.pid) process.kill(-child.pid, sig);
         else child.kill(sig);
       } catch {
         // already gone
@@ -122,9 +160,29 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     let timedOut = false;
     let aborted = false;
 
+    let killedAt = 0;
+    let killTimer: NodeJS.Timeout | undefined;
     const kill = () => {
       signalTree("SIGTERM");
-      setTimeout(() => signalTree("SIGKILL"), 5000).unref();
+      killedAt ||= Date.now();
+      if (killTimer) return;
+      killTimer = setTimeout(() => signalTree("SIGKILL"), 5000);
+      if (!grouped) killTimer.unref(); // a group is waited for, so its timer must stay
+    };
+    // After a kill, the step is not over until nothing of its group runs: SIGKILL at 5 s, and at most 1 s more.
+    const groupGone = async () => {
+      const pid = child.pid;
+      if (!pid) return;
+      let hard = 0;
+      while (groupAlive(pid)) {
+        const now = Date.now();
+        if (!hard && now - killedAt >= 5000) {
+          signalTree("SIGKILL");
+          hard = now + 1000;
+        }
+        if (hard && now > hard) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
     };
     const onAbort = () => {
       aborted = true;
@@ -184,6 +242,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       opts.signal?.removeEventListener("abort", onAbort);
     };
     child.on("error", (err) => {
+      if (child.pid) liveGroups.delete(child.pid);
       cleanup();
       measure();
       log.end();
@@ -191,6 +250,12 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     });
     child.on("close", (code) => {
       cleanup();
+      if (grouped && child.pid && killedAt) void groupGone().then(() => settle(code));
+      else settle(code);
+    });
+    const settle = (code: number | null) => {
+      clearTimeout(killTimer);
+      if (child.pid) liveGroups.delete(child.pid);
       feed(outFilter, outDecoder.end());
       feed(errFilter, errDecoder.end());
       outFilter.end();
@@ -206,7 +271,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
         if (err || logError) return reject(new Error(`could not write the log file (${(err as NodeJS.ErrnoException | null | undefined)?.code ?? logError?.code ?? "error"})`));
         resolve({ exitCode: code, stdout, stderr, timedOut, aborted });
       });
-    });
+    };
 
     child.stdin.on("error", () => {}); // process may exit before reading stdin
     child.stdin.end(opts.stdin ?? "");

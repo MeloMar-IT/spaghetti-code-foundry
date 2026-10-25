@@ -35,7 +35,7 @@ import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMO
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
-import { markRunning, sweepRunning, unmarkRunning } from "./running.js";
+import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { answerRoom, appendLiveLog, isStoppedCancel, loadRun, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
@@ -523,11 +523,13 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
   if (idx < 0) return { outcome: "failed", reason: `unknown step "${startAt}"`, next: null, lastOutput: "" };
   let lastOutput = "";
 
+  // a restart of the server stops the run with the "interrupted" reason, so the watchers resume it
+  const stopReason = (fallback: string) => (engine.signal?.reason === RESTART_INTERRUPT ? RESTART_INTERRUPTED : fallback);
   while (idx < steps.length) {
     const step = steps[idx]!;
     setNext(step.id);
     const here = () => ({ next: summary.state.next, lastOutput });
-    if (engine.signal?.aborted) return { outcome: "cancelled", reason: "cancelled by user", ...here() };
+    if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason("cancelled by user"), ...here() };
 
     const runCap = config.cost_limits ? summary.flowDef.limits.max_cost_usd : undefined;
     const overRun = runCap !== undefined && summary.totalCostUsd >= runCap;
@@ -619,7 +621,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       const reason = /^signed out —/.test(res.error ?? "") ? res.error! : `${res.error} — continues automatically after the limit resets (or resume it)`;
       return { outcome: "stopped", reason, next: step.id, lastOutput };
     }
-    if (engine.signal?.aborted) return { outcome: "cancelled", reason: `cancelled during step "${step.id}"`, ...here() };
+    if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason(`cancelled during step "${step.id}"`), ...here() };
 
     const routed = res.ok ? step.routes?.find((r) => new RegExp(r.if, "m").test(res.output))?.goto : undefined;
     if (top && !res.ok) markPlanCheckFailed(summary, step.id);

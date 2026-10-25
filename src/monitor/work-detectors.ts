@@ -277,8 +277,9 @@ const orphanLock: Detector = {
 const queueStalled: Detector = {
   name: "queue-stalled",
   description: "Jobs wait in the queue while a slot is free, and nothing starts. All new work stands still.",
-  run({ now, asleep, config, queue, lastStart, wokeAt }) {
-    if (asleep || !lastStart) return [];
+  run({ now, asleep, config, queue, lastStart, wokeAt, restart }) {
+    // While the server waits to restart nothing queued starts, on purpose.
+    if (asleep || !lastStart || restart) return [];
     const free = queue.concurrency - queue.active.length;
     // A job with `waitingFor` waits for a lock on purpose, one with `limit` for a limit of its owner, and one with `capped` for a
     // helper's temporary cap on the runs at once (machine load, usage limits); the others could start now.

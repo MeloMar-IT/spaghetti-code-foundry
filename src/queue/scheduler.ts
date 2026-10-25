@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { cancelStoppedRun, cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
+import { RESTART_INTERRUPT } from "../engine/running.js";
 import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, clearRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
@@ -304,6 +305,21 @@ export class Scheduler {
     a.cancelledBy ??= by;
     a.controller.abort();
     return true;
+  }
+
+  /** Stops these active runs for a restart (they end as interrupted and the watchers resume them). True when none of them is active within timeoutMs. */
+  async interrupt(runIds: string[], timeoutMs = 60_000): Promise<boolean> {
+    const list = runIds.map((id) => this.active.get(id)).filter((a): a is Active => a !== undefined);
+    if (!list.length) return true;
+    for (const a of list) if (!a.controller.signal.aborted) a.controller.abort(RESTART_INTERRUPT);
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<boolean>((r) => {
+      timer = setTimeout(() => r(false), timeoutMs);
+      timer.unref();
+    });
+    const ok = await Promise.race([Promise.allSettled(list.map((a) => a.done)).then(() => true), timeout]);
+    clearTimeout(timer);
+    return ok && runIds.every((id) => !this.active.has(id));
   }
 
   /** Sets or removes the archive mark of a finished run. Refuses a run that is queued, active, running or waiting. */

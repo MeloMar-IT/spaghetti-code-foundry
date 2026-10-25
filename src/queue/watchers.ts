@@ -100,12 +100,8 @@ export class WatcherManager {
     return b;
   }
 
-  sync() {
-    this.o.beforeSync?.();
-    // While the server waits to restart no watcher starts; the monitor follows the saved config. A cancelled wait calls sync() again.
-    if (this.o.restart?.()) return this.syncMonitor(this.o.config().watchers.find((w) => w.source === "monitor" && w.enabled));
-    this.drained = [];
-    const wanted = new Map(this.o.config().watchers.filter((w) => w.enabled && w.source !== "monitor").map((w) => [w.id, w]));
+  /** Stops the running watchers that are no longer wanted or whose config changed. */
+  private stopUnwanted(wanted: Map<string, WatcherConfig>) {
     for (const [id, r] of this.running) {
       const cfg = wanted.get(id);
       if (!cfg || JSON.stringify(cfg) !== r.key || this.boardKey(cfg) !== r.board) {
@@ -115,6 +111,19 @@ export class WatcherManager {
         this.o.log(`[${id}] watcher stopped`);
       }
     }
+  }
+
+  sync() {
+    this.o.beforeSync?.();
+    const wanted = new Map(this.o.config().watchers.filter((w) => w.enabled && w.source !== "monitor").map((w) => [w.id, w]));
+    // While the server waits to restart the running watchers go on (removed or changed ones stop) and no watcher starts;
+    // the monitor follows the saved config. A cancelled wait calls sync() again.
+    if (this.o.restart?.()) {
+      this.stopUnwanted(wanted);
+      return this.syncMonitor(this.o.config().watchers.find((w) => w.source === "monitor" && w.enabled));
+    }
+    this.drained = [];
+    this.stopUnwanted(wanted);
     for (const [id, cfg] of wanted) {
       if (this.running.has(id)) continue;
       const board = this.boardKey(cfg);
@@ -338,8 +347,8 @@ export class WatcherManager {
     void b.then(() => this.retired.delete(m));
   }
 
-  /** Stops the watchers and keeps the monitor running, so a restart that takes too long is seen. */
-  drain() {
-    this.stopAll(true);
+  /** The server freed the area locks of these repositories (lock folder names): the monitor closes their orphan-lock findings at its next check. */
+  locksFreed(repos: string[]) {
+    this.monitor?.monitor.locksFreed(repos);
   }
 }

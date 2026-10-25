@@ -18,6 +18,12 @@ const RETRY_WAIT_MS = 20 * 60_000;
 export type UpdateReason = "broken_state" | "needs_repair" | "not_git" | "unsupervised" | "wrong_repo" | "unreachable"
   | "not_main" | "local_changes" | "no_fast_forward" | "failed_before" | "building" | "runs" | "retry_wait";
 
+/** An active run that makes no progress: it waits for a code-area lock, or nothing of it changed for a long time. */
+export interface StuckRun {
+  runId: string;
+  why: "area_lock" | "quiet";
+}
+
 export interface UpdateView {
   version?: { commit: string; date: string };
   update?: { waiting: boolean; commit?: string; text: string };
@@ -31,6 +37,10 @@ export interface UpdaterOptions {
   drain: () => void;
   beforeExit: () => void;
   log: (m: string) => void;
+  /** The active runs that are stuck; `all`: every active run is stuck. */
+  stuck?: () => { runs: StuckRun[]; all: boolean };
+  /** Stops these runs so that they can be resumed after the restart. True when they ended. */
+  interrupt?: (runIds: string[]) => Promise<boolean>;
   // for tests:
   testCmd?: (cwd: string) => Promise<string | undefined> | string | undefined;
   slot?: { waitSec?: number; slots?: number; pollMs?: number } | false;
@@ -75,6 +85,10 @@ export class SelfUpdater {
   private lastCheck = 0;
   private lastLogged = "";
   private update: UpdateView["update"];
+  private lastStuck = "";
+  private stuckText = "";
+  private runsCommit?: string;
+  private lastNotStopped = false;
 
   constructor(private o: UpdaterOptions) {
     this.dir = o.dir ?? foundryDir();
@@ -133,11 +147,15 @@ export class SelfUpdater {
     if (!cfg.enabled || !cfg.repo) {
       this.update = undefined;
       // switched off while it waited to restart: finish the drain on the unchanged version once the active runs are done
-      if (this.drained && this.o.idle()) this.leave();
+      if (this.drained && (await this.runsDone())) this.leave();
       return;
     }
-    // a tested update waits for the runs: nothing to look at until the queue is idle
-    if (this.drained && !this.o.idle()) return;
+    // a tested update waits for the runs: nothing to look at until the queue is idle, unless every active run is stuck
+    if (this.drained && !this.o.idle()) {
+      const s = this.stuckNow();
+      this.noteStuck(s);
+      if (!s.all) return;
+    }
     const now = Date.now();
     if (!force && !this.drained && now - this.lastCheck < (this.o.checkEveryMs ?? CHECK_EVERY_MS)) return;
     this.lastCheck = now;
@@ -170,23 +188,73 @@ export class SelfUpdater {
         this.say(`self-update: ${short(res.commit)} is tested; no new runs start, and it is installed when the active runs are done`);
         this.o.drain();
       }
-      if (!this.o.idle()) return this.waitForRuns(res.commit);
+      if (!(await this.runsDone())) return this.waitForRuns(res.commit);
+      if (this.stopped) return;
       return this.install(res.commit, res.head, cfg.repo);
     }
     // nothing to install now: a drain that was announced has to end
-    if (this.drained && this.o.idle()) this.leave();
+    if (this.drained && (await this.runsDone())) this.leave();
   }
 
   private waitForRuns(commit: string) {
-    this.set({ waiting: true, commit, text: this.text("runs", commit) });
+    this.set({ waiting: true, commit, text: this.text("runs", commit) + this.stuckText });
+    this.runsCommit = commit;
+  }
+
+  private stuckNow(): { runs: StuckRun[]; all: boolean } {
+    try {
+      const s = this.o.stuck?.();
+      if (!s) return { runs: [], all: false };
+      return this.o.interrupt ? s : { runs: s.runs, all: false };
+    } catch {
+      return { runs: [], all: false };
+    }
+  }
+
+  /** The stuck runs go into the text of the waiting update, and into the log once per change. */
+  private noteStuck(s: { runs: StuckRun[]; all: boolean }) {
+    const what = (r: StuckRun) => `${r.runId} (${r.why === "area_lock" ? "waits for a code area" : "no activity for 30 minutes"})`;
+    const shown = s.runs.slice(0, 5).map(what).join(", ") + (s.runs.length > 5 ? `, and ${s.runs.length - 5} more` : "");
+    const key = s.runs.length ? `${s.runs.map((r) => r.runId).join("|")}|${s.all}` : "";
+    this.stuckText = s.runs.length ? ` Stuck: ${shown}.${s.all ? " They are interrupted and resumed after the restart." : ""}` : "";
+    if (key !== this.lastStuck) {
+      this.lastStuck = key;
+      if (key) this.say(`self-update: stuck runs: ${shown}`);
+    }
+    if (this.update?.waiting && this.runsCommit && this.update.commit === this.runsCommit) {
+      this.update = { ...this.update, text: this.text("runs", this.runsCommit) + this.stuckText };
+    }
+  }
+
+  /** True when no run is active. When every active run is stuck, they are interrupted first (they can be resumed after the restart). */
+  private async runsDone(): Promise<boolean> {
+    if (this.o.idle()) return true;
+    const s = this.stuckNow();
+    this.noteStuck(s);
+    if (!s.all) return false;
+    const ids = s.runs.map((r) => r.runId);
+    if (!this.lastNotStopped) this.say(`self-update: every active run is stuck (${ids.join(", ")}); they are interrupted and can be resumed after the restart`);
+    let ok = false;
+    try {
+      ok = (await this.o.interrupt?.(ids)) === true;
+    } catch {
+      ok = false;
+    }
+    if (!ok && !this.lastNotStopped) this.say("self-update: the stuck runs did not stop in time; the update waits");
+    this.lastNotStopped = !ok;
+    return ok && this.o.idle();
   }
 
   private set(u: UpdateView["update"]) {
     this.update = u;
-    if (!u) this.lastLogged = "";
+    if (!u) {
+      this.lastLogged = "";
+      this.runsCommit = undefined;
+    }
   }
 
   private block(reason: UpdateReason, commit?: string) {
+    this.runsCommit = undefined;
     const { state } = loadUpdateState(this.file);
     const text = this.text(reason, commit, state.failed);
     this.update = { waiting: ["not_main", "local_changes", "no_fast_forward", "failed_before", "building", "runs", "retry_wait"].includes(reason), ...(commit ? { commit } : {}), text };

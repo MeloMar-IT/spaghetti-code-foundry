@@ -33,6 +33,20 @@ describe("mergeFindings", () => {
     expect(mergeFindings(late.findings, [], at(25 * HOUR)).gone).toHaveLength(0);
   });
 
+  it("a resolved fingerprint that is not found is gone at once; others and found ones stay open", () => {
+    const a = mergeFindings([], [input("orphan-lock|area|a/b"), input("orphan-lock|area|c/d"), input("orphan-lock|area|e/f")], T0).findings;
+    const withReport = a.map((f) => (f.fingerprint.endsWith("a/b") ? { ...f, report: { repo: "o/r", issue: 1, url: "u", at: T0.toISOString(), seen: 1 } } : f));
+    const resolved = new Set(["orphan-lock|area|a/b", "orphan-lock|area|e/f"]);
+    const m = mergeFindings(withReport, [input("orphan-lock|area|e/f")], at(HOUR), resolved);
+    const by = (fp: string) => m.findings.find((f) => f.fingerprint === fp)!;
+    expect(by("orphan-lock|area|a/b")).toMatchObject({ gone: true, streak: 0, missedAt: at(HOUR).toISOString() });
+    expect(by("orphan-lock|area|c/d").gone).toBe(false);
+    expect(by("orphan-lock|area|e/f").gone).toBe(false);
+    expect(m.gone.map((f) => f.fingerprint)).toEqual(["orphan-lock|area|a/b"]);
+    // without the set nothing changes
+    expect(mergeFindings(withReport, [], at(HOUR)).findings.every((f) => !f.gone)).toBe(true);
+  });
+
   it("a gone finding that is seen again is reopened as new", () => {
     const a = mergeFindings([], [input("x")], T0).findings;
     const gone = mergeFindings(a, [], at(25 * HOUR)).findings;
