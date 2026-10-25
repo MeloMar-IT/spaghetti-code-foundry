@@ -3736,10 +3736,15 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
   wrong recipe is refused with a message that names the key). Input is checked on the server: lengths, no control
   characters. Branch names follow git's rules, are at most 200 characters, and may not be `@`. In a pattern `*`
   matches any text and `?` matches one character; `[…]` is not allowed. `{}` clears the settings.
-- **The settings are only stored and shown, with one exception.** Runs do not use them yet: the test command still
+- **Decide technical questions itself** (a checkbox in the Run settings dialog, field `questions.decide_technical`):
+  on by default, so a repository that has no such setting, including one registered before this change, counts as
+  on. Off: the Foundry asks you every question on the issue. Runs get it as `$FACTORY_DECIDE_TECHNICAL` (`1` or `0`).
+  If a run's repository is registered under two accounts and one of them is off, the run is treated as off.
+- **The settings are only stored and shown, with two exceptions.** Runs do not use the other settings yet: the test command still
   comes from the flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. The
   release-build recipe is read by the flow `release-build` when the commit has no `.factory/release-build.yaml`
-  (see "Build release files on this machine"). The settings are never in `GET /api/repos` and never shown on
+  (see "Build release files on this machine"). The "decide technical questions" switch is read by the engine for every step
+  (see above). The settings are never in `GET /api/repos` and never shown on
   **My repositories**.
 - **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
   the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of
@@ -3995,7 +4000,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
-| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names and release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) of a repository; writes an audit line |
+| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line |
 | `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |

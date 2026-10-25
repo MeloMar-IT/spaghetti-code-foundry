@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
+import { listAllRepos } from "../auth/repos.js";
+import { decideTechnicalFor, type RepoSettings } from "../auth/repo-settings.js";
 import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
 import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
@@ -104,6 +106,15 @@ export interface ResumeOptions extends CommonOptions {
 export function newRunId(now = new Date()): string {
   const ts = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   return `${ts}-${randomBytes(2).toString("hex")}`;
+}
+
+/** "1" when the Foundry may decide technical questions for this repository, else "0"; any error gives "0" (then it asks). */
+export function decideTechnicalEnv(githubRepo: string | undefined, records: () => readonly { url: string; settings?: RepoSettings }[] = listAllRepos): "1" | "0" {
+  try {
+    return decideTechnicalFor(githubRepo ?? "", records()) ? "1" : "0";
+  } catch {
+    return "0";
+  }
 }
 
 /** The learnings file of a run. Without a usable `github_repo` the key is the folder name; a user's account then gets its own file. */
@@ -289,6 +300,7 @@ async function drive(
       FACTORY_LEARNINGS_FILE: lf,
       FACTORY_TOOLS: TOOLS_DIR,
       FACTORY_BASE_SHA: summary.baseSha ?? "",
+      FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...nextStepEnv(),
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes),
       ...selfEnv(),

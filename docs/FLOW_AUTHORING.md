@@ -480,6 +480,7 @@ these environment variables instead (always quote them: `"$FACTORY_TASK"`):
 | `$FACTORY_HOTFIX` | `on`, `off` or `other`: whether this run may take the hotfix path. `off`: the **Hotfixes** setting is off. `other`: the flow is not the unchanged built-in `issue-gitflow`. Set by the engine, for every step |
 | `$FACTORY_SELF_SHA`, `$FACTORY_SELF_REPO` | The commit the running Foundry's own checkout was at when it started, and its GitHub repository (`owner/name`, lower case). Empty when the Foundry does not run from a git checkout with a GitHub origin |
 | `$FACTORY_LEARNINGS_FILE` | File where lessons for this repository are kept |
+| `$FACTORY_DECIDE_TECHNICAL` | `1` when the Foundry may decide technical questions itself for this repository, `0` when it must ask every question. On by default; an admin switches it off in the repository's settings. `0` also when the setting cannot be read |
 
 Every `FACTORY_…` variable is also set as `SCF_…` (e.g. `$SCF_TASK`); the built-in flows use `FACTORY_…`.
 
