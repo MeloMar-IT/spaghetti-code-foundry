@@ -1485,7 +1485,7 @@ Node.js alone: `node tools/delivery-validate/validate.mjs …`.
 
 ```sh
 scf delivery validate --contract contract.json --signature contract.json.sig \
-  --public-key "$DELIVERY_PUBLIC_KEY" --repo . --checks checks.json --comment comment.md
+  --public-key "$DELIVERY_PUBLIC_KEY" --repo . --checks checks.json --comment comment.md --events evidence.jsonl
 ```
 
 | Option | What it is |
@@ -1496,6 +1496,7 @@ scf delivery validate --contract contract.json --signature contract.json.sig \
 | `--repo <dir>` | The repository to check. Default: the current folder |
 | `--checks <file>` | The CI checks reported for the commit (see below) |
 | `--comment <file>` | The text of the pull request comment that carries the marker (see below) |
+| `--events <file>` | The run's evidence events (`evidence.jsonl`, JSON lines, 256 MiB at most). Checked against the contract's `evidence` (see below). Optional; without it the `evidence` check is skipped |
 | `--json` | Print one JSON object instead of the lines |
 | `--help` | Print the usage |
 
@@ -1510,11 +1511,19 @@ scf delivery validate --contract contract.json --signature contract.json.sig \
 | `locks` | `lock-changed` | A lock file at that commit is changed, missing, or not a file |
 | `workflows` | `workflow-changed` | A file under `.github/workflows/` is added, removed or changed (other files are ignored) |
 | `checks` | `required-check-failed` | A required check is missing or did not pass (see below) |
-| `evidence` | — | Always `skipped (not checked by this version)` for now |
+| `evidence` | `evidence-unverified` | With `--events`: the events file has fewer events than the contract says, a line is not a valid event of the chain, or the event at `count - 1` does not carry the contract's `terminalHash` |
 | `comment` | `superseded` or `evidence-unverified` | The comment names another contract, or another evidence hash |
 
 - If `contract` or `signature` stops, every later check is `skipped (the contract is not trusted)`, and
   git is not called.
+- **`evidence`** reads the first `count` lines of `--events` and nothing after them. Each line must be a
+  canonical JSON object of a known event version (a version newer than this script knows is refused), a
+  complete event of the chain (every event type, strict keys, and the rules that tie fields together), with
+  the right `seq`, `runId` and a unique `id`, and a hash and link that match. Events after `count` do not
+  matter. Without `--events`, the check prints `skipped (no --events given)`.
+- **The validator and the library agree.** The script gives the same verdict as the Foundry's own check
+  on the same contract, signature, key and events. Its copy of the event rules is kept in step by a test:
+  a new event type or version makes the test fail until the script is updated.
 - **`skipped` is not a pass.** Without `--checks`, `checks` is skipped, and without `--comment`, `comment`
   is skipped. A job must not treat a skipped check as ok.
 
@@ -1563,7 +1572,7 @@ delivery-contract:
           --public-key "$DELIVERY_PUBLIC_KEY" --repo . --json
 ```
 
-Pass the `--checks` and `--comment` files as well when the job has them. The job fails when the exit code is
+Pass the `--checks`, `--comment` and `--events` files as well when the job has them. The job fails when the exit code is
 not `0`. Do not add `|| true`.
 
 ### Versions of the components
@@ -6377,7 +6386,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf credential rotate-key` | Re-encrypt all stored credentials under a new key |
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
 | `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
-| `scf delivery validate --contract f --signature f --public-key k [--repo dir] [--checks f] [--comment f] [--json]` | Check a delivery contract against the checked-out commit, for a CI job. Exit code 0 no stop, 1 a stop, 2 a usage or read error ([Check a delivery contract in CI](#check-a-delivery-contract-in-ci)) |
+| `scf delivery validate --contract f --signature f --public-key k [--repo dir] [--checks f] [--comment f] [--events f] [--json]` | Check a delivery contract against the checked-out commit, for a CI job. Exit code 0 no stop, 1 a stop, 2 a usage or read error ([Check a delivery contract in CI](#check-a-delivery-contract-in-ci)) |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
 | `scf policy restore <id> [--force]` | Put back the last-known-good copy of a mandatory policy overlay as `policies/<id>.json`. A valid file is only replaced with `--force`; the replaced file is kept as `<id>.json.replaced-<time>` ([Restore the last-known-good copy](#restore-the-last-known-good-copy)) |
 | `scf policy break-glass --reason "<text>" --for <n>m\|<n>h` | Start a time-limited, audited break-glass record in the data folder. The reason is required (up to 200 characters, no credential-like text) and so is the duration (1 minute to 4 hours). A start while one is active is refused. While it is active, a privileged step that a broken mandatory policy would stop goes on ([Break-glass](#break-glass)) |
