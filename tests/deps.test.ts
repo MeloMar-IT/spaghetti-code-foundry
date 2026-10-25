@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { DEP_REF_SOURCE, dependencies, dependencyDone, dependencyRange, dependencyText, openDependencies, titleIndex } from "../src/queue/deps.js";
+import {
+  DEPS_MARK, DEPS_MARK_END, DEP_REF_SOURCE, cleanReason, dependencies, dependencyDone, dependencyRange, dependencyText, foundryDependsOn,
+  mergeDependsOn, openDependencies, removeFromDependsOn, titleIndex, withoutFoundryPart,
+} from "../src/queue/deps.js";
 
 const all = [
   { number: 1, title: "Story 1 — Publish update metadata", state: "CLOSED" },
@@ -140,5 +143,135 @@ describe("title index", () => {
     expect(dependencies(body, 99, list)).toEqual([]);
     list[3] = { number: 6, title: "Story 7 — Install the update", state: "OPEN" };
     expect(dependencies(body, 99, list)).toEqual([6]);
+  });
+});
+
+describe("the Foundry's part (#675)", () => {
+  const P = (issues: number[], reason: string, eol = "\n") =>
+    [DEPS_MARK, ...issues.map((n) => `- #${n}`), reason ? `_Added by the Spaghetti Code Foundry: ${reason}_` : "_Added by the Spaghetti Code Foundry._", DEPS_MARK_END].join(eol);
+  const section = "x\n### Depends on\nStory 4.\n\n### Notes\nabc";
+
+  it("makes a section when there is none", () => {
+    expect(mergeDependsOn("Intro", [12, 5], "Waits for the API")).toBe(`Intro\n\n### Depends on\n${P([5, 12], "Waits for the API")}`);
+  });
+  it.each([
+    ["", "\n\n### Depends on\n"],
+    ["  ", "  \n\n### Depends on\n"],
+  ])("empty or blank body %j", (b, head) => {
+    const merged = mergeDependsOn(b, [3], "r");
+    expect(merged).toBe(head + P([3], "r"));
+    expect(mergeDependsOn(merged, [3], "r")).toBe(merged);
+    expect(foundryDependsOn(merged)).toEqual([3]);
+  });
+  it("blank CRLF body", () => {
+    const merged = mergeDependsOn("\r\n", [3], "r");
+    expect(merged).toBe("\r\n\r\n\r\n### Depends on\r\n" + P([3], "r", "\r\n"));
+    expect(mergeDependsOn(merged, [3], "r")).toBe(merged);
+  });
+  it("goes under a header, and comes out again", () => {
+    const merged = mergeDependsOn(section, [12], "r");
+    expect(merged.startsWith("x\n### Depends on\n" + DEPS_MARK)).toBe(true);
+    expect(withoutFoundryPart(merged)).toBe(section);
+    expect(mergeDependsOn(merged, [12], "r")).toBe(merged);
+    expect(removeFromDependsOn(merged, [12])).toBe(section);
+  });
+  it.each([
+    "### Depends on", "### Depends on\n", "Depends on: #3", "Depends on: #3\nmore", "a\n**Depends on:** #5\n**Notes**\nz",
+    "### Depends on\r\n", "x\r\n### Depends on\r\n#12\r\n\r\n### Notes\r\nabc", "Depends on: #3\r\n",
+  ])("round trip with %j", (orig) => {
+    const merged = mergeDependsOn(orig, [12], "r");
+    expect(withoutFoundryPart(merged)).toBe(orig);
+    expect(removeFromDependsOn(merged, [12])).toBe(orig);
+    expect(mergeDependsOn(merged, [12], "r")).toBe(merged);
+    expect(dependencyText(withoutFoundryPart(merged))).toBe(dependencyText(orig));
+    if (orig.includes("\r\n")) expect(merged.replace(/\r\n/g, "")).not.toContain("\n");
+  });
+  it.each([
+    ["LF", "\n", "Notes\n"],
+    ["CRLF", "\r\n", "Notes\r\n"],
+  ])("an existing part at the end keeps the person's line end (%s)", (_name, eol, text) => {
+    const part = P([5], "why", eol);
+    const body = text + part;
+    expect(withoutFoundryPart(body)).toBe(text);
+    expect(removeFromDependsOn(body, [5])).toBe(text);
+    expect(foundryDependsOn(body)).toEqual([5]);
+  });
+  it("inline header: the person's and the Foundry's issues", () => {
+    expect(dependencies(mergeDependsOn("Depends on: #3\nmore", [12], "r"), 100, [])).toEqual([3, 12]);
+  });
+  it("unions, with the newest reason", () => {
+    const merged = mergeDependsOn(mergeDependsOn("x", [5], "A"), [7], "B");
+    expect(foundryDependsOn(merged)).toEqual([5, 7]);
+    expect(merged).toContain("Foundry: B_");
+    expect(merged).not.toContain("Foundry: A_");
+    expect(merged.split(DEPS_MARK + "\n").length).toBe(2);
+    expect(mergeDependsOn("x", [], "r")).toBe("x");
+    expect(mergeDependsOn("x", [0, -1, 1.5], "r")).toBe("x");
+  });
+  it("finds the part", () => {
+    expect(foundryDependsOn("#3")).toEqual([]);
+    expect(foundryDependsOn(`${DEPS_MARK_END} #3 ${DEPS_MARK}`)).toEqual([]);
+    expect(foundryDependsOn(`${DEPS_MARK} #3`)).toEqual([]);
+    expect(foundryDependsOn(`${DEPS_MARK}\n#3\n${P([9], "")}`)).toEqual([9]);
+    const many = Array.from({ length: 300 }, (_, i) => i + 1);
+    expect(foundryDependsOn(P(many, ""))).toHaveLength(300);
+  });
+  it("cleans a reason", () => {
+    expect(cleanReason("a\n\n  b")).toBe("a b");
+    expect(cleanReason("<!-- x -->")).toBe("!-- x --");
+    expect(cleanReason("see #12")).toBe("see issue 12");
+    expect(cleanReason("r".repeat(500)).length).toBeLessThanOrEqual(200);
+    expect(cleanReason(undefined as never)).toBe("");
+    expect(cleanReason("")).toBe("");
+    const once = cleanReason("a <b> #4 " + "z ".repeat(300));
+    expect(cleanReason(once)).toBe(once);
+  });
+  it("an empty reason has its own line", () => {
+    expect(mergeDependsOn("x", [1], "")).toContain("\n_Added by the Spaghetti Code Foundry._\n");
+  });
+  describe("removing", () => {
+    it("keeps the others and the reason", () => {
+      const merged = mergeDependsOn(section, [5, 7], "why");
+      const left = removeFromDependsOn(merged, [5]);
+      expect(foundryDependsOn(left)).toEqual([7]);
+      expect(left).toContain("Foundry: why_");
+      expect(withoutFoundryPart(left)).toBe(section);
+    });
+    it("everything gives back the section", () => {
+      expect(removeFromDependsOn(mergeDependsOn(section, [5, 7], "why"), [5, 7])).toBe(section);
+    });
+    it("nothing to remove: the same body", () => {
+      expect(removeFromDependsOn(section, [5])).toBe(section);
+      const merged = mergeDependsOn(section, [5], "why");
+      expect(removeFromDependsOn(merged, [99])).toBe(merged);
+    });
+    it("keeps CRLF", () => {
+      const merged = mergeDependsOn("x\r\n### Depends on\r\n#12\r\n", [5, 7], "why");
+      const left = removeFromDependsOn(merged, [5]);
+      expect(left.replace(/\r\n/g, "")).not.toContain("\n");
+      expect(foundryDependsOn(left)).toEqual([7]);
+    });
+    it("a removed number does not come back through an edited reason", () => {
+      const merged = mergeDependsOn(section, [5, 7], "r").replace("Foundry: r_", "Foundry: waiting for #5_");
+      const left = removeFromDependsOn(merged, [5]);
+      expect(foundryDependsOn(left)).toEqual([7]);
+      expect(left).toContain("waiting for issue 5");
+      expect(withoutFoundryPart(left)).toBe(section);
+    });
+  });
+  describe("dependencies()", () => {
+    it("the limit of 1000 characters is for the person's text only", () => {
+      const orig = "### Depends on\n" + "x ".repeat(450) + "\n#9";
+      const merged = mergeDependsOn(orig, [20, 21, 22, 23, 24, 25, 26, 27, 28, 29], "r".repeat(250));
+      expect(dependencies(orig, 100, [])).toEqual([9]);
+      expect(dependencyText(merged)).not.toContain("#9");
+      expect(dependencies(merged, 100, [])).toEqual([9, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]);
+    });
+    it("the reason is not a title", () => {
+      expect(dependencies(mergeDependsOn("x", [12], "Story 7 — Install the update"), 100, all)).toEqual([12]);
+    });
+    it("not itself", () => {
+      expect(dependencies(mergeDependsOn("x", [4, 7], "r"), 4, all)).toEqual([7]);
+    });
   });
 });

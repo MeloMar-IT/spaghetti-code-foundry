@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 /** `scf delivery validate …`: runs the dependency-free validator script, so the command and a CI job give the same answer. */
 
 export const DELIVERY_USAGE =
-  "usage: scf delivery validate --contract <file> --signature <file> --public-key <ssh-ed25519 line or file> [--repo <dir>] [--checks <file>] [--comment <file>] [--json]\n" +
+  "usage: scf delivery validate --contract <file> --signature <file> --public-key <ssh-ed25519 line or file> [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json]\n" +
   "       Check a delivery contract against the checked-out commit. Exit code 0: no stop. 1: a stop. 2: a usage or read error.";
 
 /** Works from `src/delivery/` and from `dist/delivery/`: both are two folders below the repository root. */

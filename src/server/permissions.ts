@@ -31,7 +31,7 @@ export const RULES: Rule[] = [
   r("GET", "settings", "no", "the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret"),
   r("POST", "settings/reset", "no", "remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed`"),
   r("GET", "restart", "no", "which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs)"),
-  r("POST", "restart", "no", "restart when no story is running: no new runs start and the watchers stop until the active runs are done; only when the server runs under the supervisor; writes an audit line"),
+  r("POST", "restart", "no", "restart when no story is running: no new runs start until the active runs are done, and the watchers keep running (only a move of the data folder stops them); only when the server runs under the supervisor; writes an audit line"),
   r("DELETE", "restart", "no", "cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line"),
   r("GET", "watchers", "no", "list the watchers"),
   r("POST", "watchers/:id/tick", "no", "run a watcher now"),

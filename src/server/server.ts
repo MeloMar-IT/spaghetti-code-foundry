@@ -11,6 +11,8 @@ import { TOKEN_MIN } from "../credentials/store.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { homeMoved } from "../home.js";
 import { sweepSignInDirs } from "../engine/repo-access.js";
+import { RUNNING_SWEEP_MS, sweepStaleRunning, type StaleSweep } from "../engine/running.js";
+import { cleanLine } from "../errors.js";
 import { BREAK_GLASS_WATCH_MS, breakGlassWatch } from "../engine/policy-break-glass.js";
 import { Scheduler } from "../queue/scheduler.js";
 import { steppedAsideFor } from "../queue/watcher.js";
@@ -177,6 +179,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   const swept = sweepSignInDirs(opts.runsDir);
   if (swept.removed > 0) log(`${swept.removed} leftover sign-in folder(s) of interrupted runs removed`);
   if (swept.failed > 0) log(`! ${swept.failed} leftover sign-in folder(s) could not be removed; delete the folder "sign-in" in those run folders`);
+  // a crash leaves markers and code-area locks of runs that no longer run: free them before anything can wait for them
+  const startSweep = sweepStaleRunning(opts.runsDir, () => false, { atStart: true });
   const scheduler = new Scheduler({
     runsDir: opts.runsDir,
     claudeBin: opts.claudeBin,
@@ -222,9 +226,9 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     }
     rebuild();
   };
-  /** Brings the watchers in line with the stores; like the other timers: only the lists during a restart wait or on a server without watchers. */
+  /** Brings the watchers in line with the stores. On a server without watchers, or while it waits to restart for a new data folder: only the lists. */
   const syncStored = () => {
-    if (opts.watchers === false || ctx.restart) return void refreshStored();
+    if (opts.watchers === false || ctx.restart?.why === "data_folder") return void refreshStored();
     watchers.sync();
   };
   const watchers = new WatcherManager({ scheduler, runsDir: opts.runsDir, repo: opts.repo, config: () => effective, areaWait, log, serverLog: ring.lines, restart: () => ctx.restart,
@@ -388,6 +392,23 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   const breakGlassTimer = setInterval(breakGlassTick, BREAK_GLASS_WATCH_MS);
   breakGlassTimer.unref();
   if (opts.watchers !== false) watchers.sync();
+  // What the sweeps freed goes to the log and the monitor's activity; the monitor closes the orphan-lock finding at its next check.
+  const reportFreed = (s: StaleSweep) => {
+    for (const id of s.markers) {
+      const m = `freed the running marker of run ${id} (it is not running)`;
+      log(m);
+      watchers.monitorAct(m);
+    }
+    for (const l of s.locks) {
+      const m = `freed the code-area lock of run ${l.runId} in ${l.repo} (${l.areas.map((a) => cleanLine(a).slice(0, 120)).join(", ")})`;
+      log(m);
+      watchers.monitorAct(m);
+    }
+    if (s.locks.length) watchers.locksFreed([...new Set(s.locks.map((l) => l.repo))]);
+  };
+  reportFreed(startSweep);
+  const staleTimer = setInterval(() => reportFreed(sweepStaleRunning(opts.runsDir, (id) => scheduler.isActive(id))), RUNNING_SWEEP_MS);
+  staleTimer.unref();
   let notifier: TurnNotifier | undefined;
   if (process.env.FACTORY_NO_NOTIFY !== "1") {
     notifier = new TurnNotifier(ctx, { baseUrl: localUrl(listen, opts.port), log });
@@ -410,6 +431,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       clearInterval(auditTimer);
       clearInterval(skillTimer);
       clearInterval(breakGlassTimer);
+      clearInterval(staleTimer);
       skillSweep.stop();
       clearTimeout(retryTimer);
       notifier?.stop();

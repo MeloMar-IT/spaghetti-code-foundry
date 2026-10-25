@@ -5,6 +5,7 @@
 # 
 # clone (+ newest factory branch) → read all issues → Opus lists the decisions only the owner can make
 #   → posts them on each issue that has some (label needs-info); reply or /defaults and it continues
+#   → a story that must wait for another records WAITS_FOR: #N in its Depends on (only an invalid one is asked)
 # ────────────────────────────────────────────────────────────────────────
 name: epic-questions
 description: Before building a batch of issues, ask every question only the owner can answer, in one go
@@ -87,6 +88,9 @@ steps:
       - Each question: short context, the options you see, and your recommendation with one line why.
       - Questions already answered in an issue's comments are answered — don't ask them again.
       - Put a question that concerns several issues on the earliest one, and mention the others.
+      - If an issue must wait for another open issue (of this batch or the repository) whose work has not landed, and its
+        "Depends on" does not name it yet, don't ask: write `WAITS_FOR: #<n>` (up to 10 numbers, never the issue itself)
+        and `WAITS_FOR_REASON: <one line why>` in its section. The Foundry records it; only an invalid one becomes a question.
       - Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.
       - policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).
       - Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
@@ -102,6 +106,10 @@ steps:
       **Kind:** technical | product | policy | owner_action
       <context and options>
       **Recommendation:** <option> — <why>
+      or (also before questions in the form above)
+      ### #<number>
+      WAITS_FOR: #<n>
+      WAITS_FOR_REASON: <one line why>
   - id: post
     type: shell
     repo_access: true

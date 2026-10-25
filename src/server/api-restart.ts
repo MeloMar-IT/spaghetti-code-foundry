@@ -89,8 +89,7 @@ export function settingsRestartFor(ctx: ApiContext, o: Pick<SettingsRestartOptio
     ...o,
     drain: () => {
       ctx.restart = { why: "settings", since: new Date().toISOString() };
-      ctx.scheduler.drain();
-      ctx.watchers.drain();
+      ctx.scheduler.drain(); // the watchers keep running; nothing they queue starts before the restart
     },
     undrain: () => {
       if (ctx.restart?.why !== "settings") return;

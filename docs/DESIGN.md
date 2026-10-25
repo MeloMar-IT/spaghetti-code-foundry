@@ -955,8 +955,19 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     `wrong-key` stop with `signature-unverified`. A HEAD that is not `commit.sha` gives `commit-changed`.
     A lock that is changed, missing or not a blob gives `lock-changed`. A workflow that is added, removed
     or changed gives `workflow-changed`. A required check that is missing or not `success` gives
-    `required-check-failed`. With `--comment`, a digest that differs gives `superseded`, and an evidence
-    hash that differs from `evidence.terminalHash` gives `evidence-unverified`.
+    `required-check-failed`. With `--events`, a chain that fails the library's checks, or whose event at
+    `count - 1` lacks `evidence.terminalHash`, gives `evidence-unverified` with `evidence-head-mismatch`.
+    With `--comment`, a digest that differs gives `superseded`, and an evidence hash that differs from
+    `evidence.terminalHash` gives `evidence-unverified`.
+  - **Evidence chain (`--events`, #672).** The script reads only the first `count` lines of the events
+    file (256 MiB at most) and checks them in the order of `readEvidenceChain`: each line is a canonical
+    JSON object; the version is upgraded as in `upgradeEvidence` (a version above the script's pinned
+    `EVIDENCE_EVENT_VERSION` is refused); the full `EvidenceEventSchema` holds, with every refinement;
+    `seq`, `runId` and a unique `id` are right; the hash and `prevHash` link and the content hash match.
+    Lines after `count` do not matter. The schema copy is one marked section of the script, and
+    `tests/delivery-validate-events.test.ts` is the drift guard: it reads the script's constants, compares
+    them with the library's enums, and builds one valid event per type and enum value. A new event type,
+    enum value or version fails that test until the script is updated.
   - **git.** Read-only calls through `execFile` with argument arrays, never a shell. HEAD is resolved once
     and used for every lookup. `GIT_LITERAL_PATHSPECS=1` makes a path in the contract a literal path. The
     locks use `ls-tree -z --full-tree` and `cat-file blob`; the workflows use `ls-tree -r -z` on
@@ -971,10 +982,35 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     `<!-- claude-factory delivery-contract digest=<64 hex> evidence=<64 hex> -->` (CRLF allowed). Part 2
     of #667 writes this marker, so the format is fixed.
   - **No writes.** The script never writes a file, and never fixes or regenerates a contract.
-  - **Not yet.** The `evidence` check always prints `skipped` until part 2 of #667 adds `--events`. No run
-    writes a contract or a comment yet, so the validator is used only where a CI job runs it.
-- **Not yet.** No run writes a contract and no server or UI reads one. The stop conditions are checked
-  by the validator above, and not yet by a run. Those are the next part of #162.
+  - **Not yet.** No run writes the comment yet, so the validator is used only where a CI job runs it.
+- **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
+  - **Trigger.** `deliveryAfterStep` runs from `recordStep` (`execute.ts`) after the step outputs are read,
+    for top-level steps only. It needs `outputs.pull_request` to be a pull request of the run's repository
+    (`parsePullRequestUrl`, case-insensitive) and a workdir that exists. It never throws.
+  - **Live settings.** `Engine.deliverySettings` is read at each call. The scheduler fills it from its
+    live config getter, so a settings change applies from the next step. `deliveryRequirements` gives the
+    global values, and a repository entry overrides only the fields it sets.
+  - **Bounded git reads.** `readCommitFacts` uses synchronous git with `cleanEnv`,
+    `GIT_NO_REPLACE_OBJECTS=1`, `GIT_NO_LAZY_FETCH=1` and `SAFE_OPTIONS`, under one deadline (10 s by
+    default). It throws `CommitFactsError` on a detached HEAD, too many lock or workflow files, too many
+    bytes, a timeout or a missing object. `ls-tree -r` reads the commit, and the blobs come in one
+    `cat-file --batch`. `reuse` with the same commit skips git. Messages never show git's output or paths.
+  - **Evidence.** The count and terminal hash come from `evidence.jsonl` through `readEvidenceChain`. A
+    missing, broken, truncated-tail or incomplete chain (`evidenceIncomplete`) writes nothing. A previous
+    contract must still match the chain (`evidenceHeadProblem`).
+  - **Comparison rule.** The facts are compared with the latest contract, leaving out `version`, `runId`,
+    `sequence`, `supersedes` and `evidence`. If they are equal, nothing new is numbered, and only a missing
+    or stale `contract.json` copy is put back.
+  - **Storage.** `<run>/delivery/` is created with mode 0700 only when it is absent. `contract-<n>.json`
+    and `.sig` are created with `wx` and mode 0600, so they are written once. The latest copy is
+    replaced by renaming a temporary file. An unsigned contract removes `contract.json.sig`. A failed
+    write removes the files it created.
+  - **Key folder.** The signing key must resolve (real path) inside `<data>/delivery-keys`. Otherwise
+    nothing is written. Key files are read with a size limit and no link following.
+  - **Errors.** Every fs error becomes one fixed line from `DELIVERY_WRITE_FAULTS`, with no path and no
+    system message.
+- **Not yet.** No server or UI reads a contract. Making CI stop on a missing contract, and the stop
+  conditions in a run, are the next part of #162.
 - **Tests.** `tests/delivery-contract.test.ts` (order, golden text, every byte of the text, the order
   of faults, the head check) and `tests/delivery-sshsig.test.ts` (round trips, every character of the
   signature, refused keys, the real `ssh-keygen`). Both are unit tests: no server, no git, no run.

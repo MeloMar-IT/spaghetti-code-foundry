@@ -2185,6 +2185,7 @@ write("epic-questions", {
     "",
     "clone (+ newest factory branch) → read all issues → Opus lists the decisions only the owner can make",
     "  → posts them on each issue that has some (label needs-info); reply or /defaults and it continues",
+    "  → a story that must wait for another records WAITS_FOR: #N in its Depends on (only an invalid one is asked)",
   ],
 }, {
   description: "Before building a batch of issues, ask every question only the owner can answer, in one go",
@@ -2238,6 +2239,9 @@ write("epic-questions", {
         "- Each question: short context, the options you see, and your recommendation with one line why.",
         "- Questions already answered in an issue's comments are answered — don't ask them again.",
         "- Put a question that concerns several issues on the earliest one, and mention the others.",
+        "- If an issue must wait for another open issue (of this batch or the repository) whose work has not landed, and its",
+        "  \"Depends on\" does not name it yet, don't ask: write `WAITS_FOR: #<n>` (up to 10 numbers, never the issue itself)",
+        "  and `WAITS_FOR_REASON: <one line why>` in its section. The Foundry records it; only an invalid one becomes a question.",
         ...QUESTION_KINDS.map((l) => `- ${l}`),
         "",
         "{{steps.read_issues.output}}",
@@ -2251,6 +2255,10 @@ write("epic-questions", {
         "**Kind:** technical | product | policy | owner_action",
         "<context and options>",
         "**Recommendation:** <option> — <why>",
+        "or (also before questions in the form above)",
+        "### #<number>",
+        "WAITS_FOR: #<n>",
+        "WAITS_FOR_REASON: <one line why>",
       ].join("\n"),
     },
     {

@@ -5,10 +5,18 @@
 //   **Q1. …** … **Recommendation:** …
 //   ### #76
 //   NO_QUESTIONS
+//   ### #77
+//   WAITS_FOR: #75
+//   WAITS_FOR_REASON: needs the API of #75
+//   (optionally followed by questions, or NO_QUESTIONS)
+// A WAITS_FOR request is recorded in the issue's "Depends on" (the Foundry part, through dist/queue/waits-for.js)
+// with no comment and no label. A request that cannot be recorded safely becomes the last question, with the
+// recommendation to plan the issue now without waiting. The commits of HEAD (the cwd is the clone) show landed work;
+// when they cannot be read, no wait is recorded and every request is asked.
 // Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUES (the issues that were checked),
 //      FACTORY_VAR_NEEDS_INFO_LABEL (label for issues with questions), FACTORY_RUN_ID,
 //      FACTORY_NEXT_QUESTIONS (the closing sentence of the comment),
-//      FACTORY_FIRST_QUESTIONS (the first line of the comment).
+//      FACTORY_FIRST_QUESTIONS (the first line of the comment), FACTORY_GH_BIN (the gh program, for tests).
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -18,7 +26,7 @@ const next = process.env.FACTORY_NEXT_QUESTIONS;
 const first = process.env.FACTORY_FIRST_QUESTIONS;
 const label = process.env.FACTORY_VAR_NEEDS_INFO_LABEL || "factory:needs-info";
 const checked = new Set((process.env.FACTORY_VAR_ISSUES ?? "").split(/[\s,]+/).filter((x) => /^\d+$/.test(x)));
-const gh = (args, input) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", input, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
+const gh = (args, input) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", input, maxBuffer: 64 * 1024 * 1024, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
 
 function fail(msg) {
   console.error(`post-questions: ${msg}`);
@@ -37,10 +45,80 @@ for (const line of text.split("\n")) {
 }
 if (!sections.size) fail("no '### #N' sections in the output");
 
+const WAITS_FOR_LINE = /^\s*WAITS_FOR:/m;
+const WAITS_FOR_ANY = /^\s*WAITS_FOR(?:_REASON)?:/;
+const hash = (ns) => ns.map((x) => "#" + x).join(", ");
+const RECOMMEND = '**Recommendation:** Plan it now without waiting — the Foundry could not record the wait safely. If it must wait, name the issue in its "Depends on" section.';
+
+// All commits of HEAD. undefined (with a note) when git cannot list them: the landed-work check is then impossible.
+function readCommits() {
+  try {
+    const out = execFileSync("git", ["log", "--no-show-signature", "--format=%H%x1f%B%x1e", "HEAD"], { encoding: "utf8", maxBuffer: 1024 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+    return out.split("\x1e").map((r) => r.replace(/^\n+/, "")).filter(Boolean).map((r) => {
+      const i = r.indexOf("\x1f");
+      return { sha: r.slice(0, i), message: r.slice(i + 1) };
+    });
+  } catch (e) {
+    console.log(`note: could not read the commits of HEAD (${String(e?.stderr || e?.message || e).trim().split("\n")[0]})`);
+    return undefined;
+  }
+}
+
+// The chain from a wanted issue to `self` through what this batch recorded (known: issue -> numbers it waits for), if any.
+function loopInBatch(known, self, wants) {
+  const parent = new Map();
+  const queue = [];
+  for (const w of wants) if (!parent.has(w)) { parent.set(w, 0); queue.push(w); }
+  for (let i = 0; i < queue.length; i++) {
+    const x = queue[i];
+    for (const d of known.get(x) ?? []) {
+      if (d === self) {
+        const chain = [];
+        for (let y = x; y; y = parent.get(y)) chain.unshift(y);
+        return chain;
+      }
+      if (!parent.has(d)) { parent.set(d, x); queue.push(d); }
+    }
+  }
+  return undefined;
+}
+
+let waits; // { lib, known, commits } when a checked section has a WAITS_FOR line
+if ([...sections].some(([n, l]) => checked.has(n) && WAITS_FOR_LINE.test(l.join("\n")))) {
+  let lib;
+  try {
+    lib = await import(new URL("../dist/queue/waits-for.js", import.meta.url).href);
+  } catch (e) {
+    fail(`could not load the waits-for library: ${String(e?.message ?? e).split("\n")[0]}`);
+  }
+  waits = { lib, known: new Map(), commits: readCommits() };
+}
+
 let asked = 0;
 for (const [n, lines] of sections) {
   if (!checked.has(n)) continue; // only issues that were part of this check
-  const body = lines.join("\n").trim();
+  let body = lines.join("\n").trim();
+  if (waits && WAITS_FOR_LINE.test(body)) {
+    const self = Number(n);
+    const request = waits.lib.parseWaitsFor(body);
+    body = body.split("\n").filter((l) => !WAITS_FOR_ANY.test(l)).join("\n").trim();
+    const path = request.error ? undefined : loopInBatch(waits.known, self, request.issues.filter((x) => x !== self));
+    let r;
+    if (!waits.commits) r = { outcome: "problem", wait: [], problems: ["The commits of this branch could not be read, so it is unknown whether the work already landed."] };
+    else if (path) r = { outcome: "problem", wait: [], problems: [`Waiting for #${path[0]} would make a loop: ${[self, ...path, self].map((x) => "#" + x).join(" → ")}.`] };
+    else {
+      r = waits.lib.recordWaitsFor(gh, repo, self, request, waits.commits);
+    }
+    if (r.outcome !== "problem") {
+      waits.known.set(self, r.wait);
+      console.log(`#${n}: waits for ${hash(r.wait)}${r.outcome === "unchanged" ? " (already recorded)" : ""}`);
+    } else {
+      if (/^NO_QUESTIONS\b/m.test(body)) body = "";
+      const k = Math.max(0, ...[...body.matchAll(/^\*\*Q(\d+)/gm)].map((m) => Number(m[1]))) + 1;
+      body = [body, `**Q${k}.** ${waits.lib.waitsForQuestion(self, request, r.problems)}`, RECOMMEND].filter(Boolean).join("\n\n");
+      console.log(`#${n}: could not record the wait (${r.problems[0]})`);
+    }
+  }
   if (!body || /^NO_QUESTIONS\b/m.test(body)) {
     console.log(`#${n}: no questions`);
     continue;

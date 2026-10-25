@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { FACTORY_HOME } from "../flow/load.js";
+import { pidAlive } from "./state.js";
 
 /**
  * A small "running" marker per run in `<lock folder>/.running`, so `tools/area-lock` can tell that a run is still running
@@ -118,4 +120,87 @@ export function sweepRunning(runsDir: string): void {
   } catch {
     // no lock folder yet
   }
+}
+
+export const RUNNING_SWEEP_MS = 60_000;
+/** The abort reason the scheduler uses for a restart. */
+export const RESTART_INTERRUPT = "scf:restart-interrupt";
+export const RESTART_INTERRUPTED = "interrupted by a restart of the server — resume it to continue";
+
+export interface FreedLock {
+  runId: string;
+  repo: string;
+  areas: string[];
+}
+export interface StaleSweep {
+  markers: string[];
+  locks: FreedLock[];
+}
+
+/** Who owns a run folder: a live process of another server/CLI, nobody, or a run.json that cannot be read. */
+function owner(runDir: string, bootMs: number): "live" | "dead" | "missing" | "unreadable" {
+  const file = join(runDir, "run.json");
+  const r = safeRead(file, 4_000_000);
+  if ("missing" in r) return "missing";
+  if (!("text" in r)) return "unreadable";
+  try {
+    const run = JSON.parse(r.text) as { status?: unknown; pid?: unknown };
+    if (run.status === "running" && pidAlive(run.pid) && run.pid !== process.pid && lstatSync(file).mtimeMs >= bootMs - 60_000) return "live";
+    return "dead";
+  } catch {
+    return "unreadable";
+  }
+}
+
+/**
+ * Removes markers and locks of runs that are neither active here nor live in another process (a crash leaves them behind).
+ * At start an unreadable run.json counts as gone; while the server runs it is kept. Never throws.
+ */
+export function sweepStaleRunning(runsDir: string, isActive: (runId: string) => boolean, o: { atStart?: boolean; bootMs?: number } = {}): StaleSweep {
+  const out: StaleSweep = { markers: [], locks: [] };
+  const root = lockRoot();
+  const bootMs = o.bootMs ?? Date.now() - uptime() * 1000;
+  const gone = (state: ReturnType<typeof owner>, withMissing: boolean): boolean =>
+    state === "dead" || (withMissing && state === "missing") || (state === "unreadable" && o.atStart === true);
+  try {
+    for (const f of readdirSync(join(root, ".running"))) {
+      if (f.startsWith(".")) continue;
+      try {
+        if (isActive(f) || !gone(owner(join(runsDir, f), bootMs), true)) continue;
+        rmSync(join(root, ".running", f), { force: true });
+        out.markers.push(f);
+      } catch {
+        // skip
+      }
+    }
+  } catch {
+    // no marker folder yet
+  }
+  try {
+    for (const repo of readdirSync(root, { withFileTypes: true })) {
+      if (!repo.isDirectory() || repo.name.startsWith(".")) continue;
+      for (const f of readdirSync(join(root, repo.name))) {
+        if (!f.endsWith(".json")) continue;
+        const path = join(root, repo.name, f);
+        try {
+          const r = safeRead(path);
+          if (!("text" in r)) continue;
+          const lock = JSON.parse(r.text) as { marker?: boolean; runId?: unknown; areas?: unknown };
+          if (typeof lock.runId !== "string" || !/^[\w.-]+$/.test(lock.runId) || /^\.+$/.test(lock.runId)) continue;
+          if (isActive(lock.runId)) continue;
+          if (lock.marker === true) {
+            if (!("missing" in safeRead(join(root, ".running", markerName(lock.runId))))) continue;
+          } else if (!gone(owner(join(runsDir, lock.runId), bootMs), false)) continue;
+          rmSync(path, { force: true });
+          const areas = Array.isArray(lock.areas) ? lock.areas.filter((a): a is string => typeof a === "string").slice(0, 5) : [];
+          out.locks.push({ runId: lock.runId, repo: repo.name, areas });
+        } catch {
+          // half-written or not ours
+        }
+      }
+    }
+  } catch {
+    // no lock folder yet
+  }
+  return out;
 }

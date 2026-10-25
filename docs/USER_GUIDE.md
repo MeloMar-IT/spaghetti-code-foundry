@@ -888,7 +888,7 @@ content, or ask for approval. It never gives access that a rule denied.
   The clean folder is `<run folder>/home/.codex`, made 0700, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. Session history stays, so a resumed session still works. No Codex session starts with an MCP server, so a server in your personal config is never reached. A step never gets your personal Codex folder when it is isolated. Pushing is blocked: a Foundry command rule forbids `git push`, and Codex's own sandbox has no network. A step with `bypassPermissions` and no sandbox is refused, because it could push. A login kept in the keychain, a linked login file or a missing login refuses the step, with a message that says how to sign in with a file. A refreshed token is written back to your personal file only when that file has not changed meanwhile. `OPENAI_API_KEY` alone does not select the key mode. If the clean folder cannot be made, the step is refused; it never falls back to your personal folder. In a CLI run with `isolate_agents: false`, nothing changes: no note, no "Codex:" line. A step held by the OS sandbox gets no clean folder of its own; its log says that git push is blocked in that session.
 - **The `tools:` line.** Each try of an agent step writes one line, for example `· tools: generated profile 3f2a9c1b8d0e on Codex: partial — Codex cannot hold … (recorded only)`. The twelve characters are the start of the profile's hash; the line never shows its id or rules. `enforced` means the agent holds the step's tool profile in full. `partial` means it cannot hold all of it: the line names what it cannot hold, such as Git and GitHub commands run through the shell, and for Codex the paths and tools it cannot limit one by one. Today's flows get `partial` where it applies, and the line only records it: nothing changes. `refused` means the step does not start (its line starts with `!`). That happens only with a tool profile the run was started with, when the step's settings allow more than the profile, or the agent cannot hold it. A refused step is not retried and no other agent takes it.
 - **Retry from step…** re-runs from any earlier step.
-- **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later.
+- **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later. A stopped shell step also stops every process it started, background ones included (its whole process group).
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
   A stopped run (for example one that waits for your answers) cancelled this way is saved as "cancelled — nothing to do": nothing continues it and it leaves every list of things that wait. `scf runs cancel <id>` and `POST /api/runs/:id/cancel` do the same. A refinement session is not cancelled this way.
 - **Archive** takes a finished run (succeeded, failed, cancelled or stopped) out of the list of runs,
@@ -1434,10 +1434,33 @@ active, and so does any other layer's pack.
   is still broken, the steps that need trust stay stopped. Fix or restore the policy first when you can; see
   [Restore the last-known-good copy](#restore-the-last-known-good-copy).
 
-### Delivery settings and the signing key
+### Delivery contract
 
-A delivery contract is written when a pull request is created, and it is signed with a key. The
-settings for it are in the **Delivery** card of Settings, or in `config.yaml`:
+A run that has a pull request in its own repository keeps a record of what was handed over with it: a
+chain of delivery contracts in the run folder, `delivery/`. A contract is written after a step, and only
+when something it states has changed.
+
+- **When.** After each top-level step, once `pull_request` is a pull request of the run's repository.
+  A new contract is written only when the commit, the branch, a dependency lock file, a CI workflow file
+  under `.github/workflows/`, the pull request or a requirement changed. More evidence alone does not
+  write one, and neither does a key that changed.
+- **What is in it.** The run, the pull request, the commit and branch, the lock files and workflows with
+  their hashes, the required checks, artifacts and provenance, and the evidence count and hash at that
+  moment. A signed contract also has a signature file.
+- **Files.** `contract-1.json`, `contract-2.json` and so on are never changed. Each one after the first
+  names the one before it (`supersedes`). `contract.json` and `contract.json.sig` hold a copy of the
+  latest one. Files are readable by the account only.
+- **Signed or unsigned.** With a signing key set (see below) a contract is signed; without one it is
+  unsigned. A key that is set but cannot be used (not in `delivery-keys`, unreadable, not Ed25519) writes
+  no contract at all, so an unsigned one never stands in for a signed one.
+- **Settings apply from the next step.** Required checks, artifacts and provenance are read again for each
+  step. A change makes a new contract at the next step that changes something.
+- **Failures do not stop the run.** If a contract cannot be written, the log gets one line such as
+  `delivery: the contract cannot be written`, and the run goes on. The run can then finish with a pull
+  request and no new contract. CI (see below) reports a missing or stale contract as a stop.
+- **Logs.** A written contract logs `delivery: contract <n> written (signed)` or `(unsigned)`.
+
+The settings for the contract are in the **Delivery** card of Settings, or in `config.yaml`:
 
 ```yaml
 delivery:
@@ -1459,8 +1482,8 @@ delivery:
   500 names; each name is 1 to 200 characters, has no control character and is given once. A repository
   is written as `owner/name` in lower case, and at most 50 repositories can have their own settings.
 - **Per-repository settings** are only in `config.yaml`; the Settings page does not show them.
-- **Nothing reads these settings yet.** The delivery contract that uses them comes in a later release, so
-  saving them changes no run today. The key folder is already protected by the sandbox rule above.
+- **Where the settings apply.** The settings are read at each step, so a saved change applies from the
+  next step that writes a contract. The key folder is protected by the sandbox rule below.
 
 **Set up the key.** Make the folder with owner-only access, then create the key in it:
 
@@ -1485,7 +1508,7 @@ Node.js alone: `node tools/delivery-validate/validate.mjs …`.
 
 ```sh
 scf delivery validate --contract contract.json --signature contract.json.sig \
-  --public-key "$DELIVERY_PUBLIC_KEY" --repo . --checks checks.json --comment comment.md
+  --public-key "$DELIVERY_PUBLIC_KEY" --repo . --checks checks.json --comment comment.md --events evidence.jsonl
 ```
 
 | Option | What it is |
@@ -1496,6 +1519,7 @@ scf delivery validate --contract contract.json --signature contract.json.sig \
 | `--repo <dir>` | The repository to check. Default: the current folder |
 | `--checks <file>` | The CI checks reported for the commit (see below) |
 | `--comment <file>` | The text of the pull request comment that carries the marker (see below) |
+| `--events <file>` | The run's evidence events (`evidence.jsonl`, JSON lines, 256 MiB at most). Checked against the contract's `evidence` (see below). Optional; without it the `evidence` check is skipped |
 | `--json` | Print one JSON object instead of the lines |
 | `--help` | Print the usage |
 
@@ -1510,11 +1534,19 @@ scf delivery validate --contract contract.json --signature contract.json.sig \
 | `locks` | `lock-changed` | A lock file at that commit is changed, missing, or not a file |
 | `workflows` | `workflow-changed` | A file under `.github/workflows/` is added, removed or changed (other files are ignored) |
 | `checks` | `required-check-failed` | A required check is missing or did not pass (see below) |
-| `evidence` | — | Always `skipped (not checked by this version)` for now |
+| `evidence` | `evidence-unverified` | With `--events`: the events file has fewer events than the contract says, a line is not a valid event of the chain, or the event at `count - 1` does not carry the contract's `terminalHash` |
 | `comment` | `superseded` or `evidence-unverified` | The comment names another contract, or another evidence hash |
 
 - If `contract` or `signature` stops, every later check is `skipped (the contract is not trusted)`, and
   git is not called.
+- **`evidence`** reads the first `count` lines of `--events` and nothing after them. Each line must be a
+  canonical JSON object of a known event version (a version newer than this script knows is refused), a
+  complete event of the chain (every event type, strict keys, and the rules that tie fields together), with
+  the right `seq`, `runId` and a unique `id`, and a hash and link that match. Events after `count` do not
+  matter. Without `--events`, the check prints `skipped (no --events given)`.
+- **The validator and the library agree.** The script gives the same verdict as the Foundry's own check
+  on the same contract, signature, key and events. Its copy of the event rules is kept in step by a test:
+  a new event type or version makes the test fail until the script is updated.
 - **`skipped` is not a pass.** Without `--checks`, `checks` is skipped, and without `--comment`, `comment`
   is skipped. A job must not treat a skipped check as ok.
 
@@ -1563,7 +1595,7 @@ delivery-contract:
           --public-key "$DELIVERY_PUBLIC_KEY" --repo . --json
 ```
 
-Pass the `--checks` and `--comment` files as well when the job has them. The job fails when the exit code is
+Pass the `--checks`, `--comment` and `--events` files as well when the job has them. The job fails when the exit code is
 not `0`. Do not add `|| true`.
 
 ### Versions of the components
@@ -2460,7 +2492,7 @@ watchers:
 | `status_labels` | Your own names for the status labels above |
 | `remove_on_done` | Labels to remove when a run succeeds (e.g. the trigger label) |
 | `one_at_a_time` | Never run two of this watcher's runs at once |
-| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done |
+| `wait_for_dependencies` | On by default: an issue with a **Depends on** / **Blocked by** section waits until those issues are done: closed, a `dependency_done_labels` label, or in gitflow (a `develop_branch` is set) the done label (`Factory_done`, set when the run succeeds after the merge into develop; a hotfix can finish while develop is behind, so check the fix is there). This also holds a stopped run: it is not resumed and gets no auto `/defaults` until they are done. Off: only the Foundry's marked dependencies hold an issue |
 | `dependency_done_labels` | Labels that also count as "done" for dependencies, e.g. `Factory_done` |
 | `precheck_flow` | Run this flow once over all new labelled issues before any is started (`epic-questions` asks every owner decision up front) |
 | `auto_defaults` | `true`: the watcher answers the Foundry's questions itself with the recommendations (it posts `/defaults` on the issue), so nothing waits for a person. At most twice per issue; if the planner still asks after that, a person answers. Default `false` |
@@ -2745,6 +2777,16 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   A story that has stopped (questions, approval, usage limit, budget) also waits there: it is not
   resumed and gets no automatic answers until its dependencies are done. Then it continues by
   itself, with the reason "its dependencies are done" in the activity log.
+  The Foundry may add its own dependencies in a marked part just under the **Depends on** header,
+  between two HTML comments, with a line that says why. You can edit or remove that part; your own
+  text there is never changed. Those dependencies are held even when `wait_for_dependencies` is off.
+  The questions check (`epic-questions`) can record such a dependency too. When a story must wait for
+  another open issue and its **Depends on** does not name it yet, the check writes the wait into that
+  marked part, prints it, and posts no question and no label. Only an invalid request becomes a
+  question: waiting for itself, a loop with another story of the same batch or of the repository,
+  an issue whose work already landed, or an issue that is unknown or closed. That question comes with
+  a recommendation to plan the issue now without waiting. If the commit history cannot be read, no
+  wait is recorded and every such request becomes a question.
 - **Another issue is being built.** One issue at a time per repository; the rest start after it.
 - **New issues are being checked for questions** (a few minutes, once per batch).
 - **The usage limit or the daily budget is reached.** Runs pause and continue by themselves
@@ -3200,7 +3242,9 @@ Every 5 minutes it checks, in this order, and stops at the first reason that app
 6. The same commit did not fail after its last try. It waits for a newer commit. (A failed test run is tried again 20 minutes later, up to 3 tries in all; the wait is shown in the Health line.)
 7. The checkout can fast-forward to `main`.
 
-Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 15-minute limit starts when they start, and a run that hits it counts as a failed try. If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the Health line says which try it is. The log and the Health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. When all pass, no new runs start (queued runs wait and start after the restart) and the server restarts when the active runs are done. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
+Then it builds and tests the new commit in a separate folder (`npm ci`, `npm run build`, `npm test`). The tests take a test slot like the tests of stories: 2 run at once, and they wait at most 15 minutes for a free one, then run anyway; their own 15-minute limit starts when they start, and a run that hits it counts as a failed try. If the tests fail, they run again after 20 minutes, up to 3 tries in all, and the Health line says which try it is. The log and the Health line after the third failure name the failing tests (at most 20 are kept). If the install or the build fails, it stops after one try. Until the last try ends, the old version keeps running; a failure after the last try gets a monitor finding. When all pass, no new runs start (queued runs wait and start after the restart), the watchers keep checking and queue their work, and the server restarts when the active runs are done.
+
+**Stuck runs.** While the update waits, the Health line and Home name the runs that look stuck, and the server log lists them once per change. A run is stuck when it waits for a code area (a lock another run holds), or when nothing in its run folder or `logs/` has changed for 30 minutes and no step has started or resumed in that time. A test run that writes its `tests.log` is not stuck. When every active run is stuck, the update does not wait for them: it interrupts them, waits up to 60 seconds for them to end, and then installs. A run that is interrupted ends as *interrupted* ("interrupted by a restart of the server — resume it to continue"), and its watcher resumes it after the restart. If they have not ended after 60 seconds, nothing is installed and the update waits again. Right before the install it checks everything again, including the tip of `main`. It never updates from a branch other than `main` or from another repository.
 
 **Skipped tests.** When the daily release check (`release-daily`) already passed the same tests on the same code, self-update does not run them again. The log then says `self-update: <sha> is not tested again: the release check passed these tests on this code (run <id>, <time>)`; install and build still run. It skips only when all of these hold: the test command is the updater's own test step (`npm test`, or `npm ci && npm test` when `node_modules` was missing), the release check recorded a green run of that command on the same tree in the data folder (`tested/`), and the record has exactly the form the check writes. Every other case runs the tests as usual: a story's record, another tree or command, no detected command, an unreadable record, or a `test_cmd` pinned in `.claude-factory/config.yaml` of the code, even when a record matches. A release check with its own `test_cmd` records under that command, so it matches only when that command is the updater's own test step. Only the release check's record counts. Anything that can write `tested/` in the data folder can make self-update skip its tests, so keep that folder as private as the rest of the Foundry.
 
@@ -3218,7 +3262,7 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 
 **Saving keeps your file.** A save changes only the settings you changed in `config.yaml`: your comments and the order of the keys stay, and a setting you put back to its default is removed from the file. If someone else saved, or the file was edited by hand, since you opened the page, the save is refused with "the settings changed since you loaded them — reload first". Reload the page and make the change again. A hand edit shows on the page at once, but the server uses it only after the next save or a restart.
 
-**Restart when no story is running.** Some settings, such as **Listen on**, take effect only after a restart. After a save that changed one, the page says "A restart is needed" with the running and the saved value. When the server runs under the supervisor (also when you started it with `scf ui` in a terminal), the page offers **Restart when no story is running**. Otherwise it says to stop the server and start it again. The restart works like a new version: no new runs start and the watchers stop until the active runs are done, then the server starts again by itself. While it waits, the box says why, how many runs are still active, and offers **Cancel the restart**; cancelling starts the runs and watchers again. A restart for a new version or a moved data folder takes over a waiting restart, and then it cannot be cancelled. The box is refreshed every 5 seconds. Asking for the restart and cancelling it are written to the audit log (`restart-request`, `restart-cancel`).
+**Restart when no story is running.** Some settings, such as **Listen on**, take effect only after a restart. After a save that changed one, the page says "A restart is needed" with the running and the saved value. When the server runs under the supervisor (also when you started it with `scf ui` in a terminal), the page offers **Restart when no story is running**. Otherwise it says to stop the server and start it again. The restart works like a new version: no new runs start until the active runs are done, then the server starts again by itself. The watchers keep checking during the wait (a watcher that was removed or changed stops, and none starts); only a move of the data folder stops them all. While it waits, the box says why, how many runs are still active, and offers **Cancel the restart**; cancelling starts the runs and watchers again. A restart for a new version or a moved data folder takes over a waiting restart, and then it cannot be cancelled. The box is refreshed every 5 seconds. Asking for the restart and cancelling it are written to the audit log (`restart-request`, `restart-cancel`).
 
 **Controls and their help.** Every control shows its default, one sentence on what it does and when it takes effect ("at once", "when a run starts or resumes" or "after a restart"). The Agents card sets `isolate_agents` and the failure summary (`failure_summary.enabled`, `failure_summary.model`). The User runs card sets `step_env.pass` and `step_env.agent_pass` (at most 100 names each) and `sandbox.user_read` (at most 50 absolute paths). A value the server would refuse, such as a name starting with `GH_`, a relative path or a list that is too long, is marked at its field and cannot be saved. **Set at start-up** is a read-only card: the data folder, port, repository and program paths are set when the server starts (change them there and restart), not on this page.
 
@@ -3911,7 +3955,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
 | `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
 | `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
-| `POST /api/restart` | yes | no | restart when no story is running: no new runs start and the watchers stop until the active runs are done; only when the server runs under the supervisor; writes an audit line |
+| `POST /api/restart` | yes | no | restart when no story is running: no new runs start until the active runs are done, and the watchers keep running (only a move of the data folder stops them); only when the server runs under the supervisor; writes an audit line |
 | `DELETE /api/restart` | yes | no | cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
@@ -6375,7 +6419,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf credential rotate-key` | Re-encrypt all stored credentials under a new key |
 | `scf credential check` | Check that the macOS Keychain can store, read and remove the key |
 | `scf evidence verify <run-id> [--json] [--runs-dir dir]` | Check the evidence of a run: manifest, chain of events and named files ([Evidence of a run](#evidence-of-a-run)). Exit code 0 verified, 1 not verified, 2 nothing to verify |
-| `scf delivery validate --contract f --signature f --public-key k [--repo dir] [--checks f] [--comment f] [--json]` | Check a delivery contract against the checked-out commit, for a CI job. Exit code 0 no stop, 1 a stop, 2 a usage or read error ([Check a delivery contract in CI](#check-a-delivery-contract-in-ci)) |
+| `scf delivery validate --contract f --signature f --public-key k [--repo dir] [--checks f] [--comment f] [--events f] [--json]` | Check a delivery contract against the checked-out commit, for a CI job. Exit code 0 no stop, 1 a stop, 2 a usage or read error ([Check a delivery contract in CI](#check-a-delivery-contract-in-ci)) |
 | `scf monitor off` / `on` / `status` | Stop the monitor from making bug stories, let it make them again (this also closes the circuit breaker), or print the state and the mutes. Works when the server is not running |
 | `scf policy restore <id> [--force]` | Put back the last-known-good copy of a mandatory policy overlay as `policies/<id>.json`. A valid file is only replaced with `--force`; the replaced file is kept as `<id>.json.replaced-<time>` ([Restore the last-known-good copy](#restore-the-last-known-good-copy)) |
 | `scf policy break-glass --reason "<text>" --for <n>m\|<n>h` | Start a time-limited, audited break-glass record in the data folder. The reason is required (up to 200 characters, no credential-like text) and so is the duration (1 minute to 4 hours). A start while one is active is refused. While it is active, a privileged step that a broken mandatory policy would stop goes on ([Break-glass](#break-glass)) |
@@ -7046,7 +7090,7 @@ These are the names as they appear in the log and in mutes. The thresholds are i
 - `same-step-failing` (major): the same step ended runs as failed for different issues.
 - `label-mismatch` (major): an issue's status label does not match its newest run.
 - `waiting-unlisted` (minor): an open issue has a waiting label, but Needs you does not list it.
-- `orphan-lock` (major): a lock is held by a run that is not running.
+- `orphan-lock` (major): a lock is held by a run that is not running. The server frees such markers and locks itself, at start and every minute (only those whose run is gone or has a dead process). Each one is named in the server log and the monitor's activity, and the finding clears at the next check.
 - `queue-stalled` (critical): jobs are queued, slots are free, and nothing starts.
 - `restart-overdue` (major): a new version is installed and the server has not restarted.
 - `develop-red` (critical): the tests after a merge into `develop` fail one after the other.

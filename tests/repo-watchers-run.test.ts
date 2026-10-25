@@ -263,6 +263,23 @@ describe("watchers of two repositories", () => {
     expect(await until(() => trackedIds().length === 0)).toBe(true);
   });
 
+  it("stops a removed watcher while the server waits to restart for a new version, but only refreshes the lists for a new data folder", async () => {
+    const repo = addRepo(admin.user.id, { url: "acme/web" });
+    const other = addRepo(admin.user.id, { url: "acme/other" });
+    addRepoWatcher(repo.id, { id: "web-w" });
+    addRepoWatcher(other.id, { id: "other-w" });
+    ctx.watchers.sync();
+    expect(trackedIds().sort()).toEqual(["other-w", "web-w"]);
+    await new Promise((r) => setTimeout(r, 20));
+    ctx.restart = { why: "data_folder", since: new Date().toISOString() };
+    removeWatchersOfRepos([other.id]);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(trackedIds().sort()).toEqual(["other-w", "web-w"]); // not stopped
+    ctx.restart = { why: "new_version", since: new Date().toISOString() };
+    removeWatchersOfRepos([repo.id]);
+    expect(await until(() => trackedIds().length === 0)).toBe(true);
+  });
+
   describe("at start", () => {
     const setUp = () => {
       const repo = addRepo(admin.user.id, { url: "acme/web" });

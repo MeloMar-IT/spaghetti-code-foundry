@@ -65,6 +65,76 @@ describe("monitor", () => {
     expect(loadFindings(file).findings.length).toBeGreaterThan(1);
   });
 
+  describe("locksFreed", () => {
+    const orphan = (repo: string) => ({ detector: "orphan-lock", fingerprint: `orphan-lock|area|${repo}`, severity: "major" as const, summary: "s", evidence: {}, about: "foundry" as const, firstSeen: ago(MIN), lastSeen: ago(MIN), count: 1, gone: false });
+    const state = () => loadFindings(file).findings.find((f) => f.fingerprint === "orphan-lock|area|a/b")!;
+
+    it("closes a stored orphan-lock finding of that repository at the next check", async () => {
+      saveFindings([orphan("a/b"), orphan("c/d")], file);
+      const m = monitor();
+      await m.tick();
+      expect(state().gone).toBe(false); // nothing freed: still open
+      m.locksFreed(["a/b"]);
+      await m.tick();
+      expect(state().gone).toBe(true);
+      expect(loadFindings(file).findings.find((f) => f.fingerprint === "orphan-lock|area|c/d")!.gone).toBe(false);
+    });
+
+    it("keeps a notification that arrives during a check for the next check", async () => {
+      saveFindings([orphan("a/b")], file);
+      let m: Monitor;
+      let armed = true;
+      m = monitor({
+        restart: () => {
+          if (armed) m.locksFreed(["a/b"]); // after the locks were read
+          armed = false;
+          return undefined;
+        },
+      });
+      await m.tick();
+      expect(state().gone).toBe(false);
+      await m.tick();
+      expect(state().gone).toBe(true);
+    });
+
+    it("a second notice for the same repository during a check is kept for the next check", async () => {
+      saveFindings([orphan("a/b")], file);
+      let m: Monitor;
+      let again = true;
+      m = monitor({
+        restart: () => {
+          if (again) m.locksFreed(["a/b"]); // a newer notice, while the check awaits
+          again = false;
+          return undefined;
+        },
+      });
+      m.locksFreed(["a/b"]);
+      await m.tick();
+      expect(state().gone).toBe(true);
+      // the finding comes back (its lock is seen again later); only the newer notice is still pending
+      saveFindings([orphan("a/b")], file);
+      await m.tick();
+      expect(state().gone).toBe(true);
+    });
+
+    it("keeps the notification when a check fails", async () => {
+      saveFindings([orphan("a/b")], file);
+      let fail = true;
+      const m = monitor({
+        restart: () => {
+          if (fail) throw new Error("boom");
+          return undefined;
+        },
+      });
+      m.locksFreed(["a/b"]);
+      await m.tick();
+      expect(state().gone).toBe(false);
+      fail = false;
+      await m.tick();
+      expect(state().gone).toBe(true);
+    });
+  });
+
   it("finds the restart loop and keeps the finding over a restart (the second check counts 2)", async () => {
     loop();
     await monitor().tick();
@@ -540,23 +610,61 @@ describe("the monitor in the WatcherManager", () => {
     await expect(m.runNow("mon")).rejects.toThrow(/not running/);
   });
 
-  it("drain() stops the watchers but keeps the monitor, and the restart state reaches the detectors", async () => {
-    cfg = ConfigSchema.parse({ watchers: [watcher("w"), mon] });
-    const scheduler = new Scheduler({ runsDir: join(gh.tmp, "runs"), config: () => cfg });
-    let restart: { why: "new_version"; since: string } | undefined;
-    manager = new WatcherManager({ scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, config: () => cfg, log: () => {}, restart: () => restart });
-    const m = manager;
-    m.sync();
-    await settled(m, ["w", "mon"]);
-    restart = { why: "new_version", since: new Date(Date.now() - 3 * 3600_000).toISOString() };
-    m.drain();
-    expect(m.statuses().find((s) => s.id === "w")!.status).toBeUndefined();
-    expect(m.statuses().find((s) => s.id === "mon")!.status).toBeDefined();
-    await m.runNow("mon");
-    const found = loadFindings(join(process.env.FACTORY_HOME!, "monitor-findings.json")).findings;
-    expect(found.map((f) => f.fingerprint)).toContain("restart-overdue");
-    m.stopAll(); // still stops everything
-    await expect(m.runNow("mon")).rejects.toThrow(/not running/);
+  describe("during a restart wait", () => {
+    let restart: { why: "new_version" | "data_folder"; since: string } | undefined;
+    const waiting = async (watchers: unknown[]) => {
+      cfg = ConfigSchema.parse({ watchers });
+      const scheduler = new Scheduler({ runsDir: join(gh.tmp, "runs"), config: () => cfg });
+      restart = undefined;
+      manager = new WatcherManager({ scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, config: () => cfg, log: () => {}, restart: () => restart });
+      manager.sync();
+      await settled(manager, watchers.map((w) => (w as { id: string }).id));
+      restart = { why: "new_version", since: new Date(Date.now() - 3 * 3600_000).toISOString() };
+      return manager;
+    };
+
+    it("the watchers and the monitor keep running, and the restart state reaches the detectors", async () => {
+      const m = await waiting([watcher("w"), mon]);
+      m.sync(); // a sync during the wait changes nothing for a watcher that is unchanged
+      expect(m.statuses().find((s) => s.id === "w")!.status).toBeDefined();
+      expect(m.statuses().find((s) => s.id === "mon")!.status).toBeDefined();
+      expect(m.tracked().map((t) => t.watcher.id)).toEqual(["w"]);
+      const before = m.statuses().find((s) => s.id === "w")!.status!.lastTick;
+      await new Promise((r) => setTimeout(r, 5));
+      const after = (await m.runNow("w")).lastTick;
+      expect(after).not.toBe(before); // it still checks, so holds stay fresh
+      await m.runNow("mon");
+      const found = loadFindings(join(process.env.FACTORY_HOME!, "monitor-findings.json")).findings;
+      expect(found.map((f) => f.fingerprint)).toContain("restart-overdue");
+      m.stopAll(); // still stops everything
+      await expect(m.runNow("mon")).rejects.toThrow(/not running/);
+    });
+
+    it("sync() stops a removed watcher and starts none", async () => {
+      const m = await waiting([watcher("w"), mon]);
+      cfg = ConfigSchema.parse({ watchers: [watcher("n"), mon] });
+      m.sync();
+      expect(m.tracked()).toEqual([]);
+      expect(m.statuses().find((s) => s.id === "n")!.status).toBeUndefined();
+      expect(m.statuses().find((s) => s.id === "mon")!.status).toBeDefined();
+    });
+
+    it("a data_folder restart stops the watchers and keeps the monitor", async () => {
+      const m = await waiting([watcher("w"), mon]);
+      restart = { why: "data_folder", since: new Date().toISOString() };
+      m.stopAll(true);
+      expect(m.statuses().find((s) => s.id === "w")!.status).toBeUndefined();
+      expect(m.statuses().find((s) => s.id === "mon")!.status).toBeDefined();
+    });
+
+    it("locksFreed reaches the running monitor", async () => {
+      const m = await waiting([mon]);
+      const f = join(process.env.FACTORY_HOME!, "monitor-findings.json");
+      saveFindings([{ detector: "orphan-lock", fingerprint: "orphan-lock|area|a/b", severity: "major", summary: "s", evidence: {}, about: "foundry", firstSeen: ago(MIN), lastSeen: ago(MIN), count: 1, gone: false }], f);
+      m.locksFreed(["a/b"]);
+      await m.runNow("mon");
+      expect(loadFindings(f).findings.find((x) => x.fingerprint === "orphan-lock|area|a/b")!.gone).toBe(true);
+    });
   });
 
   it("stops when it is disabled", async () => {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { saveRun, type RunSummary } from "../src/engine/state.js";
+import { mergeDependsOn } from "../src/queue/deps.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { StatusComments, type StatusView } from "../src/queue/status-comment.js";
 import { Watcher } from "../src/queue/watcher.js";
@@ -326,6 +327,56 @@ describe("a comment read that does not work changes nothing", () => {
       };
       it("working label, answered: nothing is resumed", async () => { await given([TRIGGER, WORKING]); });
       it("needs-info label, answered: nothing is relabelled or resumed", async () => { await given([TRIGGER, ASKS]); });
+    });
+  });
+
+  describe("Foundry-marked dependencies (#675)", () => {
+    const MARKED = mergeDependsOn("Text", [7], "waits for the API");
+    const resumed = () => submit.mock.calls.filter((c) => (c[0] as { kind: string }).kind === "resume").length;
+    const limit = () => plant("stopped", { reason: "usage limit reached", finishedAt: "2026-01-01T00:01:00.000Z" });
+    beforeEach(() => { process.env.FAKE_GH_LABEL_FILTER = "1"; });
+
+    it.each([true, false])("wait_for_dependencies %s: a marked open dependency holds the run", async (on) => {
+      limit(); issues([4, [TRIGGER, WORKING], MARKED], [7, []]);
+      const w = watcher({ wait_for_dependencies: on });
+      await w.tick();
+      expect(submit).not.toHaveBeenCalled();
+      expect(hold4(w)).toMatchObject({ next: { kind: "dependency", runId: "r1" } });
+      expect(log()).not.toContain("issue edit 4");
+      expect(log()).not.toContain("comment on #4");
+    });
+
+    it("setting off: resumes when the marked dependency closes", async () => {
+      limit(); issues([4, [TRIGGER, WORKING], MARKED], [7, []]);
+      const w = watcher({ wait_for_dependencies: false });
+      await w.tick();
+      expect(resumed()).toBe(0);
+      issues([4, [TRIGGER, WORKING], MARKED], [7, [], undefined, "CLOSED"]);
+      await w.tick();
+      expect(resumed()).toBe(1);
+      expect(w.status.lastActions.join("\n")).toContain("#4 its dependencies are done → resuming run r1");
+    });
+
+    it("setting off: a new issue with a marked open dependency is not started", async () => {
+      issues([4, [TRIGGER], MARKED], [7, []]);
+      const w = watcher({ wait_for_dependencies: false });
+      await w.tick();
+      expect(submit).not.toHaveBeenCalled();
+      expect(hold4(w)?.next.kind).toBe("dependency");
+    });
+
+    it("setting off: a person's unmarked dependency does not hold", async () => {
+      issues([4, [TRIGGER], "### Depends on\n#7\n"], [7, []]);
+      const w = watcher({ wait_for_dependencies: false });
+      await w.tick();
+      expect(submit).toHaveBeenCalledWith(expect.objectContaining({ kind: "run" }), expect.anything());
+      expect(hold4(w)?.next.kind).not.toBe("dependency");
+    });
+
+    it("gitflow, setting off: the done label counts", async () => {
+      limit(); issues([4, [TRIGGER, WORKING], MARKED], [7, ["factory:done"]]);
+      await watcher({ wait_for_dependencies: false, vars: { develop_branch: "develop" } }).tick();
+      expect(resumed()).toBe(1);
     });
   });
 

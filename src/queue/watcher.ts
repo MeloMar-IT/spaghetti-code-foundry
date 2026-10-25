@@ -15,7 +15,7 @@ import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
 import { RELEASE_BUILD_FLOW, RELEASE_BUILD_SUBMISSION_VAR, RELEASE_BUILD_VAR } from "../release/auto-build.js";
 import { effectiveVars } from "../engine/runner.js";
-import { dependencies, openDependencies, type DoneRule } from "./deps.js";
+import { DEPS_MARK, dependencies, foundryDependsOn, openDependencies, type DoneRule } from "./deps.js";
 import { checkReleaseBuild, mainBranchOf, releaseCheckEvery } from "./release-trigger.js";
 import { freshIssueList, isTrackingEpic } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
@@ -856,7 +856,7 @@ export class Watcher {
     } else {
       this.d.log(`[${this.cfg.id}] ! issue list: ${list.error}`);
     }
-    const wholeList = list.ok && !list.cut ? everyIssue : undefined; // before openDepsOf can replace everyIssue
+    const wholeList = list.ok && !list.cut ? everyIssue : undefined; // before allIssues can replace everyIssue
     const whole = issues.length < 100;
     const prioLabels = this.cfg.priority_labels.filter((l) => l.trim());
     // The list is cut at 100 and has no order we can use: ask for the bug stories on their own, so none is missed.
@@ -868,12 +868,19 @@ export class Watcher {
     }
     const prio = (i: Issue) => goesFirst(i, this.cfg.priority_labels);
     let rule: DoneRule | undefined;
+    const allIssues = async () => (everyIssue ??= await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--state", "all", "--limit", "500", "--json", "number,title,labels,state,body"]));
     const openDepsOf = async (issue: Issue) => {
-      if (!/depends\s+on|blocked\s+by/i.test(issue.body ?? "")) return [];
-      everyIssue ??= await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--state", "all", "--limit", "500", "--json", "number,title,labels,state,body"]);
-      return openDependencies(dependencies(issue.body ?? "", issue.number, everyIssue), everyIssue, (rule ??= this.doneRule()));
+      const body = issue.body ?? "";
+      if (!/depends\s+on|blocked\s+by/i.test(body) && !body.includes(DEPS_MARK)) return [];
+      const every = await allIssues();
+      return openDependencies(dependencies(body, issue.number, every), every, (rule ??= this.doneRule()));
     };
-    const blockedBy = async (issue: Issue) => (this.cfg.wait_for_dependencies ? openDepsOf(issue) : []);
+    const openFoundryDepsOf = async (issue: Issue) => {
+      const marked = foundryDependsOn(issue.body ?? "").filter((n) => n !== issue.number);
+      if (!marked.length) return [];
+      return openDependencies(marked, await allIssues(), (rule ??= this.doneRule()));
+    };
+    const blockedBy = async (issue: Issue) => (this.cfg.wait_for_dependencies ? openDepsOf(issue) : openFoundryDepsOf(issue));
     /** What a blocker is doing: its hold, its newest run (any flow), or what it waits for itself. */
     const describeBlocker = async (b: number, seen: Set<number>): Promise<BlockerInfo> => {
       const own = holds.find((h) => h.issue === b)?.next;
@@ -883,7 +890,7 @@ export class Watcher {
       if (r) return { issue: b, next: runNextStep(r, { watched: true, failedLabel: this.L.failed, retired: flowRetired(r) }) };
       const blocker = everyIssue?.find((i) => i.number === b);
       if (!blocker || seen.has(b)) return { issue: b };
-      const deps = (await openDepsOf(blocker)).filter((d) => !seen.has(d));
+      const deps = (await blockedBy(blocker)).filter((d) => !seen.has(d));
       if (!deps.length) return { issue: b };
       const next = nextStep("dependency", { repo: this.repo, issue: b, title: blocker.title }, {
         watched: true, issueUrl: `https://github.com/${this.repo}/issues/${b}`,
@@ -931,7 +938,7 @@ export class Watcher {
     const limited = (issue: Issue, runId?: string) =>
       firstStarted > 0 ? this.held("bug_first", issue, { runId }) : this.held("starting", issue, { maxPerTick: this.cfg.max_per_tick, runId });
 
-    /** wait_for_dependencies: a story with open "Depends on" issues neither starts nor resumes. True when it is held. */
+    /** A story with open dependencies neither starts nor resumes: all "Depends on" issues with wait_for_dependencies, else only those in the Foundry's marked part. True when it is held. */
     const holdForDeps = async (issue: Issue, runId?: string): Promise<boolean> => {
       const blockers = await blockedBy(issue);
       alive();
