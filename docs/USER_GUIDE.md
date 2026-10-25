@@ -2780,6 +2780,13 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   The Foundry may add its own dependencies in a marked part just under the **Depends on** header,
   between two HTML comments, with a line that says why. You can edit or remove that part; your own
   text there is never changed. Those dependencies are held even when `wait_for_dependencies` is off.
+  The questions check (`epic-questions`) can record such a dependency too. When a story must wait for
+  another open issue and its **Depends on** does not name it yet, the check writes the wait into that
+  marked part, prints it, and posts no question and no label. Only an invalid request becomes a
+  question: waiting for itself, a loop with another story of the same batch or of the repository,
+  an issue whose work already landed, or an issue that is unknown or closed. That question comes with
+  a recommendation to plan the issue now without waiting. If the commit history cannot be read, no
+  wait is recorded and every such request becomes a question.
 - **Another issue is being built.** One issue at a time per repository; the rest start after it.
 - **New issues are being checked for questions** (a few minutes, once per batch).
 - **The usage limit or the daily budget is reached.** Runs pause and continue by themselves
