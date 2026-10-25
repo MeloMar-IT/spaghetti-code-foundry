@@ -21,7 +21,7 @@ import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } fr
 import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
 import { drainPushLog, pushLogFile, repositoryFact, type PolicyDenied, type RunPolicy } from "./policy-hooks.js";
-import { outputEnvName, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
+import { outputEnvName, ranEnvName, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 import { boundEnv, capEnvValue, labelOutput, renderTrusted, stepTypesOf, trustOf, type OutputClassifier } from "./untrusted.js";
 
 /** Shell commands may only template trusted values; task and outputs go via env. */
@@ -102,6 +102,17 @@ export interface ApprovalDecision {
 
 export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held">;
 
+/** Position (1-based) of each step's latest record in the run history, for the steps of `scope` (keys without the scope prefix). */
+export function ranOrder(history: Pick<StepRecord, "id" | "parent">[], prefix: string): Record<string, number> {
+  const parent = prefix.slice(0, -1);
+  const out: Record<string, number> = {};
+  history.forEach((h, i) => {
+    if ((h.parent ?? "") !== parent || !h.id.startsWith(prefix)) return;
+    out[h.id.slice(prefix.length)] = i + 1;
+  });
+  return out;
+}
+
 export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o: { bound?: (env: Record<string, string>) => Record<string, string> } = {}): Record<string, string> {
   const hotfix = engine.hotfix ?? "off";
   // Never inherited from the server's own environment: only pushAllowEnv() can set it, for one step.
@@ -109,6 +120,8 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix));
   for (const [k, v] of Object.entries(scope.ctx.vars)) env[varEnvName(k)] = v;
   for (const [id, s] of Object.entries(scope.ctx.steps)) env[outputEnvName(id)] = capEnvValue(String(s.output ?? ""), `steps.${id}.output`);
+  const ran = ranOrder(engine.summary?.history ?? [], scope.prefix);
+  for (const id of Object.keys(scope.ctx.steps)) if (ran[id]) env[ranEnvName(id)] = String(ran[id]);
   // Every consumer gets untrusted values scrubbed (secrets and configured patterns) before the step's own credentials are
   // added by the callers. An agent step may also quarantine them (`bound`). The SCF_ aliases get the same values.
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });

@@ -226,6 +226,12 @@ else if (prompt.includes("CI failed on this branch")) {
   canned = process.env.FAKE_REVISE ?? "## Goal\nAdd feature.txt (revised)\n## Review notes\n- adopted: add an edge-case test\nPLAN_STATUS: READY";
 } else if (prompt.includes("architect for this repository")) {
   canned = process.env.FAKE_ISSUE_PLAN ?? "## Goal\nAdd feature.txt\n## Tests\nfeature test\nPLAN_STATUS: READY";
+  // FAKE_PLAN_COUNT (a file path) counts the calls: FAKE_ISSUE_PLAN_THEN answers every call after the first.
+  if (process.env.FAKE_PLAN_COUNT) {
+    const n = existsSync(process.env.FAKE_PLAN_COUNT) ? Number(readFileSync(process.env.FAKE_PLAN_COUNT, "utf8")) || 0 : 0;
+    writeFileSync(process.env.FAKE_PLAN_COUNT, String(n + 1));
+    if (n > 0 && process.env.FAKE_ISSUE_PLAN_THEN) canned = process.env.FAKE_ISSUE_PLAN_THEN;
+  }
 } else if (prompt.includes("Implement GitHub issue below")) {
   const issue = /# #(\d+):/.exec(prompt)?.[1] ?? "?";
   writeFileSync("feature.txt", process.env.FAKE_IMPL_BUG ? "BUG\n" : `implemented #${issue}\n`);

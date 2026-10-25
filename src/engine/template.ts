@@ -49,6 +49,11 @@ export function outputEnvName(stepId: string): string {
   return "FACTORY_OUT_" + envSuffix(stepId);
 }
 
+/** Env var name for a step's place in the run history, e.g. "run-tests" -> FACTORY_RAN_RUN_TESTS. */
+export function ranEnvName(stepId: string): string {
+  return "FACTORY_RAN_" + envSuffix(stepId);
+}
+
 /** Env var name for a flow variable, e.g. "github_repo" -> FACTORY_VAR_GITHUB_REPO. */
 export function varEnvName(name: string): string {
   return "FACTORY_VAR_" + envSuffix(name);
