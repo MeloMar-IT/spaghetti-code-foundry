@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
-import { checkRepoSettings, validBranchName, validBranchPattern, validDocPath } from "../src/auth/repo-settings.js";
+import { decideTechnicalEnv } from "../src/engine/runner.js";
+import { RepoSettingsSchema, checkRepoSettings, decideTechnicalFor, decidesTechnical, type RepoSettings, validBranchName, validBranchPattern, validDocPath } from "../src/auth/repo-settings.js";
 import { PERSONAL_METHODS, REPO_BOUND_METHODS, REPO_LIMIT, REPO_METHODS, RepoError, type TransferOptions, addRepo, listAllRepos, listRepos, ownsRepo, removeGithubRepo, removeRepo, reposPath, setRepoAuth, setRepoSettings, transferRepo, watchersRemovedDetail } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
 import { AuditEntrySchema, DETAIL_MAX } from "../src/auth/audit.js";
@@ -98,6 +99,15 @@ describe("checkRepoSettings", () => {
     expect(checkRepoSettings({ testCommand: " ", docs: [], mainBranch: "" })).toEqual({});
   });
 
+  it.each([undefined, null, {}, { decide_technical: true }, { decide_technical: null }])("stores nothing for questions %j", (questions) => {
+    expect(checkRepoSettings({ questions })).toEqual({});
+  });
+
+  it("stores only the off value of decide_technical", () => {
+    expect(checkRepoSettings({ questions: { decide_technical: false } })).toEqual({ questions: { decide_technical: false } });
+    expect(checkRepoSettings({ mainBranch: "main", questions: { decide_technical: false } })).toEqual({ mainBranch: "main", questions: { decide_technical: false } });
+  });
+
   it.each([
     ["not an object", "x", "the settings must be an object"],
     ["null", null, "the settings must be an object"],
@@ -112,6 +122,13 @@ describe("checkRepoSettings", () => {
     ["a bad pattern", { protectedBranches: ["a[b]"] }, '"*" matches any text, "?" one character'],
     ["a bad branch", { mainBranch: "a b" }, "valid git branch name"],
     ["a branch that is not text", { developBranch: 1 }, "developBranch must be text"],
+    ["questions as text", { questions: "x" }, "questions must be an object"],
+    ["questions as a list", { questions: [] }, "questions must be an object"],
+    ["questions as a number", { questions: 1 }, "questions must be an object"],
+    ["an unknown question setting", { questions: { nope: 1 } }, 'unknown setting "questions.nope"'],
+    ["an unknown key before a bad value", { questions: { nope: 1, decide_technical: "x" } }, 'unknown setting "questions.nope"'],
+    ["a text for decide_technical", { questions: { decide_technical: "no" } }, "questions.decide_technical must be true or false"],
+    ["a number for decide_technical", { questions: { decide_technical: 0 } }, "questions.decide_technical must be true or false"],
   ])("refuses %s", (_n, input, text) => {
     expect(code(() => checkRepoSettings(input))).toBe("bad-settings");
     expect(message(() => checkRepoSettings(input))).toContain(text);
@@ -153,6 +170,16 @@ describe("settings in the store", () => {
     expect(statSync(reposPath()).mtimeMs).toBe(mtime);
   });
 
+  it("stores questions off and removes them again with true", () => {
+    const a = add(ANN, "acme/app");
+    const off = setRepoSettings(a.id, { questions: { decide_technical: false } });
+    expect(off.changed).toEqual(["questions"]);
+    expect(listAllRepos()[0]!.settings).toEqual({ questions: { decide_technical: false } });
+    const on = setRepoSettings(a.id, { questions: { decide_technical: true } });
+    expect(on.changed).toEqual(["questions"]);
+    expect("settings" in file().repos[0]!).toBe(false);
+  });
+
   it("removes the key for {}; an unknown id is not-found; the file keeps mode 0600", () => {
     const a = add(ANN, "acme/app");
     setRepoSettings(a.id, S);
@@ -192,6 +219,50 @@ describe("settings in the store", () => {
       expect((e as StoreError).kind).toBe("wrong-format");
     }
     expect(a.id).toBeTruthy();
+  });
+});
+
+describe("deciding technical questions", () => {
+  const OFF = { questions: { decide_technical: false } };
+  const rec = (url: string, settings?: RepoSettings) => ({ url, settings });
+
+  it("the schema is strict inside questions", () => {
+    expect(RepoSettingsSchema.safeParse({ questions: { decide_technical: true, x: 1 } }).success).toBe(false);
+    expect(RepoSettingsSchema.safeParse({ questions: { decide_technical: false } }).success).toBe(true);
+  });
+
+  it("decidesTechnical is on unless switched off", () => {
+    expect(decidesTechnical()).toBe(true);
+    expect(decidesTechnical({})).toBe(true);
+    expect(decidesTechnical({ mainBranch: "main" })).toBe(true);
+    expect(decidesTechnical(OFF)).toBe(false);
+  });
+
+  it("decideTechnicalFor matches by GitHub name and lets any off record win", () => {
+    expect(decideTechnicalFor("acme/app", [])).toBe(true);
+    expect(decideTechnicalFor("acme/app", [rec("https://github.com/other/app", OFF)])).toBe(true);
+    expect(decideTechnicalFor("Acme/App.git", [rec("https://github.com/acme/app", OFF)])).toBe(false);
+    expect(decideTechnicalFor("acme/app", [rec("https://github.com/acme/app.git", OFF)])).toBe(false);
+    expect(decideTechnicalFor("acme/app", [rec("https://github.com/acme/app"), rec("https://github.com/acme/app", { mainBranch: "main" })])).toBe(true);
+    expect(decideTechnicalFor("acme/app", [rec("https://github.com/acme/app"), rec("git@github.com:acme/app.git", OFF)])).toBe(false);
+    expect(decideTechnicalFor("", [rec("https://github.com/acme/app", OFF)])).toBe(true);
+    expect(decideTechnicalFor("acme/app", [rec("https://example.com/acme/app", OFF)])).toBe(true);
+  });
+
+  it("decideTechnicalFor normalizes both sides the same way (repeated .git, a repository named .git)", () => {
+    expect(decideTechnicalFor("acme/app.git.git", [rec("https://github.com/acme/app", OFF)])).toBe(false);
+    expect(decideTechnicalFor("acme/app", [rec("https://github.com/acme/app.git.git", OFF)])).toBe(false);
+    expect(decideTechnicalFor("acme/.git", [rec("https://github.com/acme/.git", OFF)])).toBe(false);
+  });
+
+  it("decideTechnicalEnv reads the store and asks (0) on any error", () => {
+    const a = add(ANN, "acme/app");
+    expect(decideTechnicalEnv("acme/app")).toBe("1");
+    setRepoSettings(a.id, OFF);
+    expect(decideTechnicalEnv("acme/app")).toBe("0");
+    expect(decideTechnicalEnv("acme/other")).toBe("1");
+    expect(decideTechnicalEnv(undefined)).toBe("1");
+    expect(decideTechnicalEnv("acme/app", () => { throw new Error("x"); })).toBe("0");
   });
 });
 
