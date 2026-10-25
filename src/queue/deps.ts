@@ -47,11 +47,106 @@ export function titleIndex(all: readonly DepIssue[]): TitleIndex {
   return all.map((i) => ({ n: i.number, t: norm(i.title) })).filter((i) => i.t.length >= 3);
 }
 
-/** Issue numbers this body depends on: "#12" references, and items matching another issue's title. */
-export function dependencies(body: string, self: number, all: DepIssue[], titleList?: TitleIndex): number[] {
-  const text = dependencyText(body);
-  if (!text) return [];
+/** Start and end of the part the Foundry keeps in the "Depends on" section. */
+export const DEPS_MARK = "<!-- claude-factory depends-on -->";
+export const DEPS_MARK_END = "<!-- claude-factory depends-on end -->";
+
+const eolOf = (body: string) => (body.includes("\r\n") ? "\r\n" : "\n");
+
+/** Where the Foundry's part is (markers included), or undefined. The start marker nearest the end marker wins. */
+function foundryRange(body: string): { start: number; end: number } | undefined {
+  const s0 = body.indexOf(DEPS_MARK);
+  if (s0 < 0) return undefined;
+  const e = body.indexOf(DEPS_MARK_END, s0 + DEPS_MARK.length);
+  if (e < 0) return undefined;
+  return { start: body.lastIndexOf(DEPS_MARK, e), end: e + DEPS_MARK_END.length };
+}
+
+function renderPart(issues: readonly number[], reason: string, eol: string): string {
+  const reasonLine = reason ? `_Added by the Spaghetti Code Foundry: ${reason}_` : "_Added by the Spaghetti Code Foundry._";
+  return [DEPS_MARK, ...issues.map((n) => "- #" + n), reasonLine, DEPS_MARK_END].join(eol);
+}
+
+/** The issues in the Foundry's marked part, sorted, no length limit. */
+export function foundryDependsOn(body: string): number[] {
+  const text = body ?? "";
+  const r = foundryRange(text);
+  if (!r) return [];
   const found = new Set<number>();
+  for (const m of text.slice(r.start, r.end).matchAll(new RegExp(DEP_REF_SOURCE, "g"))) found.add(Number(m[1]));
+  return [...found].sort((a, b) => a - b);
+}
+
+/**
+ * The body without the Foundry's part (and the line end after it). When the part ends the body and
+ * the line before it is a "Depends on" header, the line end that mergeDependsOn added after the header goes too.
+ * Any other line end before the part is the person's and stays.
+ */
+export function withoutFoundryPart(body: string): string {
+  const text = body ?? "";
+  const r = foundryRange(text);
+  if (!r) return text;
+  const after = text.slice(r.end);
+  const rest = after.startsWith("\r\n") ? after.slice(2) : after.startsWith("\n") ? after.slice(1) : after;
+  let before = text.slice(0, r.start);
+  if (after === "") {
+    const cut = before.endsWith("\r\n") ? 2 : before.endsWith("\n") ? 1 : 0;
+    const head = before.slice(0, before.length - cut);
+    if (cut && HEADER.test(head.slice(head.lastIndexOf("\n") + 1))) before = head;
+  }
+  return before + rest;
+}
+
+/** A reason that is safe in one line inside the part: no < or >, no #N, at most 200 characters. */
+export function cleanReason(text: string): string {
+  return (text ?? "")
+    .replace(/[<>]/g, "")
+    .replace(/#(\d+)/g, "issue $1")
+    .replace(/\s+/g, " ").trim()
+    .slice(0, 200).trimEnd();
+}
+
+/** Adds issues to the Foundry's part (made if missing). The text outside the part is never changed. */
+export function mergeDependsOn(body: string, issues: readonly number[], reason: string): string {
+  const b = body ?? "";
+  const eol = eolOf(b);
+  const add = issues.filter((n) => Number.isInteger(n) && n > 0);
+  const all = [...new Set([...foundryDependsOn(b), ...add])].sort((x, y) => x - y);
+  if (!all.length) return b;
+  const part = renderPart(all, cleanReason(reason), eol);
+  const r = foundryRange(b);
+  if (r) return b.slice(0, r.start) + part + b.slice(r.end);
+  const m = HEADER.exec(b);
+  if (m) {
+    const p = b.indexOf("\n", m.index);
+    return p >= 0 ? b.slice(0, p + 1) + part + eol + b.slice(p + 1) : b + eol + part;
+  }
+  return b + eol + eol + "### Depends on" + eol + part;
+}
+
+/** Takes issues out of the Foundry's part. When none are left, the part goes. */
+export function removeFromDependsOn(body: string, issues: readonly number[]): string {
+  const r = foundryRange(body);
+  if (!r) return body;
+  const have = foundryDependsOn(body);
+  const left = have.filter((n) => !issues.includes(n));
+  if (left.length === have.length) return body;
+  if (!left.length) return withoutFoundryPart(body);
+  const oldReason = /^_Added by the Spaghetti Code Foundry(?:: (.*?))?_[ \t]*\r?$/m.exec(body.slice(r.start, r.end))?.[1] ?? "";
+  return body.slice(0, r.start) + renderPart(left, cleanReason(oldReason), eolOf(body)) + body.slice(r.end);
+}
+
+/** Issue numbers this body depends on: "#12" references, items matching another issue's title, and the issues in the Foundry's marked part (no length limit). */
+export function dependencies(body: string, self: number, all: DepIssue[], titleList?: TitleIndex): number[] {
+  const found = new Set<number>(foundryDependsOn(body));
+  const text = dependencyText(withoutFoundryPart(body));
+  if (text) addPersonsDependencies(text, self, all, titleList, found);
+  found.delete(self);
+  return [...found].sort((a, b) => a - b);
+}
+
+/** The person's text: "#12" references, and items matching another issue's title. */
+function addPersonsDependencies(text: string, self: number, all: DepIssue[], titleList: TitleIndex | undefined, found: Set<number>): void {
   for (const m of text.matchAll(new RegExp(DEP_REF_SOURCE, "g"))) found.add(Number(m[1]));
   const titles = titleList ?? titleIndex(all);
   const selfTitle = ` ${norm(all.find((i) => i.number === self)?.title ?? "")} `;
@@ -71,8 +166,6 @@ export function dependencies(body: string, self: number, all: DepIssue[], titleL
     }
     for (const { n } of hits) found.add(n);
   }
-  found.delete(self);
-  return [...found].sort((a, b) => a - b);
 }
 
 /** When a "Depends on" issue counts as done. */
