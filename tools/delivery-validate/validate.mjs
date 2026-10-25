@@ -3,7 +3,7 @@
 // so a CI job can run it without `npm ci` and without `dist/`.
 //
 //   node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file>
-//                     [--repo <dir>] [--checks <file>] [--comment <file>] [--json] [--help]
+//                     [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json] [--help]
 //
 // Exit codes: 0 no stop, 1 at least one stop, 2 a usage or read error.
 //
@@ -15,6 +15,11 @@
 //   src/delivery/contract.ts      verifyDeliveryContract (the order of the faults and their messages)
 //   src/delivery/sshsig.ts        verifySshSignature, Reader, parseKeyLine, armour, signedData
 //   src/skills/release-signature.ts  decodeBase64Exact, ed25519PublicKey
+//   src/evidence/schema.ts        EvidenceEventSchema (EventUnion, the envelope, the superRefine) and what it reaches:
+//                                 identity.ts (actor, step, model, tool, policy, test, git, pull request, artifact, time, UUID),
+//                                 policy/schema.ts + reasons.ts (PolicyDecisionSchema), tool-profile/schema.ts, session.ts, resolve.ts,
+//                                 engine/repo-request.ts, flow/schema.ts (AGENTS)
+//   src/evidence/chain.ts, parse.ts, version.ts, canonical.ts  readEvidenceChain, parseEvidenceEvent, upgradeEvidence, eventHash
 // Signing and key reading are left out. The script never writes a file.
 
 import { execFile } from "node:child_process";
@@ -37,7 +42,7 @@ const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const UNTRUSTED = "the contract is not trusted";
 
 const USAGE =
-  "usage: node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file> [--repo <dir>] [--checks <file>] [--comment <file>] [--json]\n" +
+  "usage: node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file> [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json]\n" +
   "       Checks a delivery contract against the checked-out commit.\n" +
   "       Exit code 0: no stop. 1: at least one stop. 2: a usage or read error.\n";
 
@@ -354,6 +359,257 @@ function checkContract(text, sigText, key) {
   }
 }
 
+// ---- copied: src/evidence/schema.ts (EvidenceEventSchema) and everything it reaches; chain.ts, parse.ts, version.ts ----
+// The script only needs a yes or no per line (the library reports just the line number), so each schema is a predicate.
+// CHANGE BOTH: a change to the event schema, an enum it uses, or EVIDENCE_EVENT_VERSION must change this section in the
+// same commit. tests/delivery-validate-events.test.ts builds a valid event for every type and enum value and fails if not.
+
+/** The newest event version this script reads. A higher version is refused, so a validator that falls behind stops delivery. */
+const EVIDENCE_EVENT_VERSION = 4;
+const EVENTS_MAX = 256 * 1024 * 1024;
+const ARTIFACT_KINDS = ["log", "transcript", "diff", "flow", "skill-lock", "test-report", "other"];
+const STEP_TYPES = ["claude", "shell", "approval", "parallel", "flow"];
+const AGENTS = ["claude", "codex"];
+const RETRY_CAUSES = ["outage", "limit"];
+const TEST_OUTCOMES = ["passed", "failed"];
+const OUTCOMES = ["allow", "warn", "require_approval", "deny"];
+const MODES = ["observe", "enforce"];
+const BOUNDARIES = ["run.start", "step.before", "step.after", "repository.access", "agent.write", "push", "approval.consume", "run.complete"];
+const CREDENTIALS = ["machine", "repository", "none"];
+const REASON_CODES = [
+  "branch.protected", "branch.hotfix-exception", "secret.detected", "path.forbidden", "output.limit-exceeded", "timeout.exceeded", "budget.step-exceeded",
+  "budget.run-exceeded", "budget.daily-exceeded", "sandbox.required", "workspace.admin-only", "repository.not-allowed", "credential.scope-exceeded",
+  "identity.missing", "tool.not-allowed", "issue.closed", "flow.retired", "approval.required", "exception.granted",
+  "policy.no-rule-matched", "policy.input-incomplete", "policy.invalid", "policy.unavailable", "policy.break-glass",
+];
+const NO_RULE_REASONS = ["policy.no-rule-matched", "policy.invalid", "policy.unavailable", "policy.break-glass"];
+const NO_PACK_REASONS = ["policy.invalid", "policy.unavailable", "policy.break-glass"];
+const DENY_ONLY_REASONS = ["policy.input-incomplete", "policy.invalid", "policy.unavailable"];
+const TOOL_KINDS = ["files", "shell", "git", "github", "web", "mcp", "builtin"];
+const OPERATIONS = {
+  files: ["read", "write"],
+  shell: ["run"],
+  git: ["status", "clone", "fetch", "branch", "commit", "push"],
+  github: ["issue.read", "issue.write", "pull-request.read", "pull-request.write", "pull-request.merge", "checks.read"],
+  web: ["fetch", "search"],
+  mcp: ["call"],
+  builtin: ["call"],
+};
+const PROFILE_SOURCES = ["generated", "declared"];
+const FIT_OUTCOMES = ["enforced", "partial", "refused"];
+const FIT_RESTRICTIONS = ["deny-kind", "limit-operations", "limit-targets", "require-approval", "timeout", "concurrency", "output-cap", "sandbox-filesystem", "sandbox-network", "data-class"];
+const HELD_BY = ["codex-sandbox"];
+const UNREADABLE = ["not-an-object", "no-version", "unsupported-version", "invalid", "error"];
+const EXCESS_FIELDS = ["operation", "targets", "dataClassification", "credential", "timeoutMs", "maxConcurrent", "outputCapBytes", "approval", "sandbox.filesystem", "sandbox.network"];
+const REPO_EVIDENCE_OPERATIONS = ["clone", "fetch", "branch", "commit", "push", "pull-request", "status", "unknown"];
+const REPO_OUTCOMES = ["done", "failed", "refused"];
+const REPO_REFUSALS = ["invalid-request", "no-target", "not-in-profile", "approval-required", "deploy-key", "no-credential", "unsafe-git-settings", "policy", "not-empty"];
+
+// The patterns of zod's z.uuid() (no version) and z.iso.datetime() (no options), copied from node_modules/zod/v4/core/regexes.js (zod 4.6.5).
+const UUID = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;
+const DATE_SOURCE = "(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))";
+const DATETIME = new RegExp(`^${DATE_SOURCE}T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$`);
+
+// Predicate builders. Each schema is a function (value) => boolean. Lookups of input names use Object.hasOwn, never a bare index.
+const any = () => true;
+const re = (rx) => (v) => typeof v === "string" && rx.test(v);
+const oneOf = (list) => (v) => typeof v === "string" && list.includes(v);
+const int = (min = -Infinity) => (v) => Number.isSafeInteger(v) && v >= min;
+const bool = (v) => typeof v === "boolean";
+const lbl = (max) => (v) => label(v, max);
+const arr = (item, max = Infinity) => (v) => Array.isArray(v) && v.length <= max && v.every((x) => item(x));
+const opt = (t) => Object.assign((v) => t(v), { optional: true });
+/** z.object(shape).strict(): no other key, every key present unless it is `opt`. */
+const obj = (shape) => (v) =>
+  isPlain(v) && Object.keys(v).every((k) => Object.hasOwn(shape, k)) && Object.entries(shape).every(([k, s]) => (Object.hasOwn(v, k) ? s(v[k]) : s.optional === true));
+/** z.discriminatedUnion(key, variants) */
+const union = (key, variants) => (v) => isPlain(v) && Object.hasOwn(v, key) && typeof v[key] === "string" && Object.hasOwn(variants, v[key]) && variants[v[key]](v);
+/** A schema and its superRefine: the rules run only on a value of the right shape. */
+const both = (schema, rules) => (v) => schema(v) && rules(v);
+
+const slug = re(/^[a-z0-9][a-z0-9._-]{0,99}$/);
+const stepId = re(/^[a-zA-Z][\w-]{0,127}$/);
+const time = re(DATETIME);
+const actor = union("kind", {
+  user: obj({ kind: any, id: re(UUID) }),
+  cli: obj({ kind: any }),
+  watcher: obj({ kind: any, id: re(/^[\w-]{1,128}$/) }),
+  system: obj({ kind: any }),
+});
+const artifactRef = obj({ kind: oneOf(ARTIFACT_KINDS), path: isSafeRelativePath, sha256: isSha256, bytes: int(0), required: bool });
+const step = obj({ id: stepId, visit: int(1), type: oneOf(STEP_TYPES), parent: opt((v) => typeof v === "string" && v.length <= 1024 && v.split("/").every(stepId)) });
+const model = obj({ agent: oneOf(AGENTS), provider: lbl(100), model: lbl(200), effort: opt(lbl(32)) });
+const tool = obj({ name: re(/^[A-Za-z0-9_.:-]{1,200}$/) });
+const policyIdentity = obj({ id: slug, version: re(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/) });
+const testResult = obj({ suite: lbl(200), outcome: oneOf(TEST_OUTCOMES), passed: opt(int(0)), failed: opt(int(0)), skipped: opt(int(0)), report: opt(artifactRef) });
+const gitIdentity = obj({ commit: isCommit, branch: opt(isBranch), repository: opt(isRepository) });
+const pullRequest = obj({ repository: isRepository, number: int(1), url: isPlainHttpsUrl, head: opt(isCommit) });
+const flowIdentity = obj({ name: lbl(200), version: opt(int(1)) });
+const toolProfileRef = obj({ id: slug, version: re(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/), sha256: isSha256 });
+const denial = union("kind", {
+  approval: obj({ kind: any, by: actor }),
+  tool: obj({ kind: any, tool }),
+  policy: obj({ kind: any, policy: policyIdentity, reasonCode: slug, tool: opt(tool) }),
+});
+const policyDecision = both(
+  obj({ version: (v) => v === 1, policy: policyIdentity, packSha256: opt(isSha256), mode: oneOf(MODES), boundary: oneOf(BOUNDARIES), inputSha256: isSha256, outcome: oneOf(OUTCOMES), reasonCode: oneOf(REASON_CODES), rule: opt(slug), evaluatedAt: time }),
+  (d) =>
+    NO_RULE_REASONS.includes(d.reasonCode) === (d.rule === undefined) &&
+    NO_PACK_REASONS.includes(d.reasonCode) === (d.packSha256 === undefined) &&
+    !(DENY_ONLY_REASONS.includes(d.reasonCode) && d.outcome !== "deny") &&
+    !(d.reasonCode === "policy.break-glass" && (d.outcome !== "warn" || d.mode !== "enforce")) &&
+    !(d.reasonCode === "policy.no-rule-matched" && d.outcome !== "allow" && d.outcome !== "deny"),
+);
+
+const event = (shape) =>
+  obj({
+    version: (v) => v === EVIDENCE_EVENT_VERSION,
+    id: re(/^[A-Za-z0-9_-]{1,64}$/),
+    seq: int(0),
+    runId: isRunId,
+    time,
+    prevHash: opt((v) => v === null || isSha256(v)),
+    hash: opt(isSha256),
+    type: any,
+    ...shape,
+  });
+const stepEnd = { step, model: opt(model), exitCode: opt(int()), durationMs: int(0), artifacts: arr(artifactRef), test: opt(testResult) };
+const EVENT_TYPES = {
+  "run.created": event({ flow: flowIdentity, by: actor }),
+  "run.queued": event({}),
+  "run.started": event({ base: opt(gitIdentity) }),
+  "run.stopped": event({ at: opt(stepId) }),
+  "run.resumed": event({ from: stepId, by: actor }),
+  "run.cancelled": event({ by: actor }),
+  "run.failed": event({ step: opt(step) }),
+  "run.completed": event({ final: opt(gitIdentity), pullRequest: opt(pullRequest) }),
+  "step.started": event({ step }),
+  "step.routed": event({ step, model, fallbackFrom: opt(model) }),
+  "step.profiled": event({
+    step,
+    agent: opt(oneOf(AGENTS)),
+    source: oneOf(PROFILE_SOURCES),
+    profile: opt(toolProfileRef),
+    unreadable: opt(oneOf(UNREADABLE)),
+    outcome: oneOf(FIT_OUTCOMES),
+    gaps: arr(obj({ kind: oneOf(TOOL_KINDS), restriction: oneOf(FIT_RESTRICTIONS), heldBy: opt(oneOf(HELD_BY)) }), 100),
+    excess: arr(obj({ kind: oneOf(TOOL_KINDS), operation: (v) => typeof v === "string" && v.length <= 40, field: oneOf(EXCESS_FIELDS) }), 200),
+    unmappedRules: int(0),
+    personalSetup: bool,
+  }),
+  "step.retried": event({ step, cause: oneOf(RETRY_CAUSES) }),
+  "step.denied": event({ step, denial }),
+  "step.approved": event({ step, by: actor }),
+  "step.failed": event(stepEnd),
+  "step.completed": event({ ...stepEnd, commit: opt(gitIdentity), pullRequest: opt(pullRequest) }),
+  "policy.decided": event({ decision: policyDecision, step: opt(step) }),
+  "repo.operation": event({
+    step,
+    operation: oneOf(REPO_EVIDENCE_OPERATIONS),
+    repository: opt(isRepository),
+    branch: opt(isBranch),
+    credential: oneOf(CREDENTIALS),
+    policy: opt(oneOf(OUTCOMES)),
+    outcome: oneOf(REPO_OUTCOMES),
+    refusal: opt(oneOf(REPO_REFUSALS)),
+    pullRequest: opt(pullRequest),
+  }),
+};
+/** The superRefine of EvidenceEventSchema, for an event of the right shape. */
+function eventRules(e) {
+  if ((e.hash === undefined) !== (e.prevHash === undefined)) return false;
+  if (e.hash !== undefined && (e.prevHash === null) !== (e.seq === 0)) return false;
+  if ((e.type === "step.failed" || e.type === "step.completed") && new Set(e.artifacts.map((a) => a.path)).size !== e.artifacts.length) return false;
+  if (e.type === "policy.decided") {
+    const runWide = e.decision.boundary === "run.start" || e.decision.boundary === "run.complete";
+    if (runWide && e.step) return false;
+    if (!runWide && !e.step && e.decision.boundary !== "repository.access") return false;
+  }
+  if (e.type === "step.profiled") {
+    if (!e.agent && e.outcome !== "refused") return false;
+    if (e.source === "generated" && (e.outcome === "refused" || e.excess.length > 0 || !e.profile)) return false;
+    if ((e.profile === undefined) !== (e.unreadable !== undefined)) return false;
+    if (e.profile === undefined && (e.source !== "declared" || e.outcome !== "refused")) return false;
+    if (e.excess.some((x) => !OPERATIONS[x.kind].includes(x.operation))) return false;
+    if (e.gaps.some((g) => g.heldBy && e.agent !== "codex")) return false;
+  }
+  if (e.type === "repo.operation") {
+    if ((e.outcome === "refused") !== (e.refusal !== undefined)) return false;
+    if (e.operation === "unknown" && (e.outcome !== "refused" || e.refusal !== "invalid-request")) return false;
+    if (e.pullRequest && (e.operation !== "pull-request" || e.outcome !== "done")) return false;
+  }
+  if (e.type === "step.approved" && e.step.type !== "approval") return false;
+  if (e.type === "step.denied" && e.denial.kind === "approval" && e.step.type !== "approval") return false;
+  return true;
+}
+const isEvent = both(union("type", EVENT_TYPES), eventRules);
+
+/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→3→4 only set the version), then the schema holds. */
+function readEvent(raw) {
+  const v = raw.version;
+  if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > EVIDENCE_EVENT_VERSION) return false;
+  return isEvent({ ...raw, version: EVIDENCE_EVENT_VERSION });
+}
+
+/** readEvidenceChain: the line (from 1) of the first fault, or the hash of the last line. Never throws. */
+function readChain(lines, runId) {
+  const ids = new Set();
+  let prev = null;
+  for (const [i, line] of lines.entries()) {
+    let raw;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      return { line: i + 1 };
+    }
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return { line: i + 1 };
+    let canonical;
+    try {
+      canonical = canonicalJson(raw);
+    } catch {
+      return { line: i + 1 };
+    }
+    if (canonical !== line || !readEvent(raw)) return { line: i + 1 };
+    if (raw.seq !== i || raw.runId !== runId || ids.has(raw.id)) return { line: i + 1 };
+    ids.add(raw.id);
+    if (raw.hash === undefined || raw.prevHash === undefined || raw.prevHash !== prev) return { line: i + 1 };
+    const { hash, ...rest } = raw;
+    if (canonicalHash(rest) !== hash) return { line: i + 1 };
+    prev = hash;
+  }
+  return { terminalHash: prev };
+}
+
+/** The first `count` whole lines, or null when the text has fewer line ends. The rest of the text is never split or read. */
+function firstLines(text, count) {
+  const lines = [];
+  let pos = 0;
+  while (lines.length < count) {
+    const end = text.indexOf("\n", pos);
+    if (end < 0) return null;
+    lines.push(text.slice(pos, end));
+    pos = end + 1;
+  }
+  return lines;
+}
+
+const evidenceStop = (reason) => ({ check: "evidence", status: "stop", condition: "evidence-unverified", fault: "evidence-head-mismatch", reason });
+
+/** Mirrors verifyDeliveryContract with events. Never throws. */
+function checkEvidence(contract, text) {
+  try {
+    const { count, terminalHash } = contract.evidence;
+    const lines = firstLines(text, count);
+    if (lines === null) return evidenceStop("the events have fewer events than the contract");
+    const chain = readChain(lines, contract.runId);
+    if (chain.line !== undefined) return evidenceStop(`line ${chain.line} of the events is not a chain`);
+    if (chain.terminalHash !== terminalHash) return evidenceStop("the event at count - 1 does not have the contract's hash");
+    return okResult("evidence");
+  } catch {
+    return evidenceStop("the events could not be read");
+  }
+}
+
 // ---- inputs ----
 
 function readText(option, path, max) {
@@ -421,6 +677,7 @@ function readInputs(args) {
         repo: { type: "string" },
         checks: { type: "string" },
         comment: { type: "string" },
+        events: { type: "string" },
         json: { type: "boolean" },
         help: { type: "boolean" },
       },
@@ -436,13 +693,14 @@ function readInputs(args) {
   const key = readKey(values["public-key"]);
   const checks = values.checks === undefined ? undefined : readChecksFile(values.checks);
   const marker = values.comment === undefined ? undefined : readMarker(values.comment);
+  const events = values.events === undefined ? undefined : readText("--events", values.events, EVENTS_MAX);
   let isDir = false;
   try {
     isDir = statSync(repo).isDirectory();
   } catch {
     // reported below
   }
-  return { contract, signature, key, checks, marker, repo, isDir, json: values.json === true };
+  return { contract, signature, key, checks, marker, events, repo, isDir, json: values.json === true };
 }
 
 // ---- git: read-only plumbing, no shell ----
@@ -556,7 +814,7 @@ async function run(inputs) {
     results.push(await checkLocks(inputs.repo, head, contract));
     results.push(await checkWorkflows(inputs.repo, head, contract));
     results.push(inputs.checks === undefined ? skipped("checks", "no --checks file was given") : checkRequired(contract, inputs.checks));
-    results.push(skipped("evidence", "not checked by this version"));
+    results.push(inputs.events === undefined ? skipped("evidence", "no --events given") : checkEvidence(contract, inputs.events));
     results.push(inputs.marker === undefined ? skipped("comment", "no --comment file was given") : checkComment(contract, verdict.digest, inputs.marker));
   }
   const result = results.some((r) => r.status === "stop") ? "stop" : "ok";

@@ -389,7 +389,7 @@ describe("output and errors", () => {
     const r = await run([...inputs({ contract: contractOf(), checks: ALL_OK, comment: m }), "--repo", baseline]);
     expect(r.code).toBe(0);
     expect(r.stdout).toBe(
-      "contract: ok\nsignature: ok\ncommit: ok\nlocks: ok\nworkflows: ok\nchecks: ok\nevidence: skipped (not checked by this version)\ncomment: ok\n",
+      "contract: ok\nsignature: ok\ncommit: ok\nlocks: ok\nworkflows: ok\nchecks: ok\nevidence: skipped (no --events given)\ncomment: ok\n",
     );
   });
   it("prints one JSON object with --json", async () => {
@@ -405,7 +405,7 @@ describe("output and errors", () => {
         { check: "locks", status: "ok" },
         { check: "workflows", status: "ok" },
         { check: "checks", status: "skipped", reason: "no --checks file was given" },
-        { check: "evidence", status: "skipped", reason: "not checked by this version" },
+        { check: "evidence", status: "skipped", reason: "no --events given" },
         { check: "comment", status: "skipped", reason: "no --comment file was given" },
       ],
     });
