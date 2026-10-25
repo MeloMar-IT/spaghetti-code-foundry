@@ -579,6 +579,8 @@ know the commit and waits for the next server start or `fix_wait_days`.
   on_success: stop
 ```
 
+**Question kinds.** A planner or epic-questions prompt asks for each question in this form: `**Q<n>. <question>**`, then a line `**Kind:** technical | product | policy | owner_action`, then `**Recommendation:** <option> — <why>` (or `none`). `tools/decide-questions.mjs` reads it: a technical question with a recommendation can be decided by the Foundry, every other question is asked. A missing or unknown kind counts as product, and an ambiguous comment decides nothing.
+
 **Commit and push to the run's branch** (never to main):
 
 ```yaml

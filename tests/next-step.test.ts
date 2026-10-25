@@ -22,7 +22,7 @@ describe("comment sentences", () => {
   it("has exactly the FACTORY_NEXT_ and FACTORY_FIRST_ variables, equal to the record", () => {
     const env = nextStepEnv();
     expect(Object.keys(env).sort()).toEqual([
-      "FACTORY_FIRST_APPROVAL", "FACTORY_FIRST_APPROVE_PLAN", "FACTORY_FIRST_APPROVE_SPLIT", "FACTORY_FIRST_DRAFT", "FACTORY_FIRST_FIXED", "FACTORY_FIRST_INFO", "FACTORY_FIRST_LOOK", "FACTORY_FIRST_MERGE_BACK",
+      "FACTORY_FIRST_APPROVAL", "FACTORY_FIRST_APPROVE_PLAN", "FACTORY_FIRST_APPROVE_SPLIT", "FACTORY_FIRST_DECIDED", "FACTORY_FIRST_DRAFT", "FACTORY_FIRST_FIXED", "FACTORY_FIRST_INFO", "FACTORY_FIRST_LOOK", "FACTORY_FIRST_MERGE_BACK",
       "FACTORY_FIRST_MERGE_PR", "FACTORY_FIRST_MERGE_RELEASE", "FACTORY_FIRST_NOTHING", "FACTORY_FIRST_OPEN_PR", "FACTORY_FIRST_PLANNER_QUESTIONS", "FACTORY_FIRST_QUESTIONS",
       "FACTORY_FIRST_SHIPS", "FACTORY_FIRST_START_CODING", "FACTORY_FIRST_START_PARTS",
       "FACTORY_NEXT_APPROVAL", "FACTORY_NEXT_APPROVE_PLAN", "FACTORY_NEXT_APPROVE_SPLIT", "FACTORY_NEXT_PLANNER_QUESTIONS", "FACTORY_NEXT_QUESTIONS",
@@ -62,6 +62,7 @@ describe("comment sentences", () => {
     ["draft", "**Nothing needed from you** — it stays a draft until the checks pass."],
     ["start_parts", "**What you need to do:** Start the new issues when you want them built."],
     ["fixed", "**Nothing needed from you** — the fix is on main and in develop."],
+    ["decided", "**Nothing needed from you** — the Foundry decided these technical questions itself."],
     ["merge_back", "**What you need to do:** Merge main into develop, because the fix is not there yet."],
   ] as const)("words the report first line %s", (kind, text) => {
     expect(reportFirst(kind)).toBe(text);
@@ -384,6 +385,9 @@ describe("next-step records, one per kind", () => {
     expect(nextStep("questions", base, {}).action).toBe("Answer the questions");
     expect(countQuestions("Hi\n**Q1. A?**\n- x\n**Q2. B?**\n**Q3. C?**")).toBe(3);
     expect(countQuestions(undefined)).toBe(0);
+    const mixed = "**Q1. A?**\n**Q2. B?**\n\n**Decided by the Foundry**\n\n> **Q3. C?**\n**Decision:** x";
+    expect(countQuestions(mixed)).toBe(2);
+    expect(countQuestions(mixed.replace(/\n/g, "\r\n"))).toBe(2);
   });
 
   it("failed: unwatched runs resume on the run page", () => {

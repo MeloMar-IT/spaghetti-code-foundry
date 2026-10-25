@@ -472,6 +472,20 @@ const TASK_LINES = [
   "What the person who started this run wrote (it may be empty; it comes on top of the issue):",
   "{{task}}",
 ];
+// How every question is written; tools/decide-questions.mjs reads it (Kind, Recommendation).
+const QUESTION_KINDS = [
+  "Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.",
+  "policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).",
+  "Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.",
+];
+const QUESTION_FORMAT = [
+  "  Write each question in this form:",
+  "    **Q<n>. <question>**",
+  "    **Kind:** technical | product | policy | owner_action",
+  "    <context and the options you see>",
+  "    **Recommendation:** <option> — <why>",
+  ...QUESTION_KINDS.map((l) => `  ${l}`),
+];
 // A planner with a skill catalogue (`skills: catalog`) must be read-only by its tool list alone (dontAsk, no Bash tools).
 const planTools = (catalogue) =>
   catalogue
@@ -515,6 +529,7 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         ...(split ? SPLIT_FORMAT : []),
         "- NEEDS_INFO: a decision only the owner can make, or missing requirements. Ask specific questions",
         "  with the options you see and your recommendation. Do not guess on things that matter.",
+        ...QUESTION_FORMAT,
         "- READY: write the plan with these sections:",
         "  ## Goal — what will work when this is done, in one or two sentences.",
         "  ## Acceptance criteria — a checklist that can be verified.",
@@ -597,6 +612,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
           "({{vars.max_files}} files / about {{vars.max_code_lines}} lines of production code), answer TOO_BIG with a split instead."] : []),
         'Write the skill line again for the final plan, in the same form: SKILL_REQUEST: {"version":1,"skills":[…]}',
         "It replaces the draft's line; do not keep skills the final plan no longer needs.",
+        "If you answer NEEDS_INFO, write the questions in the same form:",
+        ...QUESTION_FORMAT,
         ...(split && sized ? SPLIT_FORMAT : []),
         "",
         "{{steps.pull_ticket.output}}",
@@ -2208,6 +2225,7 @@ write("epic-questions", {
         "- Each question: short context, the options you see, and your recommendation with one line why.",
         "- Questions already answered in an issue's comments are answered — don't ask them again.",
         "- Put a question that concerns several issues on the earliest one, and mention the others.",
+        ...QUESTION_KINDS.map((l) => `- ${l}`),
         "",
         "{{steps.read_issues.output}}",
         "",
@@ -2217,6 +2235,7 @@ write("epic-questions", {
         "or",
         "### #<number>",
         "**Q1. <question>**",
+        "**Kind:** technical | product | policy | owner_action",
         "<context and options>",
         "**Recommendation:** <option> — <why>",
       ].join("\n"),

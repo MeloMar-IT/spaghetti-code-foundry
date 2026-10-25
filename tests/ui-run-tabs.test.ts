@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { DECIDED_HEADING } from "../src/next-step.js";
 import { FakeElement, installFakeDom } from "./helpers/fake-dom.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -200,6 +201,12 @@ describe("evidenceItems", () => {
     expect(items[1]).toMatchObject({ id: "ok", ok: true });
     expect(items[2]).toMatchObject({ href: "https://github.com/o/r/issues/7", label: "o/r#7" });
     expect(items[3].text).toBe("It ran twice.");
+  });
+  it("leaves the decided section out of the questions", () => {
+    expect(mod.DECIDED_HEADING).toBe(DECIDED_HEADING);
+    const output = "**Q1. Ship it?**\n\n**Decided by the Foundry**\n\n> **Q2. Which store?**\n> (a) file\n\n**Decision:** file";
+    const s = { status: "stopped", reason: 'stopped at step "ask_for_info"', history: [{ id: "ask_for_info", type: "claude", ok: true, durationMs: 1, output }] };
+    expect(mod.withQuestions(s).questions).toBe("**Q1. Ship it?**");
   });
   it("keeps an administrator's questions after the answered run went on", () => {
     const s = { status: "failed", answers: [{ at: "t", text: "pg" }], history: [{ id: "ask_for_info", type: "claude", ok: true, durationMs: 1, output: "Which db?" }, { id: "build", type: "shell", ok: false, durationMs: 1 }] };

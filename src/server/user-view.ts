@@ -7,7 +7,7 @@ import { REASON_CODES } from "../policy/reasons.js";
 import { BOUNDARIES } from "../policy/schema.js";
 import { usesTask } from "../flow/publish.js";
 import { REFINE_ROUND_FLOW } from "../flow/usage.js";
-import { trackingWatcher, type NextStep } from "../next-step.js";
+import { beforeDecided, trackingWatcher, type NextStep } from "../next-step.js";
 import { runOrigin } from "../your-turn.js";
 import type { RunSkillView } from "./skill-view.js";
 
@@ -64,7 +64,7 @@ export function questionsOf(s: RunSummary): string | undefined {
   const m = /stopped at step "(?:[\w-]+\/)*([\w-]+)"/.exec(s.reason ?? "");
   if (!m || !QUESTION_STEPS.includes(m[1]!)) return undefined;
   const step = [...(s.history ?? [])].reverse().find((h) => h.id.split("/").at(-1) === m[1]);
-  const text = step?.output?.trim();
+  const text = beforeDecided(step?.output ?? "").trim();
   return text ? text.slice(0, MAX_QUESTIONS) : undefined;
 }
 
