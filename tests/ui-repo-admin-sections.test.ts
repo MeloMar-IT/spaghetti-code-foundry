@@ -26,6 +26,7 @@ let authAnswer: any;
 const realFetch = globalThis.fetch;
 const ME = "me";
 let n = 1;
+const ON = { questions: { decide_technical: true } };
 const S = { testCommand: "npm test", docs: ["a.md"], protectedBranches: ["release/*"], mainBranch: "main", developBranch: "develop", releaseRecipe: "builds:\n  - name: x" };
 const readyOf = (items = DEFAULT_READY.map(({ id, text }) => ({ id, text })), isDefault = true) => ({ items, isDefault });
 const rec = (over: object = {}) => ({
@@ -150,7 +151,7 @@ describe("the admin view", () => {
     field(root(), "releaseRecipe")!.value = "builds:\n  - name: y";
     press(button(root(), "Save"));
     await settle();
-    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, releaseRecipe: "builds:\n  - name: y" });
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, ...ON, releaseRecipe: "builds:\n  - name: y" });
   });
 
   it("is plain for a user: no admin sections and no admin or watcher request", async () => {
@@ -233,7 +234,7 @@ describe("Branches and Run settings", () => {
     await settle();
     const put = sent.find((s) => s.method === "PUT")!;
     expect(put.url).toBe(`/api/admin/repos/${r.id}/settings`);
-    expect(put.body).toEqual({ ...S, mainBranch: "trunk" });
+    expect(put.body).toEqual({ ...S, ...ON, mainBranch: "trunk" });
     expect(toastText()).toBe("Settings saved");
     expect(section("branches").textContent).toContain("trunk");
   });
@@ -248,8 +249,29 @@ describe("Branches and Run settings", () => {
     field(root(), "docs")!.value = "x.md\ny.md";
     press(button(root(), "Save"));
     await settle();
-    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, testCommand: "make test", docs: ["x.md", "y.md"] });
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, ...ON, testCommand: "make test", docs: ["x.md", "y.md"] });
     expect(section("run-settings").textContent).toContain("make test");
+  });
+
+  it("Run settings shows the switch and saves it off; a Branches save keeps it off", async () => {
+    const r = rec();
+    await show(r);
+    expect(section("run-settings").textContent).toContain("Yes");
+    press(action("run-settings"));
+    await flush();
+    expect(field(root(), "decideTechnical")!.checked).toBe(true);
+    field(root(), "decideTechnical")!.checked = false;
+    press(button(root(), "Save"));
+    await settle();
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, questions: { decide_technical: false } });
+    expect(section("run-settings").textContent).toContain("No — asks every question");
+    sent.length = 0;
+    press(action("branches"));
+    await flush();
+    field(root(), "mainBranch")!.value = "trunk";
+    press(button(root(), "Save"));
+    await settle();
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, mainBranch: "trunk", questions: { decide_technical: false } });
   });
 
   it("[R1] after a saved Branches edit with a failed reload, Run settings still sends the new branches", async () => {
@@ -280,7 +302,7 @@ describe("Branches and Run settings", () => {
     press(button(root(), "Save"));
     await settle();
     const puts = sent.filter((s) => s.method === "PUT");
-    expect(puts[1]!.body).toEqual({ ...S, mainBranch: "trunk", testCommand: "make test" });
+    expect(puts[1]!.body).toEqual({ ...S, ...ON, mainBranch: "trunk", testCommand: "make test" });
   });
 
   it("[R1] reads the settings at Save time, so a change made elsewhere is not undone", async () => {
@@ -292,7 +314,7 @@ describe("Branches and Run settings", () => {
     field(root(), "testCommand")!.value = "make test";
     press(button(root(), "Save"));
     await settle();
-    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, mainBranch: "elsewhere", testCommand: "make test" });
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, ...ON, mainBranch: "elsewhere", testCommand: "make test" });
   });
 
   it("[R1] shows the error in the dialog and sends nothing when the pre-read fails", async () => {

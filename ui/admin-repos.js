@@ -17,6 +17,8 @@ export function settingsBody(values = {}) {
     developBranch: String(values.developBranch ?? "").trim(),
     // not trimmed here: the server tidies the text, and an empty text clears it
     releaseRecipe: String(values.releaseRecipe ?? ""),
+    // a missing value means on
+    questions: { decide_technical: values.decideTechnical !== false },
   };
 }
 
@@ -50,7 +52,10 @@ function sendFrom({ button, err, send, done, close, state, mark }) {
   })();
 }
 
-const formShape = (s = {}) => ({ ...s, docs: (s.docs ?? []).join("\n"), protectedBranches: (s.protectedBranches ?? []).join("\n") });
+const formShape = (s = {}) => ({
+  ...s, docs: (s.docs ?? []).join("\n"), protectedBranches: (s.protectedBranches ?? []).join("\n"), decideTechnical: s.questions?.decide_technical !== false,
+});
+const CHECKS = new Set(["decideTechnical"]);
 
 /**
  * Edits the settings of one repository. Resolves with the server's row once the dialog is closed after a save (else undefined).
@@ -68,7 +73,9 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       mainBranch: h("input", { name: "mainBranch", class: "mono", value: s.mainBranch ?? "", placeholder: "main", autocomplete: "off" }),
       developBranch: h("input", { name: "developBranch", class: "mono", value: s.developBranch ?? "", placeholder: "develop", autocomplete: "off" }),
       releaseRecipe: h("textarea", { name: "releaseRecipe", rows: 12, class: "mono", spellcheck: "false", placeholder: "builds:\n  - name: …" }),
+      decideTechnical: h("input", { type: "checkbox", name: "decideTechnical" }),
     };
+    all.decideTechnical.checked = s.questions?.decide_technical !== false;
     all.releaseRecipe.value = s.releaseRecipe ?? "";
     all.docs.value = (s.docs ?? []).join("\n");
     all.protectedBranches.value = (s.protectedBranches ?? []).join("\n");
@@ -77,6 +84,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       testCommand: ["Test command"], docs: ["Docs to update (one path per line)"], protectedBranches: ["Protected branches (one pattern per line)", PATTERN_HINT],
       mainBranch: ["Main branch"], developBranch: ["Develop branch"],
       releaseRecipe: ["Release-build recipe (YAML)", "Used by release-build when the commit has no .factory/release-build.yaml. A file in the repository wins."],
+      decideTechnical: ["Decide technical questions itself", "The Foundry takes its own recommendation on technical questions and says so on the issue. Off: you are asked every question."],
     };
     const err = h("p", { class: "status bad flush", role: "alert" });
     const pairs = [
@@ -86,9 +94,10 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       [/^mainBranch/, "mainBranch"],
       [/^developBranch/, "developBranch"],
       [/^releaseRecipe/, "releaseRecipe"],
+      [/^questions/, "decideTechnical"],
     ];
     const mark = (m) => showError(err, m, { fields: Object.values(els), field: els[fieldFor(m, pairs)] });
-    const typed = () => Object.fromEntries(Object.entries(els).map(([k, el]) => [k, el.value]));
+    const typed = () => Object.fromEntries(Object.entries(els).map(([k, el]) => [k, CHECKS.has(k) ? el.checked === true : el.value]));
     const send = async () => {
       if (!only) return api.setRepoSettings(repo.id, settingsBody(typed()));
       const base = formShape(current ? await current() : s);
@@ -98,7 +107,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
     return h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
       Object.entries(els).map(([k, el]) => field(labels[k][0], el, labels[k][1])),
-      only ? null : h("small", {}, "Stored with the repository. Runs do not use these settings yet, except the release-build recipe."),
+      only ? null : h("small", {}, 'Stored with the repository. Runs use the release-build recipe and "Decide technical questions itself"; the other settings not yet.'),
       err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
   });
   shown.then(() => { state.closed = true; });

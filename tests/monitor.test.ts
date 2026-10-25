@@ -7,6 +7,7 @@ import { parseFlow } from "../src/flow/load.js";
 import { Monitor, areaLockDir, logRing, readAreaLocks } from "../src/monitor/monitor.js";
 import { loadFindings, saveFindings } from "../src/monitor/findings.js";
 import type { DetectorInput } from "../src/monitor/detectors.js";
+import { issueListsDir, saveIssueList } from "../src/queue/issue-list.js";
 import { Scheduler } from "../src/queue/scheduler.js";
 import { WatcherManager } from "../src/queue/watchers.js";
 import { fakeGithub } from "./helpers/fake-github.js";
@@ -227,6 +228,82 @@ describe("monitor", () => {
       await m.tick();
       // A finding is only marked gone after a day, so the proof is that the second check did not see it again.
       expect(loadFindings(file).findings.find((f) => f.fingerprint === "stuck-run|acme/app|issue-gitflow|build")).toMatchObject({ count: 1 });
+    });
+
+    describe("waiting label not under Needs you", () => {
+      const T0 = new Date("2026-10-01T12:00:00Z").getTime();
+      const fp = "waiting-unlisted|w";
+      let now = T0;
+      const rec = (number: number, labels = ["factory:needs-info"]) => ({ number, title: `t${number}`, state: "open" as const, labels, createdAt: new Date(T0).toISOString(), dependsOn: [] });
+      const mon = (over: Partial<ConstructorParameters<typeof Monitor>[1]> = {}) =>
+        monitor({
+          now: () => new Date(now),
+          needsYou: () => [],
+          watchers: () => [{ cfg: WatcherSchema.parse({ id: "w", github_repo: "acme/app", every: "5m" }), status: { id: "w", lastActions: [], lastOk: new Date(T0).toISOString() } as never }],
+          ...over,
+        });
+      const checkAt = async (m: Monitor, minutes: number) => {
+        now = T0 + minutes * MIN;
+        await m.tick(true);
+      };
+      const finding = () => loadFindings(file).findings.find((f) => f.fingerprint === fp);
+      beforeEach(() => {
+        now = T0;
+        saveIssueList("acme/app", [rec(12), rec(13), rec(14)], new Date(T0), false);
+      });
+      afterEach(() => rmSync(issueListsDir(), { recursive: true, force: true }));
+
+      it("fires at the third check, without the monitor's own bug stories", async () => {
+        const story = { repo: "acme/app", issue: 12, url: "u", at: ago(60 * MIN), seen: 1 };
+        saveFindings([{ detector: "x", fingerprint: "x|1", severity: "major", summary: "s", evidence: {}, about: "foundry", firstSeen: ago(MIN), lastSeen: ago(MIN), count: 1, gone: false, report: story, earlier: [{ repo: "acme/app", issue: 13, url: "u" }] }], file);
+        const m = mon();
+        await checkAt(m, 0);
+        await checkAt(m, 10);
+        expect(finding()).toBeUndefined();
+        await checkAt(m, 11);
+        expect(finding()!.evidence.lines).toEqual(["#14: needs-info, not under Needs you for 11 minutes"]);
+      });
+
+      it("stores nothing for listed issues, or when Needs you is not known", async () => {
+        for (const needsYou of [() => [12, 13, 14].map((issue) => ({ repo: "acme/app", issue })), () => undefined, () => { throw new Error("x"); }]) {
+          const m = mon({ needsYou });
+          await checkAt(m, 0);
+          await checkAt(m, 30);
+          expect(finding()).toBeUndefined();
+          expect(m.status.lastError).toBeUndefined();
+        }
+      });
+
+      describe("the newest run of an issue", () => {
+        const brief = { runId: "r14", dirName: "r14", runDir: "/tmp/none", flow: "issue-gitflow", status: "stopped", startedAt: new Date(T0).toISOString(), updatedAt: new Date(T0).toISOString(), githubRepo: "acme/app", issue: "14" };
+        const fake = (get: () => unknown) => ({ briefs: () => [brief], get, queue: () => ({ pending: [], active: [], concurrency: 2 }), lastStart: () => new Date(now).toISOString() }) as never;
+        const lastLine = async (get: () => unknown, labels: string[]) => {
+          saveIssueList("acme/app", [rec(14, labels)], new Date(T0), false);
+          const m = mon({ scheduler: fake(get) });
+          await checkAt(m, 0);
+          await checkAt(m, 30);
+          return finding()?.evidence.lines;
+        };
+        const waiting = ["factory:needs-info"];
+        const withTrigger = [...waiting, "claude-factory"];
+        const run = (over: Record<string, unknown>) => ({ runId: "r14", runDir: "/tmp/none", ...over });
+
+        it("leaves the issue out when run.json is missing, unreadable or another run, with and without the trigger label", async () => {
+          const bad = [() => undefined, () => { throw new Error("broken"); }, () => run({ runId: "other" })];
+          for (const get of bad) {
+            expect(await lastLine(get, waiting)).toBeUndefined();
+            expect(await lastLine(get, withTrigger)).toBeUndefined();
+          }
+        });
+        it("leaves out a parked run without the trigger label, and keeps it with the label", async () => {
+          const parked = () => run({ parkedAt: new Date(T0).toISOString() });
+          expect(await lastLine(parked, waiting)).toBeUndefined();
+          expect(await lastLine(parked, withTrigger)).toEqual(["#14: needs-info, not under Needs you for 30 minutes"]);
+        });
+        it("keeps an issue whose run is not parked", async () => {
+          expect(await lastLine(() => run({}), waiting)).toHaveLength(1);
+        });
+      });
     });
 
     describe("area locks", () => {

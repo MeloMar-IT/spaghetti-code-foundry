@@ -18,7 +18,12 @@ import { userAccount } from "./isolation.js";
 export const SANDBOX_REFUSED = "This computer cannot hold a user's run in a sandbox, so the run was not started. An admin can allow user runs without it in Settings.";
 export const SANDBOX_FOLDER_FAILED = "SANDBOX_FOLDER_FAILED";
 
-const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+/** The folder in the data folder with the delivery signing keys: no sandboxed step may read it. */
+export const DELIVERY_KEYS_DIR = "delivery-keys";
+/** The folder in a run folder with the delivery contract: the server alone writes it. */
+export const RUN_DELIVERY_DIR = "delivery";
+
+const SANDBOX_EXEC ="/usr/bin/sandbox-exec";
 const WRITABLE_DEVICES = ["/dev/null", "/dev/tty", "/dev/dtracehelper"];
 
 let cached: boolean | undefined;
@@ -177,6 +182,15 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   for (const p of subpathReads) out.push(`(allow file-read* (subpath ${quote(p)}))`);
   for (const p of literalReads) out.push(`(allow file-read* (literal ${quote(p)}))`);
   for (const p of parents) out.push(`(allow file-read-metadata (literal ${quote(p)}))`);
+  // the delivery signing keys: after every allow, so no user_read or program folder opens them; a key added during the step is covered too
+  const keys = join(data, DELIVERY_KEYS_DIR);
+  out.push(`(deny file-read* (subpath ${quote(keys)}))`);
+  try {
+    const r = real(keys);
+    if (r !== keys) out.push(`(deny file-read* (subpath ${quote(r)}))`);
+  } catch {
+    /* not made yet */
+  }
   // writes
   out.push("(deny file-write*)");
   const writable = paths.workspaceReadOnly ? [join(runDir, "home"), runTmp, ...(paths.requestsDir ? [paths.requestsDir] : [])] : [runDir, runTmp, lockDir, ...(ghDir ? [ghDir] : [])];
@@ -188,6 +202,7 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   out.push(`(deny file-write* (literal ${quote(join(runDir, "run.json"))}) (literal ${quote(join(runDir, "live.log"))}) (subpath ${quote(join(runDir, "logs"))}))`);
   out.push(`(deny file-write* (literal ${quote(join(runDir, "skill-lock.json"))}))`);
   out.push(`(deny file-write* (literal ${quote(join(runDir, EVIDENCE_EVENTS_FILE))}) (literal ${quote(join(runDir, EVIDENCE_MANIFEST_FILE))}) (literal ${quote(join(runDir, EVIDENCE_DIFF_FILE))}) (literal ${quote(join(runDir, EVIDENCE_INCOMPLETE_FILE))}))`);
+  out.push(`(deny file-write* (subpath ${quote(join(runDir, RUN_DELIVERY_DIR))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(lockDir, ".running"))}))`);
   // the run folder and the lock folder themselves cannot be moved or removed
   out.push(`(deny file-write* (literal ${quote(runDir)}) (literal ${quote(lockDir)}))`);

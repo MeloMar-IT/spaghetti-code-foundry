@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
-import { runProcess } from "./process.js";
+import { runProcess, type ProcessMeter } from "./process.js";
 
 /** Codex CLIs that ship inside apps (the ChatGPT desktop app bundles one). */
 const BUNDLED_CODEX = ["/Applications/ChatGPT.app/Contents/Resources/codex", "/Applications/Codex.app/Contents/Resources/codex"];
@@ -47,6 +47,8 @@ export interface CodexRunOptions {
   cleanEnv?: boolean;
   /** Start Codex inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
+  /** Filled with the process time and the bytes it printed (see ProcessMeter). */
+  meter?: ProcessMeter;
   onProgress?: (msg: string) => void;
   /** Read-only reviewer: switch off MCP servers and hooks. It also passes `--ignore-user-config`, unless `ignoreUserConfig` says otherwise (the login is kept). */
   reviewer?: boolean;
@@ -173,6 +175,7 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
       env,
       cleanEnv: o.cleanEnv,
       sandboxProfile: o.sandboxProfile,
+      meter: o.meter,
       stdin: prompt,
       timeoutMs: o.timeoutMs,
       signal: o.signal,

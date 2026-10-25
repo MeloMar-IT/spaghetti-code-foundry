@@ -1,0 +1,32 @@
+#!/usr/bin/env node
+// Records the pull request a run opened or found as the run output `pull_request` (<run-dir>/outputs.json; other keys stay).
+//   pr-output <run-dir> <url>   the last non-empty line of <url> counts (the PR command may print notes before the link)
+// Best-effort: always exits 0. A problem is one line "pr-output: <reason>" on stderr, and the file is left as it was.
+import { existsSync, statSync } from "node:fs";
+import { join } from "node:path";
+
+const PR_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9_.-]{1,100}\/pull\/[1-9][0-9]{0,9}$/;
+const skip = (why) => {
+  console.error(`pr-output: ${why}`);
+  process.exit(0);
+};
+
+const [runDir, raw] = process.argv.slice(2);
+if (!runDir || raw === undefined) skip("usage: pr-output <run-dir> <url>");
+const url = raw.split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
+if (!PR_URL_RE.test(url)) skip("the last line is not a GitHub pull request URL");
+let isDir = false;
+try {
+  isDir = statSync(runDir).isDirectory();
+} catch {
+  /* reported below */
+}
+if (!isDir) skip(`the run folder ${runDir} does not exist`);
+try {
+  const lib = await import(new URL("../dist/engine/run-outputs.js", import.meta.url).href);
+  // an existing file that cannot be read as outputs is kept as it is (writeRunOutputs would replace it)
+  if (existsSync(join(runDir, lib.OUTPUTS_FILE)) && !lib.readRunOutputs(runDir)) skip("outputs.json exists but is not valid; left as it was");
+  lib.writeRunOutputs(runDir, { pull_request: url });
+} catch (e) {
+  skip(e.message);
+}

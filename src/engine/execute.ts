@@ -5,6 +5,7 @@ import { loadFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
 import { runAgentStep } from "../agents/run.js";
 import type { Target } from "../agents/targets.js";
+import type { ProcessMeter } from "../steps/process.js";
 import { runShell } from "../steps/shell.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { KEY_UNREADABLE } from "../auth/repos.js";
@@ -13,6 +14,7 @@ import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
 import { claimAfterResolve } from "./release-claim.js";
+import { readDecidedQuestions } from "./questions.js";
 import { readRunOutputs } from "./run-outputs.js";
 import { shortEnv,shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
@@ -20,7 +22,7 @@ import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } fr
 import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
 import { drainPushLog, pushLogFile, repositoryFact, type PolicyDenied, type RunPolicy } from "./policy-hooks.js";
-import { outputEnvName, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
+import { outputEnvName, ranEnvName, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 import { boundEnv, capEnvValue, labelOutput, renderTrusted, stepTypesOf, trustOf, type OutputClassifier } from "./untrusted.js";
 
 /** Shell commands may only template trusted values; task and outputs go via env. */
@@ -72,6 +74,8 @@ export interface Engine {
   signal?: AbortSignal;
   /** Set once a budget is used up and a free fallback exists: all agent steps run there. */
   budgetFallback?: Target;
+  /** Today's spend in US dollars, for the policy's daily budget rule. Only set when a daily budget is in effect. */
+  dailyCostUsd?: () => number;
   log: (msg: string) => void;
   save: () => void;
   /** Remaining budget in USD for the next claude call (undefined = unlimited). */
@@ -99,6 +103,17 @@ export interface ApprovalDecision {
 
 export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held">;
 
+/** Position (1-based) of each step's latest record in the run history, for the steps of `scope` (keys without the scope prefix). */
+export function ranOrder(history: Pick<StepRecord, "id" | "parent">[], prefix: string): Record<string, number> {
+  const parent = prefix.slice(0, -1);
+  const out: Record<string, number> = {};
+  history.forEach((h, i) => {
+    if ((h.parent ?? "") !== parent || !h.id.startsWith(prefix)) return;
+    out[h.id.slice(prefix.length)] = i + 1;
+  });
+  return out;
+}
+
 export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o: { bound?: (env: Record<string, string>) => Record<string, string> } = {}): Record<string, string> {
   const hotfix = engine.hotfix ?? "off";
   // Never inherited from the server's own environment: only pushAllowEnv() can set it, for one step.
@@ -106,6 +121,8 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix));
   for (const [k, v] of Object.entries(scope.ctx.vars)) env[varEnvName(k)] = v;
   for (const [id, s] of Object.entries(scope.ctx.steps)) env[outputEnvName(id)] = capEnvValue(String(s.output ?? ""), `steps.${id}.output`);
+  const ran = ranOrder(engine.summary?.history ?? [], scope.prefix);
+  for (const id of Object.keys(scope.ctx.steps)) if (ran[id]) env[ranEnvName(id)] = String(ran[id]);
   // Every consumer gets untrusted values scrubbed (secrets and configured patterns) before the step's own credentials are
   // added by the callers. An agent step may also quarantine them (`bound`). The SCF_ aliases get the same values.
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
@@ -125,7 +142,7 @@ function outputLabel(step: Step, scope: Scope, res: StepResult): StepRecord["lab
 }
 
 /** Store a finished step in history and in the scope's template context. */
-export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number): StepRecord {
+export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number, meter?: ProcessMeter): StepRecord {
   const rec: StepRecord = {
     id: scope.prefix + step.id,
     label: outputLabel(step, scope, res),
@@ -161,6 +178,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   }
   const outputs = readRunOutputs(engine.summary.runDir, engine.log);
   if (outputs) engine.summary.outputs = { ...engine.summary.outputs, ...outputs };
+  const decided = readDecidedQuestions(engine.summary.runDir, engine.log);
+  if (decided?.length) engine.summary.decidedQuestions = decided;
   engine.save();
   engine.evidence?.stepEnded(rec);
   const identity = stepIdentity(step, scope.prefix, visit);
@@ -174,14 +193,24 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       ...(GitIdentitySchema.shape.branch.safeParse(p.branch).success ? { branch: p.branch } : {}),
     });
   }
+  let daily: number | undefined;
+  try {
+    daily = engine.dailyCostUsd?.();
+  } catch {
+    daily = undefined;
+  }
+  // A process step counts only the final attempt's process time (no setup, no retries); a shell step counts what it printed, also when the call was rejected.
+  const measured = step.type === "claude" || step.type === "shell";
   engine.policy?.at(
     "step.after",
     {
       repository: repositoryFact(scope.ctx.vars),
       step: step.id,
-      elapsedMs: Math.max(0, Math.round(rec.durationMs)),
-      stepCostUsd: typeof res.costUsd === "number" ? res.costUsd : undefined,
+      outputBytes: step.type === "shell" && meter?.printedBytes !== undefined ? meter.printedBytes : Buffer.byteLength(res.output ?? "", "utf8"),
+      elapsedMs: Math.max(0, Math.round(measured ? (meter?.ms ?? 0) : rec.durationMs)),
+      stepCostUsd: res.costUsd ?? 0,
       runCostUsd: engine.summary.totalCostUsd,
+      dailyCostUsd: daily,
     },
     identity,
   );
@@ -232,7 +261,7 @@ export function newLogFile(engine: Engine, id: string): string {
 }
 
 /** Execute a claude, shell, parallel or flow step (approvals are handled by the loop). */
-export async function executeStep(step: Step, scope: Scope, engine: Engine, logFile: string): Promise<StepResult> {
+export async function executeStep(step: Step, scope: Scope, engine: Engine, logFile: string, meter?: ProcessMeter): Promise<StepResult> {
   const d = scope.flow.defaults;
   const timeoutSec = step.timeout_sec ?? d.timeout_sec;
   const timeoutMs = timeoutSec ? timeoutSec * 1000 : undefined;
@@ -241,7 +270,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
 
   switch (step.type) {
     case "claude":
-      return runAgentStep(step, scope, engine, logFile, timeoutMs);
+      return runAgentStep(step, scope, engine, logFile, timeoutMs, meter);
 
     case "shell": {
       const image = scope.flow.sandbox.docker_image ?? engine.config.sandbox.docker_image;
@@ -347,6 +376,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           scan: tokenAccess ? tokenRefused : keyAccess ? keyRefused : undefined,
           maxOutput: stepMaxOutput(step, scope.depth, scope.flow.name),
           ownGroup: Boolean(tokenAccess || keyAccess),
+          meter,
         });
       } catch (e) {
         thrown = e;
@@ -388,14 +418,15 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           const started = new Date();
           const lf = newLogFile(engine, scope.prefix + id);
           beginStep(engine, scope, sub, stepIdentity(sub, scope.prefix, visit));
+          const meter: ProcessMeter = {};
           let res: StepResult;
           try {
-            res = await executeStep(sub, scope, engine, lf);
+            res = await executeStep(sub, scope, engine, lf, meter);
           } catch (e) {
             res = { ok: false, output: "", error: (e as Error).message };
           }
           res = applyChecks(sub, res);
-          recordStep(sub, scope, engine, res, started, lf, visit);
+          recordStep(sub, scope, engine, res, started, lf, visit, meter);
           return { id, res };
         }),
       );
@@ -428,6 +459,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         prefix: `${scope.prefix}${step.id}/`,
         depth: scope.depth + 1,
       };
+      engine.policy?.subFlow(subScope.prefix.slice(0, -1), flow, subScope.depth);
       engine.log(`  ↳ sub-flow ${flow.name}`);
       const r = await engine.runLoop(subScope, null);
       const ok = r.outcome === "succeeded";

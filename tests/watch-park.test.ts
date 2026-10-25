@@ -212,7 +212,8 @@ describe("parking an issue with /park or a do-not-build answer", () => {
       const setParked = vi.spyOn(scheduler, "setParked");
       plant("NOT_CODE"); issues([TRIGGER, ASKS]); comments(question, said("/park"));
       const w = watcher();
-      w.checkTimeoutMs = 300;
+      // the permission read comes after several gh calls: on a busy machine they need more than 300 ms, and the check must reach the held call
+      w.checkTimeoutMs = 3000;
       await w.tick();
       expect(w.status.lastError).toMatch(/given up/);
       rmSync(hold);

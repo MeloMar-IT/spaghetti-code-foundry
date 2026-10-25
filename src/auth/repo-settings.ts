@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { RepoError } from "./repo-url.js";
+import { githubNameOf, RepoError } from "./repo-url.js";
 
 /**
- * Per-repository settings an admin sets. They are stored and shown, and runs do not use them yet. The exception is
+ * Per-repository settings an admin sets. They are stored and shown, and runs do not use them yet. The exceptions are
+ * `questions` (the engine passes `questions.decide_technical` to every step as `$FACTORY_DECIDE_TECHNICAL`) and
  * `releaseRecipe`: `tools/release-build` reads it through `findReleaseRecipe` in `src/release/recipe.ts` when the commit has
  * no `.factory/release-build.yaml`. Nothing under `auth/` may import `release/recipe.ts` (it imports `auth/repos.ts`: a cycle).
  */
@@ -47,6 +48,7 @@ export const RepoSettingsSchema = z
     mainBranch: z.string().refine(validBranchName),
     developBranch: z.string().refine(validBranchName),
     releaseRecipe: z.string().min(1).max(MAX_RECIPE_TEXT).refine((t) => t.trim() !== "" && !RECIPE_CONTROL.test(t)),
+    questions: z.object({ decide_technical: z.boolean() }).strict(),
   })
   .partial()
   .strict()
@@ -55,7 +57,7 @@ export const RepoSettingsSchema = z
 export type RepoSettings = z.infer<typeof RepoSettingsSchema>;
 
 const bad = (message: string) => new RepoError("bad-settings", message);
-const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe"];
+const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe", "questions"];
 const PATTERN_HELP = '"*" matches any text, "?" one character';
 const shown = (t: string) => JSON.stringify(t.replace(CONTROL_G, "?").slice(0, 80));
 const CONTROL_G = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -112,5 +114,25 @@ export function checkRepoSettings(input: unknown): RepoSettings {
     if (t.length > MAX_RECIPE_TEXT) throw bad(`releaseRecipe must be at most ${MAX_RECIPE_TEXT} characters`);
     if (t.trim()) out.releaseRecipe = t;
   }
+  const q = o.questions;
+  if (q !== undefined && q !== null) {
+    if (typeof q !== "object" || Array.isArray(q)) throw bad("questions must be an object");
+    for (const k of Object.keys(q)) if (k !== "decide_technical") throw bad(`unknown setting ${shown(`questions.${k.slice(0, 40)}`)}`);
+    const d = (q as Record<string, unknown>).decide_technical;
+    if (d !== undefined && d !== null && typeof d !== "boolean") throw bad("questions.decide_technical must be true or false");
+    if (d === false) out.questions = { decide_technical: false };
+  }
   return out;
+}
+
+/** Whether the Foundry may decide technical questions itself for these settings: on unless switched off. */
+export const decidesTechnical = (s?: RepoSettings): boolean => s?.questions?.decide_technical !== false;
+
+/** For a run's `github_repo` ("owner/name", any case, ".git" allowed): false when any record of it has the setting off; true when none matches. */
+export function decideTechnicalFor(githubRepo: string, records: readonly { url: string; settings?: RepoSettings }[]): boolean {
+  const name = githubRepo.trim();
+  if (!name) return true;
+  const want = githubNameOf(`https://github.com/${name}`);
+  if (want === undefined) return true;
+  return !records.some((r) => githubNameOf(r.url) === want && !decidesTechnical(r.settings));
 }

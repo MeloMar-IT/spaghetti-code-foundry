@@ -377,11 +377,21 @@ const clone = {
   run: 'if [ -d .git ]; then git fetch -q origin; ' + CLONE_ELSE + '\ngit log --oneline -1',
 };
 
-// The plan text: the revised plan when it finished as READY, else the first draft.
+// After a replan or resume the outputs of earlier rounds are still in the run. $FACTORY_RAN_<STEP> is the step's place in
+// the run history: a step that did not run after the latest `plan` belongs to an older round, so its output is blanked.
+const FRESH_PLAN = [
+  'fresh() { [ "${1:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ]; }',
+  'fresh "$FACTORY_RAN_PLAN_REVIEW" || FACTORY_OUT_PLAN_REVIEW=""',
+  'fresh "$FACTORY_RAN_REVISE_GATE" || FACTORY_OUT_REVISE_GATE=""',
+  'fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""',
+  'fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""',
+].join("\n");
+// The plan text of this round: the revised plan when it finished as READY, else the first draft.
 const PLAN_OUT = '"${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}"';
 // The answer that carries a split: the forced split (size limit), else the revision, else the draft.
 const SPLIT_OUT = '"${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}"';
 const PICK_PLAN = [
+  FRESH_PLAN,
   'out="$FACTORY_OUT_PLAN"; notes=""',
   'if printf \'%s\\n\' "$FACTORY_OUT_REVISE_PLAN" | grep -q "^PLAN_STATUS: READY"; then out="$FACTORY_OUT_REVISE_PLAN"',
   'elif [ -n "$FACTORY_OUT_PLAN_REVIEW" ]; then notes="$FACTORY_OUT_PLAN_REVIEW"; fi',
@@ -472,6 +482,20 @@ const TASK_LINES = [
   "What the person who started this run wrote (it may be empty; it comes on top of the issue):",
   "{{task}}",
 ];
+// How every question is written; tools/decide-questions.mjs reads it (Kind, Recommendation).
+const QUESTION_KINDS = [
+  "Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.",
+  "policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).",
+  "Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.",
+];
+const QUESTION_FORMAT = [
+  "  Write each question in this form:",
+  "    **Q<n>. <question>**",
+  "    **Kind:** technical | product | policy | owner_action",
+  "    <context and the options you see>",
+  "    **Recommendation:** <option> — <why>",
+  ...QUESTION_KINDS.map((l) => `  ${l}`),
+];
 // A planner with a skill catalogue (`skills: catalog`) must be read-only by its tool list alone (dontAsk, no Bash tools).
 const planTools = (catalogue) =>
   catalogue
@@ -515,6 +539,7 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         ...(split ? SPLIT_FORMAT : []),
         "- NEEDS_INFO: a decision only the owner can make, or missing requirements. Ask specific questions",
         "  with the options you see and your recommendation. Do not guess on things that matter.",
+        ...QUESTION_FORMAT,
         "- READY: write the plan with these sections:",
         "  ## Goal — what will work when this is done, in one or two sentences.",
         "  ## Acceptance criteria — a checklist that can be verified.",
@@ -597,6 +622,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
           "({{vars.max_files}} files / about {{vars.max_code_lines}} lines of production code), answer TOO_BIG with a split instead."] : []),
         'Write the skill line again for the final plan, in the same form: SKILL_REQUEST: {"version":1,"skills":[…]}',
         "It replaces the draft's line; do not keep skills the final plan no longer needs.",
+        "If you answer NEEDS_INFO, write the questions in the same form:",
+        ...QUESTION_FORMAT,
         ...(split && sized ? SPLIT_FORMAT : []),
         "",
         "{{steps.pull_ticket.output}}",
@@ -628,7 +655,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
       description: "Post why the issue can't be planned yet, then stop (resumes when someone replies)",
       resume_from: "pull_ticket",
       run: [
-        `out=$(printf '%s\\n' ${PLAN_OUT} | sed '/^SKILL_REQUEST:/d')`,
+        FRESH_PLAN,
+        `out=$(printf '%s\\n' ${PLAN_OUT}| sed '/^SKILL_REQUEST:/d')`,
         'status=$(printf \'%s\\n\' "$out" | sed -n \'s/^PLAN_STATUS: *\\([A-Z_]*\\).*/\\1/p\' | tail -1)',
         'park=""',
         'case "$status" in',
@@ -1133,7 +1161,8 @@ write("issue-plan", {
       jump_only: true,
       description: "Low-risk split (or already agreed): create the issues; otherwise ask the owner",
       run: [
-        `out=$(printf '%s\\n' ${SPLIT_OUT} | sed '/^SKILL_REQUEST:/d')`,
+        FRESH_PLAN,
+        `out=$(printf '%s\\n' ${SPLIT_OUT}| sed '/^SKILL_REQUEST:/d')`,
         'printf \'%s\\n\' "$out" | grep -q "^### ISSUE [0-9]" || { echo "SPLIT: none (no parts in the answer)"; exit 0; }',
         'risk=$(printf \'%s\\n\' "$out" | sed -n \'s/^SPLIT_RISK: *\\([0-9][0-9]*\\).*/\\1/p\' | tail -1); risk=${risk:-100}',
         'limit=${FACTORY_VAR_AUTO_SPLIT_MAX_RISK:-50}; agreed=""; forced=""',
@@ -1167,7 +1196,7 @@ write("issue-plan", {
       repo_access: true,
       jump_only: true,
       description: "Create the parts as issues (in order, with Depends on and the build label), then close this issue",
-      run: `printf '%s\\n' ${SPLIT_OUT} | sed '/^SKILL_REQUEST:/d' | "$FACTORY_TOOLS/create-split"`,
+      run: [FRESH_PLAN, `printf '%s\\n' ${SPLIT_OUT} | sed '/^SKILL_REQUEST:/d' | "$FACTORY_TOOLS/create-split"`].join("\n"),
       on_success: "end",
     },
   ];
@@ -1600,6 +1629,7 @@ write("issue-plan", {
     type: "shell",
     description: "Lock the code areas the plan changes; if another run holds one, step aside (free the slot) and continue when it is free",
     run: [
+      FRESH_PLAN,
       'plan="${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}"; printf \'%s\\n\' "$FACTORY_OUT_REVISE_PLAN" | grep -q "^AREAS:" || plan="$FACTORY_OUT_PLAN"',
       'areas=$(printf \'%s\\n\' "$plan" | sed -n \'s/^AREAS: *//p\' | tail -1 | tr -d \'`\')',
       '[ -n "$areas" ] || areas="*"',
@@ -2077,6 +2107,7 @@ write("release-daily", {
         '  | node -e \'let d="";process.stdin.on("data",(c)=>(d+=c)).on("end",()=>{const p=JSON.parse(d||"[]").find((x)=>x.headRefName===process.argv[1]&&x.state==="OPEN");process.stdout.write(p?String(p.number):"")})\' "$dev")',
         'if [ -n "$pr" ]; then gh pr edit "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" --title "$title" --body-file - < "{{run.dir}}/pr.md" >/dev/null',
         'else pr=$(gh pr create --repo "$FACTORY_VAR_GITHUB_REPO" --base "$main" --head "$dev" --title "$title" --body-file - < "{{run.dir}}/pr.md" | tail -1); pr=${pr##*/}; fi',
+        'case "$pr" in \'\'|*[!0-9]*) ;; *) node "$FACTORY_TOOLS/pr-output" "{{run.dir}}" "https://github.com/$FACTORY_VAR_GITHUB_REPO/pull/$pr" || true;; esac',
         'if printf \'%s\\n\' "$FACTORY_OUT_VERIFY" | grep -q "^CHECKS: no"; then ok=no; first="$FACTORY_FIRST_DRAFT"; else ok=yes; first="$FACTORY_FIRST_MERGE_RELEASE"; fi',
         '{ echo "$first"; echo',
         '  echo "🤖 **Spaghetti Code Foundry daily release check** — $(date \'+%Y-%m-%d %H:%M\')"; echo; cat "{{run.dir}}/checks.md"; echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID daily -->"; } \\',
@@ -2207,6 +2238,7 @@ write("epic-questions", {
         "- Each question: short context, the options you see, and your recommendation with one line why.",
         "- Questions already answered in an issue's comments are answered — don't ask them again.",
         "- Put a question that concerns several issues on the earliest one, and mention the others.",
+        ...QUESTION_KINDS.map((l) => `- ${l}`),
         "",
         "{{steps.read_issues.output}}",
         "",
@@ -2216,6 +2248,7 @@ write("epic-questions", {
         "or",
         "### #<number>",
         "**Q1. <question>**",
+        "**Kind:** technical | product | policy | owner_action",
         "<context and options>",
         "**Recommendation:** <option> — <why>",
       ].join("\n"),

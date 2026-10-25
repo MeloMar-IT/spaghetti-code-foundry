@@ -3,6 +3,7 @@ import { cleanLine } from "../errors.js";
 import { slowVisits } from "../estimate.js";
 import { failedIndex } from "../failure.js";
 import type { RunSummary } from "../engine/state.js";
+import { parseInterval } from "../queue/watcher.js";
 import { DETECTORS, failure, HOUR, iso, latest, ownerRepo, plural, uniq, when, type Detector } from "./detectors.js";
 import type { FindingInput } from "./findings.js";
 import type { MeasureOwner } from "./measures.js";
@@ -163,6 +164,53 @@ const labelMismatch: Detector = {
         evidence: { counts: { issues: off.length, checks: Math.max(...off.map((i) => i.labelOff!.checks)) }, lines, watchers: [cfg.id], ...(cfg.github_repo ? { repos: [cfg.github_repo] } : {}) },
         about: "foundry",
         ...(cfg.github_repo ? { repo: cfg.github_repo } : {}),
+      });
+    }
+    return out;
+  },
+};
+
+/** An open issue has a waiting label, but Needs you does not list it (#653/#654 came back). */
+const waitingUnlisted: Detector = {
+  name: "waiting-unlisted",
+  description: "An open issue carries a waiting label, but Needs you has not listed it for longer than two checks of its watcher. Nobody is asked, so the story waits for nobody.",
+  slo: {
+    owner: "admin",
+    threshold: () => "1 open issue with a waiting label that Needs you does not list",
+    window: () => "longer than 2 checks of its watcher",
+    action: "Open the issue and its newest run: answer or approve it on GitHub, or remove the waiting label when nothing waits. If the run really waits, report that Needs you does not list it.",
+  },
+  run({ now, asleep, restart, watchers, unlisted, wokeAt }) {
+    if (asleep || restart || !unlisted) return [];
+    const t = now.getTime();
+    const out: FindingInput[] = [];
+    for (const { cfg, status } of watchers) {
+      if (!cfg.enabled || status.lastError || !status.lastOk) continue;
+      let grace: number;
+      try {
+        grace = 2 * parseInterval(cfg.every);
+      } catch {
+        continue;
+      }
+      const kept = unlisted.filter((i) => i.watcher === cfg.id && t - Math.max(num(i.since), num(wokeAt)) > grace).sort((a, b) => a.issue - b.issue);
+      if (!kept.length) continue;
+      const n = kept.length;
+      const repo = cfg.github_repo;
+      const mins = (i: { since: string }) => Math.round((t - num(i.since)) / MIN);
+      out.push({
+        detector: "waiting-unlisted",
+        fingerprint: `waiting-unlisted|${cfg.id}`,
+        severity: "minor",
+        summary: `${plural(n, "open issue")} of ${repo || cfg.id} ${n === 1 ? "carries" : "carry"} a waiting label but ${n === 1 ? "is" : "are"} not listed under Needs you.`,
+        evidence: {
+          counts: { issues: n, minutes: Math.max(...kept.map(mins)) },
+          lines: kept.slice(0, 5).map((i) => `#${i.issue}: ${i.label}, not under Needs you for ${mins(i)} minutes`),
+          times: latest(kept.map((i) => num(i.since))),
+          watchers: [cfg.id],
+          ...(repo ? { repos: [repo] } : {}),
+        },
+        about: "foundry",
+        ...(repo ? { repo } : {}),
       });
     }
     return out;
@@ -342,7 +390,7 @@ const slowStep: Detector = {
   },
 };
 
-export const WORK_DETECTORS: Detector[] = [stuckRun, sameStepFailing, labelMismatch, orphanLock, queueStalled, restartOverdue, developRed, slowStep];
+export const WORK_DETECTORS: Detector[] = [stuckRun, sameStepFailing, labelMismatch, waitingUnlisted, orphanLock, queueStalled, restartOverdue, developRed, slowStep];
 
 export const ALL_DETECTORS: Detector[] = [...DETECTORS, ...WORK_DETECTORS, ...SLO_DETECTORS];
 

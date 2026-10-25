@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { nextStep, type NextKind, type NextStep } from "../src/next-step.js";
 import { REFINEMENT_SOURCE } from "../src/auth/run-owner.js";
-import { actsFor, buildTurn, emptyText, needsUser, onHome, runOrigin, soonestAt, type TurnSource } from "../src/your-turn.js";
+import { actsFor, buildTurn, emptyText, listedIssues, needsUser, onHome, runOrigin, soonestAt, type TurnSource } from "../src/your-turn.js";
 
 const rec = (kind: NextKind, base: { repo?: string; issue?: number; title?: string; runId?: string } = {}, data = {}) =>
   nextStep(kind, { repo: "o/a", ...base }, { watched: true, issueUrl: base.issue ? `https://github.com/o/a/issues/${base.issue}` : undefined, ...data });
@@ -210,6 +210,16 @@ describe("onHome", () => {
     expect(onHome(t, { runId: "run-6" })).toBe(true);
     expect(onHome(t, { runId: "run-r2" })).toBe(true);
     expect(onHome(t, { repo: "o/a", issue: 1 })).toBe(true);
+  });
+
+  it("lists next and the members of a release item, dismissed items too, and skips items without an issue", () => {
+    const sources = [failed(5, "run-5"), release(1, "run-r1"), release(2, "run-r2"), src(rec("failed", { runId: "run-x" }))];
+    const dismissed = { [sources[0]!.key]: { since: sources[0]!.stamp } };
+    const t = buildTurn(sources, { dismissed });
+    expect(t.data.groups.flatMap((g) => g.items).some((i) => i.next.issue === 5)).toBe(false);
+    const got = listedIssues(t.all);
+    expect(got).toEqual(expect.arrayContaining([{ repo: "o/a", issue: 5 }, { repo: "o/a", issue: 1 }, { repo: "o/a", issue: 2 }]));
+    expect(got).toHaveLength(3); // #5 and the 2 members; the release item and the one without an issue add no next issue
   });
 
   it("is false for a dismissed item and for a thing that is not there", () => {

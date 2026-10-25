@@ -376,6 +376,36 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   be built (too many rules or a bad version), it is a `policy.invalid` mandatory entry, so the fail-closed path
   of "Fail closed" applies at privileged boundaries. There is no silent fallback to a weaker pack.
   `BASELINE_PACK` (the four legacy rules) is still the pack of the build without run controls.
+- **Limit rules (#630).** `limitRules` (`baseline.ts`) adds, after `credential-scope-exceeded`, the observe
+  rules `output-limit-exceeded` (warn, `outputBytes`), `timeout-exceeded` and `timeout-exceeded-2`… (deny,
+  `elapsedMs`), `budget-step-exceeded` (deny, `stepCostUsd`), `budget-run-exceeded` (deny, `runCostUsd`) and
+  `budget-daily-exceeded` (deny, `dailyCostUsd`). Each is only at `step.after`. `policy-limits.ts` builds the
+  groups from `stepLimits(flow, depth, config)`: steps with the same value share one group, in order of first
+  appearance, and the groups are chunked by `MAX_PATTERNS` (100) rules, so `-1`, `-2`, … The output group uses
+  `stepMaxOutput ?? DEFAULT_MAX_OUTPUT` (20,000) for every shell step; claude steps have no output rule. Timeouts
+  cover claude and shell steps; budgets cover claude steps and need `cost_limits !== false`. Values that are
+  not finite positive numbers, and ids that are too long or not plain tokens, are dropped in `limitRules`. The
+  run-wide budget rules come from `flow.limits.max_cost_usd` and `daily_budget_usd`. A rule is only added when its
+  limit is in effect, so the rule ids of a run without limits are the same as before.
+  - **Cap.** `runBaseline` throws `PolicySchemaError` when the baseline would have more than `MAX_RULES` (500)
+    rules; `baselineEntry` turns that into `policy.invalid` with that detail, so the fail-closed path applies.
+    About 490 distinct limit values are needed to reach it.
+  - **Scopes.** `RunPolicy.subFlow(parent, flow, depth)` (called by `execute.ts` after a sub-flow's scope is
+    built; it never throws) builds the sub-flow's baseline from the root controls with that flow's limits, and
+    stores it under the parent step id. `at()` asks `scopedPacks(packs, entry)` at every boundary of a step whose
+    `parent` is set. The scoped entry replaces the root baseline, but a root that is invalid is kept, so a
+    failed root never becomes a valid scope. A sub-flow that fails is logged once (`! policy foundry.baseline:
+    sub-flow …`) and denies its privileged steps. A scope with no registration uses a fallback baseline with
+    no per-step limits. The hash is per scope and is recorded with each decision.
+  - **Meter.** `ProcessMeter` (`process.ts`) holds `ms` (from spawn to `close`, after stdio is drained) and
+    `printedBytes` (the UTF-8 bytes of the kept output). It is set on every exit path: a normal close, a timeout,
+    a spawn `error`, a failed log write and a rejected call. The caller owns it, so the values survive a rejected
+    promise. `runAgentStep` clears it before each attempt, so only the final attempt is recorded.
+  - **Bytes and characters.** The output rule counts bytes, so with non-ASCII output a warning can come before the
+    engine's character cut. Limits use `over` (strictly greater); a value exactly at its limit gives no rule.
+  - **Missing facts.** `stepCostUsd` and `outputBytes` are always given at `step.after`. The missing-fact check
+    (`input-incomplete`) runs first, so a rule that needs a fact the step did not produce is not silently skipped. `dailyCostUsd` is
+    given only when a daily budget is in effect (`Engine.dailyCostUsd`, read in a `try`; on a throw it is absent).
 - **Baseline.** `src/policy/baseline.ts` builds `foundry.baseline`. The Foundry owns it: its version is
   the package version, and admins can only add overlays. It is always in the list of packs, so a run
   always asks it. The file's only read is `package.json`, once, for that version; it is the one file
@@ -908,8 +938,43 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
   (only when the events are given). The head check reads the first `count` events of the chain and
   passes when the event at `count - 1` has the contract's `terminalHash`, so events added later do not
   break it. A passing result carries the contract and its digest.
-- **Not yet.** No run writes a contract, no server or UI reads one, and no check of a pull request
-  runs against the stop conditions. Those are the next part of #162.
+- **Validator** (`tools/delivery-validate/validate.mjs`, #671, part 1 of 2 of #667): a CI job checks a
+  contract against the checked-out commit. It is one plain Node ESM script that imports only `node:`
+  modules, so it needs no `npm ci` and no `dist/`. `scf delivery validate` (`src/delivery/cli.ts`) runs
+  the same script and gives the same stdout, stderr and exit code.
+  - **Copied rules.** The script cannot load `src/`, so it copies `canonicalJson`, `sha256Hex`, the field
+    helpers of `identity.ts`, `DeliveryContractSchema` (as `contractProblems`), `verifySshSignature` with
+    its reader and key parsing, and `decodeBase64Exact` and `ed25519PublicKey`. `node:crypto` `verify`
+    does the cryptography. A comment at the top says to change both copies. The parity test runs the
+    script and `verifyDeliveryContract` on the same contract, signature and key (good and tampered
+    fixtures, each re-canonicalised and re-signed so one fault is present) and compares the verdict and
+    the fault.
+  - **Check order.** `contract`, `signature`, `commit`, `locks`, `workflows`, `checks`, `evidence`,
+    `comment`. If `contract` or `signature` stops, the later checks are `skipped` and git is not run.
+  - **Fault → condition.** `unreadable`, `wrong-version`, `signature-missing`, `signature-bad` and
+    `wrong-key` stop with `signature-unverified`. A HEAD that is not `commit.sha` gives `commit-changed`.
+    A lock that is changed, missing or not a blob gives `lock-changed`. A workflow that is added, removed
+    or changed gives `workflow-changed`. A required check that is missing or not `success` gives
+    `required-check-failed`. With `--comment`, a digest that differs gives `superseded`, and an evidence
+    hash that differs from `evidence.terminalHash` gives `evidence-unverified`.
+  - **git.** Read-only calls through `execFile` with argument arrays, never a shell. HEAD is resolved once
+    and used for every lookup. `GIT_LITERAL_PATHSPECS=1` makes a path in the contract a literal path. The
+    locks use `ls-tree -z --full-tree` and `cat-file blob`; the workflows use `ls-tree -r -z` on
+    `.github/workflows/`, so subfolders count and other files are ignored. A git failure, or a `--repo`
+    that is not a repository, is a read error (exit 2) with git's first line, cleaned.
+  - **Output.** One line per check: `<check>: ok`, `<check>: stop <condition>: <reason>` or
+    `<check>: skipped (<why>)`. `--json` prints `{version, result, digest, checks}`. Control characters
+    in reasons become `?`. An error message never repeats file content. A `skipped` check is not a pass.
+  - **Inputs.** Options are parsed in strict mode. `--public-key` is a key line or a file (16 KiB at most).
+    Text files are 1 MiB at most. `--checks` is a JSON list of `{name, conclusion}` (a conclusion may be
+    `null`); duplicates must all be `success`. `--comment` must hold exactly one marker line:
+    `<!-- claude-factory delivery-contract digest=<64 hex> evidence=<64 hex> -->` (CRLF allowed). Part 2
+    of #667 writes this marker, so the format is fixed.
+  - **No writes.** The script never writes a file, and never fixes or regenerates a contract.
+  - **Not yet.** The `evidence` check always prints `skipped` until part 2 of #667 adds `--events`. No run
+    writes a contract or a comment yet, so the validator is used only where a CI job runs it.
+- **Not yet.** No run writes a contract and no server or UI reads one. The stop conditions are checked
+  by the validator above, and not yet by a run. Those are the next part of #162.
 - **Tests.** `tests/delivery-contract.test.ts` (order, golden text, every byte of the text, the order
   of faults, the head check) and `tests/delivery-sshsig.test.ts` (round trips, every character of the
   signature, refused keys, the real `ssh-keygen`). Both are unit tests: no server, no git, no run.

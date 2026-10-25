@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
+import { listAllRepos } from "../auth/repos.js";
+import { decideTechnicalFor, type RepoSettings } from "../auth/repo-settings.js";
 import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
 import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
@@ -43,6 +45,7 @@ import { prepareWorkspace } from "./workspace.js";
 import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { runPolicy, type RunPolicy } from "./policy-hooks.js";
+import type { ProcessMeter } from "../steps/process.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
 import { snapshotToolProfile } from "../tool-profile/session.js";
 import { configureTelemetry } from "../telemetry/telemetry.js";
@@ -56,6 +59,8 @@ interface CommonOptions {
   runsDir: string;
   claudeBin?: string;
   codexBin?: string;
+  /** Evals only: folders put first on the PATH of every step (a suite's fake `gh`). */
+  pathPrefix?: string[];
   signal?: AbortSignal;
   log?: (msg: string) => void;
   /** Called whenever run.json is written. */
@@ -101,6 +106,15 @@ export interface ResumeOptions extends CommonOptions {
 export function newRunId(now = new Date()): string {
   const ts = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
   return `${ts}-${randomBytes(2).toString("hex")}`;
+}
+
+/** "1" when the Foundry may decide technical questions for this repository, else "0"; any error gives "0" (then it asks). */
+export function decideTechnicalEnv(githubRepo: string | undefined, records: () => readonly { url: string; settings?: RepoSettings }[] = listAllRepos): "1" | "0" {
+  try {
+    return decideTechnicalFor(githubRepo ?? "", records()) ? "1" : "0";
+  } catch {
+    return "0";
+  }
 }
 
 /** The learnings file of a run. Without a usable `github_repo` the key is the folder name; a user's account then gets its own file. */
@@ -286,9 +300,11 @@ async function drive(
       FACTORY_LEARNINGS_FILE: lf,
       FACTORY_TOOLS: TOOLS_DIR,
       FACTORY_BASE_SHA: summary.baseSha ?? "",
+      FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...nextStepEnv(),
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes),
       ...selfEnv(),
+      ...(opts.pathPrefix?.length ? { PATH: [...opts.pathPrefix, process.env.PATH ?? ""].join(delimiter) } : {}),
     };
     // fails before any step, as before, when the run starts with the machine's login and has a step that uses the token
     // (shell, or a sub-flow whose steps are not known yet) — unless a mandatory policy cannot be used: then every step
@@ -321,6 +337,7 @@ async function drive(
     codexBin: opts.codexBin,
     toolProfile: summary.toolProfile,
     signal: opts.signal,
+    ...(dailyCap !== undefined ? { dailyCostUsd: () => spentToday(opts.runsDir) } : {}),
     log,
     save,
     decision: resume?.decision,
@@ -544,6 +561,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     engine.log(`▶ ${scope.prefix}${step.id} (${step.type}${visit > 1 ? `, visit ${visit}` : ""})`);
     const startedAt = new Date();
     const logFile = newLogFile(engine, scope.prefix + step.id);
+    const meter: ProcessMeter = {};
     let res: StepResult;
     if (top && step.type !== "approval") {
       summary.stepStartedAt = startedAt.toISOString();
@@ -576,7 +594,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       engine.accessFailed = false;
       beginStep(engine, scope, step, identity);
       try {
-        res = await executeStep(step, scope, engine, logFile);
+        res = await executeStep(step, scope, engine, logFile, meter);
       } catch (e) {
         res = { ok: false, output: "", error: (e as Error).message };
       }
@@ -585,7 +603,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     }
     if (top) summary.stepStartedAt = undefined; // recordStep saves it
     res = { ...res, output: redactText(res.output), ...(res.error === undefined ? {} : { error: redactText(res.error) }) };
-    recordStep(step, scope, engine, res, startedAt, logFile, visit);
+    recordStep(step, scope, engine, res, startedAt, logFile, visit, meter);
     lastOutput = res.output;
     if (res.held && top) {
       // Content waits for a person: stop here, keep the hold in run.json, and run this step again on resume.

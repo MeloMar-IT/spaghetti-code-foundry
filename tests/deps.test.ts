@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEP_REF_SOURCE, dependencies, dependencyRange, dependencyText, openDependencies, titleIndex } from "../src/queue/deps.js";
+import { DEP_REF_SOURCE, dependencies, dependencyDone, dependencyRange, dependencyText, openDependencies, titleIndex } from "../src/queue/deps.js";
 
 const all = [
   { number: 1, title: "Story 1 — Publish update metadata", state: "CLOSED" },
@@ -46,6 +46,24 @@ describe("issue dependencies", () => {
   it("counts closed issues and done labels as done; ignores unknown issues", () => {
     expect(openDependencies([1, 6, 7, 99], all, ["Factory_done"])).toEqual([7]);
     expect(openDependencies([6], all, [])).toEqual([6]);
+  });
+
+  it("dependencyDone: closed, done labels, and the watcher's done label only with gitflow", () => {
+    const open = { number: 1, title: "t", state: "OPEN" };
+    const rule = { doneLabels: ["done-x"], doneLabel: "factory:done" };
+    expect(dependencyDone({ ...open, state: "CLOSED" }, rule)).toBe(true);
+    expect(dependencyDone({ ...open, labels: [{ name: "done-x" }] }, rule)).toBe(true);
+    expect(dependencyDone({ ...open, labels: [{ name: "factory:done" }] }, { ...rule, gitflow: true })).toBe(true);
+    expect(dependencyDone({ ...open, labels: [{ name: "factory:done" }] }, { ...rule, gitflow: false })).toBe(false);
+    expect(dependencyDone({ ...open, labels: [{ name: "factory:done" }] }, rule)).toBe(false);
+    expect(dependencyDone(undefined, rule)).toBe(true);
+    expect(dependencyDone(open, rule)).toBe(false);
+  });
+
+  it("openDependencies takes a rule: the done label counts only with gitflow", () => {
+    const issues = [{ number: 7, title: "x", state: "OPEN", labels: [{ name: "factory:done" }] }];
+    expect(openDependencies([7], issues, { doneLabels: [], doneLabel: "factory:done", gitflow: true })).toEqual([]);
+    expect(openDependencies([7], issues, { doneLabels: [], doneLabel: "factory:done", gitflow: false })).toEqual([7]);
   });
 });
 

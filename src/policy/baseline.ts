@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { StepIdSchema } from "../evidence/identity.js";
 import { parsePolicyPack } from "./parse.js";
-import { FactsSchema, MAX_PATTERNS, PatternSchema, type PolicyPack } from "./schema.js";
-import { POLICY_PACK_VERSION } from "./version.js";
+import { FactsSchema, MAX_PATTERNS, MAX_RULES, PatternSchema, type PolicyPack } from "./schema.js";
+import { POLICY_PACK_VERSION, PolicySchemaError } from "./version.js";
 
 /**
  * The baseline pack: built in, owned by the Foundry, asked at every boundary of every run in observe mode.
@@ -16,8 +17,32 @@ export const BASELINE_POLICY_ID = "foundry.baseline";
 /** The flow and step of the hotfix exception; a test pins them to HOTFIX_FLOW / HOTFIX_PUSH_STEP in engine/guards.ts (this folder has no engine imports). */
 export const BASELINE_HOTFIX = { flow: "issue-gitflow", step: "push_main" } as const;
 
+/** Steps that share one limit. */
+export interface LimitGroup {
+  limit: number;
+  steps: readonly string[];
+}
+
+/** The limits of the steps of one flow, grouped by value (the order of first appearance). */
+export interface StepLimits {
+  /** Bytes a step may print before the baseline warns. */
+  output: readonly LimitGroup[];
+  /** Milliseconds a step may run. */
+  timeout: readonly LimitGroup[];
+  /** US dollars a step may cost. */
+  stepBudget: readonly LimitGroup[];
+}
+
+export interface BaselineLimits extends Partial<StepLimits> {
+  /** US dollars a run may cost (every step is asked). */
+  runBudget?: number;
+  /** US dollars a day may cost (every step is asked). */
+  dailyBudget?: number;
+}
+
 /** What the baseline of one run is built from. Later policy issues add optional fields. */
 export interface BaselineControls {
+  limits?: BaselineLimits;
   protectedBranches: readonly string[];
   secretScan: boolean;
   /** The run is the shipped hotfix flow: only then the pack has the hotfix exception (the `flow` fact is always known there). */
@@ -34,7 +59,7 @@ export const NO_BASELINE_CONTROLS: BaselineControls = { protectedBranches: [], s
  */
 export function baselineControls(
   config: { protected_branches?: readonly string[]; secret_scan?: boolean },
-  run: { repository?: string; shippedHotfixFlow: boolean },
+  run: { repository?: string; shippedHotfixFlow: boolean; limits?: BaselineLimits },
 ): { controls: BaselineControls; leftOut: string[] } {
   const protectedBranches: string[] = [];
   const leftOut: string[] = [];
@@ -49,7 +74,7 @@ export function baselineControls(
   }
   const repository = run.repository !== undefined && FactsSchema.shape.repository.safeParse(run.repository).success ? run.repository : undefined;
   return {
-    controls: { protectedBranches, secretScan: config.secret_scan !== false, shippedHotfixFlow: run.shippedHotfixFlow, ...(repository ? { repository } : {}) },
+    controls: { protectedBranches, secretScan: config.secret_scan !== false, shippedHotfixFlow: run.shippedHotfixFlow, ...(repository ? { repository } : {}), ...(run.limits ? { limits: run.limits } : {}) },
     leftOut,
   };
 }
@@ -71,6 +96,43 @@ export function legacyBaselinePack(version: string): PolicyPack {
 }
 
 const chunkId = (base: string, i: number) => (i === 0 ? base : `${base}-${i + 1}`);
+
+const validLimit = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0;
+
+/** The limit rules (observe only, at `step.after`). Bad step ids and bad numbers are dropped; a group with no steps gives no rule. */
+function limitRules(limits: BaselineLimits | undefined): unknown[] {
+  if (!limits) return [];
+  const rules: unknown[] = [];
+  const kinds = [
+    { groups: limits.output, base: "output-limit-exceeded", fact: "outputBytes", outcome: "warn", reasonCode: "output.limit-exceeded" },
+    { groups: limits.timeout, base: "timeout-exceeded", fact: "elapsedMs", outcome: "deny", reasonCode: "timeout.exceeded" },
+    { groups: limits.stepBudget, base: "budget-step-exceeded", fact: "stepCostUsd", outcome: "deny", reasonCode: "budget.step-exceeded" },
+  ];
+  for (const k of kinds) {
+    let n = 0;
+    for (const g of k.groups ?? []) {
+      if (!validLimit(g.limit)) continue;
+      const ids = [...new Set(g.steps.filter((id) => typeof id === "string" && StepIdSchema.safeParse(id).success))];
+      for (let i = 0; i < ids.length; i += MAX_PATTERNS) {
+        rules.push({
+          id: chunkId(k.base, n++),
+          boundaries: ["step.after"],
+          when: { step: { in: ids.slice(i, i + MAX_PATTERNS) }, [k.fact]: { over: g.limit } },
+          outcome: k.outcome,
+          reasonCode: k.reasonCode,
+          mode: "observe",
+        });
+      }
+    }
+  }
+  if (validLimit(limits.runBudget)) {
+    rules.push({ id: "budget-run-exceeded", boundaries: ["step.after"], when: { runCostUsd: { over: limits.runBudget } }, outcome: "deny", reasonCode: "budget.run-exceeded", mode: "observe" });
+  }
+  if (validLimit(limits.dailyBudget)) {
+    rules.push({ id: "budget-daily-exceeded", boundaries: ["step.after"], when: { dailyCostUsd: { over: limits.dailyBudget } }, outcome: "deny", reasonCode: "budget.daily-exceeded", mode: "observe" });
+  }
+  return rules;
+}
 
 /** The baseline pack of one run (pure): protected branches first, as the hook checks the branch before it scans. */
 export function baselinePack(version: string, controls: BaselineControls): PolicyPack {
@@ -97,6 +159,7 @@ export function baselinePack(version: string, controls: BaselineControls): Polic
   }
   rules.push(SANDBOX_RULE, ADMIN_RULE);
   rules.push({ id: "credential-scope-exceeded", boundaries: ["repository.access"], when: { owner: { in: ["user"] }, credential: { in: ["machine"] } }, outcome: "deny", reasonCode: "credential.scope-exceeded", mode: "observe" });
+  rules.push(...limitRules(controls.limits));
   return { version: POLICY_PACK_VERSION, policy: { id: BASELINE_POLICY_ID, version }, mode: "observe", defaultOutcome: "allow", rules } as PolicyPack;
 }
 
@@ -108,6 +171,8 @@ export interface RunBaseline {
 
 /** Builds and parses the baseline of a run. Throws PolicySchemaError when it cannot be built. */
 export function runBaseline(version: string, controls: BaselineControls): RunBaseline {
+  const n = baselinePack(version, controls).rules.length;
+  if (n > MAX_RULES) throw new PolicySchemaError("pack", "invalid", `policy pack: the baseline would have ${n} rules, more than ${MAX_RULES}`);
   const pack = parsePolicyPack(baselinePack(version, controls));
   if (!controls.repository) return { pack };
   return { pack, pushWithoutRepository: parsePolicyPack(baselinePack(version, { ...controls, repository: undefined })) };

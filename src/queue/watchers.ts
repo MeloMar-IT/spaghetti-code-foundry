@@ -30,6 +30,8 @@ export interface WatcherManagerOptions {
   serverLog?: () => LogLine[];
   /** Set while the server waits to restart, for the monitor. */
   restart?: () => DetectorInput["restart"];
+  /** The issues Needs you lists, for the monitor. */
+  needsYou?: () => readonly { repo: string; issue: number }[] | undefined;
   /** When the server started (the monitor's quiet time counts from here; the Monitor object is made again when its config changes). */
   startedAt?: Date;
   /** Called at the start of every sync(): the server reads the stored watchers again here. */
@@ -165,6 +167,7 @@ export class WatcherManager {
       scheduler: this.o.scheduler,
       watchers: () => this.tracked().map(({ watcher, status, issues }) => ({ cfg: watcher, status, issues })),
       restart: this.o.restart,
+      needsYou: this.o.needsYou,
       thresholds: () => this.o.config().monitor,
       serverLog: this.o.serverLog,
       rateLimit: () => this.rate,

@@ -74,6 +74,20 @@ describe("comment wording comes from the next-step module", () => {
     expect(step, `${file}#${id}`).toBeDefined();
     return step!.run ?? "";
   };
+  it("the planner, revision and epic prompts ask for a kind and a recommendation", () => {
+    const prompt = (file: string, id: string) => {
+      const def = parseYaml(readFileSync(file, "utf8")) as { steps: { id: string; prompt?: string }[] };
+      return def.steps.find((s) => s.id === id)?.prompt ?? "";
+    };
+    const cases: [string, string][] = [["issue-plan", "plan"], ["issue-plan", "revise_plan"], ["issue-gitflow", "plan"], ["issue-gitflow", "revise_plan"], ["epic-questions", "ask"]];
+    for (const [f, id] of cases) {
+      const p = prompt(flowPath(f), id);
+      expect(p, `${f}#${id}`).toContain("**Kind:** technical | product | policy | owner_action");
+      expect(p, `${f}#${id}`).toContain("**Recommendation:**");
+      expect(p, `${f}#${id}`).toContain("`none`");
+    }
+  });
+
   it("the asking steps print the planner's text after the comment", () => {
     const post = "--body-file - >/dev/null || exit 1\n";
     for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {

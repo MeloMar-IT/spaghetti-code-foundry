@@ -91,9 +91,11 @@ describe("pure functions", () => {
       mainBranch: "main",
       developBranch: "",
       releaseRecipe: "",
+      questions: { decide_technical: true },
     });
+    expect(ui.settingsBody({ decideTechnical: false }).questions).toEqual({ decide_technical: false });
     expect(ui.settingsBody({ releaseRecipe: "builds:\n  - x\n" }).releaseRecipe).toBe("builds:\n  - x\n");
-    expect(ui.settingsBody()).toEqual({ testCommand: "", docs: [], protectedBranches: [], mainBranch: "", developBranch: "", releaseRecipe: "" });
+    expect(ui.settingsBody()).toEqual({ testCommand: "", docs: [], protectedBranches: [], mainBranch: "", developBranch: "", releaseRecipe: "", questions: { decide_technical: true } });
   });
 
   it("ownerText and sortRepos", () => {
@@ -286,7 +288,10 @@ describe("settings dialog", () => {
     expect(field(root(), "mainBranch")!.value).toBe("main");
     expect(field(root(), "developBranch")!.value).toBe("develop");
     expect(root().textContent).toContain("? one character");
-    expect(root().textContent).toContain("Runs do not use these settings yet, except the release-build recipe.");
+    expect(root().textContent).toContain('Runs use the release-build recipe and "Decide technical questions itself"; the other settings not yet.');
+    expect(field(root(), "decideTechnical")!.checked).toBe(true);
+    expect(root().textContent).toContain("Decide technical questions itself");
+    expect(root().textContent).toContain("Off: you are asked every question.");
   });
 
   it("saves with the exact body, shows the toast, closes and resolves with the server's row", async () => {
@@ -295,10 +300,45 @@ describe("settings dialog", () => {
     press(button(root(), "Save"));
     await flush();
     await flush();
-    expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { ...S, docs: ["x.md"] } }]);
+    expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { ...S, docs: ["x.md"], questions: { decide_technical: true } } }]);
     expect(toastText()).toBe("Settings saved");
     expect(root().children).toHaveLength(0);
     expect(await closed).toEqual({});
+  });
+
+  it("starts unchecked when the setting is off, and sends the checkbox", async () => {
+    await open(rec({ settings: { ...S, questions: { decide_technical: false } } }));
+    expect(field(root(), "decideTechnical")!.checked).toBe(false);
+    press(button(root(), "Save"));
+    await flush();
+    await flush();
+    expect(sent[0]!.body.questions).toEqual({ decide_technical: false });
+  });
+
+  it("sends true after the box is checked", async () => {
+    await open(rec({ settings: { ...S, questions: { decide_technical: false } } }));
+    field(root(), "decideTechnical")!.checked = true;
+    press(button(root(), "Save"));
+    await flush();
+    await flush();
+    expect(sent[0]!.body.questions).toEqual({ decide_technical: true });
+  });
+
+  it("keeps a stored off in a section save", async () => {
+    await open(rec({ settings: { ...S, questions: { decide_technical: false } } }), { only: ["mainBranch"] });
+    expect(walk(root()).some((e) => e.attrs.name === "decideTechnical")).toBe(false);
+    press(button(root(), "Save"));
+    await flush();
+    await flush();
+    expect(sent[0]!.body.questions).toEqual({ decide_technical: false });
+  });
+
+  it("marks the checkbox for a 400 about questions", async () => {
+    await open();
+    answers.push({ status: 400, error: "questions.decide_technical must be true or false" });
+    press(button(root(), "Save"));
+    await flush();
+    expect(field(root(), "decideTechnical")!.attrs["aria-invalid"]).toBe("true");
   });
 
   it("resolves with nothing when it is closed without a save", async () => {
@@ -322,7 +362,7 @@ describe("settings dialog", () => {
       await flush();
       await flush();
       expect(current).toHaveBeenCalledTimes(1);
-      expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { testCommand: "make test", docs: ["fresh.md"], protectedBranches: ["release/*"], mainBranch: "main2", developBranch: "develop", releaseRecipe: "" } }]);
+      expect(sent).toEqual([{ method: "PUT", url: `/api/admin/repos/${r.id}/settings`, body: { testCommand: "make test", docs: ["fresh.md"], protectedBranches: ["release/*"], mainBranch: "main2", developBranch: "develop", releaseRecipe: "", questions: { decide_technical: true } } }]);
     });
 
     it("falls back to the record's own settings without current()", async () => {
@@ -331,7 +371,7 @@ describe("settings dialog", () => {
       press(button(root(), "Save"));
       await flush();
       await flush();
-      expect(sent[0]!.body).toEqual({ ...S, testCommand: "pnpm test" });
+      expect(sent[0]!.body).toEqual({ ...S, testCommand: "pnpm test", questions: { decide_technical: true } });
     });
 
     it("shows the sentence of a failed current() and sends nothing", async () => {

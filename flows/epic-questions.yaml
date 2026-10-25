@@ -87,6 +87,9 @@ steps:
       - Each question: short context, the options you see, and your recommendation with one line why.
       - Questions already answered in an issue's comments are answered — don't ask them again.
       - Put a question that concerns several issues on the earliest one, and mention the others.
+      - Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.
+      - policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).
+      - Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
 
       {{steps.read_issues.output}}
 
@@ -96,6 +99,7 @@ steps:
       or
       ### #<number>
       **Q1. <question>**
+      **Kind:** technical | product | policy | owner_action
       <context and options>
       **Recommendation:** <option> — <why>
   - id: post

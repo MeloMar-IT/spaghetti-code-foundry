@@ -14,7 +14,8 @@ import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue,
 import { flowRetired } from "../run-gate.js";
 import { LABEL_WORDS } from "../words.js";
 import { RELEASE_BUILD_FLOW, RELEASE_BUILD_SUBMISSION_VAR, RELEASE_BUILD_VAR } from "../release/auto-build.js";
-import { dependencies, openDependencies } from "./deps.js";
+import { effectiveVars } from "../engine/runner.js";
+import { dependencies, openDependencies, type DoneRule } from "./deps.js";
 import { checkReleaseBuild, mainBranchOf, releaseCheckEvery } from "./release-trigger.js";
 import { freshIssueList, isTrackingEpic } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
@@ -438,14 +439,29 @@ export class Watcher {
     }
   }
 
+  /** Would takeDefaults answer now: auto_defaults on and the per-issue limit not reached. */
+  private canTakeDefaults(comments: Comment[]): boolean {
+    if (!this.cfg.auto_defaults) return false;
+    return comments.filter((c) => c.body.includes(AUTO_DEFAULTS_MARK)).length < AUTO_DEFAULTS_MAX;
+  }
+
+  /** How this watcher judges a dependency done. */
+  private doneRule(): DoneRule {
+    let gitflow = false;
+    try {
+      const flow = loadFlow(this.flowName(), this.d.repo).flow;
+      gitflow = !!(effectiveVars(flow, this.d.repo, this.cfg.vars).develop_branch ?? "").trim();
+    } catch { /* unknown flow: no gitflow */ }
+    return { doneLabels: this.cfg.dependency_done_labels, doneLabel: this.L.done, gitflow };
+  }
+
   /**
    * auto_defaults: answer the open questions of an issue with the Foundry's own recommendations, by a
    * `/defaults` comment (so the issue shows what happened). At most twice per issue: a planner that
    * keeps asking needs a person. Returns whether the questions count as answered.
    */
   private async takeDefaults(n: number, comments: Comment[]): Promise<boolean> {
-    if (!this.cfg.auto_defaults) return false;
-    if (comments.filter((c) => c.body.includes(AUTO_DEFAULTS_MARK)).length >= AUTO_DEFAULTS_MAX) return false;
+    if (!this.canTakeDefaults(comments)) return false;
     await gh(["issue", "comment", String(n), "--repo", this.repo, "--body", `/defaults\n\n— taken by the Foundry itself: this watcher answers questions with the recommendations. ${AUTO_DEFAULTS_MARK}`]);
     this.act(`#${n} questions answered with the recommendations (auto_defaults)`);
     return true;
@@ -851,10 +867,11 @@ export class Watcher {
       for (const i of extra) if (!have.has(i.number)) issues.push(i);
     }
     const prio = (i: Issue) => goesFirst(i, this.cfg.priority_labels);
+    let rule: DoneRule | undefined;
     const openDepsOf = async (issue: Issue) => {
       if (!/depends\s+on|blocked\s+by/i.test(issue.body ?? "")) return [];
       everyIssue ??= await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--state", "all", "--limit", "500", "--json", "number,title,labels,state,body"]);
-      return openDependencies(dependencies(issue.body ?? "", issue.number, everyIssue), everyIssue, this.cfg.dependency_done_labels);
+      return openDependencies(dependencies(issue.body ?? "", issue.number, everyIssue), everyIssue, (rule ??= this.doneRule()));
     };
     const blockedBy = async (issue: Issue) => (this.cfg.wait_for_dependencies ? openDepsOf(issue) : []);
     /** What a blocker is doing: its hold, its newest run (any flow), or what it waits for itself. */
@@ -913,6 +930,22 @@ export class Watcher {
     /** Why a story is not started: the per-check limit, or the bug stories that went first. */
     const limited = (issue: Issue, runId?: string) =>
       firstStarted > 0 ? this.held("bug_first", issue, { runId }) : this.held("starting", issue, { maxPerTick: this.cfg.max_per_tick, runId });
+
+    /** wait_for_dependencies: a story with open "Depends on" issues neither starts nor resumes. True when it is held. */
+    const holdForDeps = async (issue: Issue, runId?: string): Promise<boolean> => {
+      const blockers = await blockedBy(issue);
+      alive();
+      if (!blockers.length) return false;
+      const msg = `#${issue.number} waits for ${blockers.map((b) => `#${b}`).join(", ")} (depends on)`;
+      if (!this.status.lastActions.some((a) => a.endsWith(msg))) this.act(msg);
+      const info = await Promise.all(blockers.map((b) => describeBlocker(b, new Set([issue.number]))));
+      alive();
+      holds.push(this.held("dependency", issue, { blockers: info, ...(runId ? { runId } : {}) }));
+      return true;
+    };
+    const depHeldBefore = new Set((this.status.holds ?? []).filter((h) => h.next.kind === "dependency" && h.issue !== undefined).map((h) => h.issue!));
+    const why = (n: number, normal: string) => (depHeldBefore.has(n) ? "its dependencies are done" : normal);
+    const keepAsking = new Set<number>(); // held for dependencies with open questions: the needs-info label stays
 
     // Bug stories first, the oldest issue first (its creation time; the number only breaks a tie or fills a gap).
     const age = (i: Issue) => { const t = Date.parse(i.createdAt ?? ""); return Number.isNaN(t) ? undefined : t; };
@@ -982,6 +1015,7 @@ export class Watcher {
           if (parked === "parked") tracked.splice(tracked.indexOf(track), 1);
           continue;
         }
+        if (!answers.length && this.canTakeDefaults(comments) && (await holdForDeps(issue))) { keepAsking.add(n); continue; }
         if (!answers.length && !(await this.takeDefaults(n, comments))) {
           holds.push({ ...this.held("questions", issue, { questions: questionCount(comments) }), since: [...comments].reverse().find(asked)?.createdAt });
           continue;
@@ -1113,14 +1147,7 @@ export class Watcher {
           continue;
         }
         // No run yet — also when the working label is left over from a start that failed.
-        const blockers = await blockedBy(issue);
-        if (blockers.length) {
-          const msg = `#${n} waits for ${blockers.map((b) => `#${b}`).join(", ")} (depends on)`;
-          if (!this.status.lastActions.some((a) => a.endsWith(msg))) this.act(msg);
-          const info = await Promise.all(blockers.map((b) => describeBlocker(b, new Set([n]))));
-          holds.push(this.held("dependency", issue, { blockers: info }));
-          continue;
-        }
+        if (await holdForDeps(issue)) continue;
         if (paused) { holds.push(this.held("release", issue, { pr: paused })); continue; }
         if (!budgetLeft) { holds.push(this.held("daily_budget", issue)); continue; }
         if (!ownerLeft) { holds.push(this.held("user_limit", issue, { userLimit: "budget" })); continue; }
@@ -1155,11 +1182,12 @@ export class Watcher {
         const lateDecision = decides && late ? await this.findDecision(run.runId, late) : undefined;
         const holder = steppedAsideFor(run);
         if (isFirst && holder && !paused) { firstWaits.add(holder); track.claims = holder; }
+        if ((resumable || lateDecision || lateAnswers.length) && (await holdForDeps(issue, run.runId))) { offNow.delete(n); delete track.labelOff; continue; }
         if (resumable && !isFirst && holder && firstWaits.has(holder)) {
           // A bug story waits for the same code area: it gets the area first.
           holds.push(this.held("bug_first", issue, { runId: run.runId }));
         } else if (resumable && !overLimit(isFirst)) {
-          this.resume(n, run.runId, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : "can continue now", undefined, false, first);
+          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : "can continue now"), undefined, false, first);
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
@@ -1168,7 +1196,7 @@ export class Watcher {
           offNow.delete(n); delete track.labelOff;
           if (overLimit(isFirst)) holds.push(limited(issue, run.runId));
           else {
-            this.resume(n, run.runId, `${lateDecision.approved ? "approved" : "rejected"} by @${lateDecision.by}`, lateDecision, false, first);
+            this.resume(n, run.runId, why(n, `${lateDecision.approved ? "approved" : "rejected"} by @${lateDecision.by}`), lateDecision, false, first);
             this.labelWhenDone(n, run.runId);
             started++;
             if (isFirst) firstStarted++;
@@ -1179,7 +1207,7 @@ export class Watcher {
           offNow.delete(n); delete track.labelOff;
           if (overLimit(isFirst)) holds.push(limited(issue, run.runId));
           else {
-            this.resume(n, run.runId, `answered by @${answers[0]!.author.login}`, undefined, false, first);
+            this.resume(n, run.runId, why(n, `answered by @${answers[0]!.author.login}`), undefined, false, first);
             this.labelWhenDone(n, run.runId);
             started++;
             if (isFirst) firstStarted++;
@@ -1212,12 +1240,20 @@ export class Watcher {
           const parked = await this.parkOnRequest(n, answers, run, alive);
           if (parked) { quietNow.add(n); offNow.delete(n); delete track.labelOff; continue; }
         }
+        if ((answers.length || (!notCodeStop(run) && this.canTakeDefaults(comments))) && (await holdForDeps(issue, run.runId))) {
+          if (answers.length) {
+            await setLabels(this.repo, n, this.L.working, this.allStatus);
+            this.act(`#${n} label → ${this.L.working} (answered by @${answers[0]!.author.login}, waits for its dependencies)`);
+            offNow.delete(n); delete track.labelOff;
+          } else keepAsking.add(n);
+          continue;
+        }
         // auto_defaults: nobody answered yet, so the recommendations are taken (only when the run can go on now).
         // A "not a coding task" stop is not answered with defaults: it needs a person (the planner_questions hold stays).
         const auto = !answers.length && !notCodeStop(run) && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
         if ((answers.length || auto) && !overLimit(isFirst)) {
           await setLabels(this.repo, n, this.L.working, this.allStatus);
-          this.resume(n, run.runId, auto ? "answered with the recommendations (auto_defaults)" : `answered by @${answers[0]!.author.login}`, undefined, true, first);
+          this.resume(n, run.runId, why(n, auto ? "answered with the recommendations (auto_defaults)" : `answered by @${answers[0]!.author.login}`), undefined, true, first);
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
@@ -1234,9 +1270,15 @@ export class Watcher {
         const comments = await reads.read(n);
         if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
         const decision = await this.findDecision(run.runId, comments);
+        if (decision && (await holdForDeps(issue, run.runId))) {
+          await setLabels(this.repo, n, this.L.working, this.allStatus);
+          this.act(`#${n} label → ${this.L.working} (${decision.approved ? "approved" : "rejected"} by @${decision.by}, waits for its dependencies)`);
+          offNow.delete(n); delete track.labelOff;
+          continue;
+        }
         if (decision) {
           await setLabels(this.repo, n, this.L.working, this.allStatus);
-          this.resume(n, run.runId, `${decision.approved ? "approved" : "rejected"} by @${decision.by}`, decision, true, first);
+          this.resume(n, run.runId, why(n, `${decision.approved ? "approved" : "rejected"} by @${decision.by}`), decision, true, first);
           this.labelWhenDone(n, run.runId);
         } else {
           holds.push(this.heldRun(issue, run));
@@ -1258,7 +1300,7 @@ export class Watcher {
     // from the person: the needs-info label goes, as the status comment says. Without a run nothing is lost.
     if (reads.exhausted) this.d.log(`[${this.cfg.id}] comment reads: the time for this check is used up, the other issues are listed from their labels`);
     let labelError: Error | undefined;
-    await this.dropAnsweredLabels(issues, runs, holds, alive).catch((e: Error) => { labelError = e; });
+    await this.dropAnsweredLabels(issues, runs, holds, alive, keepAsking).catch((e: Error) => { labelError = e; });
     let tidyError: Error | undefined;
     const closed: { issue: number; title: string }[] = [];
     let closedWhole = false;
@@ -1320,13 +1362,13 @@ export class Watcher {
   }
 
   /** Removes needs-info from issues without a run whose hold of this check says nothing is needed from the person. */
-  private async dropAnsweredLabels(issues: Issue[], runs: Map<string, RunSummary>, holds: Hold[], alive: () => void) {
+  private async dropAnsweredLabels(issues: Issue[], runs: Map<string, RunSummary>, holds: Hold[], alive: () => void, keep: ReadonlySet<number> = new Set()) {
     const notYours: NextKind[] = ["dependency", "release", "daily_budget", "user_limit", "starting", "bug_first", "one_at_a_time"];
     const pending = this.d.scheduler.queue().pending;
     for (const issue of issues) {
       const n = issue.number;
       const names = issue.labels.map((l) => l.name);
-      if (!names.includes(this.L.needsInfo) || runs.has(String(n))) continue;
+      if (!names.includes(this.L.needsInfo) || runs.has(String(n)) || keep.has(n)) continue;
       if (pending.some((p) => p.githubRepo === this.repo && p.issue === String(n))) continue;
       const hold = holds.find((h) => h.issue === n);
       if (!hold || !notYours.includes(hold.next.kind)) continue;

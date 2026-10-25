@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BLOCKED, emptyRedactor, makeRedactor } from "../src/credentials/redact.js";
-import { stepEnv, type Engine, type Scope } from "../src/engine/execute.js";
+import { ranOrder, stepEnv, type Engine, type Scope } from "../src/engine/execute.js";
 import {
   UNTRUSTED_DATA_NOTE,
   UNTRUSTED_VALUE_MAX,
@@ -293,6 +293,29 @@ describe("stepEnv with bound", () => {
   it("size-checks the output of a shell step", () => {
     const big = { ...scope, ctx: { ...scope.ctx, steps: { a: { output: "z".repeat(250_000) } } } } as Scope;
     expect(stepEnv(big, engine, { id: "a" }).FACTORY_OUT_A).toMatch(/^\[withheld: /);
+  });
+});
+
+describe("ranOrder and FACTORY_RAN_", () => {
+  it("gives each step its latest place in the history", () => {
+    expect(ranOrder([{ id: "plan" }, { id: "revise_plan" }, { id: "plan" }], "")).toEqual({ plan: 3, revise_plan: 2 });
+  });
+  it("counts a sub-flow's records only under their own scope", () => {
+    const h = [{ id: "sub.x", parent: "sub" }, { id: "x" }];
+    expect(ranOrder(h, "")).toEqual({ x: 2 });
+    expect(ranOrder(h, "sub.")).toEqual({ x: 1 });
+  });
+  it("sets FACTORY_RAN_ and SCF_RAN_ from the history, and nothing for a step that never ran", () => {
+    const sc = { flow: { steps: [] }, ctx: { ...ctx, steps: { a: { output: "" }, b: { output: "" }, c: { output: "" } } }, visits: {}, prefix: "", depth: 0 } as unknown as Scope;
+    const eng = { baseEnv: {}, config: { help: {} }, summary: { history: [{ id: "a" }, { id: "b" }, { id: "a" }] } } as unknown as Engine;
+    const e = stepEnv(sc, eng);
+    expect(e.FACTORY_RAN_A).toBe("3");
+    expect(e.FACTORY_RAN_B).toBe("2");
+    expect(e.SCF_RAN_A).toBe("3");
+    expect(e.FACTORY_RAN_C).toBeUndefined();
+  });
+  it("does not throw for an engine without a summary", () => {
+    expect(() => stepEnv({ flow: { steps: [] }, ctx: { ...ctx, steps: { a: { output: "" } } }, visits: {}, prefix: "", depth: 0 } as unknown as Scope, { baseEnv: {}, config: { help: {} } } as unknown as Engine)).not.toThrow();
   });
 });
 

@@ -3,6 +3,7 @@ import { delimiter, dirname, join } from "node:path";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
+import type { ProcessMeter } from "../steps/process.js";
 import { DEFAULT_PERMISSION_MODE, pushLogFor, refuseByPolicy, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
@@ -41,7 +42,7 @@ type Iso = { who: CommitIdentity };
 /** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). */
 type Ran = StepResult & { final?: boolean };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate): Promise<Ran> {
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate, meter?: ProcessMeter): Promise<Ran> {
   // Both agents get the same environment: no token and no Git or GitHub sign-in, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine, undefined, { bound: (e) => boundEnv(e, { stepTypes: stepTypesOf(scope.flow), quarantined: gate.bounded.quarantined, patterns: engine.config.help.sensitive_patterns }) });
   const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
@@ -96,7 +97,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, ...gate });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, meter, ...gate });
   } finally {
     removeGhConfigDir(ghDir);
   }
@@ -113,6 +114,8 @@ interface Gate {
 }
 
 interface WithOptions extends Gate {
+  /** Filled by the process of this attempt (see ProcessMeter). */
+  meter?: ProcessMeter;
   isolated: boolean;
   short: boolean;
   /** Held by the OS sandbox profile: the agent's own sandbox is off. */
@@ -271,6 +274,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     cwd: engine.summary.workdir!,
     logFile,
     timeoutMs,
+    meter: o.meter,
     signal: engine.signal,
     resumeSessionId: resumeId,
     onProgress: (m: string) => engine.log(`    · ${m}`),
@@ -376,7 +380,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
  * limit, retry on the router's fallbacks in order. When the budget is used up the loop sets
  * engine.budgetFallback and every agent step runs on that free target instead.
  */
-export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs?: number): Promise<StepResult> {
+export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs?: number, meter?: ProcessMeter): Promise<StepResult> {
   const { config } = engine;
   // A stored run can hold a flow that was not checked by this version: a reviewer must not be able to write.
   if (step.skill_role === "reviewer") {
@@ -472,6 +476,11 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   const memo = new Map<string, OutputLabel>();
   const heldFor = !scope.prefix && engine.summary.heldContent?.step === step.id ? engine.summary.heldContent.sha256 : undefined;
   for (;;) {
+    // only the final attempt counts
+    if (meter) {
+      meter.ms = undefined;
+      meter.printedBytes = undefined;
+    }
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
     const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
     if ("refused" in session) {
@@ -507,7 +516,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       }
       return { ok: false, output: reason, error: reason, held: classified.held.sha256, ...tries() };
     }
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified });
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified }, meter);
     seen(r);
     if (r.ok || engine.signal?.aborted || final) return await applyRepoRequests({ engine, scope, step, identity, logFile, profile: resolved.session.profile }, { ...r, ...tries() });
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
