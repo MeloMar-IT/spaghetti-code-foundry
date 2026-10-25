@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config } from "../config.js";
+import { deliveryAfterStep } from "../delivery/write.js";
 import { loadFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
 import { runAgentStep } from "../agents/run.js";
@@ -93,6 +94,8 @@ export interface Engine {
   actor?: Actor;
   /** Optional content classifier (tests only; the server sets none). It can only raise risk, quarantine or require approval. */
   classifier?: OutputClassifier;
+  /** The delivery settings, read again for each step. */
+  deliverySettings?: () => Config["delivery"];
 }
 
 export interface ApprovalDecision {
@@ -182,6 +185,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   if (decided?.length) engine.summary.decidedQuestions = decided;
   engine.save();
   engine.evidence?.stepEnded(rec);
+  if (!scope.prefix) deliveryAfterStep(engine);
   const identity = stepIdentity(step, scope.prefix, visit);
   const pushed = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
   engine.policy?.pushes(identity, pushed);

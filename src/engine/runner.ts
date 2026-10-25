@@ -77,6 +77,8 @@ interface CommonOptions {
   cancelledBy?: () => Actor | undefined;
   /** Optional classifier of untrusted content (tests only; the server sets none). It can only raise risk, quarantine or require approval. */
   outputClassifier?: OutputClassifier;
+  /** The delivery settings, read again for each step (the scheduler gives its live settings). Default: the run's config. */
+  deliverySettings?: () => Config["delivery"];
 }
 
 export interface RunOptions extends CommonOptions {
@@ -336,6 +338,7 @@ async function drive(
     claudeBin: opts.claudeBin,
     codexBin: opts.codexBin,
     toolProfile: summary.toolProfile,
+    deliverySettings: opts.deliverySettings ?? (() => config.delivery),
     signal: opts.signal,
     ...(dailyCap !== undefined ? { dailyCostUsd: () => spentToday(opts.runsDir) } : {}),
     log,

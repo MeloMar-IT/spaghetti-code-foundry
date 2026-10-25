@@ -1434,10 +1434,33 @@ active, and so does any other layer's pack.
   is still broken, the steps that need trust stay stopped. Fix or restore the policy first when you can; see
   [Restore the last-known-good copy](#restore-the-last-known-good-copy).
 
-### Delivery settings and the signing key
+### Delivery contract
 
-A delivery contract is written when a pull request is created, and it is signed with a key. The
-settings for it are in the **Delivery** card of Settings, or in `config.yaml`:
+A run that has a pull request in its own repository keeps a record of what was handed over with it: a
+chain of delivery contracts in the run folder, `delivery/`. A contract is written after a step, and only
+when something it states has changed.
+
+- **When.** After each top-level step, once `pull_request` is a pull request of the run's repository.
+  A new contract is written only when the commit, the branch, a dependency lock file, a CI workflow file
+  under `.github/workflows/`, the pull request or a requirement changed. More evidence alone does not
+  write one, and neither does a key that changed.
+- **What is in it.** The run, the pull request, the commit and branch, the lock files and workflows with
+  their hashes, the required checks, artifacts and provenance, and the evidence count and hash at that
+  moment. A signed contract also has a signature file.
+- **Files.** `contract-1.json`, `contract-2.json` and so on are never changed. Each one after the first
+  names the one before it (`supersedes`). `contract.json` and `contract.json.sig` hold a copy of the
+  latest one. Files are readable by the account only.
+- **Signed or unsigned.** With a signing key set (see below) a contract is signed; without one it is
+  unsigned. A key that is set but cannot be used (not in `delivery-keys`, unreadable, not Ed25519) writes
+  no contract at all, so an unsigned one never stands in for a signed one.
+- **Settings apply from the next step.** Required checks, artifacts and provenance are read again for each
+  step. A change makes a new contract at the next step that changes something.
+- **Failures do not stop the run.** If a contract cannot be written, the log gets one line such as
+  `delivery: the contract cannot be written`, and the run goes on. The run can then finish with a pull
+  request and no new contract. CI (see below) reports a missing or stale contract as a stop.
+- **Logs.** A written contract logs `delivery: contract <n> written (signed)` or `(unsigned)`.
+
+The settings for the contract are in the **Delivery** card of Settings, or in `config.yaml`:
 
 ```yaml
 delivery:
@@ -1459,8 +1482,8 @@ delivery:
   500 names; each name is 1 to 200 characters, has no control character and is given once. A repository
   is written as `owner/name` in lower case, and at most 50 repositories can have their own settings.
 - **Per-repository settings** are only in `config.yaml`; the Settings page does not show them.
-- **Nothing reads these settings yet.** The delivery contract that uses them comes in a later release, so
-  saving them changes no run today. The key folder is already protected by the sandbox rule above.
+- **Where the settings apply.** The settings are read at each step, so a saved change applies from the
+  next step that writes a contract. The key folder is protected by the sandbox rule below.
 
 **Set up the key.** Make the folder with owner-only access, then create the key in it:
 
