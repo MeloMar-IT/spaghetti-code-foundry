@@ -323,6 +323,57 @@ describe("overviewPanel", () => {
   });
 });
 
+describe("decided questions", () => {
+  const good = (over: Record<string, unknown> = {}) => ({
+    id: "0123456789abcdef", issue: 7, at: "2026-10-25T10:00:00.000Z", source: "planner", outcome: "went_on",
+    questions: [{ n: 2, title: "Which db?", text: "**Q2. Which db?**\nfull text", decision: "pg" }], ...over,
+  });
+  const RUN = { runId: "r1", flow: "f", status: "succeeded", history: [], decidedQuestions: [good()] };
+
+  it("keeps only well-formed rounds, newest first", () => {
+    const a = good({ id: "aaaaaaaaaaaaaaaa", issue: 1 });
+    const b = good({ id: "bbbbbbbbbbbbbbbb", issue: 2 });
+    const badQs = [{ n: 1, title: "t", text: "x", decision: "d" }];
+    const malformed = [
+      null, "x", good({ id: "nope" }), good({ issue: "7" }), good({ issue: 0 }), good({ at: "never" }), good({ source: "me" }), good({ outcome: "done" }),
+      good({ questions: "x" }), good({ questions: [{ ...badQs[0], n: -1 }] }), good({ questions: [{ ...badQs[0], n: 1.5 }] }), good({ questions: [{ ...badQs[0], title: 5 }] }),
+    ];
+    expect(mod.decidedItems({ decidedQuestions: [a, ...malformed, b] })).toEqual([b, a]);
+    expect(mod.decidedItems({})).toEqual([]);
+    expect(mod.decidedItems({ decidedQuestions: "x" })).toEqual([]);
+  });
+  it("shows the card to an administrator, with the full text in details", () => {
+    const p = mod.overviewPanel({ admin: true });
+    const node = p.build();
+    p.update(RUN);
+    expect(node.textContent).toContain("Decided by the Foundry");
+    expect(node.textContent).toContain("#7 · ");
+    expect(node.textContent).toContain("decided everything, went on");
+    expect(node.textContent).toContain("Q2: Which db? — pg");
+    const d = node.all("details")[0]!;
+    expect(d.textContent).toContain("full text");
+  });
+  it("shows text as text", () => {
+    const p = mod.overviewPanel({ admin: true });
+    const node = p.build();
+    p.update({ ...RUN, decidedQuestions: [good({ questions: [{ n: 1, title: "<img src=x onerror=1>", text: "<b>x</b>", decision: "ok" }] })] });
+    expect(node.textContent).toContain("<img src=x onerror=1>");
+    expect(node.all("img")).toHaveLength(0);
+    expect(node.all("b").map((b: FakeElement) => b.textContent)).not.toContain("x");
+  });
+  it("shows nothing to a user, and hides the card without rounds", () => {
+    const user = mod.overviewPanel({ admin: false });
+    const u = user.build();
+    user.update(RUN);
+    expect(u.textContent).not.toContain("Decided by the Foundry");
+    const admin = mod.overviewPanel({ admin: true });
+    const a = admin.build();
+    admin.update({ ...RUN, decidedQuestions: [] });
+    expect(a.textContent).not.toContain("Decided by the Foundry");
+    expect((a.all("div") as FakeElement[]).find((d) => d.attrs["data-part"] === "decided")!.hidden).toBe(true);
+  });
+});
+
 describe("changesPanel", () => {
   const view = (d: any, o?: any) => { const n = el(); n.append(d.patch ? "diff" : (o?.none ?? "none")); return n; };
   it("loads once, not on updates, again on Refresh, and when the run finishes", async () => {

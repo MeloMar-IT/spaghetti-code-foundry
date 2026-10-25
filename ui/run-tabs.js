@@ -78,6 +78,34 @@ export const timeText = (at) => {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
 };
 
+const OUTCOME_TEXT = { went_on: "decided everything, went on", asked: "decided some, asked the rest", gave_up: "gave up, asked the owner" };
+const HEX_ID = /^[0-9a-f]{16}$/;
+
+/** The well-formed rounds of `s.decidedQuestions` (the record of tools/decide-questions.mjs), newest first. */
+export function decidedItems(s) {
+  const rounds = s?.decidedQuestions;
+  if (!Array.isArray(rounds)) return [];
+  const whole = (n) => Number.isSafeInteger(n) && n >= 0;
+  const ok = (r) => !!r && typeof r === "object"
+    && typeof r.id === "string" && HEX_ID.test(r.id)
+    && Number.isSafeInteger(r.issue) && r.issue > 0
+    && typeof r.at === "string" && !Number.isNaN(new Date(r.at).getTime())
+    && (r.source === "planner" || r.source === "epic")
+    && Object.hasOwn(OUTCOME_TEXT, r.outcome)
+    && Array.isArray(r.questions)
+    && r.questions.every((q) => !!q && typeof q === "object" && whole(q.n)
+      && typeof q.title === "string" && typeof q.text === "string" && typeof q.decision === "string");
+  return rounds.filter(ok).reverse();
+}
+
+function roundNode(r) {
+  return h("div", { class: "mt-8" },
+    h("p", { class: "muted flush" }, `#${r.issue} · ${timeText(r.at)} · ${OUTCOME_TEXT[r.outcome]}`),
+    r.questions.length ? h("ul", { class: "flush" }, r.questions.map((q) => h("li", {},
+      h("span", { class: "pre-wrap" }, `Q${q.n}: ${q.title} — ${q.decision}`),
+      h("details", {}, h("summary", {}, "Full question"), h("pre", { class: "mono pre-wrap wrap-anywhere" }, q.text))))) : null);
+}
+
 function evidenceNode(it) {
   if (it.kind === "question") return h("li", {}, h("b", {}, "Questions"), h("pre", { class: "mono pre-wrap wrap-anywhere", ...aiProps("questions") }, it.text));
   if (it.kind === "answer") return h("li", {}, h("b", {}, "Answer"), timeText(it.at) ? h("span", { class: "muted" }, ` ${timeText(it.at)}`) : null, h("p", { class: "flush pre-wrap" }, it.text));
@@ -181,14 +209,15 @@ export function overviewPanel({ admin = false, extra = null } = {}) {
   const card = h("div", { class: "card mb-16" });
   const count = h("p", { class: "muted" });
   const meta = h("dl", { class: "meta" });
-  const keys = { card: null, count: null, meta: null };
+  const decided = admin ? h("div", { class: "card mb-16", "data-part": "decided" }) : null;
+  const keys = { card: null, decided: null, count: null, meta: null };
   const part = (name, key, box, nodes) => {
     if (keys[name] === key) return;
     keys[name] = key;
     mount(box, [nodes].flat(Infinity));
   };
   return {
-    build: () => h("div", {}, card, count, meta, extra),
+    build: () => h("div", {}, card, decided, count, meta, extra),
     update(raw) {
       const s = withQuestions(raw) ?? {};
       const task = s.task?.trim() ? s.task : "";
@@ -198,6 +227,11 @@ export function overviewPanel({ admin = false, extra = null } = {}) {
         questions ? h("pre", { class: "mono pre-wrap wrap-anywhere", ...aiProps("questions") }, h("b", {}, "Questions"), "\n", questions) : null,
       ]);
       card.hidden = !task && !questions;
+      if (admin) {
+        const items = decidedItems(raw);
+        part("decided", JSON.stringify(items), decided, items.length ? [h("b", {}, "Decided by the Foundry"), items.map(roundNode)] : []);
+        decided.hidden = !items.length;
+      }
       const text = stepCountText(s);
       part("count", text, count, text);
       count.hidden = !text;

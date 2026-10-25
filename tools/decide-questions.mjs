@@ -1,12 +1,20 @@
 #!/usr/bin/env node
 // Splits a question comment into the questions the Foundry can decide itself (a technical question that has a
-// recommendation) and the ones it must ask. Library only: pure functions, no I/O, no environment.
+// recommendation) and the ones it must ask. Library only, no environment. The question functions are pure; the record
+// functions at the end (decideRound, commitPending, abandonPending) read and write `decided.json` in a run folder.
 // Pass only the question text, not the whole comment: a recommendation runs to the next question or the end.
 // When the input is odd in any way, nothing is decided and every question is asked.
 // DECIDED_HEADING mirrors the one in src/next-step.ts and ui/run-tabs.js (tests keep them equal).
 
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+
 export const DECIDED_HEADING = "**Decided by the Foundry**";
-export const LIMITS = Object.freeze({ decided: 20, title: 300, text: 4000, decision: 1000 });
+// LIMITS is mirrored in src/engine/questions.ts (a test keeps them equal).
+export const LIMITS = Object.freeze({ decided: 20, title: 300, text: 4000, decision: 1000, rounds: 500, bytes: 1048576 });
+export const RECORD_FILE = "decided.json";
+export const PENDING_FILE = "decided-pending.json";
 
 const HEAD = /^\*\*Q(\d+)\.(.*)$/;
 const KIND_MARK = /\*\*\s*kind\s*(?::\s*\*\*|\*\*\s*:?)/gi;
@@ -115,4 +123,213 @@ export function decideQuestions(body) {
     ...decided.map((d) => `${quote(d.text)}\n\n**Decision:** ${d.decision}`),
   ].filter(Boolean).join("\n\n");
   return { body: out, decided, left: countOpen(out) };
+}
+
+const CONTROL = /[\u0000-\u001f\u007f]/;
+const ID_RE = /^[0-9a-f]{16}$/;
+const SOURCES = ["planner", "epic"];
+const OUTCOMES = ["went_on", "asked", "gave_up"];
+
+/** A title as the loop guard compares it: case, accents and punctuation do not matter. */
+export function normaliseTitle(t) {
+  return String(t ?? "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/** The ID of a round: a hash of the issue, source, outcome and the questions as given. */
+export function roundId(issue, source, outcome, questions) {
+  const body = JSON.stringify([issue, source, outcome, questions.map((q) => [q.n, q.title, q.text, q.decision])]);
+  return createHash("sha256").update(body).digest("hex").slice(0, 16);
+}
+
+function questionsProblem(qs, where) {
+  if (!Array.isArray(qs)) return `${where}: questions is not a list`;
+  if (qs.length > LIMITS.decided) return `${where}: more than ${LIMITS.decided} questions`;
+  for (const [i, q] of qs.entries()) {
+    const w = `${where}, question ${i + 1}`;
+    if (!q || typeof q !== "object") return `${w}: it is not an object`;
+    if (!Number.isSafeInteger(q.n) || q.n < 0) return `${w}: n is not a whole number`;
+    if (typeof q.title !== "string" || q.title.length > LIMITS.title) return `${w}: the title is not a string of up to ${LIMITS.title} characters`;
+    if (CONTROL.test(q.title)) return `${w}: the title has control characters`;
+    if (typeof q.text !== "string" || q.text.length > LIMITS.text) return `${w}: the text is not a string of up to ${LIMITS.text} characters`;
+    if (typeof q.decision !== "string" || q.decision.length > LIMITS.decision) return `${w}: the decision is not a string of up to ${LIMITS.decision} characters`;
+  }
+  return undefined;
+}
+
+/** The first problem of a round, as the input of decideRound (`stored` false) or as it sits in the record (`stored` true). */
+function roundProblem(r, where, stored) {
+  if (!r || typeof r !== "object") return `${where}: it is not an object`;
+  if (!Number.isSafeInteger(r.issue) || r.issue <= 0) return `${where}: issue is not a whole number above 0`;
+  if (!SOURCES.includes(r.source)) return `${where}: unknown source`;
+  if (!OUTCOMES.includes(r.outcome)) return `${where}: unknown outcome`;
+  const bad = questionsProblem(r.questions, where);
+  if (bad) return bad;
+  if (r.outcome === "went_on" && !r.questions.length) return `${where}: a round that went on has no questions`;
+  if (stored) {
+    if (r.outcome === "gave_up" && r.questions.length) return `${where}: a round that gave up must not hold questions`;
+    if (typeof r.id !== "string" || !ID_RE.test(r.id)) return `${where}: id is not 16 hex characters`;
+    if (typeof r.at !== "string" || r.at.length > 40 || Number.isNaN(new Date(r.at).getTime())) return `${where}: at is not a time`;
+  }
+  return undefined;
+}
+
+function recordProblem(rec) {
+  if (!rec || typeof rec !== "object" || Array.isArray(rec)) return "it is not an object";
+  if (rec.version !== 1) return "version is not 1";
+  if (!Array.isArray(rec.rounds)) return "rounds is not a list";
+  if (rec.rounds.length > LIMITS.rounds) return `more than ${LIMITS.rounds} rounds`;
+  for (const [i, r] of rec.rounds.entries()) {
+    const bad = roundProblem(r, `round ${i + 1}`, true);
+    if (bad) return bad;
+  }
+  return undefined;
+}
+
+/** The text of a plain file, null when missing; throws for a link, a non-file or a file over the byte limit. */
+function readSmall(path) {
+  let fd;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (e) {
+    if (e?.code === "ENOENT") return null;
+    throw new Error(`${path} cannot be read (${e?.code ?? "error"})`);
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw new Error(`${path} is not a plain file`);
+    if (st.size > LIMITS.bytes) throw new Error(`${path} is longer than ${LIMITS.bytes} bytes`);
+    const buf = Buffer.alloc(st.size);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Writes a file through a temporary name that is random and created exclusively, so no link at a guessed name is followed. */
+function writeAtomic(file, text) {
+  const tmp = `${file}.${randomBytes(8).toString("hex")}.tmp`;
+  try {
+    writeFileSync(tmp, text, { flag: "wx" });
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+}
+
+const encode = (rec) => JSON.stringify(rec, null, 2);
+
+/** The record of a run folder; `{ version: 1, rounds: [] }` when there is no file. Throws when the file is not valid. */
+export function readRecord(runDir) {
+  let text;
+  try {
+    text = readSmall(join(runDir, RECORD_FILE));
+  } catch (e) {
+    throw new Error(`${RECORD_FILE} is not valid: ${e.message}`);
+  }
+  if (text === null) return { version: 1, rounds: [] };
+  let rec;
+  try {
+    rec = JSON.parse(text);
+  } catch {
+    throw new Error(`${RECORD_FILE} is not valid: it is not JSON`);
+  }
+  const bad = recordProblem(rec);
+  if (bad) throw new Error(`${RECORD_FILE} is not valid: ${bad}`);
+  return rec;
+}
+
+/** The pending file, or undefined when there is none or it is not valid. */
+function readPending(runDir) {
+  try {
+    const text = readSmall(join(runDir, PENDING_FILE));
+    if (!text) return undefined;
+    const p = JSON.parse(text);
+    if (p?.version !== 1 || typeof p.id !== "string" || !p.round || p.round.id !== p.id) return undefined;
+    return roundProblem(p.round, "pending", true) ? undefined : p;
+  } catch {
+    return undefined;
+  }
+}
+
+function checkRoom(rec, round) {
+  if (rec.rounds.length >= LIMITS.rounds) throw new Error(`decided: the record already holds ${LIMITS.rounds} rounds`);
+  if (Buffer.byteLength(encode({ version: 1, rounds: [...rec.rounds, round] })) > LIMITS.bytes) throw new Error(`decided: the record would be longer than ${LIMITS.bytes} bytes`);
+}
+
+/**
+ * Step one of the two-step commit: writes only the pending file (atomically) and returns the round ID. Post the comment,
+ * then call commitPending(runDir, id). `round` = { issue, source, outcome, questions }. A round over a limit throws and
+ * writes nothing. A `gave_up` round is stored without its questions (they were never posted); its ID still covers them.
+ * A retry of the same round keeps the same ID and `at`, also after the round was committed.
+ */
+export function decideRound(runDir, round, now = new Date()) {
+  const bad = roundProblem(round, "round", false);
+  if (bad) throw new Error(`decided: ${bad}`);
+  const { issue, source, outcome, questions } = round;
+  const id = roundId(issue, source, outcome, questions);
+  const rec = readRecord(runDir);
+  const done = rec.rounds.find((r) => r.id === id);
+  const pending = readPending(runDir);
+  const at = done?.at ?? (pending?.id === id ? pending.round.at : now.toISOString());
+  const kept = outcome === "gave_up" ? [] : questions.map((q) => ({ n: q.n, title: q.title, text: q.text, decision: q.decision }));
+  const stored = { id, issue, at, source, outcome, questions: kept };
+  if (!done) checkRoom(rec, stored);
+  writeAtomic(join(runDir, PENDING_FILE), JSON.stringify({ version: 1, id, issue, round: stored }));
+  return id;
+}
+
+/**
+ * Step two: appends the pending round to the record, once. Returns true when it appended; false (and appends nothing) when
+ * there is no pending file, its ID is not `id`, or the record already holds `id`. Throws on a write failure, a corrupt
+ * record or a full record.
+ */
+export function commitPending(runDir, id) {
+  const pending = readPending(runDir);
+  if (!pending || pending.id !== id) return false;
+  const rec = readRecord(runDir);
+  const file = join(runDir, PENDING_FILE);
+  if (rec.rounds.some((r) => r.id === id)) {
+    rmSync(file, { force: true });
+    return false;
+  }
+  checkRoom(rec, pending.round);
+  writeAtomic(join(runDir, RECORD_FILE), encode({ version: 1, rounds: [...rec.rounds, pending.round] }));
+  rmSync(file, { force: true });
+  return true;
+}
+
+/** Removes a pending file that does not belong to the current body. Returns true when there was one. */
+export function abandonPending(runDir) {
+  const file = join(runDir, PENDING_FILE);
+  try {
+    lstatSync(file);
+  } catch {
+    return false;
+  }
+  rmSync(file, { force: true });
+  return true;
+}
+
+/**
+ * The loop guard. `decided` is the result of decideQuestions. Returns "gave_up" when a decided title was decided in an
+ * earlier round of this issue, or when a planner round that decides everything follows two planner rounds that went on
+ * (an `asked` or `gave_up` round, from any source, starts the streak again). Otherwise "went_on" or "asked".
+ */
+export function checkRound(record, issue, source, decided) {
+  const prior = (record?.rounds ?? []).filter((r) => r.issue === issue);
+  const seen = new Set(prior.flatMap((r) => r.questions.map((q) => normaliseTitle(q.title))).filter(Boolean));
+  const list = decided?.decided ?? [];
+  if (list.some((d) => { const t = normaliseTitle(d.title); return t && seen.has(t); })) return "gave_up";
+  const all = list.length > 0 && decided.left === 0;
+  if (source === "planner" && all) {
+    let streak = 0;
+    for (const r of prior.reverse()) {
+      if (r.outcome !== "went_on") break;
+      if (r.source === "planner") streak++;
+    }
+    if (streak >= 2) return "gave_up";
+  }
+  return all ? "went_on" : "asked";
 }
