@@ -9,7 +9,7 @@ const kindOf = (k: string) => readQuestions(`**Q1. A?**\n${k}\nx`).questions[0].
 describe("decide-questions", () => {
   it("mirrors the heading and the limits", () => {
     expect(DECIDED_HEADING).toBe(TS_HEADING);
-    expect(LIMITS).toEqual({ decided: 20, title: 300, text: 4000, decision: 1000 });
+    expect(LIMITS).toEqual({ decided: 20, title: 300, text: 4000, decision: 1000, rounds: 500, bytes: 1048576 });
   });
 
   it("reads the kind in any spelling, and defaults to product", () => {

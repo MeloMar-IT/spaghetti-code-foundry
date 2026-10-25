@@ -80,6 +80,8 @@ describe("run outputs", () => {
   it("puts what a step wrote into the summary of the run", async () => {
     const repo = join(dir, "repo");
     mkdirSync(repo);
+    const round = { id: "0123456789abcdef", issue: 7, at: "2026-10-25T10:00:00.000Z", source: "planner", outcome: "went_on", questions: [{ n: 1, title: "Which db?", text: "t", decision: "pg" }] };
+    writeFileSync(join(dir, "d.json"), JSON.stringify({ version: 1, rounds: [round] }));
     const flow = parseFlow(
       [
         "name: outputs",
@@ -87,7 +89,7 @@ describe("run outputs", () => {
         "steps:",
         "  - id: a",
         "    type: shell",
-        `    run: 'printf "{\\"release_url\\": \\"https://github.com/acme/app/releases/tag/v1\\"}" > "{{run.dir}}/outputs.json"'`,
+        `    run: 'printf "{\\"release_url\\": \\"https://github.com/acme/app/releases/tag/v1\\"}" > "{{run.dir}}/outputs.json" && cp "${join(dir, "d.json")}" "{{run.dir}}/decided.json"'`,
         "  - {id: b, type: shell, run: 'true'}",
         "",
       ].join("\n"),
@@ -98,5 +100,7 @@ describe("run outputs", () => {
     expect(s.status, s.reason).toBe("succeeded");
     expect(s.outputs).toEqual({ release_url: "https://github.com/acme/app/releases/tag/v1" });
     expect(JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8")).outputs).toEqual(s.outputs);
+    expect(s.decidedQuestions).toEqual([round]);
+    expect(JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8")).decidedQuestions).toEqual([round]);
   });
 });

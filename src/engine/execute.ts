@@ -14,6 +14,7 @@ import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
 import { claimAfterResolve } from "./release-claim.js";
+import { readDecidedQuestions } from "./questions.js";
 import { readRunOutputs } from "./run-outputs.js";
 import { shortEnv,shortEnvRun } from "./short-env.js";
 import type { RunSummary, StepRecord } from "./state.js";
@@ -164,6 +165,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   }
   const outputs = readRunOutputs(engine.summary.runDir, engine.log);
   if (outputs) engine.summary.outputs = { ...engine.summary.outputs, ...outputs };
+  const decided = readDecidedQuestions(engine.summary.runDir, engine.log);
+  if (decided?.length) engine.summary.decidedQuestions = decided;
   engine.save();
   engine.evidence?.stepEnded(rec);
   const identity = stepIdentity(step, scope.prefix, visit);
