@@ -105,6 +105,8 @@ Usage:
   scf policy break-glass --end                 End the break-glass
   scf evidence verify <run-id> [--json]          Check the evidence of a run: manifest, chain of events, named files
   scf delivery validate --contract f --signature f --public-key k …   Check a delivery contract against the checked-out commit (for CI)
+  scf delivery verify <run-id> [--json] [--public-key f]   Check the delivery contracts of a run against the trusted key (offline)
+  scf delivery public-key                        Print the configured signing key as an allowed_signers line
   scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
   scf login | logout | whoami                    Sign the command line in to a running Foundry
   scf <area> <action> … [--json]                 Everything the web interface can do, as commands. Areas: runs, turn,
@@ -210,7 +212,7 @@ function report(s: RunSummary): number {
 async function main(argv: string[]): Promise<number> {
   dropEmptyHomeVars();
   mirrorEnvPrefixes();
-  if (argv[0] === "delivery") {
+  if (argv[0] === "delivery" && argv[1] === "validate") {
     const { deliveryCommand } = await import("./delivery/cli.js");
     return deliveryCommand(argv.slice(1), { out: (s) => void process.stdout.write(s), err: (s) => void process.stderr.write(s) });
   }
@@ -231,6 +233,7 @@ async function main(argv: string[]): Promise<number> {
       ref: { type: "string" },
       var: { type: "string", short: "v", multiple: true },
       "runs-dir": { type: "string" },
+      "public-key": { type: "string" },
       "claude-bin": { type: "string" },
       "codex-bin": { type: "string" },
       "gh-bin": { type: "string" },
@@ -291,7 +294,8 @@ async function main(argv: string[]): Promise<number> {
   // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, `score …` and `effect …`
   // write only into skill-evaluations/ and skill-effects/, and `release publish …` only into skill-releases/, all through claimHomeWrite: they run without choosing or moving the data folder.
   // `scf components` only reads; `components record` writes only promotions/versions.json, through withAuthLock (claimHomeWrite).
-  if (cmd !== "components" && !(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
+  // `scf delivery verify` and `public-key` only read: no migration, no config load before the command, no path in a message.
+  if (cmd !== "components" && cmd !== "delivery" &&!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
@@ -649,6 +653,15 @@ async function main(argv: string[]): Promise<number> {
     case "evidence": {
       const { evidenceCommand } = await import("./evidence/cli.js");
       return evidenceCommand(positionals.slice(1), { runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")), json: values.json }, (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "delivery": {
+      const { deliveryCommand } = await import("./delivery/run-verify.js");
+      return deliveryCommand(
+        positionals.slice(1),
+        { runsDir: resolve(values["runs-dir"] ?? join(FACTORY_HOME, "runs")), json: values.json, publicKeyFile: values["public-key"], config: () => loadConfig() },
+        (line) => void process.stdout.write(line + "\n"),
+      );
     }
 
     case "monitor": {

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, type KeyObject } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import type { Config } from "../config.js";
@@ -25,7 +25,7 @@ export const DELIVERY_DIR = "delivery";
 export { DEPENDENCY_LOCK_NAMES, readCommitFacts, CommitFactsError, type CommitFacts, type CommitFactsOptions } from "./git-facts.js";
 
 export const MAX_EVIDENCE_BYTES = 256 * 1024 * 1024;
-const MAX_CONTRACT_BYTES = 1024 * 1024;
+export const MAX_CONTRACT_BYTES = 1024 * 1024;
 const MAX_KEY_BYTES = 16 * 1024;
 
 const PR_URL = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9_.-]{0,99})\/([A-Za-z0-9_.-]{1,100})\/pull\/([1-9][0-9]{0,9})$/;
@@ -95,10 +95,15 @@ export interface WrittenContract {
   digest: string;
 }
 
-class ReadProblem extends Error {}
+export class ReadProblem extends Error {}
 
-/** The text of a plain file of at most `max` bytes; undefined when there is none. Never follows a link and never waits for a pipe. Throws ReadProblem. */
+/** The text of a plain file of at most `max` bytes (invalid UTF-8 is replaced); undefined when there is none. Throws ReadProblem. */
 function readBounded(path: string, max: number): string | undefined {
+  return readBoundedBytes(path, max)?.toString("utf8");
+}
+
+/** The bytes of a plain file of at most `max` bytes; undefined when there is none. Never follows a link and never waits for a pipe. Throws ReadProblem. */
+export function readBoundedBytes(path: string, max: number): Buffer | undefined {
   let fd: number;
   try {
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
@@ -117,7 +122,7 @@ function readBounded(path: string, max: number): string | undefined {
       got += n;
     }
     if (got > max) throw new ReadProblem();
-    return buf.subarray(0, got).toString("utf8");
+    return buf.subarray(0, got);
   } catch (e) {
     throw e instanceof ReadProblem ? e : new ReadProblem();
   } finally {
@@ -154,6 +159,28 @@ export function writeContract(input: WriteContractInput): WrittenContract | unde
     if (e instanceof DeliveryWriteError || e instanceof CommitFactsError) throw e;
     throw new DeliveryWriteError("write");
   }
+}
+
+/** The signing key at `signingKeyPath`, which must really be inside `<dataDir>/delivery-keys`. Throws DeliveryWriteError("keyPlace" | "key"). */
+export function readConfiguredSigningKey(signingKeyPath: string, dataDir: string): KeyObject {
+  let real: string;
+  try {
+    const keys = realpathSync(join(dataDir, DELIVERY_KEYS_DIR));
+    real = realpathSync(signingKeyPath);
+    if (!real.startsWith(keys + sep)) throw new Error("outside");
+  } catch {
+    throw new DeliveryWriteError("keyPlace");
+  }
+  let keyText: string | undefined;
+  try {
+    keyText = readBounded(real, MAX_KEY_BYTES);
+  } catch {
+    keyText = undefined;
+  }
+  if (keyText === undefined) throw new DeliveryWriteError("key");
+  const key = readSigningKey(keyText);
+  if (!key.ok) throw new DeliveryWriteError("key");
+  return key.key;
 }
 
 function write(input: WriteContractInput): WrittenContract | undefined {
@@ -255,31 +282,11 @@ function write(input: WriteContractInput): WrittenContract | undefined {
   }
 
   // 7. the key
-  let key: ReturnType<typeof readSigningKey> | undefined;
-  if (delivery.signing_key_path !== undefined) {
-    let real: string;
-    try {
-      const keys = realpathSync(join(input.dataDir, DELIVERY_KEYS_DIR));
-      real = realpathSync(delivery.signing_key_path);
-      if (!real.startsWith(keys + sep)) return fail("keyPlace");
-    } catch (e) {
-      if (e instanceof DeliveryWriteError) throw e;
-      return fail("keyPlace");
-    }
-    let keyText: string | undefined;
-    try {
-      keyText = readBounded(real, MAX_KEY_BYTES);
-    } catch {
-      keyText = undefined;
-    }
-    if (keyText === undefined) return fail("key");
-    key = readSigningKey(keyText);
-    if (!key.ok) return fail("key");
-  }
+  const key = delivery.signing_key_path === undefined ? undefined : readConfiguredSigningKey(delivery.signing_key_path, input.dataDir);
 
   // 8. sign
   const text = deliveryContractText(next);
-  const sig = key?.ok ? signDeliveryContract(text, key.key) : undefined;
+  const sig = key ? signDeliveryContract(text, key) : undefined;
 
   // 9. the numbered files, written once
   // a file is owned from the moment it is created, so a failed or partial write is removed too
