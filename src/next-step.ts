@@ -175,9 +175,19 @@ const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 const lowerFirst = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 const upperFirst = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
-/** Number of questions (`**Q1.` …) in a Foundry comment. */
+/** The line a question comment's decided section starts with; nothing from it on is a question. Mirrored in tools/decide-questions.mjs and ui/run-tabs.js. */
+export const DECIDED_HEADING = "**Decided by the Foundry**";
+
+/** The text before the first line that equals DECIDED_HEADING (trimmed); all of it when there is none. */
+export function beforeDecided(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const i = lines.findIndex((l) => l.trim() === DECIDED_HEADING);
+  return i < 0 ? text : lines.slice(0, i).join("\n");
+}
+
+/** Number of questions (`**Q1.` …) in a Foundry comment, not counting the decided section. */
 export function countQuestions(body: string | undefined): number {
-  return new Set([...(body ?? "").matchAll(/\*\*Q(\d+)\./g)].map((m) => m[1])).size;
+  return new Set([...beforeDecided(body ?? "").matchAll(/\*\*Q(\d+)\./g)].map((m) => m[1])).size;
 }
 
 /** The wait for the reset in a usage-limit message, e.g. "3:50pm (Europe/Amsterdam)". */
@@ -656,7 +666,7 @@ export function firstLine(n: Pick<NextStep, "who" | "action" | "why">): string {
 export function commentFirst(kind: CommentKind): string { return firstLine(commentRecord(kind)); }
 
 /** Comments that report something (plan, result, split, daily report): the fixed first line of each. */
-export const REPORT_KINDS = ["info", "merge_pr", "open_pr", "start_coding", "ships", "look", "merge_release", "draft", "start_parts", "fixed", "merge_back"] as const;
+export const REPORT_KINDS = ["info", "merge_pr", "open_pr", "start_coding", "ships", "look", "merge_release", "draft", "start_parts", "fixed", "merge_back", "decided"] as const;
 export type ReportKind = (typeof REPORT_KINDS)[number];
 
 const you = (action: string) => ({ who: "You" as const, action, why: "" });
@@ -673,6 +683,7 @@ const REPORTS: Record<ReportKind, Pick<NextStep, "who" | "action" | "why">> = {
   start_parts: you("Start the new issues when you want them built"),
   fixed: foundry("The fix is on main and in develop"),
   merge_back: you("Merge main into develop, because the fix is not there yet"),
+  decided: foundry("The Foundry decided these technical questions itself"),
 };
 
 /** firstLine() of the fixed record of a report kind. */

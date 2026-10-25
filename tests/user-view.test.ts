@@ -166,6 +166,9 @@ describe("userRun", () => {
     const u = userRun(base);
     expect(u.questions).toBe("Q1. Which format in (folder)?");
     expect(JSON.stringify(u)).not.toContain("SECRET");
+    const mixed = "**Q1. Ship it?**\n\n**Decided by the Foundry**\n\n> **Q2. Which store?**\n> (a) file\n\n**Decision:** file";
+    const m = userRun({ ...base, history: [{ id: "ask_for_info", type: "shell", visit: 1, ok: true, output: mixed, startedAt: "x", durationMs: 1 }] } as unknown as RunSummary);
+    expect(m.questions).toBe("**Q1. Ship it?**");
     expect(userRun({ ...base, reason: 'stopped at step "other"' } as unknown as RunSummary).questions).toBeUndefined();
     expect(userRun({ ...base, status: "failed" } as unknown as RunSummary).questions).toBeUndefined();
   });

@@ -10,6 +10,9 @@ export const NO_STEPS_OLD = "No steps recorded.";
 export const NO_EVIDENCE = "No evidence recorded yet.";
 const QUESTION_STEPS = ["send_back", "ask_for_info"];
 const MAX_QUESTIONS = 4000;
+/** Mirrors DECIDED_HEADING in src/next-step.ts: nothing from this line on is an open question. */
+export const DECIDED_HEADING = "**Decided by the Foundry**";
+const beforeDecided = (t) => { const l = t.split(/\r?\n/); const i = l.findIndex((x) => x.trim() === DECIDED_HEADING); return i < 0 ? t : l.slice(0, i).join("\n"); };
 
 export const secs = (ms) => (ms < 60_000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`);
 const firstOf = (t) => String(t ?? "").split(/\r?\n/)[0].trim();
@@ -35,7 +38,7 @@ export function withQuestions(s) {
   }
   if (!name) return s;
   const step = [...(s.history ?? [])].reverse().find((r) => last(r) === name);
-  const text = typeof step?.output === "string" ? step.output.trim() : "";
+  const text = typeof step?.output === "string" ? beforeDecided(step.output).trim() : "";
   return text ? { ...s, questions: text.slice(0, MAX_QUESTIONS) } : s;
 }
 

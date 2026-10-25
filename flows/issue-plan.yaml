@@ -97,6 +97,14 @@ steps:
         issues (title + 2-3 lines each) that can each be built and tested on their own, in order.
       - NEEDS_INFO: a decision only the owner can make, or missing requirements. Ask specific questions
         with the options you see and your recommendation. Do not guess on things that matter.
+        Write each question in this form:
+          **Q<n>. <question>**
+          **Kind:** technical | product | policy | owner_action
+          <context and the options you see>
+          **Recommendation:** <option> — <why>
+        Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.
+        policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).
+        Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
       - READY: write the plan with these sections:
         ## Goal — what will work when this is done, in one or two sentences.
         ## Acceptance criteria — a checklist that can be verified.
@@ -181,6 +189,15 @@ steps:
       rejected, with one line why.
       Write the skill line again for the final plan, in the same form: SKILL_REQUEST: {"version":1,"skills":[…]}
       It replaces the draft's line; do not keep skills the final plan no longer needs.
+      If you answer NEEDS_INFO, write the questions in the same form:
+        Write each question in this form:
+          **Q<n>. <question>**
+          **Kind:** technical | product | policy | owner_action
+          <context and the options you see>
+          **Recommendation:** <option> — <why>
+        Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.
+        policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).
+        Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
 
       {{steps.pull_ticket.output}}
 
