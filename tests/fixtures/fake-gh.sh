@@ -33,6 +33,9 @@ if [ -n "$FAKE_GH_HOLD" ]; then case "$*" in *"$FAKE_GH_HOLD_ON"*) while [ -e "$
 if [ -n "$FAKE_GH_HOLD2" ]; then case "$*" in *"$FAKE_GH_HOLD2_ON"*) while [ -e "$FAKE_GH_HOLD2" ]; do sleep 0.05; done ;; esac; fi
 # $FAKE_GH_FAIL="issue list": that call prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
+# "issue view <n> --repo R --json number,title,state,body" answers {number,title,state (upper-case),body} from $FAKE_GH_ISSUES (or the --repo list), or exits 1
+# with "Could not resolve to an Issue". "issue edit <n> --body-file -" is logged as before and also stored in $FAKE_GH_LOG.issue-bodies.json
+# ({"<repo>#<n>": body}, <repo> is the --repo value), so a later view shows the new body.
 # $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
 # $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" answers with that entry.
@@ -230,7 +233,12 @@ case "$1 $2" in
       *) echo "repo: owner/repo" ;;
     esac ;;
   "issue view")
-    case "$*" in *"-q .title"*) echo "Add a feature" ;;
+    case "$*" in
+      *"--json number,title,state,body"*) node -e 'const fs=require("fs");const [n,repo,f]=process.argv.slice(1);const l=JSON.parse(process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===Number(n));
+if(!i){console.error("GraphQL: Could not resolve to an Issue with the number of "+n+". (repository.issue)");process.exit(1)}
+const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const k=repo+"#"+n;
+console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||"OPEN").toUpperCase(),body:k in m?m[k]:(i.body||"")}))' "$3" "$fake_repo" "$FAKE_GH_LOG.issue-bodies.json" || exit 1 ;;
+      *"-q .title"*) echo "Add a feature" ;;
       *"--json labels --jq"*) [ -n "$FAKE_GH_FAIL_LABELS" ] && { echo boom >&2; exit 1; }; printf '%s\n' ${FAKE_GH_ISSUE_LABELS:-} ;;
       *"--json state") node -e 'const n=Number(process.argv[1]);const l=JSON.parse(process.env.FAKE_GH_FRESH||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===n)||{state:"OPEN"};console.log(JSON.stringify({state:i.state||"OPEN"}))' "$3" ;;
       *"--json state,labels"*) node -e 'const n=Number(process.argv[1]);const l=JSON.parse(process.env.FAKE_GH_FRESH||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===n)||{state:"OPEN",labels:[]};console.log(JSON.stringify({state:i.state||"OPEN",labels:i.labels||[]}))' "$3" ;;
@@ -271,7 +279,8 @@ case "$1 $2" in
                    lim=""; hd=""; prev=""; for a in "$@"; do [ "$prev" = "--limit" ] && lim="$a"; [ "$prev" = "--head" ] && hd="$a"; prev="$a"; done
                    node -e 'const fs=require("fs");let l=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const [lim,hd]=[process.argv[2],process.argv[3]];if(hd)l=l.filter(x=>x.headRefName===hd);if(lim)l=l.slice(0,Number(lim));process.stdout.write(JSON.stringify(l))' "$FAKE_GH_LOG.prs.json" "$lim" "$hd"
                  else echo '[]'; fi ;;
-  "issue edit") case "$*" in *--body-file*) echo "--- issue body edit: $*" >> "$FAKE_GH_LOG"; cat >> "$FAKE_GH_LOG" ;; esac
+  "issue edit") case "$*" in *--body-file*) echo "--- issue body edit: $*" >> "$FAKE_GH_LOG"; cat > "$FAKE_GH_LOG.editbody"; cat "$FAKE_GH_LOG.editbody" >> "$FAKE_GH_LOG"
+      node -e 'const fs=require("fs");const [n,repo,f,b]=process.argv.slice(1);const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};m[repo+"#"+n]=fs.readFileSync(b,"utf8");fs.writeFileSync(f,JSON.stringify(m))' "$3" "$fake_repo" "$FAKE_GH_LOG.issue-bodies.json" "$FAKE_GH_LOG.editbody" ;; esac
     # --add-label / --remove-label change the labels of an issue of $FAKE_GH_LOG.issues.json (an issue that is not there is left alone).
     case "$*" in *-label*) node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const i=l.find(x=>x.number===Number(process.argv[2]));if(!i)process.exit(0);const a=process.argv.slice(3);for(let k=0;k<a.length;k++){if(a[k]==="--remove-label")i.labels=i.labels.filter(y=>y.name.toLowerCase()!==a[k+1].toLowerCase());if(a[k]==="--add-label"&&!i.labels.some(y=>y.name.toLowerCase()===a[k+1].toLowerCase()))i.labels.push({name:a[k+1]})}fs.writeFileSync(f,JSON.stringify(l))' "$FAKE_GH_LOG.issues.json" "$3" "$@" ;; esac ;;
   "label create") name=$3 # names are kept in $FAKE_GH_LOG.labels; without --force an existing one is an error
