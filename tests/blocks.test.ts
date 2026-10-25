@@ -148,6 +148,7 @@ describe("comment wording comes from the next-step module", () => {
     }
     expect(text("tools/post-questions")).toMatch(/const comment = \[\s*\.\.\.\(first \? \[first, ""\]/);
     expect(text("tools/post-questions")).toContain("FACTORY_FIRST_QUESTIONS");
+    expect(stepRun(flowPath("epic-questions"), "post")).toContain('"$FACTORY_TOOLS/post-questions" "{{run.dir}}"');
     before(stepRun("blocks/push-plan.yaml", "push_plan"), 'echo "$FACTORY_FIRST_INFO"', "push-plan");
     const result = stepRun("blocks/push-result.yaml", "push_result");
     before(result, 'echo "$first"', "push-result");

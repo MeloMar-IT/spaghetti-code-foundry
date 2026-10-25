@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Posts the questions from an epic check on each issue that has some, and labels those issues.
+// Usage: post-questions [<run-dir>]   (the questions come on stdin)
 // Input (stdin): the check's output, one section per issue:
 //   ### #75
 //   **Q1. …** … **Recommendation:** …
@@ -8,21 +9,91 @@
 // Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUES (the issues that were checked),
 //      FACTORY_VAR_NEEDS_INFO_LABEL (label for issues with questions), FACTORY_RUN_ID,
 //      FACTORY_NEXT_QUESTIONS (the closing sentence of the comment),
-//      FACTORY_FIRST_QUESTIONS (the first line of the comment).
+//      FACTORY_FIRST_QUESTIONS (the first line of the comment),
+//      FACTORY_FIRST_DECIDED (the first line when everything was decided),
+//      FACTORY_DECIDE_TECHNICAL=1 (with <run-dir>: decide technical questions that have a recommendation).
+// Decide mode: each issue is decided on its own. Order per issue: write the pending round, reconcile (read the issue:
+// a comment with our marker written by the account gh acts as is not posted again; the label is added only when missing),
+// post, label, commit the round. A retry therefore posts nothing twice and commits each round once.
+// A marker from another author never counts, because markers can be predicted.
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { checkRound, commitPending, decideQuestions, decideRound, readRecord, roundId } from "./decide-questions.mjs";
 
 const repo = process.env.FACTORY_VAR_GITHUB_REPO;
 if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
 const next = process.env.FACTORY_NEXT_QUESTIONS;
 const first = process.env.FACTORY_FIRST_QUESTIONS;
+const decidedFirst = process.env.FACTORY_FIRST_DECIDED;
 const label = process.env.FACTORY_VAR_NEEDS_INFO_LABEL || "factory:needs-info";
 const checked = new Set((process.env.FACTORY_VAR_ISSUES ?? "").split(/[\s,]+/).filter((x) => /^\d+$/.test(x)));
-const gh = (args, input) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", input, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] });
+const gh = (args, input) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", input, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
 
 function fail(msg) {
   console.error(`post-questions: ${msg}`);
   process.exit(1);
+}
+
+if (process.argv.length > 3) fail("usage: post-questions [<run-dir>]");
+const runDir = process.argv[2];
+const decide = !!runDir && process.env.FACTORY_DECIDE_TECHNICAL === "1";
+const runId = process.env.FACTORY_RUN_ID ?? "";
+if (decide) {
+  let ok = false;
+  try {
+    ok = statSync(runDir).isDirectory();
+  } catch {}
+  if (!ok) fail("the run folder is not a folder");
+  if (!/^[\w-]+$/.test(runId)) fail("FACTORY_RUN_ID is not set");
+}
+
+const ASKED_INTRO = "🤖 **Spaghetti Code Foundry** has questions before it builds this issue (asked up front for all issues in this batch):";
+const DECIDED_INTRO = "🤖 **Spaghetti Code Foundry** decided the technical questions for this issue itself (checked up front for all issues in this batch):";
+const EPIC_NOTE = "Each issue in this batch is decided on its own, so two issues may decide the same topic differently.";
+
+/** A comment: the first line, the intro, the text, the closing sentence (optional) and the marker lines. */
+function compose(first, intro, text, closing, markers) {
+  const comment = [
+    ...(first ? [first, ""] : []),
+    intro, "", text, "",
+    ...(closing ? [`_${closing}_`, ""] : []),
+    ...markers,
+  ].join("\n");
+  return comment;
+}
+
+let login;
+/** The login gh acts as; throws when gh cannot tell (an app token). */
+function ownLogin() {
+  if (login === undefined) {
+    try {
+      login = gh(["api", "user", "--jq", ".login"]).trim();
+    } catch {
+      login = "";
+    }
+  }
+  if (!login) throw new Error("this gh does not tell who wrote a comment; update gh");
+  return login;
+}
+
+/** Whether our own comment with this marker line is on the issue, and whether the issue has the label. */
+function reconcile(n, key) {
+  let view;
+  try {
+    view = JSON.parse(gh(["issue", "view", n, "--repo", repo, "--json", "comments,labels"]));
+  } catch (e) {
+    if (!(e instanceof SyntaxError)) throw e;
+  }
+  if (!view || !Array.isArray(view.comments)) throw new Error("the comments of the issue could not be read");
+  const posted = view.comments.some((c) => {
+    if (!c || typeof c.body !== "string" || !c.body.split("\n").some((l) => l.trim() === key)) return false;
+    if (c.viewerDidAuthor === true) return true;
+    if (c.viewerDidAuthor === false) return false;
+    return c.author?.login === ownLogin();
+  });
+  const labels = Array.isArray(view.labels) ? view.labels : [];
+  const labelled = labels.some((l) => String(l?.name ?? "").toLowerCase() === label.toLowerCase());
+  return { posted, labelled };
 }
 
 const text = readFileSync(0, "utf8");
@@ -37,6 +108,7 @@ for (const line of text.split("\n")) {
 }
 if (!sections.size) fail("no '### #N' sections in the output");
 
+const count = (t) => (t.match(/^\*\*Q\d+/gm) ?? []).length || "some";
 let asked = 0;
 for (const [n, lines] of sections) {
   if (!checked.has(n)) continue; // only issues that were part of this check
@@ -45,18 +117,46 @@ for (const [n, lines] of sections) {
     console.log(`#${n}: no questions`);
     continue;
   }
-  const comment = [
-    ...(first ? [first, ""] : []),
-    "🤖 **Spaghetti Code Foundry** has questions before it builds this issue (asked up front for all issues in this batch):",
-    "",
-    body,
-    "",
-    ...(next ? [`_${next}_`, ""] : []),
-    `<!-- claude-factory run=${process.env.FACTORY_RUN_ID ?? ""} questions -->`,
-  ].join("\n");
-  gh(["issue", "comment", n, "--repo", repo, "--body-file", "-"], comment);
-  gh(["issue", "edit", n, "--repo", repo, "--add-label", label]);
-  console.log(`#${n}: asked (${(body.match(/^\*\*Q\d+/gm) ?? []).length || "some"} questions)`);
-  asked++;
+  try {
+    if (!decide) {
+      const comment = compose(first, ASKED_INTRO, body, next, [`<!-- claude-factory run=${runId} questions -->`]);
+      gh(["issue", "comment", n, "--repo", repo, "--body-file", "-"], comment);
+      gh(["issue", "edit", n, "--repo", repo, "--add-label", label]);
+      console.log(`#${n}: asked (${count(body)} questions)`);
+      asked++;
+      continue;
+    }
+    const d = decideQuestions(body);
+    let id;
+    let outcome;
+    if (d.decided.length) {
+      const qs = d.decided.map(({ n: qn, title, text: qt, decision }) => ({ n: qn, title, text: qt, decision }));
+      const issue = Number(n);
+      // Drop this issue's own rounds of this body, so a retry after a commit decides the same way.
+      const own = new Set(["went_on", "asked", "gave_up"].map((o) => roundId(issue, "epic", o, qs)));
+      const rec = readRecord(runDir);
+      outcome = checkRound({ rounds: rec.rounds.filter((r) => !own.has(r.id)) }, issue, "epic", d);
+      // One pending file per run folder: a stale one of a later issue is overwritten; its ID stays the same.
+      id = decideRound(runDir, { issue, source: "epic", outcome, questions: qs });
+    }
+    const markers = [];
+    if (id) markers.push(`<!-- claude-factory run=${runId} decided=${id} -->`);
+    if (outcome !== "went_on") markers.push(`<!-- claude-factory run=${runId} questions -->`);
+    let comment;
+    if (outcome === "went_on") comment = compose(decidedFirst, DECIDED_INTRO, `${d.body}\n\n${EPIC_NOTE}`, undefined, markers);
+    else if (outcome === "asked") comment = compose(first, ASKED_INTRO, `${d.body}\n\n${EPIC_NOTE}`, next, markers);
+    else comment = compose(first, ASKED_INTRO, body, next, markers);
+    const { posted, labelled } = reconcile(n, markers[0]);
+    if (!posted) gh(["issue", "comment", n, "--repo", repo, "--body-file", "-"], comment);
+    if (outcome !== "went_on" && !labelled) gh(["issue", "edit", n, "--repo", repo, "--add-label", label]);
+    if (id) commitPending(runDir, id);
+    const again = posted ? " — already posted" : "";
+    if (outcome === "went_on") console.log(`#${n}: decided (${d.decided.length} questions)${again}`);
+    else if (outcome === "asked") console.log(`#${n}: asked (${d.left} questions, ${d.decided.length} decided)${again}`);
+    else console.log(`#${n}: asked (${count(body)} questions)${again}`);
+    if (outcome !== "went_on") asked++;
+  } catch (e) {
+    fail(`#${n}: ${String(e?.message ?? e).split("\n")[0]}`);
+  }
 }
 console.log(`QUESTIONS: ${asked}`);

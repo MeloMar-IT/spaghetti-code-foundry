@@ -33,10 +33,12 @@ if [ -n "$FAKE_GH_HOLD" ]; then case "$*" in *"$FAKE_GH_HOLD_ON"*) while [ -e "$
 if [ -n "$FAKE_GH_HOLD2" ]; then case "$*" in *"$FAKE_GH_HOLD2_ON"*) while [ -e "$FAKE_GH_HOLD2" ]; do sleep 0.05; done ;; esac; fi
 # $FAKE_GH_FAIL="issue list": that call prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1; fi
+# $FAKE_GH_FAIL_ON=<text>: a call whose arguments contain this text prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
+if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
 # $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
 # $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" answers with that entry.
-# $FAKE_GH_COMMENTS_FROM_LOG=1: the same answer is built from the comments logged in $FAKE_GH_LOG when none of the above is set.
+# $FAKE_GH_COMMENTS_FROM_LOG=1: the same answer is built from the comments logged in $FAKE_GH_LOG when none of the above is set; its labels are those of the issue in $FAKE_GH_LOG.issues.json.
 fake_repo=""; prev=""; for a in "$@"; do [ "$prev" = "--repo" ] && fake_repo="$a"; prev="$a"; done
 if [ -n "$FAKE_GH_ISSUES_BY_REPO" ] && [ -n "$fake_repo" ]; then
   FAKE_GH_ISSUES=$(node -e 'const m=JSON.parse(process.env.FAKE_GH_ISSUES_BY_REPO);console.log(JSON.stringify(m[process.argv[1]]||[]))' "$fake_repo"); export FAKE_GH_ISSUES; unset FAKE_GH_FRESH
@@ -239,7 +241,7 @@ case "$1 $2" in
          if [ -n "$FAKE_GH_COMMENTS_BY_ISSUE" ]; then c=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_COMMENTS_BY_ISSUE)[process.argv[1]];if(v)console.log(JSON.stringify(v))' "$fake_repo#$3"); fi
          [ -n "$c" ] || c=${FAKE_GH_COMMENTS:-}
          # FAKE_GH_COMMENTS_FROM_LOG=1: the comments of issue <n> as logged by "issue comment" (numbered like the printed #issuecomment-<n>), minus deleted ones.
-         if [ -z "$c" ] && [ -n "$FAKE_GH_COMMENTS_FROM_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}console.log(JSON.stringify({comments:out}))' "$FAKE_GH_LOG" "$3"); fi
+         if [ -z "$c" ] && [ -n "$FAKE_GH_COMMENTS_FROM_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}let labels=[];try{const l=JSON.parse(require("fs").readFileSync(process.argv[1]+".issues.json","utf8"));labels=(l.find(x=>x.number===Number(issue))||{}).labels||[]}catch{}console.log(JSON.stringify({comments:out,labels}))' "$FAKE_GH_LOG" "$3"); fi
          [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *"--json state"*) echo "${FAKE_GH_ISSUE_STATE:-OPEN}" ;;
       # FAKE_GH_ISSUE_BODIES: JSON {"<number>": "<body>"}; the body replaces "Please add feature.txt" for that issue (the pull_ticket text).

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { isBot, isStatusComment, type Comment } from "./github.js";
-import type { CommentKind } from "./next-step.js";
+import { beforeDecided, type CommentKind } from "./next-step.js";
 
 /** Reading the Foundry's comments on an issue, and writing the answers to them. Pure: no GitHub, no files. */
 
@@ -68,7 +68,7 @@ export function parseQuestions(body: string): Question[] {
       ...(m ? { recommendation: text.slice(m.index + m[0].length).trim() } : {}),
     });
   };
-  for (const line of visibleText(body).split("\n")) {
+  for (const line of beforeDecided(visibleText(body)).split("\n")) {
     const m = Q_HEAD.exec(line);
     if (m) {
       done();

@@ -81,6 +81,13 @@ describe("parseQuestions and visibleText", () => {
     const q = parseQuestions(body);
     expect(q.map((x) => [x.n, x.title, x.recommendation])).toEqual([[1, "One?", undefined], [2, "Two?", undefined]]);
   });
+
+  it("stops at the decided section", () => {
+    const body = ["**Q2. Who sees it?**", "text", "**Recommendation:** admins", "", "**Decided by the Foundry**", "", "> **Q1. Which hash?**", "", "**Decision:** sha256"].join("\n");
+    const q = parseQuestions(body);
+    expect(q.map((x) => x.n)).toEqual([2]);
+    expect(q[0]!.recommendation).toBe("admins");
+  });
 });
 
 describe("parseProposal", () => {

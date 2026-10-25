@@ -2257,7 +2257,7 @@ write("epic-questions", {
       id: "post",
       type: "shell",
       repo_access: true,
-      run: 'printf \'%s\\n\' "$FACTORY_OUT_ASK" | "$FACTORY_TOOLS/post-questions"',
+      run: 'printf \'%s\\n\' "$FACTORY_OUT_ASK" | "$FACTORY_TOOLS/post-questions" "{{run.dir}}"',
     },
   ],
 });
