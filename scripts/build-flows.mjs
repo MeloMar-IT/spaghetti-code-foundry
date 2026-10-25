@@ -377,11 +377,21 @@ const clone = {
   run: 'if [ -d .git ]; then git fetch -q origin; ' + CLONE_ELSE + '\ngit log --oneline -1',
 };
 
-// The plan text: the revised plan when it finished as READY, else the first draft.
+// After a replan or resume the outputs of earlier rounds are still in the run. $FACTORY_RAN_<STEP> is the step's place in
+// the run history: a step that did not run after the latest `plan` belongs to an older round, so its output is blanked.
+const FRESH_PLAN = [
+  'fresh() { [ "${1:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ]; }',
+  'fresh "$FACTORY_RAN_PLAN_REVIEW" || FACTORY_OUT_PLAN_REVIEW=""',
+  'fresh "$FACTORY_RAN_REVISE_GATE" || FACTORY_OUT_REVISE_GATE=""',
+  'fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""',
+  'fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""',
+].join("\n");
+// The plan text of this round: the revised plan when it finished as READY, else the first draft.
 const PLAN_OUT = '"${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}"';
 // The answer that carries a split: the forced split (size limit), else the revision, else the draft.
 const SPLIT_OUT = '"${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}"';
 const PICK_PLAN = [
+  FRESH_PLAN,
   'out="$FACTORY_OUT_PLAN"; notes=""',
   'if printf \'%s\\n\' "$FACTORY_OUT_REVISE_PLAN" | grep -q "^PLAN_STATUS: READY"; then out="$FACTORY_OUT_REVISE_PLAN"',
   'elif [ -n "$FACTORY_OUT_PLAN_REVIEW" ]; then notes="$FACTORY_OUT_PLAN_REVIEW"; fi',
@@ -628,7 +638,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
       description: "Post why the issue can't be planned yet, then stop (resumes when someone replies)",
       resume_from: "pull_ticket",
       run: [
-        `out=$(printf '%s\\n' ${PLAN_OUT} | sed '/^SKILL_REQUEST:/d')`,
+        FRESH_PLAN,
+        `out=$(printf '%s\\n' ${PLAN_OUT}| sed '/^SKILL_REQUEST:/d')`,
         'status=$(printf \'%s\\n\' "$out" | sed -n \'s/^PLAN_STATUS: *\\([A-Z_]*\\).*/\\1/p\' | tail -1)',
         'park=""',
         'case "$status" in',
@@ -1133,7 +1144,8 @@ write("issue-plan", {
       jump_only: true,
       description: "Low-risk split (or already agreed): create the issues; otherwise ask the owner",
       run: [
-        `out=$(printf '%s\\n' ${SPLIT_OUT} | sed '/^SKILL_REQUEST:/d')`,
+        FRESH_PLAN,
+        `out=$(printf '%s\\n' ${SPLIT_OUT}| sed '/^SKILL_REQUEST:/d')`,
         'printf \'%s\\n\' "$out" | grep -q "^### ISSUE [0-9]" || { echo "SPLIT: none (no parts in the answer)"; exit 0; }',
         'risk=$(printf \'%s\\n\' "$out" | sed -n \'s/^SPLIT_RISK: *\\([0-9][0-9]*\\).*/\\1/p\' | tail -1); risk=${risk:-100}',
         'limit=${FACTORY_VAR_AUTO_SPLIT_MAX_RISK:-50}; agreed=""; forced=""',
@@ -1167,7 +1179,7 @@ write("issue-plan", {
       repo_access: true,
       jump_only: true,
       description: "Create the parts as issues (in order, with Depends on and the build label), then close this issue",
-      run: `printf '%s\\n' ${SPLIT_OUT} | sed '/^SKILL_REQUEST:/d' | "$FACTORY_TOOLS/create-split"`,
+      run: [FRESH_PLAN, `printf '%s\\n' ${SPLIT_OUT} | sed '/^SKILL_REQUEST:/d' | "$FACTORY_TOOLS/create-split"`].join("\n"),
       on_success: "end",
     },
   ];
@@ -1600,6 +1612,7 @@ write("issue-plan", {
     type: "shell",
     description: "Lock the code areas the plan changes; if another run holds one, step aside (free the slot) and continue when it is free",
     run: [
+      FRESH_PLAN,
       'plan="${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}"; printf \'%s\\n\' "$FACTORY_OUT_REVISE_PLAN" | grep -q "^AREAS:" || plan="$FACTORY_OUT_PLAN"',
       'areas=$(printf \'%s\\n\' "$plan" | sed -n \'s/^AREAS: *//p\' | tail -1 | tr -d \'`\')',
       '[ -n "$areas" ] || areas="*"',
