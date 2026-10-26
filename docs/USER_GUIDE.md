@@ -3209,15 +3209,28 @@ may hold the turn to merge that others wait for. A new run that waits only for a
 the queue (`capped`, and the queue names the `cap`), and the monitor does not report it as a queue
 that stands still.
 
-**The load governor.** It reads the load average per core and the memory pressure. Above 2.5 load
-per core, or under critical memory pressure, it allows one run fewer per check, down to half the
-configured number (at least 2). Memory pressure "warning" counts only together with a load above 1.5
-per core: macOS reports it for hours on a full but idle machine. After five calm checks in a row
-(1.5 per core or less) it allows one more, until the configured number is back. In between (a load
-between 1.5 and 2.5, or a memory warning without load) nothing moves at first, but after 15 checks
-in a row without overload it allows one more as well, so a cap does not stay for hours on a machine
-that is only a little busy. Above 4 per core, or under critical memory pressure, only one test run
-works at a time. Every change is a line in `governor/changes.log`. Its limits end by themselves
+**The load governor.** Every minute it reads the load average per core and the memory pressure. It
+allows one run fewer per check, down to half the configured number (at least 2), only on sustained
+load: the 5-minute load is above 2.5 per core, or the 1-minute load has been above 2.5 for three
+checks in a row. A spike of a minute or two (a test suite, a build) does not lower the cap. Memory
+pressure "warning" alone does not lower it either: macOS reports it for hours on a full but idle
+machine. It counts only with a load above 2.5 per core.
+
+Two cases act at once, even during a pause: memory pressure critical, and a 1-minute load above 4
+per core. Above 4 per core, or under critical memory pressure, only one test run works at a time.
+
+After the cap moved, the governor pauses: no further step down for 3 minutes, and no step up for
+10 minutes. Only an emergency breaks the pause. It still moves one step at a time.
+
+After five calm checks in a row (1.2 per core or less, on the 1-minute and the 5-minute load) it
+allows one more run, until the configured number is back. In between (a load between 1.2 and 2.5)
+nothing moves at first, but after 15 checks in a row without overload it allows one more as well,
+so a cap does not stay for hours on a machine that is only a little busy. Both rules wait for the
+10-minute pause. These values are built into the governor; they are not set in the configuration.
+
+Every change is a line in `governor/changes.log`. `scf governor status` says how many times the
+governor changed the limits today, and Home's health line shows the same count when it is above 0.
+The daily digest mentions the changes only when there were more than 20 in the last 24 hours. The governor's limits end by themselves
 four minutes after the last check — the cap on runs, the cap on test runs, and what the governor
 remembers — so a governor that stops can never hold the Foundry down, and the first check after the
 machine slept starts fresh. `scf governor reset` takes them away at once. The daily release check

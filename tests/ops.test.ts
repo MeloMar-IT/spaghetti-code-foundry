@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,7 +9,7 @@ import { loadCaps, runLimit, setCap } from "../src/ops/caps.js";
 import { limitsSet, logTail, opsCommand, runBlockage, runDigest, runFlaky, runLimits } from "../src/ops/cli.js";
 import { digestFacts, localDay } from "../src/ops/digest.js";
 import { collectHits, parsePassed, parseTestLog, stories, suspects } from "../src/ops/flaky.js";
-import { clearGovernor, decide, loadState, runGovernor, type Sample } from "../src/ops/governor.js";
+import { clearGovernor, loadState, runGovernor, type Sample } from "../src/ops/governor.js";
 import { forecast, parseReset } from "../src/ops/limits.js";
 import { installJob, jobInstalled, jobPlist, jobState, labelOf, uninstallJob } from "../src/ops/schedule.js";
 import type { ServiceHost } from "../src/service.js";
@@ -88,53 +88,6 @@ describe("the cap on runs at once", () => {
 describe("the load governor", () => {
   const band: Sample = { load1: 2, load5: 2, pressure: 1 };
 
-  it("goes one run down per check under load, not below half, and one up after five calm checks", () => {
-    let s = decide({ calm: 0 }, hot, 6);
-    expect(s).toMatchObject({ state: { runs: 5 }, change: "runs at once 6 → 5 (load 3.0 per core)" });
-    for (let i = 0; i < 5; i++) s = decide(s.state, hot, 6);
-    expect(s.state.runs).toBe(3);
-    expect(s.change).toBeUndefined();
-    for (let i = 0; i < 4; i++) s = decide(s.state, calm, 6);
-    expect(s.state).toEqual({ calm: 4, cool: 4, runs: 3 });
-    s = decide(s.state, calm, 6);
-    expect(s).toMatchObject({ state: { calm: 0, runs: 4 }, change: "runs at once 3 → 4 (calm: load 0.5 per core)" });
-    // neither hot nor calm: nothing moves yet and the calm count starts again
-    expect(decide({ calm: 3, cool: 3, runs: 4 }, band, 6).state).toEqual({ calm: 0, cool: 4, runs: 4 });
-    // back at the configured number the cap is gone
-    expect(decide({ calm: 4, runs: 5 }, calm, 6).state).toEqual({ calm: 0 });
-  });
-
-  it("lifts the cap one step after 15 checks in a row without load, also when the machine is never quite calm", () => {
-    let s = decide({ calm: 0, runs: 3 }, band, 6);
-    for (let i = 1; i < 14; i++) s = decide(s.state, i % 4 ? band : calm, 6);
-    expect([s.state, s.change]).toEqual([{ calm: 0, cool: 14, runs: 3 }, undefined]);
-    s = decide(s.state, band, 6);
-    expect(s).toMatchObject({ state: { calm: 0, runs: 4 }, change: "runs at once 3 → 4 (no load for 15 checks: load 2.0 per core)" });
-    expect(s.state.cool).toBeUndefined();
-    // one hot check and the count starts again
-    expect(decide({ calm: 0, cool: 14, runs: 4 }, hot, 6).state).toEqual({ calm: 0, runs: 3 });
-  });
-
-  it("reacts to memory pressure and limits test runs under very high load", () => {
-    // "warning" alone (a full but idle machine) is no reason to go down, and does not stop the way up
-    expect(decide({ calm: 0 }, { ...calm, pressure: 2 }, 6)).toEqual({ state: { calm: 1, cool: 1 } });
-    expect(decide({ calm: 4, runs: 3 }, { ...calm, pressure: 2 }, 6).state.runs).toBe(4);
-    // with load above `low` it is
-    expect(decide({ calm: 0 }, { ...band, pressure: 2 }, 6)).toMatchObject({ state: { runs: 5 }, change: "runs at once 6 → 5 (memory pressure warning, load 2.0 per core)" });
-    // "critical" always is, and holds test runs to one
-    expect(decide({ calm: 0 }, { ...calm, pressure: 4 }, 6)).toMatchObject({ state: { runs: 5, tests: 1 }, change: "runs at once 6 → 5 (memory pressure critical); test runs at once → 1 (memory pressure critical)" });
-    const s = decide({ calm: 0 }, { load1: 5, load5: 5, pressure: 1 }, 6);
-    expect(s.state).toEqual({ calm: 0, runs: 5, tests: 1 });
-    expect(decide(s.state, { load1: 3, load5: 4, pressure: 1 }, 6).change).toContain("test runs at once: back to normal");
-    expect(decide({ calm: 0 }, hot, 1).state).toEqual({ calm: 0 });
-  });
-
-  it("does not report a step from a number above the configured one", () => {
-    // the configured number was lowered from 8 to 5 while a cap of 6 was stored
-    expect(decide({ calm: 0, runs: 6 }, hot, 5)).toMatchObject({ state: { runs: 4 }, change: "runs at once 5 → 4 (load 3.0 per core)" });
-    expect(decide({ calm: 0, runs: 6 }, band, 5)).toEqual({ state: { calm: 0, cool: 1 } });
-  });
-
   it("writes the caps and a log line, and takes everything away on reset", () => {
     const dir = tmp();
     const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 6, now: NOW };
@@ -170,12 +123,24 @@ describe("the load governor", () => {
     const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 6 };
     for (let i = 0; i < 3; i++) runGovernor({ ...o, now: new Date(NOW.getTime() + i * 60_000), sample: hot });
     const last = new Date(NOW.getTime() + 2 * 60_000);
-    expect(loadState(o.dir, last)).toEqual({ calm: 0, runs: 3 });
+    // the first hot check was 6 → 5 and the others are held back by the pause; a load of 3 is no emergency
+    expect(loadState(o.dir, last)).toEqual({ calm: 0, hot: 3, runs: 5, changedAt: NOW.toISOString() });
     const morning = new Date(NOW.getTime() + 9 * HOUR);
     expect(loadState(o.dir, morning)).toEqual({ calm: 0 });
     // neither hot nor calm in the morning: with yesterday's state the cap of 3 would be written again
     const d = runGovernor({ ...o, now: morning, sample: band });
     expect([d.state.runs, d.change, runLimit(6, morning, o.capsFile)]).toEqual([undefined, undefined, 6]);
+  });
+
+  it("scf governor status says how often the limits changed today", async () => {
+    const dir = join(process.env.FACTORY_HOME!, "governor");
+    mkdirSync(dir, { recursive: true });
+    const now = new Date();
+    writeFileSync(join(dir, "changes.log"), `${new Date(now.getTime()).toISOString()} runs at once 4 → 3 (x)\n`.repeat(3));
+    const lines: string[] = [];
+    await opsCommand("governor", ["status"], "/x/cli.js", (l) => lines.push(l), { platform: "darwin", agentsDir: tmp(), domain: "gui/501", launchctl: () => "", writeFile: () => {}, removeFile: () => {} });
+    rmSync(join(dir, "changes.log"));
+    expect(lines).toContain("the governor changed the limits 3 times today");
   });
 
   it("scf governor report shows no limit that has ended", async () => {
@@ -597,7 +562,11 @@ describe("the digest", () => {
     expect(text.indexOf("## Waits for you")).toBeLessThan(text.indexOf("## Done"));
     expect(text).toContain("## Interrupted\n\n- #7 — its process is gone; resume it");
     expect(text).toContain("- #10 holds up 1 (failed — needs a look)");
-    expect(text).toContain("the governor changed the limits 1 time; last: runs at once 6 → 5 (load 3.0 per core)");
+    // a few changes are normal governor work: no line
+    expect(text).not.toContain("the governor changed");
+    const many = Array.from({ length: 21 }, (_, i) => `${new Date(NOW.getTime() - HOUR + i * 1000).toISOString()} runs at once 6 → 5 (load 3.0 per core)\n`).join("");
+    writeFileSync(join(home, "governor", "changes.log"), many);
+    expect(runDigest({ runs, home, now: NOW, alive }).text).toContain("the governor changed the limits 21 times in the last day (more than 20); last: runs at once 6 → 5 (load 3.0 per core)");
     expect(text).not.toContain("## Unreliable tests");
     expect(localDay(new Date(2026, 9, 12, 0, 30))).toBe("2026-10-12");
     expect(localDay(new Date(2026, 0, 5, 23, 30))).toBe("2026-01-05");
