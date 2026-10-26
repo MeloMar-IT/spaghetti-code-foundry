@@ -1598,6 +1598,59 @@ delivery-contract:
 Pass the `--checks`, `--comment` and `--events` files as well when the job has them. The job fails when the exit code is
 not `0`. Do not add `|| true`.
 
+### Verify a run's delivery contracts offline
+
+`scf delivery verify <run-id>` checks the delivery contracts in a run folder (`delivery/`) against the trusted
+public key. It needs no server and no network, and it only reads.
+
+```sh
+scf delivery public-key > allowed_signers   # the trusted key as an allowed_signers line
+scf delivery verify 20260131-120000-ab12 --public-key allowed_signers
+```
+
+`--public-key <file>` takes a key line or an `allowed_signers` line. Without it, the key is the one set as
+`delivery.signing_key_path` in the settings, which must be in `delivery-keys`. `--json` prints the result as one
+JSON object; every path in it and in the lines is relative to the run folder.
+
+```
+✔ verified · run 20260131-120000-ab12
+  2 contract(s) signed by the trusted key and continuing the evidence
+  contracts: 2, latest <digest>
+  events:    14, last hash <hash>
+```
+
+**What is checked.** Every `contract-<n>.json` and its `.sig`: the signature is made with the trusted key, the
+numbers are 1, 2, 3 … without a gap, each contract continues the one before (`supersedes`), there is no `.sig`
+without a contract, and `contract.json` and `contract.json.sig` are the same bytes as the highest numbered
+contract. The evidence (`evidence.jsonl`) must be whole, must not be marked `evidence.incomplete`, and each
+contract's `count` events must form the chain its evidence hash names. Events after the last contract's `count`
+may be added, and the result is still verified; a broken event after that count is a failure. A file that is
+not plain UTF-8 or ends in a line that is not complete is a failure.
+
+**Exit codes.**
+
+| Exit | Result | Meaning |
+|---|---|---|
+| `0` | `verified` | Every contract is signed by the trusted key and continues the evidence |
+| `1` | `not verified` | A check failed; the first failed check is named (for example `signature-bad`, `wrong-key`, `numbering`, `orphan-signature`, `latest-copy`, `evidence-broken`) |
+| `2` | `unsigned` | At least one contract has no signature, so it cannot be checked against the trusted key |
+| `2` | `no delivery contract` | The run has no `delivery/` folder |
+
+A usage problem or a bad input (an invalid run id, a run that does not exist, no trusted key set, a
+`--public-key` file that cannot be read or has no `ssh-ed25519` key) prints `error: …` on stderr and exits `1`.
+The message never shows a path.
+
+**Check with OpenSSH alone.** Each contract can also be checked with `ssh-keygen`, without `scf`. This checks one
+contract and its signature, not the chain:
+
+```sh
+ssh-keygen -Y verify -f allowed_signers -I scf-delivery -n scf-delivery-contract \
+  -s contract-1.json.sig < contract-1.json
+```
+
+**CI.** This command reads a run folder on the machine that runs the Foundry. How a CI job gets the contract
+and its signature is not decided yet (it is part of #163).
+
 ### Versions of the components
 
 `scf components [kind]` prints each part of the Foundry that a promotion can name, with its version and

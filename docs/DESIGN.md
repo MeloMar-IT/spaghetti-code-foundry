@@ -1009,6 +1009,16 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     nothing is written. Key files are read with a size limit and no link following.
   - **Errors.** Every fs error becomes one fixed line from `DELIVERY_WRITE_FAULTS`, with no path and no
     system message.
+- **Verifier (#658, part 4 of 4 of #650).** `src/delivery/run-verify.ts`. `verifyRunDelivery(runDir, runId, publicKey)`
+  never throws and only reads. It reads each file as raw bytes with a size limit and no link following, and
+  decodes it as strict UTF-8, so a changed byte cannot decode to the signed text. It checks the folder (plain,
+  only contract files), the numbering, the signatures against the trusted key, `supersedes`, the latest copy, the
+  `evidence.incomplete` marker and the evidence chain up to each contract's `count` (through
+  `evidenceHeadProblem`). The first failure ends the check with one `fault` and a relative path. The result is
+  `verified`, `failed`, `unsigned` or `none`, and `deliveryVerifyExitCode` maps it to 0, 1 or 2 (none gives 2).
+  Events after the last contract are allowed. `deliveryCommand` handles `verify` and `public-key`; the key comes
+  from `--public-key` (`readPublicKeyFile`) or from the configured signing key (`readConfiguredSigningKey`).
+  Nothing in the server, the UI or CI calls it yet.
 - **Not yet.** No server or UI reads a contract. Making CI stop on a missing contract, and the stop
   conditions in a run, are the next part of #162.
 - **Tests.** `tests/delivery-contract.test.ts` (order, golden text, every byte of the text, the order
