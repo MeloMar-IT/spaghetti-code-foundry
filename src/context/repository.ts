@@ -120,6 +120,27 @@ function parseRecord(rec: Buffer): Listed | undefined {
 }
 
 /**
+ * The full id of the commit HEAD names in `dir`, by `deadlineMs` (in the ms of `now`). Git is not started when no
+ * time is left, and gets the smaller of 10 s and the time left. Throws ContextRepositoryError.
+ */
+export function gitHead(dir: string, deadlineMs: number, now: () => number = Date.now, base: NodeJS.ProcessEnv = process.env): string {
+  let top: string;
+  try {
+    top = realpathSync(dir);
+  } catch {
+    throw new ContextRepositoryError("not-a-repository");
+  }
+  const left = Math.floor(deadlineMs - now());
+  if (!(left >= 1)) throw new ContextRepositoryError("timeout");
+  const r = spawnSync("git", [...OPTIONS, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"], { cwd: top, env: gitEnv(base, top), timeout: Math.min(10_000, left), maxBuffer: 4096, stdio: ["ignore", "pipe", "ignore"] });
+  const err = failure(r, "no-commit");
+  if (err) throw err;
+  const id = r.stdout.toString("latin1").trim();
+  if (!COMMIT.test(id)) throw new ContextRepositoryError("no-commit");
+  return id;
+}
+
+/**
  * Opens the repository in folder `dir` at `commit` (a full commit id, never a branch or a tag). `dir` must itself be
  * the repository (its root, or a bare repository): a repository in a folder above it is not used.
  * Throws ContextRepositoryError.

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanRuns } from "../src/clean.js";
 import { ConfigSchema } from "../src/config.js";
+import { lockRunContext } from "../src/engine/run-context.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadRun, saveRun } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -35,6 +36,19 @@ const age = (runId: string, days: number) => {
 const run = (yaml: string) => runFlow(parseFlow(yaml), { task: "", repo, runsDir: runsDir(), config });
 
 describe("clean", () => {
+  it("purges a run whose context bundle is locked", async () => {
+    const old = await run("name: a\nsteps:\n  - {id: a, type: shell, run: 'true'}");
+    age(old.runId, 10);
+    const bundle = join(old.runDir, "context");
+    mkdirSync(join(bundle, "sub"), { recursive: true });
+    writeFileSync(join(bundle, "sub", "s-1"), "x");
+    writeFileSync(join(old.runDir, "context.json"), "{}");
+    lockRunContext(old.runDir);
+    const r = cleanRuns({ runsDir: runsDir(), olderThanDays: 7, purge: true });
+    expect(r.runs).toEqual([old.runId]);
+    expect(existsSync(old.runDir)).toBe(false);
+  });
+
   it("removes old worktrees (keeping branches), skips paused and recent runs, previews with dryRun", async () => {
     const old = await run("name: a\nsteps:\n  - {id: a, type: shell, run: 'true'}");
     const paused = await run("name: b\nsteps:\n  - {id: a, type: shell, run: 'true', on_success: stop}");

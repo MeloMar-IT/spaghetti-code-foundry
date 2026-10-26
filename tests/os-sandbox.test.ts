@@ -208,6 +208,15 @@ describe("sandboxProfile for an agent step", () => {
       expect(at(t, line)).toBeGreaterThan(at(t, "(deny file-write* (literal \"/Users/mac/.data/runs/r1/evidence"));
     });
 
+    it("denies writes to the context bundle and its marker, after the evidence line, in both variants", () => {
+      const line = '(deny file-write* (literal "/Users/mac/.data/runs/r1/context.json") (literal "/Users/mac/.data/runs/r1/context.attempt") (subpath "/Users/mac/.data/runs/r1/context"))';
+      for (const t of [sandboxProfile(base, same), sandboxProfile({ ...base, workspaceReadOnly: true }, same)]) {
+        expect(t).toContain(line);
+        expect(at(t, line)).toBeGreaterThan(at(t, '(deny file-write* (literal "/Users/mac/.data/runs/r1/evidence'));
+        expect(at(t, line)).toBeLessThan(at(t, '(deny file-write* (subpath "/Users/mac/.data/runs/r1/delivery"))'));
+      }
+    });
+
     it("denies reading the key folder with no settings at all", () => {
       const t = sandboxProfile(base, same);
       expect(t).toContain(`(deny file-read* (subpath "${keys}"))`);

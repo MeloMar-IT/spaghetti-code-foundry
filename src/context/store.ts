@@ -7,7 +7,7 @@ import { CONTEXT_BUNDLE_FILE, CONTEXT_SOURCES_DIR } from "./version.js";
 
 /**
  * Writing a context bundle into a folder: the text of every source under `context/`, then `context.json`.
- * Nothing calls this yet: giving a run its context is the next step (#153).
+ * The engine calls it once per issue run, just before the first agent step (see engine/run-context.ts).
  */
 
 export type ContextStoreErrorCode = "no-folder" | "exists" | "texts-do-not-match" | "write-failed";

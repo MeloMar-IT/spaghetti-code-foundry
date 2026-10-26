@@ -1228,6 +1228,59 @@ $ scf evidence verify 20260131-120000-ab12
   (status, the first failure with its code, every check and every file) for a script.
   `--runs-dir <dir>` reads another runs folder.
 
+### Context of a run
+
+An issue run is given a **context bundle**: a record of what the run was given to read, with the
+files themselves. It is made once, from the commit the workspace has, just before the run's first
+agent step (the first step that is not a shell step or an approval). It holds the issue text, its
+comments, the repository's `AGENTS.md` and `CLAUDE.md`, the ownership file, the files the task names,
+the API schema files and the README. No agent reads the bundle yet; it is written now so that it can
+be given to agents later.
+
+- **The settings.** The `context:` section of `config.yaml` has seven keys, all optional:
+  - `max_sources` (default `200`): the most files in the bundle.
+  - `max_source_bytes` (`262144`): the most bytes of one file.
+  - `max_total_bytes` (`2097152`): the most bytes of all files. It may not be below `max_source_bytes`.
+  - `classification` (`internal`): the privacy the files are given.
+  - `max_classification` (`restricted`): the most private file that may be used. A more private file is
+    left out.
+  - `consumers` (`planner`, `coder`, `reviewer` and `tester`): the roles that may be given the bundle.
+    A list with at least one role, each at most once.
+  - `task_max_age_seconds` (`null`): how long the issue text stays fresh, in seconds. `null` means it
+    never goes stale. The issue's time is the latest fetch of the ticket in this run, so a resumed run
+    is judged by its newest fetch.
+
+  A wrong value is reported when the configuration is checked, at `context.<key>`, and the message
+  never shows the value.
+- **30 seconds.** The bundle must be finished 30 seconds after the step starts. **A bundle not done in
+  time is not written:** the run goes on, and the log gives `CONTEXT_FAILED timeout`.
+- **The log.** One line per run. A success reads, for example,
+  `· context: 12 sources, 3 left out, commit 1a2b3c4d5e6f`, with `, 2 comments skipped` added when
+  some comments could not be read. A failure reads `! context: CONTEXT_FAILED <code>`. Neither line
+  shows a path or a value.
+- **The codes.**
+  - `marker-failed`: the attempt marker could not be written.
+  - `repository-no-commit`: the workspace has no commit yet. `repository-…` otherwise means the
+    repository could not be read in time or is not usable.
+  - `issue-unreadable`, `comments-unreadable`: the issue files that `pull_ticket` saves are missing or
+    not valid.
+  - `select-invalid`: the `context:` settings cannot be used.
+  - `bundle-invalid`: the bundle made did not pass its own check.
+  - `timeout`: not finished within 30 seconds.
+  - `lock-failed`: the files could not be made read-only. The bundle is removed.
+  - `store-…`: the files could not be written. The files written so far are removed.
+  - `internal`: anything else.
+
+  A failure never stops the run.
+- **Read-only files.** `context.json` is read-only, and so is every file under `context/`. Folders are
+  read-only too. On macOS the OS sandbox of a step also denies writes to these paths.
+- **One attempt.** The file `context.attempt` is written before the bundle is tried, and it stays. A run
+  gets one attempt: a run that has an attempt, a bundle or a `context/` folder gets no other, also after
+  a resume. A run that already took an agent step gets no bundle.
+- **Which runs.** Only runs of flows that save the issue files (the built-in issue flows). A custom flow
+  gets no bundle and no line in the log.
+- **Removal.** `scf clean --purge` removes the bundle with its run.
+
 ### Policy packs in observe mode
 
 A policy pack is a set of rules that is asked at the important moments of a run. The answers are
@@ -1698,7 +1751,8 @@ component is a problem.
 - **Where each part comes from.** Flows are the `.yaml` files in `flows/`. Policy packs are `policies/<id>.json`.
   Tool profiles are `tool-profiles/<id>.yaml` and context selectors are `context-selectors/<id>.yaml`. Both
   folders are optional. The model routes are the `router` settings of `config.yaml`. A context selector file
-  holds the settings that `selectContext` reads; no run uses them yet.
+  holds the settings that `selectContext` reads; no run reads it yet. The context of an issue run comes
+  from the `context:` section of `config.yaml` (see [Context of a run](#context-of-a-run)).
 - **Built-ins.** The built-in flows and the built-in baseline pack are listed too, and end with ` builtin`.
   They are never counted or recorded.
 - **Versions.** A flow's version is its `publish.version` when it is published, and `0` when not; a new
