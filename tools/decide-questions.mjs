@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 // Splits a question comment into the questions the Foundry can decide itself (a technical question that has a
-// recommendation) and the ones it must ask. Library only, no environment. The question functions are pure; the record
-// functions at the end (decideRound, commitPending, abandonPending) read and write `decided.json` in a run folder.
+// recommendation) and the ones it must ask. The library functions read no environment. The question functions are pure; the
+// record functions (decideRound, commitPending, abandonPending) read and write `decided.json` in a run folder.
+// `post-plan <run-dir>` (postPlan, main, at the end) is the only part that reads the environment or calls gh.
 // Pass only the question text, not the whole comment: a recommendation runs to the next question or the end.
 // When the input is odd in any way, nothing is decided and every question is asked.
 // DECIDED_HEADING mirrors the one in src/next-step.ts and ui/run-tabs.js (tests keep them equal).
 
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
 
 export const DECIDED_HEADING = "**Decided by the Foundry**";
@@ -162,6 +165,7 @@ function roundProblem(r, where, stored) {
   if (!Number.isSafeInteger(r.issue) || r.issue <= 0) return `${where}: issue is not a whole number above 0`;
   if (!SOURCES.includes(r.source)) return `${where}: unknown source`;
   if (!OUTCOMES.includes(r.outcome)) return `${where}: unknown outcome`;
+  if (r.input !== undefined && (typeof r.input !== "string" || !/^[0-9a-f]{64}$/.test(r.input))) return `${where}: input is not a SHA-256 digest`;
   const bad = questionsProblem(r.questions, where);
   if (bad) return bad;
   if (r.outcome === "went_on" && !r.questions.length) return `${where}: a round that went on has no questions`;
@@ -261,7 +265,7 @@ function checkRoom(rec, round) {
 /**
  * Step one of the two-step commit: writes only the pending file (atomically) and returns the round ID. Post the comment,
  * then call commitPending(runDir, id). `round` = { issue, source, outcome, questions }. A round over a limit throws and
- * writes nothing. A `gave_up` round is stored without its questions (they were never posted); its ID still covers them.
+ * writes nothing. A `gave_up` round is stored without its questions (they are asked, not decided); its ID still covers them.
  * A retry of the same round keeps the same ID and `at`, also after the round was committed.
  */
 export function decideRound(runDir, round, now = new Date()) {
@@ -274,7 +278,7 @@ export function decideRound(runDir, round, now = new Date()) {
   const pending = readPending(runDir);
   const at = done?.at ?? (pending?.id === id ? pending.round.at : now.toISOString());
   const kept = outcome === "gave_up" ? [] : questions.map((q) => ({ n: q.n, title: q.title, text: q.text, decision: q.decision }));
-  const stored = { id, issue, at, source, outcome, questions: kept };
+  const stored = { id, issue, at, source, outcome, questions: kept, ...(round.input !== undefined ? { input: round.input } : {}) };
   if (!done) checkRoom(rec, stored);
   writeAtomic(join(runDir, PENDING_FILE), JSON.stringify({ version: 1, id, issue, round: stored }));
   return id;
@@ -333,3 +337,124 @@ export function checkRound(record, issue, source, decided) {
   }
   return all ? "went_on" : "asked";
 }
+
+const WANT_OTHER = "Want a different answer? Cancel the run if it is still going, answer on the issue, and start it again.";
+const GAVE_UP = "post-plan: the Foundry gave up deciding these questions itself (it decided the same question before, or went on twice in a row). The questions are in the plan step and on the issue; answer them on the issue.";
+const CODES = { went_on: 3, asked: 0, gave_up: 4 };
+const GH_TIMEOUT_MS = 60_000;
+
+function defaultGh(env) {
+  const timeout = Number(env.FACTORY_GH_TIMEOUT_MS) > 0 ? Number(env.FACTORY_GH_TIMEOUT_MS) : GH_TIMEOUT_MS;
+  return (args, input) => execFileSync(env.FACTORY_GH_BIN || "gh", args, { env, encoding: "utf8", input, timeout, maxBuffer: 64 * 1024 * 1024, stdio: [input !== undefined ? "pipe" : "ignore", "pipe", "pipe"] });
+}
+
+/** The comment text. `outcome` undefined is the plain NEEDS_INFO comment, byte for byte what send_back posts. */
+function planComment(env, outcome, shown, marker) {
+  const all = outcome === "went_on";
+  const first = all ? process.env.FACTORY_FIRST_DECIDED : process.env.FACTORY_FIRST_PLANNER_QUESTIONS;
+  const head = all ? "decided these technical questions itself and plans the issue again:" : "needs more information before it can plan this issue:";
+  const tail = all ? WANT_OTHER : (env.FACTORY_NEXT_PLANNER_QUESTIONS ?? "");
+  const comment = [...(first ? [first, ""] : ["", ""]), `🤖 **Spaghetti Code Foundry** ${head}`, "", shown, "", `_${tail}_`, "", marker].join("\n") + "\n";
+  return comment;
+}
+
+const lastLine = (body) => body.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
+/** A fingerprint of the whole input (asked questions included): a retry must match all of it. */
+const inputOf = (text) => createHash("sha256").update(text.replace(/\r\n?/g, "\n").trim()).digest("hex");
+
+/**
+ * Decides the technical questions of a planner text, posts one comment on the issue and records the round.
+ * Returns { code, out }: 3 all decided, 0 questions remain or nothing decided, 4 gave up, 1 error, 2 bad arguments.
+ */
+export function postPlan(runDir, text, env = process.env, gh = defaultGh(env)) {
+  const issue = env.FACTORY_VAR_ISSUE ?? "";
+  const repo = env.FACTORY_VAR_GITHUB_REPO ?? "";
+  const run = env.FACTORY_RUN_ID ?? "";
+  let problem;
+  if (!/^[1-9]\d*$/.test(issue)) problem = "FACTORY_VAR_ISSUE is not an issue number";
+  else if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) problem = "FACTORY_VAR_GITHUB_REPO is not owner/repo";
+  else if (!/^[\w-]+$/.test(run)) problem = "FACTORY_RUN_ID is not a run ID";
+  else {
+    try {
+      if (!statSync(runDir).isDirectory()) problem = "the run folder is not a folder";
+    } catch {
+      problem = "the run folder does not exist";
+    }
+  }
+  if (problem) return { code: 2, out: `post-plan: ${problem}\n` };
+
+  try {
+    const n = Number(issue);
+    const body = text.replace(/\n+$/, "");
+    const post = (comment) => gh(["issue", "comment", issue, "--repo", repo, "--body-file", "-"], comment);
+    const d = decideQuestions(text);
+    if (env.FACTORY_DECIDE_TECHNICAL !== "1" || !d.decided.length) {
+      abandonPending(runDir);
+      post(planComment(env, undefined, body, `<!-- claude-factory run=${run} -->`));
+      return { code: 0, out: text };
+    }
+    const rec = readRecord(runDir);
+    const pend = readPending(runDir);
+    let view;
+    try {
+      view = JSON.parse(gh(["issue", "view", issue, "--repo", repo, "--json", "comments,labels"]));
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) throw e;
+    }
+    if (!Array.isArray(view?.comments)) throw new Error("the comments of the issue could not be read");
+    const markerFor = (id) => `<!-- claude-factory run=${run} decided=${id} -->`;
+    const result = (o) => (o === "gave_up" ? { code: 4, out: GAVE_UP + "\n\n" + body + "\n" } : { code: CODES[o], out: d.body + "\n" });
+
+    // A retry: the latest committed round of this issue, or the pending round, holds this exact input and a comment of
+    // ours carries its marker. Only the marker is compared, so edited comments and changed formatting do not post again.
+    const input = inputOf(text);
+    const kept = [rec.rounds.filter((r) => r.issue === n).at(-1), pend?.round?.issue === n ? pend.round : undefined];
+    for (const r of kept) {
+      if (r?.input !== input || r.id !== roundId(n, "planner", r.outcome, d.decided)) continue;
+      const found = view.comments.some((x) => x?.viewerDidAuthor === true && typeof x.body === "string" && lastLine(x.body) === markerFor(r.id));
+      if (found) {
+        commitPending(runDir, r.id);
+        return result(r.outcome);
+      }
+    }
+
+    const outcome = checkRound(rec, n, "planner", d);
+    const id = decideRound(runDir, { issue: n, source: "planner", outcome, questions: d.decided, input });
+    const comment = planComment(env, outcome, outcome === "gave_up" ? body : d.body, markerFor(id));
+    post(comment);
+    commitPending(runDir, id);
+    if (!readRecord(runDir).rounds.some((r) => r.id === id)) throw new Error("the round was not recorded");
+    return result(outcome);
+  } catch (e) {
+    return { code: 1, out: `post-plan: ${e?.message ?? e}\n` };
+  }
+}
+
+function writeAll(fd, s) {
+  const buf = Buffer.from(s);
+  let at = 0;
+  while (at < buf.length) {
+    try {
+      at += writeSync(fd, buf, at);
+    } catch (e) {
+      if (e?.code !== "EAGAIN") throw e;
+    }
+  }
+}
+
+function main() {
+  const args = process.argv.slice(2);
+  const r = args.length === 2 && args[0] === "post-plan"
+    ? postPlan(args[1], readFileSync(0, "utf8"))
+    : { code: 2, out: "usage: decide-questions.mjs post-plan <run-dir>\n" };
+  writeAll(r.code === 0 || r.code === 3 || r.code === 4 ? 1 : 2, r.out);
+  process.exit(r.code);
+}
+
+let isMain = false;
+try {
+  isMain = realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+} catch {
+  isMain = false;
+}
+if (isMain) main();

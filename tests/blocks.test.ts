@@ -233,7 +233,19 @@ describe("every posted comment starts with a first-line variable", () => {
   });
   it("accepts good Node tools", () => {
     expect(scanNode(node(array + call))).toEqual([]);
-    for (const f of ["tools/post-questions", "tools/create-split"]) expect(scanTool(readFileSync(f, "utf8")), f).toEqual([]);
+    for (const f of ["tools/post-questions", "tools/create-split", "tools/decide-questions.mjs"]) expect(scanTool(readFileSync(f, "utf8")), f).toEqual([]);
+  });
+  it("accepts one plain condition between two first-line variables", () => {
+    const src = (first: string, arr = array) => `#!/usr/bin/env node\nconst first = ${first};\n${arr}${call}`;
+    expect(scanNode(src("all ? process.env.FACTORY_FIRST_DECIDED : process.env.FACTORY_FIRST_PLANNER_QUESTIONS"))).toEqual([]);
+    expect(scanNode(src("process.env.FACTORY_FIRST_INFO", array.replace("[]", '["", ""]')))).toEqual([]);
+    for (const bad of [
+      'a ? process.env.FACTORY_FIRST_INFO : "x"',
+      "a ? process.env.OTHER : process.env.FACTORY_FIRST_INFO",
+      "a ? process.env.FACTORY_FIRST_A : b ? process.env.FACTORY_FIRST_B : process.env.FACTORY_FIRST_C",
+      "a ? (b ? process.env.FACTORY_FIRST_A : process.env.FACTORY_FIRST_B) : process.env.FACTORY_FIRST_C",
+    ]) expect(scanNode(src(bad)), bad).not.toEqual([]);
+    expect(scanNode(src("process.env.FACTORY_FIRST_INFO", array.replace("[]", '["x", ""]')))).not.toEqual([]);
   });
 });
 
