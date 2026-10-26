@@ -9,7 +9,7 @@ import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } fr
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
 import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
-import { clearGovernor, loadState, runGovernor, sample } from "./governor.js";
+import { changesToday, clearGovernor, loadState, MANY_CHANGES, runGovernor, sample } from "./governor.js";
 import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, type Family, type LimitsState } from "./limits.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
 
@@ -209,7 +209,7 @@ export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; aliv
     }),
     part("Machine load", () => {
       const load = lines(join(o.home, "governor", "changes.log")).filter((l) => l.slice(0, 24) >= since);
-      return load.length ? [`the governor changed the limits ${load.length} time${load.length === 1 ? "" : "s"}; last: ${load.at(-1)!.slice(25)}`] : [];
+      return load.length > MANY_CHANGES ? [`the governor changed the limits ${load.length} times in the last day (more than ${MANY_CHANGES}); last: ${load.at(-1)!.slice(25)}`] : [];
     }),
     part("Unreliable tests", () => (latest<{ suspects: { test: string; failedIn: string[]; retriedIn?: string[] }[] }>("flaky").suspects ?? []).slice(0, 3).map((s) => `${s.test} — failed in ${s.failedIn.length} stories${s.retriedIn?.length ? `, passed only on a retry in ${s.retriedIn.length}` : ""}`)),
   ];
@@ -308,6 +308,10 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       if (name === "governor" || name === "limits") {
         const caps = Object.entries(loadCaps(capsPath(dataDir()))).filter(([, c]) => Date.parse(c.until) > Date.now());
         out(caps.length ? caps.map(([who, c]) => `cap by ${who}: ${c.runs} runs at once (${c.why})`).join("\n") : "no cap on runs at once");
+      }
+      if (name === "governor") {
+        const n = changesToday(dir, new Date());
+        out(`the governor changed the limits ${n} time${n === 1 ? "" : "s"} today`);
       }
       return 0;
     }

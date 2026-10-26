@@ -428,3 +428,22 @@ describe("health()", () => {
     });
   });
 });
+
+describe("health(): load governor", () => {
+  const dir = () => join(process.env.FACTORY_HOME!, "governor");
+  afterEach(() => rmSync(dir(), { recursive: true, force: true }));
+
+  it("counts the changes of today, as information only", () => {
+    const now = new Date(2026, 9, 1, 12, 0);
+    mkdirSync(dir(), { recursive: true });
+    const line = (d: Date) => `${d.toISOString()} runs at once 4 → 3 (load 3.0 per core)\n`;
+    writeFileSync(join(dir(), "changes.log"), line(new Date(2026, 8, 30, 23, 30)) + line(new Date(2026, 9, 1, 8, 0)) + line(new Date(2026, 9, 1, 11, 0)));
+    const h = health(ctxOf(), now);
+    expect(h.governor).toEqual({ changesToday: 2 });
+    expect([h.ok, h.summary]).toEqual([true, "All good"]);
+  });
+
+  it("has no governor field without changes", () => {
+    expect(health(ctxOf(), NOW)).not.toHaveProperty("governor");
+  });
+});
