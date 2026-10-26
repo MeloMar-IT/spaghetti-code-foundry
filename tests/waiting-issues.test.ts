@@ -55,6 +55,11 @@ describe("openQuestion", () => {
   it("skips a status comment", () => {
     expect(openQuestion([bot("**Q1.** a"), status])?.questions).toBe(1);
   });
+  it("skips a verified overrule reply, but not a copied one", () => {
+    const reply = { author: { login: "bot" }, body: "accepted\n<!-- claude-factory overrule=5 -->", createdAt: "2026-01-01T04:00:00Z", viewerDidAuthor: true } as Comment;
+    expect(openQuestion([bot("**Q1.** a"), reply])).toEqual({ questions: 1, since: "2026-01-01T00:00:00Z" });
+    expect(openQuestion([bot("**Q1.** a"), { ...reply, viewerDidAuthor: undefined }])?.questions).toBe(0);
+  });
   it("is undefined after a human comment, with only a status comment, or without comments", () => {
     expect(openQuestion([bot("**Q1.** a"), human])).toBeUndefined();
     expect(openQuestion([status])).toBeUndefined();

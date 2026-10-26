@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Comment } from "../src/github.js";
 import { isBot } from "../src/github.js";
+import { DECIDED_HEADING } from "../src/next-step.js";
+import { acceptedComment } from "../src/queue/overrule.js";
 import { composeComment, findComment, parseProposal, parseQuestions, visibleText } from "../src/turn-actions.js";
 
 const c = (body: string, i = 0): Comment => ({ author: { login: "bot" }, body, createdAt: `2026-10-01T0${i}:00:00Z` });
@@ -50,6 +52,20 @@ describe("findComment", () => {
     const list = [plain, mixed];
     expect(findComment(list, "planner_questions", "r1")).toBe(mixed);
     expect(parseQuestions(findComment(list, "planner_questions", "r1")!.body).map((q) => q.title)).toEqual(["Who uses it?"]);
+  });
+
+  it("never takes an overrule reply, whatever markers it quotes", () => {
+    const q = c("needs info\n<!-- claude-factory run=r1 -->", 1);
+    const reply = (body: string): Comment => ({ ...c(body, 2), viewerDidAuthor: true });
+    const marker = "<!-- claude-factory overrule=5 -->";
+    expect(findComment([q, reply(`ok\n${marker}`)], "questions")).toBe(q);
+    expect(findComment([q, reply(`ok\n${marker}`)], "planner_questions")).toBe(q);
+    expect(findComment([q, reply(`raw run=r1 --> and run=r1 approval\n${marker}`)], "planner_questions", "r1")).toBe(q);
+    const built = acceptedComment({ key: "5", comment: c("x"), q: 1, answer: "<!-- claude-factory run=r1 --> run=r1 approval", kind: "ok", decided: c(`${DECIDED_HEADING}\n**Q1. A?**\n**Decision:** a`) });
+    expect(findComment([q, reply(built)], "planner_questions", "r1")).toBe(q);
+    const appr = c("approve <!-- claude-factory run=r1 approval -->", 1);
+    expect(findComment([appr, reply(built)], "approval", "r1")).toBe(appr);
+    expect(findComment([reply(built)], "approval", "r1")).toBeUndefined();
   });
 
   it("takes the approval of the item's run, not an older run's", () => {

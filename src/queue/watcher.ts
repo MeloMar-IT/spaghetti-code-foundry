@@ -7,7 +7,7 @@ import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
 import { commentReads, extraWaitingIssues, EXTRA_READS_PER_CHECK, EXTRA_READ_MEMO_MS, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs, type CommentReads } from "./waiting-issues.js";
-import { canWrite, commentOnIssue, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isStatusComment, issueComments, issueStates, listOpenIssuesByLabelPages, setLabels, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
+import { canWrite, commentOnIssue, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isOverruleReply, isStatusComment, issueComments, issueStates, listOpenIssuesByLabelPages, setLabels, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
@@ -979,8 +979,8 @@ export class Watcher {
     let anyRuns: Map<string, RunSummary> | undefined; // newest run per issue in any flow (to describe blockers)
     const checked = this.prechecked();
     const toCheck: Issue[] = [];
-    // The status comment is ours too, but it is not a question or an approval request: it never ends the wait.
-    const asked = (c: Comment) => isBot(c) && !isStatusComment(c);
+    // The status comment is ours too, and so is an overrule reply, but neither is a question or an approval request: they never end the wait.
+    const asked = (c: Comment) => isBot(c) && !isStatusComment(c) && !isOverruleReply(c);
     const nowMs = Date.now();
     for (const [k, t] of this.slowUntil) if (t <= nowMs) this.slowUntil.delete(k);
     const reads = commentReads({

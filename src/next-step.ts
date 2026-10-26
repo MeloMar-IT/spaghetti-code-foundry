@@ -839,7 +839,7 @@ export function releaseWatchersFor<W extends WatcherConfig>(watchers: W[], run: 
 }
 
 /** Does a step id (with optional sub-flow prefix) end in one of `ids`? */
-const stepIs = (id: string | null | undefined, ids: string[]) => !!id && ids.includes(id.split("/").at(-1)!);
+export const stepIs = (id: string | null | undefined, ids: readonly string[]) => !!id && ids.includes(id.split("/").at(-1)!);
 
 /**
  * The run closed its issue itself (gitflow report, split, merge): a finished `report`, `merge` or

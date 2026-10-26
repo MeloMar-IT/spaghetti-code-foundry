@@ -126,6 +126,8 @@ export interface Comment {
 export interface Issue {
   number: number;
   title: string;
+  /** When the issue was last changed; gh reports it when asked for it. */
+  updatedAt?: string;
   labels: { name: string }[];
   body?: string;
   state?: string;
@@ -142,6 +144,17 @@ const STATUS_MARKERS: readonly string[] = [STATUS_MARKER, "<!-- spaghetti-code-f
 export function isStatusComment(c: { body: string }): boolean {
   const last = c.body.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
   return last !== undefined && STATUS_MARKERS.includes(last);
+}
+
+/** A comment the Foundry really wrote: its marker, and written by the account gh acts as (a marker alone can be copied). */
+export const isFoundryComment = (c: Pick<Comment, "body" | "viewerDidAuthor">): boolean => isBot(c) && c.viewerDidAuthor === true;
+
+const OVERRULE_REPLY = /^<!-- claude-factory overrule=[\w-]+( followup)? -->$/;
+
+/** The Foundry's reply to an /overrule (its marker is the last line): never a question or an approval request. */
+export function isOverruleReply(c: Pick<Comment, "body" | "viewerDidAuthor">): boolean {
+  const last = c.body.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
+  return isFoundryComment(c) && last !== undefined && OVERRULE_REPLY.test(last);
 }
 
 /** The numeric id in a comment link (…#issuecomment-123). */

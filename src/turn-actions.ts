@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isBot, isStatusComment, type Comment } from "./github.js";
+import { isBot, isOverruleReply, isStatusComment, type Comment } from "./github.js";
 import { beforeDecided, type CommentKind } from "./next-step.js";
 
 /** Reading the Foundry's comments on an issue, and writing the answers to them. Pure: no GitHub, no files. */
@@ -11,10 +11,11 @@ const QUESTION_KINDS: readonly string[] = ["questions", "planner_questions", "ow
 
 /**
  * The Foundry comment an item is about: found by its marker, since a newer Foundry comment may follow it.
+ * An overrule reply is never the comment an item is about.
  * The marker can be copied by anyone, so with `author` (the GitHub login the Foundry posts as) only that account's comments count.
  */
 export function findComment(comments: Comment[], kind: string, runId?: string, author?: string): Comment | undefined {
-  const newest = (match: (c: Comment) => boolean) => [...comments].reverse().find((c) => (author === undefined || c.author.login === author) && match(c));
+  const newest = (match: (c: Comment) => boolean) => [...comments].reverse().find((c) => (author === undefined || c.author.login === author) && !isOverruleReply(c) && match(c));
   const marked = (re: RegExp) => newest((c) => isBot(c) && re.test(c.body));
   let found: Comment | undefined;
   // Something to do is a question comment: a run's, or the one asked up front.
