@@ -21,12 +21,10 @@ vars:
   forbidden_paths: ""
   develop_branch: ""
 var_info:
-  github_repo:
+  github_repo: &a1
     set_by_run: true
-  issues:
-    set_by_run: true
-  needs_info_label:
-    set_by_run: true
+  issues: *a1
+  needs_info_label: *a1
   forbidden_paths:
     label: Forbidden paths
     help: Paths the agents must not change. Separate paths with spaces.

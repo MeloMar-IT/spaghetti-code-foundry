@@ -1054,7 +1054,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 
 | Status | What it means and what happens next |
 |---|---|
-| waiting for you — questions | The Foundry has questions about this issue before it starts. Answer them on the issue, or reply /defaults to go with the recommendations. When the planner asks: The planner has questions that the issue and the code do not answer. Answer them and the work goes on. |
+| waiting for you — questions | The Foundry has questions about this issue before it starts. Answer them on the issue, or reply /defaults to go with the recommendations. When the planner asks: The planner has questions that the issue, the code and the Foundry itself cannot settle. Answer them and the work goes on. |
 | waiting for you — risky plan | The plan is risky, or you asked to check it, so coding waits for your decision. Approve it to start coding, or reject it and say what to change. |
 | waiting for you — split | The issue is too big for one change, so the Foundry proposes smaller issues. Approve and it creates them and closes this one, or reject it and say what to change. |
 | waiting for you — approval | A step of the run asks for your approval before it goes on. Approve or reject it, and the run goes on with your decision. |
@@ -2716,6 +2716,37 @@ reinterpreting scope, or anything that needs your decision, is high).
 
 The threshold is the `auto_split_max_risk` variable (default 50).
 
+#### Questions the Foundry decides itself
+
+When the planner has questions, it sorts them by kind. The Foundry decides a question by itself only when
+both hold: it is a **technical** question (how the code should be done, not what the product should do) and
+the planner gives a **recommendation** for it. Everything else still waits for you: **product** questions,
+**policy** questions, **owner action** questions (things only you can do), and technical questions without a
+recommendation.
+
+- **What you see:** a comment on the issue with the heading **Decided by the Foundry**. Under it is each
+  decided question with its text and **Decision:**. If every question was decided, the comment says the
+  Foundry decided them and plans the issue again, and the work goes on with no reply from you. If some were
+  not, the comment shows the questions that still need you above the decided ones, and the run waits as
+  before. The first line of the comment says **Nothing needed from you** when everything was decided.
+- **The planner follows the decisions.** It takes them as answers, unless a later comment from a person says
+  otherwise.
+- **How to answer differently:** cancel the run if it is still going, answer the decided question on the issue,
+  and start the run again. Your answer then goes into the next plan.
+- **The setting:** **Decide technical questions itself** in the repository's Run settings (field
+  `questions.decide_technical`). It is on by default. With it off, the planner's questions all wait for you, as
+  before. A run reads the setting when it starts or resumes, so a change applies to the runs that start or
+  resume after it. Runs read it as `$FACTORY_DECIDE_TECHNICAL`. See [Settings and safety](#7-settings-and-safety)
+  for the other repository settings.
+- **Admins:** the admin run page has a card **Decided by the Foundry** on its Overview. It lists each round with
+  its issue, time and outcome (decided everything and went on, decided some and asked the rest, or gave up and
+  asked the owner). Under each round is each question with its decision; the full question text is under
+  **Full question**. The card is hidden when a run has no such rounds.
+- **The limit:** the Foundry replans at most twice in a row. After two rounds that went on, the next round
+  that could be decided gives up instead. A round also gives up at once when a question title was already
+  decided earlier in this issue. Giving up posts the planner's questions as a plain comment, and the run waits
+  for you. Answer them on the issue.
+
 #### Stories that fix failing tests
 
 A story can be written to repair tests that already fail on the branch. Without this, the run
@@ -3879,13 +3910,13 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
   matches any text and `?` matches one character; `[…]` is not allowed. `{}` clears the settings.
 - **Decide technical questions itself** (a checkbox in the Run settings dialog, field `questions.decide_technical`):
   on by default, so a repository that has no such setting, including one registered before this change, counts as
-  on. Off: the Foundry asks you every question on the issue. Runs get it as `$FACTORY_DECIDE_TECHNICAL` (`1` or `0`).
+  on. Off: the Foundry asks you every question on the issue. Runs get it as `$FACTORY_DECIDE_TECHNICAL` (`1` or `0`), read when a run starts or resumes. See [Questions the Foundry decides itself](#questions-the-foundry-decides-itself).
   If a run's repository is registered under two accounts and one of them is off, the run is treated as off.
 - **The settings are only stored and shown, with two exceptions.** Runs do not use the other settings yet: the test command still
   comes from the flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. The
   release-build recipe is read by the flow `release-build` when the commit has no `.factory/release-build.yaml`
-  (see "Build release files on this machine"). The "decide technical questions" switch is read by the engine for every step
-  (see above). The settings are never in `GET /api/repos` and never shown on
+  (see "Build release files on this machine"). The "decide technical questions" switch is read by the engine when a run starts
+  or resumes (see above). The settings are never in `GET /api/repos` and never shown on
   **My repositories**.
 - **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
   the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of

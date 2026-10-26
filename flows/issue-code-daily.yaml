@@ -61,10 +61,9 @@ vars:
   docs_required: ""
   agent_env: ""
 var_info:
-  github_repo:
+  github_repo: &a1
     set_by_run: true
-  issue:
-    set_by_run: true
+  issue: *a1
   test_cmd:
     label: Test command
     help: Use auto to find the command from the project files, or type the command that builds and tests the project.

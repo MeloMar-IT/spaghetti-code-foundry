@@ -93,7 +93,7 @@ describe("comment wording comes from the next-step module", () => {
     for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
       const run = stepRun(flowPath(f), "send_back");
       expect(run, f).toContain(post);
-      expect(run.trimEnd(), f).toMatch(/\nprintf '%s\\n' "\$out" \| sed '\/\^PLAN_STATUS:\/d'$/);
+      expect(run.trimEnd(), f).toMatch(/\nprintf '%s\\n' "\$body"$/);
     }
     const asked = (file: string) => {
       const run = stepRun(file, "ask_for_info");
@@ -107,6 +107,24 @@ describe("comment wording comes from the next-step module", () => {
       const run = stepRun(flowPath(f), "ask_for_info");
       expect(run, f).not.toContain("gh issue comment");
       expect(run.trim().replace(/\s+/g, " "), f).toBe(`printf '%s ' "$FACTORY_OUT_PLAN" | sed -E '/^(PLAN_STATUS|ROUTE):/d'`);
+    }
+  });
+
+  it("send_back lets the Foundry decide technical questions", () => {
+    for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
+      const run = stepRun(flowPath(f), "send_back");
+      expect(run, f).toContain("/^DECIDED:/d");
+      expect(run, f).toContain('node "$FACTORY_TOOLS/decide-questions.mjs" post-plan "{{run.dir}}"');
+      expect(run, f).toContain('echo "DECIDED: went_on"');
+      expect(run, f).toContain("--body-file - >/dev/null || exit 1");
+      expect(run.trim().split("\n").at(-1), f).toBe(`printf '%s\\n' "$body"`);
+      const def = parseYaml(readFileSync(flowPath(f), "utf8")) as { steps: { id: string; prompt?: string }[] };
+      expect(def.steps.find((s) => s.id === "send_back"), f).toMatchObject({
+        routes: [{ if: "^DECIDED: went_on\\s*$", goto: "pull_ticket" }], max_visits: 3, resume_from: "pull_ticket", on_success: "stop",
+      });
+      const p = def.steps.find((s) => s.id === "plan")?.prompt ?? "";
+      expect(p, f).toContain("**Decided by the Foundry**");
+      expect(p, f).toContain("unless a later comment from a person says otherwise");
     }
   });
 
