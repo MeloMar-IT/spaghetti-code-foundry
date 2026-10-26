@@ -120,6 +120,19 @@ case "$1 $2" in
   "api repos/"*"/contents/.factory/release-build.yaml?ref="*)
     if [ "$FAKE_GH_RECIPE" != 1 ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
     echo '{"type":"file","path":".factory/release-build.yaml"}'; exit 0 ;;
+  # "api repos/R/contents/<path>[?ref=<branch>]": a file when $FAKE_GH_FILES (a JSON list of "<branch>:<path>", `default` without ?ref=) holds the decoded ref and path,
+  # a directory (a JSON list, as the real API answers) when $FAKE_GH_DIRS holds it the same way, else 404.
+  "api repos/"*"/contents/"*)
+    url="${2#*/contents/}"; cpath="${url%%\?*}"; cref=default
+    case "$url" in *"?ref="*) cref="${url#*\?ref=}" ;; esac
+    cpath=$(printf '%b' "${cpath//%/\\x}"); cref=$(printf '%b' "${cref//%/\\x}")
+    case "${FAKE_GH_DIRS:-[]}" in
+      *"\"$cref:$cpath\""*) echo '[{"type":"file","path":"x"}]'; exit 0 ;;
+    esac
+    case "${FAKE_GH_FILES:-[]}" in
+      *"\"$cref:$cpath\""*) printf '{"type":"file","path":"%s"}\n' "$cpath"; exit 0 ;;
+    esac
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
 esac
 # Releases. State: $FAKE_GH_LOG.releases.json, a list of { id, tag_name, draft, prerelease, created_at, body, html_url, upload_url, name, target_commitish,
 # assets: [{ id, name, size, text? }] } (a test may write it first). Calls: "api --paginate repos/R/releases?per_page=100 --jq …" (one compact JSON line per

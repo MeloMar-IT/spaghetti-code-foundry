@@ -32,6 +32,13 @@ describe("findComment", () => {
     expect(findComment(list, "planner_questions", "r1")).toBe(mine);
   });
 
+  it("finds the comment of something to do like the questions of its run, or the up-front questions", () => {
+    const mine = c("needs info\n<!-- claude-factory run=r1 -->", 1);
+    const upFront = c("first\n<!-- claude-factory run=pre1 questions -->", 1);
+    expect(findComment([mine, c("other\n<!-- claude-factory run=r2 -->", 2)], "owner_action", "r1")).toBe(mine);
+    expect(findComment([upFront, c("plan\n<!-- claude-factory run=r1 plan -->", 2)], "owner_action")).toBe(upFront);
+  });
+
   it("takes a newer mixed comment (with decided=) over an older plain one of the same run", () => {
     const plain = c("🤖 asks\n\n**Q1. Which store?**\nA or b.\n**Recommendation:** a\n\n<!-- claude-factory run=r1 -->", 1);
     const mixed = c([

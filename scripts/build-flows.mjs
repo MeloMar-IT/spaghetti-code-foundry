@@ -486,12 +486,14 @@ const TASK_LINES = [
 const QUESTION_KINDS = [
   "Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.",
   "policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).",
+  "An owner_action question that waits for a file adds `**Needs:** file <path>` (the path from the repository root): the Foundry goes on by itself once the file is there.",
   "Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.",
 ];
 const QUESTION_FORMAT = [
   "  Write each question in this form:",
   "    **Q<n>. <question>**",
   "    **Kind:** technical | product | policy | owner_action",
+  "    **Needs:** file <path>   (only an owner_action question that waits for a file in the repository)",
   "    <context and the options you see>",
   "    **Recommendation:** <option> — <why>",
   ...QUESTION_KINDS.map((l) => `  ${l}`),

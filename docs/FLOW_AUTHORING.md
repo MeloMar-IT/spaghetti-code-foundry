@@ -582,6 +582,8 @@ know the commit and waits for the next server start or `fix_wait_days`.
 
 **Question kinds.** A planner or epic-questions prompt asks for each question in this form: `**Q<n>. <question>**`, then a line `**Kind:** technical | product | policy | owner_action`, then `**Recommendation:** <option> — <why>` (or `none`). `tools/decide-questions.mjs` reads it: a technical question with a recommendation can be decided by the Foundry, every other question is asked. A missing or unknown kind counts as product, and an ambiguous comment decides nothing.
 
+**Needs line.** An `owner_action` question that waits for a file in the repository adds a line `**Needs:** file <path>` (the path from the repository root, no `..`, no leading `/`). The watcher then checks that file on the develop branch (the default branch without gitflow) and goes on by itself once it is there. Without the line, the question waits for a person. `owner_action` questions are never answered by `/defaults`.
+
 **Commit and push to the run's branch** (never to main):
 
 ```yaml

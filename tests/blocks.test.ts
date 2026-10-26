@@ -83,6 +83,7 @@ describe("comment wording comes from the next-step module", () => {
     for (const [f, id] of cases) {
       const p = prompt(flowPath(f), id);
       expect(p, `${f}#${id}`).toContain("**Kind:** technical | product | policy | owner_action");
+      expect(p, `${f}#${id}`).toContain("**Needs:** file <path>");
       expect(p, `${f}#${id}`).toContain("**Recommendation:**");
       expect(p, `${f}#${id}`).toContain("`none`");
     }

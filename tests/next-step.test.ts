@@ -926,3 +926,29 @@ describe("records for a user", () => {
     expect(runNextStep(r, { limitAgent: "codex" }).why).toBe("The Codex usage limit is reached");
   });
 });
+
+describe("something to do (owner_action)", () => {
+  it("is yours, names the action and, with files, when it goes on by itself", () => {
+    const n = nextStep("owner_action", { issue: 4 }, { watched: true, issueUrl: "https://github.com/o/r/issues/4", ownerAction: "Commit config/app.yaml.", ownerFiles: { paths: ["config/app.yaml"], where: "`develop`" } });
+    expect(n.who).toBe("You");
+    expect(n.status).toBe("waiting for you — something to do");
+    expect(n.action).toBe("Commit config/app.yaml.");
+    expect(n.text).toContain("commit config/app.yaml, then answer on the issue — or it goes on by itself once `config/app.yaml` is on `develop`");
+    expect(n.until).toBe("once `config/app.yaml` is on `develop`");
+    expect(firstLine(n)).toBe("**What you need to do:** Commit config/app.yaml.");
+  });
+
+  it("has no waiting hint without files, and a plain action without text", () => {
+    const n = nextStep("owner_action", {}, { ownerAction: "Create the account" });
+    expect(n.until).toBeUndefined();
+    expect(n.text).toBe("A question needs something only you can do — create the account, then answer on the issue.");
+    expect(nextStep("owner_action").action).toBe("Do what the question on the issue asks");
+  });
+
+  it("is named in a dependency chain as waiting for something only you can do", () => {
+    const blocker = { issue: 8, next: nextStep("owner_action", { issue: 8 }, {}) };
+    const text = nextStep("dependency", { issue: 9 }, { blockers: [blocker] }).text;
+    expect(text).toContain("#8, which waits for something only you can do");
+    expect(text).toContain("handled #8");
+  });
+});

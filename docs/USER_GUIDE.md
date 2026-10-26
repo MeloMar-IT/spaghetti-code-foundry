@@ -440,6 +440,7 @@ Home asks again every 30 seconds.
 - **Comments that cannot be read:** an issue whose comments cannot be read in time is listed from its label alone, with no number of questions.
 - **Every waiting label counts.** The issue is listed also past the first 100 issues, also next to another status label, and also without the trigger label unless its run is parked. An answered issue stays listed until its label goes. No status comment is written on it.
 - **One item per issue.** When several watchers list the same issue (the repository name is not case-sensitive), Your turn shows one item. It is the ordinary listing before an extra one, then the one that needs you, then the first watcher's. A waiting-label issue does not also get a separate item for its older runs.
+- **Something to do:** a question that needs something only you can do (a file, an account, access) is listed as "waiting for you — something to do". The action is the question's title, as one line. **Show question** opens the question and **Answer…** sends your answer as a comment on the issue. When the question names a file (`**Needs:** file <path>`), the story goes on by itself once that file is on the develop branch (the default branch without gitflow); the item says so, and no answer is needed. `/defaults` does not answer such a question.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
 - **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. A failed automatic release build (see [Sources](#sources)) is titled "Build failed — open the run" and links to its run; Dismiss works as for other failed runs. Runs of older versions have no record of who started them and are treated like watcher runs.
 - **Answer and approve here:** for an item of a watcher, buttons next to the GitHub link do the work. **Show questions** has **Accept all recommendations** (only for questions asked up front) and **Answer…** (a box per question; each needs an answer, and **Use recommendation** fills one in visibly). **Show plan**, **Show split** and **Show request** show the risk and **Approve** / **Reject** (say what to change). A failed item has **Retry** and **Retry with a hint…**. Each action is a normal comment on the issue under the Foundry's GitHub login, signed with your name, so replying on GitHub still works. Approve and reject need write access for that login. The item then shows under **Done — continuing**.
@@ -1054,6 +1055,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 
 | Status | What it means and what happens next |
 |---|---|
+| waiting for you — something to do | A question asks for something only you can do, such as adding a file, creating an account or giving access. Do it and answer on the issue — when the question names a file, the work goes on by itself once the file is there. |
 | waiting for you — questions | The Foundry has questions about this issue before it starts. Answer them on the issue, or reply /defaults to go with the recommendations. When the planner asks: The planner has questions that the issue, the code and the Foundry itself cannot settle. Answer them and the work goes on. |
 | waiting for you — risky plan | The plan is risky, or you asked to check it, so coding waits for your decision. Approve it to start coding, or reject it and say what to change. |
 | waiting for you — split | The issue is too big for one change, so the Foundry proposes smaller issues. Approve and it creates them and closes this one, or reject it and say what to change. |
@@ -2497,6 +2499,8 @@ answered and cannot continue yet shows `factory:working`. The label comes back o
 unanswered questions. A waiting label on an issue that has no run, or next to another status label, is not changed; the
 issue is listed under **Needs you** as waiting for you. Remove the label to start it.
 
+**Something to do.** A question that needs something only you can do keeps the needs-info label, and `/defaults` does not answer it. The story waits with no run, no cost and no comment until someone answers on the issue, or the file the question names is on the develop branch (the default branch without gitflow). The Foundry checks for that file at each check: when it is there, it posts one note ("Nothing needed from you — …, so the Foundry goes on.") and resumes the story. It does this at most twice for one issue; after that the story waits for a person. A file path that is not a plain repository path is not checked.
+
 **Parked stories.** To park a story, remove its Foundry labels (or only the trigger label). A run
 that stopped with questions, or was cancelled while it was stopped, is then parked at the next
 check: the watcher marks the run as parked, and the overview shows "parked — not tracked by a
@@ -2800,7 +2804,7 @@ repository with this.
 
 | Label | Means | What you do |
 |---|---|---|
-| `Factory_needs_info` | Waiting for you — questions: asked up front for the whole batch, or by the planner | Reply on the issue — or just **`/defaults`** to accept the recommendations. It continues by itself. |
+| `Factory_needs_info` | Waiting for you — questions: asked up front for the whole batch, or by the planner | Reply on the issue — or just **`/defaults`** to accept the recommendations. It continues by itself. A question that needs something only you can do (a file, an account, access) is not answered by `/defaults`: do it, and the story goes on by itself once the file the question names is on the develop branch (or answer on the issue). |
 | `Factory_working` | Working, or paused — usage limit: planning and coding are running or paused | Wait; follow it on the Runs page |
 | `Factory_waiting` | Waiting for you — risky plan / split: it waits for your decision | `/approve` or `/reject` + feedback on the issue |
 | `Factory_done` | Done: implemented, tested, reviewed and merged into `develop` (gitflow) or in the rolling pull request | Nothing — merge the release pull request (or the rolling one) when you like |

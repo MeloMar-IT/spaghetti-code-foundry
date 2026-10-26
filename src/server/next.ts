@@ -181,7 +181,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     // A hold of a limit or a failure carries the administrator's wording: a user keeps the record of the run; so does a run that is answered on its page.
     const hold = rec.kind === "user_limit" || forUser && (rec.kind === "daily_budget" || rec.kind === "usage_limit" || rec.kind === "failed" || (rec.kind === "planner_questions" && answerHere))
       ? undefined
-      : tracked.flatMap((t) => t.status.holds ?? []).find((h) => h.next.runId === run.runId && (h.next.kind === rec.kind ||
+      : tracked.flatMap((t) => t.status.holds ?? []).find((h) => h.next.runId === run.runId && (h.next.kind === rec.kind || (h.next.kind === "owner_action" && rec.kind === "planner_questions") ||
         // "A bug story goes first" holds a stopped run that the watcher would resume: only while the run still is stopped.
         (h.next.kind === "bug_first" && !queued && (run.status === "stopped" || run.status === "cancelled" || rec.kind === "interrupted"))));
     // A retired run keeps its own record (it says "start a new run"), not a hold that says "resume"; any other hold only gets the flag.

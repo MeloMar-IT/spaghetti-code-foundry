@@ -10,7 +10,7 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic";
+  | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic" | "owner_action";
 
 export type NextWho = "You" | "Foundry" | "Another story" | "A time limit" | "Something is wrong";
 
@@ -91,6 +91,9 @@ export interface NextData {
   /** Link to the issue or pull request (default: none). */
   issueUrl?: string;
   questions?: number;
+  /** `owner_action`: what the owner must do (the question, as one safe line), and the files the Foundry waits for. */
+  ownerAction?: string;
+  ownerFiles?: { paths: string[]; where: string };
   /** `planner_questions`: the answer is typed on the run page of the user display (no watcher follows the run, its flow reads the task). */
   answerHere?: boolean;
   /** Text of the approval request or the failure reason. */
@@ -222,6 +225,7 @@ function blockerClause(b: BlockerInfo): string {
   if (!n) return "which is to be done";
   switch (n.kind) {
     case "questions": case "planner_questions": return "which waits for answers";
+    case "owner_action": return "which waits for something only you can do";
     case "approve_plan": return "which waits for your decision on its risky plan";
     case "approve_split": return "which waits for your decision on its split";
     case "approval": return "which waits for your decision";
@@ -242,7 +246,7 @@ function blockerClause(b: BlockerInfo): string {
 }
 
 /** Kinds of a blocker that need the owner (an answer or a decision). */
-const NEEDS_YOU = new Set<NextKind>(["questions", "planner_questions", "approve_plan", "approve_split", "approval"]);
+const NEEDS_YOU = new Set<NextKind>(["questions", "planner_questions", "owner_action", "approve_plan", "approve_split", "approval"]);
 
 /** The blockers that hold everything up: down every "waits for another story", each issue once. */
 function rootBlockers(bs: BlockerInfo[] | undefined, seen = new Set<number>()): BlockerInfo[] {
@@ -316,6 +320,20 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       say = kind === "questions" ? `${action.toLowerCase()} on the issue, or reply /defaults to go with the recommendations`
         : `${action.toLowerCase()} ${here ? "on the run page" : "on the issue"} and it continues`;
       if (kind === "planner_questions" && (here || !d.watched)) w = runWhere ?? where;
+      break;
+    }
+    case "owner_action": {
+      who = "You";
+      why = "A question needs something only you can do";
+      action = d.ownerAction || "Do what the question on the issue asks";
+      const files = d.ownerFiles?.paths ?? [];
+      say = `${lowerFirst(action.replace(/[.!?:;,\s]+$/, ""))}, then answer on the issue`;
+      if (files.length && d.ownerFiles) {
+        const list = files.map((p) => `\`${p}\``).join(", ");
+        const when = `${list} ${files.length === 1 ? "is" : "are"} on ${d.ownerFiles.where}`;
+        say += ` — or it goes on by itself once ${when}`;
+        until = `once ${when}`;
+      }
       break;
     }
     case "approve_plan":
