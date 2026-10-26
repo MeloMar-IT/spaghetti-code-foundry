@@ -23,14 +23,11 @@ vars:
   field: ""
   items: ""
 var_info:
-  github_repo:
+  github_repo: &a1
     set_by_run: true
-  ask:
-    set_by_run: true
-  field:
-    set_by_run: true
-  items:
-    set_by_run: true
+  ask: *a1
+  field: *a1
+  items: *a1
 steps:
   - id: clone
     type: shell

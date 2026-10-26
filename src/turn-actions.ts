@@ -18,7 +18,7 @@ export function findComment(comments: Comment[], kind: string, runId?: string, a
   const marked = (re: RegExp) => newest((c) => isBot(c) && re.test(c.body));
   let found: Comment | undefined;
   if (kind === "questions") found = marked(/<!-- [\w-]+ run=\S* questions -->/);
-  else if (kind === "planner_questions") found = runId ? newest((c) => isBot(c) && c.body.includes(`run=${runId} -->`)) : undefined;
+  else if (kind === "planner_questions") found = runId ? newest((c) => isBot(c) && (c.body.includes(`run=${runId} -->`) || c.body.includes(`run=${runId} decided=`))) : undefined;
   else if (runId) found = newest((c) => isBot(c) && c.body.includes(`run=${runId} approval`));
   if (!found && QUESTION_KINDS.includes(kind)) found = newest((c) => isBot(c) && !isStatusComment(c));
   return found;

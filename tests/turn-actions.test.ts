@@ -32,6 +32,19 @@ describe("findComment", () => {
     expect(findComment(list, "planner_questions", "r1")).toBe(mine);
   });
 
+  it("takes a newer mixed comment (with decided=) over an older plain one of the same run", () => {
+    const plain = c("🤖 asks\n\n**Q1. Which store?**\nA or b.\n**Recommendation:** a\n\n<!-- claude-factory run=r1 -->", 1);
+    const mixed = c([
+      "**What you need to do:** Answer the question on the issue.", "",
+      "**Q2. Who uses it?**", "Admins or users.", "**Recommendation:** none", "",
+      "**Decided by the Foundry**", "", "**Q1. Which store?**", "**Decision:** a", "",
+      "<!-- claude-factory run=r1 decided=1 -->",
+    ].join("\n"), 2);
+    const list = [plain, mixed];
+    expect(findComment(list, "planner_questions", "r1")).toBe(mixed);
+    expect(parseQuestions(findComment(list, "planner_questions", "r1")!.body).map((q) => q.title)).toEqual(["Who uses it?"]);
+  });
+
   it("takes the approval of the item's run, not an older run's", () => {
     const list = [c("a <!-- claude-factory run=r2 approval -->", 1), c("b <!-- claude-factory run=r1 approval -->", 2), c("c <!-- claude-factory run=r2 approval -->", 3)];
     expect(findComment(list, "approve_plan", "r1")).toBe(list[1]);

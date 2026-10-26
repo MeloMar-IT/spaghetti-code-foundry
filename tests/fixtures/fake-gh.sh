@@ -264,6 +264,8 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
     esac
     printf '\n--- end comment\n' >> "$FAKE_GH_LOG" # a body may end without a line end
     cn=$(($(cat "$FAKE_GH_LOG.comments" 2>/dev/null || echo 0) + 1)); echo "$cn" > "$FAKE_GH_LOG.comments"
+    # FAKE_GH_COMMENT_MKDIR=<dir>: runs mkdir -p on that folder after logging the comment (a test points it at <runDir>/decided.json/x so the commit after the post fails).
+    [ -n "$FAKE_GH_COMMENT_MKDIR" ] && mkdir -p "$FAKE_GH_COMMENT_MKDIR"
     echo "https://github.com/owner/repo/issues/$3#issuecomment-$cn" ;;
   "issue create") n=$(($(cat "$FAKE_GH_LOG.created" 2>/dev/null || echo 100) + 1)); echo "$n" > "$FAKE_GH_LOG.created"
                   echo "--- created issue: $*" >> "$FAKE_GH_LOG"; case "$*" in *--body-file*) cat >> "$FAKE_GH_LOG" ;; esac

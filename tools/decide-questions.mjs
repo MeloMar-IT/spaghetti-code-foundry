@@ -407,8 +407,10 @@ export function postPlan(runDir, text, env = process.env, gh = defaultGh(env)) {
 
     // A retry: the latest committed round of this issue, or the pending round, holds this exact input and a comment of
     // ours carries its marker. Only the marker is compared, so edited comments and changed formatting do not post again.
+    // A fresh planner round (FACTORY_NEW_ROUND=1, set by send_back when the plan ran after the last send_back) is never a
+    // retry, even when the planner repeats the same questions: it goes through checkRound's title check.
     const input = inputOf(text);
-    const kept = [rec.rounds.filter((r) => r.issue === n).at(-1), pend?.round?.issue === n ? pend.round : undefined];
+    const kept = env.FACTORY_NEW_ROUND === "1" ? [] : [rec.rounds.filter((r) => r.issue === n).at(-1), pend?.round?.issue === n ? pend.round : undefined];
     for (const r of kept) {
       if (r?.input !== input || r.id !== roundId(n, "planner", r.outcome, d.decided)) continue;
       const found = view.comments.some((x) => x?.viewerDidAuthor === true && typeof x.body === "string" && lastLine(x.body) === markerFor(r.id));
