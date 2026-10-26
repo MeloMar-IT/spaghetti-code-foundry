@@ -528,7 +528,8 @@ bundle yet: the stories after it give the sources to the agents read-only (#153)
 - **Consumers**: the roles that may be given the source (`planner`, `coder`, `reviewer`, `tester`),
   at least one (`mayConsume`).
 - **Budget**: `maxSources`, `maxSourceBytes` and `maxTotalBytes`. A bundle over its own budget is not
-  valid.
+  valid. `max_source_bytes` may not be above `max_total_bytes` (the `context:` settings check this
+  before a bundle is made; see `src/context/settings.ts`).
 - **Omitted**: an expected source that is not in the bundle, with one reason: `missing`, `stale`,
   `ambiguous`, `over-budget`, `classification`, `generated` (the repository marks the file as made
   by a program) or `unsupported` (not a regular text file: a link, a submodule or a binary file).
@@ -558,7 +559,10 @@ hashes (`hashContextSources`). **It is not called by the engine yet**: giving a 
   how long a fetched input stays fresh.
 - **Only the declared commit.** `openRepositoryAt(folder, commit)` (`repository.ts`) reads through
   git only: `ls-tree` of the full commit id, then `cat-file` by the object id from that list. The
-  working tree is never read, so a changed, new or left-over file cannot get in. The folder must be
+  working tree is never read, so a changed, new or left-over file cannot get in. Reading has an
+  optional `deadlineMs` (an absolute time, with the clock `now`): every git call, `cat-file`
+  included, gets the smaller of its own timeout and the time left, and with no time left it throws
+  `timeout` without starting git. Without a deadline the clock is never read. The folder must be
   the repository itself (a repository above it is not used), a branch, a tag or a short id is
   refused, and git runs without the caller's `GIT_*` variables, without user or system settings and
   without fetching missing objects. A link is listed as a link and never followed; its text is not
@@ -598,7 +602,11 @@ hashes (`hashContextSources`). **It is not called by the engine yet**: giving a 
 - **Writing** (`store.ts`): `writeContextBundle(folder, bundle, texts)` checks every text against
   its hash, then writes `context/<source id>` per source and `context.json` last, and returns the
   evidence `ArtifactRef`. It never replaces a file: a folder that already has `context.json` or
-  `context/` is refused. Nothing calls it yet.
+  `context/` is refused. Every file is made with `openSync(…, "wx", 0o600)` and recorded at once, and
+  every folder right after its `mkdirSync`. If anything fails, the store walks that record in reverse
+  and removes each entry (`rmSync` for a file, `rmdirSync` for a folder), never recursively, each in
+  its own `try`; then it throws `write-failed`. Files and folders it did not make survive, so a
+  foreign file planted inside `context/` mid-write keeps its folder. Nothing calls it yet.
 
 ### Tool profiles
 

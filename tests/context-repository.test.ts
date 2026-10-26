@@ -178,3 +178,111 @@ describe("writing a context bundle into a folder", () => {
     expect(readdirSync(run)).toEqual([]);
   });
 });
+
+describe("a deadline for the git calls", () => {
+  it("throws timeout without starting git when no time is left", () => {
+    const env = { ...process.env, PATH: join(tmp, "no-bin") };
+    mkdirSync(join(tmp, "no-bin"), { recursive: true });
+    // without the deadline git is missing; with it the deadline is seen first
+    expect(code(() => openRepositoryAt(repo, first, { env }))).toBe("no-git");
+    expect(code(() => openRepositoryAt(repo, first, { env, deadlineMs: 0 }))).toBe("timeout");
+    expect(code(() => openRepositoryAt(repo, first, { env, deadlineMs: 1000, now: () => 1000 }))).toBe("timeout");
+    expect(code(() => openRepositoryAt(repo, first, { env, deadlineMs: Number.NaN }))).toBe("timeout");
+  });
+
+  it("gives read() the time that is left, not the time of the open", () => {
+    let t = 1_000;
+    const snap = openRepositoryAt(repo, first, { deadlineMs: 61_000, now: () => t });
+    t = 2_000;
+    expect(Buffer.from(snap.read("assets/logo.png"))).toEqual(Buffer.from(FILES["assets/logo.png"] as Uint8Array));
+    t = 61_000;
+    expect(code(() => snap.read("assets/logo.png"))).toBe("timeout");
+    t = 2_000;
+    expect(snap.read("assets/logo.png").length).toBe(8);
+  });
+
+  it("keeps a deadline when the git timeout is 0 (no limit)", () => {
+    expect(code(() => openRepositoryAt(repo, first, { timeoutMs: 0, deadlineMs: 5, now: () => 5 }))).toBe("timeout");
+    expect(openRepositoryAt(repo, first, { timeoutMs: 0, deadlineMs: Date.now() + 60_000 }).entries.length).toBe(Object.keys(FILES).length);
+  });
+
+  it("changes nothing, and never reads the clock, without a deadline", () => {
+    const now = () => {
+      throw new Error("clock read");
+    };
+    const snap = openRepositoryAt(repo, first, { now });
+    expect(snap.entries.length).toBe(Object.keys(FILES).length);
+    expect(snap.read("assets/logo.png").length).toBe(8);
+  });
+});
+
+describe("a failed write of a context bundle leaves nothing behind", () => {
+  const sel = selectContext(input());
+  const folder = (name: string) => {
+    const dir = join(tmp, name);
+    mkdirSync(dir);
+    return dir;
+  };
+  const boom = () => {
+    throw new Error("boom");
+  };
+  /** The bundle with its sources moved to the given paths (first source to paths[0], and so on). */
+  const moved = (paths: string[]) => {
+    const texts = new Map<string, Uint8Array>();
+    const sources = sel.bundle.sources.map((s, i) => {
+      const path = paths[i] ?? s.content.path;
+      texts.set(path, sel.texts.get(s.content.path) as Uint8Array);
+      return { ...s, content: { ...s.content, path } };
+    });
+    return { bundle: { ...sel.bundle, sources }, texts };
+  };
+  const tree = (dir: string, rel = ""): string[] =>
+    readdirSync(join(dir, rel), { withFileTypes: true })
+      .flatMap((e) => (e.isDirectory() ? [`${join(rel, e.name)}/`, ...tree(dir, join(rel, e.name))] : [join(rel, e.name)]))
+      .sort();
+
+  it("removes everything when a source or context.json fails after it was opened", () => {
+    const firstPath = sel.bundle.sources[0]!.content.path;
+    for (const [name, at] of [["src", firstPath], ["json", "context.json"]] as const) {
+      const run = folder(`run-open-${name}`);
+      expect(code(() => writeContextBundle(run, sel.bundle, sel.texts, { afterOpen: (p) => p.endsWith(at) && boom() })), name).toBe("write-failed");
+      expect(readdirSync(run), name).toEqual([]);
+    }
+  });
+
+  it("removes the folders of a nested source too", () => {
+    const m = moved(["context/a/b.md"]);
+    const run = folder("run-nested");
+    expect(code(() => writeContextBundle(run, m.bundle, m.texts, { afterOpen: (p) => p.endsWith("context/a/b.md") && boom() }))).toBe("write-failed");
+    expect(readdirSync(run)).toEqual([]);
+  });
+
+  it("leaves a planted context.json, or a planted context/ with a file in it, as it was", () => {
+    const a = folder("run-plant-json");
+    expect(code(() => writeContextBundle(a, sel.bundle, sel.texts, { afterCheck: () => writeFileSync(join(a, "context.json"), "planted") }))).toBe("write-failed");
+    expect(readFileSync(join(a, "context.json"), "utf8")).toBe("planted");
+    expect(readdirSync(a)).toEqual(["context.json"]);
+
+    const b = folder("run-plant-dir");
+    const plant = () => {
+      mkdirSync(join(b, "context"));
+      writeFileSync(join(b, "context", "x.txt"), "planted");
+    };
+    expect(code(() => writeContextBundle(b, sel.bundle, sel.texts, { afterCheck: plant }))).toBe("write-failed");
+    expect(tree(b)).toEqual(["context/", "context/x.txt"]);
+    expect(readFileSync(join(b, "context", "x.txt"), "utf8")).toBe("planted");
+  });
+
+  it("keeps a foreign file, and its folder, that appeared in a folder the store made", () => {
+    const m = moved(["context/sub/a.md", "context/sub/b.md"]);
+    const run = folder("run-foreign");
+    const afterOpen = (p: string) => {
+      if (!p.endsWith("context/sub/b.md")) return;
+      writeFileSync(join(run, "context", "sub", "foreign.txt"), "foreign");
+      boom();
+    };
+    expect(code(() => writeContextBundle(run, m.bundle, m.texts, { afterOpen }))).toBe("write-failed");
+    expect(tree(run)).toEqual(["context/", "context/sub/", "context/sub/foreign.txt"]);
+    expect(readFileSync(join(run, "context", "sub", "foreign.txt"), "utf8")).toBe("foreign");
+  });
+});

@@ -10,6 +10,7 @@ import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
 import { BASELINE_POLICY_ID } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
+import { ContextSettingsSchema } from "./context/settings.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { CANONICAL_LIMITS } from "./skills/canonical-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
@@ -713,6 +714,8 @@ export const ConfigSchema = z
       .prefault({}),
     /** Lifecycle telemetry: one value-free event per line in <data folder>/telemetry/events-YYYY-MM-DD.jsonl (the UTC day). */
     telemetry: TelemetrySchema.prefault({}),
+    /** What a run is given as context: the limits and the privacy of its sources (read from #696 part 2 on). */
+    context: ContextSettingsSchema.prefault({}),
   })
   .strict()
   .superRefine((c, ctx) => {

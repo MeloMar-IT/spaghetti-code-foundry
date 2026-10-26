@@ -70,3 +70,6 @@ export function upgradeContextBundle(raw: unknown, current: number, migrations: 
   }
   return record;
 }
+
+/** Marks a bundle write that started in the run folder; used from #696 part 2. */
+export const CONTEXT_ATTEMPT_FILE = "context.attempt";
