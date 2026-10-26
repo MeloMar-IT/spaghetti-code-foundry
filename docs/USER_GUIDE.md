@@ -2579,6 +2579,15 @@ If the issue is an epic by mistake, remove the `epic` label or the list of stori
 the watcher builds it like any other story. A run that was stopped with questions for an epic is
 parked and its waiting labels are removed, so the epic does not stay in **Needs you**.
 
+**Epic questions the Foundry decides itself.** When the repository's **Decide technical questions itself** setting is on
+(the default), the up-front check of an epic decides the technical questions of each issue that has a recommendation, as
+the planner does. Each issue then gets only the questions that need you, plus a note of what was decided. An issue whose
+questions were all decided gets a comment that says so, and no waiting label. An issue with both gets one comment with
+both and the waiting label. Each issue's decisions are a separate decision: two issues of one epic can decide the same
+topic differently, and the note says so. The decisions are recorded in the run record (see "Decided by the Foundry" on the
+run page). If the check fails for an issue, that issue is not recorded and the check reports the error; a retry posts
+nothing twice. With the setting off, the check asks every question, as before.
+
 ### Bug stories go first
 
 A story with a bug label is repaired before the Foundry builds anything new. The watcher option `priority_labels` lists the labels (default `[bug]`, not case sensitive). Set `priority_labels: []` to turn it off for a watcher.
