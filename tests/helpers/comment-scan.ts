@@ -66,12 +66,13 @@ export function scanNode(source: string): string[] {
     }
     if (!/["']--body-file["'],\s*["']-["']/.test(call[1]!)) problems.push("does not read its text from stdin (--body-file -)");
     const id = call[2]!;
-    if (!new RegExp(`(?:const|let)\\s+${id.replace(/\$/g, "\\$")}\\s*=\\s*\\[\\s*\\.\\.\\.\\(first \\? \\[first, ""\\] : \\[\\]\\)`).test(source)) {
+    if (!new RegExp(`(?:const|let)\\s+${id.replace(/\$/g, "\\$")}\\s*=\\s*\\[\\s*\\.\\.\\.\\(first \\? \\[first, ""\\] : (?:\\[\\]|\\["", ""\\])\\)`).test(source)) {
       problems.push(`${id} does not start with the first line`);
     }
     const firsts = [...source.matchAll(/(?<![\w$.])first\s*=(?!=)\s*([^;\n]+)/g)];
-    if (firsts.length !== 1 || !new RegExp(`^process\\.env\\.${VAR}$`).test(firsts[0]![1]!.trim())) {
-      problems.push("first is not read from process.env.FACTORY_FIRST_<NAME>");
+    const one = `process\\.env\\.${VAR}`;
+    if (firsts.length !== 1 || !new RegExp(`^(?:${one}|[^?:]+\\?\\s*${one}\\s*:\\s*${one})$`).test(firsts[0]![1]!.trim())) {
+      problems.push("first is not read from process.env.FACTORY_FIRST_<NAME> (or one plain condition between two of them)");
     }
   }
   return problems;

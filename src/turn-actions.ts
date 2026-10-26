@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import { isBot, isStatusComment, type Comment } from "./github.js";
-import type { CommentKind } from "./next-step.js";
+import { beforeDecided, type CommentKind } from "./next-step.js";
 
 /** Reading the Foundry's comments on an issue, and writing the answers to them. Pure: no GitHub, no files. */
 
 const ANY_KIND: readonly string[] = ["questions", "planner_questions", "approve_plan", "approve_split", "approval"];
 export const isCommentKind = (k: string): k is CommentKind => ANY_KIND.includes(k);
 
-const QUESTION_KINDS: readonly string[] = ["questions", "planner_questions"];
+const QUESTION_KINDS: readonly string[] = ["questions", "planner_questions", "owner_action"];
 
 /**
  * The Foundry comment an item is about: found by its marker, since a newer Foundry comment may follow it.
@@ -17,8 +17,10 @@ export function findComment(comments: Comment[], kind: string, runId?: string, a
   const newest = (match: (c: Comment) => boolean) => [...comments].reverse().find((c) => (author === undefined || c.author.login === author) && match(c));
   const marked = (re: RegExp) => newest((c) => isBot(c) && re.test(c.body));
   let found: Comment | undefined;
+  // Something to do is a question comment: a run's, or the one asked up front.
+  if (kind === "owner_action") kind = runId ? "planner_questions" : "questions";
   if (kind === "questions") found = marked(/<!-- [\w-]+ run=\S* questions -->/);
-  else if (kind === "planner_questions") found = runId ? newest((c) => isBot(c) && c.body.includes(`run=${runId} -->`)) : undefined;
+  else if (kind === "planner_questions") found = runId ? newest((c) => isBot(c) && (c.body.includes(`run=${runId} -->`) || c.body.includes(`run=${runId} decided=`))) : undefined;
   else if (runId) found = newest((c) => isBot(c) && c.body.includes(`run=${runId} approval`));
   if (!found && QUESTION_KINDS.includes(kind)) found = newest((c) => isBot(c) && !isStatusComment(c));
   return found;
@@ -68,7 +70,7 @@ export function parseQuestions(body: string): Question[] {
       ...(m ? { recommendation: text.slice(m.index + m[0].length).trim() } : {}),
     });
   };
-  for (const line of visibleText(body).split("\n")) {
+  for (const line of beforeDecided(visibleText(body)).split("\n")) {
     const m = Q_HEAD.exec(line);
     if (m) {
       done();

@@ -123,8 +123,10 @@ function toastFocusBack() {
  * `back: false`: the caller puts the focus back itself, after its work.
  */
 function closeToast(back = true) {
-  const el = document.getElementById("toast");
   clearTimeout(toastTimer);
+  // A timer can fire after the page is gone (a closed window, a finished test): nothing to hide then.
+  const el = globalThis.document?.getElementById("toast");
+  if (!el) return;
   const inside = !!el.contains?.(document.activeElement) && document.activeElement !== el;
   el.className = "";
   toastRun = undefined;

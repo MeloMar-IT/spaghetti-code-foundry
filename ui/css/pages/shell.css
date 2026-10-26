@@ -14,6 +14,7 @@
 .health .holds { margin: 0; flex: 1 1 420px; }
 .health-repos { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-left: auto; }
 .health-version { flex: 1 1 100%; }
+.health-governor { flex: 1 1 100%; }
 .user { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--text-small); white-space: nowrap; }
 .signed-out .repo, .signed-out .layout > aside, .signed-out .since, .signed-out .health, .signed-out .subnav, .signed-out .crumbs { display: none; }
 .top a[data-nav="start"] { border: 1px solid var(--border); color: var(--text); text-decoration: none; padding: 6px 12px; border-radius: var(--radius-md); white-space: nowrap; }

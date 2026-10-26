@@ -366,12 +366,36 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   `credential-scope-exceeded`. The branch rules come first because the hook checks the branch before it scans:
   a push refused for a protected branch has no secret count, so `secret-detected` must not decide it.
   `repository-not-allowed` comes after the secret and identity rules, so every push decided by them keeps its
-  decision. The hotfix exception is only allowed for `issue-gitflow` / `push_main` with `shippedFlow: true`,
+  decision. Forbidden paths (`forbidden_paths`, #631) are taken as written, and their `paths` rules come last, after
+  the limit rules, so no earlier rule's index changes.
+  The hotfix exception is only allowed for `issue-gitflow` / `push_main` with `shippedFlow: true`,
   and is safe with `hotfix_to_main` off because `push_main` exits before pushing unless `FACTORY_HOTFIX=on`.
   Scan off: the hook never gives a count, so the secret rule is not in the pack; no zero count is invented.
 - **Unknown push repository.** `runBaseline` also builds `pushWithoutRepository` (the same pack without the
   repository rule). `RunPolicy.decide` uses it at `push` only when the input has no `repository`. Such a
   decision records that pack's hash. The repository is never guessed.
+- **Step without sandbox fact.** The `sandbox-required` rule also applies at `step.before` (`SANDBOX_STEP_RULE`), and
+  `runBaseline` builds `stepWithoutSandbox`: the same pack with the rule only at `agent.write`. `RunPolicy.decide`
+  uses it at `step.before` only when the input has no `sandboxed` fact, which is every step that is not a shell
+  step (`shellSandboxed`, `src/engine/step-facts.ts`, returns undefined for those). So a claude step or an approval
+  step never gets a baseline `input-incomplete` there. For a shell step it is `(OS sandbox on and short environment)
+  or (the step has a Docker image)`, matching `boxed` and the Docker path of `execute.ts`; a refused sandbox counts as not on.
+- **Changed paths (#631).** `paths` is worked out only when a usable pack needs it (`RunPolicy.needsFact`, at
+  `step.after`), so runs without path rules do no git work. `src/engine/diff.ts` (`changedPaths`, `checkoutRoot`,
+  `runChangedPaths`, `ensurePathsBase`) runs git async, with the cancel signal and a 30 s budget. `changedPaths`
+  uses a private bare git folder in a temporary folder, with the workspace's objects as alternates and the
+  workspace as work tree: `read-tree` of HEAD, a check that every blob of HEAD and the base is present, `add -A`,
+  then `diff --cached --name-only base`. It takes the union with the same diff of the workspace's own index, which is
+  read and never written (`--cached`, `GIT_OPTIONAL_LOCKS=0`), so a crafted index can only add paths or make the
+  result incomplete. Calls have no lazy fetch (`GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL` empty,
+  `-c protocol.allow=never`), so a promisor config cannot run a command; a missing object is undefined. Output is
+  `-z`, each path is checked with `isSafeRelativePath`, and more than 5000 paths is undefined.
+  `checkoutRoot` accepts the root of the workdir's repository only when it is the workdir or an ancestor of it;
+  an empty workspace never searches upward. The `pathsTracked` flag (set on new runs) gates every mode: older runs
+  get no git call and `input-incomplete`. The base for an empty workspace is HEAD after the first step that left a
+  checkout (`pathsBaseSha`), read once and memoised per summary (`ensurePathsBase`); `baseSha` is ignored there.
+  Any failure after `.git` exists sets `pathsBaseLost`, persisted, and `resumeRun` sets it for a checkout without a
+  base. The base never moves forward. `runChangedPaths` never throws.
 - **Construction failure.** `baselineEntry(version, controls)` returns a `LayeredPack`. If the baseline cannot
   be built (too many rules or a bad version), it is a `policy.invalid` mandatory entry, so the fail-closed path
   of "Fail closed" applies at privileged boundaries. There is no silent fallback to a weaker pack.
@@ -1009,6 +1033,16 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     nothing is written. Key files are read with a size limit and no link following.
   - **Errors.** Every fs error becomes one fixed line from `DELIVERY_WRITE_FAULTS`, with no path and no
     system message.
+- **Verifier (#658, part 4 of 4 of #650).** `src/delivery/run-verify.ts`. `verifyRunDelivery(runDir, runId, publicKey)`
+  never throws and only reads. It reads each file as raw bytes with a size limit and no link following, and
+  decodes it as strict UTF-8, so a changed byte cannot decode to the signed text. It checks the folder (plain,
+  only contract files), the numbering, the signatures against the trusted key, `supersedes`, the latest copy, the
+  `evidence.incomplete` marker and the evidence chain up to each contract's `count` (through
+  `evidenceHeadProblem`). The first failure ends the check with one `fault` and a relative path. The result is
+  `verified`, `failed`, `unsigned` or `none`, and `deliveryVerifyExitCode` maps it to 0, 1 or 2 (none gives 2).
+  Events after the last contract are allowed. `deliveryCommand` handles `verify` and `public-key`; the key comes
+  from `--public-key` (`readPublicKeyFile`) or from the configured signing key (`readConfiguredSigningKey`).
+  Nothing in the server, the UI or CI calls it yet.
 - **Not yet.** No server or UI reads a contract. Making CI stop on a missing contract, and the stop
   conditions in a run, are the next part of #162.
 - **Tests.** `tests/delivery-contract.test.ts` (order, golden text, every byte of the text, the order

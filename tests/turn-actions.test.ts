@@ -32,6 +32,26 @@ describe("findComment", () => {
     expect(findComment(list, "planner_questions", "r1")).toBe(mine);
   });
 
+  it("finds the comment of something to do like the questions of its run, or the up-front questions", () => {
+    const mine = c("needs info\n<!-- claude-factory run=r1 -->", 1);
+    const upFront = c("first\n<!-- claude-factory run=pre1 questions -->", 1);
+    expect(findComment([mine, c("other\n<!-- claude-factory run=r2 -->", 2)], "owner_action", "r1")).toBe(mine);
+    expect(findComment([upFront, c("plan\n<!-- claude-factory run=r1 plan -->", 2)], "owner_action")).toBe(upFront);
+  });
+
+  it("takes a newer mixed comment (with decided=) over an older plain one of the same run", () => {
+    const plain = c("🤖 asks\n\n**Q1. Which store?**\nA or b.\n**Recommendation:** a\n\n<!-- claude-factory run=r1 -->", 1);
+    const mixed = c([
+      "**What you need to do:** Answer the question on the issue.", "",
+      "**Q2. Who uses it?**", "Admins or users.", "**Recommendation:** none", "",
+      "**Decided by the Foundry**", "", "**Q1. Which store?**", "**Decision:** a", "",
+      "<!-- claude-factory run=r1 decided=1 -->",
+    ].join("\n"), 2);
+    const list = [plain, mixed];
+    expect(findComment(list, "planner_questions", "r1")).toBe(mixed);
+    expect(parseQuestions(findComment(list, "planner_questions", "r1")!.body).map((q) => q.title)).toEqual(["Who uses it?"]);
+  });
+
   it("takes the approval of the item's run, not an older run's", () => {
     const list = [c("a <!-- claude-factory run=r2 approval -->", 1), c("b <!-- claude-factory run=r1 approval -->", 2), c("c <!-- claude-factory run=r2 approval -->", 3)];
     expect(findComment(list, "approve_plan", "r1")).toBe(list[1]);
@@ -80,6 +100,13 @@ describe("parseQuestions and visibleText", () => {
     const body = "**Q1. One?**\nplain\n\n**Q1. Again?**\nx\n\n**Q2. Two?**\nlast";
     const q = parseQuestions(body);
     expect(q.map((x) => [x.n, x.title, x.recommendation])).toEqual([[1, "One?", undefined], [2, "Two?", undefined]]);
+  });
+
+  it("stops at the decided section", () => {
+    const body = ["**Q2. Who sees it?**", "text", "**Recommendation:** admins", "", "**Decided by the Foundry**", "", "> **Q1. Which hash?**", "", "**Decision:** sha256"].join("\n");
+    const q = parseQuestions(body);
+    expect(q.map((x) => x.n)).toEqual([2]);
+    expect(q[0]!.recommendation).toBe("admins");
   });
 });
 

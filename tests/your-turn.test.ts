@@ -128,6 +128,7 @@ describe("actsFor and acted items", () => {
   it("gives the actions per kind, and none without a watcher, an issue or for a joined release", () => {
     expect(actsFor("questions", "a", 1)).toEqual(["defaults", "answer"]);
     expect(actsFor("planner_questions", "a", 1)).toEqual(["answer"]);
+    expect(actsFor("owner_action", "a", 1)).toEqual(["answer"]);
     for (const k of ["approve_plan", "approve_split", "approval"] as NextKind[]) expect(actsFor(k, "a", 1)).toEqual(["approve", "reject"]);
     expect(actsFor("failed", "a", 1)).toEqual(["retry", "retry_hint"]);
     expect(actsFor("failed", "a", 1, true)).toEqual([]);

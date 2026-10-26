@@ -34,6 +34,7 @@ export function renderHealth(el, health, { onCancel, readOnly = false } = {}) {
       health.skillProblemsMore > 0 ? h("li", {}, `and ${health.skillProblemsMore} more skill problem${health.skillProblemsMore === 1 ? "" : "s"}: run "scf skills" to see all`) : null,
     ]) : null,
     health.monitorFindings ? h("a", { class: "health-findings", "data-focus": "health-findings", href: "#/problems" }, findingsLink(health.monitorFindings)) : null,
+    health.governor?.changesToday > 0 ? h("span", { class: "health-governor muted" }, `The load governor changed the limits ${health.governor.changesToday} time${health.governor.changesToday === 1 ? "" : "s"} today`) : null,
     repos.length ? h("span", { class: "health-repos muted" }, repos.map((r) => h("span", {}, h("span", { class: "mono" }, r.repo), lastOkText({ lastOk: r.lastOk })))) : null,
     health.version || health.update ? h("span", { class: "health-version muted" },
       health.version ? `Version ${String(health.version.commit).slice(0, 7)} · ${new Date(health.version.date).toLocaleString()}` : "",

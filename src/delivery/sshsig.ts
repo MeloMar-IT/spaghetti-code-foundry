@@ -140,7 +140,7 @@ export function verifySshSignature(message: string | Uint8Array, armoured: strin
 }
 
 /** The 32 raw bytes of an `ssh-ed25519 AAAA…` line, or undefined. */
-function parseKeyLine(line: string): Buffer | undefined {
+export function parseKeyLine(line: string): Buffer | undefined {
   try {
     if (typeof line !== "string") return undefined;
     const parts = line.trim().split(/\s+/);

@@ -29,7 +29,7 @@ export function actsFor(kind: NextStep["kind"], watcher: string | undefined, iss
   if (!watcher || issue === undefined) return [];
   switch (kind) {
     case "questions": return ["defaults", "answer"];
-    case "planner_questions": return ["answer"];
+    case "planner_questions": case "owner_action": return ["answer"];
     case "approve_plan": case "approve_split": case "approval": return ["approve", "reject"];
     case "failed": return retired ? [] : ["retry", "retry_hint"];
     default: return [];

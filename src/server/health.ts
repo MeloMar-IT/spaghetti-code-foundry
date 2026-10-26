@@ -9,6 +9,9 @@ import { activeMutes, muteFor } from "../monitor/mutes.js";
 import { findingState } from "../monitor/state.js";
 import { runOrigin } from "../your-turn.js";
 import { cachedSkillRegistry } from "../skills/registry.js";
+import { join } from "node:path";
+import { FACTORY_HOME } from "../flow/load.js";
+import { changesToday } from "../ops/governor.js";
 import { send } from "./http.js";
 import { nextFor, watcherProblem } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
@@ -31,6 +34,8 @@ export interface Health {
   skillProblems?: { source: string; root: string; package?: string; reason: string }[];
   /** How many skill problems are not listed (`scf skills` lists all). */
   skillProblemsMore?: number;
+  /** How often the load governor changed the limits today (local time). A count only. Not a problem: it does not change `ok`. Absent when 0. */
+  governor?: { changesToday: number };
 }
 
 const RUNS = { label: "Runs page", url: "#/runs" };
@@ -156,6 +161,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
   const count = list.length + skillAll.length;
   const self = ctx.selfUpdate?.view();
   const monitorFindings = findingsCount(cfg.monitor.report_to);
+  const governorChanges = changesToday(join(process.env.FACTORY_HOME ?? FACTORY_HOME, "governor"), now);
   return {
     ok: count === 0,
     summary: count === 0 ? "All good" : count === 1 ? "1 problem" : `${count} problems`,
@@ -164,6 +170,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
     ...(skillProblems.length ? { skillProblems } : {}),
     ...(skillAll.length > skillProblems.length ? { skillProblemsMore: skillAll.length - skillProblems.length } : {}),
     ...(monitorFindings ? { monitorFindings } : {}),
+    ...(governorChanges > 0 ? { governor: { changesToday: governorChanges } } : {}),
     ...(self?.version ? { version: self.version } : {}),
     ...(self?.update ? { update: self.update } : {}),
   };

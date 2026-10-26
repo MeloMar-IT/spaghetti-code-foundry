@@ -440,6 +440,7 @@ Home asks again every 30 seconds.
 - **Comments that cannot be read:** an issue whose comments cannot be read in time is listed from its label alone, with no number of questions.
 - **Every waiting label counts.** The issue is listed also past the first 100 issues, also next to another status label, and also without the trigger label unless its run is parked. An answered issue stays listed until its label goes. No status comment is written on it.
 - **One item per issue.** When several watchers list the same issue (the repository name is not case-sensitive), Your turn shows one item. It is the ordinary listing before an extra one, then the one that needs you, then the first watcher's. A waiting-label issue does not also get a separate item for its older runs.
+- **Something to do:** a question that needs something only you can do (a file, an account, access) is listed as "waiting for you — something to do". The action is the question's title, as one line. **Show question** opens the question and **Answer…** sends your answer as a comment on the issue. When the question names a file (`**Needs:** file <path>`), the story goes on by itself once that file is on the develop branch (the default branch without gitflow); the item says so, and no answer is needed. `/defaults` does not answer such a question.
 - **Each item:** what it is, why it waits, the action, and since when. The button opens the place to do it (GitHub in a new tab, or the run page).
 - **Runs you started yourself** (UI or `scf run`) count when they wait for approval, at any age, or when they failed or stopped in the last 7 days. Failed release, CI-fix and review runs started by a watcher show the same way. A failed automatic release build (see [Sources](#sources)) is titled "Build failed — open the run" and links to its run; Dismiss works as for other failed runs. Runs of older versions have no record of who started them and are treated like watcher runs.
 - **Answer and approve here:** for an item of a watcher, buttons next to the GitHub link do the work. **Show questions** has **Accept all recommendations** (only for questions asked up front) and **Answer…** (a box per question; each needs an answer, and **Use recommendation** fills one in visibly). **Show plan**, **Show split** and **Show request** show the risk and **Approve** / **Reject** (say what to change). A failed item has **Retry** and **Retry with a hint…**. Each action is a normal comment on the issue under the Foundry's GitHub login, signed with your name, so replying on GitHub still works. Approve and reject need write access for that login. The item then shows under **Done — continuing**.
@@ -841,6 +842,11 @@ its description, or the kind of step when the flow gives none.
 
   ![Changes](images/run-diff.png)
 
+- **Issue files** — when a run pulls a GitHub issue, the Foundry saves the issue as `issue.json`
+  (its body, number, title and last update) and its comments as `issue-comments.jsonl` (one comment
+  per line) in the run folder. A step can read these files without calling GitHub again. If a
+  fetch fails, that file is not written and the run goes on without it.
+
 ### Approvals
 
 An **approval** step pauses the run until a person decides. Approve or reject in the UI, with
@@ -1054,7 +1060,8 @@ Every status in the app has a **?** that shows the two sentences from this table
 
 | Status | What it means and what happens next |
 |---|---|
-| waiting for you — questions | The Foundry has questions about this issue before it starts. Answer them on the issue, or reply /defaults to go with the recommendations. When the planner asks: The planner has questions that the issue and the code do not answer. Answer them and the work goes on. |
+| waiting for you — something to do | A question asks for something only you can do, such as adding a file, creating an account or giving access. Do it and answer on the issue — when the question names a file, the work goes on by itself once the file is there. |
+| waiting for you — questions | The Foundry has questions about this issue before it starts. Answer them on the issue, or reply /defaults to go with the recommendations. When the planner asks: The planner has questions that the issue, the code and the Foundry itself cannot settle. Answer them and the work goes on. |
 | waiting for you — risky plan | The plan is risky, or you asked to check it, so coding waits for your decision. Approve it to start coding, or reject it and say what to change. |
 | waiting for you — split | The issue is too big for one change, so the Foundry proposes smaller issues. Approve and it creates them and closes this one, or reject it and say what to change. |
 | waiting for you — approval | A step of the run asks for your approval before it goes on. Approve or reject it, and the run goes on with your decision. |
@@ -1237,7 +1244,10 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   - a push without a committer name and e-mail that git can find is denied (`identity.missing`);
   - a push to a repository other than the run's is denied (`repository.not-allowed`); this rule is left out
     when the run has no repository;
-  - an agent write by a user without a sandbox is denied (`sandbox.required`);
+  - an agent write by a user without a sandbox is denied (`sandbox.required`); a shell step of a user's run is
+    denied the same way (`sandbox.required` at `step.before`) unless the OS sandbox is on or the step has a Docker image;
+  - a run whose changed files match the run's `forbidden_paths` gets `path.forbidden` after the step that changed them
+    (see below);
   - an in-place run by a user is denied (`workspace.admin-only`);
   - a user's run that gets the machine's credential is denied (`credential.scope-exceeded`);
   - a shell step whose output is over its limit gets a warning (`output.limit-exceeded`). Every shell step
@@ -1262,6 +1272,25 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   logs one `!` line for them. The hook still blocks those pushes, and they show as `policy.input-incomplete`.
   A push to a remote that is not on GitHub is not asked about the repository. The pack's hash (`packSha256`)
   depends on these settings and on the run, so two runs with different settings have different hashes.
+
+  **Changed paths (`path.forbidden`).** The baseline reads the run's `forbidden_paths` variable as written, with
+  the same split on spaces and new lines as `protected_branches`. Each entry is matched against the whole path, and
+  `*` is the only wildcard: write `docs/*` to match the files in `docs`, and `a.txt` to match only that file. The
+  guard step still treats each entry as a prefix, so the two can differ. Entries with `?`, `[`, `]` or `\`, spaces,
+  control characters, or over 255 characters are not in the baseline; the run logs one `!` line for them, and the
+  guard step still checks them. A changed file counts from the run's starting commit: committed changes, staged
+  files, unstaged edits, new files, deleted files, both sides of a rename, and the changes of merged branches. A dirty
+  in-place folder counts too. Files that are ignored and were never staged do not count. The Foundry runs git
+  without fetching: a missing object is not fetched. The result is `policy.input-incomplete` (not an allow) when:
+  - the workspace has no checkout yet, or it is the clone step of an empty workspace;
+  - the starting commit could not be read when the checkout appeared, or the run was resumed without it. The run
+    stays incomplete from then on, so the base never moves forward;
+  - git is missing objects, takes longer than 30 seconds, or the run was cancelled;
+  - there are more than 5000 changed files;
+  - the run was started before this version, and so has no record of its starting commit.
+
+  The baseline only observes: nothing is stopped by `path.forbidden`. Its decisions are in the evidence, and a
+  line `! policy foundry.baseline: forbidden path patterns …` in the run log names any pattern that was left out.
 
   Nothing else is built in. The id `foundry.baseline` is reserved: `policy.packs`, `policy.mandatory`
   and `policy.repositories` refuse it.
@@ -1597,6 +1626,59 @@ delivery-contract:
 
 Pass the `--checks`, `--comment` and `--events` files as well when the job has them. The job fails when the exit code is
 not `0`. Do not add `|| true`.
+
+### Verify a run's delivery contracts offline
+
+`scf delivery verify <run-id>` checks the delivery contracts in a run folder (`delivery/`) against the trusted
+public key. It needs no server and no network, and it only reads.
+
+```sh
+scf delivery public-key > allowed_signers   # the trusted key as an allowed_signers line
+scf delivery verify 20260131-120000-ab12 --public-key allowed_signers
+```
+
+`--public-key <file>` takes a key line or an `allowed_signers` line. Without it, the key is the one set as
+`delivery.signing_key_path` in the settings, which must be in `delivery-keys`. `--json` prints the result as one
+JSON object; every path in it and in the lines is relative to the run folder.
+
+```
+✔ verified · run 20260131-120000-ab12
+  2 contract(s) signed by the trusted key and continuing the evidence
+  contracts: 2, latest <digest>
+  events:    14, last hash <hash>
+```
+
+**What is checked.** Every `contract-<n>.json` and its `.sig`: the signature is made with the trusted key, the
+numbers are 1, 2, 3 … without a gap, each contract continues the one before (`supersedes`), there is no `.sig`
+without a contract, and `contract.json` and `contract.json.sig` are the same bytes as the highest numbered
+contract. The evidence (`evidence.jsonl`) must be whole, must not be marked `evidence.incomplete`, and each
+contract's `count` events must form the chain its evidence hash names. Events after the last contract's `count`
+may be added, and the result is still verified; a broken event after that count is a failure. A file that is
+not plain UTF-8 or ends in a line that is not complete is a failure.
+
+**Exit codes.**
+
+| Exit | Result | Meaning |
+|---|---|---|
+| `0` | `verified` | Every contract is signed by the trusted key and continues the evidence |
+| `1` | `not verified` | A check failed; the first failed check is named (for example `signature-bad`, `wrong-key`, `numbering`, `orphan-signature`, `latest-copy`, `evidence-broken`) |
+| `2` | `unsigned` | At least one contract has no signature, so it cannot be checked against the trusted key |
+| `2` | `no delivery contract` | The run has no `delivery/` folder |
+
+A usage problem or a bad input (an invalid run id, a run that does not exist, no trusted key set, a
+`--public-key` file that cannot be read or has no `ssh-ed25519` key) prints `error: …` on stderr and exits `1`.
+The message never shows a path.
+
+**Check with OpenSSH alone.** Each contract can also be checked with `ssh-keygen`, without `scf`. This checks one
+contract and its signature, not the chain:
+
+```sh
+ssh-keygen -Y verify -f allowed_signers -I scf-delivery -n scf-delivery-contract \
+  -s contract-1.json.sig < contract-1.json
+```
+
+**CI.** This command reads a run folder on the machine that runs the Foundry. How a CI job gets the contract
+and its signature is not decided yet (it is part of #163).
 
 ### Versions of the components
 
@@ -2422,6 +2504,8 @@ answered and cannot continue yet shows `factory:working`. The label comes back o
 unanswered questions. A waiting label on an issue that has no run, or next to another status label, is not changed; the
 issue is listed under **Needs you** as waiting for you. Remove the label to start it.
 
+**Something to do.** A question that needs something only you can do keeps the needs-info label, and `/defaults` does not answer it. The story waits with no run, no cost and no comment until someone answers on the issue, or the file the question names is on the develop branch (the default branch without gitflow). The Foundry checks for that file at each check: when it is there, it posts one note ("Nothing needed from you — …, so the Foundry goes on.") and resumes the story. It does this at most twice for one issue; after that the story waits for a person. A file path that is not a plain repository path is not checked.
+
 **Parked stories.** To park a story, remove its Foundry labels (or only the trigger label). A run
 that stopped with questions, or was cancelled while it was stopped, is then parked at the next
 check: the watcher marks the run as parked, and the overview shows "parked — not tracked by a
@@ -2525,6 +2609,15 @@ the status **epic — its stories are built one by one** (see [Words the Foundry
 If the issue is an epic by mistake, remove the `epic` label or the list of stories. At the next check
 the watcher builds it like any other story. A run that was stopped with questions for an epic is
 parked and its waiting labels are removed, so the epic does not stay in **Needs you**.
+
+**Epic questions the Foundry decides itself.** When the repository's **Decide technical questions itself** setting is on
+(the default), the up-front check of an epic decides the technical questions of each issue that has a recommendation, as
+the planner does. Each issue then gets only the questions that need you, plus a note of what was decided. An issue whose
+questions were all decided gets a comment that says so, and no waiting label. An issue with both gets one comment with
+both and the waiting label. Each issue's decisions are a separate decision: two issues of one epic can decide the same
+topic differently, and the note says so. The decisions are recorded in the run record (see "Decided by the Foundry" on the
+run page). If the check fails for an issue, that issue is not recorded and the check reports the error; a retry posts
+nothing twice. With the setting off, the check asks every question, as before.
 
 ### Bug stories go first
 
@@ -2632,6 +2725,37 @@ reinterpreting scope, or anything that needs your decision, is high).
 
 The threshold is the `auto_split_max_risk` variable (default 50).
 
+#### Questions the Foundry decides itself
+
+When the planner has questions, it sorts them by kind. The Foundry decides a question by itself only when
+both hold: it is a **technical** question (how the code should be done, not what the product should do) and
+the planner gives a **recommendation** for it. Everything else still waits for you: **product** questions,
+**policy** questions, **owner action** questions (things only you can do), and technical questions without a
+recommendation.
+
+- **What you see:** a comment on the issue with the heading **Decided by the Foundry**. Under it is each
+  decided question with its text and **Decision:**. If every question was decided, the comment says the
+  Foundry decided them and plans the issue again, and the work goes on with no reply from you. If some were
+  not, the comment shows the questions that still need you above the decided ones, and the run waits as
+  before. The first line of the comment says **Nothing needed from you** when everything was decided.
+- **The planner follows the decisions.** It takes them as answers, unless a later comment from a person says
+  otherwise.
+- **How to answer differently:** cancel the run if it is still going, answer the decided question on the issue,
+  and start the run again. Your answer then goes into the next plan.
+- **The setting:** **Decide technical questions itself** in the repository's Run settings (field
+  `questions.decide_technical`). It is on by default. With it off, the planner's questions all wait for you, as
+  before. A run reads the setting when it starts or resumes, so a change applies to the runs that start or
+  resume after it. Runs read it as `$FACTORY_DECIDE_TECHNICAL`. See [Settings and safety](#7-settings-and-safety)
+  for the other repository settings.
+- **Admins:** the admin run page has a card **Decided by the Foundry** on its Overview. It lists each round with
+  its issue, time and outcome (decided everything and went on, decided some and asked the rest, or gave up and
+  asked the owner). Under each round is each question with its decision; the full question text is under
+  **Full question**. The card is hidden when a run has no such rounds.
+- **The limit:** the Foundry replans at most twice in a row. After two rounds that went on, the next round
+  that could be decided gives up instead. A round also gives up at once when a question title was already
+  decided earlier in this issue. Giving up posts the planner's questions as a plain comment, and the run waits
+  for you. Answer them on the issue.
+
 #### Stories that fix failing tests
 
 A story can be written to repair tests that already fail on the branch. Without this, the run
@@ -2685,7 +2809,7 @@ repository with this.
 
 | Label | Means | What you do |
 |---|---|---|
-| `Factory_needs_info` | Waiting for you — questions: asked up front for the whole batch, or by the planner | Reply on the issue — or just **`/defaults`** to accept the recommendations. It continues by itself. |
+| `Factory_needs_info` | Waiting for you — questions: asked up front for the whole batch, or by the planner | Reply on the issue — or just **`/defaults`** to accept the recommendations. It continues by itself. A question that needs something only you can do (a file, an account, access) is not answered by `/defaults`: do it, and the story goes on by itself once the file the question names is on the develop branch (or answer on the issue). |
 | `Factory_working` | Working, or paused — usage limit: planning and coding are running or paused | Wait; follow it on the Runs page |
 | `Factory_waiting` | Waiting for you — risky plan / split: it waits for your decision | `/approve` or `/reject` + feedback on the issue |
 | `Factory_done` | Done: implemented, tested, reviewed and merged into `develop` (gitflow) or in the rolling pull request | Nothing — merge the release pull request (or the rolling one) when you like |
@@ -3156,15 +3280,28 @@ may hold the turn to merge that others wait for. A new run that waits only for a
 the queue (`capped`, and the queue names the `cap`), and the monitor does not report it as a queue
 that stands still.
 
-**The load governor.** It reads the load average per core and the memory pressure. Above 2.5 load
-per core, or under critical memory pressure, it allows one run fewer per check, down to half the
-configured number (at least 2). Memory pressure "warning" counts only together with a load above 1.5
-per core: macOS reports it for hours on a full but idle machine. After five calm checks in a row
-(1.5 per core or less) it allows one more, until the configured number is back. In between (a load
-between 1.5 and 2.5, or a memory warning without load) nothing moves at first, but after 15 checks
-in a row without overload it allows one more as well, so a cap does not stay for hours on a machine
-that is only a little busy. Above 4 per core, or under critical memory pressure, only one test run
-works at a time. Every change is a line in `governor/changes.log`. Its limits end by themselves
+**The load governor.** Every minute it reads the load average per core and the memory pressure. It
+allows one run fewer per check, down to half the configured number (at least 2), only on sustained
+load: the 5-minute load is above 2.5 per core, or the 1-minute load has been above 2.5 for three
+checks in a row. A spike of a minute or two (a test suite, a build) does not lower the cap. Memory
+pressure "warning" alone does not lower it either: macOS reports it for hours on a full but idle
+machine. It counts only with a load above 2.5 per core.
+
+Two cases act at once, even during a pause: memory pressure critical, and a 1-minute load above 4
+per core. Above 4 per core, or under critical memory pressure, only one test run works at a time.
+
+After the cap moved, the governor pauses: no further step down for 3 minutes, and no step up for
+10 minutes. Only an emergency breaks the pause. It still moves one step at a time.
+
+After five calm checks in a row (1.2 per core or less, on the 1-minute and the 5-minute load) it
+allows one more run, until the configured number is back. In between (a load between 1.2 and 2.5)
+nothing moves at first, but after 15 checks in a row without overload it allows one more as well,
+so a cap does not stay for hours on a machine that is only a little busy. Both rules wait for the
+10-minute pause. These values are built into the governor; they are not set in the configuration.
+
+Every change is a line in `governor/changes.log`. `scf governor status` says how many times the
+governor changed the limits today, and Home's health line shows the same count when it is above 0.
+The daily digest mentions the changes only when there were more than 20 in the last 24 hours. The governor's limits end by themselves
 four minutes after the last check — the cap on runs, the cap on test runs, and what the governor
 remembers — so a governor that stops can never hold the Foundry down, and the first check after the
 machine slept starts fresh. `scf governor reset` takes them away at once. The daily release check
@@ -3782,13 +3919,13 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
   matches any text and `?` matches one character; `[…]` is not allowed. `{}` clears the settings.
 - **Decide technical questions itself** (a checkbox in the Run settings dialog, field `questions.decide_technical`):
   on by default, so a repository that has no such setting, including one registered before this change, counts as
-  on. Off: the Foundry asks you every question on the issue. Runs get it as `$FACTORY_DECIDE_TECHNICAL` (`1` or `0`).
+  on. Off: the Foundry asks you every question on the issue. Runs get it as `$FACTORY_DECIDE_TECHNICAL` (`1` or `0`), read when a run starts or resumes. See [Questions the Foundry decides itself](#questions-the-foundry-decides-itself).
   If a run's repository is registered under two accounts and one of them is off, the run is treated as off.
 - **The settings are only stored and shown, with two exceptions.** Runs do not use the other settings yet: the test command still
   comes from the flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. The
   release-build recipe is read by the flow `release-build` when the commit has no `.factory/release-build.yaml`
-  (see "Build release files on this machine"). The "decide technical questions" switch is read by the engine for every step
-  (see above). The settings are never in `GET /api/repos` and never shown on
+  (see "Build release files on this machine"). The "decide technical questions" switch is read by the engine when a run starts
+  or resumes (see above). The settings are never in `GET /api/repos` and never shown on
   **My repositories**.
 - **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
   the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of

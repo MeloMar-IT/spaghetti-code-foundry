@@ -18,6 +18,7 @@ import { claimAfterResolve } from "./release-claim.js";
 import { readDecidedQuestions } from "./questions.js";
 import { readRunOutputs } from "./run-outputs.js";
 import { shortEnv,shortEnvRun } from "./short-env.js";
+import { shellImage, shellSandboxed, stepAfterPaths } from "./step-facts.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } from "../evidence/identity.js";
 import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
@@ -145,7 +146,7 @@ function outputLabel(step: Step, scope: Scope, res: StepResult): StepRecord["lab
 }
 
 /** Store a finished step in history and in the scope's template context. */
-export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number, meter?: ProcessMeter): StepRecord {
+export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number, meter?: ProcessMeter, paths?: string[]): StepRecord {
   const rec: StepRecord = {
     id: scope.prefix + step.id,
     label: outputLabel(step, scope, res),
@@ -215,6 +216,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       stepCostUsd: res.costUsd ?? 0,
       runCostUsd: engine.summary.totalCostUsd,
       dailyCostUsd: daily,
+      paths,
     },
     identity,
   );
@@ -242,9 +244,9 @@ export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">,
 }
 
 /** A visit of a step begins: the evidence event, then the policy question for `step.before`. Every step visit passes here. */
-export function beginStep(engine: Engine, scope: Scope, step: Pick<Step, "id" | "type">, identity: StepIdentity): void {
+export function beginStep(engine: Engine, scope: Scope, step: Pick<Step, "id" | "type"> & { sandbox?: boolean }, identity: StepIdentity): void {
   engine.evidence?.stepStarted(identity);
-  engine.policy?.at("step.before", { repository: repositoryFact(scope.ctx.vars), step: step.id }, identity);
+  engine.policy?.at("step.before", { repository: repositoryFact(scope.ctx.vars), step: step.id, sandboxed: shellSandboxed(engine, scope, step) }, identity);
 }
 
 /** A mandatory policy cannot be used at a privileged boundary: the step is refused and the run ends there (`on_failure` is not followed). */
@@ -277,7 +279,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       return runAgentStep(step, scope, engine, logFile, timeoutMs, meter);
 
     case "shell": {
-      const image = scope.flow.sandbox.docker_image ?? engine.config.sandbox.docker_image;
+      const image = shellImage(scope, engine);
       if (step.sandbox && !image) engine.log(`    ⚠ ${step.id}: not sandboxed (no sandbox.docker_image configured)`);
       const env = stepEnv(scope, engine, step);
       // The stored token of the repository, looked up now, only for a step with repo_access (or the old grant by name).
@@ -430,7 +432,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
             res = { ok: false, output: "", error: (e as Error).message };
           }
           res = applyChecks(sub, res);
-          recordStep(sub, scope, engine, res, started, lf, visit, meter);
+          recordStep(sub, scope, engine, res, started, lf, visit, meter, await stepAfterPaths(engine));
           return { id, res };
         }),
       );

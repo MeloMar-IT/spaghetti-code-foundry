@@ -83,6 +83,7 @@ describe("comment wording comes from the next-step module", () => {
     for (const [f, id] of cases) {
       const p = prompt(flowPath(f), id);
       expect(p, `${f}#${id}`).toContain("**Kind:** technical | product | policy | owner_action");
+      expect(p, `${f}#${id}`).toContain("**Needs:** file <path>");
       expect(p, `${f}#${id}`).toContain("**Recommendation:**");
       expect(p, `${f}#${id}`).toContain("`none`");
     }
@@ -93,7 +94,7 @@ describe("comment wording comes from the next-step module", () => {
     for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
       const run = stepRun(flowPath(f), "send_back");
       expect(run, f).toContain(post);
-      expect(run.trimEnd(), f).toMatch(/\nprintf '%s\\n' "\$out" \| sed '\/\^PLAN_STATUS:\/d'$/);
+      expect(run.trimEnd(), f).toMatch(/\nprintf '%s\\n' "\$body"$/);
     }
     const asked = (file: string) => {
       const run = stepRun(file, "ask_for_info");
@@ -107,6 +108,24 @@ describe("comment wording comes from the next-step module", () => {
       const run = stepRun(flowPath(f), "ask_for_info");
       expect(run, f).not.toContain("gh issue comment");
       expect(run.trim().replace(/\s+/g, " "), f).toBe(`printf '%s ' "$FACTORY_OUT_PLAN" | sed -E '/^(PLAN_STATUS|ROUTE):/d'`);
+    }
+  });
+
+  it("send_back lets the Foundry decide technical questions", () => {
+    for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
+      const run = stepRun(flowPath(f), "send_back");
+      expect(run, f).toContain("/^DECIDED:/d");
+      expect(run, f).toContain('node "$FACTORY_TOOLS/decide-questions.mjs" post-plan "{{run.dir}}"');
+      expect(run, f).toContain('echo "DECIDED: went_on"');
+      expect(run, f).toContain("--body-file - >/dev/null || exit 1");
+      expect(run.trim().split("\n").at(-1), f).toBe(`printf '%s\\n' "$body"`);
+      const def = parseYaml(readFileSync(flowPath(f), "utf8")) as { steps: { id: string; prompt?: string }[] };
+      expect(def.steps.find((s) => s.id === "send_back"), f).toMatchObject({
+        routes: [{ if: "^DECIDED: went_on\\s*$", goto: "pull_ticket" }], max_visits: 3, resume_from: "pull_ticket", on_success: "stop",
+      });
+      const p = def.steps.find((s) => s.id === "plan")?.prompt ?? "";
+      expect(p, f).toContain("**Decided by the Foundry**");
+      expect(p, f).toContain("unless a later comment from a person says otherwise");
     }
   });
 
@@ -148,6 +167,7 @@ describe("comment wording comes from the next-step module", () => {
     }
     expect(text("tools/post-questions")).toMatch(/const comment = \[\s*\.\.\.\(first \? \[first, ""\]/);
     expect(text("tools/post-questions")).toContain("FACTORY_FIRST_QUESTIONS");
+    expect(stepRun(flowPath("epic-questions"), "post")).toContain('"$FACTORY_TOOLS/post-questions" "{{run.dir}}"');
     before(stepRun("blocks/push-plan.yaml", "push_plan"), 'echo "$FACTORY_FIRST_INFO"', "push-plan");
     const result = stepRun("blocks/push-result.yaml", "push_result");
     before(result, 'echo "$first"', "push-result");
@@ -233,7 +253,19 @@ describe("every posted comment starts with a first-line variable", () => {
   });
   it("accepts good Node tools", () => {
     expect(scanNode(node(array + call))).toEqual([]);
-    for (const f of ["tools/post-questions", "tools/create-split"]) expect(scanTool(readFileSync(f, "utf8")), f).toEqual([]);
+    for (const f of ["tools/post-questions", "tools/create-split", "tools/decide-questions.mjs"]) expect(scanTool(readFileSync(f, "utf8")), f).toEqual([]);
+  });
+  it("accepts one plain condition between two first-line variables", () => {
+    const src = (first: string, arr = array) => `#!/usr/bin/env node\nconst first = ${first};\n${arr}${call}`;
+    expect(scanNode(src("all ? process.env.FACTORY_FIRST_DECIDED : process.env.FACTORY_FIRST_PLANNER_QUESTIONS"))).toEqual([]);
+    expect(scanNode(src("process.env.FACTORY_FIRST_INFO", array.replace("[]", '["", ""]')))).toEqual([]);
+    for (const bad of [
+      'a ? process.env.FACTORY_FIRST_INFO : "x"',
+      "a ? process.env.OTHER : process.env.FACTORY_FIRST_INFO",
+      "a ? process.env.FACTORY_FIRST_A : b ? process.env.FACTORY_FIRST_B : process.env.FACTORY_FIRST_C",
+      "a ? (b ? process.env.FACTORY_FIRST_A : process.env.FACTORY_FIRST_B) : process.env.FACTORY_FIRST_C",
+    ]) expect(scanNode(src(bad)), bad).not.toEqual([]);
+    expect(scanNode(src("process.env.FACTORY_FIRST_INFO", array.replace("[]", '["x", ""]')))).not.toEqual([]);
   });
 });
 

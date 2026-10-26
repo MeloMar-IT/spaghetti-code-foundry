@@ -38,7 +38,8 @@ const scheduled = (f: WordFacts) => !!f.releaseAt;
  */
 const GLOSSARY: Record<NextKind, Words> = {
   questions: { status: "waiting for you — questions", help: "The Foundry has questions about this issue before it starts. Answer them on the issue, or reply /defaults to go with the recommendations." },
-  planner_questions: { status: "waiting for you — questions", help: "The planner has questions that the issue and the code do not answer. Answer them and the work goes on." },
+  owner_action: { status: "waiting for you — something to do", help: "A question asks for something only you can do, such as adding a file, creating an account or giving access. Do it and answer on the issue — when the question names a file, the work goes on by itself once the file is there." },
+  planner_questions: { status: "waiting for you — questions", help: "The planner has questions that the issue, the code and the Foundry itself cannot settle. Answer them and the work goes on." },
   approve_plan: { status: "waiting for you — risky plan", help: "The plan is risky, or you asked to check it, so coding waits for your decision. Approve it to start coding, or reject it and say what to change." },
   approve_split: { status: "waiting for you — split", help: "The issue is too big for one change, so the Foundry proposes smaller issues. Approve and it creates them and closes this one, or reject it and say what to change." },
   approval: { status: "waiting for you — approval", help: "A step of the run asks for your approval before it goes on. Approve or reject it, and the run goes on with your decision." },

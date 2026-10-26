@@ -63,6 +63,18 @@ describe("renderHealth", () => {
     expect(e.all("button")).toHaveLength(0);
   });
 
+  it("says how often the load governor changed the limits today, and nothing when it did not", () => {
+    const one = el();
+    ui.renderHealth(one, { ...good, governor: { changesToday: 1 } });
+    expect(one.textContent).toContain("The load governor changed the limits 1 time today");
+    const many = el();
+    ui.renderHealth(many, { ...good, governor: { changesToday: 7 } });
+    expect(many.textContent).toContain("changed the limits 7 times today");
+    const none = el();
+    ui.renderHealth(none, { ...good, governor: { changesToday: 0 } });
+    expect(none.textContent).toBe("All good");
+  });
+
   it("lists skill problems with the label and reason, and counts the rest", () => {
     const e = el();
     ui.renderHealth(e, { ...good, ok: false, summary: "3 problems", skillProblems: [{ source: "admin", root: "skills.roots[0]", package: "x", reason: "bad version" }, { source: "admin", root: "built-in", reason: "ENOENT" }], skillProblemsMore: 1 });

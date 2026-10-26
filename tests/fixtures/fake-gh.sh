@@ -36,10 +36,14 @@ if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "
 # "issue view <n> --repo R --json number,title,state,body" answers {number,title,state (upper-case),body} from $FAKE_GH_ISSUES (or the --repo list), or exits 1
 # with "Could not resolve to an Issue". "issue edit <n> --body-file -" is logged as before and also stored in $FAKE_GH_LOG.issue-bodies.json
 # ({"<repo>#<n>": body}, <repo> is the --repo value), so a later view shows the new body.
+# $FAKE_GH_ISSUE_JSON: the answer of "issue view <n> --json body,number,title,updatedAt" (pull_ticket saves it as issue.json); unset or empty: 404 on stderr, exit 1.
+# $FAKE_GH_ISSUE_COMMENTS_JSONL (set, also when empty): the answer of "api --paginate repos/<o>/<n>/issues/<n>/comments…" (issue-comments.jsonl); unset: 404.
+# $FAKE_GH_FAIL_ON=<text>: a call whose arguments contain this text prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
+if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
 # $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
 # $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" answers with that entry.
-# $FAKE_GH_COMMENTS_FROM_LOG=1: the same answer is built from the comments logged in $FAKE_GH_LOG when none of the above is set.
+# $FAKE_GH_COMMENTS_FROM_LOG=1: the same answer is built from the comments logged in $FAKE_GH_LOG when none of the above is set; its labels are those of the issue in $FAKE_GH_LOG.issues.json.
 fake_repo=""; prev=""; for a in "$@"; do [ "$prev" = "--repo" ] && fake_repo="$a"; prev="$a"; done
 if [ -n "$FAKE_GH_ISSUES_BY_REPO" ] && [ -n "$fake_repo" ]; then
   FAKE_GH_ISSUES=$(node -e 'const m=JSON.parse(process.env.FAKE_GH_ISSUES_BY_REPO);console.log(JSON.stringify(m[process.argv[1]]||[]))' "$fake_repo"); export FAKE_GH_ISSUES; unset FAKE_GH_FRESH
@@ -108,6 +112,10 @@ const dir=q.get("direction")==="desc"?-1:1;l=l.slice().sort((x,y)=>dir*(((x&&x.n
     api_fail read
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const p=l.find(x=>x.number===Number(process.argv[2]));if(!p){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify({number:p.number,state:p.state,merged:p.merged===true,merged_at:p.merged===true?"2026-01-01T00:00:00Z":null}))' "$FAKE_GH_LOG.pulls.json" "${all##*/pulls/}"
     exit $? ;;
+  # pull_ticket saves the comments: answers $FAKE_GH_ISSUE_COMMENTS_JSONL as it is (set, also when empty), else 404.
+  "api --paginate repos/"*"/issues/"[0-9]*"/comments"*)
+    if [ -n "${FAKE_GH_ISSUE_COMMENTS_JSONL+x}" ]; then printf '%s' "$FAKE_GH_ISSUE_COMMENTS_JSONL"; exit 0; fi
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
 esac
 # Main branch: "api repos/R/git/ref/heads/<branch>" answers $FAKE_GH_MAIN_SHA as the commit (404 when it is unset).
 # "api repos/R/contents/.factory/release-build.yaml?ref=<sha>" answers a file when $FAKE_GH_RECIPE=1, else 404.
@@ -118,6 +126,19 @@ case "$1 $2" in
   "api repos/"*"/contents/.factory/release-build.yaml?ref="*)
     if [ "$FAKE_GH_RECIPE" != 1 ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
     echo '{"type":"file","path":".factory/release-build.yaml"}'; exit 0 ;;
+  # "api repos/R/contents/<path>[?ref=<branch>]": a file when $FAKE_GH_FILES (a JSON list of "<branch>:<path>", `default` without ?ref=) holds the decoded ref and path,
+  # a directory (a JSON list, as the real API answers) when $FAKE_GH_DIRS holds it the same way, else 404.
+  "api repos/"*"/contents/"*)
+    url="${2#*/contents/}"; cpath="${url%%\?*}"; cref=default
+    case "$url" in *"?ref="*) cref="${url#*\?ref=}" ;; esac
+    cpath=$(printf '%b' "${cpath//%/\\x}"); cref=$(printf '%b' "${cref//%/\\x}")
+    case "${FAKE_GH_DIRS:-[]}" in
+      *"\"$cref:$cpath\""*) echo '[{"type":"file","path":"x"}]'; exit 0 ;;
+    esac
+    case "${FAKE_GH_FILES:-[]}" in
+      *"\"$cref:$cpath\""*) printf '{"type":"file","path":"%s"}\n' "$cpath"; exit 0 ;;
+    esac
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
 esac
 # Releases. State: $FAKE_GH_LOG.releases.json, a list of { id, tag_name, draft, prerelease, created_at, body, html_url, upload_url, name, target_commitish,
 # assets: [{ id, name, size, text? }] } (a test may write it first). Calls: "api --paginate repos/R/releases?per_page=100 --jq …" (one compact JSON line per
@@ -234,6 +255,7 @@ case "$1 $2" in
     esac ;;
   "issue view")
     case "$*" in
+      *"--json body,number,title,updatedAt"*) if [ -n "$FAKE_GH_ISSUE_JSON" ]; then printf '%s\n' "$FAKE_GH_ISSUE_JSON"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
       *"--json number,title,state,body"*) node -e 'const fs=require("fs");const [n,repo,f]=process.argv.slice(1);const l=JSON.parse(process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===Number(n));
 if(!i){console.error("GraphQL: Could not resolve to an Issue with the number of "+n+". (repository.issue)");process.exit(1)}
 const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const k=repo+"#"+n;
@@ -247,7 +269,7 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
          if [ -n "$FAKE_GH_COMMENTS_BY_ISSUE" ]; then c=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_COMMENTS_BY_ISSUE)[process.argv[1]];if(v)console.log(JSON.stringify(v))' "$fake_repo#$3"); fi
          [ -n "$c" ] || c=${FAKE_GH_COMMENTS:-}
          # FAKE_GH_COMMENTS_FROM_LOG=1: the comments of issue <n> as logged by "issue comment" (numbered like the printed #issuecomment-<n>), minus deleted ones.
-         if [ -z "$c" ] && [ -n "$FAKE_GH_COMMENTS_FROM_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}console.log(JSON.stringify({comments:out}))' "$FAKE_GH_LOG" "$3"); fi
+         if [ -z "$c" ] && [ -n "$FAKE_GH_COMMENTS_FROM_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}let labels=[];try{const l=JSON.parse(require("fs").readFileSync(process.argv[1]+".issues.json","utf8"));labels=(l.find(x=>x.number===Number(issue))||{}).labels||[]}catch{}console.log(JSON.stringify({comments:out,labels}))' "$FAKE_GH_LOG" "$3"); fi
          [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *"--json state"*) echo "${FAKE_GH_ISSUE_STATE:-OPEN}" ;;
       # FAKE_GH_ISSUE_BODIES: JSON {"<number>": "<body>"}; the body replaces "Please add feature.txt" for that issue (the pull_ticket text).
@@ -262,6 +284,8 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
     esac
     printf '\n--- end comment\n' >> "$FAKE_GH_LOG" # a body may end without a line end
     cn=$(($(cat "$FAKE_GH_LOG.comments" 2>/dev/null || echo 0) + 1)); echo "$cn" > "$FAKE_GH_LOG.comments"
+    # FAKE_GH_COMMENT_MKDIR=<dir>: runs mkdir -p on that folder after logging the comment (a test points it at <runDir>/decided.json/x so the commit after the post fails).
+    [ -n "$FAKE_GH_COMMENT_MKDIR" ] && mkdir -p "$FAKE_GH_COMMENT_MKDIR"
     echo "https://github.com/owner/repo/issues/$3#issuecomment-$cn" ;;
   "issue create") n=$(($(cat "$FAKE_GH_LOG.created" 2>/dev/null || echo 100) + 1)); echo "$n" > "$FAKE_GH_LOG.created"
                   echo "--- created issue: $*" >> "$FAKE_GH_LOG"; case "$*" in *--body-file*) cat >> "$FAKE_GH_LOG" ;; esac
