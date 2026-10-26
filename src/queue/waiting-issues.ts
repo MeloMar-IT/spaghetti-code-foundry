@@ -1,4 +1,4 @@
-import { isStatusComment, isBot, type Comment } from "../github.js";
+import { isStatusComment, isOverruleReply, isBot, type Comment } from "../github.js";
 import { isUserBudgetStop, type RunSummary } from "../engine/state.js";
 import { asksQuestions, countQuestions } from "../next-step.js";
 import { flowRetired } from "../run-gate.js";
@@ -86,11 +86,11 @@ export function waitsAs(run: RunSummary, label: string, L: WaitingLabels): boole
   return false;
 }
 
-/** The newest bot comment that is not a status comment, while no human has commented after it. */
+/** The newest bot comment that is not a status comment or an overrule reply, while no human has commented after it. */
 export function openQuestion(comments: readonly Comment[]): { questions: number; since?: string } | undefined {
   for (let i = comments.length - 1; i >= 0; i--) {
     const c = comments[i]!;
-    if (isStatusComment(c)) continue;
+    if (isStatusComment(c) || isOverruleReply(c)) continue;
     if (!isBot(c)) return undefined;
     return { questions: countQuestions(c.body), ...(c.createdAt ? { since: c.createdAt } : {}) };
   }
