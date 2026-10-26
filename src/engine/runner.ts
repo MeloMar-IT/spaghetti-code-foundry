@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
+import { stepAfterPaths } from "./step-facts.js";
 import { listAllRepos } from "../auth/repos.js";
 import { decideTechnicalFor, type RepoSettings } from "../auth/repo-settings.js";
 import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
@@ -157,6 +158,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   const summary: RunSummary = {
     runId,
+    pathsTracked: true,
     flow: flow.name,
     flowDef: flow,
     task: opts.task,
@@ -221,6 +223,8 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   if (summary.status === "waiting" && !opts.decision && !opts.from) throw new Error("run is waiting for approval: approve or reject it");
   if (summary.status === "succeeded" && !opts.from) throw new Error("run already succeeded (pass a step to re-run from)");
   if (!summary.workdir || !existsSync(summary.workdir)) throw new Error("the run's workspace no longer exists");
+  // an empty-workspace run that has a checkout but no recorded base cannot get one later: the base would move forward
+  if (summary.pathsTracked && summary.flowDef.workspace === "empty" && !summary.pathsBaseSha && existsSync(join(summary.workdir, ".git"))) summary.pathsBaseLost = true;
   const from = opts.from ?? summary.state.next;
   if (!from) throw new Error("nothing to resume");
   if (!summary.flowDef.steps.some((s) => s.id === from)) throw new Error(`unknown step "${from}"`);
@@ -608,7 +612,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     }
     if (top) summary.stepStartedAt = undefined; // recordStep saves it
     res = { ...res, output: redactText(res.output), ...(res.error === undefined ? {} : { error: redactText(res.error) }) };
-    recordStep(step, scope, engine, res, startedAt, logFile, visit, meter);
+    recordStep(step, scope, engine, res, startedAt, logFile, visit, meter, await stepAfterPaths(engine));
     lastOutput = res.output;
     if (res.held && top) {
       // Content waits for a person: stop here, keep the hold in run.json, and run this step again on resume.
