@@ -842,6 +842,11 @@ its description, or the kind of step when the flow gives none.
 
   ![Changes](images/run-diff.png)
 
+- **Issue files** — when a run pulls a GitHub issue, the Foundry saves the issue as `issue.json`
+  (its body, number, title and last update) and its comments as `issue-comments.jsonl` (one comment
+  per line) in the run folder. A step can read these files without calling GitHub again. If a
+  fetch fails, that file is not written and the run goes on without it.
+
 ### Approvals
 
 An **approval** step pauses the run until a person decides. Approve or reject in the UI, with

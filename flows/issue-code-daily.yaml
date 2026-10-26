@@ -98,6 +98,8 @@ steps:
     description: Read the GitHub issue as plain text
     run: |
       case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the 'issue' variable to an issue number (got '$FACTORY_VAR_ISSUE')"; exit 1;; esac
+      gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json body,number,title,updatedAt > "{{run.dir}}/issue.json" 2>/dev/null || rm -f "{{run.dir}}/issue.json"
+      gh api --paginate "repos/$FACTORY_VAR_GITHUB_REPO/issues/$FACTORY_VAR_ISSUE/comments?per_page=100" --jq '.[] | {id, html_url, created_at, updated_at, body}' > "{{run.dir}}/issue-comments.jsonl" 2>/dev/null || rm -f "{{run.dir}}/issue-comments.jsonl"
       gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json body --jq .body > "{{run.dir}}/issue-body.md" 2>/dev/null || rm -f "{{run.dir}}/issue-body.md"
       gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json number,title,body,url,labels,comments --jq '
         "# #\(.number): \(.title)\n\(.url)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body)\n"

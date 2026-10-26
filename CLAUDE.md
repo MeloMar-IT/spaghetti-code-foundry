@@ -10,7 +10,7 @@ no frameworks. This repository is **public** — never commit private data, path
 npm ci                 # install
 npm run build          # TypeScript → dist/ (the CLI runs from dist/)
 npm test               # vitest; ~40 s; must pass before anything is committed
-node scripts/build-flows.mjs   # regenerate flows/*.yaml (see below)
+npm run flows          # regenerate flows/*.yaml (node scripts/build-flows.mjs; see below)
 ```
 
 ## Layout
@@ -36,7 +36,7 @@ node scripts/build-flows.mjs   # regenerate flows/*.yaml (see below)
 ## Rules
 
 - **Never edit `flows/*.yaml` directly.** Change `scripts/build-flows.mjs` (or `blocks/`), run
-  `node scripts/build-flows.mjs`, and commit both.
+  `npm run flows`, and commit both.
 - **Tests never use real services.** They use the fakes in `tests/fixtures/` (fake `claude`, `codex`,
   `gh` on PATH, a bare git repo as the remote). Extend the fakes when a flow needs a new call.
   `tests/setup.ts` gives every test run a temporary data folder — never read or write the real

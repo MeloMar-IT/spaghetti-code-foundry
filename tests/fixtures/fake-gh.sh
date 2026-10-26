@@ -36,6 +36,8 @@ if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "
 # "issue view <n> --repo R --json number,title,state,body" answers {number,title,state (upper-case),body} from $FAKE_GH_ISSUES (or the --repo list), or exits 1
 # with "Could not resolve to an Issue". "issue edit <n> --body-file -" is logged as before and also stored in $FAKE_GH_LOG.issue-bodies.json
 # ({"<repo>#<n>": body}, <repo> is the --repo value), so a later view shows the new body.
+# $FAKE_GH_ISSUE_JSON: the answer of "issue view <n> --json body,number,title,updatedAt" (pull_ticket saves it as issue.json); unset or empty: 404 on stderr, exit 1.
+# $FAKE_GH_ISSUE_COMMENTS_JSONL (set, also when empty): the answer of "api --paginate repos/<o>/<n>/issues/<n>/comments…" (issue-comments.jsonl); unset: 404.
 # $FAKE_GH_FAIL_ON=<text>: a call whose arguments contain this text prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
 # $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
@@ -110,6 +112,10 @@ const dir=q.get("direction")==="desc"?-1:1;l=l.slice().sort((x,y)=>dir*(((x&&x.n
     api_fail read
     node -e 'const f=process.argv[1],fs=require("fs");const l=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):[];const p=l.find(x=>x.number===Number(process.argv[2]));if(!p){console.error("gh: Not Found (HTTP 404)");process.exit(1)}console.log(JSON.stringify({number:p.number,state:p.state,merged:p.merged===true,merged_at:p.merged===true?"2026-01-01T00:00:00Z":null}))' "$FAKE_GH_LOG.pulls.json" "${all##*/pulls/}"
     exit $? ;;
+  # pull_ticket saves the comments: answers $FAKE_GH_ISSUE_COMMENTS_JSONL as it is (set, also when empty), else 404.
+  "api --paginate repos/"*"/issues/"[0-9]*"/comments"*)
+    if [ -n "${FAKE_GH_ISSUE_COMMENTS_JSONL+x}" ]; then printf '%s' "$FAKE_GH_ISSUE_COMMENTS_JSONL"; exit 0; fi
+    echo "gh: Not Found (HTTP 404)" >&2; exit 1 ;;
 esac
 # Main branch: "api repos/R/git/ref/heads/<branch>" answers $FAKE_GH_MAIN_SHA as the commit (404 when it is unset).
 # "api repos/R/contents/.factory/release-build.yaml?ref=<sha>" answers a file when $FAKE_GH_RECIPE=1, else 404.
@@ -249,6 +255,7 @@ case "$1 $2" in
     esac ;;
   "issue view")
     case "$*" in
+      *"--json body,number,title,updatedAt"*) if [ -n "$FAKE_GH_ISSUE_JSON" ]; then printf '%s\n' "$FAKE_GH_ISSUE_JSON"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
       *"--json number,title,state,body"*) node -e 'const fs=require("fs");const [n,repo,f]=process.argv.slice(1);const l=JSON.parse(process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===Number(n));
 if(!i){console.error("GraphQL: Could not resolve to an Issue with the number of "+n+". (repository.issue)");process.exit(1)}
 const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const k=repo+"#"+n;

@@ -29,6 +29,7 @@
     "docs/examples/skill-sources.confluent.yaml"
   ],
   "scripts": {
+    "flows": "node scripts/build-flows.mjs",
     "build": "tsc -p tsconfig.build.json && chmod +x dist/cli.js dist/factory.js",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
