@@ -48,6 +48,8 @@ export interface BaselineControls {
   /** The run is the shipped hotfix flow: only then the pack has the hotfix exception (the `flow` fact is always known there). */
   shippedHotfixFlow: boolean;
   repository?: string;
+  /** Patterns of the `forbidden_paths` run variable, as written (`*` is the only wildcard). Left out when empty. */
+  forbiddenPaths?: readonly string[];
 }
 
 export const NO_BASELINE_CONTROLS: BaselineControls = { protectedBranches: [], secretScan: true, shippedHotfixFlow: false };
@@ -59,8 +61,8 @@ export const NO_BASELINE_CONTROLS: BaselineControls = { protectedBranches: [], s
  */
 export function baselineControls(
   config: { protected_branches?: readonly string[]; secret_scan?: boolean },
-  run: { repository?: string; shippedHotfixFlow: boolean; limits?: BaselineLimits },
-): { controls: BaselineControls; leftOut: string[] } {
+  run: { repository?: string; shippedHotfixFlow: boolean; limits?: BaselineLimits; forbiddenPaths?: string },
+): { controls: BaselineControls; leftOut: string[]; leftOutPaths: string[] } {
   const protectedBranches: string[] = [];
   const leftOut: string[] = [];
   const seen = new Set<string>();
@@ -72,16 +74,27 @@ export function baselineControls(
       else protectedBranches.push(token);
     }
   }
+  const forbiddenPaths: string[] = [];
+  const leftOutPaths: string[] = [];
+  const seenPaths = new Set<string>();
+  for (const token of typeof run.forbiddenPaths === "string" ? run.forbiddenPaths.split(/[ \t\n]+/) : []) {
+    if (!token || seenPaths.has(token)) continue;
+    seenPaths.add(token);
+    if (PatternSchema.safeParse(token).success) forbiddenPaths.push(token);
+    else leftOutPaths.push(token);
+  }
   const repository = run.repository !== undefined && FactsSchema.shape.repository.safeParse(run.repository).success ? run.repository : undefined;
   return {
-    controls: { protectedBranches, secretScan: config.secret_scan !== false, shippedHotfixFlow: run.shippedHotfixFlow, ...(repository ? { repository } : {}), ...(run.limits ? { limits: run.limits } : {}) },
+    controls: { protectedBranches, secretScan: config.secret_scan !== false, shippedHotfixFlow: run.shippedHotfixFlow, ...(repository ? { repository } : {}), ...(run.limits ? { limits: run.limits } : {}), ...(forbiddenPaths.length ? { forbiddenPaths } : {}) },
     leftOut,
+    leftOutPaths,
   };
 }
 
 const SECRET_RULE = { id: "secret-detected", boundaries: ["push"], when: { secretsFound: { over: 0 } }, outcome: "deny", reasonCode: "secret.detected", mode: "observe" };
 const IDENTITY_RULE = { id: "identity-missing", boundaries: ["push"], when: { commitIdentity: false }, outcome: "deny", reasonCode: "identity.missing", mode: "observe" };
 const SANDBOX_RULE = { id: "sandbox-required", boundaries: ["agent.write"], when: { owner: { in: ["user"] }, sandboxed: false }, outcome: "deny", reasonCode: "sandbox.required", mode: "observe" };
+const SANDBOX_STEP_RULE = { ...SANDBOX_RULE, boundaries: ["agent.write", "step.before"] };
 const ADMIN_RULE = { id: "workspace-admin-only", boundaries: ["run.start"], when: { owner: { in: ["user"] }, workspace: { in: ["inplace"] } }, outcome: "deny", reasonCode: "workspace.admin-only", mode: "observe" };
 
 /** The four rules of the baseline without run controls (unchanged). */
@@ -134,8 +147,17 @@ function limitRules(limits: BaselineLimits | undefined): unknown[] {
   return rules;
 }
 
+/** The forbidden-path rules (observe only, at `step.after`): a whole path matches a pattern, `*` is a wildcard. */
+function pathRules(patterns: readonly string[] | undefined): unknown[] {
+  const rules: unknown[] = [];
+  for (let i = 0; i < (patterns?.length ?? 0); i += MAX_PATTERNS) {
+    rules.push({ id: chunkId("path-forbidden", i / MAX_PATTERNS), boundaries: ["step.after"], when: { paths: { anyIn: patterns!.slice(i, i + MAX_PATTERNS) } }, outcome: "deny", reasonCode: "path.forbidden", mode: "observe" });
+  }
+  return rules;
+}
+
 /** The baseline pack of one run (pure): protected branches first, as the hook checks the branch before it scans. */
-export function baselinePack(version: string, controls: BaselineControls): PolicyPack {
+export function baselinePack(version: string, controls: BaselineControls, o: { stepSandbox?: boolean } = {}): PolicyPack {
   const chunks: string[][] = [];
   for (let i = 0; i < controls.protectedBranches.length; i += MAX_PATTERNS) chunks.push(controls.protectedBranches.slice(i, i + MAX_PATTERNS));
   const rules: unknown[] = [];
@@ -157,9 +179,10 @@ export function baselinePack(version: string, controls: BaselineControls): Polic
   if (controls.repository) {
     rules.push({ id: "repository-not-allowed", boundaries: ["push"], when: { repository: { notIn: [controls.repository] } }, outcome: "deny", reasonCode: "repository.not-allowed", mode: "observe" });
   }
-  rules.push(SANDBOX_RULE, ADMIN_RULE);
+  rules.push(o.stepSandbox === false ? SANDBOX_RULE : SANDBOX_STEP_RULE, ADMIN_RULE);
   rules.push({ id: "credential-scope-exceeded", boundaries: ["repository.access"], when: { owner: { in: ["user"] }, credential: { in: ["machine"] } }, outcome: "deny", reasonCode: "credential.scope-exceeded", mode: "observe" });
   rules.push(...limitRules(controls.limits));
+  rules.push(...pathRules(controls.forbiddenPaths));
   return { version: POLICY_PACK_VERSION, policy: { id: BASELINE_POLICY_ID, version }, mode: "observe", defaultOutcome: "allow", rules } as PolicyPack;
 }
 
@@ -167,6 +190,8 @@ export interface RunBaseline {
   pack: PolicyPack;
   /** For a push whose repository is not known: the same pack without the repository rule. Only when the pack has one. */
   pushWithoutRepository?: PolicyPack;
+  /** For a step whose `sandboxed` fact is not known (not a shell step): the sandbox rule only at `agent.write`. */
+  stepWithoutSandbox: PolicyPack;
 }
 
 /** Builds and parses the baseline of a run. Throws PolicySchemaError when it cannot be built. */
@@ -174,8 +199,9 @@ export function runBaseline(version: string, controls: BaselineControls): RunBas
   const n = baselinePack(version, controls).rules.length;
   if (n > MAX_RULES) throw new PolicySchemaError("pack", "invalid", `policy pack: the baseline would have ${n} rules, more than ${MAX_RULES}`);
   const pack = parsePolicyPack(baselinePack(version, controls));
-  if (!controls.repository) return { pack };
-  return { pack, pushWithoutRepository: parsePolicyPack(baselinePack(version, { ...controls, repository: undefined })) };
+  const stepWithoutSandbox = parsePolicyPack(baselinePack(version, controls, { stepSandbox: false }));
+  if (!controls.repository) return { pack, stepWithoutSandbox };
+  return { pack, stepWithoutSandbox, pushWithoutRepository: parsePolicyPack(baselinePack(version, { ...controls, repository: undefined })) };
 }
 
 function readVersion(): string {

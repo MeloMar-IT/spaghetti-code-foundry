@@ -36,7 +36,7 @@ export const MAX_PACK_BYTES = 1 << 20;
 export const UNKNOWN_POLICY_VERSION = "unknown";
 
 export type LoadedPack =
-  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push whose repository is not known. */ pushWithoutRepository?: PolicyPack }
+  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push whose repository is not known. */ pushWithoutRepository?: PolicyPack; /** Asked instead of `pack` at `step.before` when the `sandboxed` fact is not known. */ stepWithoutSandbox?: PolicyPack }
   | { id: string; problem: "policy.unavailable" | "policy.invalid"; detail: string };
 
 export type LayeredPack = LoadedPack & { layer: Layer };
@@ -289,6 +289,19 @@ export class RunPolicy {
     if ("problem" in entry) this.log(`! policy ${entry.id}: sub-flow ${parent}: ${entry.detail} — this mandatory policy denies steps with a sign-in and writing agents in this sub-flow`);
   }
 
+  /** Does any usable pack have a rule at this boundary that uses this fact? Never throws. */
+  needsFact(boundary: Boundary, fact: FactName): boolean {
+    try {
+      for (const loaded of [...this.packs, ...this.scoped.values()]) {
+        if ("problem" in loaded) continue;
+        if (loaded.pack.rules.some((r) => r.boundaries.includes(boundary) && (r.when as Record<string, unknown>)[fact] !== undefined)) return true;
+      }
+    } catch {
+      // not known: no
+    }
+    return false;
+  }
+
   /** The packs to ask for one step: the root's, or with the sub-flow's baseline swapped in. */
   private packsFor(step?: StepIdentity): readonly LayeredPack[] {
     if (step?.parent === undefined || !this.scopedBaseline) return this.packs;
@@ -411,7 +424,10 @@ export class RunPolicy {
   private decide(loaded: LayeredPack, input: PolicyInput, mode: Mode): PolicyDecision {
     const at = this.now();
     if ("problem" in loaded) return this.noPack(loaded.id, loaded.problem, input, mode, at);
-    const pack = input.boundary === "push" && input.facts.repository === undefined && loaded.pushWithoutRepository ? loaded.pushWithoutRepository : loaded.pack;
+    let pack = loaded.pack;
+    if (input.boundary === "push") {
+      if (input.facts.repository === undefined && loaded.pushWithoutRepository) pack = loaded.pushWithoutRepository;
+    } else if (input.boundary === "step.before" && input.facts.sandboxed === undefined && loaded.stepWithoutSandbox) pack = loaded.stepWithoutSandbox;
     return evaluatePolicy(pack, input, at);
   }
 
@@ -481,8 +497,8 @@ export class RunPolicy {
 /** The mandatory baseline entry of a run. Never throws: a baseline that cannot be built is a `policy.invalid` entry (no weaker fallback). */
 export function baselineEntry(version: string, controls: BaselineControls): LayeredPack {
   try {
-    const { pack, pushWithoutRepository } = runBaseline(version, controls);
-    return { layer: "mandatory", id: BASELINE_POLICY_ID, pack, ...(pushWithoutRepository ? { pushWithoutRepository } : {}) };
+    const { pack, pushWithoutRepository, stepWithoutSandbox } = runBaseline(version, controls);
+    return { layer: "mandatory", id: BASELINE_POLICY_ID, pack, stepWithoutSandbox, ...(pushWithoutRepository ? { pushWithoutRepository } : {}) };
   } catch (e) {
     return { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, e instanceof PolicySchemaError ? (e.message.split("\n")[0] ?? "could not be built") : "could not be built") };
   }
@@ -511,10 +527,14 @@ export function runPolicy(
   } catch {
     limitsFailed = true; // the baseline is then invalid: no weaker fallback
   }
-  const { controls, leftOut } = baselineControls(config, { repository: base.repository, shippedHotfixFlow: shipped && summary.flowDef?.name === HOTFIX_FLOW, ...(limits ? { limits } : {}) });
+  const { controls, leftOut, leftOutPaths } = baselineControls(config, { forbiddenPaths: summary.vars?.forbidden_paths, repository: base.repository, shippedHotfixFlow: shipped && summary.flowDef?.name === HOTFIX_FLOW, ...(limits ? { limits } : {}) });
   if (leftOut.length) {
     const shown = leftOut.slice(0, 10).map((p) => JSON.stringify(p)).join(", ");
     log(`! policy ${BASELINE_POLICY_ID}: protected branch patterns ${shown}${leftOut.length > 10 ? ` and ${leftOut.length - 10} more` : ""} cannot be expressed in the baseline (? [ ] \\, other spaces or control characters, or over 255 characters) and are not in it — the hook still blocks them`);
+  }
+  if (leftOutPaths.length) {
+    const shown = leftOutPaths.slice(0, 10).map((p) => JSON.stringify(p)).join(", ");
+    log(`! policy ${BASELINE_POLICY_ID}: forbidden path patterns ${shown}${leftOutPaths.length > 10 ? ` and ${leftOutPaths.length - 10} more` : ""} cannot be expressed in the baseline (spaces, control characters, or over 255 characters) and are not in it — the guard step still checks them`);
   }
   const entry: LayeredPack = limitsFailed ? { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, "its limits could not be read") } : baselineEntry(BASELINE_VERSION, controls);
   if ("problem" in entry) log(`! policy ${entry.id}: ${entry.detail} — recorded as ${entry.problem}; this mandatory policy denies steps with a sign-in and writing agents`);

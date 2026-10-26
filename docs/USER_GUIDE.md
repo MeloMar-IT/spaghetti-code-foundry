@@ -1237,7 +1237,10 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   - a push without a committer name and e-mail that git can find is denied (`identity.missing`);
   - a push to a repository other than the run's is denied (`repository.not-allowed`); this rule is left out
     when the run has no repository;
-  - an agent write by a user without a sandbox is denied (`sandbox.required`);
+  - an agent write by a user without a sandbox is denied (`sandbox.required`); a shell step of a user's run is
+    denied the same way (`sandbox.required` at `step.before`) unless the OS sandbox is on or the step has a Docker image;
+  - a run whose changed files match the run's `forbidden_paths` gets `path.forbidden` after the step that changed them
+    (see below);
   - an in-place run by a user is denied (`workspace.admin-only`);
   - a user's run that gets the machine's credential is denied (`credential.scope-exceeded`);
   - a shell step whose output is over its limit gets a warning (`output.limit-exceeded`). Every shell step
@@ -1262,6 +1265,25 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   logs one `!` line for them. The hook still blocks those pushes, and they show as `policy.input-incomplete`.
   A push to a remote that is not on GitHub is not asked about the repository. The pack's hash (`packSha256`)
   depends on these settings and on the run, so two runs with different settings have different hashes.
+
+  **Changed paths (`path.forbidden`).** The baseline reads the run's `forbidden_paths` variable as written, with
+  the same split on spaces and new lines as `protected_branches`. Each entry is matched against the whole path, and
+  `*` is the only wildcard: write `docs/*` to match the files in `docs`, and `a.txt` to match only that file. The
+  guard step still treats each entry as a prefix, so the two can differ. Entries with `?`, `[`, `]` or `\`, spaces,
+  control characters, or over 255 characters are not in the baseline; the run logs one `!` line for them, and the
+  guard step still checks them. A changed file counts from the run's starting commit: committed changes, staged
+  files, unstaged edits, new files, deleted files, both sides of a rename, and the changes of merged branches. A dirty
+  in-place folder counts too. Files that are ignored and were never staged do not count. The Foundry runs git
+  without fetching: a missing object is not fetched. The result is `policy.input-incomplete` (not an allow) when:
+  - the workspace has no checkout yet, or it is the clone step of an empty workspace;
+  - the starting commit could not be read when the checkout appeared, or the run was resumed without it. The run
+    stays incomplete from then on, so the base never moves forward;
+  - git is missing objects, takes longer than 30 seconds, or the run was cancelled;
+  - there are more than 5000 changed files;
+  - the run was started before this version, and so has no record of its starting commit.
+
+  The baseline only observes: nothing is stopped by `path.forbidden`. Its decisions are in the evidence, and a
+  line `! policy foundry.baseline: forbidden path patterns …` in the run log names any pattern that was left out.
 
   Nothing else is built in. The id `foundry.baseline` is reserved: `policy.packs`, `policy.mandatory`
   and `policy.repositories` refuse it.

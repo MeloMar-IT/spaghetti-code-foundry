@@ -17,6 +17,7 @@ const NEVER: Conditions = {
   runCostUsd: { over: 1e12 },
   isolated: true,
   sandboxed: true,
+  paths: { anyIn: ["__never__"] },
 };
 
 /** The rule id of the rule that decides when a boundary got every fact it should. */
@@ -27,7 +28,7 @@ export const checkRule = (boundary: Boundary): string => `${boundary.replace(/\.
 export const COVER: Record<Boundary, { needs: (keyof Conditions)[]; ok: Conditions }> = {
   "run.start": { needs: ["flow", "workspace", "owner"], ok: { flow: { in: ["cover"] }, workspace: { in: ["inplace"] }, owner: { notIn: ["user"] } } },
   "step.before": { needs: ["flow", "step"], ok: { step: { in: ["*"] } } },
-  "step.after": { needs: ["step", "outputBytes", "elapsedMs", "stepCostUsd", "runCostUsd"], ok: { step: { in: ["*"] } } },
+  "step.after": { needs: ["step", "outputBytes", "elapsedMs", "stepCostUsd", "runCostUsd", "paths"], ok: { step: { in: ["*"] } } },
   // asked for the run's workspace (no step, no sign-in) and for every step
   "repository.access": { needs: ["credential"], ok: { credential: { in: ["machine", "none"] } } },
   push: { needs: ["step", "credential", "isolated", "branch"], ok: { credential: { in: ["machine"] }, isolated: false, branch: { in: ["feat*"] } } },

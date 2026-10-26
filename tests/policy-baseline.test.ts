@@ -206,3 +206,54 @@ describe("the limit rules of the baseline", () => {
     expect(() => runBaseline("1", fine)).not.toThrow();
   });
 });
+
+describe("the forbidden path rules and the step sandbox rule", () => {
+  const PATHS = { ...NO_BASELINE_CONTROLS, forbiddenPaths: ["a.txt", "docs/*"] };
+  const after = (controls: BaselineControls, facts: Facts) => ask(controls, "step.after", { step: "s", ...facts });
+
+  it("reads the variable as written, and leaves out what the pack cannot hold", () => {
+    const r = baselineControls({}, { shippedHotfixFlow: false, forbiddenPaths: "docs/*  a.txt\tdocs/* x* c\x05d " + "y".repeat(255) + " " + "z".repeat(256) });
+    expect(r.controls.forbiddenPaths).toEqual(["docs/*", "a.txt", "x*", "y".repeat(255)]);
+    expect(r.leftOutPaths).toEqual(["c\x05d", "z".repeat(256)]);
+    expect(baselineControls({}, { shippedHotfixFlow: false, forbiddenPaths: "a?b [x]" }).controls.forbiddenPaths).toEqual(["a?b", "[x]"]);
+    for (const v of [undefined, "", " \n\t "]) {
+      const c = baselineControls({}, { shippedHotfixFlow: false, forbiddenPaths: v }).controls;
+      expect("forbiddenPaths" in c).toBe(false);
+      expect(ids(c)).not.toContain("path-forbidden");
+    }
+  });
+
+  it("puts the path rules last, in chunks of 100", () => {
+    expect(ids({ ...PATHS, limits: { runBudget: 5 } }).slice(-2)).toEqual(["budget-run-exceeded", "path-forbidden"]);
+    const many = Array.from({ length: 150 }, (_, i) => `p${i}`);
+    expect(ids({ ...NO_BASELINE_CONTROLS, forbiddenPaths: many }).slice(-2)).toEqual(["path-forbidden", "path-forbidden-2"]);
+    expect(BASELINE_PACK.rules.map((r) => r.id)).toEqual(["secret-detected", "identity-missing", "sandbox-required", "workspace-admin-only"]);
+  });
+
+  it("denies a changed file that matches a whole path, and only observes", () => {
+    expect(after(PATHS, { paths: ["a.txt"] })).toMatchObject({ outcome: "deny", reason: "path.forbidden" });
+    expect(after(PATHS, { paths: ["a.txt.bak"] }).reason).toBe("policy.no-rule-matched");
+    expect(after(PATHS, { paths: ["docs/a.md"] }).reason).toBe("path.forbidden");
+    expect(after(PATHS, { paths: ["docs.md"] }).reason).toBe("policy.no-rule-matched");
+    expect(after(PATHS, { paths: [] }).reason).toBe("policy.no-rule-matched");
+    expect(runBaseline("1", PATHS).pack.rules.every((r) => r.mode === "observe")).toBe(true);
+  });
+
+  it("is incomplete without paths, unless there are no patterns or a limit rule applies first", () => {
+    expect(after(PATHS, {})).toMatchObject({ reason: "policy.input-incomplete", rule: "path-forbidden" });
+    expect(after(NO_BASELINE_CONTROLS, {}).reason).toBe("policy.no-rule-matched");
+    const timed = { ...PATHS, limits: { timeout: [{ limit: 10, steps: ["s"] }] } };
+    expect(after(timed, { elapsedMs: 99 }).reason).toBe("timeout.exceeded");
+  });
+
+  it("asks for the sandbox before a shell step of a user's run, not for a step without the fact", () => {
+    const before = (facts: Facts) => ask(NO_BASELINE_CONTROLS, "step.before", { step: "s", ...facts });
+    expect(before({ owner: "user", sandboxed: false })).toMatchObject({ outcome: "deny", reason: "sandbox.required" });
+    expect(before({ owner: "user", sandboxed: true }).reason).toBe("policy.no-rule-matched");
+    expect(before({ owner: "admin", sandboxed: false }).reason).toBe("policy.no-rule-matched");
+    const v = runBaseline("1", NO_BASELINE_CONTROLS).stepWithoutSandbox;
+    const run = (boundary: Boundary, facts: Facts) => evaluatePolicy(v, { version: 1, boundary, runId: "r", facts }, T).reasonCode;
+    expect(run("step.before", { step: "s", owner: "user" })).toBe("policy.no-rule-matched");
+    expect(run("agent.write", { step: "s", owner: "user", sandboxed: false, isolated: false })).toBe("sandbox.required");
+  });
+});

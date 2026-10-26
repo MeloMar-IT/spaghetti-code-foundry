@@ -657,3 +657,46 @@ describe("the policy.decided evidence event", () => {
     }
   });
 });
+
+describe("needsFact, the step without a sandbox fact and the path patterns", () => {
+  const user = (vars: Record<string, string> = {}, owner = "user") => ({ runId: "r", vars, flow: "f", flowDef: { workspace: "worktree" }, owner }) as never;
+  const pathsPack = (boundary: Boundary): PolicyPack => pack({ version: 2, policy: { id: "q", version: "1" }, rules: [{ id: "p", boundaries: [boundary], when: { paths: { anyIn: ["x*"] } }, outcome: "warn", reasonCode: "output.limit-exceeded" }] });
+
+  it("says whether a usable pack asks for paths at step.after", () => {
+    const none = runPolicy(user(), ConfigSchema.parse({}), () => undefined, undefined, home);
+    expect(none.needsFact("step.after", "paths")).toBe(false);
+    const withPatterns = runPolicy(user({ forbidden_paths: "a/*" }), ConfigSchema.parse({}), () => undefined, undefined, home);
+    expect(withPatterns.needsFact("step.after", "paths")).toBe(true);
+    expect(withPatterns.needsFact("push", "paths")).toBe(false);
+    writePack(home, "q", pathsPack("step.after"));
+    expect(runPolicy(user(), ConfigSchema.parse({ policy: { packs: ["q"] } }), () => undefined, undefined, home).needsFact("step.after", "paths")).toBe(true);
+    writePack(home, "q", pathsPack("push"));
+    expect(runPolicy(user(), ConfigSchema.parse({ policy: { packs: ["q"] } }), () => undefined, undefined, home).needsFact("step.after", "paths")).toBe(false);
+    expect(runPolicy(user(), ConfigSchema.parse({ policy: { packs: ["missing"] } }), () => undefined, undefined, home).needsFact("step.after", "paths")).toBe(false);
+  });
+
+  it("asks a step without the sandbox fact against the variant pack", () => {
+    const policy = runPolicy(user(), ConfigSchema.parse({}), () => undefined, undefined, home);
+    const without = policy.at("step.before", { step: "x" }).decisions[0]!.decision;
+    expect(without.reasonCode).toBe("policy.no-rule-matched");
+    const open = policy.at("step.before", { step: "x", sandboxed: false }).decisions[0]!.decision;
+    expect(open).toMatchObject({ outcome: "deny", reasonCode: "sandbox.required", mode: "observe" });
+    expect(without.packSha256).not.toBe(open.packSha256);
+  });
+
+  it("logs one line for patterns it cannot hold, and denies a matching path", () => {
+    const lines: string[] = [];
+    const policy = runPolicy(user({ forbidden_paths: "ok/* bad\x05x" }), ConfigSchema.parse({}), (l) => lines.push(l), undefined, home);
+    expect(lines.filter((l) => l.startsWith("! ") && l.includes("forbidden path patterns"))).toHaveLength(1);
+    expect(lines.join("\n")).toContain(JSON.stringify("bad\x05x"));
+    expect(policy.at("step.after", { step: "s", paths: ["ok/a"], outputBytes: 0, elapsedMs: 0, stepCostUsd: 0, runCostUsd: 0 }).decisions[0]!.decision.reasonCode).toBe("path.forbidden");
+  });
+
+  it("gives a sub-flow step the path rule and the variant", () => {
+    const policy = runPolicy(user({ forbidden_paths: "ok/*" }), ConfigSchema.parse({}), () => undefined, undefined, home);
+    policy.subFlow("sub", { name: "s", steps: [], defaults: {} } as never, 1);
+    const id = { id: "t", visit: 1, type: "shell", parent: "sub" } as const;
+    expect(policy.at("step.after", { step: "t", paths: ["ok/a"] }, id).decisions[0]!.decision.reasonCode).toBe("path.forbidden");
+    expect(policy.at("step.before", { step: "t" }, id).decisions[0]!.decision.reasonCode).toBe("policy.no-rule-matched");
+  });
+});

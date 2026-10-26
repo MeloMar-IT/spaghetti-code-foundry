@@ -93,6 +93,12 @@ export interface RunSummary {
   branch?: string;
   /** Commit the workspace started from (for diffs). */
   baseSha?: string;
+  /** The empty-workspace base for the `paths` fact: HEAD after the first step that left a checkout. */
+  pathsBaseSha?: string;
+  /** Set on new runs; without it the `paths` fact is never worked out (older runs). */
+  pathsTracked?: boolean;
+  /** The empty-workspace base could not be read when the checkout appeared; `paths` stays incomplete for the rest of the run. */
+  pathsBaseLost?: boolean;
   startedAt: string;
   finishedAt?: string;
   totalCostUsd: number;
