@@ -4,6 +4,11 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- Delivery: a library to write and read the delivery-contract pull request comment (one per pull request, edited in place), `publicKeyFingerprint`, and `upsertStatusComment` for pull requests (#697). Nothing posts it yet.
+  - **Code.** New `src/delivery/comment.ts` (`deliveryMarker`, `validatorMarker`, `isDeliveryComment`, `deliveryCommentBody`, `readDeliveryComment`; `safeLine` for reasons and check lines). `src/delivery/sshsig.ts` (`publicKeyFingerprint`, the `SHA256:` form that `ssh-keygen -l` shows). `src/github.ts` (`prComments`, `commentOnPullRequest`; the `on` and `match` options of `upsertStatusComment`, with the defaults unchanged).
+  - **Tests.** New `tests/delivery-comment.test.ts` (layout per status, fences, safe lines, size fallback, round trip, secrets, and a run of `tools/delivery-validate/validate.mjs --comment`). `tests/delivery-sshsig.test.ts` and `tests/status-comment.test.ts` (the new cases). `tests/fixtures/fake-gh.sh` answers `pr view --json comments` and `pr comment`.
+  - **Docs.** `docs/DESIGN.md` ("Delivery contract", the PR comment). The user guide is unchanged, because no user-visible behaviour changes yet.
+
 - `pull_ticket` saves the issue and its comments in the run folder (#700, part 2 of 2 of #695): `issue.json` (body, number, title, `updatedAt`) and `issue-comments.jsonl` (one comment per line) are written next to the run, so a later step can build the context with `readIssueFiles` without calling `gh`. A failed fetch removes the file and the run goes on; the issue text the step prints is unchanged.
   - **Code.** `blocks/pull-ticket.yaml` (two `gh` lines after the `case` line), regenerated `flows/issue-gitflow.yaml`, `flows/issue-plan.yaml`, `flows/issue-code-daily.yaml` and `tests/fixtures/flows/{github-issue,github-auto,github-pr,issue-deliver}.yaml`. `package.json` gets the `npm run flows` script; `CLAUDE.md` names it.
   - **Tests.** New `tests/pull-ticket-files.test.ts` (the line order in the three shipped flows; the rendered script with both, no, and empty comment variables; stale files removed; `readIssueFiles` reads the result). `tests/fixtures/fake-gh.sh` answers the two new calls only when `FAKE_GH_ISSUE_JSON` or `FAKE_GH_ISSUE_COMMENTS_JSONL` is set (an empty value counts as set).

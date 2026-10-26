@@ -101,6 +101,45 @@ export function signSsh(message: string | Uint8Array, key: KeyObject, namespace:
 export type SshSignatureFault = "malformed" | "namespace" | "bad" | "public-key" | "wrong-key";
 export type SshSignatureCheck = { ok: true } | { ok: false; fault: SshSignatureFault };
 
+/** The parts of an SSHSIG signature, read from its armour. */
+export interface ParsedSshSignature {
+  /** The raw 32-byte Ed25519 public key the signature names. */
+  publicKey: Buffer;
+  namespace: Buffer;
+  signature: Buffer;
+}
+
+/**
+ * Reads an armoured SSHSIG signature: the armour, the magic, the version, the embedded key, the namespace, the hash
+ * algorithm and the 64-byte Ed25519 signature. Returns undefined for anything else (it does not check the signature
+ * itself). Never throws.
+ */
+export function parseSshSignature(armoured: string): ParsedSshSignature | undefined {
+  try {
+    if (typeof armoured !== "string" || !armoured.startsWith(BEGIN) || !armoured.endsWith(END)) return undefined;
+    const b64 = armoured.slice(BEGIN.length, armoured.length - END.length).replace(/\n/g, "");
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return undefined;
+    const blob = Buffer.from(b64, "base64");
+    if (blob.toString("base64") !== b64 || armour(blob) !== armoured) return undefined;
+
+    const r = new Reader(blob);
+    if (!r.raw(MAGIC.length).equals(MAGIC) || r.u32() !== 1) return undefined;
+    const pubBlob = new Reader(r.bytes());
+    if (pubBlob.text() !== KEY_TYPE) return undefined;
+    const embedded = pubBlob.bytes();
+    if (embedded.length !== 32 || !pubBlob.done()) return undefined;
+    const ns = r.bytes();
+    if (r.bytes().length !== 0 || r.text() !== HASH_ALGORITHM) return undefined;
+    const sigBlob = new Reader(r.bytes());
+    if (sigBlob.text() !== KEY_TYPE) return undefined;
+    const sig = sigBlob.bytes();
+    if (sig.length !== 64 || !sigBlob.done() || !r.done()) return undefined;
+    return { publicKey: Buffer.from(embedded), namespace: Buffer.from(ns), signature: Buffer.from(sig) };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Checks, in the order of `ssh-keygen -Y verify`: the form, the namespace, the signature against the key inside it,
  * and only then that this key is the trusted one. Never throws.
@@ -108,31 +147,14 @@ export type SshSignatureCheck = { ok: true } | { ok: false; fault: SshSignatureF
 export function verifySshSignature(message: string | Uint8Array, armoured: string, trustedKeyLine: string, namespace: string): SshSignatureCheck {
   const fail = (fault: SshSignatureFault): SshSignatureCheck => ({ ok: false, fault });
   try {
-    if (typeof armoured !== "string" || !armoured.startsWith(BEGIN) || !armoured.endsWith(END)) return fail("malformed");
-    const b64 = armoured.slice(BEGIN.length, armoured.length - END.length).replace(/\n/g, "");
-    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return fail("malformed");
-    const blob = Buffer.from(b64, "base64");
-    if (blob.toString("base64") !== b64 || armour(blob) !== armoured) return fail("malformed");
-
-    const r = new Reader(blob);
-    if (!r.raw(MAGIC.length).equals(MAGIC) || r.u32() !== 1) return fail("malformed");
-    const pubBlob = new Reader(r.bytes());
-    if (pubBlob.text() !== KEY_TYPE) return fail("malformed");
-    const embedded = pubBlob.bytes();
-    if (embedded.length !== 32 || !pubBlob.done()) return fail("malformed");
-    const ns = r.bytes();
-    if (r.bytes().length !== 0 || r.text() !== HASH_ALGORITHM) return fail("malformed");
-    const sigBlob = new Reader(r.bytes());
-    if (sigBlob.text() !== KEY_TYPE) return fail("malformed");
-    const sig = sigBlob.bytes();
-    if (sig.length !== 64 || !sigBlob.done() || !r.done()) return fail("malformed");
-
-    if (typeof namespace !== "string" || !ns.equals(Buffer.from(namespace, "utf8"))) return fail("namespace");
-    if (!verify(null, signedData(message, namespace), ed25519PublicKey(embedded), sig)) return fail("bad");
+    const parsed = parseSshSignature(armoured);
+    if (!parsed) return fail("malformed");
+    if (typeof namespace !== "string" || !parsed.namespace.equals(Buffer.from(namespace, "utf8"))) return fail("namespace");
+    if (!verify(null, signedData(message, namespace), ed25519PublicKey(parsed.publicKey), parsed.signature)) return fail("bad");
 
     const trusted = parseKeyLine(trustedKeyLine);
     if (!trusted) return fail("public-key");
-    if (!trusted.equals(embedded)) return fail("wrong-key");
+    if (!trusted.equals(parsed.publicKey)) return fail("wrong-key");
     return { ok: true };
   } catch {
     return fail("malformed");
@@ -156,7 +178,19 @@ export function parseKeyLine(line: string): Buffer | undefined {
   }
 }
 
-export type SigningKeyFault = "unreadable" | "encrypted" | "not-ed25519";
+/** `SHA256:` and the unpadded base64 of the SHA-256 of the key blob, as `ssh-keygen -l` shows it; undefined for anything but a valid ssh-ed25519 line. */
+export function publicKeyFingerprint(line: string): string | undefined {
+  try {
+    if (!parseKeyLine(line)) return undefined;
+    const blob = decodeBase64Exact(line.trim().split(/\s+/)[1]!, 4 + KEY_TYPE.length + 4 + 32);
+    if (!blob) return undefined;
+    return `SHA256:${createHash("sha256").update(blob).digest("base64").replace(/=+$/, "")}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export type SigningKeyFault ="unreadable" | "encrypted" | "not-ed25519";
 export type SigningKeyRead = { ok: true; key: KeyObject } | { ok: false; reason: SigningKeyFault; message: string };
 
 const refuse = (reason: SigningKeyFault, message: string): SigningKeyRead => ({ ok: false, reason, message });
