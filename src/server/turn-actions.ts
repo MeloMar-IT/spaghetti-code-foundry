@@ -112,7 +112,7 @@ export async function turnDetail(ctx: ApiContext, key: string, now = new Date())
   if (item.next.kind === "failed") return { ...base, text: item.next.text };
   const { repo, issue } = target(item);
   const { c } = await asRepo(ctx, item.watcher, () => foundryComment(repo, issue, item.next.kind, item.next.runId));
-  if (item.next.kind === "questions" || item.next.kind === "planner_questions") {
+  if (item.next.kind === "questions" || item.next.kind === "planner_questions" || item.next.kind === "owner_action") {
     const questions = parseQuestions(c.body);
     return { ...base, digest: commentDigest(c), text: visibleText(c.body), questions };
   }

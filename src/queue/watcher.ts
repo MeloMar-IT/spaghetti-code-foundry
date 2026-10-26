@@ -22,6 +22,8 @@ import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
 import { notCodeStop, parkedComment, wantsPark } from "./park.js";
+import { contentsPath, filesToCheck, openOwnerActions, OWNER_FILE_MARK, type OwnerAsk } from "./owner-action.js";
+import { validBranchName } from "../auth/repo-settings.js";
 
 /** Status labels the watcher puts on issues. Remove one to have the issue picked up again. */
 export const STATUS_LABELS = {
@@ -189,6 +191,23 @@ const APPROVE_RE = /^\s*\/(approve|reject)\b[ \t]*(.*)$/im;
 /** The hidden mark of a `/defaults` comment the watcher wrote itself (auto_defaults), and how many it writes per issue. */
 const AUTO_DEFAULTS_MARK = "<!-- spaghetti-code-foundry auto-defaults -->";
 const AUTO_DEFAULTS_MAX = 2;
+
+/** A contents answer that is one file (not a directory's list). */
+function isFileBody(body: string): boolean {
+  try {
+    const v: unknown = JSON.parse(body);
+    return !!v && typeof v === "object" && !Array.isArray(v) && (v as { type?: unknown }).type === "file";
+  } catch {
+    return false;
+  }
+}
+
+/** owner_action questions that wait for a file: how often a found file resumes one issue, and the limits of the file checks per check. */
+const OWNER_FILE_MAX = 2;
+const FILE_CHECKS_PER_TICK = 20;
+const FILE_CHECK_MS = 30_000;
+/** When the cap was reached at the last check, an issue checked within this time waits its turn, so later issues get checked too. */
+const FILE_RECHECK_MS = 5 * 60_000;
 
 export { steppedAsideFor };
 
@@ -442,7 +461,48 @@ export class Watcher {
   /** Would takeDefaults answer now: auto_defaults on and the per-issue limit not reached. */
   private canTakeDefaults(comments: Comment[]): boolean {
     if (!this.cfg.auto_defaults) return false;
+    // Something only a person can do is never answered with a recommendation.
+    if (openOwnerActions(comments)) return false;
     return comments.filter((c) => c.body.includes(AUTO_DEFAULTS_MARK)).length < AUTO_DEFAULTS_MAX;
+  }
+
+  /** Files an owner_action question waits for are looked for here: the develop branch with gitflow, else the default branch. */
+  private fileRef(): { ref?: string; where: string } | undefined {
+    let branch = "";
+    try {
+      const flow = loadFlow(this.flowName(), this.d.repo).flow;
+      branch = (effectiveVars(flow, this.d.repo, this.cfg.vars).develop_branch ?? "").trim();
+    } catch { /* unknown flow: no gitflow */ }
+    if (!branch) return { where: "the default branch" };
+    return validBranchName(branch) ? { ref: branch, where: `\`${branch}\`` } : undefined;
+  }
+
+  private fileChecked = new Map<number, number>();
+  private filePressed = false;
+
+  /** Are all these files on the branch? One request per file, one total time limit; any failure means "not there". */
+  private async filesThere(files: string[], ref: string | undefined, alive: () => void): Promise<boolean> {
+    const until = Date.now() + FILE_CHECK_MS;
+    for (const f of files) {
+      const left = until - Date.now();
+      if (left <= 0) return false;
+      try {
+        const body = await gh(["api", contentsPath(this.repo, f, ref)], undefined, left);
+        alive();
+        // A directory answers with a list, a file with one object: only a file counts.
+        if (!isFileBody(body)) return false;
+      } catch (e) {
+        alive();
+        const msg = errorLine((e as Error).message);
+        if (!/\b404\b|Not Found/i.test(msg)) this.d.log(`[${this.cfg.id}] ! looking for ${f}: ${msg}`);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private async noteFile(n: number, met: string): Promise<void> {
+    await gh(["issue", "comment", String(n), "--repo", this.repo, "--body", `**Nothing needed from you** — ${met}, so the Foundry goes on.\n\n${OWNER_FILE_MARK}`]);
   }
 
   /** How this watcher judges a dependency done. */
@@ -954,6 +1014,37 @@ export class Watcher {
     const why = (n: number, normal: string) => (depHeldBefore.has(n) ? "its dependencies are done" : normal);
     const keepAsking = new Set<number>(); // held for dependencies with open questions: the needs-info label stays
 
+    // Open owner_action questions (something only a person can do): a hold with the action, or `met` when every file they wait for is there.
+    let fileChecks = 0;
+    const pressedBefore = this.filePressed;
+    this.filePressed = false;
+    const ownerWait = async (issue: Issue, comments: Comment[], runId?: string): Promise<{ met: string } | { hold: Hold } | undefined> => {
+      const ask: OwnerAsk | undefined = openOwnerActions(comments);
+      if (!ask) return undefined;
+      const files = filesToCheck(ask);
+      const target = files.length ? this.fileRef() : undefined;
+      const marks = comments.filter((c) => c.body.includes(OWNER_FILE_MARK)).length;
+      const auto = !!target && marks < OWNER_FILE_MAX;
+      const list = files.map((f) => `\`${f}\``).join(", ");
+      if (auto) {
+        const recent = Date.now() - (this.fileChecked.get(issue.number) ?? 0) < FILE_RECHECK_MS;
+        if (fileChecks + files.length > FILE_CHECKS_PER_TICK) this.filePressed = true;
+        else if (!(pressedBefore && recent)) {
+          fileChecks += files.length;
+          this.fileChecked.set(issue.number, Date.now());
+          if (await this.filesThere(files, target.ref, alive)) return { met: `${list} ${files.length === 1 ? "is" : "are"} on ${target.where}` };
+        }
+      }
+      const first = ask.actions[0]!.action;
+      const ownerAction = ask.actions.length > 1 ? `${first} (and ${ask.actions.length - 1} more on the issue)` : first;
+      return {
+        hold: {
+          ...this.held("owner_action", issue, { runId, ownerAction, ...(auto ? { ownerFiles: { paths: files, where: target.where } } : {}) }),
+          since: ask.since,
+        },
+      };
+    };
+
     // Bug stories first, the oldest issue first (its creation time; the number only breaks a tie or fills a gap).
     const age = (i: Issue) => { const t = Date.parse(i.createdAt ?? ""); return Number.isNaN(t) ? undefined : t; };
     const byAge = (a: Issue, b: Issue) => { const x = age(a), y = age(b); return x !== undefined && y !== undefined ? x - y : 0; };
@@ -1022,8 +1113,11 @@ export class Watcher {
           if (parked === "parked") tracked.splice(tracked.indexOf(track), 1);
           continue;
         }
-        if (!answers.length && this.canTakeDefaults(comments) && (await holdForDeps(issue))) { keepAsking.add(n); continue; }
-        if (!answers.length && !(await this.takeDefaults(n, comments))) {
+        const owner = answers.length ? undefined : await ownerWait(issue, comments);
+        if (owner && "hold" in owner) { holds.push(owner.hold); continue; }
+        if (owner) this.act(`#${n} ${owner.met} → it starts`);
+        if (!owner && !answers.length && this.canTakeDefaults(comments) && (await holdForDeps(issue))) { keepAsking.add(n); continue; }
+        if (!owner && !answers.length && !(await this.takeDefaults(n, comments))) {
           holds.push({ ...this.held("questions", issue, { questions: questionCount(comments) }), since: [...comments].reverse().find(asked)?.createdAt });
           continue;
         }
@@ -1134,7 +1228,8 @@ export class Watcher {
               await setLabels(this.repo, n, this.L.needsInfo, this.allStatus);
               this.act(`#${n} label → ${this.L.needsInfo}`);
             }
-            holds.push(this.heldRun(issue, run, { questions: questionCount(comments) }));
+            const ask = openOwnerActions(comments);
+            holds.push(ask ? { ...this.held("owner_action", issue, { runId: run.runId, ownerAction: ask.actions[0]!.action }), since: ask.since } : this.heldRun(issue, run, { questions: questionCount(comments) }));
           } else {
             if (status !== this.L.waiting) {
               await setLabels(this.repo, n, this.L.waiting, this.allStatus);
@@ -1247,7 +1342,9 @@ export class Watcher {
           const parked = await this.parkOnRequest(n, answers, run, alive);
           if (parked) { quietNow.add(n); offNow.delete(n); delete track.labelOff; continue; }
         }
-        if ((answers.length || (!notCodeStop(run) && this.canTakeDefaults(comments))) && (await holdForDeps(issue, run.runId))) {
+        const owner = answers.length ? undefined : await ownerWait(issue, comments, run.runId);
+        if (owner && "hold" in owner) { holds.push(owner.hold); continue; }
+        if ((answers.length || owner || (!notCodeStop(run) && this.canTakeDefaults(comments))) && (await holdForDeps(issue, run.runId))) {
           if (answers.length) {
             await setLabels(this.repo, n, this.L.working, this.allStatus);
             this.act(`#${n} label → ${this.L.working} (answered by @${answers[0]!.author.login}, waits for its dependencies)`);
@@ -1257,13 +1354,22 @@ export class Watcher {
         }
         // auto_defaults: nobody answered yet, so the recommendations are taken (only when the run can go on now).
         // A "not a coding task" stop is not answered with defaults: it needs a person (the planner_questions hold stays).
-        const auto = !answers.length && !notCodeStop(run) && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
-        if ((answers.length || auto) && !overLimit(isFirst)) {
+        const auto = !answers.length && !owner && !notCodeStop(run) && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
+        if ((answers.length || auto || owner) && !overLimit(isFirst)) {
+          // The file a question waited for is there: say so once (the mark limits it), then go on.
           await setLabels(this.repo, n, this.L.working, this.allStatus);
-          this.resume(n, run.runId, why(n, auto ? "answered with the recommendations (auto_defaults)" : `answered by @${answers[0]!.author.login}`), undefined, true, first);
+          this.resume(n, run.runId, why(n, owner ? owner.met : auto ? "answered with the recommendations (auto_defaults)" : `answered by @${answers[0]!.author.login}`), undefined, true, first);
           this.labelWhenDone(n, run.runId);
+          // Written only after the resume went out: a failed resume must not use up the note limit.
+          if (owner) {
+            alive();
+            try { await this.noteFile(n, owner.met); } catch (e) { this.d.log(`[${this.cfg.id}] ! #${n} note for the file: ${errorLine((e as Error).message)}`); }
+          }
           started++;
           if (isFirst) firstStarted++;
+        } else if (owner) {
+          // The file is there but the per-check limit is used up: the label stays, nothing is posted yet.
+          holds.push(limited(issue, run.runId));
         } else if (!answers.length) {
           holds.push(this.heldRun(issue, run, { questions: questionCount(comments) }));
         } else {

@@ -62,6 +62,7 @@ describe("actButtons", () => {
     const labels = (kind: string) => ui.actButtons(item(kind), onAct).map((b: FakeElement) => b.textContent);
     expect(labels("questions")).toEqual(["Show questions"]);
     expect(labels("planner_questions")).toEqual(["Show questions"]);
+    expect(labels("owner_action")).toEqual(["Show question"]);
     expect(labels("approve_plan")).toEqual(["Show plan"]);
     expect(labels("approve_split")).toEqual(["Show split"]);
     expect(labels("approval")).toEqual(["Show request"]);

@@ -7,7 +7,7 @@ import { beforeDecided, type CommentKind } from "./next-step.js";
 const ANY_KIND: readonly string[] = ["questions", "planner_questions", "approve_plan", "approve_split", "approval"];
 export const isCommentKind = (k: string): k is CommentKind => ANY_KIND.includes(k);
 
-const QUESTION_KINDS: readonly string[] = ["questions", "planner_questions"];
+const QUESTION_KINDS: readonly string[] = ["questions", "planner_questions", "owner_action"];
 
 /**
  * The Foundry comment an item is about: found by its marker, since a newer Foundry comment may follow it.
@@ -17,6 +17,8 @@ export function findComment(comments: Comment[], kind: string, runId?: string, a
   const newest = (match: (c: Comment) => boolean) => [...comments].reverse().find((c) => (author === undefined || c.author.login === author) && match(c));
   const marked = (re: RegExp) => newest((c) => isBot(c) && re.test(c.body));
   let found: Comment | undefined;
+  // Something to do is a question comment: a run's, or the one asked up front.
+  if (kind === "owner_action") kind = runId ? "planner_questions" : "questions";
   if (kind === "questions") found = marked(/<!-- [\w-]+ run=\S* questions -->/);
   else if (kind === "planner_questions") found = runId ? newest((c) => isBot(c) && (c.body.includes(`run=${runId} -->`) || c.body.includes(`run=${runId} decided=`))) : undefined;
   else if (runId) found = newest((c) => isBot(c) && c.body.includes(`run=${runId} approval`));

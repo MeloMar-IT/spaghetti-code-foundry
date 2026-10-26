@@ -4,7 +4,7 @@ import { aiProps, h, modal, mount, toast } from "./dom.js";
 // The buttons and panels of Your turn that answer, approve, reject or retry an item. Every action is a normal
 // comment on the issue (the server posts it); the panels only collect the text.
 
-const SHOW = { questions: "Show questions", planner_questions: "Show questions", approve_plan: "Show plan", approve_split: "Show split", approval: "Show request" };
+const SHOW = { questions: "Show questions", planner_questions: "Show questions", owner_action: "Show question", approve_plan: "Show plan", approve_split: "Show split", approval: "Show request" };
 const FILLER = "Go with the recommendation.";
 
 /** Buttons for an item with `acts`; `onAct(body)` posts and returns a promise. */
@@ -31,7 +31,7 @@ export function actButtons(item, onAct) {
     ];
   }
   const label = SHOW[kind];
-  const questions = kind === "questions" || kind === "planner_questions";
+  const questions = kind === "questions" || kind === "planner_questions" || kind === "owner_action";
   const build = (detail, close) => (questions ? questionsPanel : proposalPanel)(item, detail, { onAct, close });
   return label ? [h("button", { class: "primary", onClick: () => openDetail(label, build) }, label)] : [];
 }
