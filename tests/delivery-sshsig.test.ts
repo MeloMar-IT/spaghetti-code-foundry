@@ -1,10 +1,10 @@
-import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { publicKeyLine, readSigningKey, signSsh, verifySshSignature } from "../src/delivery/sshsig.js";
+import { publicKeyFingerprint, publicKeyLine, readSigningKey, signSsh, verifySshSignature } from "../src/delivery/sshsig.js";
 import { rawPublicKey } from "../src/skills/release-signature.js";
 
 const NS = "scf-delivery-contract";
@@ -172,6 +172,48 @@ describe("readSigningKey", () => {
       long: opensshKeyText(K1, { comment: "x".repeat(17000) }),
     };
     for (const [name, text] of Object.entries(cases)) expect(reason(text), name).toBe("unreadable");
+  });
+});
+
+describe("publicKeyFingerprint", () => {
+  const line = publicKeyLine(K1);
+  const blobOf = (l: string): Buffer => Buffer.from(l.split(" ")[1]!, "base64");
+
+  it("is SHA256: and the unpadded base64 of the key blob hash", () => {
+    const fp = publicKeyFingerprint(line)!;
+    expect(fp).toMatch(/^SHA256:[A-Za-z0-9+/]{43}$/);
+    expect(fp).toBe("SHA256:" + createHash("sha256").update(blobOf(line)).digest("base64").replace(/=+$/, ""));
+  });
+
+  it("ignores a comment and surrounding spaces", () => {
+    expect(publicKeyFingerprint(`  ${line} me@example.com \n`)).toBe(publicKeyFingerprint(line));
+  });
+
+  it("differs between keys", () => {
+    expect(publicKeyFingerprint(publicKeyLine(K2))).not.toBe(publicKeyFingerprint(line));
+  });
+
+  it("is undefined for anything but a valid ssh-ed25519 line", () => {
+    const blob = blobOf(line);
+    const otherType = Buffer.concat([str("ssh-rsa"), blob.subarray(4 + 11)]);
+    const bad = [
+      "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ", "", "garbage", "ssh-ed25519", `ssh-ed25519 ${blob.subarray(0, 40).toString("base64")}`,
+      `ssh-ed25519 ${otherType.toString("base64")}`, 123 as unknown as string, undefined as unknown as string,
+    ];
+    for (const l of bad) expect(publicKeyFingerprint(l)).toBeUndefined();
+  });
+});
+
+describe.skipIf(!existsSync("/usr/bin/ssh-keygen"))("real ssh-keygen", () => {
+  it("shows the same fingerprint as ssh-keygen -l", () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-fp-"));
+    try {
+      const line = publicKeyLine(K1);
+      writeFileSync(join(d, "key.pub"), `${line}\n`);
+      expect(execFileSync("/usr/bin/ssh-keygen", ["-l", "-f", join(d, "key.pub")]).toString()).toContain(publicKeyFingerprint(line)!);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });
 

@@ -956,6 +956,8 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
   - `publicKeyLine(key)` gives `ssh-ed25519 AAAA…`.
   - `verifySshSignature(message, armoured, publicKeyLine, namespace)` never throws. It checks the
     signature against the key inside it first, then against the trusted key.
+  - `publicKeyFingerprint(line)` gives `SHA256:` and the unpadded base64 of the SHA-256 of the key blob,
+    as `ssh-keygen -l` shows it. It is `undefined` for anything but a valid `ssh-ed25519` line.
 - **Verify** (`verifyDeliveryContract(text, sigText, publicKey, eventsText?)`): never throws. It returns
   the first fault in this order: `unreadable` (not JSON, not an object, not canonical, or not valid),
   `wrong-version`, `signature-missing`, `signature-bad`, `wrong-key`, and `evidence-head-mismatch`
@@ -1007,6 +1009,37 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     of #667 writes this marker, so the format is fixed.
   - **No writes.** The script never writes a file, and never fixes or regenerates a contract.
   - **Not yet.** No run writes the comment yet, so the validator is used only where a CI job runs it.
+- **PR comment (`src/delivery/comment.ts`, #697).** A library that builds
+  and reads the comment that carries a signed contract on a pull request. Nothing posts it yet.
+  - **Layout.** A first line (`reportFirst("info")` for `ok` and `unsigned`; a "what you need to do" line
+    for `stop`), a `### Delivery contract` heading, a status line (`**Verified.**`, `**Not verified.**`
+    for an unsigned contract, or ``**Stopped:** `<condition>` — <reason>``), bullets for the run, sequence,
+    digest, commit, branch, evidence count and terminal hash, and the key fingerprint or `unsigned`. Then
+    up to 50 check lines (more get an "and N more" line), a `<details>` block with the contract and the
+    signature, and the markers as the last two lines.
+  - **Two markers.** The validator marker `<!-- claude-factory delivery-contract digest=… evidence=… -->`
+    is the one `validate.mjs --comment` reads (`VALIDATOR_MARKER_RE` matches its `MARKER`). The delivery
+    marker `<!-- <product> delivery-contract run=<id> -->` is always the last line, and only the Foundry
+    writes it. `isDeliveryComment` accepts it only as the last line (LF or CRLF), so a quoted or mid-body
+    copy does not count.
+  - **One comment per pull request.** `upsertStatusComment` with `on: "pr"` and `match: isDeliveryComment`
+    finds any run's delivery marker, so a later run edits the same comment and the others are left alone.
+    `on` (`"issue"` by default, or `"pr"`) picks the comment list and the posting call (`prComments`,
+    `commentOnPullRequest`). `match` picks which comments count (`isStatusComment` by default).
+  - **Contract and signature blocks.** `json scf-delivery-contract` holds the canonical text and
+    `text scf-delivery-signature` the signature. Each fence is longer than any backtick run in its content,
+    so the content cannot close it.
+  - **Safe text.** Reasons and check lines go through `safeLine`: secrets are taken out (`scrub`, which
+    throws when it cannot be sure), white space is folded, `<` and `>` become `‹` and `›`, backticks become `'`, mentions are neutralised, and the
+    result is at most 300 characters with the ellipsis counted. Nothing is deleted, so no delimiter can be
+    rebuilt. The signed contract bytes are never changed: a contract with a secret in a string field is refused.
+  - **Too long.** Above 60 000 characters the details block is replaced by a pointer to
+    `delivery/contract-<n>.json` in the run folder.
+  - **Reading.** `readDeliveryComment` returns the contract, signature, digest and evidence from a body. It
+    never throws, and a body with two validator markers gives no digest or evidence.
+  - **Checks.** `deliveryCommentBody` throws when the run id is bad, the contract fails its schema, the
+    digest is not the digest of the text, or the signature is not in SSH-signature form.
+- **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
 - **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
   - **Trigger.** `deliveryAfterStep` runs from `recordStep` (`execute.ts`) after the step outputs are read,
     for top-level steps only. It needs `outputs.pull_request` to be a pull request of the run's repository
