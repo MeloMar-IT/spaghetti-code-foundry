@@ -96,6 +96,8 @@ export const FactsSchema = z
     contextOmitted: count,
     /** The most private class among the sources of the context bundle. Left out when there are no sources. */
     contextClassification: z.enum(CONTEXT_CLASSIFICATIONS),
+    /** How many of the plan's Requirements, Constraints and Acceptance criteria sections cite no context entry it was given (0 to 3). */
+    contextUncited: count,
   })
   .partial()
   .strict();
@@ -162,6 +164,7 @@ export const ConditionsSchema = z
     contextBytes: over,
     contextOmitted: over,
     contextClassification: choice(CONTEXT_CLASSIFICATIONS),
+    contextUncited: over,
   })
   .partial()
   .strict();

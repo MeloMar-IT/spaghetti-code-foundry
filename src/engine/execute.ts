@@ -14,6 +14,7 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { stepContextUncited } from "./context-index.js";
 import { claimAfterResolve } from "./release-claim.js";
 import { readDecidedQuestions } from "./questions.js";
 import { readRunOutputs } from "./run-outputs.js";
@@ -217,6 +218,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       runCostUsd: engine.summary.totalCostUsd,
       dailyCostUsd: daily,
       paths,
+      contextUncited: stepContextUncited({ summary: engine.summary, step, topLevel: !scope.prefix, output: res.output }),
     },
     identity,
   );

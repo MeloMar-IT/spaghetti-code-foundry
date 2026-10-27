@@ -31,6 +31,7 @@ export const RULE_REASONS = {
   "context.limit-exceeded": "The run's context has more sources or bytes than allowed.",
   "context.sources-omitted": "Sources the run would have used were left out of its context.",
   "context.classification-exceeded": "The run's context holds a source more private than allowed.",
+  "context.uncited": "The plan cites none of the context entries it was given for some of its requirements, constraints or acceptance criteria.",
 } as const;
 
 /** Codes only the evaluation itself gives; a rule cannot use them. */

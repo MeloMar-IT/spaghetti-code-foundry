@@ -5,9 +5,9 @@
 
 /**
  * The version of one line of `evidence.jsonl` this Foundry writes. Raise it for any change of shape or meaning.
- * 2 adds the `policy.decided` event. 3 adds `step.profiled`. 4 adds `repo.operation`. 5 adds `context.bundled` and the `context.select` boundary.
+ * 2 adds the `policy.decided` event. 3 adds `step.profiled`. 4 adds `repo.operation`. 5 adds `context.bundled` and the `context.select` boundary. 6 adds the reason code `context.uncited`.
  */
-export const EVIDENCE_EVENT_VERSION = 5;
+export const EVIDENCE_EVENT_VERSION = 6;
 /** The version of `evidence.json` (the manifest of a finished run) this Foundry writes. */
 export const RUN_EVIDENCE_VERSION = 1;
 

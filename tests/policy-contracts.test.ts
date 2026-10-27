@@ -54,14 +54,14 @@ const edit = <T>(value: T, change: (copy: any) => void): any => {
 
 describe("versions", () => {
   it("every contract has its own explicit version", () => {
-    expect([POLICY_PACK_VERSION, POLICY_INPUT_VERSION, POLICY_DECISION_VERSION]).toEqual([2, 2, 1]);
+    expect([POLICY_PACK_VERSION, POLICY_INPUT_VERSION, POLICY_DECISION_VERSION]).toEqual([2, 3, 1]);
     expect(parsePolicyPack(BASELINE).version).toBe(1);
     expect(decide("push", { branch: "feature/x", secretsFound: 0, paths: [] }).version).toBe(1);
   });
 
   it.each([
     ["pack", parsePolicyPack, 3, "versions 1 to 2"],
-    ["input", parsePolicyInput, 3, "version 2"],
+    ["input", parsePolicyInput, 4, "version 3"],
     ["decision", parsePolicyDecision, 2, "version 1"],
   ] as const)("a %s is refused without a version, with another version, or when it is not an object", (kind, parse, unsupported, reads) => {
     expect(failure(() => parse(null)).code).toBe("not-an-object");
@@ -243,7 +243,7 @@ describe("reason codes", () => {
   it("are stable: this list only grows", () => {
     expect([...REASON_CODES].sort()).toEqual([
       "approval.required", "branch.hotfix-exception", "branch.protected", "budget.daily-exceeded", "budget.run-exceeded", "budget.step-exceeded",
-      "context.classification-exceeded", "context.limit-exceeded", "context.sources-omitted",
+      "context.classification-exceeded", "context.limit-exceeded", "context.sources-omitted", "context.uncited",
       "credential.scope-exceeded", "exception.granted", "flow.retired", "identity.missing", "issue.closed", "output.limit-exceeded", "path.forbidden",
       "policy.break-glass", "policy.input-incomplete", "policy.invalid", "policy.no-rule-matched", "policy.unavailable", "repository.not-allowed", "sandbox.required",
       "secret.detected", "timeout.exceeded", "tool.not-allowed", "workspace.admin-only",

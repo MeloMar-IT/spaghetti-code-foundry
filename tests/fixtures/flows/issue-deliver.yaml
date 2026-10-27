@@ -185,6 +185,8 @@ steps:
         Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
       - READY: write the plan with these sections:
         ## Goal — what will work when this is done, in one or two sentences.
+        ## Requirements — what the work must do, as a list.
+        ## Constraints — what it must respect (rules, compatibility, limits), as a list.
         ## Acceptance criteria — a checklist that can be verified.
         ## Design — the approach, and why it fits the existing architecture. Alternatives you rejected, briefly.
         ## Changes — per module/file (existing paths, or marked NEW): what changes. Include signatures of
@@ -194,6 +196,12 @@ steps:
         ## Documentation — what goes in the changelog / user guide.
         ## Risks & open points — what could go wrong, migrations, performance, security, compatibility.
         No new dependencies unless the issue asks for them. Be concrete; skip filler.
+      A READY plan has these three sections, each with its own heading: ## Requirements, ## Constraints and ## Acceptance criteria.
+      When a CONTEXT list is given above (between === CONTEXT and === END CONTEXT ===), end each item under
+        ## Requirements, ## Constraints and ## Acceptance criteria with the ids of the entries it rests on, as
+        [source: s-<16 hex>] (several: [source: s-…, s-…]). Use only ids from that list.
+        ## Missing context — the left-out entries of the CONTEXT list the plan needed, each with its reason, or "none".
+        Without a CONTEXT list, leave the [source: …] citations out.
 
       Also score how risky it is to build this plan without a human checking it first (0-100):
       - 0-25: a local change, well covered by tests, easy to undo.
@@ -293,6 +301,13 @@ steps:
       rejected, with one line why.
       Keep the "## Risk" section and the RISK_SCORE / RISK_REASON lines, updated if the review changed
       the picture (never lower the score just because the reviewer scored lower).
+      A READY plan has these three sections, each with its own heading: ## Requirements, ## Constraints and ## Acceptance criteria.
+      When a CONTEXT list is given above (between === CONTEXT and === END CONTEXT ===), end each item under
+        ## Requirements, ## Constraints and ## Acceptance criteria with the ids of the entries it rests on, as
+        [source: s-<16 hex>] (several: [source: s-…, s-…]). Use only ids from that list.
+        ## Missing context — the left-out entries of the CONTEXT list the plan needed, each with its reason, or "none".
+        Without a CONTEXT list, leave the [source: …] citations out.
+      Keep the citations of the draft that are still right; fix the ones the review changed.
       Write the skill line again for the final plan, in the same form: SKILL_REQUEST: {"version":1,"skills":[…]}
       It replaces the draft's line; do not keep skills the final plan no longer needs.
       If you answer NEEDS_INFO, write the questions in the same form:

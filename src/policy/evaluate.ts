@@ -80,6 +80,7 @@ const TESTS: { [K in FactName]-?: (c: NonNullable<Conditions[K]>, fact: NonNulla
   contextBytes: (c, f) => f > c.over,
   contextOmitted: (c, f) => f > c.over,
   contextClassification: (c, f) => listed(c, (l) => l.includes(f)),
+  contextUncited: (c, f) => f > c.over,
 };
 
 /** The facts a rule looks at, in the order of their names. */

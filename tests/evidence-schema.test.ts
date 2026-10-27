@@ -152,12 +152,13 @@ describe("evidence events", () => {
     expect(EvidenceEventSchema.safeParse({ ...at, step: undefined }).success).toBe(true);
     expect(EvidenceEventSchema.safeParse({ ...at, step: shell }).success).toBe(false);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 4 })).toEqual(EVENTS["run.queued"]);
+    expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 5 })).toEqual(EVENTS["run.queued"]);
   });
 
   it("names the events that end a run, and the file names", () => {
     expect(TERMINAL_EVENT_TYPES).toEqual(["run.cancelled", "run.failed", "run.completed"]);
     expect([EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE]).toEqual(["evidence.jsonl", "evidence.json"]);
-    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([5, 1]);
+    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([6, 1]);
     expect(STEP_TYPES).toEqual(["claude", "shell", "approval", "parallel", "flow"]);
   });
 
@@ -316,9 +317,9 @@ describe("the run manifest", () => {
 
 describe("versions and migration", () => {
   it("refuses a version it does not support, in one clear sentence", () => {
-    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 6 }));
+    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 7 }));
     expect([e.kind, e.code]).toEqual(["event", "unsupported-version"]);
-    expect(e.message).toBe("evidence event: version 6 is not supported; this Foundry reads versions 1 to 5. It was written by a newer Foundry: update to read it");
+    expect(e.message).toBe("evidence event: version 7 is not supported; this Foundry reads versions 1 to 6. It was written by a newer Foundry: update to read it");
     expect(problems(() => upgradeEvidence({ version: 9 }, "manifest", 3, {})).message).toContain("this Foundry reads versions 1 to 3");
   });
 
@@ -351,10 +352,10 @@ describe("versions and migration", () => {
   });
 
   it("checks a migrated record against the current schema", () => {
-    // A version 5 record is current, so the step table is only used for lower versions.
+    // A version 6 record is current, so the step table is only used for lower versions.
     const typed: EvidenceEvent = parseEvidenceEvent(EVENTS["run.queued"], { 1: () => ({ version: 2 }) });
-    expect(typed.version).toBe(5);
-    // version 1 and 2 lines of an older Foundry read as version 5 (the real migrations only set the version)
+    expect(typed.version).toBe(6);
+    // version 1 and 2 lines of an older Foundry read as version 6 (the real migrations only set the version)
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 2 })).toEqual(EVENTS["run.queued"]);
     const old = parseEvidenceEvent({ ...EVENTS["run.queued"], version: 1 });
     expect(old).toEqual(EVENTS["run.queued"]);
