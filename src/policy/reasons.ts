@@ -28,6 +28,9 @@ export const RULE_REASONS = {
   "flow.retired": "The flow of the run no longer exists.",
   "approval.required": "A person has to agree before this goes on.",
   "exception.granted": "A rule makes an exception to a rule after it.",
+  "context.limit-exceeded": "The run's context has more sources or bytes than allowed.",
+  "context.sources-omitted": "Sources the run would have used were left out of its context.",
+  "context.classification-exceeded": "The run's context holds a source more private than allowed.",
 } as const;
 
 /** Codes only the evaluation itself gives; a rule cannot use them. */

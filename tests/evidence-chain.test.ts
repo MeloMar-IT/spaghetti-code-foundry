@@ -142,7 +142,7 @@ describe("the hash chain", () => {
       ["an empty line", [LINES[0]!, "", ...LINES.slice(1)], 2, "not-json"],
       ["an array", ["[]"], 1, "not-json"],
       ["an unknown field", swap(0, '"seq":0', '"secret":"x","seq":0'), 1, "invalid"],
-      ["a newer version", swap(0, '"version":1', '"version":5'), 1, "unsupported-version"],
+      ["a newer version", swap(0, '"version":1', '"version":99'), 1, "unsupported-version"],
       ["another run", chained([{ type: "run.started" }], "run-2"), 1, "order"],
       ["no hashes", ['{"id":"ev-000000","runId":"run-1","seq":0,"time":"2026-01-31T12:00:00.000Z","type":"run.started","version":1}'], 1, "unchained"],
     ];
@@ -278,6 +278,14 @@ describe("the manifest of a chain", () => {
     expect(m.artifacts.map((a) => [a.path, a.sha256[0]])).toEqual([["logs/001-code.log", "1"], ["logs/002-run_tests.log", "3"], ["logs/report.xml", "4"]]);
     expect(m.diff).toEqual(diff);
     expect(m.pullRequest).toEqual(pr);
+  });
+
+  it("lists the context bundle of a written event as a file, and nothing for a failed one", () => {
+    const bundle = { kind: "other", path: "context.json", sha256: "6".repeat(64), bytes: 40, required: true };
+    const written = { type: "context.bundled", outcome: "written", bundle, sourcesSha256: "7".repeat(64), limits: { maxSources: 5, maxSourceBytes: 10, maxTotalBytes: 50 }, sources: 1, bytes: 4, omitted: { missing: 0, stale: 0, ambiguous: 0, "over-budget": 0, classification: 0, generated: 0, unsupported: 0 } };
+    const around = (middle: Record<string, unknown>) => chained([{ type: "run.created", flow: { name: "demo" }, by: { kind: "cli" } }, middle, { type: "run.completed" }]);
+    expect(build(around(written)).artifacts).toEqual([bundle]);
+    expect(build(around({ type: "context.bundled", outcome: "failed", failure: "internal" })).artifacts).toEqual([]);
   });
 
   it("is refused for events that are not those of a whole run that ended", () => {

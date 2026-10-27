@@ -12,6 +12,7 @@ import { BASELINE_VERSION, NO_BASELINE_CONTROLS, baselinePack } from "../src/pol
 import type { PolicyDecision } from "../src/policy/schema.js";
 import { baselineEntry, baseFacts, deniedReason, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
 import { ENGINE_REASONS } from "../src/policy/reasons.js";
+import { POLICY_INPUT_VERSION } from "../src/policy/version.js";
 import { baselineLimits } from "../src/engine/policy-limits.js";
 import { DenialSchema } from "../src/evidence/schema.js";
 import { BASELINE_PACK, BASELINE_POLICY_ID } from "../src/policy/baseline.js";
@@ -408,6 +409,15 @@ describe("fail closed", () => {
     expect(b.lines[0]).toBe("! policy p1: could not be evaluated at run.start — recorded as policy.invalid; the run goes on");
   });
 
+  it("context.select is not privileged: an unusable mandatory pack gives a recorded observe deny and stops nothing", () => {
+    expect(privilegedBoundary("context.select", { credential: "machine" })).toBe(false);
+    const bad = { layer: "mandatory" as const, id: "p1", pack: { ...pack(), version: 99 } as unknown as PolicyPack };
+    const a = make([bad]);
+    const answer = a.policy.at("context.select", { contextSources: 2, contextBytes: 10, contextOmitted: 0, contextClassification: "internal" });
+    expect(answer.denied).toBeUndefined();
+    expect(answer.decisions[0]!.decision).toMatchObject({ mode: "observe", outcome: "deny", reasonCode: "policy.invalid", boundary: "context.select" });
+  });
+
   it("is denied without a decision when even the failure cannot be recorded", () => {
     const { policy, incomplete } = make([{ layer: "mandatory", id: "Bad Id", pack: { ...pack(), version: 99 } as unknown as PolicyPack }]);
     const answer = policy.at("agent.write", WRITE);
@@ -536,7 +546,7 @@ describe("the baseline of a run", () => {
   it("has shippedFlow as a base fact at run.start", () => {
     const { policy } = make({}, { name: "mine", workspace: "worktree" }, "mine");
     const facts = { repository: "acme/widgets", flow: "mine", workspace: "worktree", owner: "none", shippedFlow: false } as const;
-    expect(policy.at("run.start").decisions[0]!.decision.inputSha256).toBe(policyInputSha256({ version: 1, boundary: "run.start", runId: "r", facts }));
+    expect(policy.at("run.start").decisions[0]!.decision.inputSha256).toBe(policyInputSha256({ version: POLICY_INPUT_VERSION, boundary: "run.start", runId: "r", facts }));
   });
 
   it("does not throw for a config without the baseline settings", () => {

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { ContextSchemaError } from "../src/context/version.js";
 import { ContextRepositoryError, gitHead } from "../src/context/repository.js";
-import { contextBeforeStep, contextPending, lockRunContext, unlockRunContext, writeRunContext, type RunContextDeps } from "../src/engine/run-context.js";
+import { contextBeforeStep, contextPending, contextSelectFacts, lockRunContext, RUN_CONTEXT_CODES, unlockRunContext, writeRunContext, type RunContextDeps } from "../src/engine/run-context.js";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
 import { parseFlow } from "../src/flow/load.js";
 import { COMMIT, memorySnapshot } from "./helpers/context-fixture.js";
@@ -188,6 +188,86 @@ describe("contextBeforeStep", () => {
       throw new Error("log");
     };
     expect(() => contextBeforeStep(engine, fakes())).not.toThrow();
+  });
+});
+
+describe("evidence and policy", () => {
+  /** An engine whose evidence and policy only note what they were told, in order, together with the log lines. */
+  const watched = (s: RunSummary, config: Record<string, unknown> = {}, throwing = false) => {
+    const calls: unknown[][] = [];
+    const base = engineOf(s, config);
+    const fail = () => {
+      if (throwing) throw new Error("boom");
+    };
+    const engine = {
+      ...base.engine,
+      log: (m: string) => calls.push(["log", m]),
+      evidence: { contextBundled: (r: unknown) => (calls.push(["evidence", r]), fail()) },
+      policy: { at: (b: string, f: unknown, st?: unknown) => (calls.push(["policy", b, f, st]), fail()) },
+    };
+    return { engine: engine as unknown as Parameters<typeof contextBeforeStep>[0], calls };
+  };
+
+  it("records the bundle, then asks context.select with no step, then logs", () => {
+    files();
+    const { engine, calls } = watched(summary());
+    contextBeforeStep(engine, fakes());
+    expect(calls.map((c) => c[0])).toEqual(["evidence", "policy", "log"]);
+    const bundle = JSON.parse(readFileSync(join(tmp, "run", "context.json"), "utf8"));
+    expect((calls[0]![1] as { bundle: { sources: unknown[] } }).bundle.sources).toHaveLength(bundle.sources.length);
+    const [, boundary, facts, step] = calls[1]!;
+    expect([boundary, step]).toEqual(["context.select", undefined]);
+    expect(facts).toMatchObject({ contextSources: bundle.sources.length, contextOmitted: bundle.omitted.length, contextClassification: settings.classification });
+    expect((facts as { contextBytes: number }).contextBytes).toBe(bundle.sources.reduce((n: number, s: { content: { bytes: number } }) => n + s.content.bytes, 0));
+  });
+
+  it("counts what max_sources left out", () => {
+    files();
+    const { engine, calls } = watched(summary(), { context: { max_sources: 1 } });
+    contextBeforeStep(engine, fakes());
+    expect((calls[1]![2] as { contextSources: number; contextOmitted: number }).contextSources).toBe(1);
+    expect((calls[1]![2] as { contextOmitted: number }).contextOmitted).toBeGreaterThanOrEqual(1);
+  });
+
+  it("records a failure with its code and does not ask policy", () => {
+    files();
+    const { engine, calls } = watched(summary());
+    contextBeforeStep(engine, fakes({ gitHead: () => { throw new ContextRepositoryError("timeout"); } }));
+    expect(calls.map((c) => c[0])).toEqual(["evidence", "log"]);
+    expect(calls[0]![1]).toEqual({ failed: "repository-timeout" });
+  });
+
+  it("records nothing for a run that is not pending", () => {
+    const { engine, calls } = watched(summary({ history: [] }));
+    expect(contextBeforeStep(engine, fakes())).toBe("skipped");
+    expect(calls).toEqual([]);
+  });
+
+  it("does not throw when evidence or policy throws, and still logs", () => {
+    files();
+    const { engine, calls } = watched(summary(), {}, true);
+    expect(() => contextBeforeStep(engine, fakes())).not.toThrow();
+    expect(calls.map((c) => c[0])).toEqual(["evidence", "policy", "log"]);
+  });
+});
+
+describe("contextSelectFacts", () => {
+  const source = (classification: string) => ({ classification, content: { bytes: 10 } });
+  const bundleOf = (classes: string[]) => ({ sources: classes.map(source), omitted: [{ reason: "stale" }] }) as unknown as Parameters<typeof contextSelectFacts>[0];
+
+  it("leaves the classification out when there are no sources", () => {
+    expect(contextSelectFacts(bundleOf([]))).toEqual({ contextSources: 0, contextBytes: 0, contextOmitted: 1 });
+  });
+
+  it("gives the most private class", () => {
+    expect(contextSelectFacts(bundleOf(["public", "confidential", "internal"]))).toEqual({ contextSources: 3, contextBytes: 30, contextOmitted: 1, contextClassification: "confidential" });
+  });
+});
+
+describe("RUN_CONTEXT_CODES", () => {
+  it("has no code twice and holds the codes the attempts above give", () => {
+    expect(new Set(RUN_CONTEXT_CODES).size).toBe(RUN_CONTEXT_CODES.length);
+    for (const code of ["marker-failed", "select-invalid", "timeout", "lock-failed", "internal", "repository-no-commit", "store-exists", "store-write-failed"]) expect(RUN_CONTEXT_CODES).toContain(code);
   });
 });
 

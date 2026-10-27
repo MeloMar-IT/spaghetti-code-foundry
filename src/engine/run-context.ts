@@ -7,7 +7,9 @@ import { ContextSelectError, selectContext } from "../context/select.js";
 import { ContextStoreError, writeContextBundle, type ContextStoreErrorCode, type ContextStoreHooks } from "../context/store.js";
 import { ContextSchemaError } from "../context/version.js";
 import { CONTEXT_ATTEMPT_FILE, CONTEXT_BUNDLE_FILE, CONTEXT_SOURCES_DIR } from "../context/version.js";
-import type { ContextBundle } from "../context/schema.js";
+import { classificationAtMost, contextTotalBytes } from "../context/bundle.js";
+import { CONTEXT_CLASSIFICATIONS, type ContextBundle } from "../context/schema.js";
+import type { Facts } from "../policy/schema.js";
 import { RepositorySchema } from "../evidence/identity.js";
 import type { Engine } from "./execute.js";
 import type { RunSummary } from "./state.js";
@@ -20,7 +22,7 @@ import type { RunSummary } from "./state.js";
 
 export const CONTEXT_DEADLINE_MS = 30_000;
 
-export type RunContextCode =
+type CodeUnion =
   | "marker-failed"
   | "issue-unreadable"
   | "comments-unreadable"
@@ -32,7 +34,32 @@ export type RunContextCode =
   | `repository-${ContextRepositoryErrorCode}`
   | `store-${ContextStoreErrorCode}`;
 
-export type RunContextResult = { written: { sources: number; omitted: number; commit: string; skippedComments: number } } | { failed: RunContextCode };
+/** Every code a failed context attempt can give, as a list evidence can check against. */
+export const RUN_CONTEXT_CODES = [
+  "marker-failed", "issue-unreadable", "comments-unreadable", "select-invalid", "bundle-invalid", "timeout", "lock-failed", "internal",
+  "repository-no-git", "repository-not-a-repository", "repository-no-commit", "repository-too-large", "repository-timeout", "repository-bad-listing", "repository-read-failed",
+  "store-no-folder", "store-exists", "store-texts-do-not-match", "store-write-failed",
+] as const;
+export type RunContextCode = (typeof RUN_CONTEXT_CODES)[number];
+
+// Fails the build when the list and the codes of the repository and the store drift apart.
+type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+const everyCodeIsListed: Same<RunContextCode, CodeUnion> = true;
+void everyCodeIsListed;
+
+export type RunContextResult = { written: { sources: number; omitted: number; commit: string; skippedComments: number; bundle: ContextBundle } } | { failed: RunContextCode };
+
+/** The facts policy gets at `context.select`: how big the bundle is, how much was left out and how private its most private source is. */
+export function contextSelectFacts(bundle: ContextBundle): Facts {
+  const classes = bundle.sources.map((s) => s.classification);
+  const highest = CONTEXT_CLASSIFICATIONS.find((c) => classes.length > 0 && classes.every((k) => classificationAtMost(k, c)));
+  return {
+    contextSources: bundle.sources.length,
+    contextBytes: contextTotalBytes(bundle),
+    contextOmitted: bundle.omitted.length,
+    ...(highest ? { contextClassification: highest } : {}),
+  };
+}
 
 export interface RunContextDeps {
   /** One clock for the deadline, the selection time and git. Default Date.now. */
@@ -43,7 +70,7 @@ export interface RunContextDeps {
   lock?: (runDir: string) => void;
 }
 
-type ContextEngine = Pick<Engine, "summary" | "config" | "log">;
+type ContextEngine = Pick<Engine, "summary" | "config" | "log"> & Partial<Pick<Engine, "evidence" | "policy">>;
 
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
@@ -187,7 +214,7 @@ export function writeRunContext(o: { summary: RunSummary; settings: unknown; com
       removeOwnBundle(runDir, bundle);
       return { failed: "timeout" };
     }
-    return { written: { sources: bundle.sources.length, omitted: bundle.omitted.length, commit: o.commit, skippedComments: files.ok.leftComments } };
+    return { written: { sources: bundle.sources.length, omitted: bundle.omitted.length, commit: o.commit, skippedComments: files.ok.leftComments, bundle } };
   } catch (e) {
     return { failed: codeOf(e) };
   }
@@ -203,6 +230,16 @@ export function contextBeforeStep(engine: ContextEngine, deps: RunContextDeps = 
     result = attempt(summary, engine.config.context, deadlineMs, deps);
   } catch {
     result = { failed: "internal" };
+  }
+  try {
+    engine.evidence?.contextBundled("written" in result ? { bundle: result.written.bundle } : result);
+  } catch {
+    // evidence never stops the run
+  }
+  try {
+    if ("written" in result) engine.policy?.at("context.select", contextSelectFacts(result.written.bundle));
+  } catch {
+    // policy is only observed here
   }
   try {
     engine.log(

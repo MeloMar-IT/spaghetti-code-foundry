@@ -14,7 +14,7 @@ const C2 = "b".repeat(40);
 const USER = "0b8f6a0e-5a52-4a4e-9a57-0f2f3f1f7c11";
 const T = "2026-01-31T12:00:00.000Z";
 
-const base = { version: 4, id: "e0001", seq: 1, runId: "20260131-120000-abc", time: T } as const;
+const base = { version: EVIDENCE_EVENT_VERSION, id: "e0001", seq: 1, runId: "20260131-120000-abc", time: T } as const;
 const shell = { id: "test", visit: 1, type: "shell" } as const;
 const agent = { id: "code", visit: 2, type: "claude", parent: "build/inner" } as const;
 const gate = { id: "approve", visit: 1, type: "approval" } as const;
@@ -37,6 +37,15 @@ const DECISION = {
 } as const;
 
 /** One valid event of every type. */
+const WRITTEN = {
+  outcome: "written",
+  bundle: { kind: "other", path: "context.json", sha256: H1, bytes: 900, required: true },
+  sourcesSha256: H2,
+  limits: { maxSources: 50, maxSourceBytes: 20000, maxTotalBytes: 200000 },
+  sources: 3,
+  bytes: 1200,
+  omitted: { missing: 0, stale: 0, ambiguous: 0, "over-budget": 2, classification: 0, generated: 1, unsupported: 0 },
+};
 const EVENTS: Record<EvidenceEventType, Record<string, unknown>> = {
   "run.created": { ...base, type: "run.created", flow: { name: "issue-gitflow", version: 3 }, by: { kind: "watcher", id: "main-issues" } },
   "run.queued": { ...base, type: "run.queued" },
@@ -68,6 +77,7 @@ const EVENTS: Record<EvidenceEventType, Record<string, unknown>> = {
   "step.completed": { ...base, type: "step.completed", step: agent, model, durationMs: 5000, artifacts: [log, { ...log, kind: "transcript", path: "steps/code-2.transcript.md", required: false }], commit: { commit: C2 }, pullRequest: pr },
   "policy.decided": { ...base, type: "policy.decided", decision: DECISION, step: shell },
   "repo.operation": { ...base, type: "repo.operation", step: shell, operation: "push", repository: "own/repo", branch: "feat/x", credential: "repository", policy: "allow", outcome: "done" },
+  "context.bundled": { ...base, type: "context.bundled", ...WRITTEN },
 };
 
 const manifest = (): Record<string, unknown> => ({
@@ -119,10 +129,35 @@ describe("evidence events", () => {
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 3 })).toEqual(EVENTS["run.queued"]);
   });
 
+  it("holds a written context bundle to its fields and a failed one to its code", () => {
+    const written = EVENTS["context.bundled"] as Record<string, unknown>;
+    const failed = { ...base, type: "context.bundled", outcome: "failed", failure: "repository-timeout" };
+    expect(parseEvidenceEvent(failed)).toEqual(failed);
+    const bad = (raw: Record<string, unknown>) => EvidenceEventSchema.safeParse(raw).success;
+    expect(bad({ ...written, bundle: undefined })).toBe(false);
+    expect(bad({ ...written, failure: "internal" })).toBe(false);
+    expect(bad({ ...written, bundle: { ...(written.bundle as object), path: "other.json" } })).toBe(false);
+    expect(bad({ ...written, bundle: { ...(written.bundle as object), required: false } })).toBe(false);
+    expect(bad({ ...written, omitted: { missing: 0 } })).toBe(false);
+    expect(bad({ ...written, omitted: { ...(written.omitted as object), extra: 1 } })).toBe(false);
+    expect(bad({ ...written, sources: -1 })).toBe(false);
+    expect(bad({ ...failed, sources: 1 })).toBe(false);
+    expect(bad({ ...failed, failure: undefined })).toBe(false);
+    expect(bad({ ...failed, failure: "disk-on-fire" })).toBe(false);
+  });
+
+  it("takes a decision at context.select for the run, not for a step, and reads a version 4 line as 5", () => {
+    const decided = EVENTS["policy.decided"] as { decision: Record<string, unknown> };
+    const at = { ...decided, decision: { ...decided.decision, boundary: "context.select" } };
+    expect(EvidenceEventSchema.safeParse({ ...at, step: undefined }).success).toBe(true);
+    expect(EvidenceEventSchema.safeParse({ ...at, step: shell }).success).toBe(false);
+    expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 4 })).toEqual(EVENTS["run.queued"]);
+  });
+
   it("names the events that end a run, and the file names", () => {
     expect(TERMINAL_EVENT_TYPES).toEqual(["run.cancelled", "run.failed", "run.completed"]);
     expect([EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE]).toEqual(["evidence.jsonl", "evidence.json"]);
-    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([4, 1]);
+    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([5, 1]);
     expect(STEP_TYPES).toEqual(["claude", "shell", "approval", "parallel", "flow"]);
   });
 
@@ -281,9 +316,9 @@ describe("the run manifest", () => {
 
 describe("versions and migration", () => {
   it("refuses a version it does not support, in one clear sentence", () => {
-    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 5 }));
+    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 6 }));
     expect([e.kind, e.code]).toEqual(["event", "unsupported-version"]);
-    expect(e.message).toBe("evidence event: version 5 is not supported; this Foundry reads versions 1 to 4. It was written by a newer Foundry: update to read it");
+    expect(e.message).toBe("evidence event: version 6 is not supported; this Foundry reads versions 1 to 5. It was written by a newer Foundry: update to read it");
     expect(problems(() => upgradeEvidence({ version: 9 }, "manifest", 3, {})).message).toContain("this Foundry reads versions 1 to 3");
   });
 
@@ -316,10 +351,10 @@ describe("versions and migration", () => {
   });
 
   it("checks a migrated record against the current schema", () => {
-    // A version 4 record is current, so the step table is only used for lower versions.
+    // A version 5 record is current, so the step table is only used for lower versions.
     const typed: EvidenceEvent = parseEvidenceEvent(EVENTS["run.queued"], { 1: () => ({ version: 2 }) });
-    expect(typed.version).toBe(4);
-    // version 1 and 2 lines of an older Foundry read as version 4 (the real migrations only set the version)
+    expect(typed.version).toBe(5);
+    // version 1 and 2 lines of an older Foundry read as version 5 (the real migrations only set the version)
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 2 })).toEqual(EVENTS["run.queued"]);
     const old = parseEvidenceEvent({ ...EVENTS["run.queued"], version: 1 });
     expect(old).toEqual(EVENTS["run.queued"]);

@@ -34,7 +34,7 @@ const BASELINE: PolicyPack = {
   ],
 };
 
-const input = (boundary: PolicyInput["boundary"], facts: Facts): PolicyInput => ({ version: 1, boundary, runId: "20260131-120000-abc", facts });
+const input = (boundary: PolicyInput["boundary"], facts: Facts): PolicyInput => ({ version: POLICY_INPUT_VERSION, boundary, runId: "20260131-120000-abc", facts });
 const decide = (boundary: PolicyInput["boundary"], facts: Facts, pack: PolicyPack = BASELINE): PolicyDecision => evaluatePolicy(pack, input(boundary, facts), T);
 const short = (d: PolicyDecision) => [d.outcome, d.reasonCode, d.rule];
 const failure = (run: () => unknown): PolicySchemaError => {
@@ -54,14 +54,14 @@ const edit = <T>(value: T, change: (copy: any) => void): any => {
 
 describe("versions", () => {
   it("every contract has its own explicit version", () => {
-    expect([POLICY_PACK_VERSION, POLICY_INPUT_VERSION, POLICY_DECISION_VERSION]).toEqual([2, 1, 1]);
+    expect([POLICY_PACK_VERSION, POLICY_INPUT_VERSION, POLICY_DECISION_VERSION]).toEqual([2, 2, 1]);
     expect(parsePolicyPack(BASELINE).version).toBe(1);
     expect(decide("push", { branch: "feature/x", secretsFound: 0, paths: [] }).version).toBe(1);
   });
 
   it.each([
     ["pack", parsePolicyPack, 3, "versions 1 to 2"],
-    ["input", parsePolicyInput, 2, "version 1"],
+    ["input", parsePolicyInput, 3, "version 2"],
     ["decision", parsePolicyDecision, 2, "version 1"],
   ] as const)("a %s is refused without a version, with another version, or when it is not an object", (kind, parse, unsupported, reads) => {
     expect(failure(() => parse(null)).code).toBe("not-an-object");
@@ -243,6 +243,7 @@ describe("reason codes", () => {
   it("are stable: this list only grows", () => {
     expect([...REASON_CODES].sort()).toEqual([
       "approval.required", "branch.hotfix-exception", "branch.protected", "budget.daily-exceeded", "budget.run-exceeded", "budget.step-exceeded",
+      "context.classification-exceeded", "context.limit-exceeded", "context.sources-omitted",
       "credential.scope-exceeded", "exception.granted", "flow.retired", "identity.missing", "issue.closed", "output.limit-exceeded", "path.forbidden",
       "policy.break-glass", "policy.input-incomplete", "policy.invalid", "policy.no-rule-matched", "policy.unavailable", "repository.not-allowed", "sandbox.required",
       "secret.detected", "timeout.exceeded", "tool.not-allowed", "workspace.admin-only",
@@ -280,7 +281,7 @@ describe("evaluatePolicy", () => {
     const facts = { branch: "main", flow: "issue-gitflow", step: "push_main", shippedFlow: true, secretsFound: 0, paths: [] };
     const first = decide("push", facts);
     const reordered: PolicyPack = { rules: BASELINE.rules.map((r) => ({ reasonCode: r.reasonCode, outcome: r.outcome, when: r.when, boundaries: r.boundaries, id: r.id })), defaultOutcome: "allow", mode: "enforce", policy: { version: "2026.1", id: "baseline" }, version: 1 };
-    const again = evaluatePolicy(reordered, { facts: { paths: [], secretsFound: 0, shippedFlow: true, step: "push_main", flow: "issue-gitflow", branch: "main" }, runId: "20260131-120000-abc", boundary: "push", version: 1 }, T);
+    const again = evaluatePolicy(reordered, { facts: { paths: [], secretsFound: 0, shippedFlow: true, step: "push_main", flow: "issue-gitflow", branch: "main" }, runId: "20260131-120000-abc", boundary: "push", version: POLICY_INPUT_VERSION }, T);
     expect(JSON.stringify(first)).toBe(JSON.stringify(again));
     expect(JSON.stringify(decide("push", facts))).toBe(JSON.stringify(first));
     expect(short(first)).toEqual(["allow", "branch.hotfix-exception", "hotfix-merge"]);
@@ -344,6 +345,26 @@ describe("evaluatePolicy", () => {
   it("compares limits with more than, never with equal", () => {
     const at = (runCostUsd: number) => decide("step.before", { runCostUsd, owner: "admin", sandboxed: false }).outcome;
     expect([at(24.99), at(25), at(25.01)]).toEqual(["allow", "allow", "deny"]);
+  });
+
+  it("judges the context facts at context.select: counts over a limit, a class in or not in a list", () => {
+    const pack = (when: object, reasonCode = "context.limit-exceeded"): PolicyPack =>
+      ({ version: 2, policy: { id: "ctx", version: "1" }, mode: "observe", defaultOutcome: "allow", rules: [{ id: "r", boundaries: ["context.select"], when, outcome: "warn", reasonCode }] }) as PolicyPack;
+    const facts: Facts = { contextSources: 5, contextBytes: 1000, contextOmitted: 2, contextClassification: "confidential" };
+    for (const name of ["contextSources", "contextBytes", "contextOmitted"] as const) {
+      expect(short(decide("context.select", facts, pack({ [name]: { over: facts[name] } }))), `${name} at the limit`).toEqual(["allow", "policy.no-rule-matched", undefined]);
+      expect(short(decide("context.select", facts, pack({ [name]: { over: facts[name]! - 1 } }))), `${name} over the limit`).toEqual(["warn", "context.limit-exceeded", "r"]);
+    }
+    const classed = (when: object) => pack(when, "context.classification-exceeded");
+    expect(decide("context.select", facts, classed({ contextClassification: { in: ["confidential", "restricted"] } })).reasonCode).toBe("context.classification-exceeded");
+    expect(decide("context.select", facts, classed({ contextClassification: { notIn: ["confidential"] } })).reasonCode).toBe("policy.no-rule-matched");
+    expect(() => decide("context.select", facts, classed({ contextClassification: { in: ["secret"] } }))).toThrow(PolicySchemaError);
+  });
+
+  it("denies a rule on a context fact when the fact is left out", () => {
+    const rule = { id: "r", boundaries: ["context.select"], when: { contextClassification: { in: ["restricted"] } }, outcome: "warn", reasonCode: "context.classification-exceeded" };
+    const p = { version: 2, policy: { id: "ctx", version: "1" }, mode: "observe", defaultOutcome: "allow", rules: [rule] } as PolicyPack;
+    expect(short(decide("context.select", { contextSources: 0, contextBytes: 0, contextOmitted: 0 }, p))).toEqual(["deny", "policy.input-incomplete", "r"]);
   });
 
   it("reads in, notIn and flags as written", () => {
@@ -469,7 +490,7 @@ describe("helpers", () => {
   it("the hashes are SHA-256 of the canonical form", () => {
     expect(policyPackSha256(BASELINE)).toMatch(/^[0-9a-f]{64}$/);
     expect(policyPackSha256({ ...BASELINE, mode: "observe" })).not.toBe(policyPackSha256(BASELINE));
-    expect(policyInputSha256(input("push", { branch: "a", step: "s" }))).toBe(policyInputSha256({ facts: { step: "s", branch: "a" }, runId: "20260131-120000-abc", boundary: "push", version: 1 }));
+    expect(policyInputSha256(input("push", { branch: "a", step: "s" }))).toBe(policyInputSha256({ facts: { step: "s", branch: "a" }, runId: "20260131-120000-abc", boundary: "push", version: POLICY_INPUT_VERSION }));
     expect(() => policyPackSha256({ ...BASELINE, extra: 1 } as never)).toThrow(PolicySchemaError);
   });
 

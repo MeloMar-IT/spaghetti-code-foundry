@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -200,6 +201,52 @@ describe("verifyEvidence", () => {
     expect(verifyEvidence(input({ flowDef: undefined })).failure).toMatchObject({ code: "flow-missing" });
     expect(verifyEvidence(input({ flowDef: { ...FIXTURE_FLOW, name: "other" } })).failure).toMatchObject({ code: "flow-changed" });
     expect(verifyEvidence(input({ runId: "another" })).failure).toMatchObject({ code: "manifest-run" });
+  });
+
+  describe("with a context bundle", () => {
+    const CONTEXT_TEXT = '{"sources":[]}\n';
+    const sha = (t: string) => createHash("sha256").update(t, "utf8").digest("hex");
+    const ctxRef = { kind: "other", path: "context.json", sha256: sha(CONTEXT_TEXT), bytes: Buffer.byteLength(CONTEXT_TEXT), required: true };
+    const omitted = { missing: 0, stale: 0, ambiguous: 0, "over-budget": 0, classification: 0, generated: 0, unsupported: 0 };
+    const bundled = { type: "context.bundled", time: "2026-01-31T12:00:00.150Z", outcome: "written", bundle: ctxRef, sourcesSha256: "3".repeat(64), limits: { maxSources: 5, maxSourceBytes: 10, maxTotalBytes: 50 }, sources: 0, bytes: 0, omitted };
+    const bodies = (extra: Record<string, unknown>[]): Record<string, unknown>[] => {
+      const all = fixtureChain().lines.map((l) => JSON.parse(l) as Record<string, unknown>).map(({ hash: _h, prevHash: _p, id: _i, seq: _s, version: _v, runId: _r, ...body }) => body);
+      return [...all.slice(0, 2), ...extra, ...all.slice(2)];
+    };
+    const withContext = (over: { ref?: Record<string, unknown> | null; extra?: Record<string, unknown>[] } = {}) => {
+      const chain = fixtureChain(bodies(over.extra ?? [bundled]), ID, 5);
+      const m = fixtureManifest() as { artifacts: unknown[]; events: Record<string, unknown> };
+      const manifest = { ...m, events: { ...m.events, count: chain.lines.length, terminalHash: chain.terminalHash }, artifacts: over.ref === null ? m.artifacts : [over.ref ?? ctxRef, ...m.artifacts] };
+      return { chain, manifest };
+    };
+    const probe = (sha256: string | undefined): Parameters<typeof verifyEvidence>[0]["file"] => (path) => {
+      if (path === "context.json") return sha256 === undefined ? { state: "missing" } : { state: "ok", sha256, bytes: ctxRef.bytes };
+      const text = FIXTURE_FILES[path as keyof typeof FIXTURE_FILES];
+      const refs = (fixtureManifest().artifacts as { path: string; sha256: string }[]).concat([fixtureManifest().diff as { path: string; sha256: string }]);
+      return text === undefined ? { state: "missing" } : { state: "ok", sha256: refs.find((a) => a.path === path)!.sha256, bytes: Buffer.byteLength(text) };
+    };
+    const run = (c: ReturnType<typeof withContext>, file: Parameters<typeof verifyEvidence>[0]["file"]) =>
+      verifyEvidence({ runId: ID, manifest: { state: "ok", text: JSON.stringify(c.manifest) }, events: { state: "ok", text: c.chain.lines.map((l) => `${l}\n`).join("") }, incomplete: false, flowDef: FIXTURE_FLOW, file });
+
+    it("verifies when context.json is what the event recorded", () => {
+      expect(run(withContext(), probe(ctxRef.sha256))).toMatchObject({ status: "verified", verified: true });
+    });
+
+    it("fails when context.json was changed or removed", () => {
+      expect(run(withContext(), probe("0".repeat(64)))).toMatchObject({ status: "failed", failure: { check: "files", code: "file-changed", path: "context.json" } });
+      expect(run(withContext(), probe(undefined))).toMatchObject({ status: "failed", failure: { check: "files", code: "file-missing", path: "context.json" } });
+    });
+
+    it("fails when the manifest does not list the file the event names", () => {
+      expect(run(withContext({ ref: null }), probe(ctxRef.sha256))).toMatchObject({ status: "failed", failure: { code: "manifest-changed" } });
+      expect(run(withContext({ ref: { ...ctxRef, sha256: "9".repeat(64) } }), probe(ctxRef.sha256))).toMatchObject({ status: "failed", failure: { code: "manifest-changed" } });
+    });
+
+    it("lists nothing for a failed attempt, and still verifies a stream without the event", () => {
+      const failed = { type: "context.bundled", time: "2026-01-31T12:00:00.150Z", outcome: "failed", failure: "internal" };
+      expect(run(withContext({ extra: [failed], ref: null }), probe(undefined))).toMatchObject({ status: "verified" });
+      expect(verifyEvidence(input()).status).toBe("verified");
+    });
   });
 
   it("never throws, whatever it is given", () => {

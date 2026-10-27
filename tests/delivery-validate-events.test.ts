@@ -14,6 +14,9 @@ import { ARTIFACT_KINDS, STEP_TYPES, TestResultSchema } from "../src/evidence/id
 import { EVENT_MIGRATIONS } from "../src/evidence/parse.js";
 import { DenialSchema, EVIDENCE_EVENT_TYPES, EvidenceEventSchema } from "../src/evidence/schema.js";
 import { EVIDENCE_EVENT_VERSION } from "../src/evidence/version.js";
+import { CONTEXT_OMISSION_REASONS } from "../src/context/schema.js";
+import { CONTEXT_OUTCOMES } from "../src/evidence/schema.js";
+import { RUN_CONTEXT_CODES } from "../src/engine/run-context.js";
 import { REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS } from "../src/engine/repo-request.js";
 import { AGENTS } from "../src/flow/schema.js";
 import { BOUNDARIES, CREDENTIALS, DENY_ONLY_REASONS, MODES, NO_PACK_REASONS, NO_RULE_REASONS, OUTCOMES } from "../src/policy/schema.js";
@@ -140,6 +143,16 @@ const PROFILED = {
   personalSetup: false,
 };
 const REPO_OP = { type: "repo.operation", step: shell, operation: "push", credential: "repository", outcome: "done" };
+const CTX_WRITTEN: Rec = {
+  type: "context.bundled",
+  outcome: "written",
+  bundle: { kind: "other", path: "context.json", sha256: H("1"), bytes: 900, required: true },
+  sourcesSha256: H("2"),
+  limits: { maxSources: 50, maxSourceBytes: 20000, maxTotalBytes: 200000 },
+  sources: 3,
+  bytes: 1200,
+  omitted: Object.fromEntries(CONTEXT_OMISSION_REASONS.map((r, i) => [r, i])),
+};
 const BASE: Record<string, Rec> = {
   "run.created": { type: "run.created", flow: { name: "issue-gitflow", version: 3 }, by: { kind: "watcher", id: "main-issues" } },
   "run.queued": { type: "run.queued" },
@@ -159,6 +172,7 @@ const BASE: Record<string, Rec> = {
   "step.completed": { type: "step.completed", step: agent, model, durationMs: 5000, artifacts: [log, { ...log, kind: "transcript", path: "steps/code-2.transcript.md", required: false }], commit: { commit: C1 }, pullRequest: pr },
   "policy.decided": { type: "policy.decided", decision: DECISION, step: shell },
   "repo.operation": { ...REPO_OP, repository: "own/repo", branch: "feat/x", policy: "allow" },
+  "context.bundled": CTX_WRITTEN,
 };
 
 // ---- bodies built from the library's lists (the drift guard) ----
@@ -172,7 +186,7 @@ const decision = (reasonCode: string, over: Rec = {}): Rec => ({
   ...over,
 });
 const decided = (d: Rec, s: Rec | null = shell): Rec => ({ type: "policy.decided", decision: d, ...(s ? { step: s } : {}) });
-const RUN_WIDE = ["run.start", "run.complete"];
+const RUN_WIDE = ["run.start", "run.complete", "context.select"];
 const restrictionGaps = FIT_RESTRICTIONS.map((restriction) => ({ kind: "files", restriction }));
 const excessOps = TOOL_KINDS.flatMap((kind) => OPERATIONS[kind].map((operation) => ({ kind, operation, field: "operation" })));
 
@@ -212,7 +226,9 @@ const GEN: Rec[] = [
   // edge values the library accepts
   ...["2024-02-29T00:00:00Z", "2000-02-29T00:00:00Z", "2026-01-31T12:00:59.123456789Z"].map((time) => ({ type: "run.queued", time })),
   ...["00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff", USER.toUpperCase(), "0b8f6a0e-5a52-8a4e-ba57-0f2f3f1f7c11"].map((id) => ({ type: "run.cancelled", by: { kind: "user", id } })),
-  ...[1, 2, 3].map((version) => ({ type: "run.queued", version })),
+  ...[1, 2, 3, 4].map((version) => ({ type: "run.queued", version })),
+  ...RUN_CONTEXT_CODES.map((failure) => ({ type: "context.bundled", outcome: "failed", failure })),
+  ...CONTEXT_OMISSION_REASONS.map((reason) => ({ ...CTX_WRITTEN, omitted: { ...(CTX_WRITTEN.omitted as object), [reason]: 7 } })),
 ];
 
 // ---- running a case on both sides ----
@@ -271,6 +287,7 @@ describe("drift guard: the copied lists and the event schema", () => {
     const lists: Record<string, unknown> = {
       ARTIFACT_KINDS, STEP_TYPES, AGENTS, OUTCOMES, MODES, BOUNDARIES, CREDENTIALS, REASON_CODES, NO_RULE_REASONS, NO_PACK_REASONS, DENY_ONLY_REASONS,
       TOOL_KINDS, OPERATIONS, PROFILE_SOURCES, FIT_OUTCOMES, FIT_RESTRICTIONS, HELD_BY, UNREADABLE, EXCESS_FIELDS, REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS,
+      CONTEXT_OUTCOMES, CONTEXT_OMISSION_REASONS, RUN_CONTEXT_CODES,
       RETRY_CAUSES: inline().retry, TEST_OUTCOMES: inline().test,
     };
     for (const [name, list] of Object.entries(lists)) expect(fromScript(name), name).toEqual(list);
@@ -316,7 +333,7 @@ describe("parity: the chain", () => {
       { name: "a line that is not JSON", lines: [g[0]!, "nope", g[2]!], ok: false },
       { name: "a JSON array line", lines: [g[0]!, "[]", g[2]!], ok: false },
       { name: "a deeply nested line", lines: [g[0]!, deep, g[2]!], ok: false },
-      { name: "a too-high version", lines: chain([{ type: "run.queued", version: 5 }]), ok: false },
+      { name: "a too-high version", lines: chain([{ type: "run.queued", version: EVIDENCE_EVENT_VERSION + 1 }]), ok: false },
       { name: "an unchained event", lines: chain([BASE["run.queued"]!], { mutate: (e) => (delete e.prevHash, false) }), terminalHash: H("0"), ok: false },
       { name: "a duplicate id", lines: chain([BASE["run.queued"]!, BASE["run.queued"]!], { mutate: (e, i) => void (i === 1 && (e.id = "ev-0")) }), ok: false },
       { name: "a gap in seq", lines: chain([BASE["run.queued"]!, BASE["run.queued"]!], { mutate: (e, i) => void (i === 1 && (e.seq = 5)) }), ok: false },
@@ -396,6 +413,14 @@ describe("parity: events that are hashed and anchored but break the schema", () 
       one("duplicate artifact paths", (e) => e.artifacts.push({ ...e.artifacts[0] }), "step.failed"),
       one("a step on run.start", (e) => ((e.step = shell), (e.decision.boundary = "run.start")), "policy.decided"),
       one("no step on step.before", (e) => delete e.step, "policy.decided"),
+      one("a step on context.select", (e) => ((e.step = shell), (e.decision.boundary = "context.select")), "policy.decided"),
+      one("a written bundle without its file", (e) => delete e.bundle, "context.bundled"),
+      one("a written bundle with a failure", (e) => (e.failure = "internal"), "context.bundled"),
+      one("a bundle at another path", (e) => (e.bundle.path = "other.json"), "context.bundled"),
+      one("a bundle that is not required", (e) => (e.bundle.required = false), "context.bundled"),
+      one("an omitted count missing", (e) => delete e.omitted.stale, "context.bundled"),
+      one("a failed bundle without a code", (e) => ((e.outcome = "failed"), ["bundle", "sourcesSha256", "limits", "sources", "bytes", "omitted"].forEach((k) => delete e[k])), "context.bundled"),
+      one("a failed bundle with counts", (e) => ((e.outcome = "failed"), (e.failure = "internal")), "context.bundled"),
       one("profiled without an agent and not refused", prof((e) => delete e.agent), "step.profiled"),
       one("generated and refused", prof((e) => ((e.source = "generated"), (e.outcome = "refused"))), "step.profiled"),
       one("generated with excess", prof((e) => (e.source = "generated")), "step.profiled"),
