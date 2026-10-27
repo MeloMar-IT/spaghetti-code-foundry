@@ -3070,6 +3070,15 @@ flowchart LR
   once make each of them slow and let timing-sensitive tests fail. `0` switches the limit off.
   Test runs work at a lower priority (`nice` 10; `FACTORY_TEST_NICE` changes it, `0` keeps the
   normal priority), so the server, its pages and the agents stay responsive while tests work.
+  Four environment variables tune the slot runner for the daily checks. `FACTORY_TEST_SLOT_LIMIT_SEC`
+  is the working time of a command in seconds, counted from its start after the slot wait. At the
+  limit the command's whole process tree is stopped (SIGTERM, then SIGKILL 5 s later, at most 6 s in
+  all), the slot is freed, the last line says `test-slot: stopped after <n> s — the time limit is <m> s`
+  and the exit code is 124. With no limit nothing changes. `FACTORY_TEST_SLOT_STARTED_FILE` gets the
+  epoch seconds just before the command starts. `FACTORY_TEST_SLOT_TRACK_FILE` remembers processes
+  that left the command's process group, so a later call with a limit can stop them, and
+  `FACTORY_TEST_SLOT_TRACK_MS` (default `2000`) sets how often they are noted while a limit or a track
+  file is set.
 - **Tests an agent starts itself count too.** In an agent step, `npm`/`pnpm`/`yarn`/`bun` test
   scripts, `npx vitest` (and jest, mocha, playwright …), `pytest`, `python -m pytest`, `gradle`/`mvn`
   test, check, build or verify, and `go test`/`cargo test` go through the same test slots and run at
