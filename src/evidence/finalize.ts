@@ -74,6 +74,7 @@ export function buildRunEvidence(events: readonly EvidenceEvent[], o: { terminal
   const files = new Map<string, ArtifactRef>();
   for (const e of events) {
     if (e.type === "step.routed") models.push(e.model);
+    if (e.type === "context.bundled" && e.bundle) files.set(e.bundle.path, e.bundle);
     if (e.type === "step.approved") approvals.push({ step: e.step, time: e.time, decision: "approved", by: e.by });
     if (e.type === "step.denied" && e.denial.kind === "approval") approvals.push({ step: e.step, time: e.time, decision: "rejected", by: e.denial.by });
     if (e.type === "step.denied" && e.denial.kind === "policy") policies.push(e.denial.policy);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { POLICY_INPUT_VERSION } from "../src/policy/version.js";
 import { HOTFIX_FLOW, HOTFIX_PUSH_STEP } from "../src/engine/guards.js";
 import {
   BASELINE_HOTFIX,
@@ -19,7 +20,7 @@ const FULL: BaselineControls = { protectedBranches: ["main", "release/*"], secre
 const ask = (controls: BaselineControls, boundary: Boundary, facts: Facts, variant = false) => {
   const b = runBaseline("1", controls);
   const pack = variant && b.pushWithoutRepository ? b.pushWithoutRepository : b.pack;
-  const d = evaluatePolicy(pack, { version: 1, boundary, runId: "r", facts }, T);
+  const d = evaluatePolicy(pack, { version: POLICY_INPUT_VERSION, boundary, runId: "r", facts }, T);
   return { reason: d.reasonCode, outcome: d.outcome, rule: d.rule };
 };
 const push = (branch: string, over: Facts = {}): Facts => ({ branch, step: "x", secretsFound: 0, commitIdentity: true, repository: "acme/widgets", flow: "f", shippedFlow: false, ...over });
@@ -252,7 +253,7 @@ describe("the forbidden path rules and the step sandbox rule", () => {
     expect(before({ owner: "user", sandboxed: true }).reason).toBe("policy.no-rule-matched");
     expect(before({ owner: "admin", sandboxed: false }).reason).toBe("policy.no-rule-matched");
     const v = runBaseline("1", NO_BASELINE_CONTROLS).stepWithoutSandbox;
-    const run = (boundary: Boundary, facts: Facts) => evaluatePolicy(v, { version: 1, boundary, runId: "r", facts }, T).reasonCode;
+    const run = (boundary: Boundary, facts: Facts) => evaluatePolicy(v, { version: POLICY_INPUT_VERSION, boundary, runId: "r", facts }, T).reasonCode;
     expect(run("step.before", { step: "s", owner: "user" })).toBe("policy.no-rule-matched");
     expect(run("agent.write", { step: "s", owner: "user", sandboxed: false, isolated: false })).toBe("sandbox.required");
   });

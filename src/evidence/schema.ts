@@ -9,6 +9,9 @@ import { EXCESS_FIELDS } from "../tool-profile/resolve.js";
 import { OPERATIONS, TOOL_KINDS, ToolProfileRefSchema } from "../tool-profile/schema.js";
 import { FIT_OUTCOMES, FIT_RESTRICTIONS, HELD_BY, PROFILE_SOURCES, UNREADABLE } from "../tool-profile/session.js";
 import { AGENTS } from "../flow/schema.js";
+import { CONTEXT_OMISSION_REASONS, ContextBudgetSchema } from "../context/schema.js";
+import { CONTEXT_BUNDLE_FILE } from "../context/version.js";
+import { RUN_CONTEXT_CODES } from "../engine/run-context.js";
 import { EVIDENCE_EVENT_VERSION, EVIDENCE_EVENTS_FILE, RUN_EVIDENCE_VERSION } from "./version.js";
 
 /**
@@ -44,6 +47,13 @@ const envelope = {
 };
 
 const event = <T extends string, S extends z.ZodRawShape>(type: T, shape: S) => z.object({ ...envelope, type: z.literal(type), ...shape }).strict();
+
+/** How many sources were left out for each reason: every reason is a key, also with 0. */
+export const ContextOmittedCountsSchema = z
+  .object(Object.fromEntries(CONTEXT_OMISSION_REASONS.map((r) => [r, z.number().int().min(0)])) as Record<(typeof CONTEXT_OMISSION_REASONS)[number], z.ZodNumber>)
+  .strict();
+/** What happened to the context bundle of a run: it was written, or making it failed. */
+export const CONTEXT_OUTCOMES = ["written", "failed"] as const;
 
 const step = StepIdentitySchema;
 /** What a finished step leaves behind. `artifacts` are its log and transcript; `durationMs` is the time the step took. */
@@ -137,6 +147,21 @@ const EventUnion = z.discriminatedUnion("type", [
     refusal: z.enum(REPO_REFUSALS).optional(),
     pullRequest: PullRequestIdentitySchema.optional(),
   }),
+
+  /**
+   * The context bundle of the run was written (`written`: the file, the hash of its sources, its limits and counts) or making it
+   * failed (`failed`: only the fixed failure code). `omitted` counts the left-out sources per reason.
+   */
+  event("context.bundled", {
+    outcome: z.enum(CONTEXT_OUTCOMES),
+    bundle: ArtifactRefSchema.optional(),
+    sourcesSha256: Sha256Schema.optional(),
+    limits: ContextBudgetSchema.optional(),
+    sources: z.number().int().min(0).optional(),
+    bytes: z.number().int().min(0).optional(),
+    omitted: ContextOmittedCountsSchema.optional(),
+    failure: z.enum(RUN_CONTEXT_CODES).optional(),
+  }),
 ]);
 
 const uniquePaths = (refs: { path: string }[], ctx: z.RefinementCtx, at: PropertyKey[]) => {
@@ -155,7 +180,7 @@ export const EvidenceEventSchema = EventUnion.superRefine((e, ctx) => {
   }
   if (e.type === "step.failed" || e.type === "step.completed") uniquePaths(e.artifacts, ctx, ["artifacts"]);
   if (e.type === "policy.decided") {
-    const runWide = e.decision.boundary === "run.start" || e.decision.boundary === "run.complete";
+    const runWide = e.decision.boundary === "run.start" || e.decision.boundary === "run.complete" || e.decision.boundary === "context.select";
     if (runWide && e.step) ctx.addIssue({ code: "custom", path: ["step"], message: `is not allowed for the boundary ${e.decision.boundary}` });
     // access to the repository is also asked for the run itself, before any step (the workspace is made)
     if (!runWide && !e.step && e.decision.boundary !== "repository.access") ctx.addIssue({ code: "custom", path: ["step"], message: `is missing: the boundary ${e.decision.boundary} is about a step` });
@@ -178,6 +203,18 @@ export const EvidenceEventSchema = EventUnion.superRefine((e, ctx) => {
     if (e.operation === "unknown" && (e.outcome !== "refused" || e.refusal !== "invalid-request")) ctx.addIssue({ code: "custom", path: ["operation"], message: '"unknown" is only for a refused invalid-request' });
     if (e.pullRequest && (e.operation !== "pull-request" || e.outcome !== "done")) ctx.addIssue({ code: "custom", path: ["pullRequest"], message: "is only for a pull request that is done" });
   }
+  if (e.type === "context.bundled") {
+    const add = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });
+    const data = { bundle: e.bundle, sourcesSha256: e.sourcesSha256, limits: e.limits, sources: e.sources, bytes: e.bytes, omitted: e.omitted };
+    if (e.outcome === "written") {
+      for (const [name, value] of Object.entries(data)) if (value === undefined) add(name, 'is missing: it is needed when the outcome is "written"');
+      if (e.failure !== undefined) add("failure", 'is not allowed when the outcome is "written"');
+      if (e.bundle && (e.bundle.kind !== "other" || e.bundle.path !== CONTEXT_BUNDLE_FILE || !e.bundle.required)) add("bundle", `must be the required file ${CONTEXT_BUNDLE_FILE} of kind "other"`);
+    } else {
+      if (e.failure === undefined) add("failure", 'is missing: it is needed when the outcome is "failed"');
+      for (const [name, value] of Object.entries(data)) if (value !== undefined) add(name, 'is not allowed when the outcome is "failed"');
+    }
+  }
   if (e.type === "step.approved" && e.step.type !== "approval") ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be approved" });
   if (e.type === "step.denied" && e.denial.kind === "approval" && e.step.type !== "approval") {
     ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be rejected" });
@@ -190,7 +227,8 @@ export const RUN_EVENT_TYPES = ["run.created", "run.queued", "run.started", "run
 export const STEP_EVENT_TYPES = ["step.started", "step.routed", "step.profiled", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"] as const satisfies readonly EvidenceEventType[];
 export const POLICY_EVENT_TYPES = ["policy.decided"] as const satisfies readonly EvidenceEventType[];
 export const REPO_EVENT_TYPES = ["repo.operation"] as const satisfies readonly EvidenceEventType[];
-export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES, ...REPO_EVENT_TYPES];
+export const CONTEXT_EVENT_TYPES = ["context.bundled"] as const satisfies readonly EvidenceEventType[];
+export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES, ...REPO_EVENT_TYPES, ...CONTEXT_EVENT_TYPES];
 /** The events after which a run is over; exactly one of them ends a finished stream. */
 export const TERMINAL_EVENT_TYPES = ["run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
 

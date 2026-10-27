@@ -76,6 +76,10 @@ const TESTS: { [K in FactName]-?: (c: NonNullable<Conditions[K]>, fact: NonNulla
   commitIdentity: (c, f) => c === f,
   issueClosed: (c, f) => c === f,
   flowRetired: (c, f) => c === f,
+  contextSources: (c, f) => f > c.over,
+  contextBytes: (c, f) => f > c.over,
+  contextOmitted: (c, f) => f > c.over,
+  contextClassification: (c, f) => listed(c, (l) => l.includes(f)),
 };
 
 /** The facts a rule looks at, in the order of their names. */

@@ -237,8 +237,9 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   `step.denied`, `step.approved`, `step.failed`, `step.completed`), with `step.profiled` (the tool
   profile of one try, see "Tool profiles") from version 3, and `policy.decided` from version 2
   (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"), and `repo.operation` from
-  version 4 (one repository operation of the broker, see "Repository broker"). `prevHash` and `hash` come
-  together and are for the hash chain.
+  version 4 (one repository operation of the broker, see "Repository broker"), and `context.bundled` from
+  version 5 (the context bundle of the run was written, or making it failed, see "Writing a run's bundle").
+  `prevHash` and `hash` come together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
   and final commit, models, policies, approvals, test results, files, the diff and the pull request.
@@ -276,11 +277,13 @@ numbers and pure functions.
   fixed values for a choice, `anyIn` for the changed paths, `over` for a number (more than, never
   equal), `true` or `false` for a flag.
 - **`PolicyInput`**: `version`, `boundary`, `runId` and `facts`. The boundaries are `run.start`,
-  `step.before`, `step.after`, `repository.access`, `agent.write`, `push`, `approval.consume` and
-  `run.complete`. The facts are a closed list (`FactsSchema`): repository, branch, flow, step, tool,
+  `step.before`, `step.after`, `repository.access`, `agent.write`, `push`, `approval.consume`,
+  `context.select` and `run.complete`. The facts are a closed list (`FactsSchema`): repository, branch, flow, step, tool,
   workspace, owner role, credential, changed paths, secrets found, output bytes, elapsed time, step,
-  run and daily cost, and six flags. All are optional and none is free text. A caller gives what it
-  knows and never a guess.
+  run and daily cost, six flags, and the context facts of `context.select` (`contextSources`,
+  `contextBytes`, `contextOmitted` and `contextClassification`, the most private class of the sources).
+  All are optional and none is free text. A caller gives what it knows and never a guess.
+  `POLICY_INPUT_VERSION` is 2 from the `context.select` change.
 - **`PolicyDecision`**: `version`, `policy`, `packSha256`, `mode`, `boundary`, `inputSha256`,
   `outcome`, `reasonCode`, `rule` and `evaluatedAt`. The outcomes are `allow`, `warn`,
   `require_approval` and `deny`. The input itself is not kept, only its hash. The hashes are the
@@ -291,7 +294,8 @@ numbers and pure functions.
   `output.limit-exceeded`, `timeout.exceeded`, `budget.step-exceeded`, `budget.run-exceeded`,
   `budget.daily-exceeded`, `sandbox.required`, `workspace.admin-only`, `repository.not-allowed`,
   `credential.scope-exceeded`, `identity.missing`, `tool.not-allowed`, `issue.closed`,
-  `flow.retired`, `approval.required`, `exception.granted`. Codes only the evaluation gives:
+  `flow.retired`, `approval.required`, `exception.granted`, `context.limit-exceeded`,
+  `context.sources-omitted`, `context.classification-exceeded`. Codes only the evaluation gives:
   `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`. The code
   only the break-glass gives: `policy.break-glass` (a `warn` in `enforce` mode, see "Break-glass" below).
 - **`evaluatePolicy(pack, input, evaluatedAt)`** gives one decision and is deterministic: no file,
@@ -323,7 +327,8 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
 
 - **Where the questions come from.** The engine asks, so a flow cannot leave a boundary out: `runner.ts`
   asks `run.start`, `repository.access` (before a workspace is made), `approval.consume` and
-  `run.complete` (only when the run succeeded); `execute.ts` asks `step.before` and `step.after` for
+  `run.complete` (only when the run succeeded); `run-context.ts` asks `context.select` once the bundle is
+  written (see "Writing a run's bundle"); `execute.ts` asks `step.before` and `step.after` for
   every visit of a step through `beginStep` and `recordStep`, and `repository.access` for a step in the
   repository's checkout; `agents/run.ts` asks `agent.write` before a write-capable agent step.
   Built-in and custom flows take the same path.
@@ -641,6 +646,21 @@ So custom flows and runs that already took an agent step get no bundle, and no l
   normal and the read-only variant (`src/engine/os-sandbox.ts`).
 - **Log.** `contextBeforeStep` logs exactly one line, with no path and no value, and never throws. It
   returns `skipped` when the hook does not apply.
+- **Evidence (#638).** Right after the write (or the failure), `contextBeforeStep` calls
+  `RunRecorder.contextBundled`, which records one `context.bundled` event. A written bundle gives
+  `outcome: "written"` with `bundle` (`contextBundleRef`, the `context.json` file), `sourcesSha256`
+  (`hashContextSources`), the `limits` (`ContextBudgetSchema`), `sources`, `bytes` and `omitted`, a count
+  for every omission reason (zero included). A failed selection gives `outcome: "failed"` with only the
+  fixed `failure` code from `RUN_CONTEXT_CODES`. The schema refuses the other fields for each outcome.
+  `finalize.ts` puts `context.json` into the manifest's files, so `verifyEvidence` checks it by its hash
+  like every other file: a changed `context.json` is `file-changed`.
+- **Policy (#638).** For a written bundle, the hook then asks `context.select` with `contextSelectFacts`:
+  the source count, the byte total (`contextTotalBytes`), the left-out count and the highest
+  classification of the sources (left out when there are none). The decision is recorded as a
+  `policy.decided` event with no step, like `run.start`. A failed selection is not asked. The engine
+  does not act on the answer: the run goes on whatever the decision is, also in `enforce` mode. The
+  fail-closed rules (`privilegedBoundary`) do not cover this boundary.
+- **Old runs.** A run without the event verifies as before; `EVENT_MIGRATIONS` 4 → 5 only sets the version.
 
 ### Tool profiles
 

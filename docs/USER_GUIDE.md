@@ -1272,6 +1272,10 @@ be given to agents later.
   - `internal`: anything else.
 
   A failure never stops the run.
+- **Evidence and policy.** The run's evidence records the bundle: a `context.bundled` event with the
+  bundle's hash, its limits, its source and byte counts and the number left out per reason, or the failure
+  code. Policy packs are asked at the boundary `context.select` after a bundle is written. The answer is only
+  recorded; the run goes on either way.
 - **Read-only files.** `context.json` is read-only, and so is every file under `context/`. Folders are
   read-only too. On macOS the OS sandbox of a step also denies writes to these paths.
 - **One attempt.** The file `context.attempt` is written before the bundle is tried, and it stays. A run

@@ -15,6 +15,9 @@ const NEVER: Conditions = {
   elapsedMs: { over: 1e12 },
   stepCostUsd: { over: 1e12 },
   runCostUsd: { over: 1e12 },
+  contextSources: { over: 1e12 },
+  contextBytes: { over: 1e12 },
+  contextOmitted: { over: 1e12 },
   isolated: true,
   sandboxed: true,
   paths: { anyIn: ["__never__"] },
@@ -34,6 +37,7 @@ export const COVER: Record<Boundary, { needs: (keyof Conditions)[]; ok: Conditio
   push: { needs: ["step", "credential", "isolated", "branch"], ok: { credential: { in: ["machine"] }, isolated: false, branch: { in: ["feat*"] } } },
   "agent.write": { needs: ["step", "isolated", "sandboxed"], ok: { isolated: false, sandboxed: false } },
   "approval.consume": { needs: ["step"], ok: { step: { in: ["ok"] } } },
+  "context.select": { needs: ["contextSources", "contextBytes", "contextOmitted"], ok: {} },
   "run.complete": { needs: ["runCostUsd"], ok: {} },
 };
 

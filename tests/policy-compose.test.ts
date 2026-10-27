@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { POLICY_INPUT_VERSION } from "../src/policy/version.js";
 import { BASELINE_PACK, BASELINE_POLICY_ID, NO_BASELINE_CONTROLS, baselinePack, legacyBaselinePack } from "../src/policy/baseline.js";
 import { combineDecisions, layeredPackIds, type Layer, type LayeredDecision } from "../src/policy/compose.js";
 import { evaluatePolicy } from "../src/policy/evaluate.js";
@@ -7,7 +8,7 @@ import { parsePolicyPack } from "../src/policy/parse.js";
 import { OUTCOMES, type Boundary, type Facts, type Outcome, type PolicyPack } from "../src/policy/schema.js";
 
 const T = "2026-01-31T12:00:00.000Z";
-const input = (boundary: Boundary, facts: Facts) => ({ version: 1, boundary, runId: "run-1", facts }) as never;
+const input = (boundary: Boundary, facts: Facts) => ({ version: POLICY_INPUT_VERSION, boundary, runId: "run-1", facts }) as never;
 const ask = (pack: PolicyPack, boundary: Boundary, facts: Facts) => evaluatePolicy(pack, input(boundary, facts), T);
 const mk = (id: string, rule: PolicyPack["rules"][number]): PolicyPack => ({ version: 1, policy: { id, version: "1" }, mode: "observe", defaultOutcome: "allow", rules: [rule] });
 const layered = (layer: Layer, pack: PolicyPack, boundary: Boundary, facts: Facts): LayeredDecision => ({ layer, decision: ask(pack, boundary, facts) });

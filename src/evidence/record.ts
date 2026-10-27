@@ -3,6 +3,9 @@ import { existsSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { z } from "zod";
 import type { PolicyDecision } from "../policy/schema.js";
+import { contextBundleRef, contextTotalBytes, hashContextSources } from "../context/bundle.js";
+import { CONTEXT_OMISSION_REASONS, type ContextBundle, type ContextOmissionReason } from "../context/schema.js";
+import type { RunContextCode } from "../engine/run-context.js";
 import type { RunSummary, StepRecord } from "../engine/state.js";
 import type { Step } from "../flow/schema.js";
 import {
@@ -212,6 +215,25 @@ export class RunRecorder {
   /** The repository broker did, or refused, one operation. */
   repoOperation(fields: Omit<Extract<EvidenceEventBody, { type: "repo.operation" }>, "type">): void {
     this.put(() => ({ type: "repo.operation", ...fields }));
+  }
+
+  /** The context bundle of the run was written, or making it failed with a fixed code. */
+  contextBundled(result: { bundle: ContextBundle } | { failed: RunContextCode }): void {
+    this.put(() => {
+      if ("failed" in result) return { type: "context.bundled", outcome: "failed", failure: result.failed };
+      const b = result.bundle;
+      const omitted = Object.fromEntries(CONTEXT_OMISSION_REASONS.map((r) => [r, b.omitted.filter((o) => o.reason === r).length])) as Record<ContextOmissionReason, number>;
+      return {
+        type: "context.bundled",
+        outcome: "written",
+        bundle: contextBundleRef(b),
+        sourcesSha256: hashContextSources(b),
+        limits: b.budget,
+        sources: b.sources.length,
+        bytes: contextTotalBytes(b),
+        omitted,
+      };
+    });
   }
 
   /** The end of one visit: a `step.denied` for every tool the agent was refused, then `step.completed` or `step.failed`. */
