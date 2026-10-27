@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,6 +14,19 @@ const dead = (pid: number) => {
   }
 };
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Waits until the file has at least `lines` lines (a counter written by a test helper). */
+const untilPath = async (f: string, lines: number) => {
+  const end = Date.now() + 10_000;
+  for (;;) {
+    try {
+      if (readFileSync(f, "utf8").split("\n").filter(Boolean).length >= lines) return;
+    } catch {
+      // not there yet
+    }
+    if (Date.now() > end) throw new Error(`${f} did not reach ${lines} lines`);
+    await sleep(20);
+  }
+};
 const untilFile = async (f: string) => {
   const end = Date.now() + 10_000;
   for (;;) {
@@ -67,6 +80,107 @@ describe("runProcess with groupKill", () => {
     expect(dead(pid)).toBe(false);
     process.kill(pid, "SIGKILL");
   });
+
+  // A parent that starts a child in a session of its own (so it leaves the group). The child writes its pid to READY once it is set up.
+  const PARENT = `const {spawn}=require("child_process"),fs=require("fs");
+const c=spawn("/bin/sh",["-c",process.env.CHILD],{detached:true,stdio:"ignore"});c.unref();
+if(process.env.GO){const t=setInterval(()=>{if(fs.existsSync(process.env.GO)){clearInterval(t);process.exit(0)}},20)}else setInterval(()=>{},1000);`;
+  const detached = (d: string, trap: boolean, extraEnv: Record<string, string> = {}) => ({
+    cwd: d,
+    logFile: join(d, "log"),
+    groupKill: true,
+    trackEveryMs: 50,
+    redactor: makeRedactor([]),
+    env: { CHILD: `${trap ? 'trap "" TERM; ' : ""}echo $$ > "$READY"; exec sleep 60`, READY: join(d, "ready.pid"), ...extraEnv },
+  });
+  const spare: number[] = [];
+  afterEach(() => {
+    for (const p of spare.splice(0)) {
+      try {
+        process.kill(p, "SIGKILL");
+      } catch {
+        // gone
+      }
+    }
+  });
+
+  it("a timeout stops a detached child whose parent still runs", async () => {
+    const d = dir();
+    const p = runProcess(process.execPath, ["-e", PARENT], { ...detached(d, false), timeoutMs: 1500 });
+    const pid = await untilFile(join(d, "ready.pid"));
+    spare.push(pid);
+    const res = await p;
+    expect(res.timedOut).toBe(true);
+    expect(dead(pid)).toBe(true);
+  }, 20_000);
+
+  it("an abort stops a detached child too", async () => {
+    const d = dir();
+    const ctl = new AbortController();
+    const p = runProcess(process.execPath, ["-e", PARENT], { ...detached(d, false), signal: ctl.signal });
+    const pid = await untilFile(join(d, "ready.pid"));
+    spare.push(pid);
+    ctl.abort();
+    const res = await p;
+    expect(res.aborted).toBe(true);
+    expect(dead(pid)).toBe(true);
+  }, 20_000);
+
+  it("a normal exit leaves a detached child running", async () => {
+    const d = dir();
+    const go = join(d, "go");
+    const p = runProcess(process.execPath, ["-e", PARENT], detached(d, false, { GO: go }));
+    const pid = await untilFile(join(d, "ready.pid"));
+    spare.push(pid);
+    await sleep(200); // a few polls of the tracker
+    writeFileSync(go, "1");
+    const res = await p;
+    expect(res.exitCode).toBe(0);
+    expect(dead(pid)).toBe(false);
+  }, 20_000);
+
+  it("a detached child that ignores SIGTERM is killed within 6 s of the abort", async () => {
+    const d = dir();
+    const ctl = new AbortController();
+    const p = runProcess(process.execPath, ["-e", PARENT], { ...detached(d, true), signal: ctl.signal });
+    const pid = await untilFile(join(d, "ready.pid")); // written after the trap is set
+    spare.push(pid);
+    const t0 = Date.now();
+    ctl.abort();
+    await p;
+    expect(Date.now() - t0).toBeLessThan(6000);
+    expect(dead(pid)).toBe(true);
+  }, 20_000);
+
+  it("a child that ignores SIGTERM is still SIGKILLed after a failed process-table read at the stop", async () => {
+    const d = dir();
+    const fake = join(d, "fake-ps");
+    const down = join(d, "down");
+    const failed = join(d, "failed");
+    const ok = join(d, "ok");
+    // a ps that fails while the `down` file exists, and counts its good reads
+    writeFileSync(fake, `#!/bin/sh\nif [ -e "${down}" ]; then echo x >> "${failed}"; exit 1; fi\necho x >> "${ok}"\nexec ps "$@"\n`, { mode: 0o755 });
+    const prev = process.env.FACTORY_TEST_SLOT_PS;
+    process.env.FACTORY_TEST_SLOT_PS = fake;
+    try {
+      const ctl = new AbortController();
+      const p = runProcess(process.execPath, ["-e", PARENT], { ...detached(d, true), signal: ctl.signal });
+      const pid = await untilFile(join(d, "ready.pid"));
+      spare.push(pid);
+      await untilPath(ok, 2); // the tracker has read the table with the child in it
+      writeFileSync(down, "");
+      const t0 = Date.now();
+      ctl.abort();
+      await untilPath(failed, 1); // the stop-time read failed
+      rmSync(down); // ps works again; the SIGKILL at 5 s must still reach the child
+      await p;
+      expect(Date.now() - t0).toBeLessThan(6500);
+      expect(dead(pid)).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.FACTORY_TEST_SLOT_PS;
+      else process.env.FACTORY_TEST_SLOT_PS = prev;
+    }
+  }, 20_000);
 
   it("killLiveGroups kills the group of a running step", async () => {
     const d = dir();
