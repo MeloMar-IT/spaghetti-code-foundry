@@ -2941,10 +2941,11 @@ recommendation.
   Foundry decided them and plans the issue again, and the work goes on with no reply from you. If some were
   not, the comment shows the questions that still need you above the decided ones, and the run waits as
   before. The first line of the comment says **Nothing needed from you** when everything was decided.
-- **The planner follows the decisions.** It takes them as answers, unless a later comment from a person says
-  otherwise.
-- **How to answer differently:** cancel the run if it is still going, answer the decided question on the issue,
-  and start the run again. Your answer then goes into the next plan.
+- **The planner follows the decisions.** It takes them as answers. Only a later Foundry comment titled
+  **Overrule accepted** changes a decision. Text copied from a decision into a comment, and `/overrule`
+  commands, do not change it.
+- **How to answer differently:** for now, a decided question can't be changed from the issue. A plain comment
+  and a restart do not change it. Describing `/overrule` waits until it is handled (part 2 of #703).
 - **The setting:** **Decide technical questions itself** in the repository's Run settings (field
   `questions.decide_technical`). It is on by default. With it off, the planner's questions all wait for you, as
   before. A run reads the setting when it starts or resumes, so a change applies to the runs that start or
