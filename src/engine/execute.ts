@@ -75,6 +75,8 @@ export interface Engine {
   /** The declared tool profile saved with the run (`null`: it could not be read). Undefined: generated profiles. */
   toolProfile?: unknown;
   signal?: AbortSignal;
+  /** Asked before each top-level step: a non-empty answer stops the run there with that reason (the step runs on resume). */
+  stopBefore?: (stepId: string) => string | undefined;
   /** Set once a budget is used up and a free fallback exists: all agent steps run there. */
   budgetFallback?: Target;
   /** Today's spend in US dollars, for the policy's daily budget rule. Only set when a daily budget is in effect. */
