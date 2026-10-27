@@ -2145,7 +2145,7 @@ write("release-daily", {
     "(a schedule watcher runs this once a day, e.g. 17:00 Europe/Berlin)",
     "",
     "clone → develop ahead of main? ─┬─ no → end",
-    "                                └─ full tests + build on develop (limit verify_timeout_min, 180 min; the slot wait does not count)",
+    "                                └─ full tests (skipped when this exact code already passed them: reuse_test_results) + build on develop (limit verify_timeout_min, 180 min; the slot wait does not count)",
     "                                   → open / update the PR develop → main",
     "                                   (lists and closes the merged issues; draft while red or not finished in time) → comment the checks",
     "                                   → handoff (check the contract, then ready or draft)",
@@ -2154,7 +2154,7 @@ write("release-daily", {
   description: "Once a day: full tests and build on develop, then one pull request develop → main that closes the merged issues",
   workspace: "empty",
   defaults: { timeout_sec: 3600 },
-  vars: { github_repo: "owner/repo", test_cmd: "auto", build_cmd: "", develop_branch: "develop", main_branch: "main", verify_timeout_min: "180" },
+  vars: { github_repo: "owner/repo", test_cmd: "auto", build_cmd: "", develop_branch: "develop", main_branch: "main", verify_timeout_min: "180", reuse_test_results: "yes" },
   steps: [
     clone,
     {
@@ -2188,15 +2188,31 @@ write("release-daily", {
         // the build, so the build cannot hide what the tests left behind; the record itself is written after the build, and only
         // when no check timed out (a time-out writes no record). A record that fails changes nothing.
         'tree=""; if t=$(git rev-parse "HEAD^{tree}") && st=$(git status --porcelain) && [ -z "$st" ]; then tree="$t"; fi',
+        // Reuse (reuse_test_results): a record in tested/ under the key of this clean tree and this command, from a story
+        // ("run <id>, <time>") or a release check ("run <id>, <time>, tree <sha>"), means these tests already passed on this
+        // exact code. Only the matched "run <id>, <time>" text is shown, and a hit writes no record, so a story record never
+        // becomes the release form that self-update trusts.
+        'hit=""; if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -n "$tree" ] && [ -n "$cmd" ]; then',
+        '  key=$(printf \'%s\\n%s\\n\' "$tree" "$cmd" | shasum | cut -c1-40); f="{{run.dir}}/../../tested/$key"',
+        '  if [ "${#key}" -eq 40 ] && [ -f "$f" ] && [ ! -L "$f" ]; then',
+        '    line=$(head -c 200 "$f" 2>/dev/null | head -1)',
+        '    hit=$(printf \'%s\\n\' "$line" | sed -nE \'s/^(run [A-Za-z0-9_-]{1,64}, [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z)(, tree [0-9a-f]{40})?$/\\1/p\')',
+        '    case "$line" in *", tree "*) [ "$line" = "$hit, tree $tree" ] || hit="" ;; esac',
+        '  fi',
+        'fi',
         'marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes',
+        'timed=""; bnote=""; used=0',
+        'if [ -n "$hit" ]; then echo "\\$ $cmd"; echo "not run again: this exact code already passed these tests ($hit)"',
+        'else',
         CHECK_TESTS,
-        'record=no; if [ "$ok" = yes ] && [ -n "$tree" ] && [ -n "$cmd" ] && st=$(git status --porcelain) && [ -z "$st" ] && after_tree=$(git rev-parse "HEAD^{tree}") && [ "$after_tree" = "$tree" ]; then record=yes; fi',
+        'fi',
+        'record=no; if [ "$ok" = yes ] && [ -z "$hit" ] && [ -n "$tree" ] && [ -n "$cmd" ] && st=$(git status --porcelain) && [ -z "$st" ] && after_tree=$(git rev-parse "HEAD^{tree}") && [ "$after_tree" = "$tree" ]; then record=yes; fi',
         CHECK_BUILD,
         'if [ "$record" = yes ] && [ -z "$timed" ]; then',
         '  key=$(printf \'%s\\n%s\\n\' "$tree" "$cmd" | shasum | cut -c1-40)',
         '  if [ "${#key}" -eq 40 ]; then { mkdir -p "{{run.dir}}/../../tested" && printf \'run %s, %s, tree %s\\n\' "$FACTORY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%MZ)" "$tree" > "{{run.dir}}/../../tested/$key"; } 2>/dev/null || true; fi',
         'fi',
-        '{ echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo \'```\'; echo "\\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"',
+        '{ echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo \'```\'; echo "\\$ $cmd"; if [ -n "$hit" ]; then echo "not run again: this exact code already passed these tests ($hit)"; else "$FACTORY_TOOLS/test-summary" "$marker"; fi',
         CHECK_BUILD_LINE,
         "  echo '```'; " + CHECK_TIMED_LINE + '; } > "{{run.dir}}/checks.md"',
         'cat "{{run.dir}}/checks.md"; echo "CHECKS: $ok"',

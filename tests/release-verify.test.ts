@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -269,5 +269,90 @@ describe("release-daily verify: the record of a pass", () => {
     const r = s.run(s.script("issue-gitflow", "baseline_tests"), { test: "true" });
     expect(r.files).toEqual([testedKey(tree, "true")]);
     expect(passedBefore(s.tested, tree, "true")).toBeUndefined();
+  });
+});
+
+describe("release-daily verify: reuse of a test record", () => {
+  const REUSE = { FACTORY_VAR_REUSE_TEST_RESULTS: "yes" };
+  const snapshot = (dir: string) => (existsSync(dir) ? readdirSync(dir).sort().map((f) => [f, readFileSync(join(dir, f), "utf8")]) : []);
+  const put = (s: ReturnType<typeof setup>, cmd: string, content: string) => {
+    mkdirSync(s.tested, { recursive: true });
+    const tree = s.git("rev-parse", "HEAD^{tree}");
+    writeFileSync(join(s.tested, testedKey(tree, cmd)), content);
+    return tree;
+  };
+  const ran = (s: ReturnType<typeof setup>) => existsSync(join(s.repo, "ran-tests"));
+
+  it("skips the tests on a story record", () => {
+    const s = setup();
+    put(s, "touch ran-tests", "run s1, 2026-10-26T10:00Z\n");
+    const before = snapshot(s.tested);
+    const r = s.verify({ test: "touch ran-tests" }, REUSE);
+    expect(r.out).toContain("CHECKS: yes");
+    expect(r.out).toContain("not run again");
+    expect(r.out).toContain("(run s1, 2026-10-26T10:00Z)");
+    expect(readFileSync(join(s.runDir, "checks.md"), "utf8")).toContain("(run s1, 2026-10-26T10:00Z)");
+    expect(ran(s)).toBe(false);
+    expect(snapshot(s.tested)).toEqual(before);
+  });
+
+  it("skips the tests on a release record of this tree and shows no tree", () => {
+    const s = setup();
+    const tree = s.git("rev-parse", "HEAD^{tree}");
+    put(s, "touch ran-tests", `run s1, 2026-10-26T10:00Z, tree ${tree}\n`);
+    const r = s.verify({ test: "touch ran-tests" }, REUSE);
+    expect(r.out).toContain("(run s1, 2026-10-26T10:00Z)");
+    expect(readFileSync(join(s.runDir, "checks.md"), "utf8")).not.toContain("tree ");
+    expect(ran(s)).toBe(false);
+  });
+
+  it("runs the tests on a miss", () => {
+    const other = "a".repeat(40);
+    const good = "run s1, 2026-10-26T10:00Z\n";
+    const cases: Array<[string, (s: ReturnType<typeof setup>) => Record<string, string>]> = [
+      ["another command", (s) => (put(s, "true", good), REUSE)],
+      ["reuse off", (s) => (put(s, "touch ran-tests", good), { FACTORY_VAR_REUSE_TEST_RESULTS: "no" })],
+      ["dirty tree", (s) => (put(s, "touch ran-tests", good), writeFileSync(join(s.repo, "untracked.txt"), "x"), REUSE)],
+      [
+        "symlink",
+        (s) => {
+          const tree = s.git("rev-parse", "HEAD^{tree}");
+          mkdirSync(s.tested, { recursive: true });
+          const real = join(s.root, "real-record");
+          writeFileSync(real, good);
+          symlinkSync(real, join(s.tested, testedKey(tree, "touch ran-tests")));
+          return REUSE;
+        },
+      ],
+      ["text", (s) => (put(s, "touch ran-tests", "hello\n"), REUSE)],
+      ["bad time", (s) => (put(s, "touch ran-tests", "run s1, yesterday\n"), REUSE)],
+      ["other tree", (s) => (put(s, "touch ran-tests", `run s1, 2026-10-26T10:00Z, tree ${other}\n`), REUSE)],
+    ];
+    for (const [name, prep] of cases) {
+      const s = setup();
+      const env = prep(s);
+      const r = s.verify({ test: "touch ran-tests" }, env);
+      expect(r.out, name).toContain("CHECKS: yes");
+      expect(r.out, name).not.toContain("not run again");
+      expect(ran(s), name).toBe(true);
+    }
+  });
+
+  it("still runs the build, and a failing build gives CHECKS: no", () => {
+    const s = setup();
+    put(s, "touch ran-tests", "run s1, 2026-10-26T10:00Z\n");
+    const before = snapshot(s.tested);
+    const r = s.verify({ test: "touch ran-tests", build: "false" }, REUSE);
+    expect(r.out).toContain("CHECKS: no");
+    expect(r.out).toContain("⚠ **Checks failed**");
+    expect(ran(s)).toBe(false);
+    expect(snapshot(s.tested)).toEqual(before);
+  });
+
+  it("is only in release-daily", () => {
+    const s = setup();
+    expect(loadFlow("daily-pr", s.repo).flow.vars).not.toHaveProperty("reuse_test_results");
+    expect(s.script("daily-pr", "verify")).not.toMatch(/REUSE_TEST_RESULTS|not run again/);
+    expect(loadFlow("release-daily", s.repo).flow.vars?.reuse_test_results).toBe("yes");
   });
 });
