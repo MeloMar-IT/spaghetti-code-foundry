@@ -66,7 +66,7 @@ const fresh = () => {
 const SKILLS = ConfigSchema.parse({ skills: { releases: { allow_unreleased: true } } }).skills;
 const cfg = (over: Record<string, unknown> = {}) => ConfigSchema.parse({ concurrency: 1, protected_branches: [], ...over });
 const ENV = ["FACTORY_HOME", "SCF_HOME", "FACTORY_LOCK_DIR", "SCF_LOCK_DIR", "FACTORY_NO_NOTIFY", "FACTORY_NO_FAILURE_MODEL", "SCF_STEP_ENV_PASS", "FACTORY_STEP_ENV_PASS", "SCF_USER_SANDBOX", "FACTORY_USER_SANDBOX",
-  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CORP_KEY", "GH_TOKEN", "EVAL_BOT_TOKEN", "AWS_SECRET_ACCESS_KEY"];
+  "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CORP_KEY", "GH_TOKEN", "EVAL_BOT_TOKEN", "AWS_SECRET_ACCESS_KEY", "TMPDIR"];
 let saved: Record<string, string | undefined>;
 let home: string;
 let cwd: string;
@@ -82,6 +82,8 @@ const suiteYaml = (ins?: { check?: string; task?: string; extra?: string }) =>
 
 beforeEach(() => {
   saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
+  // a temp folder of its own: other test files run at the same time and make scf-skill-eval-* folders in the shared one
+  process.env.TMPDIR = fresh();
   home = fresh();
   process.env.FACTORY_HOME = home;
   process.env.ANTHROPIC_API_KEY = "sk-ant-dummy-0123456789";

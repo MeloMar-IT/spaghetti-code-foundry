@@ -549,6 +549,18 @@ sources to the agents read-only (#153) and show them (#154). It is an extra file
   `CONTEXT_MIGRATIONS`. `readContextBundle` gives `absent` for a run without the file (every run
   made before this), and never throws. Error messages name fields, never values.
 
+- **The view (#154, part 1).** `GET /api/runs/:id/context` answers the bundle as a view
+  (`src/server/context-view.ts`, `runContextView`). It reads `context.json` once, with a size limit, and never
+  throws. `state` is `available`, `absent` (no file, as for every run before the bundle) or `unreadable` (with a
+  fixed reason and a code). The view has the bundle's hash, the sources' hash, the creation time, the commit,
+  the budget, one entry per source (kind, label, revision, selection, `retrievedAt`, freshness at the time of the
+  request, classification, owners, `sha256` and `bytes`) and one per left-out source (status and next action).
+  It never holds source text or the path of a stored text. Statuses and next actions are closed lists in the
+  same file, so the wording is in one place. A user's answer is built from a list of fields: no address, id or
+  owners for any entry, and only kind, classification, selection and freshness for a confidential or restricted
+  source. The admin view has `uri` and `id`. The UI (`ui/run-sources.js`) only draws the answer and exports it
+  unchanged.
+
 ### Context selection
 
 `selectContext` (`src/context/select.ts`) makes a bundle and the text of its sources from one

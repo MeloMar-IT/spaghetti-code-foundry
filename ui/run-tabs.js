@@ -248,14 +248,16 @@ export function overviewPanel({ admin = false, extra = null } = {}) {
 /**
  * The Evidence panel: what the run already has (see `evidenceItems`). Redrawn only when the items changed.
  * `record`: the Evidence record section (ui/run-evidence.js), placed above the list and given every update first.
+ * `sources`: the Context sources section (ui/run-sources.js), placed after the record and given every update too.
  */
-export function evidencePanel({ record } = {}) {
+export function evidencePanel({ record, sources } = {}) {
   const box = h("div");
   let key = null;
   return {
-    build: () => (record ? h("div", {}, record.build(), box) : box),
+    build: () => (record || sources ? h("div", {}, record?.build(), sources?.build(), box) : box),
     update(s, prev) {
       record?.update(s, prev);
+      sources?.update(s, prev);
       const items = evidenceItems(withQuestions(s));
       const k = JSON.stringify(items);
       if (k === key) return;
