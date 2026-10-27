@@ -48,7 +48,9 @@ describe("readStrict through readIssueFiles", () => {
     const flags = fs.openSync.mock.calls[0]![1] as number;
     expect(flags & realFs.constants.O_NOFOLLOW).toBe(realFs.constants.O_NOFOLLOW);
     expect(flags & realFs.constants.O_NONBLOCK).toBe(realFs.constants.O_NONBLOCK);
-    expect(closed()).toEqual([10, 11]);
+    // issue.json, issue-comments.jsonl, then issue-foundry-comments.json (this mock gives every other path the comments file's fd and text)
+    expect(closed()).toEqual([10, 11, 11]);
+    expect(paths.map((p) => p.split("/").pop())).toEqual(["issue.json", "issue-comments.jsonl", "issue-foundry-comments.json"]);
   });
 
   it("fails on an early end of the issue file, closes it, and never opens the comments", () => {

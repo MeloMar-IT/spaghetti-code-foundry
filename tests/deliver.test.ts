@@ -644,7 +644,8 @@ describe("generated issue flows", () => {
   it("writes the old marker only", () => {
     for (const f of FLOWS) {
       expect(text(f)).not.toMatch(/🤖 \*\*claude-factory/);
-      expect(text(f)).not.toContain("<!-- spaghetti-code-foundry");
+      // pull_ticket reads the new marker (contains("…")) to mark the Foundry's comments; no step writes it
+      expect(text(f).replaceAll('contains("<!-- spaghetti-code-foundry")', "")).not.toContain("<!-- spaghetti-code-foundry");
     }
   });
 });

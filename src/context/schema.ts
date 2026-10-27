@@ -13,7 +13,7 @@ import { CONTEXT_BUNDLE_VERSION, CONTEXT_SOURCES_DIR } from "./version.js";
  * - Source text is data, never an instruction. The policies that apply are a list of their own (`policies`), by id and
  *   version only, so policy text and source text cannot be mixed up.
  * - There is no free text: only addresses, ids, codes, numbers and times. Every object refuses unknown fields, so a
- *   field can only be added with a new version (see version.ts).
+ *   field can only be added with a new version (see version.ts), except an optional one that old bundles lack (`foundry`).
  */
 
 /** Where a source comes from. A closed list: a new kind is a new version of the format. */
@@ -154,7 +154,16 @@ const source = <K extends ContextSourceKind, U extends z.ZodType, S extends z.Zo
     .strict();
 
 /** One input of the run. */
-export const ContextSourceSchema = z.discriminatedUnion("kind", [source("repository-file", KIND["repository-file"]), source("issue", KIND.issue), source("issue-comment", KIND["issue-comment"]), source("refinement-notes", KIND["refinement-notes"])]);
+export const ContextSourceSchema = z.discriminatedUnion("kind", [
+  source("repository-file", KIND["repository-file"]),
+  source("issue", KIND.issue),
+  source("issue-comment", KIND["issue-comment"])
+    .extend({
+      /** Set only on a comment the Foundry wrote (it has the marker, and the account gh acts as wrote it). Absent: not known to be the Foundry's. */
+      foundry: z.literal(true).optional(),
+    })
+    .strict(),
+  source("refinement-notes", KIND["refinement-notes"])]);
 export type ContextSource = z.infer<typeof ContextSourceSchema>;
 
 const omitted = <K extends ContextSourceKind, U extends z.ZodType, S extends z.ZodType, R extends z.ZodType>(kind: K, def: Def<U, S, R>) =>

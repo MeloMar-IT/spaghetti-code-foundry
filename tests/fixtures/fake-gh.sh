@@ -38,6 +38,7 @@ if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "
 # ({"<repo>#<n>": body}, <repo> is the --repo value), so a later view shows the new body.
 # $FAKE_GH_ISSUE_JSON: the answer of "issue view <n> --json body,number,title,updatedAt" (pull_ticket saves it as issue.json); unset or empty: 404 on stderr, exit 1.
 # $FAKE_GH_ISSUE_COMMENTS_JSONL (set, also when empty): the answer of "api --paginate repos/<o>/<n>/issues/<n>/comments…" (issue-comments.jsonl); unset: 404.
+# $FAKE_GH_FOUNDRY_COMMENTS_JSON (set, also when empty): the answer of "issue view <n> --json comments --jq …" (issue-foundry-comments.json); unset: 404.
 # $FAKE_GH_FAIL_ON=<text>: a call whose arguments contain this text prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
 # $FAKE_GH_FAIL_PR_READY=1: "pr ready" (also with --undo) fails.
 if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
@@ -265,6 +266,7 @@ case "$1 $2" in
   "issue view")
     case "$*" in
       *"--json body,number,title,updatedAt"*) if [ -n "$FAKE_GH_ISSUE_JSON" ]; then printf '%s\n' "$FAKE_GH_ISSUE_JSON"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
+      *"--json comments --jq"*) if [ -n "${FAKE_GH_FOUNDRY_COMMENTS_JSON+x}" ]; then printf '%s' "$FAKE_GH_FOUNDRY_COMMENTS_JSON"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
       *"--json number,title,state,body"*) node -e 'const fs=require("fs");const [n,repo,f]=process.argv.slice(1);const l=JSON.parse(process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===Number(n));
 if(!i){console.error("GraphQL: Could not resolve to an Issue with the number of "+n+". (repository.issue)");process.exit(1)}
 const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const k=repo+"#"+n;

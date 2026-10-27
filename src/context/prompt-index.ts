@@ -24,6 +24,8 @@ export interface ContextIndexEntry {
   bytes: number;
   reason: ContextSelectionReason;
   rule?: string;
+  /** A comment the Foundry wrote. */
+  foundry?: true;
 }
 
 export interface ContextIndexLeftOut {
@@ -80,6 +82,7 @@ export function contextIndex(bundle: ContextBundle, o: { role: ContextConsumer; 
       bytes: s.content.bytes,
       reason: s.selection.reason,
       ...(s.selection.reason === "discovery" && s.selection.rule !== undefined ? { rule: s.selection.rule } : {}),
+      ...(s.kind === "issue-comment" && s.foundry === true ? { foundry: true as const } : {}),
     });
   }
   return { role: o.role, entries: entries.sort(compare), leftOut: leftOut.sort(compare) };
@@ -93,7 +96,7 @@ export function renderContextIndex(index: ContextIndex): string {
   ];
   if (index.entries.length === 0) lines.push("- none");
   for (const e of index.entries) {
-    lines.push(`- ${e.id} | ${e.kind} | ${e.uri} | ${e.file} | ${e.bytes} bytes | picked: ${e.reason}${e.rule !== undefined ? `, rule ${e.rule}` : ""}`);
+    lines.push(`- ${e.id} | ${e.kind} | ${e.uri} | ${e.file} | ${e.bytes} bytes | picked: ${e.reason}${e.rule !== undefined ? `, rule ${e.rule}` : ""}${e.foundry === true ? " | by: Foundry" : ""}`);
   }
   lines.push("Left out:");
   if (index.leftOut.length === 0) lines.push("- none");

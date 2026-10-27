@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { ISSUE_COMMENTS_FILE, ISSUE_FILE, ISSUE_FILE_MAX_BYTES, readIssueFiles } from "../src/context/issue-files.js";
+import { ISSUE_COMMENTS_FILE, ISSUE_FILE, ISSUE_FILE_MAX_BYTES, ISSUE_FOUNDRY_COMMENTS_FILE, readIssueFiles } from "../src/context/issue-files.js";
 import { selectContext } from "../src/context/select.js";
 import { BUDGET, NOW, TASK, input, memorySnapshot } from "./helpers/context-fixture.js";
 
@@ -56,6 +56,35 @@ describe("readIssueFiles: valid files", () => {
     const sel = selectContext(input({ snapshot: memorySnapshot(), now: NOW, budget: BUDGET, task: { issue } }));
     const uris = JSON.stringify(sel);
     for (const u of ["issue:12", "issue:12/comment/20", "issue:12/comment/34"]) expect(uris).toContain(u);
+  });
+
+  it("marks the ids of the Foundry comment list, ignores unknown ids, and the result passes selectContext", () => {
+    const d = fresh();
+    write(d);
+    writeFileSync(join(d, ISSUE_FOUNDRY_COMMENTS_FILE), "[34, 999]");
+    const { issue } = okOf(d);
+    expect(issue.comments!.filter((c) => "foundry" in c).map((c) => c.id)).toEqual([34]);
+    const sel = selectContext(input({ snapshot: memorySnapshot(), now: NOW, budget: BUDGET, task: { issue } }));
+    expect(sel.bundle.sources.filter((s) => "foundry" in s).map((s) => s.uri)).toEqual(["issue:12/comment/34"]);
+  });
+
+  it("marks nothing, and still reads, when the Foundry list is missing, invalid or not a file", () => {
+    const d = fresh();
+    write(d);
+    const list = join(d, ISSUE_FOUNDRY_COMMENTS_FILE);
+    const marked = () => okOf(d).issue.comments!.filter((c) => "foundry" in c).map((c) => c.id);
+    expect(marked()).toEqual([]);
+    for (const bad of ["{}", "[1.5]", "[0]", '["34"]', "[34, 0]", "not json", "", "[34,"]) {
+      writeFileSync(list, bad);
+      expect(marked(), bad).toEqual([]);
+    }
+    rmSync(list);
+    mkdirSync(list);
+    expect(marked()).toEqual([]);
+    rmSync(list, { recursive: true });
+    writeFileSync(join(d, "real.json"), "[34]");
+    symlinkSync(join(d, "real.json"), list);
+    expect(marked()).toEqual([]);
   });
 
   it("reads a null body as empty text", () => {

@@ -493,5 +493,17 @@ describe("context bundle: versions and old runs", () => {
     expect(() => upgradeContextBundle({ version: 4 }, 3, steps)).toThrow(/reads versions 1 to 3/);
     expect(() => upgradeContextBundle({ version: 1 }, 2, { toString: () => ({}) } as never)).toThrow(/can no longer be read/);
   });
+});
 
+describe("the foundry mark on an issue comment", () => {
+  const withComment = (more: Raw) => bundle({ sources: [src("issue-comment", "issue:12/comment/34", "x", more)] });
+  it("accepts foundry: true and still reads a comment without it", () => {
+    expect(parseContextBundle(withComment({ foundry: true })).sources[0]).toHaveProperty("foundry", true);
+    expect(parseContextBundle(withComment({})).sources[0]).not.toHaveProperty("foundry");
+  });
+  it("refuses false, other values, other kinds and unknown fields", () => {
+    for (const v of [false, "yes", 1, null]) expect(() => parseContextBundle(withComment({ foundry: v })), String(v)).toThrow();
+    for (const s of [ISSUE(), FILE(), NOTES()]) expect(() => parseContextBundle(bundle({ sources: [{ ...s, foundry: true }] })), s.kind).toThrow();
+    expect(() => parseContextBundle(withComment({ other: true }))).toThrow();
+  });
 });

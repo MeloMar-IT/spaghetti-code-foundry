@@ -845,7 +845,8 @@ its description, or the kind of step when the flow gives none.
 
 - **Issue files** — when a run pulls a GitHub issue, the Foundry saves the issue as `issue.json`
   (its body, number, title and last update) and its comments as `issue-comments.jsonl` (one comment
-  per line) in the run folder. A step can read these files without calling GitHub again. If a
+  per line) in the run folder, and `issue-foundry-comments.json`, the ids of the comments the Foundry
+  wrote itself. A step can read these files without calling GitHub again. If a
   fetch fails, that file is not written and the run goes on without it.
 
 ### Approvals
@@ -1243,7 +1244,9 @@ use are listed (the planner, coder, reviewer or tester role, by the step's `skil
 `coder`). A source that is stale, not there or not for the role is listed as left out, with its
 reason, and the agent is told not to look for it elsewhere. Claude can read the context folder but
 cannot write to it; the workspace stays writable as before. A run with no bundle keeps the issue text
-in its prompt.
+in its prompt. A comment the Foundry wrote is marked in the list as `by: Foundry`, and in the issue
+text as `(Foundry)` in its header. Any other comment is not marked, so a comment that copies the
+Foundry's header does not get the mark.
 
 **Plans cite their sources.** When the run has a bundle, the planner writes its requirements,
 constraints and acceptance criteria with a citation at the end of each item, such as

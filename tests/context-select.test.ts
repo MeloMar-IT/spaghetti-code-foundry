@@ -297,6 +297,27 @@ describe("the context selector: input it refuses", () => {
   });
 });
 
+describe("the context selector: the foundry mark on a comment", () => {
+  const withFlag = (flag?: unknown) => ({
+    issue: { ...TASK.issue!, comments: TASK.issue!.comments!.map((c) => (c.id === 34 ? { ...c, ...(flag === undefined ? {} : { foundry: flag }) } : c)) },
+  });
+  const run = (flag?: unknown) => selectContext(input({ snapshot: memorySnapshot(), task: withFlag(flag) as never }));
+
+  it("copies foundry: true to that comment's source only", () => {
+    expect(run(true).bundle.sources.filter((x) => "foundry" in x).map((x) => x.uri)).toEqual(["issue:12/comment/34"]);
+    expect(run().bundle.sources.some((x) => "foundry" in x)).toBe(false);
+  });
+  it("refuses false, and refuses the field on the issue", () => {
+    expect(() => run(false)).toThrow(ContextSelectError);
+    expect(() => run(false)).toThrow(/task\.issue\.comments\.\d+\.foundry/);
+    expect(() => selectContext(input({ snapshot: memorySnapshot(), task: { issue: { ...TASK.issue!, foundry: true } } as never }))).toThrow(ContextSelectError);
+  });
+  it("gives the same ids and hashes with and without the flag", () => {
+    const pairs = (s: ContextSelection) => s.bundle.sources.map((x) => [x.id, x.content.sha256]);
+    expect(pairs(run(true))).toEqual(pairs(run()));
+  });
+});
+
 describe("path patterns, ownership files and generated marks", () => {
   const owners = (pattern: string, path: string) => compilePattern(pattern, "owners")!(path);
   const attr = (pattern: string, path: string) => compilePattern(pattern, "file")!(path);
