@@ -78,7 +78,7 @@ const whole = z.number().int().min(1).max(9_999_999_999_999_999);
 
 const TaskSchema = z
   .object({
-    issue: z.object({ number: whole, ...fetched, comments: z.array(z.object({ id: whole, ...fetched }).strict()).max(10_000).default([]) }).strict().optional(),
+    issue: z.object({ number: whole, ...fetched, comments: z.array(z.object({ id: whole, ...fetched, foundry: z.literal(true).optional() }).strict()).max(10_000).default([]) }).strict().optional(),
     refinement: z.object({ sessionId: z.string().max(64), ...fetched }).strict().optional(),
     /** Files and folders the task is about, relative to the repository root. A path that is not safe is ignored and counted. */
     paths: z.array(z.string().max(8192)).max(1000).default([]),
@@ -153,6 +153,8 @@ interface Candidate {
   path?: string;
   /** Set for a task input. */
   input?: { text: string; version: string; retrievedAt: string; classification: ContextClassification };
+  /** Set for a comment the Foundry wrote. */
+  foundry?: true;
 }
 
 const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -247,7 +249,7 @@ export function selectContext(input: SelectContextInput): ContextSelection {
     for (const c of [...task.issue.comments].sort((a, b) => a.id - b.id)) {
       if (ids.has(c.id)) throw new ContextSelectError("not valid: task.issue.comments has the same id twice");
       ids.add(c.id);
-      comments.push({ rule: "task-comments", kind: "issue-comment", uri: issueCommentUri(task.issue.number, c.id), input: fetchedInput(c, "task.issue.comments") });
+      comments.push({ rule: "task-comments", kind: "issue-comment", uri: issueCommentUri(task.issue.number, c.id), input: fetchedInput(c, "task.issue.comments"), ...(c.foundry === true ? { foundry: true as const } : {}) });
       texts.push(c.text);
     }
   }
@@ -385,6 +387,7 @@ export function selectContext(input: SelectContextInput): ContextSelection {
         freshness: { maxAgeSeconds: c.input ? opt.taskMaxAgeSeconds : null },
         selection,
         consumers: CONTEXT_CONSUMERS.filter((r) => (opt.consumers as ContextConsumer[]).includes(r)),
+        ...(c.foundry === true ? { foundry: true } : {}),
       } as ContextSource);
     }
   }

@@ -106,6 +106,15 @@ describe("contextIndex", () => {
     expect(contextIndex(bundleOf(sources), opts()).entries.map((e) => e.uri)).toEqual(["issue:12", "issue:12/comment/99", "issue:12/comment/100", "repo:a.md", "repo:z.md"]);
   });
 
+  it("adds | by: Foundry to a marked comment only", () => {
+    const text = renderContextIndex(contextIndex(bundleOf([src("issue", "issue:12"), src("issue-comment", "issue:12/comment/5", { foundry: true }), src("issue-comment", "issue:12/comment/6")]), opts()));
+    const lines = text.split("\n");
+    expect(lines.filter((l) => l.includes("by: Foundry"))).toHaveLength(1);
+    expect(lines.find((l) => l.includes("issue:12/comment/5"))!.endsWith("| picked: task | by: Foundry")).toBe(true);
+    expect(lines.find((l) => l.includes("issue:12/comment/6"))).not.toContain("by:");
+    expect(text).not.toContain(MARKER);
+  });
+
   it("prints none for empty lists", () => {
     const text = renderContextIndex(contextIndex(bundleOf([]), opts()));
     expect(text.match(/^- none$/gm)).toHaveLength(2);

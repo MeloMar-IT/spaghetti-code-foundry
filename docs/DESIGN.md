@@ -521,7 +521,9 @@ sources to the agents read-only (#153) and show them (#154). It is an extra file
   a `budget`, `policies`, `sources` and `omitted`.
 - **A source** has an `id`, a `kind`, a `uri`, a `revision`, `content` (file, SHA-256, size in
   bytes), `owners`, a `classification`, `retrievedAt`, `freshness`, a `selection` reason and
-  `consumers`. Every field is required.
+  `consumers`. Every field is required, except `foundry` on an `issue-comment`: `foundry: true` is set
+  only for a comment the Foundry wrote (see "Issue files" below). A bundle without the field still
+  reads, so `CONTEXT_BUNDLE_VERSION` stays 1.
 - **Kinds and addresses** (a closed list, `uri.ts`): `repository-file` (`repo:<path>`), `issue`
   (`issue:<number>`), `issue-comment` (`issue:<number>/comment/<id>`) and `refinement-notes`
   (`refinement:<session id>`). An address has no host, no folder of the machine, no query and no
@@ -636,6 +638,22 @@ giving the bundle to the agents is #153.
   and removes each entry (`rmSync` for a file, `rmdirSync` for a folder), never recursively, each in
   its own `try`; then it throws `write-failed`. Files and folders it did not make survive, so a
   foreign file planted inside `context/` mid-write keeps its folder.
+
+### Issue files
+
+`pull_ticket` (`blocks/pull-ticket.yaml`) writes three files in the run folder, each removed when its
+fetch fails: `issue.json`, `issue-comments.jsonl` and `issue-foundry-comments.json`, a JSON array of
+the ids (safe integers ≥ 1) of the comments the Foundry wrote. A comment counts as the Foundry's when
+GitHub says the account that runs the Foundry wrote it (`viewerDidAuthor`) and its body has
+`<!-- claude-factory` or `<!-- spaghetti-code-foundry`. The printed issue text uses the same rule: such
+a comment is headed `--- comment by <login> (Foundry):`. Any other line that starts with
+`--- comment by` in an issue or comment body is quoted as `> --- comment by`, so no body can fake the
+header.
+
+`readIssueFiles` (`src/context/issue-files.ts`) reads the list with the same strict rules. A comment in
+the list gets `foundry: true`. A missing, unreadable or invalid list marks nothing and the bundle is
+still built (the planner then sees no Foundry comments). `renderContextIndex` shows a marked comment
+with ` | by: Foundry`. The index never holds comment text.
 
 ### Writing a run's bundle
 

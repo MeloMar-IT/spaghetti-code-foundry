@@ -74,6 +74,16 @@ describe("comment wording comes from the next-step module", () => {
     expect(step, `${file}#${id}`).toBeDefined();
     return step!.run ?? "";
   };
+  it("pull_ticket marks the Foundry's own comments and quotes fake headers", () => {
+    for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
+      const run = stepRun(flowPath(f), "pull_ticket");
+      for (const s of [".viewerDidAuthor", " (Foundry)", "<!-- claude-factory", "<!-- spaghetti-code-foundry", 'gsub("(?m)^--- comment by"; "> --- comment by")', "issue-foundry-comments.json"]) {
+        expect(run, `${f}: ${s}`).toContain(s);
+      }
+    }
+    expect(stepRun(flowPath("epic-questions"), "read_issues")).not.toContain("(Foundry)");
+  });
+
   it("the planner, revision and epic prompts ask for a kind and a recommendation", () => {
     const prompt = (file: string, id: string) => {
       const def = parseYaml(readFileSync(file, "utf8")) as { steps: { id: string; prompt?: string }[] };
@@ -413,7 +423,8 @@ describe("generated ticket flows", () => {
       const y = text(f);
       expect(y, f).not.toMatch(/(🤖|✅|✋) \*\*claude-factory/);
       expect(y, f).not.toContain("claude-factory continues");
-      expect(y, f).not.toContain("<!-- spaghetti-code-foundry");
+      // pull_ticket may read the new marker (contains("…")); no step writes it
+      expect(y.replaceAll('contains("<!-- spaghetti-code-foundry")', ""), f).not.toContain("<!-- spaghetti-code-foundry");
       expect(y, f).toContain("<!-- claude-factory run=$FACTORY_RUN_ID -->");
     }
     expect(text("github-pr")).toContain("<!-- claude-factory run=$FACTORY_RUN_ID approval -->");

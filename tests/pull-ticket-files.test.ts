@@ -13,6 +13,9 @@ const L1 =
 const L2 =
   'gh api --paginate "repos/$FACTORY_VAR_GITHUB_REPO/issues/$FACTORY_VAR_ISSUE/comments?per_page=100" --jq \'.[] | {id, html_url, created_at, updated_at, body}\' > "{{run.dir}}/issue-comments.jsonl" 2>/dev/null || rm -f "{{run.dir}}/issue-comments.jsonl"';
 
+const L3 =
+  'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json comments --jq \'[.comments[] | select(.viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry"))) | (.url // "") | select(test("#issuecomment-[0-9]+$")) | capture("#issuecomment-(?<id>[0-9]+)$").id | tonumber]\' > "{{run.dir}}/issue-foundry-comments.json" 2>/dev/null || rm -f "{{run.dir}}/issue-foundry-comments.json"';
+
 function pullTicketScript(flow: string): string {
   const doc = parse(readFileSync(resolve("flows", `${flow}.yaml`), "utf8")) as { steps: { id: string; run?: string }[] };
   const step = doc.steps.find((s) => s.id === "pull_ticket");
@@ -55,6 +58,11 @@ describe("pull_ticket saves the issue files", () => {
     expect(i).toBeGreaterThanOrEqual(0);
     expect(lines[i + 1]).toBe(L1);
     expect(lines[i + 2]).toBe(L2);
+    expect(lines[i + 3]).toBe(L3);
+    expect(lines.filter((l) => l === L3)).toHaveLength(1);
+    const text = lines.findIndex((l) => l.includes("--json number,title,body,url,labels,comments"));
+    expect(text).toBeGreaterThan(i + 3);
+    expect(lines.slice(text + 1).some((l) => l.includes("gh "))).toBe(false);
     expect(lines.slice(0, i + 1).some((l) => l.includes("gh "))).toBe(false);
     expect(lines.filter((l) => l === L1)).toHaveLength(1);
     expect(lines.filter((l) => l === L2)).toHaveLength(1);
@@ -79,6 +87,25 @@ describe("pull_ticket saves the issue files", () => {
     expect(calls).toContain("gh api --paginate repos/owner/repo/issues/12/comments?per_page=100");
   });
 
+  it("saves the Foundry comment ids, and readIssueFiles marks them", () => {
+    const none = runScript();
+    const vars = { FAKE_GH_ISSUE_JSON: JSON.stringify(ISSUE), FAKE_GH_ISSUE_COMMENTS_JSONL: `${comment(1)}\n${comment(2)}\n` };
+    const r = runScript({ ...vars, FAKE_GH_FOUNDRY_COMMENTS_JSON: "[2]" });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe(none.stdout);
+    expect(readFileSync(join(runDir, "issue-foundry-comments.json"), "utf8")).toBe("[2]");
+    const read = readIssueFiles(runDir, 12, "2026-10-26T00:00:00Z");
+    if (!("ok" in read)) throw new Error("not read");
+    expect(read.ok.issue.comments![0]).not.toHaveProperty("foundry");
+    expect(read.ok.issue.comments![1]).toHaveProperty("foundry", true);
+  });
+
+  it("a failed call removes an old Foundry list", () => {
+    writeFileSync(join(runDir, "issue-foundry-comments.json"), "[1]");
+    expect(runScript().status).toBe(0);
+    expect(existsSync(join(runDir, "issue-foundry-comments.json"))).toBe(false);
+  });
+
   it("without the variables: exit 0, same stdout, no files", () => {
     const r = runScript();
     expect(r.status).toBe(0);
@@ -86,6 +113,7 @@ describe("pull_ticket saves the issue files", () => {
     expect(r.stderr).not.toContain("404");
     expect(existsSync(join(runDir, "issue.json"))).toBe(false);
     expect(existsSync(join(runDir, "issue-comments.jsonl"))).toBe(false);
+    expect(existsSync(join(runDir, "issue-foundry-comments.json"))).toBe(false);
     expect(readIssueFiles(runDir, 12, "2026-10-26T00:00:00Z")).toEqual({ failed: "issue-unreadable" });
   });
 
