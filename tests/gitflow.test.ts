@@ -485,7 +485,7 @@ describe("gitflow pipeline", () => {
     await watcher().tick();
     await settle();
     const flow = loadFlow("release-daily", gh.tmp).flow;
-    const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
+    const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true", reuse_test_results: "no" } });
     expect(r.status).toBe("succeeded");
     expect(r.history.at(-1)!.id).toBe("handoff");
     expect(r.history.at(-1)!.output).toContain("HANDOFF: skipped (");
@@ -532,6 +532,13 @@ describe("gitflow pipeline", () => {
     } finally {
       delete process.env.FAKE_GH_FAIL_PR_READY;
     }
+
+    // a later run on the same code does not run the tests again: the record of the first run is the hit
+    const again = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
+    expect(again.status).toBe("succeeded");
+    const reused = again.history.find((h) => h.id === "verify")!.output;
+    expect(reused).toContain("not run again");
+    expect(reused).toContain("CHECKS: yes");
   });
 
   it("creates the release pull request as a draft when the checks fail", async () => {

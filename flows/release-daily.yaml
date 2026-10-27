@@ -4,7 +4,7 @@
 # (a schedule watcher runs this once a day, e.g. 17:00 Europe/Berlin)
 # 
 # clone → develop ahead of main? ─┬─ no → end
-#                                 └─ full tests + build on develop (limit verify_timeout_min, 180 min; the slot wait does not count)
+#                                 └─ full tests (skipped when this exact code already passed them: reuse_test_results) + build on develop (limit verify_timeout_min, 180 min; the slot wait does not count)
 #                                    → open / update the PR develop → main
 #                                    (lists and closes the merged issues; draft while red or not finished in time) → comment the checks
 #                                    → handoff (check the contract, then ready or draft)
@@ -21,6 +21,7 @@ vars:
   develop_branch: develop
   main_branch: main
   verify_timeout_min: "180"
+  reuse_test_results: yes
 var_info:
   github_repo:
     set_by_run: true
@@ -46,6 +47,10 @@ var_info:
     kind: number
     min: 1
     max: 720
+  reuse_test_results:
+    label: Reuse test results
+    help: Skip a test run when the same code was already tested.
+    kind: yes_no
 steps:
   - id: clone
     type: shell
@@ -83,14 +88,26 @@ steps:
       track="{{run.dir}}/check.procs"; : > "$track"
       fmt() { if [ "$1" -lt 60 ]; then printf '%d s' "$1"; elif [ "$1" -lt 3600 ]; then printf '%d min' $(($1 / 60)); else printf '%d h %d min' $(($1 / 3600)) $(($1 % 3600 / 60)); fi; }
       tree=""; if t=$(git rev-parse "HEAD^{tree}") && st=$(git status --porcelain) && [ -z "$st" ]; then tree="$t"; fi
+      hit=""; if [ "$FACTORY_VAR_REUSE_TEST_RESULTS" != no ] && [ -n "$tree" ] && [ -n "$cmd" ]; then
+        key=$(printf '%s\n%s\n' "$tree" "$cmd" | shasum | cut -c1-40); f="{{run.dir}}/../../tested/$key"
+        if [ "${#key}" -eq 40 ] && [ -f "$f" ] && [ ! -L "$f" ]; then
+          line=$(head -c 200 "$f" 2>/dev/null | head -1)
+          hit=$(printf '%s\n' "$line" | sed -nE 's/^(run [A-Za-z0-9_-]{1,64}, [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}Z)(, tree [0-9a-f]{40})?$/\1/p')
+          case "$line" in *", tree "*) [ "$line" = "$hit, tree $tree" ] || hit="" ;; esac
+        fi
+      fi
       marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes
+      timed=""; bnote=""; used=0
+      if [ -n "$hit" ]; then echo "\$ $cmd"; echo "not run again: this exact code already passed these tests ($hit)"
+      else
       started="{{run.dir}}/tests.started"; rm -f "$started"; before=$(date +%s); timed=""; bnote=""
       FACTORY_TEST_SLOT_LIMIT_SEC="$limit" FACTORY_TEST_SLOT_STARTED_FILE="$started" FACTORY_TEST_SLOT_TRACK_FILE="$track" "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?
       [ "$code" -eq 0 ] || ok=no
       if [ "$code" -eq 124 ] && tail -n 1 "{{run.dir}}/tests.log" | grep -q "^test-slot: stopped after "; then timed=tests; fi
       t0=$(head -n 1 "$started" 2>/dev/null); case "$t0" in ""|*[!0-9]*) t0=$before ;; esac
       used=$(($(date +%s) - t0)); [ "$used" -ge 0 ] || used=0
-      record=no; if [ "$ok" = yes ] && [ -n "$tree" ] && [ -n "$cmd" ] && st=$(git status --porcelain) && [ -z "$st" ] && after_tree=$(git rev-parse "HEAD^{tree}") && [ "$after_tree" = "$tree" ]; then record=yes; fi
+      fi
+      record=no; if [ "$ok" = yes ] && [ -z "$hit" ] && [ -n "$tree" ] && [ -n "$cmd" ] && st=$(git status --porcelain) && [ -z "$st" ] && after_tree=$(git rev-parse "HEAD^{tree}") && [ "$after_tree" = "$tree" ]; then record=yes; fi
       if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then
         left=$((limit - used))
         if [ -n "$timed" ] || [ "$left" -le 0 ]; then bnote="not run (no time left)"; ok=no; [ -n "$timed" ] || timed=build
@@ -103,7 +120,7 @@ steps:
         key=$(printf '%s\n%s\n' "$tree" "$cmd" | shasum | cut -c1-40)
         if [ "${#key}" -eq 40 ]; then { mkdir -p "{{run.dir}}/../../tested" && printf 'run %s, %s, tree %s\n' "$FACTORY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%MZ)" "$tree" > "{{run.dir}}/../../tested/$key"; } 2>/dev/null || true; fi
       fi
-      { echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo '```'; echo "\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"
+      { echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo '```'; echo "\$ $cmd"; if [ -n "$hit" ]; then echo "not run again: this exact code already passed these tests ($hit)"; else "$FACTORY_TOOLS/test-summary" "$marker"; fi
         [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\$ $FACTORY_VAR_BUILD_CMD → ${bnote:-$(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")}"
         echo '```'; if [ -n "$timed" ]; then if [ "$timed" = tests ]; then what="the tests"; else what="the build"; fi; echo "⏱ **Checks did not finish in time** — the time limit of $(fmt "$limit") (verify_timeout_min) ran out before $what finished, so they were stopped. The wait for a test slot does not count. Marked as draft; see the run log."; elif [ "$ok" != yes ]; then echo "⚠ **Checks failed** — marked as draft until they pass. See the run log for details."; fi; } > "{{run.dir}}/checks.md"
       cat "{{run.dir}}/checks.md"; echo "CHECKS: $ok"
