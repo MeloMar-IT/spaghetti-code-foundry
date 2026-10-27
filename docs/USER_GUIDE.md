@@ -3002,6 +3002,16 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   an issue whose work already landed, or an issue that is unknown or closed. That question comes with
   a recommendation to plan the issue now without waiting. If the commit history cannot be read, no
   wait is recorded and every such request becomes a question.
+  The planner can also ask for a wait. In `issue-plan` and `issue-gitflow`, when the planner finds
+  that the work must wait for another open issue and that issue is not in **Depends on** yet, it
+  answers with that issue instead of asking about the order. The Foundry adds the issue to the marked
+  part of **Depends on**, prints it, and stops without a comment. When that issue is done, the
+  watcher continues: it reads the issue again and plans again on the current code.
+  The same rules as above apply. The wait becomes one question when the planner names the issue
+  itself, an unknown issue, a closed issue with no commit, work that already landed, an issue it
+  already waited for, or a loop, or when the check hits its limit. The question comes with a
+  recommendation to plan the issue now.
+  A run that you started by hand stays stopped until you resume it.
 - **Another issue is being built.** One issue at a time per repository; the rest start after it.
 - **New issues are being checked for questions** (a few minutes, once per batch).
 - **The usage limit or the daily budget is reached.** Runs pause and continue by themselves

@@ -285,7 +285,7 @@ export function recordWaitsFor(gh: GhCall, repo: string, self: number, request: 
 export function waitsForQuestion(self: number, request: WaitsForRequest, problems: readonly string[]): string {
   const reason = cleanReason(request.reason);
   return [
-    `The Foundry wanted #${self} to wait for ${hash(request.issues)}, but this is not possible:`,
+    `The Foundry wanted #${self} to wait for ${request.issues.length ? hash(request.issues) : "another story"}, but this is not possible:`,
     ...problems.map((p) => `- ${p}`),
     ...(reason ? [`Reason given: ${reason}`] : []),
     `What should happen? Answer here, or name the issue to wait for in the "Depends on" section.`,

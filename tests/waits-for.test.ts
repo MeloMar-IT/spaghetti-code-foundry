@@ -350,6 +350,10 @@ describe("waitsForQuestion", () => {
     expect(q).toContain("Reason given: needs issue 3 b");
     expect(waitsForQuestion(12, req([5]), ["p"])).not.toContain("Reason given");
   });
+
+  it("says another story when no issue was named", () => {
+    expect(waitsForQuestion(7, { issues: [], reason: "", error: "x" }, ["x"])).toMatch(/^The Foundry wanted #7 to wait for another story/);
+  });
 });
 
 describe("fake-gh fixture: issue view and edit", () => {
