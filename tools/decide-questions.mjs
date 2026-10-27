@@ -338,7 +338,7 @@ export function checkRound(record, issue, source, decided) {
   return all ? "went_on" : "asked";
 }
 
-const WANT_OTHER = "Want a different answer? Cancel the run if it is still going, answer on the issue, and start it again.";
+const WANT_OTHER = "Want a different answer? Reply `/overrule Q<n> <your answer>` on this issue.";
 const GAVE_UP = "post-plan: the Foundry gave up deciding these questions itself (it decided the same question before, or went on twice in a row). The questions are in the plan step and on the issue; answer them on the issue.";
 const CODES = { went_on: 3, asked: 0, gave_up: 4 };
 const GH_TIMEOUT_MS = 60_000;

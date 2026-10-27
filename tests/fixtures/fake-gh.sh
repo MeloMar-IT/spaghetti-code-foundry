@@ -46,6 +46,8 @@ if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
 # $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" and "pr view <n> --json comments" answer with that entry.
 # $FAKE_GH_COMMENTS_FROM_LOG=1: the same answer is built from the comments logged in $FAKE_GH_LOG when none of the above is set; its labels are those of the issue in $FAKE_GH_LOG.issues.json.
+# $FAKE_GH_COMMENTS_PLUS_LOG=1: the answer is the comments of $FAKE_GH_COMMENTS followed by the comments logged in $FAKE_GH_LOG (comments_from_log), merged.
+# $FAKE_GH_PERMISSION=fail: the permission lookup ("api repos/…/collaborators/<login>/permission") prints "gh: Bad Gateway (HTTP 502)" to stderr and fails.
 # comments_from_log <number> <1 with labels | 0 without>: that answer.
 comments_from_log() {
   node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}let labels=[];try{const l=JSON.parse(require("fs").readFileSync(process.argv[1]+".issues.json","utf8"));labels=(l.find(x=>x.number===Number(issue))||{}).labels||[]}catch{}console.log(JSON.stringify(process.argv[3]==="1"?{comments:out,labels}:{comments:out}))' "$FAKE_GH_LOG" "$1" "$2"
@@ -281,6 +283,7 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
          [ -n "$c" ] || c=${FAKE_GH_COMMENTS:-}
          # FAKE_GH_COMMENTS_FROM_LOG=1: the comments of issue <n> as logged by "issue comment" (numbered like the printed #issuecomment-<n>), minus deleted ones.
          if [ -z "$c" ] && [ -n "$FAKE_GH_COMMENTS_FROM_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(comments_from_log "$3" 1); fi
+         if [ -n "$FAKE_GH_COMMENTS_PLUS_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(node -e 'const a=JSON.parse(process.argv[1]||"{}"),b=JSON.parse(process.argv[2]);console.log(JSON.stringify(Object.assign({},a,{comments:(a.comments||[]).concat(b.comments),labels:a.labels||b.labels})))' "${FAKE_GH_COMMENTS:-}" "$(comments_from_log "$3" 1)"); fi
          [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *"--json state"*) echo "${FAKE_GH_ISSUE_STATE:-OPEN}" ;;
       # FAKE_GH_ISSUE_BODIES: JSON {"<number>": "<body>"}; the body replaces "Please add feature.txt" for that issue (the pull_ticket text).
@@ -364,7 +367,8 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
   "run view")    echo "FAIL src/app.test.js: expected 2, got 3" ;;
   "pr merge")    echo "merged" ;;
   "pr checkout") git fetch -q origin "factory/pr-$3" && git checkout -q -B "factory/pr-$3" FETCH_HEAD && git branch -q --set-upstream-to="origin/factory/pr-$3" 2>/dev/null; git config "branch.factory/pr-$3.remote" origin; git config "branch.factory/pr-$3.merge" "refs/heads/factory/pr-$3" ;;
-  "api "*)       case "$2" in user) echo "${FAKE_GH_LOGIN:-foundry-owner}" ;; *permission*) l=${2#*collaborators/}; l=${l%/permission}
+  "api "*)       if [ "$FAKE_GH_PERMISSION" = fail ]; then case "$2" in *permission*) echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1 ;; esac; fi
+                 case "$2" in user) echo "${FAKE_GH_LOGIN:-foundry-owner}" ;; *permission*) l=${2#*collaborators/}; l=${l%/permission}
                        # $FAKE_GH_READONLY: logins that only have read access
                        case " $FAKE_GH_READONLY " in *" $l "*) echo read ;; *) echo "${FAKE_GH_PERMISSION:-write}" ;; esac ;; *) printf '%s' "${FAKE_GH_API:-[]}" ;; esac ;;
   *) echo "fake gh: unsupported: $*" >&2; exit 1 ;;

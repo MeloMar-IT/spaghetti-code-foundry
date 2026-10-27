@@ -161,7 +161,7 @@ const FOUNDRY = "🤖 **Spaghetti Code Foundry**";
 export function acceptedComment(o: Overrule): string {
   const before = o.q === undefined ? "" : decidedItems(o.decided.body).get(o.q) ?? "";
   return [
-    `${FOUNDRY}: **Overrule accepted** for Q${o.q}.`,
+    `${FOUNDRY}: ${ACCEPTED_TEXT} for Q${o.q}.`,
     ...(before ? ["The Foundry had decided:", quote(defuse(before))] : []),
     "Your answer replaces it:",
     quote(defuse(o.answer ?? "")),
@@ -195,4 +195,49 @@ export function followUpComment(issue: Pick<Issue, "number">, o: Overrule): stri
     "_The Foundry does not create this issue: create it yourself if you want the change._",
     overruleMarker(o.key, true),
   ].join("\n\n");
+}
+
+/** Does the flow of this run plan (has a `plan` step)? Only then an overrule can change anything. */
+export function hasPlanStep(run: Pick<RunSummary, "flowDef">): boolean {
+  return (run.flowDef?.steps ?? []).some((s) => stepIs(s.id, ["plan"]));
+}
+
+/** The line a watcher writes into the live log of the run that plans again for an accepted overrule. */
+export const PLANNED_LINE = (key: string): string => `overrule ${key} planned again`;
+
+/** The keys named by PLANNED_LINE lines. */
+export function plannedKeys(logLines: readonly string[]): Set<string> {
+  const keys = new Set<string>();
+  for (const l of logLines) {
+    const m = /^overrule (\S+) planned again$/.exec(l.trim());
+    if (m) keys.add(m[1]!);
+  }
+  return keys;
+}
+
+const ACK_KEY = /^<!-- claude-factory overrule=([\w-]+) -->$/;
+const ACCEPTED_TEXT = "**Overrule accepted**";
+
+/** The overrules the Foundry accepted (a verified ack is on the issue) whose run was not planned again yet, rebuilt from the comments. */
+export function ackedNotPlanned(comments: readonly Comment[], planned: ReadonlySet<string>): Overrule[] {
+  const out: Overrule[] = [];
+  const seen = new Set<string>();
+  for (const ack of comments) {
+    if (!isFoundryComment(ack) || !isOverruleReply(ack)) continue;
+    // A rejection note carries the same marker: only the acceptance text makes it an ack (a follow-up reply has another marker).
+    if (!ack.body.includes(ACCEPTED_TEXT)) continue;
+    const key = ACK_KEY.exec(lastLine(ack.body) ?? "")?.[1];
+    if (!key || planned.has(key) || seen.has(key)) continue;
+    const at = comments.findIndex((c) => !isFoundryComment(c) && overruleKey(c) === key);
+    if (at < 0) continue;
+    const original = comments[at]!;
+    const parsed = parseOverrule(original.body);
+    if (parsed === undefined || parsed === "malformed") continue;
+    let decided: Comment | undefined;
+    for (const c of comments.slice(0, at)) if (isFoundryComment(c) && !isOverruleReply(c) && hasDecidedHeading(c.body)) decided = c;
+    if (!decided || !decidedItems(decided.body).has(parsed.q)) continue;
+    seen.add(key);
+    out.push({ key, comment: original, q: parsed.q, answer: parsed.answer, kind: "ok", decided });
+  }
+  return out;
 }
