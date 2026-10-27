@@ -1244,6 +1244,15 @@ reason, and the agent is told not to look for it elsewhere. Claude can read the 
 cannot write to it; the workspace stays writable as before. A run with no bundle keeps the issue text
 in its prompt.
 
+**Plans cite their sources.** When the run has a bundle, the planner writes its requirements,
+constraints and acceptance criteria with a citation at the end of each item, such as
+`[source: s-0123456789abcdef]`, naming the entries it rests on. Only entries the planner was given
+can be cited. The plan also has a `## Missing context` section that lists the entries the plan
+needed but did not get, with the reason, or says "none". A READY plan in which some of these three
+sections cite no entry gets a policy **warning** (`context.uncited`): it shows in the run log and in
+**Policy decisions** of the Evidence tab. The plan step does not fail. A run with no bundle gets no
+citations and no warning.
+
 - **The settings.** The `context:` section of `config.yaml` has seven keys, all optional:
   - `max_sources` (default `200`): the most files in the bundle.
   - `max_source_bytes` (`262144`): the most bytes of one file.

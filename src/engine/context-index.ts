@@ -1,9 +1,10 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { join } from "node:path";
-import { readContextBundle } from "../context/bundle.js";
+import { mayConsume, readContextBundle } from "../context/bundle.js";
+import { planCitations } from "../context/citations.js";
 import { contextIndex, ContextIndexError, renderContextIndex } from "../context/prompt-index.js";
 import { CONTEXT_BUNDLE_FILE, CONTEXT_SOURCES_DIR } from "../context/version.js";
-import type { ClaudeStep } from "../flow/schema.js";
+import type { ClaudeStep, Step } from "../flow/schema.js";
 import { readPlainFile } from "./os-sandbox.js";
 import { isTicketRecord } from "./run-context.js";
 import type { RunSummary } from "./state.js";
@@ -51,6 +52,34 @@ function isRegularFile(path: string): boolean {
     return lstatSync(path).isFile();
   } catch {
     return false;
+  }
+}
+
+const PLAN_READY = /^PLAN_STATUS: READY\s*$/m;
+
+/**
+ * After a top-level agent step whose prompt has `{{context.index}}` and whose output is a READY plan: how many of the
+ * plan's Requirements, Constraints and Acceptance criteria sections cite none of the bundle's sources the step's role
+ * may consume. Undefined (the fact is not given) in every other case, also when the bundle cannot be read. Never throws.
+ */
+export function stepContextUncited(
+  o: { summary: Pick<RunSummary, "runDir">; step: Step; topLevel: boolean; output: string | undefined },
+  deps: Pick<StepContextIndexDeps, "read"> = {},
+): number | undefined {
+  const { summary, step, output } = o;
+  if (!o.topLevel || step.type !== "claude" || output === undefined) return undefined;
+  PLACEHOLDER.lastIndex = 0;
+  if (!PLACEHOLDER.test(step.prompt) || !PLAN_READY.test(output)) return undefined;
+  try {
+    const text = (deps.read ?? readFile)(join(summary.runDir, CONTEXT_BUNDLE_FILE));
+    if (text === undefined) return undefined;
+    const read = readContextBundle(text);
+    if (read.state !== "ok") return undefined;
+    const role = step.skill_role ?? "coder";
+    const known = new Set(read.bundle.sources.filter((s) => mayConsume(s, role)).map((s) => s.id));
+    return planCitations(output, known).uncited;
+  } catch {
+    return undefined;
   }
 }
 

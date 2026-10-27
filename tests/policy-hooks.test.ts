@@ -694,6 +694,19 @@ describe("needsFact, the step without a sandbox fact and the path patterns", () 
     expect(without.packSha256).not.toBe(open.packSha256);
   });
 
+  it("warns for an uncited plan at step.after, and asks a step without the fact against the variant pack", () => {
+    const lines: string[] = [];
+    const policy = runPolicy(user(), ConfigSchema.parse({}), (l) => lines.push(l), undefined, home);
+    const warn = policy.at("step.after", { step: "plan", contextUncited: 2 }).decisions[0]!.decision;
+    expect(warn).toMatchObject({ outcome: "warn", reasonCode: "context.uncited", mode: "observe" });
+    expect(lines.join("\n")).toContain("context.uncited");
+    const without = policy.at("step.after", { step: "x" }).decisions[0]!.decision;
+    expect(without.reasonCode).toBe("policy.no-rule-matched");
+    const zero = policy.at("step.after", { step: "x", contextUncited: 0 }).decisions[0]!.decision;
+    expect(zero.reasonCode).toBe("policy.no-rule-matched");
+    expect(without.packSha256).not.toBe(zero.packSha256);
+  });
+
   it("logs one line for patterns it cannot hold, and denies a matching path", () => {
     const lines: string[] = [];
     const policy = runPolicy(user({ forbidden_paths: "ok/* bad\x05x" }), ConfigSchema.parse({}), (l) => lines.push(l), undefined, home);

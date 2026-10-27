@@ -365,7 +365,7 @@ function checkContract(text, sigText, key) {
 // same commit. tests/delivery-validate-events.test.ts builds a valid event for every type and enum value and fails if not.
 
 /** The newest event version this script reads. A higher version is refused, so a validator that falls behind stops delivery. */
-const EVIDENCE_EVENT_VERSION = 5;
+const EVIDENCE_EVENT_VERSION = 6;
 const EVENTS_MAX = 256 * 1024 * 1024;
 const ARTIFACT_KINDS = ["log", "transcript", "diff", "flow", "skill-lock", "test-report", "other"];
 const STEP_TYPES = ["claude", "shell", "approval", "parallel", "flow"];
@@ -380,7 +380,7 @@ const REASON_CODES = [
   "branch.protected", "branch.hotfix-exception", "secret.detected", "path.forbidden", "output.limit-exceeded", "timeout.exceeded", "budget.step-exceeded",
   "budget.run-exceeded", "budget.daily-exceeded", "sandbox.required", "workspace.admin-only", "repository.not-allowed", "credential.scope-exceeded",
   "identity.missing", "tool.not-allowed", "issue.closed", "flow.retired", "approval.required", "exception.granted",
-  "context.limit-exceeded", "context.sources-omitted", "context.classification-exceeded",
+  "context.limit-exceeded", "context.sources-omitted", "context.classification-exceeded", "context.uncited",
   "policy.no-rule-matched", "policy.input-incomplete", "policy.invalid", "policy.unavailable", "policy.break-glass",
 ];
 const NO_RULE_REASONS = ["policy.no-rule-matched", "policy.invalid", "policy.unavailable", "policy.break-glass"];
@@ -571,7 +571,7 @@ function eventRules(e) {
 }
 const isEvent = both(union("type", EVENT_TYPES), eventRules);
 
-/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→3→4→5 only set the version), then the schema holds. */
+/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→3→4→5→6 only set the version), then the schema holds. */
 function readEvent(raw) {
   const v = raw.version;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > EVIDENCE_EVENT_VERSION) return false;

@@ -36,7 +36,7 @@ export const MAX_PACK_BYTES = 1 << 20;
 export const UNKNOWN_POLICY_VERSION = "unknown";
 
 export type LoadedPack =
-  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push whose repository is not known. */ pushWithoutRepository?: PolicyPack; /** Asked instead of `pack` at `step.before` when the `sandboxed` fact is not known. */ stepWithoutSandbox?: PolicyPack }
+  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push whose repository is not known. */ pushWithoutRepository?: PolicyPack; /** Asked instead of `pack` at `step.before` when the `sandboxed` fact is not known. */ stepWithoutSandbox?: PolicyPack; /** Asked instead of `pack` at `step.after` when the `contextUncited` fact is not known. */ stepWithoutCitations?: PolicyPack }
   | { id: string; problem: "policy.unavailable" | "policy.invalid"; detail: string };
 
 export type LayeredPack = LoadedPack & { layer: Layer };
@@ -428,6 +428,7 @@ export class RunPolicy {
     if (input.boundary === "push") {
       if (input.facts.repository === undefined && loaded.pushWithoutRepository) pack = loaded.pushWithoutRepository;
     } else if (input.boundary === "step.before" && input.facts.sandboxed === undefined && loaded.stepWithoutSandbox) pack = loaded.stepWithoutSandbox;
+    else if (input.boundary === "step.after" && input.facts.contextUncited === undefined && loaded.stepWithoutCitations) pack = loaded.stepWithoutCitations;
     return evaluatePolicy(pack, input, at);
   }
 
@@ -497,8 +498,8 @@ export class RunPolicy {
 /** The mandatory baseline entry of a run. Never throws: a baseline that cannot be built is a `policy.invalid` entry (no weaker fallback). */
 export function baselineEntry(version: string, controls: BaselineControls): LayeredPack {
   try {
-    const { pack, pushWithoutRepository, stepWithoutSandbox } = runBaseline(version, controls);
-    return { layer: "mandatory", id: BASELINE_POLICY_ID, pack, stepWithoutSandbox, ...(pushWithoutRepository ? { pushWithoutRepository } : {}) };
+    const { pack, pushWithoutRepository, stepWithoutSandbox, stepWithoutCitations } = runBaseline(version, controls);
+    return { layer: "mandatory", id: BASELINE_POLICY_ID, pack, stepWithoutSandbox, stepWithoutCitations, ...(pushWithoutRepository ? { pushWithoutRepository } : {}) };
   } catch (e) {
     return { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, e instanceof PolicySchemaError ? (e.message.split("\n")[0] ?? "could not be built") : "could not be built") };
   }

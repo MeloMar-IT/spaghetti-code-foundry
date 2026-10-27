@@ -238,7 +238,8 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   profile of one try, see "Tool profiles") from version 3, and `policy.decided` from version 2
   (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"), and `repo.operation` from
   version 4 (one repository operation of the broker, see "Repository broker"), and `context.bundled` from
-  version 5 (the context bundle of the run was written, or making it failed, see "Writing a run's bundle").
+  version 5 (the context bundle of the run was written, or making it failed, see "Writing a run's bundle"),
+  and from version 6 the reason code `context.uncited` (see "Policy hooks in observe mode").
   `prevHash` and `hash` come together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -280,10 +281,12 @@ numbers and pure functions.
   `step.before`, `step.after`, `repository.access`, `agent.write`, `push`, `approval.consume`,
   `context.select` and `run.complete`. The facts are a closed list (`FactsSchema`): repository, branch, flow, step, tool,
   workspace, owner role, credential, changed paths, secrets found, output bytes, elapsed time, step,
-  run and daily cost, six flags, and the context facts of `context.select` (`contextSources`,
-  `contextBytes`, `contextOmitted` and `contextClassification`, the most private class of the sources).
+  run and daily cost, six flags, the context facts of `context.select` (`contextSources`,
+  `contextBytes`, `contextOmitted` and `contextClassification`, the most private class of the sources),
+  and `contextUncited` at `step.after` (a count from 0 to 3 of the plan's sections with no citation, see
+  "Policy hooks in observe mode").
   All are optional and none is free text. A caller gives what it knows and never a guess.
-  `POLICY_INPUT_VERSION` is 2 from the `context.select` change.
+  `POLICY_INPUT_VERSION` is 3 from the `contextUncited` change (2 from the `context.select` change).
 - **`PolicyDecision`**: `version`, `policy`, `packSha256`, `mode`, `boundary`, `inputSha256`,
   `outcome`, `reasonCode`, `rule` and `evaluatedAt`. The outcomes are `allow`, `warn`,
   `require_approval` and `deny`. The input itself is not kept, only its hash. The hashes are the
@@ -295,7 +298,7 @@ numbers and pure functions.
   `budget.daily-exceeded`, `sandbox.required`, `workspace.admin-only`, `repository.not-allowed`,
   `credential.scope-exceeded`, `identity.missing`, `tool.not-allowed`, `issue.closed`,
   `flow.retired`, `approval.required`, `exception.granted`, `context.limit-exceeded`,
-  `context.sources-omitted`, `context.classification-exceeded`. Codes only the evaluation gives:
+  `context.sources-omitted`, `context.classification-exceeded`, `context.uncited`. Codes only the evaluation gives:
   `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`. The code
   only the break-glass gives: `policy.break-glass` (a `warn` in `enforce` mode, see "Break-glass" below).
 - **`evaluatePolicy(pack, input, evaluatedAt)`** gives one decision and is deterministic: no file,
@@ -379,6 +382,15 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
 - **Unknown push repository.** `runBaseline` also builds `pushWithoutRepository` (the same pack without the
   repository rule). `RunPolicy.decide` uses it at `push` only when the input has no `repository`. Such a
   decision records that pack's hash. The repository is never guessed.
+- **Plan citations fact.** `stepContextUncited` (`src/engine/context-index.ts`, called from `recordStep` in
+  `execute.ts`) gives `contextUncited` at `step.after` only for a top-level `claude` step whose prompt has
+  `{{context.index}}`, whose output has a `PLAN_STATUS: READY` line, and whose run has a readable `context.json`.
+  The count comes from `planCitations` (`src/context/citations.ts`): the Requirements, Constraints and
+  Acceptance criteria sections that are missing or cite no id the step's role may consume (`mayConsume`, role
+  `skill_role ?? "coder"`). The baseline rule `context-uncited` (`CONTEXT_UNCITED_RULE`, observe, `warn`) is last,
+  so a limit or path deny still wins. `runBaseline` builds `stepWithoutCitations`, the same pack without that rule;
+  `RunPolicy.decide` uses it at `step.after` when the input has no `contextUncited` fact, so other steps never get
+  `input-incomplete` there.
 - **Step without sandbox fact.** The `sandbox-required` rule also applies at `step.before` (`SANDBOX_STEP_RULE`), and
   `runBaseline` builds `stepWithoutSandbox`: the same pack with the rule only at `agent.write`. `RunPolicy.decide`
   uses it at `step.before` only when the input has no `sandboxed` fact, which is every step that is not a shell
