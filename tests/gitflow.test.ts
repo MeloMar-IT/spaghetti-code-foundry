@@ -453,6 +453,27 @@ describe("gitflow pipeline", () => {
     }
   });
 
+  it("fails the handoff step when gh cannot mark the pull request ready or a draft", async () => {
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const flow = loadFlow("release-daily", gh.tmp).flow;
+    process.env.FAKE_GH_FAIL_ON = "pr ready";
+    process.env.FAKE_GH_FAIL_TEXT = "boom";
+    try {
+      const green = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
+      expect(green.status).toBe("failed");
+      expect(green.history.at(-1)!.output).toContain("PR #99 could not be marked ready");
+      expect(green.history.at(-1)!.output).not.toContain("ready to merge");
+      const red = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
+      expect(red.status).toBe("failed");
+      expect(red.history.at(-1)!.output).toContain("PR #99 could not be made a draft");
+    } finally {
+      delete process.env.FAKE_GH_FAIL_ON;
+      delete process.env.FAKE_GH_FAIL_TEXT;
+    }
+  });
+
   it("opens one release pull request develop → main that closes the merged issues", async () => {
     issues(5);
     await watcher().tick();
@@ -460,7 +481,20 @@ describe("gitflow pipeline", () => {
     const flow = loadFlow("release-daily", gh.tmp).flow;
     const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
     expect(r.status).toBe("succeeded");
+    expect(r.history.at(-1)!.id).toBe("handoff");
+    expect(r.history.at(-1)!.output).toContain("HANDOFF: skipped (");
     expect(r.history.at(-1)!.output).toMatch(/checks passed — PR #99 \(Release \d{4}-\d\d-\d\d: #5\) is ready to merge/);
+    expect(r.history.find((h) => h.id === "release_pr")!.output).toMatch(/^PR: 99\nTITLE: Release \d{4}-\d\d-\d\d: #5$/m);
+    // the flow: no ready mark in release_pr; the key-guarded draft comes before the check, the ready mark only after it
+    const rp = flow.steps.find((s) => s.id === "release_pr") as { run: string };
+    const ho = flow.steps.find((s) => s.id === "handoff") as { run: string; repo_access?: boolean; timeout_sec?: number };
+    expect(rp.run).not.toContain("gh pr ready");
+    expect(ho.repo_access).toBe(true);
+    expect(ho.timeout_sec).toBe(1800);
+    const at = (s: string) => ho.run.indexOf(s);
+    expect(at('if [ -n "$FACTORY_DELIVERY_PUBLIC_KEY" ]; then draft')).toBeGreaterThan(-1);
+    expect(at('if [ -n "$FACTORY_DELIVERY_PUBLIC_KEY" ]; then draft')).toBeLessThan(at("delivery-handoff"));
+    expect(at('gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" >')).toBeGreaterThan(at("delivery-handoff"));
     const log = gh.ghLog();
     expect(log).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release/);
     expect(log).not.toMatch(/gh pr create[^\n]*--draft/);

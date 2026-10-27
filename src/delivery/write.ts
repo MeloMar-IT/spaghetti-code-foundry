@@ -13,7 +13,7 @@ import { EVIDENCE_EVENTS_FILE } from "../evidence/version.js";
 import { buildDeliveryContract, contractDigest, DeliveryContractError, deliveryContractText, evidenceHeadProblem, signDeliveryContract } from "./contract.js";
 import { CommitFactsError, readCommitFacts, type CommitFactsOptions } from "./git-facts.js";
 import { DeliveryContractSchema, type DeliveryContract } from "./schema.js";
-import { readSigningKey } from "./sshsig.js";
+import { publicKeyLine, readSigningKey } from "./sshsig.js";
 
 /**
  * Writes the delivery contracts of a run: after a step, once the run has a pull request of its own repository, a new
@@ -130,6 +130,15 @@ export function readBoundedBytes(path: string, max: number): Buffer | undefined 
   }
 }
 
+/** The text of a plain file of at most `max` bytes; undefined when there is none or it cannot be read. Never throws. */
+export function readBoundedText(path: string, max: number): string | undefined {
+  try {
+    return readBounded(path, max);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Replaces `contract.json` (and its `.sig`) with the given contract by renaming temporary files. */
 function publishLatest(dir: string, text: string, sig: string | undefined): void {
   const tag = randomBytes(6).toString("hex");
@@ -181,6 +190,33 @@ export function readConfiguredSigningKey(signingKeyPath: string, dataDir: string
   const key = readSigningKey(keyText);
   if (!key.ok) throw new DeliveryWriteError("key");
   return key.key;
+}
+
+export type SigningKeyState = { kind: "none" } | { kind: "unusable"; fault: "keyPlace" | "key" } | { kind: "key"; key: KeyObject };
+
+/** What the delivery settings say about the signing key: none set, set but not usable, or the key. */
+export function deliverySigningKey(delivery: Config["delivery"], dataDir: string): SigningKeyState {
+  const path = delivery.signing_key_path;
+  if (path === undefined) return { kind: "none" };
+  try {
+    return { kind: "key", key: readConfiguredSigningKey(path, dataDir) };
+  } catch (e) {
+    return { kind: "unusable", fault: e instanceof DeliveryWriteError && e.fault === "keyPlace" ? "keyPlace" : "key" };
+  }
+}
+
+/**
+ * The step environment value of the trusted public key: the `ssh-ed25519` line, `-` when a key is set but cannot be used,
+ * `""` when none is set. Only the public line is ever returned. `{}` when the settings are not usable.
+ */
+export function deliveryKeyEnv(delivery: Config["delivery"] | undefined, dataDir: string): Record<string, string> {
+  try {
+    if (!delivery || typeof delivery !== "object") return {};
+    const k = deliverySigningKey(delivery, dataDir);
+    return { FACTORY_DELIVERY_PUBLIC_KEY: k.kind === "key" ? publicKeyLine(k.key) : k.kind === "unusable" ? "-" : "" };
+  } catch {
+    return {};
+  }
 }
 
 function write(input: WriteContractInput): WrittenContract | undefined {

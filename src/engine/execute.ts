@@ -1,7 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config } from "../config.js";
-import { deliveryAfterStep } from "../delivery/write.js";
+import { deliveryAfterStep, deliveryKeyEnv } from "../delivery/write.js";
+import { FACTORY_HOME } from "../home.js";
 import { loadFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
 import { runAgentStep } from "../agents/run.js";
@@ -133,7 +134,9 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   // Every consumer gets untrusted values scrubbed (secrets and configured patterns) before the step's own credentials are
   // added by the callers. An agent step may also quarantine them (`bound`). The SCF_ aliases get the same values.
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
-  return withScfAliases(o.bound ? o.bound(scrubbed) : scrubbed);
+  // The trusted public key comes only from the engine, never from the server's own environment: a missing value is blank.
+  const keyEnv = { FACTORY_DELIVERY_PUBLIC_KEY: "", ...deliveryKeyEnv((engine.deliverySettings ?? (() => engine.config?.delivery))(), process.env.FACTORY_HOME ?? FACTORY_HOME) };
+  return withScfAliases({ ...(o.bound ? o.bound(scrubbed) : scrubbed), ...keyEnv });
 }
 
 export function historySummary(summary: RunSummary): string {
