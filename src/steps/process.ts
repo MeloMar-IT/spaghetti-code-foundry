@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
+import { anyPidAlive, ProcessTracker, processTableAsync, signalRows, type ProcRow } from "./proc-tree.js";
 import { combineRedactors, liveRedactor, makeRedactor, redactStream, requireRedaction, type Redactor } from "../credentials/redact.js";
 
 export interface ProcessResult {
@@ -36,6 +37,8 @@ export interface ProcessOptions {
   ownGroup?: boolean;
   /** Run in a process group of its own and signal the whole group on cancel and timeout (not when the process ends). A kill waits until the group is gone. */
   groupKill?: boolean;
+  /** With groupKill: how often the step's descendants are noted, so ones that left the group are stopped on cancel and time-out too (default 10 s). */
+  trackEveryMs?: number;
   /** Start from nothing instead of the server's environment: only `env` is passed (a user's run, see short-env.ts). */
   cleanEnv?: boolean;
   /** Start the command inside `/usr/bin/sandbox-exec` with this profile (a shell step of a user's run, see os-sandbox.ts). */
@@ -135,6 +138,8 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
         process.on("exit", killLiveGroups);
       }
     }
+    const tracker = opts.groupKill && child.pid ? new ProcessTracker(child.pid, { everyMs: opts.trackEveryMs ?? 10_000 }) : undefined;
+    tracker?.start();
     const began = Date.now();
     let printed = 0;
     const measure = () => {
@@ -162,24 +167,51 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
 
     let killedAt = 0;
     let killTimer: NodeJS.Timeout | undefined;
+    // Processes of the step that left its group, read at the first kill (see proc-tree.ts).
+    let extra: ProcRow[] = [];
+    let extraDone = false; // the extra rows were validated and SIGKILLed
+    let extraBusy = false; // a table read for them is running
+    // SIGKILL to the extra rows, once a fresh table confirms them. A failed read is retried on the next call.
+    const killExtra = () => {
+      if (extraDone || extraBusy || !extra.length) return;
+      extraBusy = true;
+      const rows = extra;
+      void processTableAsync(1000).then((t) => {
+        extraBusy = false;
+        if (!t) return;
+        signalRows(rows, "SIGKILL", t);
+        extraDone = true;
+      });
+    };
+    const hardKill = () => {
+      signalTree("SIGKILL");
+      killExtra();
+    };
     const kill = () => {
-      signalTree("SIGTERM");
+      const first = !killedAt;
       killedAt ||= Date.now();
-      if (killTimer) return;
-      killTimer = setTimeout(() => signalTree("SIGKILL"), 5000);
-      if (!grouped) killTimer.unref(); // a group is waited for, so its timer must stay
+      if (!killTimer) {
+        killTimer = setTimeout(hardKill, 5000);
+        if (!grouped) killTimer.unref(); // a group is waited for, so its timer must stay
+      }
+      // before the group goes: the children that left it still point to their parents
+      if (first && tracker) extra = tracker.toStop();
+      signalTree("SIGTERM");
+      // validated against a fresh table; when that read fails, the SIGKILL path retries it
+      if (first && extra.length) signalRows(extra, "SIGTERM");
     };
     // After a kill, the step is not over until nothing of its group runs: SIGKILL at 5 s, and at most 1 s more.
     const groupGone = async () => {
       const pid = child.pid;
       if (!pid) return;
       let hard = 0;
-      while (groupAlive(pid)) {
+      while (groupAlive(pid) || anyPidAlive(extra)) {
         const now = Date.now();
         if (!hard && now - killedAt >= 5000) {
           signalTree("SIGKILL");
           hard = now + 1000;
         }
+        if (hard) killExtra();
         if (hard && now > hard) break;
         await new Promise((r) => setTimeout(r, 50));
       }
@@ -239,6 +271,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
 
     const cleanup = () => {
       clearTimeout(timer);
+      tracker?.stop();
       opts.signal?.removeEventListener("abort", onAbort);
     };
     child.on("error", (err) => {
