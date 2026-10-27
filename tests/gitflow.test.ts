@@ -463,6 +463,7 @@ describe("gitflow pipeline", () => {
     expect(r.history.at(-1)!.output).toMatch(/checks passed — PR #99 \(Release \d{4}-\d\d-\d\d: #5\) is ready to merge/);
     const log = gh.ghLog();
     expect(log).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release/);
+    expect(log).not.toMatch(/gh pr create[^\n]*--draft/);
     expect(log).toContain("Closes #5");
     expect(log).toContain("Spaghetti Code Foundry daily release check");
     // the green run left the checked record that self-update reads
@@ -480,6 +481,30 @@ describe("gitflow pipeline", () => {
     expect(green.at(-1)).toBe(`<!-- claude-factory run=${r.runId} daily -->`);
     expect(first(checks[1]!.body)).toBe(reportFirst("draft"));
     expect(checks[1]!.body).toContain("⚠ **Checks failed**");
+
+    // when the switch to a draft fails, the run says so
+    process.env.FAKE_GH_FAIL_PR_READY = "1";
+    try {
+      const stuck = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
+      expect(stuck.status).toBe("succeeded");
+      expect(stuck.history.at(-1)!.output).toContain("checks failed — could not mark PR #99 as a draft");
+      expect(stuck.history.at(-1)!.output).not.toContain("PR #99 is a draft");
+    } finally {
+      delete process.env.FAKE_GH_FAIL_PR_READY;
+    }
+  });
+
+  it("creates the release pull request as a draft when the checks fail", async () => {
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const flow = loadFlow("release-daily", gh.tmp).flow;
+    const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
+    expect(r.status).toBe("succeeded");
+    expect(r.history.at(-1)!.output).toContain("checks failed — PR #99 is a draft");
+    const log = gh.ghLog();
+    expect(log).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release[^\n]* --draft/);
+    expect(log).not.toMatch(/gh pr ready 99 [^\n]*--undo/);
   });
 });
 

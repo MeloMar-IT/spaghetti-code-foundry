@@ -39,6 +39,7 @@ if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "
 # $FAKE_GH_ISSUE_JSON: the answer of "issue view <n> --json body,number,title,updatedAt" (pull_ticket saves it as issue.json); unset or empty: 404 on stderr, exit 1.
 # $FAKE_GH_ISSUE_COMMENTS_JSONL (set, also when empty): the answer of "api --paginate repos/<o>/<n>/issues/<n>/comments…" (issue-comments.jsonl); unset: 404.
 # $FAKE_GH_FAIL_ON=<text>: a call whose arguments contain this text prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
+# $FAKE_GH_FAIL_PR_READY=1: "pr ready" (also with --undo) fails.
 if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
 # $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
@@ -322,7 +323,7 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
                  # "--body-file -" stores the new title (--title, else the old one) and body of the PR in $FAKE_GH_LOG.bodies.json.
                  case "$*" in *"--body-file -"*) title=""; prev=""; for a in "$@"; do [ "$prev" = "--title" ] && title="$a"; prev="$a"; done
                    node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const u=process.argv[2];const old=m[u]||{title:""};m[u]={title:process.argv[3]||old.title,body:fs.readFileSync(process.argv[4],"utf8")};fs.writeFileSync(f,JSON.stringify(m))' "$FAKE_GH_LOG.bodies.json" "$3" "$title" "$FAKE_GH_LOG.lastbody" ;; esac ;;
-  "pr ready")    ;;
+  "pr ready")    if [ -n "$FAKE_GH_FAIL_PR_READY" ]; then echo "boom" >&2; exit 1; fi ;;
   "repo clone")  # the folder is $4; the flags after "--" go to git clone, as in the real gh (the remote is a local folder, so any GIT_ALLOW_PROTOCOL is dropped)
                  dest="$4"; shift 4; [ "$1" = "--" ] && shift
                  ( unset GIT_ALLOW_PROTOCOL; git clone "$@" "$FAKE_GH_REMOTE" "$dest" ) ;;

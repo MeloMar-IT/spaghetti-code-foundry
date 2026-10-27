@@ -71,11 +71,12 @@ steps:
     description: Open the PR if there is none yet; comment the checks on it; draft while they fail
     run: |-
       branch=$(printf '%s\n' "$FACTORY_OUT_FIND_BRANCH" | head -1)
-      url=$("$FACTORY_TOOLS/daily-branch" ensure-pr "$branch") || exit 1; n=${url##*/}
       if printf '%s\n' "$FACTORY_OUT_VERIFY" | grep -q "^CHECKS: no"; then ok=no; first="$FACTORY_FIRST_DRAFT"; else ok=yes; first="$FACTORY_FIRST_MERGE_RELEASE"; fi
+      draft=""; if [ "$ok" = no ]; then draft=--draft; fi
+      url=$("$FACTORY_TOOLS/daily-branch" ensure-pr "$branch" $draft) || exit 1; n=${url##*/}
       { echo "$first"; echo
         echo "🤖 **Spaghetti Code Foundry daily report** — $(date '+%Y-%m-%d %H:%M')"; echo; cat "{{run.dir}}/checks.md"
         if [ "$ok" = yes ]; then echo; echo "_Merge whenever you like — the Foundry keeps working either way; after a merge it continues on a fresh branch._"; fi
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID daily -->"; } | gh pr comment "$n" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null
-      if [ "$ok" = no ]; then gh pr ready "$n" --repo "$FACTORY_VAR_GITHUB_REPO" --undo >/dev/null 2>&1 || true; echo "checks failed — $url is a draft"
+      if [ "$ok" = no ]; then if gh pr ready "$n" --repo "$FACTORY_VAR_GITHUB_REPO" --undo >/dev/null 2>&1; then echo "checks failed — $url is a draft"; else echo "checks failed — could not mark $url as a draft"; fi
       else gh pr ready "$n" --repo "$FACTORY_VAR_GITHUB_REPO" >/dev/null 2>&1 || true; echo "checks passed — $url is ready to merge"; fi
