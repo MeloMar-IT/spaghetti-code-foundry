@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { FLOW_SKILL_MODES, SkillIdSchema, STEP_SKILL_MODES, STEP_SKILL_ROLES } from "../skills/schema.js";
 import { RESOLVE_RANGE } from "../skills/resolve-rules.js";
-import { varEnvName } from "../engine/template.js";
+import { placeholders, varEnvName } from "../engine/template.js";
 import { REPO_OPERATIONS, type RepoOperation } from "../engine/repo-request.js";
 
 /** Reserved transition targets. Anything else must be a step id. */
@@ -293,6 +293,16 @@ export const FlowSkillsSchema = z
 
 type AnyStep = z.infer<typeof StepSchema>;
 
+/** Why a template may not use this placeholder, or undefined. `{{context.index}}` is for the prompt of a claude step only. */
+export function contextPlaceholderProblem(text: string, allowIndex: boolean): string | undefined {
+  for (const p of placeholders(text)) {
+    if (p.split(".")[0] !== "context") continue;
+    if (p !== "context.index") return `{{${p}}} is not a context value; the only one is {{context.index}}`;
+    if (!allowIndex) return "{{context.index}} can only be used in the prompt of a claude step";
+  }
+  return undefined;
+}
+
 /**
  * Check that jumps, routes, resume and parallel references point at known steps.
  * `known` is the set of ids a reference may point at.
@@ -301,6 +311,13 @@ export function checkStepRefs(steps: AnyStep[], known: Set<string>, addIssue: (p
   const reserved = RESERVED_TARGETS as readonly string[];
   const byId = new Map(steps.map((s) => [s.id, s]));
   steps.forEach((s, i) => {
+    const texts: [string[], string | undefined, boolean][] =
+      s.type === "claude" ? [[["prompt"], s.prompt, true], [["system_prompt"], s.system_prompt, false]] : s.type === "shell" ? [[["run"], s.run, false]] : s.type === "approval" ? [[["message"], s.message, false]] : [];
+    if (s.type === "flow") for (const [k, v] of Object.entries(s.vars ?? {})) texts.push([["vars", k], v, false]);
+    for (const [field, text, allowIndex] of texts) {
+      const problem = text === undefined ? undefined : contextPlaceholderProblem(text, allowIndex);
+      if (problem) addIssue(["steps", i, ...field], problem);
+    }
     const target = (t: string | undefined, path: (string | number)[]) => {
       if (t && !reserved.includes(t) && !known.has(t)) addIssue(["steps", i, ...path], `unknown step "${t}"`);
     };
@@ -393,6 +410,10 @@ export const FlowSchema = z
       }
     });
     checkStepRefs(flow.steps, ids, (path, message) => ctx.addIssue({ code: "custom", path, message }));
+    for (const [key, value] of Object.entries(flow.vars)) {
+      const problem = typeof value === "string" ? contextPlaceholderProblem(value, false) : undefined;
+      if (problem) ctx.addIssue({ code: "custom", path: ["vars", key], message: problem });
+    }
     for (const [key, info] of Object.entries(flow.var_info ?? {})) {
       if (!Object.hasOwn(flow.vars, key)) {
         ctx.addIssue({ code: "custom", path: ["var_info", key], message: `unknown variable "${key}"` });

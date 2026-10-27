@@ -76,6 +76,8 @@ export function trustOf(path: string, stepTypes: Record<string, Step["type"]> = 
     return (EXTERNAL_VARS as readonly string[]).includes(a) ? { trust: "untrusted", kind: "external" } : { trust: "operator" };
   }
   if (root === "workdir") return { trust: "operator" };
+  // The context index is fixed words plus strictly shaped bundle values (see context/prompt-index.ts); any other context path fails closed.
+  if (root === "context" && a === "index" && parts.length === 2) return { trust: "operator" };
   if (root === "run") return a && OPERATOR_RUN.has(a) ? { trust: "operator" } : { trust: "untrusted", kind: "log" };
   if (root === "task") return { trust: "untrusted", kind: "issue" };
   if (root === "learnings") return { trust: "untrusted", kind: "memory" };
@@ -365,7 +367,7 @@ export function envSourceItems(ctx: TemplateContext, stepTypes: Record<string, S
 
 /** The deterministic phase: render the prompt with data blocks, check the system prompt. Throws `UntrustedRefusal` or `GuardError`. */
 export function boundAgentPrompt(step: Pick<ClaudeStep, "prompt" | "system_prompt">, ctx: TemplateContext, o: { stepTypes: Record<string, Step["type"]> } & GuardOptions): BoundPrompt {
-  if (step.system_prompt && placeholders(step.system_prompt).some((p) => trustOf(p, o.stepTypes).trust === "untrusted")) throw new UntrustedRefusal(SYSTEM_PROMPT_REFUSAL);
+  if (step.system_prompt && placeholders(step.system_prompt).some((p) => p.split(".")[0] === "context" || trustOf(p, o.stepTypes).trust === "untrusted")) throw new UntrustedRefusal(SYSTEM_PROMPT_REFUSAL);
   const found = new Map<string, BoundItem>();
   const rendered = render(step.prompt, ctx, undefined, (path, text) => {
     const t = trustOf(path, o.stepTypes);
@@ -382,7 +384,8 @@ export function boundAgentPrompt(step: Pick<ClaudeStep, "prompt" | "system_promp
     const byPath = new Map(list.map((i) => [i.path, i]));
     return rendered.replace(/\u0000([^\u0000]+)\u0000/g, (_m, p: string) => (byPath.has(p) ? envelope(p, byPath.get(p)!) : _m));
   };
-  const systemText = step.system_prompt ? render(step.system_prompt, ctx) : "";
+  const { context: _context, ...systemCtx } = ctx;
+  const systemText = step.system_prompt ? render(step.system_prompt, systemCtx) : "";
   const system = [items.length === 0 ? "" : UNTRUSTED_DATA_NOTE, systemText].filter(Boolean).join("\n\n");
   return {
     prompt: compose(items),
