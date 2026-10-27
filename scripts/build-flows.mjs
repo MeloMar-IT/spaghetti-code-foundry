@@ -376,6 +376,13 @@ const clone = {
   repo_access: true,
   run: 'if [ -d .git ]; then git fetch -q origin; ' + CLONE_ELSE + '\ngit log --oneline -1',
 };
+// Planning must see current code: a failed fetch, branch lookup or checkout fails the step (a resume plans again on it).
+const PLAN_CLONE_RUN = 'if [ -d .git ]; then git fetch -q origin || { echo "could not fetch origin"; exit 1; }; ' + CLONE_ELSE + '\ngit log --oneline -1';
+const DAILY_CHECKOUT = [
+  'b=$("$FACTORY_TOOLS/daily-branch" latest) || { echo "could not find the newest daily branch (see above)"; exit 1; }',
+  'if [ "$b" != NONE ]; then git checkout -q --detach "origin/$b" || { echo "could not check out $b"; exit 1; }; echo "Code: main plus unmerged work on $b"',
+  'else git checkout -q --detach origin/HEAD || { echo "could not check out main (origin/HEAD)"; exit 1; }; echo "Code: main"; fi',
+].join("\n");
 
 // After a replan or resume the outputs of earlier rounds are still in the run. $FACTORY_RAN_<STEP> is the step's place in
 // the run history: a step that did not run after the latest `plan` belongs to an older round, so its output is blanked.
@@ -385,8 +392,15 @@ const FRESH_PLAN = [
   'fresh "$FACTORY_RAN_REVISE_GATE" || FACTORY_OUT_REVISE_GATE=""',
   'fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""',
   'fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""',
+  'fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""',
 ].join("\n");
-// The plan text of this round: the revised plan when it finished as READY, else the first draft.
+const WAITS_FOR_LINES = [
+  "- WAITS_FOR: the work must wait for another open issue of this repository whose work has not landed, and its",
+  "  \"Depends on\" does not name it yet. Don't ask about the order and don't plan it: write `WAITS_FOR: #<n>`",
+  "  (up to 10 numbers, never this issue) and `WAITS_FOR_REASON: <one line why>`. The Foundry records it in",
+  "  \"Depends on\" and plans again once that issue is done; only an invalid wait becomes a question.",
+];
+// The plan text of this round:the revised plan when it finished as READY, else the first draft.
 const PLAN_OUT = '"${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}"';
 // The answer that carries a split: the forced split (size limit), else the revision, else the draft.
 const SPLIT_OUT = '"${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}"';
@@ -553,6 +567,7 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         "- NEEDS_INFO: a decision only the owner can make, or missing requirements. Ask specific questions",
         "  with the options you see and your recommendation. Do not guess on things that matter.",
         ...QUESTION_FORMAT,
+        ...WAITS_FOR_LINES,
         "- READY: write the plan with these sections:",
         "  ## Goal — what will work when this is done, in one or two sentences.",
         "  ## Requirements — what the work must do, as a list.",
@@ -574,9 +589,9 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         ...(sized ? SIZE_LINES : []),
         ...SKILL_LINES,
         "",
-        "End with exactly one line: PLAN_STATUS: READY | NEEDS_INFO | NOT_CODE | TOO_BIG",
+        "End with exactly one line: PLAN_STATUS: READY | NEEDS_INFO | NOT_CODE | TOO_BIG | WAITS_FOR",
       ].join("\n"),
-      routes: [{ if: "^PLAN_STATUS: READY\\s*$", goto: "plan_review" }, ...(split ? [{ if: "^PLAN_STATUS: TOO_BIG\\s*$", goto: "split_gate" }] : [])],
+      routes: [{ if: "^PLAN_STATUS: READY\\s*$", goto: "plan_review" }, { if: "^PLAN_STATUS: WAITS_FOR\\s*$", goto: "wait_for_story" },...(split ? [{ if: "^PLAN_STATUS: TOO_BIG\\s*$", goto: "split_gate" }] : [])],
       on_success: "send_back",
     },
     {
@@ -642,6 +657,8 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         "It replaces the draft's line; do not keep skills the final plan no longer needs.",
         "If you answer NEEDS_INFO, write the questions in the same form:",
         ...QUESTION_FORMAT,
+        "If you answer WAITS_FOR, write the WAITS_FOR: and WAITS_FOR_REASON: lines as described here:",
+        ...WAITS_FOR_LINES,
         ...(split && sized ? SPLIT_FORMAT : []),
         "",
         "{{context.index}}",
@@ -654,16 +671,28 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         "=== REVIEW ===",
         "{{steps.plan_review.output}}",
         "",
-        "End with exactly one line: PLAN_STATUS: READY | NEEDS_INFO | NOT_CODE | TOO_BIG",
+        "End with exactly one line: PLAN_STATUS: READY | NEEDS_INFO | NOT_CODE | TOO_BIG | WAITS_FOR",
       ].join("\n"),
       // READY → post it; another status → send back; no status (cut off) or a failure → post the draft.
       routes: [
         { if: "^PLAN_STATUS: READY\\s*$", goto: post },
         ...(split ? [{ if: "^PLAN_STATUS: TOO_BIG\\s*$", goto: "split_gate" }] : []),
+        { if: "^PLAN_STATUS: WAITS_FOR\\s*$", goto: "wait_for_story" },
         { if: "^PLAN_STATUS: [A-Z_]+\\s*$", goto: "send_back" },
       ],
       on_success: post,
       on_failure: post,
+    },
+    {
+      id: "wait_for_story",
+      type: "shell",
+      repo_access: true,
+      jump_only: true,
+      description: "Record in Depends on that this issue waits for another story and stop (continues when it is done); an invalid wait is asked",
+      resume_from: "pull_ticket",
+      run: [FRESH_PLAN, `printf '%s\\n' ${PLAN_OUT} | node "$FACTORY_TOOLS/waits-for"`].join("\n"),
+      routes: [{ if: "^QUESTION\\s*$", goto: "send_back" }],
+      on_success: "stop",
     },
     {
       id: "send_back",
@@ -686,10 +715,14 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         '  if [ "$code" -eq 3 ]; then printf \'%s\\n\' "$body"; echo "DECIDED: went_on"; exit 0; fi',
         '  if [ "$code" -ne 0 ]; then printf \'%s\\n\' "$body"; exit "$code"; fi',
         "else",
-        '  park=""',
+        '  park=""; extra=""',
         '  case "$status" in',
         '    NOT_CODE) head="thinks this issue is not a coding task:"; park="$FACTORY_PARK_HINT" ;;',
         '    TOO_BIG) head="thinks this issue is too big for one change and proposes splitting it:" ;;',
+        '    WAITS_FOR) q=$(printf \'%s\\n\' "$FACTORY_OUT_WAIT_FOR_STORY" | sed \'/^QUESTION[[:space:]]*$/d\')',
+        '      [ -n "$q" ] || { echo "planning failed: WAITS_FOR, but the wait was not checked"; exit 1; }',
+        '      head="wanted this issue to wait for another story, but could not record it:"',
+        '      out=$(printf \'%s\\n\' "$out" | sed -E \'/^[[:space:]]*WAITS_FOR(_REASON)?:/d\'); park="$q"; extra="$q" ;;',
         '    *) echo "planning failed: no PLAN_STATUS line"; exit 1 ;;',
         "  esac",
         '  { echo "$FACTORY_FIRST_PLANNER_QUESTIONS"; echo',
@@ -699,7 +732,7 @@ const planPhase = (post, { risk = false, split = false, sized = false, reviseAbo
         '    echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"',
         '    echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \\',
         '    | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null || exit 1',
-        '  body=$(printf \'%s\\n\' "$out" | sed \'/^PLAN_STATUS:/d\')',
+        '  body=$(printf \'%s\\n\' "$out" | sed \'/^PLAN_STATUS:/d\'; if [ -n "$extra" ]; then echo; printf \'%s\\n\' "$extra"; fi)',
         "fi",
         'printf \'%s\\n\' "$body"',
       ].join("\n"),
@@ -717,6 +750,7 @@ write("issue-plan", {
     "  ─┬─ READY → Codex checks the plan against the code ─┬─ approved → post plan → done",
     "   │                                                  └─ issues → Opus revises (fresh, targeted) → post plan → done",
     "   │     (if the revision fails or the budget runs out, the draft is posted with Codex's notes)",
+    "   ├─ WAITS_FOR #N → recorded in Depends on → stop (continues when #N is done; an invalid wait is asked)",
     "   └─ NEEDS_INFO / NOT_CODE / TOO_BIG → post why → stop (resumes and re-plans when you reply)",
     "     (technical questions with a recommendation: the Foundry decides them, posts them and plans again)",
   ],
@@ -731,8 +765,7 @@ write("issue-plan", {
     {
       ...clone,
       description: "Clone, then check out the newest daily branch that is not in main yet (so the plan sees unmerged work)",
-      run: clone.run + '\nb=$("$FACTORY_TOOLS/daily-branch" latest 2>/dev/null || echo NONE)\n' +
-        'if [ "$b" != NONE ] && git checkout -q --detach "origin/$b"; then echo "Code: main plus unmerged work on $b"; else echo "Code: main"; fi',
+      run: PLAN_CLONE_RUN + "\n" + DAILY_CHECKOUT,
     },
     ...planPhase("post_plan", { catalogue: true }),
     {
@@ -1277,6 +1310,7 @@ write("issue-plan", {
       "",
       "pull ticket → branch of the open factory PR (or a new one) → baseline tests",
       "  → Opus plans (xhigh) → Codex checks it (+ its own risk score) → Opus revises",
+      "      WAITS_FOR #N → recorded in Depends on → stop (continues when #N is done; an invalid wait is asked)",
       "      NEEDS_INFO / NOT_CODE → ask on the issue → stop (continues when you reply)",
       "      TOO_BIG → split risk ≤ 50 (or you already agreed) → create the parts as issues, close this one",
       "              otherwise → post the split, wait for /approve",
@@ -2038,6 +2072,7 @@ write("issue-plan", {
       "pull ticket → feature/<issue>-<title> from develop (develop is created from main if missing) → baseline tests",
       "  → Opus plans (with size + code areas) → Codex checks (+ risk) → Opus revises",
       "      too big (limit or planner) → split: low split risk creates the issues itself, else /approve",
+      "      WAITS_FOR #N → recorded in Depends on → stop (continues when #N is done; an invalid wait is asked)",
       "  → risk > 75 or Factory_review_plan → wait for /approve",
       "  → lock the plan's code areas (runs on other areas code at the same time)",
       "  → Sonnet codes → tests ⟲ fix → 2 × Codex review → docs → commit → push the feature branch",
@@ -2227,9 +2262,7 @@ write("epic-questions", {
     {
       ...clone,
       description: "Clone, then check out develop (gitflow) or the newest factory branch that is not in main yet",
-      run: clone.run + '\nif [ -n "$FACTORY_VAR_DEVELOP_BRANCH" ] && git rev-parse -q --verify "origin/$FACTORY_VAR_DEVELOP_BRANCH" >/dev/null; then git checkout -q --detach "origin/$FACTORY_VAR_DEVELOP_BRANCH" && echo "Code: $FACTORY_VAR_DEVELOP_BRANCH" && exit 0; fi' +
-        '\nb=$("$FACTORY_TOOLS/daily-branch" latest 2>/dev/null || echo NONE)\n' +
-        'if [ "$b" != NONE ] && git checkout -q --detach "origin/$b"; then echo "Code: main plus unmerged work on $b"; else echo "Code: main"; fi',
+      run: PLAN_CLONE_RUN + '\nif [ -n "$FACTORY_VAR_DEVELOP_BRANCH" ] && git rev-parse -q --verify "origin/$FACTORY_VAR_DEVELOP_BRANCH" >/dev/null; then git checkout -q --detach "origin/$FACTORY_VAR_DEVELOP_BRANCH" || { echo "could not check out $FACTORY_VAR_DEVELOP_BRANCH"; exit 1; }; echo "Code: $FACTORY_VAR_DEVELOP_BRANCH"; exit 0; fi\n' + DAILY_CHECKOUT,
     },
     {
       id: "read_issues",

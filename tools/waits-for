@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+// Records that the issue being planned waits for another story, in the Foundry part of its "Depends on".
+// Usage: waits-for   (the plan comes on stdin; run it with node)
+// Input (stdin): the plan text with a line `WAITS_FOR: #12, #13` and optionally `WAITS_FOR_REASON: why`.
+// Output (stdout), exit 0:
+//   WAITS_FOR: #12 / Recorded in Depends on of #7. / PARKED     the wait is recorded (or was already); the run stops
+//   <question text> / QUESTION                                  the wait is not possible; the flow asks one question
+// Exit 1 (message on stderr as `waits-for: …`): bad input or environment, the commits of HEAD cannot be read, or gh failed
+// (other than "issue not found"). Nothing is asked then; a failed write is undone by the library where it can be.
+// The library is dist/queue/waits-for.js (build first). The commits of HEAD (the cwd is the clone) show landed work.
+// Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE, FACTORY_GH_BIN (the gh program, for tests).
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+
+const GH = process.env.FACTORY_GH_BIN || "gh";
+
+function fail(msg) {
+  process.stderr.write(`waits-for: ${msg}\n`);
+  process.exit(1);
+}
+
+if (process.argv.length > 2) fail("usage: waits-for  (the plan comes on stdin)");
+const repo = process.env.FACTORY_VAR_GITHUB_REPO ?? "";
+if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+const issue = process.env.FACTORY_VAR_ISSUE ?? "";
+if (!/^[1-9]\d{0,8}$/.test(issue)) fail("set var issue to the issue number");
+const self = Number(issue);
+
+const text = readFileSync(0, "utf8");
+let lib;
+try {
+  lib = await import(new URL("../dist/queue/waits-for.js", import.meta.url).href);
+} catch (e) {
+  fail(`could not load the waits-for library: ${String(e?.message || e).split("\n")[0]}`);
+}
+
+const request = lib.parseWaitsFor(text) ?? { issues: [], reason: "", error: "The plan has no WAITS_FOR: line." };
+
+function ask(problems) {
+  console.log(lib.waitsForQuestion(self, request, problems));
+  console.log("QUESTION");
+  process.exit(0);
+}
+if (request.error) ask([request.error]);
+
+// All commits of HEAD. A failure stops the tool: the landed-work check is impossible without them.
+function readCommits() {
+  try {
+    const out = execFileSync("git", ["log", "--no-show-signature", "--format=%H%x1f%B%x1e", "HEAD"], { encoding: "utf8", maxBuffer: 1024 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+    return out.split("\x1e").map((r) => r.replace(/^\n+/, "")).filter(Boolean).map((r) => {
+      const i = r.indexOf("\x1f");
+      return { sha: r.slice(0, i), message: r.slice(i + 1) };
+    });
+  } catch (e) {
+    return fail(`could not read the commits of HEAD: ${String(e?.stderr || e?.message || e).trim().split("\n")[0]}`);
+  }
+}
+const commits = readCommits();
+
+let ghFailure;
+function gh(args, input) {
+  try {
+    return execFileSync(GH, args, { encoding: "utf8", input, timeout: 60_000, maxBuffer: 64 * 1024 * 1024, stdio: [input !== undefined ? "pipe" : "ignore", "pipe", "pipe"] });
+  } catch (e) {
+    const msg = String(e?.stderr || e?.message || e).trim();
+    // An unknown issue is a question, not a failure.
+    if (!(args[1] === "view" && /Could not resolve to an Issue|Not Found|HTTP 404/i.test(msg))) {
+      ghFailure ??= msg.split("\n")[0];
+    }
+    throw e;
+  }
+}
+
+const r = lib.recordWaitsFor(gh, repo, self, request, commits);
+if (ghFailure) {
+  for (const p of r.problems) process.stderr.write(`${p}\n`);
+  fail(`gh failed: ${ghFailure}`);
+}
+if (r.outcome === "problem") ask(r.problems);
+console.log(`WAITS_FOR: ${r.wait.map((n) => "#" + n).join(", ")}`);
+console.log(r.outcome === "unchanged" ? `Already recorded in Depends on of #${self}.` : `Recorded in Depends on of #${self}.`);
+for (const a of r.already ?? []) console.log(`#${a.issue} already landed (commit ${String(a.commit ?? "").slice(0, 7)}).`);
+console.log("PARKED");
