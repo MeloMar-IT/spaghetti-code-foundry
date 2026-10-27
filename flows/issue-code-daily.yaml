@@ -153,7 +153,7 @@ steps:
     prompt: |-
       Implement GitHub issue below in this repository.
 
-      {{steps.pull_ticket.output}}
+      {{context.index}}
 
       Follow the plan in the latest "Spaghetti Code Foundry plan" comment (older ones are headed
       "claude-factory plan"), including any later comments from people, which override it. The bold first

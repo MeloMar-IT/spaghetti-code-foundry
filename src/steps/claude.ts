@@ -124,6 +124,8 @@ export interface ClaudeRunOptions {
   sandbox?: boolean;
   /** Folders outside the workspace the agent may write (the request folder of a step with repo_ops): added to its folders and to its bash sandbox. */
   writableDirs?: string[];
+  /** Folders outside the workspace the agent may read but never edit (the run's context folder). */
+  readOnlyDirs?: string[];
   /** Load no MCP servers (keeps the prompt small for local models). */
   noMcp?: boolean;
   /** Skip the user's personal setup: MCP servers, user settings (hooks, plugins, env), skills. */
@@ -256,7 +258,12 @@ export function buildClaudeArgs(o: ClaudeRunOptions): string[] {
   const strict = o.isolated || Boolean(o.tools);
   if (o.noMcp || strict) args.push("--strict-mcp-config");
   if (strict) args.push("--setting-sources", "project,local", "--disable-slash-commands");
+  // Through --settings, not --allowedTools: a path with a space or a comma would break the list.
+  const readOnly = (o.readOnlyDirs ?? []).map((dir) => `//${dir.replace(/^\/+/, "").replace(/\/+$/, "")}/**`);
   const settings = {
+    ...(readOnly.length
+      ? { permissions: { allow: readOnly.map((p) => `Read(${p})`), deny: readOnly.flatMap((p) => [`Edit(${p})`, `Write(${p})`, `NotebookEdit(${p})`]) } }
+      : {}),
     ...(o.sandbox ? { sandbox: { enabled: true, autoAllowBashIfSandboxed: true, ...(o.writableDirs?.length ? { filesystem: { allowWrite: o.writableDirs } } : {}) } } : {}),
     ...(o.tools ? { disableAllHooks: true } : {}),
   };

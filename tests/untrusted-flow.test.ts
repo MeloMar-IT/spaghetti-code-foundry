@@ -57,6 +57,28 @@ describe("untrusted text in a flow", () => {
     expect(asked).toBe(0);
   });
 
+  const TICKET = '  - {id: pull_ticket, type: shell, run: "echo ISSUE-BODY-MARKER"}\n';
+  const INDEX_ASK = '  - {id: ask, type: claude, prompt: "SHOWPROMPT\\n{{context.index}}"}\n';
+
+  it("gives {{context.index}} the pasted issue when the run has no bundle", async () => {
+    const s = await run(`${TICKET}${INDEX_ASK}`);
+    expect(s.status).toBe("succeeded");
+    const prompt = out(s, "ask").split("PROMPT<<")[1]!;
+    expect(prompt).toContain("ISSUE-BODY-MARKER");
+    expect(prompt).not.toContain("=== CONTEXT");
+  });
+
+  it("stops a step whose bundle cannot be read, without starting the agent or pasting the issue", async () => {
+    const write = '  - {id: bundle, type: shell, run: "echo {} > {{run.dir}}/context.json"}\n';
+    const s = await run(`${TICKET}${write}${INDEX_ASK}`);
+    expect(s.status).toBe("failed");
+    const ask = s.history.find((h) => h.id === "ask")!;
+    expect(ask.error).toMatch(/^CONTEXT_UNUSABLE bundle-invalid/);
+    expect(ask.accessFailed).toBe(true);
+    expect(ask.output).not.toContain("ISSUE-BODY-MARKER");
+    expect(ask.sessionId).toBeUndefined();
+  });
+
   it("refuses run.history and the CI variables in a shell step", async () => {
     const s = await run("  - {id: sh, type: shell, run: \"echo {{run.history}}\"}\n");
     expect(s.status).toBe("failed");

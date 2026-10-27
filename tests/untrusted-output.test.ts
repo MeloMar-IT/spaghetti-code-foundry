@@ -178,6 +178,21 @@ describe("classifier", () => {
   });
 });
 
+describe("the context index", () => {
+  it("is operator text; any other context path is untrusted", () => {
+    expect(trustOf("context.index")).toEqual({ trust: "operator" });
+    for (const p of ["context", "context.other", "context.index.x"]) expect(trustOf(p).trust).toBe("untrusted");
+  });
+  it("renders inline in a prompt, with no data envelope", () => {
+    const b = boundAgentPrompt({ prompt: "A {{context.index}} B" }, { ...ctx, context: { index: "=== CONTEXT ===" } }, { stepTypes: types, stored });
+    expect(b.prompt).toBe("A === CONTEXT === B");
+    expect(b.items).toHaveLength(0);
+  });
+  it("is refused in a system_prompt", () => {
+    expect(() => boundAgentPrompt({ prompt: "p", system_prompt: "S {{context.index}}" }, { ...ctx, context: { index: "x" } }, { stepTypes: types, stored })).toThrow(UntrustedRefusal);
+  });
+});
+
 describe("renderTrusted", () => {
   const rt = (t: string) => renderTrusted(t, ctx, types);
   it("refuses untrusted placeholders", () => {

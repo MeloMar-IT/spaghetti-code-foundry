@@ -47,7 +47,7 @@ type ContextEngine = Pick<Engine, "summary" | "config" | "log">;
 
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
-const isTicketRecord = (h: RunSummary["history"][number]): boolean => h.id === "pull_ticket" && h.parent === undefined && h.ok;
+export const isTicketRecord =(h: RunSummary["history"][number]): boolean => h.id === "pull_ticket" && h.parent === undefined && h.ok;
 
 /** Whether nothing is there at `path` (lstat: a link, even a dangling one, is something). Any error but ENOENT counts as there. */
 function absent(path: string): boolean {

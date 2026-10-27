@@ -363,7 +363,7 @@ steps:
       You are the lead architect for this repository. Plan the work for the GitHub issue below so that
       another engineer can implement it without having to make design decisions. Do NOT modify files.
 
-      {{steps.pull_ticket.output}}
+      {{context.index}}
 
       {{steps.clone.output}}
       Paths that must not be changed: {{vars.forbidden_paths}}
@@ -568,7 +568,7 @@ steps:
         asks for, or needs decisions only the owner can make. Write it as the line: SPLIT_RISK: <0-100>
         If the owner already agreed to split this issue (in the comments above), also write: SPLIT_APPROVED: yes
 
-      {{steps.pull_ticket.output}}
+      {{context.index}}
 
       What the person who started this run wrote (it may be empty; it comes on top of the issue):
       {{task}}
@@ -843,7 +843,7 @@ steps:
     prompt: |-
       Implement GitHub issue below in this repository.
 
-      {{steps.pull_ticket.output}}
+      {{context.index}}
 
       Follow this plan (comments from people on the issue override it):
 

@@ -18,6 +18,7 @@ import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
 import { TOOLS_DIR, botIdentityEnv } from "../engine/guards.js";
+import { stepContextIndex } from "../engine/context-index.js";
 import { boundAgentPrompt, boundEnv, classifyBound, stepTypesOf, UntrustedRefusal, type BoundPrompt, type OutputLabel } from "../engine/untrusted.js";
 import { GuardError } from "../help/guard.js";
 import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
@@ -111,6 +112,8 @@ interface Gate {
   toolProfile: ToolProfile;
   /** The prompt with its data blocks, and the system prompt with the data note (see untrusted.ts). */
   bounded: BoundPrompt;
+  /** Folders the agent may read but not edit (the run's context folder). Claude only; Codex reads the disk and never writes there. */
+  readOnlyDirs?: string[];
 }
 
 interface WithOptions extends Gate {
@@ -346,6 +349,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     maxBudgetUsd: caps.length ? Math.max(0.01, Math.min(...caps)) : undefined,
     sandbox: sandboxed,
     writableDirs: env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : undefined,
+    readOnlyDirs: o.readOnlyDirs,
     noMcp: local,
     isolated: isolatedSession,
     effort,
@@ -465,8 +469,17 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   }
   // Deterministic bounding of everything from outside the policy; a refusal here is a denial like the ones above.
   let bounded: BoundPrompt;
+  // `{{context.index}}` becomes the list of the run's context files, or the pasted issue when there is no bundle; a bundle that cannot be used stops the step.
+  const withIndex = stepContextIndex({ summary: engine.summary, step, ctx: scope.ctx });
+  if ("refuse" in withIndex) {
+    engine.log(`    ! ${withIndex.refuse}`);
+    engine.accessFailed = true;
+    return { ok: false, output: withIndex.refuse, error: withIndex.refuse };
+  }
+  if (withIndex.log) engine.log(`    ${withIndex.log}`);
+  const readOnlyDirs = withIndex.readOnlyDirs;
   try {
-    bounded = boundAgentPrompt(step, scope.ctx, { stepTypes: stepTypesOf(scope.flow), patterns: config.help.sensitive_patterns });
+    bounded = boundAgentPrompt({ ...step, prompt: withIndex.prompt }, withIndex.ctx, { stepTypes: stepTypesOf(scope.flow), patterns: config.help.sensitive_patterns });
   } catch (e) {
     if (!(e instanceof UntrustedRefusal || e instanceof GuardError)) throw e;
     engine.log(`    ! ${e.message}`);
@@ -516,7 +529,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       }
       return { ok: false, output: reason, error: reason, held: classified.held.sha256, ...tries() };
     }
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified }, meter);
+    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified, readOnlyDirs }, meter);
     seen(r);
     if (r.ok || engine.signal?.aborted || final) return await applyRepoRequests({ engine, scope, step, identity, logFile, profile: resolved.session.profile }, { ...r, ...tries() });
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try

@@ -454,6 +454,9 @@ In `prompt`, `message` and `vars` values, `{{…}}` placeholders are replaced:
 | `{{steps.ID.output}}` | Output of a step that already ran (empty if it hasn't run yet) |
 | `{{steps.ID.ok}}`, `{{steps.ID.exit_code}}` | Whether it succeeded; a shell step's exit code |
 | `{{learnings}}` | Lessons saved by earlier runs in this repository (may be empty) |
+| `{{context.index}}` | Only in the `prompt` of a `claude` step; any other `{{context.…}}` is refused. The list of the run's context files that the step's role may use (`skill_role`, default `coder`): id, kind, address, the read-only file path, bytes and why it was picked, then the sources left out with a reason code. It never holds source text, and the sources are read with the agent's tools. With no context bundle in the run, it is the issue text (`{{steps.pull_ticket.output}}`). A bundle that cannot be used stops the step before the agent starts. |
+
+Use `{{context.index}}` in a prompt that works from the issue, so that the agent gets only the sources its role may use. Keep `system_prompt` free of it: source text is never placed there.
 
 A flow variable named **`agent_env`** is special: its `KEY=value` pairs (separated by `;` or new
 lines) are added to the environment of every agent step — e.g. `agent_env: JAVA_HOME=/opt/jdk21`

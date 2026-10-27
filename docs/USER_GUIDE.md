@@ -1234,8 +1234,15 @@ An issue run is given a **context bundle**: a record of what the run was given t
 files themselves. It is made once, from the commit the workspace has, just before the run's first
 agent step (the first step that is not a shell step or an approval). It holds the issue text, its
 comments, the repository's `AGENTS.md` and `CLAUDE.md`, the ownership file, the files the task names,
-the API schema files and the README. No agent reads the bundle yet; it is written now so that it can
-be given to agents later.
+the API schema files and the README.
+
+The planner and coder prompts of the built-in issue flows get a list of the bundle's entries instead
+of the pasted issue text. Each entry gives the file to read, and only the entries the step's role may
+use are listed (the planner, coder, reviewer or tester role, by the step's `skill_role`, default
+`coder`). A source that is stale, not there or not for the role is listed as left out, with its
+reason, and the agent is told not to look for it elsewhere. Claude can read the context folder but
+cannot write to it; the workspace stays writable as before. A run with no bundle keeps the issue text
+in its prompt.
 
 - **The settings.** The `context:` section of `config.yaml` has seven keys, all optional:
   - `max_sources` (default `200`): the most files in the bundle.

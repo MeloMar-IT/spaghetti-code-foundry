@@ -595,7 +595,11 @@ describe("generated issue flows", () => {
       const prompt = s?.type === "claude" ? s.prompt : "";
       expect(prompt, id).toContain("\n\nWhat the person who started this run wrote (it may be empty; it comes on top of the issue):\n{{task}}\n\n");
       expect(prompt.split("{{task}}"), id).toHaveLength(2);
-      expect(prompt.indexOf("{{task}}"), id).toBeGreaterThan(prompt.indexOf("{{steps.pull_ticket.output}}"));
+      // the planner steps list the run's context files; the reviewer of the plan still gets the pasted issue
+      const issue = id === "plan_review" ? "{{steps.pull_ticket.output}}" : "{{context.index}}";
+      expect(prompt, id).toContain(issue);
+      expect(prompt, id).not.toContain(id === "plan_review" ? "{{context.index}}" : "{{steps.pull_ticket.output}}");
+      expect(prompt.indexOf("{{task}}"), id).toBeGreaterThan(prompt.indexOf(issue));
     }
     expect(usesTask(flow)).toBe(true);
   });
