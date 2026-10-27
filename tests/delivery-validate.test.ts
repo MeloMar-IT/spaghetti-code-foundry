@@ -506,8 +506,17 @@ describe("scf delivery validate", () => {
     const good = [...inputs({ contract: contractOf() }), "--repo", baseline];
     const stopped = [...inputs({ contract: contractOf(), key: KEY2 }), "--repo", baseline];
     const broken = ["--contract", "nope"];
-    for (const args of [good, stopped, broken, ["--help"]]) {
+    for (const args of [good, stopped, broken, ["--help"], ["--version"]]) {
       expect(capture(["validate", ...args]), args.join(" ")).toEqual(await run(args));
+    }
+  });
+  it("prints its version", async () => {
+    const want = /const VALIDATOR_VERSION = "(\d+\.\d+\.\d+)";/.exec(readFileSync(SCRIPT, "utf8"))![1];
+    for (const args of [["--version"], ["--version", "--contract", "nope"]]) {
+      const r = await run(args);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toBe(want + "\n");
+      expect(r.stderr).toBe("");
     }
   });
   it("refuses anything but validate", () => {
