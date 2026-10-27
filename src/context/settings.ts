@@ -4,7 +4,7 @@ import type { ContextSelectorSettings } from "./select.js";
 
 /**
  * The `context:` section of config.yaml: the limits and the privacy of the context a run is given. The keys are read
- * from the next step (#696 part 2) on; until then no run behaves differently. Every message is fixed and never has the
+ * by the engine when it makes the context bundle of an issue run (engine/run-context.ts). Every message is fixed and never has the
  * value in it, and an error is reported at `context.<field>`.
  */
 

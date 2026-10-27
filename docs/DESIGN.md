@@ -495,9 +495,9 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
 ### Context bundle
 
 `src/context/` defines the format that says what a run was given to read, and where each piece came
-from (#151), and the selector that makes one (#152, see "Context selection" below). No run has a
-bundle yet: the stories after it give the sources to the agents read-only (#153) and show them
-(#154). It is an extra file in the run folder,
+from (#151), and the selector that makes one (#152, see "Context selection" below). Issue runs get
+a bundle before their first agent step (see "Writing a run's bundle"). The stories after it give the
+sources to the agents read-only (#153) and show them (#154). It is an extra file in the run folder,
 `runs/<run-id>/context.json`, so `run.json` stays as it is.
 
 - **`ContextBundle`**: `version`, `runId`, `createdAt`, the one `repository` and commit it is about,
@@ -549,8 +549,8 @@ bundle yet: the stories after it give the sources to the agents read-only (#153)
 `selectContext` (`src/context/select.ts`) makes a bundle and the text of its sources from one
 repository at one commit and the inputs of a task (#152). It is a function: no model, no network
 and no clock (the caller gives `now`). The same repository state and task give the same sources and
-hashes (`hashContextSources`). **It is not called by the engine yet**: giving a run its context is
-#153.
+hashes (`hashContextSources`). **The engine calls it** for issue runs (see "Writing a run's bundle");
+giving the bundle to the agents is #153.
 
 - **Inputs.** A snapshot of the repository, the task (the issue text, its comments and the accepted
   refinement notes, all fetched by the caller; and the paths the task is about), a budget, the
@@ -606,7 +606,41 @@ hashes (`hashContextSources`). **It is not called by the engine yet**: giving a 
   every folder right after its `mkdirSync`. If anything fails, the store walks that record in reverse
   and removes each entry (`rmSync` for a file, `rmdirSync` for a folder), never recursively, each in
   its own `try`; then it throws `write-failed`. Files and folders it did not make survive, so a
-  foreign file planted inside `context/` mid-write keeps its folder. Nothing calls it yet.
+  foreign file planted inside `context/` mid-write keeps its folder.
+
+### Writing a run's bundle
+
+`src/engine/run-context.ts` makes the bundle of an issue run (#707). The runner calls
+`contextBeforeStep(engine)` for every top-level step that is not a shell or an approval step, between
+the `max_visits` check and the `▶` line, so the bundle is written before the first agent step. The
+hook does nothing unless `contextPending` holds: a top-level `pull_ticket` shell step that runs
+`issue.json`, an ok `pull_ticket` record, no `claude`, `parallel` or `flow` record at any depth, and
+none of `context.attempt`, `context.json` or `context/` in the run folder (checked with `lstat`).
+So custom flows and runs that already took an agent step get no bundle, and no log line.
+
+- **Attempt marker.** `context.attempt` is created first, with `wx` and mode 0400. It is never
+  removed, so a run has one attempt, also after a resume or a restart. If it cannot be made, the
+  result is `marker-failed`.
+- **Commit rule.** The bundle is about the workspace's `HEAD^{commit}`, read by `gitHead` with a
+  clean environment, `GIT_OPTIONAL_LOCKS=0`, `core.hooksPath=/dev/null` and `core.fsmonitor=false`.
+  The answer must be a 40 or 64 hex id; no commit gives `repository-no-commit`. The working tree is
+  never read.
+- **Deadline.** One deadline, now + 30 s (`CONTEXT_DEADLINE_MS`), is shared by `gitHead`, the
+  repository reads and the selection. `gitHead` takes the smaller of 10 s and the time left. After
+  selection, a deadline that has passed gives `timeout` and nothing is stored. A bundle that is
+  stored and locked after the deadline is removed the same way.
+- **`retrievedAt`.** The issue sources take the `startedAt` of the **latest** ok top-level
+  `pull_ticket` record. A resumed run that fetched the ticket again is therefore judged by its newest
+  fetch, not by the first one, so `task_max_age_seconds` does not drop a fresh issue as stale.
+- **Store and locking.** `writeContextBundle` writes the files. `lockRunContext` then sets files to
+  0400 and folders to 0500, deepest first; it walks with `lstat`, opens with `O_NOFOLLOW` and changes
+  the mode with `fchmodSync`. If locking fails, the bundle's own paths are removed, never recursively.
+  `unlockRunContext` sets the folders back to 0700, top-down, and never throws. `scf clean` calls it
+  before the purge removes the run folder.
+- **Sandbox.** The OS sandbox denies writes to `context.json`, `context.attempt` and `context/`, in the
+  normal and the read-only variant (`src/engine/os-sandbox.ts`).
+- **Log.** `contextBeforeStep` logs exactly one line, with no path and no value, and never throws. It
+  returns `skipped` when the hook does not apply.
 
 ### Tool profiles
 

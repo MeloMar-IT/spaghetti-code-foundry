@@ -43,6 +43,7 @@ import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { prepareWorkspace } from "./workspace.js";
+import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { runPolicy, type RunPolicy } from "./policy-hooks.js";
@@ -566,6 +567,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     const visit = (visits[step.id] = (visits[step.id] ?? 0) + 1);
     const maxVisits = step.max_visits ?? flow.defaults.max_visits ?? DEFAULT_MAX_VISITS;
     if (visit > maxVisits) return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" exceeded max_visits (${maxVisits})`, ...here() };
+    if (top && step.type !== "shell" && step.type !== "approval") contextBeforeStep(engine);
 
     engine.log(`▶ ${scope.prefix}${step.id} (${step.type}${visit > 1 ? `, visit ${visit}` : ""})`);
     const startedAt = new Date();

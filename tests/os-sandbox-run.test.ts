@@ -89,6 +89,13 @@ describe.skipIf(!basic)("a user's shell step in the OS sandbox", () => {
     expect(JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8")).runId).toBe(s.runId);
   });
 
+  it("cannot write the context bundle, its marker or the context folder, but can write another file of the run folder", async () => {
+    const s = await go(flowOf(`echo x > "{{run.dir}}/context.json"; echo x > "{{run.dir}}/context.attempt"; mkdir "{{run.dir}}/context"; echo x > "{{run.dir}}/other"; echo end`), user.id);
+    expect(out(s).match(/Operation not permitted/g)).toHaveLength(3);
+    for (const n of ["context.json", "context.attempt", "context"]) expect(existsSync(join(s.runDir, n))).toBe(false);
+    expect(existsSync(join(s.runDir, "other"))).toBe(true);
+  });
+
   it("can write in the workspace, tmp and the run folder, and run git and node, with its own HOME and TMPDIR", async () => {
     const s = await go(
       flowOf(
