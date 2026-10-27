@@ -64,6 +64,8 @@ interface CommonOptions {
   /** Evals only: folders put first on the PATH of every step (a suite's fake `gh`). */
   pathPrefix?: string[];
   signal?: AbortSignal;
+  /** Asked before each top-level step: a non-empty answer stops the run there with that reason (the step runs on resume). */
+  stopBefore?: (stepId: string) => string | undefined;
   log?: (msg: string) => void;
   /** Called whenever run.json is written. */
   onUpdate?: (summary: RunSummary) => void;
@@ -345,6 +347,7 @@ async function drive(
     toolProfile: summary.toolProfile,
     deliverySettings: opts.deliverySettings ?? (() => config.delivery),
     signal: opts.signal,
+    stopBefore: opts.stopBefore,
     ...(dailyCap !== undefined ? { dailyCostUsd: () => spentToday(opts.runsDir) } : {}),
     log,
     save,
@@ -538,6 +541,11 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     setNext(step.id);
     const here = () => ({ next: summary.state.next, lastOutput });
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason("cancelled by user"), ...here() };
+    const stopNow = top ? engine.stopBefore?.(step.id) : undefined;
+    if (stopNow) {
+      engine.log(`■ stopped before "${step.id}": ${stopNow}`);
+      return { outcome: "stopped", reason: stopNow, ...here() };
+    }
 
     const runCap = config.cost_limits ? summary.flowDef.limits.max_cost_usd : undefined;
     const overRun = runCap !== undefined && summary.totalCostUsd >= runCap;

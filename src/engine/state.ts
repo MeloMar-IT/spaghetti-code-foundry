@@ -351,7 +351,10 @@ export function clearRunParked(runDir: string): boolean {
 
 /** The reason of a run cancelled while it was stopped: it sets this cancel apart from an aborted running run, which a watcher resumes. */
 export const STOPPED_CANCEL_REASON = "cancelled by user while stopped";
-export const isStoppedCancel = (reason?: string): boolean => reason === STOPPED_CANCEL_REASON;
+/** The reason of a run the Foundry stopped before its next step to plan it again (an overrule). */
+export const OVERRULED_REASON = "overruled";
+export const isOverruledStop = (s: Pick<RunSummary, "status" | "reason">): boolean => s.status === "stopped" && s.reason === OVERRULED_REASON;
+export const isStoppedCancel =(reason?: string): boolean => reason === STOPPED_CANCEL_REASON;
 
 /**
  * Rewrites run.json with `change` and changes nothing else (not the file time or the mode). `change` returns the new

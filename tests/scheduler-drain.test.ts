@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -126,5 +126,132 @@ steps:
     s.cancel(id);
     await s.idle();
     expect(s.get(id)!.reason).toBe('cancelled during step "a"');
+  }, 30_000);
+});
+
+describe("Scheduler.requestStop", () => {
+  const dirs: string[] = [];
+  const schedulers: Scheduler[] = [];
+  const gates: string[] = [];
+  afterEach(async () => {
+    for (const g of gates.splice(0)) writeFileSync(g, ""); // release every gate, then wait for the runs to end
+    for (const s of schedulers.splice(0)) await s.idle();
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const waitFor = async (ok: () => boolean) => {
+    const end = Date.now() + 15_000;
+    while (!ok() && Date.now() < end) await sleep(20);
+    expect(ok()).toBe(true);
+  };
+  /** An id ending in "*" is a gate: the step waits for a file (with a deadline of its own). The others echo. */
+  const setup = (ids: string[]) => {
+    const tmp = mkdtempSync(join(tmpdir(), "stop-"));
+    dirs.push(tmp);
+    const repo = join(tmp, "repo");
+    mkdirSync(repo);
+    const gate = (id: string) => join(tmp, `go-${id}`);
+    const steps = ids
+      .map((id) => {
+        const g = id.endsWith("*");
+        const name = g ? id.slice(0, -1) : id;
+        const run = g ? `for i in $(seq 1 400); do [ -f ${gate(name)} ] && exit 0; sleep 0.05; done; exit 1` : `echo ${name}`;
+        if (g) gates.push(gate(name));
+        return `  - {id: ${name}, type: shell, run: ${JSON.stringify(run)}, timeout_sec: 30}`;
+      })
+      .join("\n");
+    const config = () => ({ ...ConfigSchema.parse({}), concurrency: 1 });
+    const s = new Scheduler({ runsDir: join(tmp, "runs"), queueFile: join(tmp, "queue.json"), config });
+    schedulers.push(s);
+    const id = s.submit({ kind: "run", flow: parseFlow(`name: t\nworkspace: inplace\nsteps:\n${steps}\n`), task: "t", repo, vars: {} }, { source: "ui" });
+    const open = (name: string) => writeFileSync(gate(name), "");
+    const close = (name: string) => rmSync(gate(name), { force: true });
+    const at = (step: string) => () => s.get(id)?.status === "running" && s.get(id)?.state.next === step;
+    return { s, id, open, close, at };
+  };
+  const ids = (s: Scheduler, id: string) => s.get(id)!.history.map((h) => h.id);
+
+  it("stops an active run before its next step", async () => {
+    const { s, id, open, at } = setup(["a*", "b"]);
+    await waitFor(at("a"));
+    expect(s.requestStop(id, "overruled")).toBe(true);
+    open("a");
+    const run = await s.wait(id);
+    expect(run!.status).toBe("stopped");
+    expect(run!.reason).toBe("overruled");
+    expect(run!.state.next).toBe("b");
+    expect(ids(s, id)).toEqual(["a"]);
+  }, 30_000);
+
+  it("drops a request when the run ends", async () => {
+    const { s, id, open, at } = setup(["a", "b*"]);
+    await waitFor(at("b"));
+    expect(s.requestStop(id, "overruled")).toBe(true); // no boundary is left
+    open("b");
+    expect((await s.wait(id))!.status).toBe("succeeded");
+    expect(s.requestStop(id, "overruled")).toBe(false);
+    s.submit({ kind: "resume", runId: id, from: "a" }, { source: "ui" });
+    const run = await s.wait(id);
+    expect(run!.status).toBe("succeeded");
+    expect(ids(s, id)).toEqual(["a", "b", "a", "b"]);
+  }, 30_000);
+
+  it("is dropped once the run reaches merge_develop", async () => {
+    const { s, id, open, at } = setup(["a*", "merge_develop*", "c"]);
+    await waitFor(at("a"));
+    expect(s.requestStop(id, "overruled")).toBe(true);
+    open("a");
+    await waitFor(at("merge_develop"));
+    expect(s.requestStop(id, "overruled")).toBe(false);
+    open("merge_develop");
+    const run = await s.wait(id);
+    expect(run!.status).toBe("succeeded");
+    expect(ids(s, id)).toEqual(["a", "merge_develop", "c"]);
+  }, 30_000);
+
+  it("refuses steps after a merge step too", async () => {
+    const { s, id, open, at } = setup(["merge_develop", "test_develop*", "c"]);
+    await waitFor(at("test_develop"));
+    expect(s.requestStop(id, "overruled")).toBe(false);
+    open("test_develop");
+    expect((await s.wait(id))!.status).toBe("succeeded");
+  }, 30_000);
+
+  it("stops a resumed run before its next step", async () => {
+    const { s, id, open, close, at } = setup(["a*", "b"]);
+    await waitFor(at("a"));
+    open("a");
+    expect((await s.wait(id))!.status).toBe("succeeded");
+    close("a");
+    s.submit({ kind: "resume", runId: id, from: "a" }, { source: "ui" });
+    await waitFor(() => s.isActive(id) && at("a")());
+    expect(s.requestStop(id, "overruled")).toBe(true);
+    open("a");
+    const run = await s.wait(id);
+    expect(run!.status).toBe("stopped");
+    expect(run!.reason).toBe("overruled");
+    expect(run!.state.next).toBe("b");
+  }, 30_000);
+
+  it("refuses a request for a run resumed after a merge", async () => {
+    const { s, id, open, close, at } = setup(["merge_develop", "test_develop*", "c"]);
+    await waitFor(at("test_develop"));
+    open("test_develop");
+    expect((await s.wait(id))!.status).toBe("succeeded");
+    close("test_develop");
+    s.submit({ kind: "resume", runId: id, from: "test_develop" }, { source: "ui" });
+    await waitFor(() => s.isActive(id) && at("test_develop")());
+    expect(s.requestStop(id, "overruled")).toBe(false);
+    open("test_develop");
+    expect((await s.wait(id))!.status).toBe("succeeded");
+  }, 30_000);
+
+  it("refuses an unknown run, an empty reason and a cancelled run", async () => {
+    const { s, id, at } = setup(["a*", "b"]);
+    expect(s.requestStop("nope", "overruled")).toBe(false);
+    await waitFor(at("a"));
+    expect(s.requestStop(id, "")).toBe(false);
+    expect(s.requestStop(id, "   ")).toBe(false);
+    s.cancel(id);
+    expect(s.requestStop(id, "overruled")).toBe(false);
   }, 30_000);
 });

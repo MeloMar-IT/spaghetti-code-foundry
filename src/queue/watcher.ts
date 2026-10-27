@@ -1,6 +1,6 @@
 import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
-import { isStoppedCancel, isUserBudgetStop, loadRun, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { isOverruledStop, isStoppedCancel, isUserBudgetStop, loadRun, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
@@ -229,7 +229,7 @@ function labelFor(s: RunSummary, L: LabelNames): string | undefined {
   switch (s.status) {
     case "succeeded": return L.done;
     case "waiting": return L.waiting;
-    case "stopped": return isPaused(s) ? L.working : L.needsInfo;
+    case "stopped": return isPaused(s) || isOverruledStop(s) ? L.working : L.needsInfo;
     case "running": return L.working;
     default: return /interrupted/.test(s.reason ?? "") ? L.working : L.failed;
   }

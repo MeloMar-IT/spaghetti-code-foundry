@@ -29,8 +29,8 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
-const start = (yaml: string, opts: { vars?: Record<string, string>; config?: Config; task?: string } = {}) =>
-  runFlow(parseFlow(yaml), { task: opts.task ?? "t", repo, runsDir, claudeBin, vars: opts.vars, config: opts.config ?? baseConfig() });
+const start = (yaml: string, opts: { vars?: Record<string, string>; config?: Config; task?: string; stopBefore?: (id: string) => string | undefined } = {}) =>
+  runFlow(parseFlow(yaml), { task: opts.task ?? "t", repo, runsDir, claudeBin, vars: opts.vars, config: opts.config ?? baseConfig(), stopBefore: opts.stopBefore });
 const resume = (runId: string, extra: Partial<Parameters<typeof resumeRun>[0]> = {}) =>
   resumeRun({ runId, runsDir, claudeBin, config: baseConfig(), ...extra });
 
@@ -260,6 +260,43 @@ steps:
     writeFileSync(join(repo, "answered"), "");
     const r = await resume(s2.runId);
     expect(r.history.map((h) => h.id)).toEqual(["fetch", "plan", "ask", "plan", "build"]);
+  });
+});
+
+describe("stopBefore", () => {
+  const abc = `
+name: t
+workspace: inplace
+steps:
+  - {id: a, type: shell, run: echo a}
+  - {id: b, type: shell, run: echo b}
+  - {id: c, type: shell, run: echo c}
+`;
+
+  it("stops before the asked step, which runs on resume", async () => {
+    const s = await start(abc, { stopBefore: (id) => (id === "b" ? "overruled" : undefined) });
+    expect(s.status).toBe("stopped");
+    expect(s.reason).toBe("overruled");
+    expect(s.state.next).toBe("b");
+    expect(s.stepStartedAt).toBeUndefined();
+    expect(s.history.map((h) => h.id)).toEqual(["a"]);
+    expect(readFileSync(liveLogFile(s.runDir), "utf8")).toContain('stopped before "b"');
+    const r = await resume(s.runId);
+    expect(r.status).toBe("succeeded");
+    expect(r.history.map((h) => h.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("does not stop on an empty answer", async () => {
+    const s = await start(abc, { stopBefore: (id) => (id === "b" ? "" : undefined) });
+    expect(s.status).toBe("succeeded");
+    expect(s.history.map((h) => h.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("can stop before the first step", async () => {
+    const s = await start(abc, { stopBefore: () => "overruled" });
+    expect(s.status).toBe("stopped");
+    expect(s.history).toEqual([]);
+    expect(s.state.next).toBe("a");
   });
 });
 

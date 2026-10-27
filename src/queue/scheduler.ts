@@ -20,6 +20,8 @@ export const isChoreRun = (source?: string): boolean => typeof source === "strin
 /** Runs that use no story slot: architect runs of a refinement session and schedule chores. */
 const ownLane = (source?: string): boolean => isRefinementRun(source) || isChoreRun(source);
 import { runIdsStartedToday } from "./usage.js";
+import { MERGE_GUARD, mergeStarted } from "./overrule.js";
+import { stepIs } from "../next-step.js";
 import type { Actor } from "../evidence/identity.js";
 import { actorOf } from "../evidence/record.js";
 
@@ -72,6 +74,8 @@ interface Active {
   group: string;
   /** Evidence only: who cancelled the run. */
   cancelledBy?: Actor;
+  /** Set once the run reached a merge: a stop request is not taken any more. */
+  merging?: boolean;
 }
 
 /** Which per-user limit holds a job back. */
@@ -130,6 +134,8 @@ export function queuerOf(q: QueuedJob): string | undefined {
 export class Scheduler {
   private pending: QueuedJob[] = [];
   private active = new Map<string, Active>();
+  /** Stop requests of active runs: the reason they stop with before their next step. Memory only. */
+  private stopRequests = new Map<string, string>();
   private lastStartAt = new Date().toISOString();
   private recent = new Map<string, Active>(); // finished, kept briefly for late subscribers
   /** Viewers of runs that are not running right now; attached when the run starts. */
@@ -304,6 +310,16 @@ export class Scheduler {
     if (a.summary?.status === "stopped" && !a.controller.signal.aborted && this.cancelStopped(runId, by)) return true;
     a.cancelledBy ??= by;
     a.controller.abort();
+    return true;
+  }
+
+  /** Asks an active run to stop before its next step (never during a merge). False when it is not active, is cancelled or ending, merges, or the reason is empty. */
+  requestStop(runId: string, reason: string): boolean {
+    const a = this.active.get(runId);
+    const why = typeof reason === "string" ? reason.trim() : "";
+    if (!a || !why || a.merging || a.controller.signal.aborted) return false;
+    if (a.summary && (a.summary.status !== "running" || mergeStarted(a.summary, 0))) return false;
+    this.stopRequests.set(runId, why);
     return true;
   }
 
@@ -855,6 +871,16 @@ export class Scheduler {
       actor: actorOf(q.source, queuerOf(q)),
       queuedAt: q.enqueuedAt,
       cancelledBy: () => a.cancelledBy,
+      // a stop request (an overrule) ends the run before this step, never once a merge started
+      stopBefore: (stepId: string) => {
+        const why = this.stopRequests.get(q.runId);
+        this.stopRequests.delete(q.runId);
+        if (stepIs(stepId, MERGE_GUARD) || (a.summary && mergeStarted(a.summary, 0))) {
+          a.merging = true;
+          return undefined;
+        }
+        return why;
+      },
     };
     const j = q.job;
     const promise =
@@ -871,6 +897,7 @@ export class Scheduler {
         return loadRun(this.o.runsDir, q.runId);
       })
       .finally(() => {
+        this.stopRequests.delete(q.runId);
         this.active.delete(q.runId);
         this.recent.set(q.runId, a);
         setTimeout(() => this.recent.delete(q.runId), 10 * 60_000).unref();
