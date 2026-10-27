@@ -2699,6 +2699,8 @@ watchers:
     at: "17:00"
     timezone: Europe/Berlin
     task: Daily release pull request develop → main
+    vars:
+      verify_timeout_min: "240"    # the daily tests and build may run 4 h (default 180)
 ```
 
 | Option | What it does |
@@ -3147,6 +3149,7 @@ flowchart LR
   and opens (or updates) **one pull request `develop` → `main`** that lists and closes the day's
   issues — a draft while the checks fail. A red run opens a new pull request as a draft from the start; for an existing one it switches the pull request to a draft. If that switch fails, the run says `checks failed — could not mark PR #<n> as a draft` instead of hiding it. **You merge it once a day.** When the tests pass on a clean
   checkout, the run also records that pass in the data folder, so that [self-update](#self-update) can skip its own test run on the same code.
+- **The time limit of the daily checks.** The full tests and build of `release-daily` and `daily-pr` may work for `verify_timeout_min` minutes (flow variable, 1 to 720, default `180`). The wait for a test slot does not count: the limit starts when the tests start, and the build gets the time that is left. A check never fails just for waiting. `release-daily` waits at most 5 minutes for a slot by default (`FACTORY_TEST_SLOT_WAIT_SEC`) and then runs its tests anyway; the wait is capped at 6 hours in all. When the limit runs out, the processes are stopped, the run still succeeds, and the pull request is a draft with the line `⏱ **Checks did not finish in time** — the time limit of … (verify_timeout_min) ran out before …`. A time-out writes no `tested/` record, so [self-update](#self-update) runs its tests again. Set another limit in the watcher's `vars` (see the watcher examples in [6. Automate with watchers](#6-automate-with-watchers)). The server environment variable `FACTORY_CHECK_LIMIT_SEC` (1 to 43200 seconds) replaces the limit of these checks; a value that is not a whole number is ignored with a message.
 - `develop` is created from `main` the first time, and kept up to date with `main` (for example
   after a hotfix) before new work starts. `develop` must not be in *Protected branches*
   (Settings), since the Foundry pushes to it; `main` stays protected (the one exception is the
@@ -6764,7 +6767,7 @@ or `/reject` with what to change.
 
 **The release pull request is a draft.** The daily full test run or build failed on it; the
 daily report or release check starts with `**Nothing needed from you** — it stays a draft until the checks pass.`
-and has the failing output. It becomes ready again when a later report passes. If the Foundry could not switch the pull request to a draft, the run says `checks failed — could not mark PR #<n> as a draft`; then take the pull request out of review by hand before you merge.
+and has the failing output. It becomes ready again when a later report passes. If the checks ran past the time limit (`verify_timeout_min`, default 180 minutes), the report says `⏱ **Checks did not finish in time**` instead: the tests or the build were stopped, and the run did not fail. Raise `verify_timeout_min` in the watcher's `vars` and run the check again, or look at the run log for the step that was stopped. If the Foundry could not switch the pull request to a draft, the run says `checks failed — could not mark PR #<n> as a draft`; then take the pull request out of review by hand before you merge.
 
 **A run failed, or a watcher shows an error.** The message says what happened, why, and what
 you can do first. Find yours in the table:
