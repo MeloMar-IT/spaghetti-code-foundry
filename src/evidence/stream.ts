@@ -71,8 +71,11 @@ function redactValue(r: Redactor, value: unknown, depth = 0): unknown {
   return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, redactValue(r, v, depth + 1)]));
 }
 
-/** The bytes of a plain file; undefined when there is none. Throws for a link, a pipe or a folder. */
-export function readPlainBytes(path: string): Buffer | undefined {
+/**
+ * The bytes of a plain file; undefined when there is none. Throws for a link, a pipe or a folder, and, when `maxBytes`
+ * is given, for a file larger than that (checked before any memory is taken for it).
+ */
+export function readPlainBytes(path: string, maxBytes?: number): Buffer | undefined {
   let fd: number;
   try {
     fd = openSync(path, constants.O_RDONLY | SAFE);
@@ -83,6 +86,7 @@ export function readPlainBytes(path: string): Buffer | undefined {
   try {
     const st = fstatSync(fd);
     if (!st.isFile()) throw new StreamProblem("not a plain file");
+    if (maxBytes !== undefined && st.size > maxBytes) throw new StreamProblem("too large");
     return readAll(fd, st.size);
   } finally {
     closeSync(fd);

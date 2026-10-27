@@ -1292,6 +1292,23 @@ citations and no warning.
   bundle's hash, its limits, its source and byte counts and the number left out per reason, or the failure
   code. Policy packs are asked at the boundary `context.select` after a bundle is written. The answer is only
   recorded; the run goes on either way.
+- **Context sources on the run page.** The Evidence tab of a run has a **Context sources** section. It
+  lists the sources the run was given, with the reason each was picked, the time it was read and whether it
+  is **Fresh** or **Stale**. Below them it lists the sources that were left out, each with its status and
+  **What to do**. A run from before the bundle existed says **This run has no context bundle.**
+  - **Statuses.** *Not found*: the file is not in the repository at the run's commit. *Too old*: the copy is
+    past its age limit. *More than one fits*: the name matches several sources. *Over the context limits*: it
+    did not fit `max_sources`, `max_source_bytes` or `max_total_bytes`. *Too private for this run*: it is more
+    private than `max_classification` allows. *Made by a program*: the repository marks it as generated.
+    *Not a text file*: it is a link, a submodule or a binary file.
+  - **Who sees what.** An administrator sees the exact address (`uri`) and id of every entry, and the wording
+    for the limits and the classification tells them which setting to change. A user sees a plain label, for
+    example "Repository file docs/API.md", "Issue #12" or "Comment 34 on issue #12", and no address, id or
+    owners. For a confidential or restricted source a user sees only the kind and the classification, for
+    example "Restricted repository file". Machine folders are never shown.
+  - **Export.** **Export context** saves what the page shows as `context-<run id>.json`. It is the answer of
+    `GET /api/runs/:id/context`, so the export has the same visibility as the page. It has the hashes and the
+    times, but never the text of a source.
 - **Read-only files.** `context.json` is read-only, and so is every file under `context/`. Folders are
   read-only too. On macOS the OS sandbox of a step also denies writes to these paths.
 - **One attempt.** The file `context.attempt` is written before the bundle is tried, and it stays. A run
@@ -4209,6 +4226,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
 | `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest |
+| `GET /api/runs/:id/context` | yes | own runs | the context sources of a run and the ones left out, each with a status and a next action (never source text; a user: no address, id or owners for any entry, and only kind, classification, selection and freshness for confidential and restricted sources); `state` is `absent` for a run without a bundle |
 | `GET /api/runs/:id/transcript/:n` | yes | no | the transcript of a step |
 | `GET /api/next` | yes | no | what happens next, for all runs |
 | `GET /api/health` | yes | no | server health |

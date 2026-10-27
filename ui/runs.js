@@ -8,6 +8,7 @@ import { STEP_TYPES } from "./step-types.js";
 import { createRunHeader } from "./run-header.js";
 import { createLog, diffView } from "./run-output.js";
 import { evidenceRecordSection } from "./run-evidence.js";
+import { contextSourcesSection } from "./run-sources.js";
 import { skillsCard } from "./run-skills.js";
 import { dialogOpen, keepScroll, poller } from "./live.js";
 import { adminRunActions } from "./run-dialogs.js";
@@ -460,7 +461,7 @@ export function renderRunDetail(main, runId, { admin = true } = {}) {
     { id: "overview", label: "Overview", ...overviewPanel({ admin }) },
     { id: "steps", label: "Steps", build: () => timeline.el, update: (s) => timeline.update(s) },
     { id: "diff", label: "Changes", ...changesPanel({ view: diffView, loading: "Computing diff…", load: () => api.diff(runId) }) },
-    { id: "evidence", label: "Evidence", ...evidencePanel({ record: evidenceRecordSection({ load: () => api.evidence(runId), admin, runId }) }) },
+    { id: "evidence", label: "Evidence", ...evidencePanel({ record: evidenceRecordSection({ load: () => api.evidence(runId), admin, runId }), sources: contextSourcesSection({ load: () => api.context(runId), admin, runId }) }) },
     { id: "log", label: "Logs", build: () => log.el, onShow: () => log.restore() },
   ], { initial: "overview" });
   const tabsBox = tabs.el;

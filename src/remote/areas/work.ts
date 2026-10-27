@@ -66,6 +66,14 @@ function showEvidence(d: unknown): string {
   return blocks([head, typeof v.explanation === "string" && v.explanation, files.length > 0 && table(files, cols("kind", "path", "bytes", "needed", "state", "sha256"))]);
 }
 
+function showContext(d: unknown): string {
+  const x = obj(d);
+  const head = `${x.state === "available" ? "context" : x.state === "absent" ? "no context bundle" : "context cannot be read"} · run ${x.runId}`;
+  const sources = list(x.sources).map((s) => ({ label: s.label, class: s.classification, fresh: s.freshness }));
+  const omitted = list(x.omitted).map((o) => ({ label: o.label, status: o.statusLabel, next: o.next }));
+  return blocks([head, obj(x.problem).reason, sources.length > 0 && table(sources, cols("label", "class", "fresh")), omitted.length > 0 && table(omitted, cols("label", "status", "next"))]);
+}
+
 function showTranscript(d: unknown): string {
   const x = obj(d);
   const lines = list(x.events).map((e) => {
@@ -182,6 +190,7 @@ export const WORK: Cmd[] = [
   { area: "runs", action: "log", method: "GET", path: "runs/:id/transcript/:n", args: ["id", "n"], show: showTranscript, help: "what the agent said and did in a step; <n> is the step's number in `scf runs show`" },
   { area: "runs", action: "diff", method: "GET", path: "runs/:id/diff", args: ["id"], show: showDiff },
   { area: "runs", action: "evidence", method: "GET", path: "runs/:id/evidence", args: ["id"], show: showEvidence, help: "the evidence of a run: whether it still verifies, and the files it names with their hashes" },
+  { area: "runs", action: "context", method: "GET", path: "runs/:id/context", args: ["id"], show: showContext, help: "the context sources of a run, and the ones left out with what to do about each" },
   { area: "runs", action: "answer", method: "POST", path: "runs/:id/answer", args: ["id", "text"], show: queued("continues with your answer") },
   { area: "runs", action: "approve", method: "POST", path: "runs/:id/approve", args: ["id"], show: queued("continues: approved"), help: "approve a run that waits for a decision",
     flags: { note: { type: "string", help: "a note for the run" } } },
