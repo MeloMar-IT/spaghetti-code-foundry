@@ -2942,10 +2942,32 @@ recommendation.
   not, the comment shows the questions that still need you above the decided ones, and the run waits as
   before. The first line of the comment says **Nothing needed from you** when everything was decided.
 - **The planner follows the decisions.** It takes them as answers. Only a later Foundry comment titled
-  **Overrule accepted** changes a decision. Text copied from a decision into a comment, and `/overrule`
-  commands, do not change it.
-- **How to answer differently:** for now, a decided question can't be changed from the issue. A plain comment
-  and a restart do not change it. Describing `/overrule` waits until it is handled (part 2 of #703).
+  **Overrule accepted** changes a decision. Text copied from a decision into a comment does not change it, and
+  a plain comment does not either.
+- **How to answer differently:** reply `/overrule Q<n> <your answer>` on the issue, where `<n>` is the number
+  of the question. Only a person with **write access** to the repository may do this (#717, part 2 of 2 of #703).
+  The Foundry checks the access first, then posts **Overrule accepted** with your answer and the decision it
+  replaces, and plans the issue again:
+  - **Stopped, failed or waiting run:** the run is resumed from its first step (`pull_ticket`) and the label
+    becomes working.
+  - **Active run that has not started merging:** the run is asked to stop, with the reason "overruled". After it
+    stops, the Foundry plans the issue again.
+  - **Queued run, or a run that has started merging:** the overrule waits for a later check. A run that has
+    started merging is not stopped.
+  - **Finished plan-only run:** its done label is removed and a new run starts.
+  - **Merged code:** nothing changes in the code. The Foundry posts a draft for a follow-up issue instead; you
+    create that issue yourself if you want it.
+  - **Parked or cancelled run:** nothing changes.
+  - **No run yet** (the issue still needs your answers before a run starts): your overrule counts as an answer.
+    The ack is posted, then a new run starts. Dependencies, the lock, the limits and the release pause still apply,
+    and while the run waits, the label stays **needs info**.
+  - **Read-only user:** the overrule is ignored. Nothing is posted; the activity line `#n ignored /overrule from
+    @x (no write access)` is written, and the same line goes into the run's log.
+  - **Malformed command or unknown question number:** the Foundry posts exactly one note, and plans nothing again.
+  - **Failures:** if the access check or a post fails, the Foundry tries again at the next check. An ack is never
+    posted twice, and an accepted overrule is not lost.
+  - An `/overrule` comment is never an answer to the run's questions. A copied **Overrule accepted** marker
+    without the Foundry as its author does not count.
 - **The setting:** **Decide technical questions itself** in the repository's Run settings (field
   `questions.decide_technical`). It is on by default. With it off, the planner's questions all wait for you, as
   before. A run reads the setting when it starts or resumes, so a change applies to the runs that start or
@@ -3027,6 +3049,7 @@ Issues with an excluded label (e.g. `geni`) are never picked up, whatever other 
 |---|---|
 | Build an issue, or a whole epic | Add `Factory_go` to each issue (select them all in GitHub's issue list → Labels). Give stories a **Depends on** section so they are built in order. |
 | Answer the questions | Reply on the issue, or `/defaults` — or in the app, on Home |
+| Change a question the Foundry decided itself | Reply `/overrule Q<n> <your answer>` on the issue (you need write access). See [Questions the Foundry decides itself](#questions-the-foundry-decides-itself) |
 | Check a plan before it is coded | Add `Factory_review_plan` before (or together with) `Factory_go` |
 | Approve / reject a risky plan | `/approve` (+ notes), or `/reject` + what to change — or in the app, on Home |
 | Retry after an error | Remove `Factory_ERROR` to start over, or resume the run on its page to continue at the failed step |

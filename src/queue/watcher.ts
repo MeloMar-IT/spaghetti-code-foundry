@@ -1,13 +1,15 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
-import { isOverruledStop, isStoppedCancel, isUserBudgetStop, loadRun, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { OVERRULED_REASON, appendLiveLog, isOverruledStop, isStoppedCancel, isUserBudgetStop, loadRun, readLiveLog, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
 import { commentReads, extraWaitingIssues, EXTRA_READS_PER_CHECK, EXTRA_READ_MEMO_MS, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs, type CommentReads } from "./waiting-issues.js";
-import { canWrite, commentOnIssue, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isOverruleReply, isStatusComment, issueComments, issueStates, listOpenIssuesByLabelPages, setLabels, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
+import { canWrite, commentOnIssue, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isOverruleReply, isStatusComment, issueComments, issueStates, listOpenIssuesByLabelPages, mayWrite, repoPermission, setLabels, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
@@ -22,6 +24,7 @@ import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
 import { notCodeStop, parkedComment, wantsPark } from "./park.js";
+import { ackedNotPlanned, acceptedComment, findOverrules, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
 import { contentsPath, filesToCheck, openOwnerActions, OWNER_FILE_MARK, type OwnerAsk } from "./owner-action.js";
 import { validBranchName } from "../auth/repo-settings.js";
 
@@ -206,6 +209,8 @@ function isFileBody(body: string): boolean {
 const OWNER_FILE_MAX = 2;
 const FILE_CHECKS_PER_TICK = 20;
 const FILE_CHECK_MS = 30_000;
+/** Time limit of one permission lookup and of one ack or note post for an /overrule. */
+const OVERRULE_GH_MS = 30_000;
 /** When the cap was reached at the last check, an issue checked within this time waits its turn, so later issues get checked too. */
 const FILE_RECHECK_MS = 5 * 60_000;
 
@@ -284,6 +289,14 @@ export class Watcher {
   private waitingCursor = new Map<string, number>();
   /** Comment reads of needs-info extras: when, whether it worked, and the open question. */
   private readMemo = new Map<number, { at: number; ok: boolean; open?: { questions: number; since?: string } }>();
+  /** /overrule: per issue, the updatedAt of the last check that handled its overrules completely. */
+  private overruleSeen = new Map<number, string>();
+  /** /overrule: per comment key, may its author overrule? At most 5000 entries. */
+  private overrulePerm = new Map<string, "ok" | "denied">();
+  /** /overrule: acks posted whose run is not submitted yet, per issue (at most 5000 issues); rebuilt from GitHub and the run log when lost. */
+  private overruleAcked = new Map<number, Overrule[]>();
+  /** /overrule: comment keys whose ack or note is being posted right now (a given-up check may still be posting). */
+  private overruleInFlight = new Set<string>();
   private kickAgain = false;
   private setupDone = false;
   private stopped = false;
@@ -791,9 +804,108 @@ export class Watcher {
     return runId;
   }
 
-  private resume(issue: number, runId: string, why: string, decision?: { approved: boolean; by: string; note?: string }, labelled = false, first?: { storyAt?: string }) {
-    this.submit(issue, "issue", { kind: "resume", runId, decision }, first);
+  private resume(issue: number, runId: string, why: string, decision?: { approved: boolean; by: string; note?: string }, labelled = false, first?: { storyAt?: string }, from?: string) {
+    this.submit(issue, "issue", { kind: "resume", runId, ...(from ? { from } : {}), decision }, first);
     this.act(`#${issue} ${why} → resuming run ${runId}${labelled ? ` · label → ${this.L.working}` : ""}`);
+  }
+
+  /** Keys of the overrules that a run of this issue planned again (the live logs of all its runs). */
+  private plannedOverrules(n: number): Set<string> {
+    const keys = new Set<string>();
+    for (const b of this.d.scheduler.briefs()) {
+      if (b.githubRepo !== this.repo || b.issue !== String(n)) continue;
+      for (const k of plannedKeys(readLiveLog(join(this.d.runsDir, b.dirName)))) keys.add(k);
+    }
+    return keys;
+  }
+
+  /** The overrules whose ack is posted but whose run was not planned again: in memory, plus those the issue and the run logs still show. Saved back to memory. */
+  private pendingOverrules(n: number, comments: Comment[]): Overrule[] {
+    const planned = this.plannedOverrules(n);
+    const merged = new Map<string, Overrule>();
+    for (const o of this.overruleAcked.get(n) ?? []) if (!planned.has(o.key)) merged.set(o.key, o);
+    for (const o of ackedNotPlanned(comments, planned)) if (!merged.has(o.key)) merged.set(o.key, o);
+    const list = [...merged.values()];
+    if (list.length) this.rememberAcked(n, [...list]);
+    else this.overruleAcked.delete(n);
+    return list;
+  }
+
+  private rememberAcked(n: number, list: Overrule[]) {
+    this.overruleAcked.delete(n);
+    this.overruleAcked.set(n, list);
+    if (this.overruleAcked.size > 5000) this.overruleAcked.delete(this.overruleAcked.keys().next().value!);
+  }
+
+  /** Posts a comment unless the same key is being posted right now (a given-up check may still be posting). False: skipped. A failed post rejects. */
+  private async postOnce(n: number, key: string, body: string, alive: () => void): Promise<boolean> {
+    if (this.overruleInFlight.has(key)) return false;
+    alive();
+    this.overruleInFlight.add(key);
+    try {
+      await commentOnIssue(this.repo, n, body, OVERRULE_GH_MS);
+    } finally {
+      this.overruleInFlight.delete(key);
+    }
+    return true;
+  }
+
+  /**
+   * The open overrules of people with write access among `comments`. Read-only authors get one activity line (and a run log line);
+   * a writer's malformed or unknown command gets one note. Rejects when a permission lookup or a note fails: the next check tries again.
+   * `complete` is false when a note was being posted elsewhere.
+   */
+  private async checkOverrules(n: number, comments: Comment[], run: RunSummary | undefined, alive: () => void): Promise<{ ok: Overrule[]; complete: boolean }> {
+    const acked = new Set((this.overruleAcked.get(n) ?? []).map((o) => o.key));
+    const ok: Overrule[] = [];
+    let complete = true;
+    for (const o of findOverrules(comments)) {
+      if (acked.has(o.key)) continue;
+      const login = o.comment.author.login;
+      let perm = this.overrulePerm.get(o.key);
+      if (!perm) {
+        if (o.comment.viewerDidAuthor === true && ghActsAsApp()) perm = "ok";
+        else {
+          const level = await repoPermission(this.repo, login, OVERRULE_GH_MS);
+          alive();
+          perm = mayWrite(level) ? "ok" : "denied";
+        }
+        this.overrulePerm.set(o.key, perm);
+        if (this.overrulePerm.size > 5000) this.overrulePerm.delete(this.overrulePerm.keys().next().value!);
+        if (perm === "denied") {
+          const line = `#${n} ignored /overrule from @${login} (no write access)`;
+          this.act(line);
+          if (run) appendLiveLog(run.runDir, line);
+        }
+      }
+      if (perm === "denied") continue;
+      if (o.kind === "ok") ok.push(o);
+      else if (await this.postOnce(n, o.key, noteComment(o), alive)) this.act(`#${n} /overrule from @${login} not used (${o.kind === "malformed" ? "wrong format" : `no Q${o.q}`}) → note posted`);
+      else complete = false;
+    }
+    return { ok, complete };
+  }
+
+  /** Posts the ack of each overrule (once) and keeps it in memory until the run is submitted. False: one is being posted elsewhere. */
+  private async ackOverrules(n: number, list: Overrule[], alive: () => void): Promise<boolean> {
+    for (const o of list) {
+      if ((this.overruleAcked.get(n) ?? []).some((a) => a.key === o.key)) continue;
+      if (!(await this.postOnce(n, o.key, acceptedComment(o), alive))) return false;
+      this.rememberAcked(n, [...(this.overruleAcked.get(n) ?? []), o]); // at once: a given-up check keeps what it posted
+      this.act(`#${n} overrule of Q${o.q} by @${o.comment.author.login} accepted`);
+    }
+    return true;
+  }
+
+  /** The run was submitted for these overrules: say so in its log (the proof after a restart) and forget them. */
+  private plannedAgain(n: number, runId: string, list: Overrule[]) {
+    const dir = join(this.d.runsDir, runId);
+    try { mkdirSync(dir, { recursive: true }); } catch { /* the line is best effort */ }
+    for (const o of list) appendLiveLog(dir, PLANNED_LINE(o.key));
+    const keys = new Set(list.map((o) => o.key));
+    const rest = (this.overruleAcked.get(n) ?? []).filter((o) => !keys.has(o.key));
+    if (rest.length) this.overruleAcked.set(n, rest);
+    else this.overruleAcked.delete(n);
   }
 
   /** A hold for a reason; the text comes from the next-step module. */
@@ -902,7 +1014,7 @@ export class Watcher {
     // `mine` is the token of the tick itself, so a check whose sign-in or setup outlasted the timeout is already given up here.
     const alive = () => { if (mine !== this.tickToken || this.retired) throw new Error("this check was given up"); };
     alive();
-    const issues = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--label", this.cfg.label, "--state", "open", "--limit", "100", "--json", "number,title,labels,body,createdAt"]);
+    const issues = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--label", this.cfg.label, "--state", "open", "--limit", "100", "--json", "number,title,labels,body,createdAt,updatedAt"]);
     alive();
     // All issues, read once per check and shared with the other watchers of this repository; also saved as the issue list file.
     let everyIssue: Issue[] | undefined; // all issues, for the dependency check
@@ -922,7 +1034,7 @@ export class Watcher {
     // The list is cut at 100 and has no order we can use: ask for the bug stories on their own, so none is missed.
     if (!whole && prioLabels.length) {
       const extra = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--label", this.cfg.label, "--state", "open", "--limit", "1000", // gh pages through the results up to the limit
-        "--search", `label:${prioLabels.map((l) => `"${l.replace(/"/g, "")}"`).join(",")} sort:created-asc`, "--json", "number,title,labels,body,createdAt"]);
+        "--search", `label:${prioLabels.map((l) => `"${l.replace(/"/g, "")}"`).join(",")} sort:created-asc`, "--json", "number,title,labels,body,createdAt,updatedAt"]);
       const have = new Set(issues.map((i) => i.number));
       for (const i of extra) if (!have.has(i.number)) issues.push(i);
     }
@@ -981,6 +1093,8 @@ export class Watcher {
     const toCheck: Issue[] = [];
     // The status comment is ours too, and so is an overrule reply, but neither is a question or an approval request: they never end the wait.
     const asked = (c: Comment) => isBot(c) && !isStatusComment(c) && !isOverruleReply(c);
+    // An /overrule changes a decision of the Foundry: it is never the answer to a question.
+    const answersOf = (c: Comment[]) => commentsAfter(c, asked).filter((x) => parseOverrule(x.body) === undefined);
     const nowMs = Date.now();
     for (const [k, t] of this.slowUntil) if (t <= nowMs) this.slowUntil.delete(k);
     const reads = commentReads({
@@ -1100,27 +1214,117 @@ export class Watcher {
         continue;
       }
 
+      // /overrule: a person with write access replaces a question the Foundry decided itself, and the work is planned again.
+      if (run && !mixed && !flowRetired(run)) {
+        const busyOf = (r: RunSummary) => (queuedId !== undefined || this.d.scheduler.isQueued(r.runId) || this.d.scheduler.queue().pending.some((j) => j.githubRepo === this.repo && j.issue === String(n)) ? "queued" as const : this.d.scheduler.isActive(r.runId) ? "active" as const : undefined);
+        const actionOf = (r: RunSummary) => { const a = overruleAction(r, busyOf(r), hasPlanStep(r)); return a === "followup" ? "none" : a; };
+        /** The run as it is now, when it still has this action (the awaits above may have changed it). */
+        const recheck = (was: ReturnType<typeof actionOf>) => {
+          const now = loadRun(this.d.runsDir, run.runId);
+          return now && JSON.stringify(actionOf(now)) === JSON.stringify(was) ? now : undefined;
+        };
+        const action = actionOf(run);
+        if (action === "none") {
+          this.overruleAcked.delete(n);
+          if (issue.updatedAt) this.overruleSeen.set(n, issue.updatedAt);
+        } else if (action === "wait") {
+          this.overruleSeen.delete(n);
+        } else if (this.overruleAcked.has(n) || !issue.updatedAt || this.overruleSeen.get(n) !== issue.updatedAt) {
+          let accepted: Overrule[] = [];
+          let complete = false;
+          const comments = await reads.read(n);
+          alive();
+          if (!comments) unknown.add(n);
+          else {
+            try {
+              accepted = this.pendingOverrules(n, comments);
+              const got = await this.checkOverrules(n, comments, run, alive);
+              accepted.push(...got.ok);
+              complete = got.complete;
+            } catch (e) {
+              alive();
+              this.d.log(`[${this.cfg.id}] ! #${n} /overrule: ${errorLine((e as Error).message)}; tried again at the next check`);
+            }
+          }
+          if (!accepted.length) {
+            if (complete && issue.updatedAt) this.overruleSeen.set(n, issue.updatedAt);
+          } else {
+            this.overruleSeen.delete(n);
+            const by = accepted[0]!.comment.author.login;
+            if (action === "stop") {
+              if (this.d.scheduler.requestStop(run.runId, OVERRULED_REASON)) {
+                const msg = `#${n} overruled by @${by} → run ${run.runId} is asked to stop, then it is planned again`;
+                if (!this.status.lastActions.some((a) => a.endsWith(msg))) this.act(msg);
+              }
+              // the run is working: the branches below keep its label
+            } else {
+              offNow.delete(n); delete track.labelOff;
+              if (await holdForDeps(issue, run.runId)) continue;
+              if (this.d.scheduler.isLocked(this.lockFor(n))) {
+                if (this.cfg.one_at_a_time) holds.push(this.held("one_at_a_time", issue, { runId: run.runId, blockingRun: this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId }));
+                continue;
+              }
+              if (paused) { holds.push(this.held("release", issue, { pr: paused })); continue; }
+              if (!budgetLeft) { holds.push(this.held("daily_budget", issue)); continue; }
+              if (!(action === "restart" ? ownerLeft : this.budgetLeftFor(run.owner))) { holds.push(this.held("user_limit", issue, { userLimit: "budget" })); continue; }
+              if (overLimit(isFirst)) { holds.push(limited(issue, run.runId)); continue; }
+              if (!recheck(action) || !(await this.ackOverrules(n, accepted, alive))) continue;
+              alive();
+              await setLabels(this.repo, n, this.L.working, this.allStatus);
+              alive();
+              if (!recheck(action)) continue;
+              if (action === "restart") {
+                const runId = this.startNew(issue, first);
+                this.plannedAgain(n, runId, accepted);
+                track.runId = runId;
+                this.labelWhenDone(n, runId);
+              } else {
+                this.resume(n, run.runId, `overruled by @${by}`, undefined, true, first, action.replan);
+                this.plannedAgain(n, run.runId, accepted);
+                this.labelWhenDone(n, run.runId);
+              }
+              if (issue.updatedAt) this.overruleSeen.set(n, issue.updatedAt);
+              started++;
+              if (isFirst) firstStarted++;
+              continue;
+            }
+          }
+        }
+      }
+
       // Questions asked up front (no run yet): wait for an answer, then start like a new issue.
       let answeredEarly = false;
+      let early: Overrule[] = []; // /overrule by people with write access before any run: they count as an answer
       if (status === this.L.needsInfo && !run && !mixed) {
         const comments = await reads.read(n);
         alive();
         if (!comments) { unknown.add(n); holds.push({ ...this.held("questions", issue), byLabel: true }); continue; }
-        const answers = commentsAfter(comments, asked);
+        const answers = answersOf(comments);
+        try {
+          early = this.pendingOverrules(n, comments);
+          early.push(...(await this.checkOverrules(n, comments, undefined, alive)).ok);
+        } catch (e) {
+          alive();
+          this.d.log(`[${this.cfg.id}] ! #${n} /overrule: ${errorLine((e as Error).message)}; tried again at the next check`);
+          early = this.overruleAcked.get(n) ?? [];
+        }
+        const answered = answers.length > 0 || early.length > 0;
         const parked = answers.length ? await this.parkOnRequest(n, answers, undefined, alive) : undefined;
         if (parked) {
           quietNow.add(n); offNow.delete(n); delete track.labelOff;
           if (parked === "parked") tracked.splice(tracked.indexOf(track), 1);
           continue;
         }
-        const owner = answers.length ? undefined : await ownerWait(issue, comments);
+        const owner = answered ? undefined : await ownerWait(issue, comments);
         if (owner && "hold" in owner) { holds.push(owner.hold); continue; }
         if (owner) this.act(`#${n} ${owner.met} → it starts`);
-        if (!owner && !answers.length && this.canTakeDefaults(comments) && (await holdForDeps(issue))) { keepAsking.add(n); continue; }
-        if (!owner && !answers.length && !(await this.takeDefaults(n, comments))) {
+        if (!owner && !answered && this.canTakeDefaults(comments) && (await holdForDeps(issue))) { keepAsking.add(n); continue; }
+        if (!owner && !answered && !(await this.takeDefaults(n, comments))) {
           holds.push({ ...this.held("questions", issue, { questions: questionCount(comments) }), since: [...comments].reverse().find(asked)?.createdAt });
           continue;
         }
+        // An overrule is acked right before the run starts: while something holds the start, needs-info stays.
+        if (early.length) keepAsking.add(n);
         answeredEarly = true;
       }
       // A run that is working (running or queued, e.g. approved or resumed in the UI): the label says so.
@@ -1212,10 +1416,10 @@ export class Watcher {
           alive();
           if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
           if (askedRun) {
-            const parked = await this.parkOnRequest(n, commentsAfter(comments, asked), run, alive);
+            const parked = await this.parkOnRequest(n, answersOf(comments), run, alive);
             if (parked) { quietNow.add(n); offNow.delete(n); delete track.labelOff; continue; }
           }
-          const answered = askedRun ? commentsAfter(comments, asked).length > 0 : !!(await this.findDecision(run.runId, comments));
+          const answered = askedRun ? answersOf(comments).length > 0 : !!(await this.findDecision(run.runId, comments));
           if (answered) {
             if (status !== this.L.working) {
               await setLabels(this.repo, n, this.L.working, this.allStatus);
@@ -1258,7 +1462,10 @@ export class Watcher {
         // It ran before: GitHub's issue list can lag behind (a just-failed or just-finished issue still
         // listed without its new label, or as open). Ask for this issue directly before starting again.
         if (run && run.status !== "running" && !(await this.reallyStartable(n))) continue;
+        if (early.length && !(await this.ackOverrules(n, early, alive))) continue;
+        alive();
         const runId = this.startNew(issue, first);
+        if (early.length) this.plannedAgain(n, runId, early);
         track.runId = runId;
         await setLabels(this.repo, n, this.L.working, this.allStatus);
         this.labelWhenDone(n, runId);
@@ -1276,7 +1483,7 @@ export class Watcher {
         const late = asks || decides ? await reads.read(n) : [];
         alive();
         if (!late) unknown.add(n);
-        const lateAnswers = asks && late ? commentsAfter(late, asked) : [];
+        const lateAnswers = asks && late ? answersOf(late) : [];
         if (lateAnswers.length) {
           const parked = await this.parkOnRequest(n, lateAnswers, run, alive);
           if (parked) { quietNow.add(n); offNow.delete(n); delete track.labelOff; continue; }
@@ -1337,7 +1544,7 @@ export class Watcher {
         const comments = await reads.read(n);
         alive();
         if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
-        const answers = commentsAfter(comments, asked);
+        const answers = answersOf(comments);
         if (answers.length) {
           const parked = await this.parkOnRequest(n, answers, run, alive);
           if (parked) { quietNow.add(n); offNow.delete(n); delete track.labelOff; continue; }
@@ -1436,6 +1643,8 @@ export class Watcher {
     this.status.holds = holds;
     this.status.pausedBy = paused ? { number: paused.number, url: paused.url, title: paused.title, createdAt: paused.createdAt } : undefined;
     this.tracked = tracked;
+    const listed = new Set(issues.map((i) => i.number));
+    for (const k of [...this.overruleSeen.keys()]) if (!listed.has(k)) this.overruleSeen.delete(k); // overruleAcked is capped instead: the ack must outlive a gap in the list
     this.labelOff = offNow;
     const quiet = [...new Set([...holds.filter((h) => h.byLabel && h.issue !== undefined).map((h) => h.issue!), ...unknown, ...quietNow])];
     if (this.cfg.status_comment) await this.reportStatus(runs, holds, tracked, closed, !tidyError && closedWhole && whole, () => mine === this.tickToken && !this.stopped, quiet);

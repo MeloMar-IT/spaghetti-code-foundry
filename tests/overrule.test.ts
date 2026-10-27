@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { STOPPED_CANCEL_REASON, type RunSummary } from "../src/engine/state.js";
 import { isFoundryComment, isOverruleReply, isStatusComment, type Comment } from "../src/github.js";
 import {
-  EPIC_NOTE, OVERRULE_ANSWER_MAX, acceptedComment, codeMerged, decidedItems, findOverrules, followUpComment, mergeStarted,
-  noteComment, overruleAction, overruleKey, overruleMarker, parseOverrule, type Overrule,
+  EPIC_NOTE, OVERRULE_ANSWER_MAX, PLANNED_LINE, ackedNotPlanned, acceptedComment, codeMerged, decidedItems, findOverrules, followUpComment, hasPlanStep, mergeStarted,
+  noteComment, overruleAction, overruleKey, overruleMarker, parseOverrule, plannedKeys, type Overrule,
 } from "../src/queue/overrule.js";
 // @ts-expect-error a plain ES module of the tools folder, without types
 import { DECIDED_HEADING, decideQuestions } from "../tools/decide-questions.mjs";
@@ -244,5 +244,37 @@ describe("builders", () => {
     expect(t).toContain("### Acceptance criteria");
     expect(t).toContain("The Foundry does not create this issue");
     expect(t.endsWith("<!-- claude-factory overrule=7 followup -->")).toBe(true);
+  });
+});
+
+describe("hasPlanStep", () => {
+  it("is true with a plan step only", () => {
+    expect(hasPlanStep({ flowDef: { name: "f", steps: [{ id: "pull_ticket" }, { id: "plan" }] } } as never)).toBe(true);
+    expect(hasPlanStep({ flowDef: { name: "f", steps: [{ id: "pull_ticket" }] } } as never)).toBe(false);
+    expect(hasPlanStep({ flowDef: { name: "f", steps: [] } } as never)).toBe(false);
+    expect(hasPlanStep({} as never)).toBe(false);
+  });
+});
+
+describe("ackedNotPlanned", () => {
+  const ack = (key: string, i: number, extra: Partial<Comment> = {}): Comment => ({ ...bot(`🤖 **Spaghetti Code Foundry**: **Overrule accepted** for Q1.\n\n${overruleMarker(key)}`, i), ...extra });
+  const thread = (extra: Partial<Comment> = {}): Comment[] => [bot(decided(), 0), c("/overrule Q1 sqlite", 1), ack(overruleKey(c("", 1)), 2, extra)];
+  it("gives back an accepted overrule that no run planned again", () => {
+    const [o] = ackedNotPlanned(thread(), new Set());
+    expect(o).toMatchObject({ key: "101", q: 1, answer: "sqlite", kind: "ok" });
+  });
+  it("gives nothing for a planned key, a forged ack, or when the overrule comment is gone", () => {
+    expect(ackedNotPlanned(thread(), plannedKeys([PLANNED_LINE("101")]))).toEqual([]);
+    expect(ackedNotPlanned(thread({ viewerDidAuthor: false }), new Set())).toEqual([]);
+    expect(ackedNotPlanned(thread().filter((x) => x.url !== c("", 1).url), new Set())).toEqual([]);
+  });
+  it("does not take a rejection note for an ack, even when the command was edited to a valid question", () => {
+    // The Foundry rejected `/overrule Q7 x` with a note (same marker as an ack); the user then edited it to Q1.
+    const note = bot(`${"🤖 **Spaghetti Code Foundry**: this overrule was not used"}\n\n${overruleMarker("101")}`, 2);
+    const edited = [bot(decided(), 0), c("/overrule Q1 sqlite", 1), note];
+    expect(ackedNotPlanned(edited, new Set())).toEqual([]);
+  });
+  it("reads the planned lines of a run log", () => {
+    expect([...plannedKeys(["x", PLANNED_LINE("5"), "overrule 6 planned again "])]).toEqual(["5", "6"]);
   });
 });

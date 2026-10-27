@@ -54,7 +54,8 @@ describe("comment wording comes from the next-step module", () => {
       "to start coding (optionally with notes)", "and the Foundry creates these issues", "to continue or **/reject** to stop",
     ];
     for (const f of files) {
-      expect(text(f), f).not.toMatch(/\bReply\b/);
+      // The one allowed sentence: how to overrule a decision (#717), a command and not a next-step wording.
+      expect(text(f).split("Reply `/overrule Q<n> <your answer>` on this issue.").join(""), f).not.toMatch(/\bReply\b/);
       for (const o of old) expect(text(f), `${f}: ${o}`).not.toContain(o);
     }
   });
