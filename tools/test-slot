@@ -10,7 +10,15 @@
 // so the test gate of agent steps (tools/agent-bin) does not ask for a second slot inside this one.
 // Env: FACTORY_VAR_TEST_SLOTS (how many at once; default 2, 0 = no limit),
 //      FACTORY_TEST_SLOT_WAIT_SEC (longest wait; default 5400), FACTORY_TEST_SLOT_POLL_MS (default 2000),
-//      FACTORY_TEST_NICE (the nice value; default 10, 0 = normal priority).
+//      FACTORY_TEST_NICE (the nice value; default 10, 0 = normal priority),
+//      FACTORY_TEST_SLOT_LIMIT_SEC (working time in seconds, counted from the start of the command after the wait;
+//        at the limit the command's whole process tree is stopped — SIGTERM, SIGKILL after 5 s, at most 6 s — the slot
+//        is freed, "test-slot: stopped after <n> s — the time limit is <m> s" is printed and the exit code is 124; default: none),
+//      FACTORY_TEST_SLOT_STARTED_FILE (the epoch seconds are written here just before the command starts),
+//      FACTORY_TEST_SLOT_TRACK_FILE (processes that left the command's group are remembered here from one call to the next),
+//      FACTORY_TEST_SLOT_TRACK_MS (how often the processes are noted while a limit or a track file is set; default 2000).
+// The process tracker is loaded from ../dist/steps/proc-tree.js (FACTORY_TEST_SLOT_PS there sets the ps path, for tests).
+// With a limit the command runs in its own process group and SIGINT, SIGTERM and SIGHUP go to the whole group.
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { getPriority } from "node:os";
@@ -40,6 +48,10 @@ const pollMs = num(process.env.FACTORY_TEST_SLOT_POLL_MS, 2000);
 // FACTORY_TEST_SLOT_STRICT=1: never run without a slot. When none comes free in time (or the slots folder cannot be used)
 // the command is not run and test-slot exits with 75.
 const strict = process.env.FACTORY_TEST_SLOT_STRICT === "1";
+const limitSec = num(process.env.FACTORY_TEST_SLOT_LIMIT_SEC, 0);
+const trackMs = num(process.env.FACTORY_TEST_SLOT_TRACK_MS, 2000) || 2000;
+const startedFile = process.env.FACTORY_TEST_SLOT_STARTED_FILE || "";
+const trackFile = process.env.FACTORY_TEST_SLOT_TRACK_FILE || "";
 
 const alive = (pid) => {
   try {
@@ -115,18 +127,160 @@ const release = () => {
 };
 const nice = num(process.env.FACTORY_TEST_NICE, 10);
 const env = { ...process.env, FACTORY_IN_TEST_SLOT: "1" };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** The process tracker of dist/, or undefined (the process group is then still stopped). */
+async function loadProcTree() {
+  try {
+    return await import(new URL("../dist/steps/proc-tree.js", import.meta.url).href);
+  } catch (e) {
+    console.error(`test-slot: cannot load the process tracker (${e.message}) — only the process group is stopped at the limit`);
+    return undefined;
+  }
+}
+const groupAlive = (pid) => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+const signalGroup = (pid, sig) => {
+  try { process.kill(-pid, sig); } catch { /* already gone */ }
+};
+function readTrack(pt) {
+  try {
+    return pt.parsePs(readFileSync(trackFile, "utf8"));
+  } catch {
+    return [];
+  }
+}
+/** Writes back the remembered rows that still run (checked against a fresh table within 1 s; unchecked when ps fails — the next call checks them). */
+async function writeTrack(pt, tracker) {
+  if (!trackFile || !pt || !tracker) return;
+  try {
+    let rows = tracker.remembered();
+    const t = await pt.processTableAsync(1000);
+    if (t) {
+      const starts = new Map(t.map((r) => [r.pid, r.start]));
+      rows = rows.filter((r) => starts.get(r.pid) === r.start);
+    }
+    writeFileSync(trackFile, pt.formatRows(rows));
+  } catch (e) {
+    console.error(`test-slot: cannot write the track file (${e.message})`);
+  }
+}
+
+// The tracker module is loaded before the start time is taken, so loading does not count against the limit.
+const pt = limitSec > 0 || trackFile ? await loadProcTree() : undefined;
+const startedAt = Date.now();
+if (startedFile) {
+  try {
+    writeFileSync(startedFile, `${Math.floor(startedAt / 1000)}\n`);
+  } catch (e) {
+    console.error(`test-slot: cannot write the started file (${e.message})`);
+  }
+}
 // `nice -n` adds to the priority this process already has; a run that already has a low priority is not lowered again.
 let have = 0;
 try { have = getPriority(); } catch { /* unknown: count it as normal */ }
 const more = Math.min(nice, 19) - have;
-const child = more > 0 ? spawn("nice", ["-n", String(more), cmd, ...args], { stdio: "inherit", env }) : spawn(cmd, args, { stdio: "inherit", env });
-for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => { child.kill(sig); });
+const opts = limitSec > 0 ? { stdio: "inherit", env, detached: true } : { stdio: "inherit", env };
+const child = more > 0 ? spawn("nice", ["-n", String(more), cmd, ...args], opts) : spawn(cmd, args, opts);
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(sig, () => {
+    if (limitSec > 0 && child.pid) signalGroup(child.pid, sig);
+    else child.kill(sig);
+  });
+}
+
+let tracker;
+if (pt && child.pid) {
+  try {
+    tracker = new pt.ProcessTracker(child.pid, {
+      everyMs: trackMs,
+      tableAsync: () => pt.processTableAsync(2000),
+      remembered: trackFile ? readTrack(pt) : [],
+    });
+    tracker.start();
+  } catch (e) {
+    console.error(`test-slot: cannot start the process tracker (${e.message})`);
+    tracker = undefined;
+  }
+}
+
+let stopping = false;
+let limitTimer;
+
+/** Rows whose pid still has the same start time in a fresh table (read without blocking, retried until `deadline`); signalled with `sig`. */
+async function confirm(rows, deadline, sig) {
+  while (Date.now() < deadline) {
+    const t = await pt.processTableAsync(1500);
+    if (t) {
+      const starts = new Map(t.map((r) => [r.pid, r.start]));
+      const ok = rows.filter((r) => starts.get(r.pid) === r.start);
+      pt.signalRows(ok, sig, t);
+      return ok;
+    }
+    await sleep(100);
+  }
+  return undefined;
+}
+
+async function stopAtLimit() {
+  stopping = true;
+  const pid = child.pid;
+  // Note the descendants before anything is signalled, but never let a slow ps hold the signal back for long.
+  if (tracker) await Promise.race([tracker.poll().catch(() => {}), sleep(1000)]);
+  const candidates = tracker ? tracker.remembered() : [];
+  tracker?.stop();
+  const first = Date.now();
+  // `found.rows` are the candidates that passed the last check. A check still running (ps is slow) keeps the wait
+  // going, so the stop does not end while a detached process may still get its signal.
+  const found = { rows: [], pending: 0 };
+  const stopRows = (sig, deadline) => {
+    if (!candidates.length) return;
+    found.pending++;
+    confirm(candidates, deadline, sig)
+      .then((ok) => { if (ok) found.rows = ok; })
+      .catch(() => {})
+      .finally(() => { found.pending--; });
+  };
+  signalGroup(pid, "SIGTERM");
+  stopRows("SIGTERM", first + 5500);
+  let hard = false;
+  while (groupAlive(pid) || found.pending || (found.rows.length && pt.anyPidAlive(found.rows))) {
+    const waited = Date.now() - first;
+    if (waited >= 6000) break;
+    if (waited >= 5000 && !hard) {
+      hard = true;
+      signalGroup(pid, "SIGKILL");
+      stopRows("SIGKILL", first + 5900);
+    }
+    await sleep(50);
+  }
+  release();
+  await writeTrack(pt, tracker);
+  const n = Math.round((Date.now() - startedAt) / 1000);
+  process.stdout.write(`test-slot: stopped after ${n} s — the time limit is ${limitSec} s\n`, () => process.exit(124));
+}
+
+if (limitSec > 0) limitTimer = setTimeout(() => void stopAtLimit(), limitSec * 1000);
+
 child.on("error", (e) => {
+  clearTimeout(limitTimer);
+  tracker?.stop();
   release();
   console.error(`test-slot: cannot run ${cmd}: ${e.message}`);
   process.exit(127);
 });
 child.on("exit", (code, signal) => {
-  release();
-  process.exit(code ?? (signal ? 1 : 0));
+  if (stopping) return; // the stop at the limit owns the exit
+  clearTimeout(limitTimer);
+  tracker?.stop();
+  void writeTrack(pt, tracker).finally(() => {
+    release();
+    process.exit(code ?? (signal ? 1 : 0));
+  });
 });
