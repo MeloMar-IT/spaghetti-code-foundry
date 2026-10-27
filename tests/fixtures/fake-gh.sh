@@ -38,12 +38,20 @@ if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "
 # ({"<repo>#<n>": body}, <repo> is the --repo value), so a later view shows the new body.
 # $FAKE_GH_ISSUE_JSON: the answer of "issue view <n> --json body,number,title,updatedAt" (pull_ticket saves it as issue.json); unset or empty: 404 on stderr, exit 1.
 # $FAKE_GH_ISSUE_COMMENTS_JSONL (set, also when empty): the answer of "api --paginate repos/<o>/<n>/issues/<n>/comments…" (issue-comments.jsonl); unset: 404.
+# $FAKE_GH_FOUNDRY_COMMENTS_JSON (set, also when empty): the answer of "issue view <n> --json comments --jq …" (issue-foundry-comments.json); unset: 404.
 # $FAKE_GH_FAIL_ON=<text>: a call whose arguments contain this text prints $FAKE_GH_FAIL_TEXT (default "boom") to stderr and fails.
+# $FAKE_GH_FAIL_PR_READY=1: "pr ready" (also with --undo) fails.
 if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
 # $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
-# $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" answers with that entry.
+# $FAKE_GH_COMMENTS_BY_ISSUE (JSON {"owner/name#4": {"comments": [...]}}): "issue view <n> --json comments,labels" and "pr view <n> --json comments" answer with that entry.
 # $FAKE_GH_COMMENTS_FROM_LOG=1: the same answer is built from the comments logged in $FAKE_GH_LOG when none of the above is set; its labels are those of the issue in $FAKE_GH_LOG.issues.json.
+# $FAKE_GH_COMMENTS_PLUS_LOG=1: the answer is the comments of $FAKE_GH_COMMENTS followed by the comments logged in $FAKE_GH_LOG (comments_from_log), merged.
+# $FAKE_GH_PERMISSION=fail: the permission lookup ("api repos/…/collaborators/<login>/permission") prints "gh: Bad Gateway (HTTP 502)" to stderr and fails.
+# comments_from_log <number> <1 with labels | 0 without>: that answer.
+comments_from_log() {
+  node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}let labels=[];try{const l=JSON.parse(require("fs").readFileSync(process.argv[1]+".issues.json","utf8"));labels=(l.find(x=>x.number===Number(issue))||{}).labels||[]}catch{}console.log(JSON.stringify(process.argv[3]==="1"?{comments:out,labels}:{comments:out}))' "$FAKE_GH_LOG" "$1" "$2"
+}
 fake_repo=""; prev=""; for a in "$@"; do [ "$prev" = "--repo" ] && fake_repo="$a"; prev="$a"; done
 if [ -n "$FAKE_GH_ISSUES_BY_REPO" ] && [ -n "$fake_repo" ]; then
   FAKE_GH_ISSUES=$(node -e 'const m=JSON.parse(process.env.FAKE_GH_ISSUES_BY_REPO);console.log(JSON.stringify(m[process.argv[1]]||[]))' "$fake_repo"); export FAKE_GH_ISSUES; unset FAKE_GH_FRESH
@@ -246,6 +254,10 @@ case "$all" in "api graphql"*)
 esac
 # "api repos/<o>/<n>/labels?…": the label names, one per line, from $FAKE_GH_LOG.labels (nothing when the file is not there).
 case "$all" in "api repos/"*"/labels?"*) cat "$FAKE_GH_LOG.labels" 2>/dev/null; exit 0 ;; esac
+# "api repos/<o>/<n>/commits/<sha>/check-runs…": the JSON in $FAKE_GH_CHECK_RUNS (e.g. {"check_runs":[{"name":"build","status":"completed","conclusion":"success"}]}), else {"check_runs":[]}.
+case "$all" in "api repos/"*"/commits/"*"/check-runs"*)
+  if [ -n "${FAKE_GH_CHECK_RUNS:-}" ]; then printf '%s\n' "$FAKE_GH_CHECK_RUNS"; else printf '%s\n' '{"check_runs":[]}'; fi; exit 0 ;;
+esac
 case "$all" in "api rate_limit") if [ -n "$FAKE_GH_RATE_LIMIT" ]; then printf '%s\n' "$FAKE_GH_RATE_LIMIT"; else echo '{"resources":{}}'; fi; exit 0 ;; esac
 case "$1 $2" in
   "repo view")
@@ -256,6 +268,7 @@ case "$1 $2" in
   "issue view")
     case "$*" in
       *"--json body,number,title,updatedAt"*) if [ -n "$FAKE_GH_ISSUE_JSON" ]; then printf '%s\n' "$FAKE_GH_ISSUE_JSON"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
+      *"--json comments --jq"*) if [ -n "${FAKE_GH_FOUNDRY_COMMENTS_JSON+x}" ]; then printf '%s' "$FAKE_GH_FOUNDRY_COMMENTS_JSON"; else echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi ;;
       *"--json number,title,state,body"*) node -e 'const fs=require("fs");const [n,repo,f]=process.argv.slice(1);const l=JSON.parse(process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===Number(n));
 if(!i){console.error("GraphQL: Could not resolve to an Issue with the number of "+n+". (repository.issue)");process.exit(1)}
 const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const k=repo+"#"+n;
@@ -269,7 +282,8 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
          if [ -n "$FAKE_GH_COMMENTS_BY_ISSUE" ]; then c=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_COMMENTS_BY_ISSUE)[process.argv[1]];if(v)console.log(JSON.stringify(v))' "$fake_repo#$3"); fi
          [ -n "$c" ] || c=${FAKE_GH_COMMENTS:-}
          # FAKE_GH_COMMENTS_FROM_LOG=1: the comments of issue <n> as logged by "issue comment" (numbered like the printed #issuecomment-<n>), minus deleted ones.
-         if [ -z "$c" ] && [ -n "$FAKE_GH_COMMENTS_FROM_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}let labels=[];try{const l=JSON.parse(require("fs").readFileSync(process.argv[1]+".issues.json","utf8"));labels=(l.find(x=>x.number===Number(issue))||{}).labels||[]}catch{}console.log(JSON.stringify({comments:out,labels}))' "$FAKE_GH_LOG" "$3"); fi
+         if [ -z "$c" ] && [ -n "$FAKE_GH_COMMENTS_FROM_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(comments_from_log "$3" 1); fi
+         if [ -n "$FAKE_GH_COMMENTS_PLUS_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(node -e 'const a=JSON.parse(process.argv[1]||"{}"),b=JSON.parse(process.argv[2]);console.log(JSON.stringify(Object.assign({},a,{comments:(a.comments||[]).concat(b.comments),labels:a.labels||b.labels})))' "${FAKE_GH_COMMENTS:-}" "$(comments_from_log "$3" 1)"); fi
          [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *"--json state"*) echo "${FAKE_GH_ISSUE_STATE:-OPEN}" ;;
       # FAKE_GH_ISSUE_BODIES: JSON {"<number>": "<body>"}; the body replaces "Please add feature.txt" for that issue (the pull_ticket text).
@@ -318,7 +332,7 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
                  # "--body-file -" stores the new title (--title, else the old one) and body of the PR in $FAKE_GH_LOG.bodies.json.
                  case "$*" in *"--body-file -"*) title=""; prev=""; for a in "$@"; do [ "$prev" = "--title" ] && title="$a"; prev="$a"; done
                    node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const u=process.argv[2];const old=m[u]||{title:""};m[u]={title:process.argv[3]||old.title,body:fs.readFileSync(process.argv[4],"utf8")};fs.writeFileSync(f,JSON.stringify(m))' "$FAKE_GH_LOG.bodies.json" "$3" "$title" "$FAKE_GH_LOG.lastbody" ;; esac ;;
-  "pr ready")    ;;
+  "pr ready")    if [ -n "$FAKE_GH_FAIL_PR_READY" ]; then echo "boom" >&2; exit 1; fi ;;
   "repo clone")  # the folder is $4; the flags after "--" go to git clone, as in the real gh (the remote is a local folder, so any GIT_ALLOW_PROTOCOL is dropped)
                  dest="$4"; shift 4; [ "$1" = "--" ] && shift
                  ( unset GIT_ALLOW_PROTOCOL; git clone "$@" "$FAKE_GH_REMOTE" "$dest" ) ;;
@@ -336,6 +350,11 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
       *reviewDecision*) echo "${FAKE_GH_REVIEW_DECISION:-}" ;;
       *comments,reviews,commits*) printf '%s' "${FAKE_GH_PR_VIEW:-{\"comments\":[],\"reviews\":[],\"commits\":[]\}}" ;;
       *reviews,comments*) printf '%s\n' "${FAKE_GH_PR_COMMENTS:---- alice:\nplease rename x}" ;;
+      *"--json comments") c=""
+         if [ -n "$FAKE_GH_COMMENTS_BY_ISSUE" ]; then c=$(node -e 'const v=JSON.parse(process.env.FAKE_GH_COMMENTS_BY_ISSUE)[process.argv[1]];if(v)console.log(JSON.stringify(v))' "$fake_repo#$3"); fi
+         [ -n "$c" ] || c=${FAKE_GH_COMMENTS:-}
+         if [ -z "$c" ] && [ -n "$FAKE_GH_COMMENTS_FROM_LOG" ] && [ -f "$FAKE_GH_LOG" ]; then c=$(comments_from_log "$3" 0); fi
+         [ -n "$c" ] || c='{"comments":[]}'; printf '%s' "$c" ;;
       *number,title,body*) echo "# PR #$3 Some change" ;;
       *url*) [ -f "$FAKE_GH_LOG.pr" ] && cat "$FAKE_GH_LOG.pr" || exit 1 ;;
       *) exit 1 ;;
@@ -348,7 +367,8 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
   "run view")    echo "FAIL src/app.test.js: expected 2, got 3" ;;
   "pr merge")    echo "merged" ;;
   "pr checkout") git fetch -q origin "factory/pr-$3" && git checkout -q -B "factory/pr-$3" FETCH_HEAD && git branch -q --set-upstream-to="origin/factory/pr-$3" 2>/dev/null; git config "branch.factory/pr-$3.remote" origin; git config "branch.factory/pr-$3.merge" "refs/heads/factory/pr-$3" ;;
-  "api "*)       case "$2" in user) echo "${FAKE_GH_LOGIN:-foundry-owner}" ;; *permission*) l=${2#*collaborators/}; l=${l%/permission}
+  "api "*)       if [ "$FAKE_GH_PERMISSION" = fail ]; then case "$2" in *permission*) echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1 ;; esac; fi
+                 case "$2" in user) echo "${FAKE_GH_LOGIN:-foundry-owner}" ;; *permission*) l=${2#*collaborators/}; l=${l%/permission}
                        # $FAKE_GH_READONLY: logins that only have read access
                        case " $FAKE_GH_READONLY " in *" $l "*) echo read ;; *) echo "${FAKE_GH_PERMISSION:-write}" ;; esac ;; *) printf '%s' "${FAKE_GH_API:-[]}" ;; esac ;;
   *) echo "fake gh: unsupported: $*" >&2; exit 1 ;;

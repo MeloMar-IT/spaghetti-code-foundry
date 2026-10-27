@@ -3,6 +3,7 @@ import { closeSync, constants, existsSync, fchmodSync, fstatSync, lstatSync, mkd
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import type { Config } from "../config.js";
+import { CONTEXT_ATTEMPT_FILE, CONTEXT_BUNDLE_FILE, CONTEXT_SOURCES_DIR } from "../context/version.js";
 import { EVIDENCE_DIFF_FILE, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE, EVIDENCE_MANIFEST_FILE } from "../evidence/version.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { checkOutbound, evaluationLimits, READ_DENY_REFUSED } from "./eval-limits.js";
@@ -202,6 +203,7 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   out.push(`(deny file-write* (literal ${quote(join(runDir, "run.json"))}) (literal ${quote(join(runDir, "live.log"))}) (subpath ${quote(join(runDir, "logs"))}))`);
   out.push(`(deny file-write* (literal ${quote(join(runDir, "skill-lock.json"))}))`);
   out.push(`(deny file-write* (literal ${quote(join(runDir, EVIDENCE_EVENTS_FILE))}) (literal ${quote(join(runDir, EVIDENCE_MANIFEST_FILE))}) (literal ${quote(join(runDir, EVIDENCE_DIFF_FILE))}) (literal ${quote(join(runDir, EVIDENCE_INCOMPLETE_FILE))}))`);
+  out.push(`(deny file-write* (literal ${quote(join(runDir, CONTEXT_BUNDLE_FILE))}) (literal ${quote(join(runDir, CONTEXT_ATTEMPT_FILE))}) (subpath ${quote(join(runDir, CONTEXT_SOURCES_DIR))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(runDir, RUN_DELIVERY_DIR))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(lockDir, ".running"))}))`);
   // the run folder and the lock folder themselves cannot be moved or removed

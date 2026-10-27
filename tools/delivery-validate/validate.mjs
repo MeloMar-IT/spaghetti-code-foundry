@@ -3,7 +3,7 @@
 // so a CI job can run it without `npm ci` and without `dist/`.
 //
 //   node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file>
-//                     [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json] [--help]
+//                     [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json] [--version] [--help]
 //
 // Exit codes: 0 no stop, 1 at least one stop, 2 a usage or read error.
 //
@@ -30,6 +30,9 @@ import { parseArgs, promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const NAMESPACE = "scf-delivery-contract";
+// Raise this when a verdict, an option or the output changes. The release files are named after it
+// (scf-delivery-validate-<version>.mjs). It is not the `version` of the --json output.
+const VALIDATOR_VERSION = "1.0.0";
 const STOP_CONDITIONS = ["commit-changed", "lock-changed", "workflow-changed", "required-check-failed", "evidence-unverified", "signature-unverified", "superseded"];
 const WORKFLOWS_DIR = ".github/workflows/";
 const EVIDENCE_EVENTS_FILE = "evidence.jsonl";
@@ -42,7 +45,7 @@ const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const UNTRUSTED = "the contract is not trusted";
 
 const USAGE =
-  "usage: node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file> [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json]\n" +
+  "usage: node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file> [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json] [--version]\n" +
   "       Checks a delivery contract against the checked-out commit.\n" +
   "       Exit code 0: no stop. 1: at least one stop. 2: a usage or read error.\n";
 
@@ -365,7 +368,7 @@ function checkContract(text, sigText, key) {
 // same commit. tests/delivery-validate-events.test.ts builds a valid event for every type and enum value and fails if not.
 
 /** The newest event version this script reads. A higher version is refused, so a validator that falls behind stops delivery. */
-const EVIDENCE_EVENT_VERSION = 4;
+const EVIDENCE_EVENT_VERSION = 6;
 const EVENTS_MAX = 256 * 1024 * 1024;
 const ARTIFACT_KINDS = ["log", "transcript", "diff", "flow", "skill-lock", "test-report", "other"];
 const STEP_TYPES = ["claude", "shell", "approval", "parallel", "flow"];
@@ -374,12 +377,13 @@ const RETRY_CAUSES = ["outage", "limit"];
 const TEST_OUTCOMES = ["passed", "failed"];
 const OUTCOMES = ["allow", "warn", "require_approval", "deny"];
 const MODES = ["observe", "enforce"];
-const BOUNDARIES = ["run.start", "step.before", "step.after", "repository.access", "agent.write", "push", "approval.consume", "run.complete"];
+const BOUNDARIES = ["run.start", "step.before", "step.after", "repository.access", "agent.write", "push", "approval.consume", "context.select", "run.complete"];
 const CREDENTIALS = ["machine", "repository", "none"];
 const REASON_CODES = [
   "branch.protected", "branch.hotfix-exception", "secret.detected", "path.forbidden", "output.limit-exceeded", "timeout.exceeded", "budget.step-exceeded",
   "budget.run-exceeded", "budget.daily-exceeded", "sandbox.required", "workspace.admin-only", "repository.not-allowed", "credential.scope-exceeded",
   "identity.missing", "tool.not-allowed", "issue.closed", "flow.retired", "approval.required", "exception.granted",
+  "context.limit-exceeded", "context.sources-omitted", "context.classification-exceeded", "context.uncited",
   "policy.no-rule-matched", "policy.input-incomplete", "policy.invalid", "policy.unavailable", "policy.break-glass",
 ];
 const NO_RULE_REASONS = ["policy.no-rule-matched", "policy.invalid", "policy.unavailable", "policy.break-glass"];
@@ -403,6 +407,14 @@ const UNREADABLE = ["not-an-object", "no-version", "unsupported-version", "inval
 const EXCESS_FIELDS = ["operation", "targets", "dataClassification", "credential", "timeoutMs", "maxConcurrent", "outputCapBytes", "approval", "sandbox.filesystem", "sandbox.network"];
 const REPO_EVIDENCE_OPERATIONS = ["clone", "fetch", "branch", "commit", "push", "pull-request", "status", "unknown"];
 const REPO_OUTCOMES = ["done", "failed", "refused"];
+const CONTEXT_OUTCOMES = ["written", "failed"];
+const CONTEXT_BUNDLE_FILE = "context.json";
+const CONTEXT_OMISSION_REASONS = ["missing", "stale", "ambiguous", "over-budget", "classification", "generated", "unsupported"];
+const RUN_CONTEXT_CODES = [
+  "marker-failed", "issue-unreadable", "comments-unreadable", "select-invalid", "bundle-invalid", "timeout", "lock-failed", "internal",
+  "repository-no-git", "repository-not-a-repository", "repository-no-commit", "repository-too-large", "repository-timeout", "repository-bad-listing", "repository-read-failed",
+  "store-no-folder", "store-exists", "store-texts-do-not-match", "store-write-failed",
+];
 const REPO_REFUSALS = ["invalid-request", "no-target", "not-in-profile", "approval-required", "deploy-key", "no-credential", "unsafe-git-settings", "policy", "not-empty"];
 
 // The patterns of zod's z.uuid() (no version) and z.iso.datetime() (no options), copied from node_modules/zod/v4/core/regexes.js (zod 4.6.5).
@@ -446,6 +458,7 @@ const gitIdentity = obj({ commit: isCommit, branch: opt(isBranch), repository: o
 const pullRequest = obj({ repository: isRepository, number: int(1), url: isPlainHttpsUrl, head: opt(isCommit) });
 const flowIdentity = obj({ name: lbl(200), version: opt(int(1)) });
 const toolProfileRef = obj({ id: slug, version: re(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/), sha256: isSha256 });
+const contextBudget = obj({ maxSources: (v) => int(1)(v) && v <= 1000, maxSourceBytes: int(1), maxTotalBytes: int(1) });
 const denial = union("kind", {
   approval: obj({ kind: any, by: actor }),
   tool: obj({ kind: any, tool }),
@@ -514,6 +527,16 @@ const EVENT_TYPES = {
     refusal: opt(oneOf(REPO_REFUSALS)),
     pullRequest: opt(pullRequest),
   }),
+  "context.bundled": event({
+    outcome: oneOf(CONTEXT_OUTCOMES),
+    bundle: opt(artifactRef),
+    sourcesSha256: opt(isSha256),
+    limits: opt(contextBudget),
+    sources: opt(int(0)),
+    bytes: opt(int(0)),
+    omitted: opt(obj(Object.fromEntries(CONTEXT_OMISSION_REASONS.map((r) => [r, int(0)])))),
+    failure: opt(oneOf(RUN_CONTEXT_CODES)),
+  }),
 };
 /** The superRefine of EvidenceEventSchema, for an event of the right shape. */
 function eventRules(e) {
@@ -521,7 +544,7 @@ function eventRules(e) {
   if (e.hash !== undefined && (e.prevHash === null) !== (e.seq === 0)) return false;
   if ((e.type === "step.failed" || e.type === "step.completed") && new Set(e.artifacts.map((a) => a.path)).size !== e.artifacts.length) return false;
   if (e.type === "policy.decided") {
-    const runWide = e.decision.boundary === "run.start" || e.decision.boundary === "run.complete";
+    const runWide = e.decision.boundary === "run.start" || e.decision.boundary === "run.complete" || e.decision.boundary === "context.select";
     if (runWide && e.step) return false;
     if (!runWide && !e.step && e.decision.boundary !== "repository.access") return false;
   }
@@ -538,13 +561,20 @@ function eventRules(e) {
     if (e.operation === "unknown" && (e.outcome !== "refused" || e.refusal !== "invalid-request")) return false;
     if (e.pullRequest && (e.operation !== "pull-request" || e.outcome !== "done")) return false;
   }
+  if (e.type === "context.bundled") {
+    const data = [e.bundle, e.sourcesSha256, e.limits, e.sources, e.bytes, e.omitted];
+    if (e.outcome === "written") {
+      if (data.some((x) => x === undefined) || e.failure !== undefined) return false;
+      if (e.bundle.kind !== "other" || e.bundle.path !== CONTEXT_BUNDLE_FILE || !e.bundle.required) return false;
+    } else if (e.failure === undefined || data.some((x) => x !== undefined)) return false;
+  }
   if (e.type === "step.approved" && e.step.type !== "approval") return false;
   if (e.type === "step.denied" && e.denial.kind === "approval" && e.step.type !== "approval") return false;
   return true;
 }
 const isEvent = both(union("type", EVENT_TYPES), eventRules);
 
-/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→3→4 only set the version), then the schema holds. */
+/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→3→4→5→6 only set the version), then the schema holds. */
 function readEvent(raw) {
   const v = raw.version;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > EVIDENCE_EVENT_VERSION) return false;
@@ -680,11 +710,13 @@ function readInputs(args) {
         events: { type: "string" },
         json: { type: "boolean" },
         help: { type: "boolean" },
+        version: { type: "boolean" },
       },
     }));
   } catch (e) {
     throw new InputError(true, clean(e instanceof Error ? e.message.split("\n")[0] : "bad options"));
   }
+  if (values.version) return { version: true };
   if (values.help) return { help: true };
   for (const o of ["contract", "signature", "public-key"]) if (values[o] === undefined) throw new InputError(true, `--${o} is required`);
   const repo = values.repo ?? ".";
@@ -828,6 +860,10 @@ async function run(inputs) {
 async function main(args) {
   try {
     const inputs = readInputs(args);
+    if (inputs.version) {
+      process.stdout.write(VALIDATOR_VERSION + "\n");
+      return 0;
+    }
     if (inputs.help) {
       process.stdout.write(USAGE);
       return 0;

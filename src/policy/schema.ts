@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CONTEXT_CLASSIFICATIONS } from "../context/schema.js";
 import { PolicyIdentitySchema, RelativePathSchema, RunIdSchema, Sha256Schema, StepIdSchema, TimeSchema } from "../evidence/identity.js";
 import { ReasonCodeSchema, RuleReasonCodeSchema, type ReasonCode } from "./reasons.js";
 import { POLICY_DECISION_VERSION, POLICY_INPUT_VERSION, POLICY_PACK_VERSION, type POLICY_PACK_VERSIONS } from "./version.js";
@@ -22,7 +23,7 @@ export const MODES = ["observe", "enforce"] as const;
 export type Mode = (typeof MODES)[number];
 
 /** The moments at which a question is asked. A rule names the moments it is about. */
-export const BOUNDARIES = ["run.start", "step.before", "step.after", "repository.access", "agent.write", "push", "approval.consume", "run.complete"] as const;
+export const BOUNDARIES = ["run.start", "step.before", "step.after", "repository.access", "agent.write", "push", "approval.consume", "context.select", "run.complete"] as const;
 export type Boundary = (typeof BOUNDARIES)[number];
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
@@ -87,6 +88,16 @@ export const FactsSchema = z
     issueClosed: z.boolean(),
     /** The flow of the run is in none of the flow folders any more. */
     flowRetired: z.boolean(),
+    /** How many sources the run's context bundle has. */
+    contextSources: count,
+    /** How many bytes of text the sources of the context bundle have together. */
+    contextBytes: count,
+    /** How many sources were left out of the context bundle. */
+    contextOmitted: count,
+    /** The most private class among the sources of the context bundle. Left out when there are no sources. */
+    contextClassification: z.enum(CONTEXT_CLASSIFICATIONS),
+    /** How many of the plan's Requirements, Constraints and Acceptance criteria sections cite no context entry it was given (0 to 3). */
+    contextUncited: count,
   })
   .partial()
   .strict();
@@ -149,6 +160,11 @@ export const ConditionsSchema = z
     commitIdentity: flag,
     issueClosed: flag,
     flowRetired: flag,
+    contextSources: over,
+    contextBytes: over,
+    contextOmitted: over,
+    contextClassification: choice(CONTEXT_CLASSIFICATIONS),
+    contextUncited: over,
   })
   .partial()
   .strict();

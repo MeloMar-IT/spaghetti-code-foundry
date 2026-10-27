@@ -5,6 +5,7 @@ import { supersededRuns } from "../stats.js";
 import { resolve } from "node:path";
 import { runDiff } from "../engine/diff.js";
 import { readTranscript } from "../engine/transcript.js";
+import { runContextView } from "./context-view.js";
 import { runEvidenceView } from "./evidence-view.js";
 import { auditAction } from "../auth/audit.js";
 import type { User } from "../auth/users.js";
@@ -348,6 +349,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, runDiff(s)), true;
   }
   if (action === "evidence" && !seg[3] && method === "GET") return send(res, 200, hide(runEvidenceView(s, admin))), true;
+  if (action === "context" && !seg[3] && method === "GET") return send(res, 200, hide(runContextView(s, admin, new Date().toISOString()))), true;
   if (action === "transcript" && method === "GET") {
     const n = Number(seg[3]);
     const rec = s.history[n];

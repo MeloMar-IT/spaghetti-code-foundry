@@ -19,7 +19,7 @@ import { toolNameOf } from "../tool-profile/resolve.js";
 export const TELEMETRY_VERSION = 2;
 
 export const TELEMETRY_NAMES = {
-  run: [...RUN_EVENT_TYPES, "run.measured"],
+  run: [...RUN_EVENT_TYPES, "run.measured", "context.bundled"],
   step: ["step.started", "step.profiled", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"],
   model: ["model.routed"],
   policy: ["policy.decided"],
@@ -217,6 +217,8 @@ function parts(body: EvidenceEventBody): { kind: TelemetryKind; name: string; fi
       };
       return { kind: "tool", name: "tool.called", fields, repository: repoOf({ repository: body.repository }) };
     }
+    case "context.bundled":
+      return { kind: "run", name: type, fields: { outcome: body.outcome === "written" ? "ok" : "failed" } };
     default: {
       const never: never = body;
       void never;

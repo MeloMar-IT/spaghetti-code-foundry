@@ -771,7 +771,8 @@ describe("watcher", () => {
     const end = log.indexOf(marker, start);
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
-    expect(log).not.toContain("<!-- spaghetti-code-foundry");
+    // the logged pull_ticket call reads the new marker (contains("…")); no comment is posted with it
+    expect(log.replaceAll('contains("<!-- spaghetti-code-foundry")', "")).not.toContain("<!-- spaghetti-code-foundry");
     const posted = gh.comments().at(-1)!.body; // the whole comment, starting with the first line
     expect(posted.startsWith("**")).toBe(true);
     expect(posted).toContain(marker);

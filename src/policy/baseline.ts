@@ -97,6 +97,8 @@ const SANDBOX_RULE = { id: "sandbox-required", boundaries: ["agent.write"], when
 const SANDBOX_STEP_RULE = { ...SANDBOX_RULE, boundaries: ["agent.write", "step.before"] };
 const ADMIN_RULE = { id: "workspace-admin-only", boundaries: ["run.start"], when: { owner: { in: ["user"] }, workspace: { in: ["inplace"] } }, outcome: "deny", reasonCode: "workspace.admin-only", mode: "observe" };
 
+const CONTEXT_UNCITED_RULE = { id: "context-uncited", boundaries: ["step.after"], when: { contextUncited: { over: 0 } }, outcome: "warn", reasonCode: "context.uncited", mode: "observe" };
+
 /** The four rules of the baseline without run controls (unchanged). */
 export function legacyBaselinePack(version: string): PolicyPack {
   return {
@@ -157,7 +159,7 @@ function pathRules(patterns: readonly string[] | undefined): unknown[] {
 }
 
 /** The baseline pack of one run (pure): protected branches first, as the hook checks the branch before it scans. */
-export function baselinePack(version: string, controls: BaselineControls, o: { stepSandbox?: boolean } = {}): PolicyPack {
+export function baselinePack(version: string, controls: BaselineControls, o: { stepSandbox?: boolean; contextCitations?: boolean } = {}): PolicyPack {
   const chunks: string[][] = [];
   for (let i = 0; i < controls.protectedBranches.length; i += MAX_PATTERNS) chunks.push(controls.protectedBranches.slice(i, i + MAX_PATTERNS));
   const rules: unknown[] = [];
@@ -183,6 +185,8 @@ export function baselinePack(version: string, controls: BaselineControls, o: { s
   rules.push({ id: "credential-scope-exceeded", boundaries: ["repository.access"], when: { owner: { in: ["user"] }, credential: { in: ["machine"] } }, outcome: "deny", reasonCode: "credential.scope-exceeded", mode: "observe" });
   rules.push(...limitRules(controls.limits));
   rules.push(...pathRules(controls.forbiddenPaths));
+  // Last, so a limit or path deny at `step.after` still wins over this warning.
+  if (o.contextCitations !== false) rules.push(CONTEXT_UNCITED_RULE);
   return { version: POLICY_PACK_VERSION, policy: { id: BASELINE_POLICY_ID, version }, mode: "observe", defaultOutcome: "allow", rules } as PolicyPack;
 }
 
@@ -192,6 +196,8 @@ export interface RunBaseline {
   pushWithoutRepository?: PolicyPack;
   /** For a step whose `sandboxed` fact is not known (not a shell step): the sandbox rule only at `agent.write`. */
   stepWithoutSandbox: PolicyPack;
+  /** For a step whose `contextUncited` fact is not known (not a READY plan): the same pack without the citation rule. */
+  stepWithoutCitations: PolicyPack;
 }
 
 /** Builds and parses the baseline of a run. Throws PolicySchemaError when it cannot be built. */
@@ -200,8 +206,9 @@ export function runBaseline(version: string, controls: BaselineControls): RunBas
   if (n > MAX_RULES) throw new PolicySchemaError("pack", "invalid", `policy pack: the baseline would have ${n} rules, more than ${MAX_RULES}`);
   const pack = parsePolicyPack(baselinePack(version, controls));
   const stepWithoutSandbox = parsePolicyPack(baselinePack(version, controls, { stepSandbox: false }));
-  if (!controls.repository) return { pack, stepWithoutSandbox };
-  return { pack, stepWithoutSandbox, pushWithoutRepository: parsePolicyPack(baselinePack(version, { ...controls, repository: undefined })) };
+  const stepWithoutCitations = parsePolicyPack(baselinePack(version, controls, { contextCitations: false }));
+  if (!controls.repository) return { pack, stepWithoutSandbox, stepWithoutCitations };
+  return { pack, stepWithoutSandbox, stepWithoutCitations, pushWithoutRepository: parsePolicyPack(baselinePack(version, { ...controls, repository: undefined })) };
 }
 
 function readVersion(): string {

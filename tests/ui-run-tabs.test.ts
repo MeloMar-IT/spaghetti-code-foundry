@@ -255,6 +255,20 @@ describe("evidencePanel", () => {
     expect(node.children[0]).toBe(rec);
     expect(node.all("li")).toHaveLength(3);
   });
+  it("places the sources after the record and gives both every update", () => {
+    const rec = el("section");
+    const src = el("section");
+    const record = { build: vi.fn(() => rec), update: vi.fn() };
+    const sources = { build: vi.fn(() => src), update: vi.fn() };
+    const p = mod.evidencePanel({ record, sources });
+    const node = p.build();
+    expect(node.children[0]).toBe(rec);
+    expect(node.children[1]).toBe(src);
+    const prev = { finishedAt: undefined };
+    p.update({}, prev);
+    expect(sources.update).toHaveBeenCalledWith({}, prev);
+    expect(record.update).toHaveBeenCalledWith({}, prev);
+  });
   it("shows the questions of an administrator's stopped run, read from the step that asked", () => {
     const p = mod.evidencePanel();
     const node = p.build();

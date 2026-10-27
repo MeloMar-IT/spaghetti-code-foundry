@@ -22,7 +22,12 @@ function build(entries: Entry[]): Record<string, unknown> {
 const issues = (entries: Entry[]) => ConfigSchema.safeParse(build(entries)).error?.issues ?? [];
 const issuesAt = (key: string, value: unknown) => issues([[key, value]]).filter((i) => i.path.join(".") === key);
 const issuesUnder = (entries: Entry[], key: string) => issues(entries).filter((i) => i.path.join(".").startsWith(key));
-const accepts = (key: string) => (v: unknown) => issuesAt(key, v).length === 0;
+// A key that must not be above another is tried with that other one out of the way.
+const ABOVE_OTHER: Record<string, Entry> = { "context.max_source_bytes": ["context.max_total_bytes", Number.MAX_SAFE_INTEGER] };
+const accepts = (key: string) => (v: unknown) => {
+  const other = ABOVE_OTHER[key];
+  return issues(other ? [[key, v], other] : [[key, v]]).filter((i) => i.path.join(".") === key).length === 0;
+};
 
 const leaf = (key: string): SettingLeaf => {
   const l = schemaLeaves().find((x) => x.key === key);

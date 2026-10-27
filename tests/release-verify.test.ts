@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -45,7 +45,7 @@ function setup() {
     if (!step || step.type !== "shell") throw new Error(`no shell step ${id} in ${flow}`);
     return step.run.replaceAll("{{run.dir}}", runDir);
   };
-  const run = (text: string, vars: { test?: string; build?: string; bin?: string }) => {
+  const run = (text: string, vars: { test?: string; build?: string; bin?: string }, env: Record<string, string> = {}) => {
     const r = spawnSync("sh", ["-c", text], {
       cwd: repo,
       encoding: "utf8",
@@ -59,13 +59,126 @@ function setup() {
         FACTORY_VAR_DEVELOP_BRANCH: "develop",
         FACTORY_TEST_SLOT_WAIT_SEC: "0",
         FACTORY_TEST_SLOT_POLL_MS: "50",
+        ...env,
       },
     });
     return { status: r.status, out: r.stdout, files: existsSync(tested) && statSync(tested).isDirectory() ? readdirSync(tested) : [] };
   };
-  const verify = (vars: Parameters<typeof run>[1]) => run(script("release-daily", "verify"), vars);
-  return { root, repo, tested, git: (...a: string[]) => git(repo, ...a), fakeGit, verify, run, script };
+  const verify = (vars: Parameters<typeof run>[1], env: Record<string, string> = {}) => run(script("release-daily", "verify"), vars, env);
+  return { root, repo, runDir, tested, git: (...a: string[]) => git(repo, ...a), fakeGit, verify, run, script };
 }
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe("release-daily verify: the time limit", () => {
+  const read = (s: ReturnType<typeof setup>, f: string) => readFileSync(join(s.runDir, f), "utf8");
+
+  it("stops the tests at the limit, runs no build and writes no record", () => {
+    const s = setup();
+    const test = `sleep 60 & echo $! > "${s.root}/child"; echo $$ > "${s.root}/pid"; wait`;
+    const started = Date.now();
+    const r = s.verify({ test, build: "touch built" }, { FACTORY_CHECK_LIMIT_SEC: "2" });
+    expect(Date.now() - started).toBeLessThan(15000);
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("CHECKS: no");
+    const checks = read(s, "checks.md");
+    expect(checks).toContain("⏱ **Checks did not finish in time**");
+    expect(checks).toContain("the tests");
+    expect(checks).not.toContain("⚠ **Checks failed**");
+    expect(checks).toContain("not run (no time left)");
+    expect(read(s, "tests.log").trim().split("\n").pop()).toMatch(/^test-slot: stopped after /);
+    for (const f of ["child", "pid"]) expect(alive(Number(readFileSync(join(s.root, f), "utf8").trim())), f).toBe(false);
+    expect(existsSync(join(s.repo, "built"))).toBe(false);
+    expect(r.files).toEqual([]);
+  });
+
+  it("stops the build at the limit and writes no record", () => {
+    const s = setup();
+    const started = Date.now();
+    const r = s.verify({ test: "true", build: "sleep 60" }, { FACTORY_CHECK_LIMIT_SEC: "2" });
+    expect(Date.now() - started).toBeLessThan(15000);
+    expect(r.out).toContain("CHECKS: no");
+    const checks = read(s, "checks.md");
+    expect(checks).toContain("⏱ **Checks did not finish in time**");
+    expect(checks).toContain("the build");
+    expect(read(s, "build.log").trim().split("\n").pop()).toMatch(/^test-slot: stopped after /);
+    expect(r.files).toEqual([]);
+  });
+
+  it("does not run the build when the tests used all the time", () => {
+    const s = setup();
+    const r = s.verify({ test: 'echo 1000 > "$FACTORY_TEST_SLOT_STARTED_FILE"', build: "touch built" }, { FACTORY_VAR_VERIFY_TIMEOUT_MIN: "2" });
+    expect(r.out).toContain("not run (no time left)");
+    expect(r.out).toContain("⏱ **Checks did not finish in time**");
+    expect(r.out).toContain("the build");
+    expect(r.out).toContain("CHECKS: no");
+    expect(existsSync(join(s.repo, "built"))).toBe(false);
+    expect(r.files).toEqual([]);
+  });
+
+  it("takes the limit from verify_timeout_min", () => {
+    const s = setup();
+    const r = s.verify({ test: 'echo "limit=$FACTORY_TEST_SLOT_LIMIT_SEC"' }, { FACTORY_VAR_VERIFY_TIMEOUT_MIN: "2" });
+    expect(read(s, "tests.log")).toContain("limit=120");
+    expect(r.out).not.toContain("using 180");
+    expect(r.out).toContain("CHECKS: yes");
+  });
+
+  it("uses 180 minutes for a missing or invalid value and says so", () => {
+    for (const v of ["abc", "0", "721", "010", "-1", "1.5", ""]) {
+      const s = setup();
+      const r = s.verify({ test: 'echo "limit=$FACTORY_TEST_SLOT_LIMIT_SEC"' }, { FACTORY_VAR_VERIFY_TIMEOUT_MIN: v });
+      expect(read(s, "tests.log"), v).toContain("limit=10800");
+      const warning = `verify_timeout_min "${v}" is not a whole number from 1 to 720 — using 180`;
+      if (v === "") expect(r.out).not.toContain("using 180");
+      else expect(r.out, v).toContain(warning);
+    }
+  });
+
+  it("lets FACTORY_CHECK_LIMIT_SEC replace the limit, and ignores a bad one", () => {
+    let s = setup();
+    s.verify({ test: 'echo "limit=$FACTORY_TEST_SLOT_LIMIT_SEC"' }, { FACTORY_VAR_VERIFY_TIMEOUT_MIN: "2", FACTORY_CHECK_LIMIT_SEC: "5" });
+    expect(read(s, "tests.log")).toContain("limit=5");
+    for (const v of ["0", "43201", "x"]) {
+      s = setup();
+      const r = s.verify({ test: 'echo "limit=$FACTORY_TEST_SLOT_LIMIT_SEC"' }, { FACTORY_VAR_VERIFY_TIMEOUT_MIN: "2", FACTORY_CHECK_LIMIT_SEC: v });
+      expect(r.out, v).toContain(`FACTORY_CHECK_LIMIT_SEC "${v}" is not a whole number from 1 to 43200 — ignored`);
+      expect(read(s, "tests.log"), v).toContain("limit=120");
+    }
+  });
+
+  it("caps the wait for a test slot at 6 hours and keeps run-anyway", () => {
+    const test = 'echo "wait=$FACTORY_TEST_SLOT_WAIT_SEC"';
+    let s = setup();
+    let r = s.verify({ test }, { FACTORY_TEST_SLOT_WAIT_SEC: "99999" });
+    expect(read(s, "tests.log")).toContain("wait=21600");
+    expect(r.out).toContain("capped at 21600");
+    s = setup();
+    r = s.verify({ test }, { FACTORY_TEST_SLOT_WAIT_SEC: "21600" });
+    expect(read(s, "tests.log")).toContain("wait=21600");
+    expect(r.out).not.toContain("capped");
+    s = setup();
+    s.verify({ test }, { FACTORY_TEST_SLOT_WAIT_SEC: "" });
+    expect(read(s, "tests.log")).toContain("wait=300");
+  });
+
+  it("does not call a failure a time-out", () => {
+    for (const test of ["exit 124", 'echo "test-slot: stopped after 1 s"; exit 1']) {
+      const s = setup();
+      const r = s.verify({ test });
+      expect(r.out, test).toContain("⚠ **Checks failed**");
+      expect(r.out, test).not.toContain("⏱");
+      expect(r.out, test).toContain("CHECKS: no");
+    }
+  });
+});
 
 describe("release-daily verify: the record of a pass", () => {
   it("writes the checked record after a clean pass", () => {
@@ -156,5 +269,90 @@ describe("release-daily verify: the record of a pass", () => {
     const r = s.run(s.script("issue-gitflow", "baseline_tests"), { test: "true" });
     expect(r.files).toEqual([testedKey(tree, "true")]);
     expect(passedBefore(s.tested, tree, "true")).toBeUndefined();
+  });
+});
+
+describe("release-daily verify: reuse of a test record", () => {
+  const REUSE = { FACTORY_VAR_REUSE_TEST_RESULTS: "yes" };
+  const snapshot = (dir: string) => (existsSync(dir) ? readdirSync(dir).sort().map((f) => [f, readFileSync(join(dir, f), "utf8")]) : []);
+  const put = (s: ReturnType<typeof setup>, cmd: string, content: string) => {
+    mkdirSync(s.tested, { recursive: true });
+    const tree = s.git("rev-parse", "HEAD^{tree}");
+    writeFileSync(join(s.tested, testedKey(tree, cmd)), content);
+    return tree;
+  };
+  const ran = (s: ReturnType<typeof setup>) => existsSync(join(s.repo, "ran-tests"));
+
+  it("skips the tests on a story record", () => {
+    const s = setup();
+    put(s, "touch ran-tests", "run s1, 2026-10-26T10:00Z\n");
+    const before = snapshot(s.tested);
+    const r = s.verify({ test: "touch ran-tests" }, REUSE);
+    expect(r.out).toContain("CHECKS: yes");
+    expect(r.out).toContain("not run again");
+    expect(r.out).toContain("(run s1, 2026-10-26T10:00Z)");
+    expect(readFileSync(join(s.runDir, "checks.md"), "utf8")).toContain("(run s1, 2026-10-26T10:00Z)");
+    expect(ran(s)).toBe(false);
+    expect(snapshot(s.tested)).toEqual(before);
+  });
+
+  it("skips the tests on a release record of this tree and shows no tree", () => {
+    const s = setup();
+    const tree = s.git("rev-parse", "HEAD^{tree}");
+    put(s, "touch ran-tests", `run s1, 2026-10-26T10:00Z, tree ${tree}\n`);
+    const r = s.verify({ test: "touch ran-tests" }, REUSE);
+    expect(r.out).toContain("(run s1, 2026-10-26T10:00Z)");
+    expect(readFileSync(join(s.runDir, "checks.md"), "utf8")).not.toContain("tree ");
+    expect(ran(s)).toBe(false);
+  });
+
+  it("runs the tests on a miss", () => {
+    const other = "a".repeat(40);
+    const good = "run s1, 2026-10-26T10:00Z\n";
+    const cases: Array<[string, (s: ReturnType<typeof setup>) => Record<string, string>]> = [
+      ["another command", (s) => (put(s, "true", good), REUSE)],
+      ["reuse off", (s) => (put(s, "touch ran-tests", good), { FACTORY_VAR_REUSE_TEST_RESULTS: "no" })],
+      ["dirty tree", (s) => (put(s, "touch ran-tests", good), writeFileSync(join(s.repo, "untracked.txt"), "x"), REUSE)],
+      [
+        "symlink",
+        (s) => {
+          const tree = s.git("rev-parse", "HEAD^{tree}");
+          mkdirSync(s.tested, { recursive: true });
+          const real = join(s.root, "real-record");
+          writeFileSync(real, good);
+          symlinkSync(real, join(s.tested, testedKey(tree, "touch ran-tests")));
+          return REUSE;
+        },
+      ],
+      ["text", (s) => (put(s, "touch ran-tests", "hello\n"), REUSE)],
+      ["bad time", (s) => (put(s, "touch ran-tests", "run s1, yesterday\n"), REUSE)],
+      ["other tree", (s) => (put(s, "touch ran-tests", `run s1, 2026-10-26T10:00Z, tree ${other}\n`), REUSE)],
+    ];
+    for (const [name, prep] of cases) {
+      const s = setup();
+      const env = prep(s);
+      const r = s.verify({ test: "touch ran-tests" }, env);
+      expect(r.out, name).toContain("CHECKS: yes");
+      expect(r.out, name).not.toContain("not run again");
+      expect(ran(s), name).toBe(true);
+    }
+  });
+
+  it("still runs the build, and a failing build gives CHECKS: no", () => {
+    const s = setup();
+    put(s, "touch ran-tests", "run s1, 2026-10-26T10:00Z\n");
+    const before = snapshot(s.tested);
+    const r = s.verify({ test: "touch ran-tests", build: "false" }, REUSE);
+    expect(r.out).toContain("CHECKS: no");
+    expect(r.out).toContain("⚠ **Checks failed**");
+    expect(ran(s)).toBe(false);
+    expect(snapshot(s.tested)).toEqual(before);
+  });
+
+  it("is only in release-daily", () => {
+    const s = setup();
+    expect(loadFlow("daily-pr", s.repo).flow.vars).not.toHaveProperty("reuse_test_results");
+    expect(s.script("daily-pr", "verify")).not.toMatch(/REUSE_TEST_RESULTS|not run again/);
+    expect(loadFlow("release-daily", s.repo).flow.vars?.reuse_test_results).toBe("yes");
   });
 });

@@ -42,6 +42,28 @@ describe("repo_access", () => {
   });
 });
 
+describe("{{context.index}}", () => {
+  it("is accepted in the prompt of a claude step", () => {
+    expect(parseFlow(minimal("  - {id: a, type: claude, prompt: 'Plan {{context.index}}'}")).steps).toHaveLength(1);
+  });
+  it.each([
+    ["system_prompt", "{id: a, type: claude, prompt: x, system_prompt: '{{context.index}}'}"],
+    ["shell run", "{id: a, type: shell, run: 'echo {{context.index}}'}"],
+    ["approval message", "{id: a, type: approval, message: '{{context.index}}'}"],
+  ])("is refused in %s", (_n, step) => {
+    expect(() => parseFlow(minimal(`  - ${step}`))).toThrow(/\{\{context\.index\}\} can only be used in the prompt of a claude step/);
+  });
+  it("is refused in flow vars and sub-flow vars", () => {
+    expect(() => parseFlow(`name: t\nvars:\n  v: "{{context.index}}"\nsteps:\n  - {id: a, type: shell, run: x}`)).toThrow(/can only be used in the prompt of a claude step/);
+    expect(() => parseFlow(minimal("  - {id: a, type: flow, flow: other, vars: {v: '{{context.index}}'}}"))).toThrow(/can only be used in the prompt of a claude step/);
+  });
+  it("is the only context value", () => {
+    for (const p of ["context.foo", "context", "context.index.x"]) {
+      expect(() => parseFlow(minimal(`  - {id: a, type: claude, prompt: 'x {{${p}}}'}`))).toThrow(/is not a context value; the only one is \{\{context\.index\}\}/);
+    }
+  });
+});
+
 describe("flow schema", () => {
   it("parses the built-in flows", () => {
     const shipped = readdirSync("flows").filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""));

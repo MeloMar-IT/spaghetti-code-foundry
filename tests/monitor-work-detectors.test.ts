@@ -166,6 +166,8 @@ describe("label and run disagree", () => {
       ["working with a run paused by a limit", L.working, false, r("stopped", "usage limit reached"), undefined],
       ["working with a run that asks questions", L.working, false, r("stopped", "stopped at step ask"), "stopped"],
       ["working with a cancelled run", L.working, false, r("cancelled"), undefined],
+      ["working with an overruled run", L.working, false, r("stopped", "overruled"), undefined],
+      ["needs-info with an overruled run", L.needsInfo, false, r("stopped", "overruled"), "stopped"],
       ["failed with a failed run", L.failed, false, r("failed"), undefined],
       ["failed with a cancelled run", L.failed, false, r("cancelled"), undefined],
       ["waiting with a cancelled run", L.waiting, false, r("cancelled"), "cancelled"],

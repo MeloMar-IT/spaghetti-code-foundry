@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { contractDigest, evidenceHeadProblem, verifyDeliveryContract } from "../src/delivery/contract.js";
 import { publicKeyLine } from "../src/delivery/sshsig.js";
-import { DELIVERY_DIR, DEPENDENCY_LOCK_NAMES, deliveryAfterStep, deliveryRequirements, parsePullRequestUrl, readCommitFacts, writeContract } from "../src/delivery/write.js";
+import { DELIVERY_DIR, DEPENDENCY_LOCK_NAMES, deliveryAfterStep, deliveryKeyEnv, deliveryRequirements, deliverySigningKey, parsePullRequestUrl, readBoundedText, readCommitFacts, writeContract } from "../src/delivery/write.js";
 import { RUN_DELIVERY_DIR } from "../src/engine/os-sandbox.js";
 import type { Engine } from "../src/engine/execute.js";
 import { canonicalJson, eventHash } from "../src/evidence/canonical.js";
@@ -387,5 +387,44 @@ describe("deliveryAfterStep", () => {
     }
     expect(logs).toHaveLength(1);
     expect(logs[0]).toMatch(/^ {2}delivery: the evidence of the run is missing/);
+  });
+});
+
+describe("deliverySigningKey, deliveryKeyEnv and readBoundedText", () => {
+  it("tells none, an unusable place, an unusable key and a key", () => {
+    const f = fresh();
+    expect(deliverySigningKey(cfg(), f.dataDir)).toEqual({ kind: "none" });
+    expect(deliverySigningKey(cfg({ signing_key_path: join(f.runDir, "k") }), f.dataDir)).toEqual({ kind: "unusable", fault: "keyPlace" });
+    const bad = join(f.dataDir, "delivery-keys", "bad");
+    writeFileSync(bad, "not a key");
+    expect(deliverySigningKey(cfg({ signing_key_path: bad }), f.dataDir)).toEqual({ kind: "unusable", fault: "key" });
+    expect(deliverySigningKey(cfg({ signing_key_path: f.keyPath }), f.dataDir).kind).toBe("key");
+  });
+  it("gives the public line, '-', '' or nothing, and never private key material", () => {
+    const f = fresh();
+    const line = deliveryKeyEnv(cfg({ signing_key_path: f.keyPath }), f.dataDir);
+    expect(line).toEqual({ FACTORY_DELIVERY_PUBLIC_KEY: f.pub });
+    expect(JSON.stringify(line)).not.toContain("PRIVATE KEY");
+    expect(deliveryKeyEnv(cfg({ signing_key_path: join(f.runDir, "k") }), f.dataDir)).toEqual({ FACTORY_DELIVERY_PUBLIC_KEY: "-" });
+    expect(deliveryKeyEnv(cfg(), f.dataDir)).toEqual({ FACTORY_DELIVERY_PUBLIC_KEY: "" });
+    expect(deliveryKeyEnv(undefined, f.dataDir)).toEqual({});
+    expect(() => deliveryKeyEnv("x" as never, f.dataDir)).not.toThrow();
+  });
+  it("reads a small plain file only", () => {
+    const f = fresh();
+    expect(readBoundedText(join(f.runDir, "missing"), 10)).toBeUndefined();
+    writeFileSync(join(f.runDir, "big"), "x".repeat(20));
+    expect(readBoundedText(join(f.runDir, "big"), 10)).toBeUndefined();
+    writeFileSync(join(f.runDir, "small"), "abc");
+    expect(readBoundedText(join(f.runDir, "small"), 10)).toBe("abc");
+  });
+  it("a second writeContract on the same facts writes nothing", () => {
+    const f = fresh();
+    writeContract(f.input());
+    const before = read(f, "contract.json");
+    const listing = names(f);
+    expect(writeContract(f.input())).toBeUndefined();
+    expect(names(f)).toEqual(listing);
+    expect(read(f, "contract.json")).toBe(before);
   });
 });

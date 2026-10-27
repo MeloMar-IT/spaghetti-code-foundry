@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { POLICY_INPUT_VERSION } from "../src/policy/version.js";
 import { HOTFIX_FLOW, HOTFIX_PUSH_STEP } from "../src/engine/guards.js";
 import {
   BASELINE_HOTFIX,
@@ -18,8 +19,9 @@ const T = "2026-01-31T12:00:00.000Z";
 const FULL: BaselineControls = { protectedBranches: ["main", "release/*"], secretScan: true, shippedHotfixFlow: true, repository: "acme/widgets" };
 const ask = (controls: BaselineControls, boundary: Boundary, facts: Facts, variant = false) => {
   const b = runBaseline("1", controls);
-  const pack = variant && b.pushWithoutRepository ? b.pushWithoutRepository : b.pack;
-  const d = evaluatePolicy(pack, { version: 1, boundary, runId: "r", facts }, T);
+  let pack = variant && b.pushWithoutRepository ? b.pushWithoutRepository : b.pack;
+  if (boundary === "step.after" && facts.contextUncited === undefined) pack = b.stepWithoutCitations;
+  const d = evaluatePolicy(pack, { version: POLICY_INPUT_VERSION, boundary, runId: "r", facts }, T);
   return { reason: d.reasonCode, outcome: d.outcome, rule: d.rule };
 };
 const push = (branch: string, over: Facts = {}): Facts => ({ branch, step: "x", secretsFound: 0, commitIdentity: true, repository: "acme/widgets", flow: "f", shippedFlow: false, ...over });
@@ -42,10 +44,10 @@ describe("baselinePack", () => {
   });
 
   it("orders the rules, all in observe", () => {
-    expect(ids(FULL)).toEqual(["branch-hotfix-exception", "branch-protected", "secret-detected", "identity-missing", "repository-not-allowed", "sandbox-required", "workspace-admin-only", "credential-scope-exceeded"]);
+    expect(ids(FULL)).toEqual(["branch-hotfix-exception", "branch-protected", "secret-detected", "identity-missing", "repository-not-allowed", "sandbox-required", "workspace-admin-only", "credential-scope-exceeded", "context-uncited"]);
     expect(baselinePack("1", FULL).rules.every((r) => r.mode === "observe")).toBe(true);
     expect(ids({ ...FULL, shippedHotfixFlow: false })[0]).toBe("branch-protected");
-    expect(ids(NO_BASELINE_CONTROLS)).toEqual(["secret-detected", "identity-missing", "sandbox-required", "workspace-admin-only", "credential-scope-exceeded"]);
+    expect(ids(NO_BASELINE_CONTROLS)).toEqual(["secret-detected", "identity-missing", "sandbox-required", "workspace-admin-only", "credential-scope-exceeded", "context-uncited"]);
     expect(ids({ ...NO_BASELINE_CONTROLS, secretScan: false })).not.toContain("secret-detected");
   });
 
@@ -135,11 +137,11 @@ describe("the limit rules of the baseline", () => {
   };
   const C: BaselineControls = { ...NO_BASELINE_CONTROLS, limits: LIMITS };
   const facts = (over: Facts = {}): Facts => ({ step: "a", outputBytes: 0, elapsedMs: 0, stepCostUsd: 0, runCostUsd: 0, dailyCostUsd: 0, ...over });
-  const afterIds = (c: BaselineControls) => ids(c).slice(ids(NO_BASELINE_CONTROLS).length);
+  const afterIds = (c: BaselineControls) => ids(c).filter((id) => id !== "context-uncited").slice(ids(NO_BASELINE_CONTROLS).length - 1);
 
   it("adds the rules after credential-scope-exceeded, in order, observe only and at step.after", () => {
     expect(afterIds(C)).toEqual(["output-limit-exceeded", "timeout-exceeded", "timeout-exceeded-2", "budget-step-exceeded", "budget-run-exceeded", "budget-daily-exceeded"]);
-    const added = baselinePack("1", C).rules.slice(-6);
+    const added = baselinePack("1", C).rules.slice(-7, -1);
     expect(added.every((r) => r.mode === "observe" && r.boundaries.join() === "step.after")).toBe(true);
     expect(added.map((r) => r.outcome)).toEqual(["warn", "deny", "deny", "deny", "deny", "deny"]);
   });
@@ -188,7 +190,7 @@ describe("the limit rules of the baseline", () => {
       },
     };
     expect(afterIds(c)).toEqual(["timeout-exceeded"]);
-    expect((baselinePack("1", c).rules.at(-1)!.when as { step: { in: string[] } }).step.in).toEqual(["ok"]);
+    expect((baselinePack("1", c).rules.at(-2)!.when as { step: { in: string[] } }).step.in).toEqual(["ok"]);
   });
 
   it("has the same rules as before without limits, and asks no more facts", () => {
@@ -224,9 +226,9 @@ describe("the forbidden path rules and the step sandbox rule", () => {
   });
 
   it("puts the path rules last, in chunks of 100", () => {
-    expect(ids({ ...PATHS, limits: { runBudget: 5 } }).slice(-2)).toEqual(["budget-run-exceeded", "path-forbidden"]);
+    expect(ids({ ...PATHS, limits: { runBudget: 5 } }).slice(-3, -1)).toEqual(["budget-run-exceeded", "path-forbidden"]);
     const many = Array.from({ length: 150 }, (_, i) => `p${i}`);
-    expect(ids({ ...NO_BASELINE_CONTROLS, forbiddenPaths: many }).slice(-2)).toEqual(["path-forbidden", "path-forbidden-2"]);
+    expect(ids({ ...NO_BASELINE_CONTROLS, forbiddenPaths: many }).slice(-3, -1)).toEqual(["path-forbidden", "path-forbidden-2"]);
     expect(BASELINE_PACK.rules.map((r) => r.id)).toEqual(["secret-detected", "identity-missing", "sandbox-required", "workspace-admin-only"]);
   });
 
@@ -252,8 +254,22 @@ describe("the forbidden path rules and the step sandbox rule", () => {
     expect(before({ owner: "user", sandboxed: true }).reason).toBe("policy.no-rule-matched");
     expect(before({ owner: "admin", sandboxed: false }).reason).toBe("policy.no-rule-matched");
     const v = runBaseline("1", NO_BASELINE_CONTROLS).stepWithoutSandbox;
-    const run = (boundary: Boundary, facts: Facts) => evaluatePolicy(v, { version: 1, boundary, runId: "r", facts }, T).reasonCode;
+    const run = (boundary: Boundary, facts: Facts) => evaluatePolicy(v, { version: POLICY_INPUT_VERSION, boundary, runId: "r", facts }, T).reasonCode;
     expect(run("step.before", { step: "s", owner: "user" })).toBe("policy.no-rule-matched");
     expect(run("agent.write", { step: "s", owner: "user", sandboxed: false, isolated: false })).toBe("sandbox.required");
+  });
+  it("warns at step.after for an uncited plan, last, and a limit deny wins over it", () => {
+    const pack = baselinePack("1", NO_BASELINE_CONTROLS);
+    expect(pack.rules.at(-1)).toMatchObject({ id: "context-uncited", boundaries: ["step.after"], outcome: "warn", reasonCode: "context.uncited", mode: "observe", when: { contextUncited: { over: 0 } } });
+    expect(ask(NO_BASELINE_CONTROLS, "step.after", { step: "p", contextUncited: 1 })).toMatchObject({ outcome: "warn", reason: "context.uncited", rule: "context-uncited" });
+    expect(ask(NO_BASELINE_CONTROLS, "step.after", { step: "p", contextUncited: 0 }).reason).toBe("policy.no-rule-matched");
+    const c = { ...NO_BASELINE_CONTROLS, limits: { runBudget: 1 } } as BaselineControls;
+    expect(ask(c, "step.after", { step: "p", runCostUsd: 2, contextUncited: 2 }).reason).toBe("budget.run-exceeded");
+  });
+  it("has a variant without the citation rule that is not input-incomplete without the fact", () => {
+    const b = runBaseline("1", FULL);
+    expect(b.stepWithoutCitations.rules.map((r) => r.id)).toEqual(b.pack.rules.map((r) => r.id).filter((id) => id !== "context-uncited"));
+    expect(ask(FULL, "step.after", { step: "s" }).reason).toBe("policy.no-rule-matched");
+    expect(BASELINE_PACK.rules.map((r) => r.id)).not.toContain("context-uncited");
   });
 });

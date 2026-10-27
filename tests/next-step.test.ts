@@ -541,6 +541,36 @@ describe("paused runs", () => {
   });
 });
 
+describe("runNextStep: a story waiting for another story", () => {
+  const entry = (output: string) => ({ id: "wait_for_story", type: "shell" as const, visit: 1, ok: true, output });
+  const stoppedAt = (id: string, history: ReturnType<typeof entry>[]) =>
+    runNextStep(run({ status: "stopped", reason: `stopped at step "${id}" — needs attention`, history }), watched);
+
+  it("is a dependency whose blockers come from the step output", () => {
+    const n = stoppedAt("wait_for_story", [entry("WAITS_FOR: #12, #13\nRecorded in Depends on of #7.\nPARKED")]);
+    expect(n.kind).toBe("dependency");
+    expect(n.blockers).toEqual([{ issue: 12 }, { issue: 13 }]);
+    expect(n.who).toBe("Another story");
+    expect(stoppedAt("build/wait_for_story", [entry("WAITS_FOR: #12\nPARKED")]).kind).toBe("dependency");
+  });
+
+  it("reads the newest wait_for_story output", () => {
+    const n = stoppedAt("wait_for_story", [entry("WAITS_FOR: #3\nPARKED"), entry("WAITS_FOR: #12\nPARKED")]);
+    expect(n.blockers).toEqual([{ issue: 12 }]);
+  });
+
+  it("has no blockers without output", () => {
+    const n = stoppedAt("wait_for_story", []);
+    expect(n.blockers).toEqual([]);
+    expect(n.why).toContain("waits for another story");
+  });
+
+  it("leaves the other wait steps alone", () => {
+    expect(stoppedAt("wait_for_merge", []).kind).toBe("release");
+    expect(stoppedAt("wait_for_area", []).kind).toBe("area_lock");
+  });
+});
+
 describe("runNextStep", () => {
   it("classifies real reason strings", () => {
     const k = (over: Partial<RunSummary>) => runNextStep(run(over), watched).kind;

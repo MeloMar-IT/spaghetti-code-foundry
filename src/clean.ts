@@ -3,6 +3,7 @@ import { existsSync, lstatSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { dataHome } from "./auth/store.js";
 import { prunePlanRecords } from "./skills/plan-record.js";
+import { unlockRunContext } from "./engine/run-context.js";
 import { listRunIds, loadRun, type RunSummary } from "./engine/state.js";
 import { EVIDENCE_DIFF_FILE, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE, EVIDENCE_MANIFEST_FILE } from "./evidence/version.js";
 
@@ -130,6 +131,7 @@ export function cleanRuns(o: CleanOptions): CleanResult {
       res.runs.push(id);
       if (!o.dryRun) {
         if (ownWorkspace) removeWorkspace(s);
+        unlockRunContext(s.runDir);
         rmSync(s.runDir, { recursive: true, force: true });
       }
     } else if (ownWorkspace) {

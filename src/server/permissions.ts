@@ -74,6 +74,7 @@ export const RULES: Rule[] = [
   r("GET", "runs/:id/events", "own", "follow a run live (a user: without costs and setup)"),
   r("GET", "runs/:id/diff", "own", "the changes of a run"),
   r("GET", "runs/:id/evidence", "own", "the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest"),
+  r("GET", "runs/:id/context", "own", "the context sources of a run and the ones left out, each with a status and a next action (never source text; a user: no address, id or owners for any entry, and only kind, classification, selection and freshness for confidential and restricted sources); `state` is `absent` for a run without a bundle"),
   r("GET", "runs/:id/transcript/:n", "no", "the transcript of a step"),
   r("GET", "next", "no", "what happens next, for all runs"),
   r("GET", "health", "no", "server health"),

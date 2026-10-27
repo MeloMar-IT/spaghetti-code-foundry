@@ -43,6 +43,7 @@ import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../skills/run-plan.js";
 import { prepareWorkspace } from "./workspace.js";
+import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { runPolicy, type RunPolicy } from "./policy-hooks.js";
@@ -63,6 +64,8 @@ interface CommonOptions {
   /** Evals only: folders put first on the PATH of every step (a suite's fake `gh`). */
   pathPrefix?: string[];
   signal?: AbortSignal;
+  /** Asked before each top-level step: a non-empty answer stops the run there with that reason (the step runs on resume). */
+  stopBefore?: (stepId: string) => string | undefined;
   log?: (msg: string) => void;
   /** Called whenever run.json is written. */
   onUpdate?: (summary: RunSummary) => void;
@@ -344,6 +347,7 @@ async function drive(
     toolProfile: summary.toolProfile,
     deliverySettings: opts.deliverySettings ?? (() => config.delivery),
     signal: opts.signal,
+    stopBefore: opts.stopBefore,
     ...(dailyCap !== undefined ? { dailyCostUsd: () => spentToday(opts.runsDir) } : {}),
     log,
     save,
@@ -537,6 +541,11 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     setNext(step.id);
     const here = () => ({ next: summary.state.next, lastOutput });
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason("cancelled by user"), ...here() };
+    const stopNow = top ? engine.stopBefore?.(step.id) : undefined;
+    if (stopNow) {
+      engine.log(`■ stopped before "${step.id}": ${stopNow}`);
+      return { outcome: "stopped", reason: stopNow, ...here() };
+    }
 
     const runCap = config.cost_limits ? summary.flowDef.limits.max_cost_usd : undefined;
     const overRun = runCap !== undefined && summary.totalCostUsd >= runCap;
@@ -566,6 +575,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     const visit = (visits[step.id] = (visits[step.id] ?? 0) + 1);
     const maxVisits = step.max_visits ?? flow.defaults.max_visits ?? DEFAULT_MAX_VISITS;
     if (visit > maxVisits) return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" exceeded max_visits (${maxVisits})`, ...here() };
+    if (top && step.type !== "shell" && step.type !== "approval") contextBeforeStep(engine);
 
     engine.log(`▶ ${scope.prefix}${step.id} (${step.type}${visit > 1 ? `, visit ${visit}` : ""})`);
     const startedAt = new Date();

@@ -2,6 +2,7 @@ import type { WatcherConfig } from "./config.js";
 import { explainError } from "./errors.js";
 import { isStoppedCancel, isUserBudgetStop, type RunSummary } from "./engine/state.js";
 import { classifyFailure, failureSummary, type FailureCause, type FailureSummary } from "./failure.js";
+import { parseWaitsFor } from "./queue/waits-for.js";
 import { statusHelp, statusName } from "./words.js";
 
 /** Why something waits (or what it does now). One kind per waiting reason. */
@@ -780,6 +781,7 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
       if (/interrupted/.test(reason)) return make("interrupted");
       if (asksQuestions(run)) return make("planner_questions", { questions: o.questions });
       const step = stoppedStep(reason);
+      if (step === "wait_for_story") return make("dependency", { blockers: storyBlockers(run) });
       if (step === "wait_for_area") return make("area_lock");
       if (step?.startsWith("wait_")) return make("release");
       return make("stopped");
@@ -839,7 +841,13 @@ export function releaseWatchersFor<W extends WatcherConfig>(watchers: W[], run: 
 }
 
 /** Does a step id (with optional sub-flow prefix) end in one of `ids`? */
-const stepIs = (id: string | null | undefined, ids: string[]) => !!id && ids.includes(id.split("/").at(-1)!);
+export const stepIs = (id: string | null | undefined, ids: readonly string[]) => !!id && ids.includes(id.split("/").at(-1)!);
+
+/** The issues a run stopped at wait_for_story waits for: the WAITS_FOR line of its newest wait_for_story output. */
+function storyBlockers(run: RunSummary): BlockerInfo[] {
+  const h = [...(run.history ?? [])].reverse().find((x) => stepIs(x.id, ["wait_for_story"]));
+  return (parseWaitsFor(h?.output ?? "")?.issues ?? []).map((issue) => ({ issue }));
+}
 
 /**
  * The run closed its issue itself (gitflow report, split, merge): a finished `report`, `merge` or

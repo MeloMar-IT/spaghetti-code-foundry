@@ -415,6 +415,58 @@ describe("with the fake gh", () => {
       expect(gh.statusEdits()[0]!.body).toContain("secretive words");
       expect(calls(/^gh /).join("\n")).not.toContain("secretive");
     });
+
+    it("reads an issue with the default options", async () => {
+      setComments(ours(5));
+      await upsertStatusComment(REPO, 3, BODY, { create: true });
+      expect(calls(/^gh issue view 3 .*--json comments,labels$/)).toHaveLength(1);
+      expect(calls(/^gh pr view/)).toEqual([]);
+    });
+
+    it("on a pull request, reads its comments and edits ours", async () => {
+      setComments(ours(5));
+      const r = await upsertStatusComment(REPO, 12, BODY, { create: true, on: "pr" });
+      expect(r).toMatchObject({ id: "5", changed: true });
+      expect(calls(/^gh pr view 12 --repo acme\/app --json comments$/)).toHaveLength(1);
+      expect(calls(/issue view/)).toEqual([]);
+      expect(gh.statusEdits().map((e) => e.id)).toEqual(["5"]);
+    });
+
+    it("on a pull request, posts with gh pr comment through stdin when there is none of ours", async () => {
+      setComments();
+      const r = await upsertStatusComment(REPO, 12, "pr words\n\n" + STATUS_MARKER, { create: true, on: "pr" });
+      expect(r).toMatchObject({ created: true, id: "1" });
+      expect(calls(/^gh pr comment 12 --repo acme\/app --body-file -$/)).toHaveLength(1);
+      expect(calls(/issue comment/)).toEqual([]);
+      expect(gh.ghLog()).toContain("pr words");
+      expect(calls(/^gh /).join("\n")).not.toContain("pr words");
+    });
+
+    it("with match, edits only the matching comment of ours, deletes a second one and leaves others alone", async () => {
+      const END = "<!-- x delivery -->";
+      const mine = (id: number, over: Record<string, unknown> = {}) => ours(id, { body: `delivery ${id}\n\n${END}`, ...over });
+      setComments(ours(4), mine(7), mine(8), mine(9, { viewerDidAuthor: false, author: { login: "mallory" } }));
+      const r = await upsertStatusComment(REPO, 12, `fresh\n\n${END}`, { create: true, on: "pr", match: (c) => c.body.trimEnd().endsWith(END) });
+      expect(r).toMatchObject({ id: "7", changed: true, removed: 1 });
+      const log = gh.ghLog();
+      expect([...log.matchAll(/^--- comment edit (\d+):/gm)].map((m) => m[1])).toEqual(["7"]);
+      expect([...log.matchAll(/^--- comment delete (\d+)$/gm)].map((m) => m[1])).toEqual(["8"]);
+    });
+
+    it("on a pull request, the second upsert edits the comment the first one posted", async () => {
+      process.env.FAKE_GH_COMMENTS_FROM_LOG = "1";
+      delete process.env.FAKE_GH_COMMENTS;
+      try {
+        expect(await upsertStatusComment(REPO, 12, BODY, { create: true, on: "pr" })).toMatchObject({ created: true, id: "1" });
+        const r = await upsertStatusComment(REPO, 12, `other text\n\n${STATUS_MARKER}`, { create: true, on: "pr" });
+        expect(r).toMatchObject({ id: "1", changed: true });
+        expect(r.created).toBeUndefined();
+        expect(gh.ghLog()).toContain("--- comment edit 1");
+        expect(calls(/^gh pr comment/)).toHaveLength(1);
+      } finally {
+        delete process.env.FAKE_GH_COMMENTS_FROM_LOG;
+      }
+    });
   });
 
   describe("StatusComments", () => {

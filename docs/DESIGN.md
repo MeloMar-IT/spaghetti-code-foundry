@@ -237,8 +237,10 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   `step.denied`, `step.approved`, `step.failed`, `step.completed`), with `step.profiled` (the tool
   profile of one try, see "Tool profiles") from version 3, and `policy.decided` from version 2
   (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"), and `repo.operation` from
-  version 4 (one repository operation of the broker, see "Repository broker"). `prevHash` and `hash` come
-  together and are for the hash chain.
+  version 4 (one repository operation of the broker, see "Repository broker"), and `context.bundled` from
+  version 5 (the context bundle of the run was written, or making it failed, see "Writing a run's bundle"),
+  and from version 6 the reason code `context.uncited` (see "Policy hooks in observe mode").
+  `prevHash` and `hash` come together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
   and final commit, models, policies, approvals, test results, files, the diff and the pull request.
@@ -276,11 +278,15 @@ numbers and pure functions.
   fixed values for a choice, `anyIn` for the changed paths, `over` for a number (more than, never
   equal), `true` or `false` for a flag.
 - **`PolicyInput`**: `version`, `boundary`, `runId` and `facts`. The boundaries are `run.start`,
-  `step.before`, `step.after`, `repository.access`, `agent.write`, `push`, `approval.consume` and
-  `run.complete`. The facts are a closed list (`FactsSchema`): repository, branch, flow, step, tool,
+  `step.before`, `step.after`, `repository.access`, `agent.write`, `push`, `approval.consume`,
+  `context.select` and `run.complete`. The facts are a closed list (`FactsSchema`): repository, branch, flow, step, tool,
   workspace, owner role, credential, changed paths, secrets found, output bytes, elapsed time, step,
-  run and daily cost, and six flags. All are optional and none is free text. A caller gives what it
-  knows and never a guess.
+  run and daily cost, six flags, the context facts of `context.select` (`contextSources`,
+  `contextBytes`, `contextOmitted` and `contextClassification`, the most private class of the sources),
+  and `contextUncited` at `step.after` (a count from 0 to 3 of the plan's sections with no citation, see
+  "Policy hooks in observe mode").
+  All are optional and none is free text. A caller gives what it knows and never a guess.
+  `POLICY_INPUT_VERSION` is 3 from the `contextUncited` change (2 from the `context.select` change).
 - **`PolicyDecision`**: `version`, `policy`, `packSha256`, `mode`, `boundary`, `inputSha256`,
   `outcome`, `reasonCode`, `rule` and `evaluatedAt`. The outcomes are `allow`, `warn`,
   `require_approval` and `deny`. The input itself is not kept, only its hash. The hashes are the
@@ -291,7 +297,8 @@ numbers and pure functions.
   `output.limit-exceeded`, `timeout.exceeded`, `budget.step-exceeded`, `budget.run-exceeded`,
   `budget.daily-exceeded`, `sandbox.required`, `workspace.admin-only`, `repository.not-allowed`,
   `credential.scope-exceeded`, `identity.missing`, `tool.not-allowed`, `issue.closed`,
-  `flow.retired`, `approval.required`, `exception.granted`. Codes only the evaluation gives:
+  `flow.retired`, `approval.required`, `exception.granted`, `context.limit-exceeded`,
+  `context.sources-omitted`, `context.classification-exceeded`, `context.uncited`. Codes only the evaluation gives:
   `policy.no-rule-matched`, `policy.input-incomplete`, `policy.invalid`, `policy.unavailable`. The code
   only the break-glass gives: `policy.break-glass` (a `warn` in `enforce` mode, see "Break-glass" below).
 - **`evaluatePolicy(pack, input, evaluatedAt)`** gives one decision and is deterministic: no file,
@@ -323,7 +330,8 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
 
 - **Where the questions come from.** The engine asks, so a flow cannot leave a boundary out: `runner.ts`
   asks `run.start`, `repository.access` (before a workspace is made), `approval.consume` and
-  `run.complete` (only when the run succeeded); `execute.ts` asks `step.before` and `step.after` for
+  `run.complete` (only when the run succeeded); `run-context.ts` asks `context.select` once the bundle is
+  written (see "Writing a run's bundle"); `execute.ts` asks `step.before` and `step.after` for
   every visit of a step through `beginStep` and `recordStep`, and `repository.access` for a step in the
   repository's checkout; `agents/run.ts` asks `agent.write` before a write-capable agent step.
   Built-in and custom flows take the same path.
@@ -374,6 +382,15 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
 - **Unknown push repository.** `runBaseline` also builds `pushWithoutRepository` (the same pack without the
   repository rule). `RunPolicy.decide` uses it at `push` only when the input has no `repository`. Such a
   decision records that pack's hash. The repository is never guessed.
+- **Plan citations fact.** `stepContextUncited` (`src/engine/context-index.ts`, called from `recordStep` in
+  `execute.ts`) gives `contextUncited` at `step.after` only for a top-level `claude` step whose prompt has
+  `{{context.index}}`, whose output has a `PLAN_STATUS: READY` line, and whose run has a readable `context.json`.
+  The count comes from `planCitations` (`src/context/citations.ts`): the Requirements, Constraints and
+  Acceptance criteria sections that are missing or cite no id the step's role may consume (`mayConsume`, role
+  `skill_role ?? "coder"`). The baseline rule `context-uncited` (`CONTEXT_UNCITED_RULE`, observe, `warn`) is last,
+  so a limit or path deny still wins. `runBaseline` builds `stepWithoutCitations`, the same pack without that rule;
+  `RunPolicy.decide` uses it at `step.after` when the input has no `contextUncited` fact, so other steps never get
+  `input-incomplete` there.
 - **Step without sandbox fact.** The `sandbox-required` rule also applies at `step.before` (`SANDBOX_STEP_RULE`), and
   `runBaseline` builds `stepWithoutSandbox`: the same pack with the rule only at `agent.write`. `RunPolicy.decide`
   uses it at `step.before` only when the input has no `sandboxed` fact, which is every step that is not a shell
@@ -495,16 +512,18 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
 ### Context bundle
 
 `src/context/` defines the format that says what a run was given to read, and where each piece came
-from (#151), and the selector that makes one (#152, see "Context selection" below). No run has a
-bundle yet: the stories after it give the sources to the agents read-only (#153) and show them
-(#154). It is an extra file in the run folder,
+from (#151), and the selector that makes one (#152, see "Context selection" below). Issue runs get
+a bundle before their first agent step (see "Writing a run's bundle"). The stories after it give the
+sources to the agents read-only (#153) and show them (#154). It is an extra file in the run folder,
 `runs/<run-id>/context.json`, so `run.json` stays as it is.
 
 - **`ContextBundle`**: `version`, `runId`, `createdAt`, the one `repository` and commit it is about,
   a `budget`, `policies`, `sources` and `omitted`.
 - **A source** has an `id`, a `kind`, a `uri`, a `revision`, `content` (file, SHA-256, size in
   bytes), `owners`, a `classification`, `retrievedAt`, `freshness`, a `selection` reason and
-  `consumers`. Every field is required.
+  `consumers`. Every field is required, except `foundry` on an `issue-comment`: `foundry: true` is set
+  only for a comment the Foundry wrote (see "Issue files" below). A bundle without the field still
+  reads, so `CONTEXT_BUNDLE_VERSION` stays 1.
 - **Kinds and addresses** (a closed list, `uri.ts`): `repository-file` (`repo:<path>`), `issue`
   (`issue:<number>`), `issue-comment` (`issue:<number>/comment/<id>`) and `refinement-notes`
   (`refinement:<session id>`). An address has no host, no folder of the machine, no query and no
@@ -528,7 +547,8 @@ bundle yet: the stories after it give the sources to the agents read-only (#153)
 - **Consumers**: the roles that may be given the source (`planner`, `coder`, `reviewer`, `tester`),
   at least one (`mayConsume`).
 - **Budget**: `maxSources`, `maxSourceBytes` and `maxTotalBytes`. A bundle over its own budget is not
-  valid.
+  valid. `max_source_bytes` may not be above `max_total_bytes` (the `context:` settings check this
+  before a bundle is made; see `src/context/settings.ts`).
 - **Omitted**: an expected source that is not in the bundle, with one reason: `missing`, `stale`,
   `ambiguous`, `over-budget`, `classification`, `generated` (the repository marks the file as made
   by a program) or `unsupported` (not a regular text file: a link, a submodule or a binary file).
@@ -543,13 +563,25 @@ bundle yet: the stories after it give the sources to the agents read-only (#153)
   `CONTEXT_MIGRATIONS`. `readContextBundle` gives `absent` for a run without the file (every run
   made before this), and never throws. Error messages name fields, never values.
 
+- **The view (#154, part 1).** `GET /api/runs/:id/context` answers the bundle as a view
+  (`src/server/context-view.ts`, `runContextView`). It reads `context.json` once, with a size limit, and never
+  throws. `state` is `available`, `absent` (no file, as for every run before the bundle) or `unreadable` (with a
+  fixed reason and a code). The view has the bundle's hash, the sources' hash, the creation time, the commit,
+  the budget, one entry per source (kind, label, revision, selection, `retrievedAt`, freshness at the time of the
+  request, classification, owners, `sha256` and `bytes`) and one per left-out source (status and next action).
+  It never holds source text or the path of a stored text. Statuses and next actions are closed lists in the
+  same file, so the wording is in one place. A user's answer is built from a list of fields: no address, id or
+  owners for any entry, and only kind, classification, selection and freshness for a confidential or restricted
+  source. The admin view has `uri` and `id`. The UI (`ui/run-sources.js`) only draws the answer and exports it
+  unchanged.
+
 ### Context selection
 
 `selectContext` (`src/context/select.ts`) makes a bundle and the text of its sources from one
 repository at one commit and the inputs of a task (#152). It is a function: no model, no network
 and no clock (the caller gives `now`). The same repository state and task give the same sources and
-hashes (`hashContextSources`). **It is not called by the engine yet**: giving a run its context is
-#153.
+hashes (`hashContextSources`). **The engine calls it** for issue runs (see "Writing a run's bundle");
+giving the bundle to the agents is #153.
 
 - **Inputs.** A snapshot of the repository, the task (the issue text, its comments and the accepted
   refinement notes, all fetched by the caller; and the paths the task is about), a budget, the
@@ -558,7 +590,10 @@ hashes (`hashContextSources`). **It is not called by the engine yet**: giving a 
   how long a fetched input stays fresh.
 - **Only the declared commit.** `openRepositoryAt(folder, commit)` (`repository.ts`) reads through
   git only: `ls-tree` of the full commit id, then `cat-file` by the object id from that list. The
-  working tree is never read, so a changed, new or left-over file cannot get in. The folder must be
+  working tree is never read, so a changed, new or left-over file cannot get in. Reading has an
+  optional `deadlineMs` (an absolute time, with the clock `now`): every git call, `cat-file`
+  included, gets the smaller of its own timeout and the time left, and with no time left it throws
+  `timeout` without starting git. Without a deadline the clock is never read. The folder must be
   the repository itself (a repository above it is not used), a branch, a tag or a short id is
   refused, and git runs without the caller's `GIT_*` variables, without user or system settings and
   without fetching missing objects. A link is listed as a link and never followed; its text is not
@@ -598,7 +633,76 @@ hashes (`hashContextSources`). **It is not called by the engine yet**: giving a 
 - **Writing** (`store.ts`): `writeContextBundle(folder, bundle, texts)` checks every text against
   its hash, then writes `context/<source id>` per source and `context.json` last, and returns the
   evidence `ArtifactRef`. It never replaces a file: a folder that already has `context.json` or
-  `context/` is refused. Nothing calls it yet.
+  `context/` is refused. Every file is made with `openSync(…, "wx", 0o600)` and recorded at once, and
+  every folder right after its `mkdirSync`. If anything fails, the store walks that record in reverse
+  and removes each entry (`rmSync` for a file, `rmdirSync` for a folder), never recursively, each in
+  its own `try`; then it throws `write-failed`. Files and folders it did not make survive, so a
+  foreign file planted inside `context/` mid-write keeps its folder.
+
+### Issue files
+
+`pull_ticket` (`blocks/pull-ticket.yaml`) writes three files in the run folder, each removed when its
+fetch fails: `issue.json`, `issue-comments.jsonl` and `issue-foundry-comments.json`, a JSON array of
+the ids (safe integers ≥ 1) of the comments the Foundry wrote. A comment counts as the Foundry's when
+GitHub says the account that runs the Foundry wrote it (`viewerDidAuthor`) and its body has
+`<!-- claude-factory` or `<!-- spaghetti-code-foundry`. The printed issue text uses the same rule: such
+a comment is headed `--- comment by <login> (Foundry):`. Any other line that starts with
+`--- comment by` in an issue or comment body is quoted as `> --- comment by`, so no body can fake the
+header.
+
+`readIssueFiles` (`src/context/issue-files.ts`) reads the list with the same strict rules. A comment in
+the list gets `foundry: true`. A missing, unreadable or invalid list marks nothing and the bundle is
+still built (the planner then sees no Foundry comments). `renderContextIndex` shows a marked comment
+with ` | by: Foundry`. The index never holds comment text.
+
+### Writing a run's bundle
+
+`src/engine/run-context.ts` makes the bundle of an issue run (#707). The runner calls
+`contextBeforeStep(engine)` for every top-level step that is not a shell or an approval step, between
+the `max_visits` check and the `▶` line, so the bundle is written before the first agent step. The
+hook does nothing unless `contextPending` holds: a top-level `pull_ticket` shell step that runs
+`issue.json`, an ok `pull_ticket` record, no `claude`, `parallel` or `flow` record at any depth, and
+none of `context.attempt`, `context.json` or `context/` in the run folder (checked with `lstat`).
+So custom flows and runs that already took an agent step get no bundle, and no log line.
+
+- **Attempt marker.** `context.attempt` is created first, with `wx` and mode 0400. It is never
+  removed, so a run has one attempt, also after a resume or a restart. If it cannot be made, the
+  result is `marker-failed`.
+- **Commit rule.** The bundle is about the workspace's `HEAD^{commit}`, read by `gitHead` with a
+  clean environment, `GIT_OPTIONAL_LOCKS=0`, `core.hooksPath=/dev/null` and `core.fsmonitor=false`.
+  The answer must be a 40 or 64 hex id; no commit gives `repository-no-commit`. The working tree is
+  never read.
+- **Deadline.** One deadline, now + 30 s (`CONTEXT_DEADLINE_MS`), is shared by `gitHead`, the
+  repository reads and the selection. `gitHead` takes the smaller of 10 s and the time left. After
+  selection, a deadline that has passed gives `timeout` and nothing is stored. A bundle that is
+  stored and locked after the deadline is removed the same way.
+- **`retrievedAt`.** The issue sources take the `startedAt` of the **latest** ok top-level
+  `pull_ticket` record. A resumed run that fetched the ticket again is therefore judged by its newest
+  fetch, not by the first one, so `task_max_age_seconds` does not drop a fresh issue as stale.
+- **Store and locking.** `writeContextBundle` writes the files. `lockRunContext` then sets files to
+  0400 and folders to 0500, deepest first; it walks with `lstat`, opens with `O_NOFOLLOW` and changes
+  the mode with `fchmodSync`. If locking fails, the bundle's own paths are removed, never recursively.
+  `unlockRunContext` sets the folders back to 0700, top-down, and never throws. `scf clean` calls it
+  before the purge removes the run folder.
+- **Sandbox.** The OS sandbox denies writes to `context.json`, `context.attempt` and `context/`, in the
+  normal and the read-only variant (`src/engine/os-sandbox.ts`).
+- **Log.** `contextBeforeStep` logs exactly one line, with no path and no value, and never throws. It
+  returns `skipped` when the hook does not apply.
+- **Evidence (#638).** Right after the write (or the failure), `contextBeforeStep` calls
+  `RunRecorder.contextBundled`, which records one `context.bundled` event. A written bundle gives
+  `outcome: "written"` with `bundle` (`contextBundleRef`, the `context.json` file), `sourcesSha256`
+  (`hashContextSources`), the `limits` (`ContextBudgetSchema`), `sources`, `bytes` and `omitted`, a count
+  for every omission reason (zero included). A failed selection gives `outcome: "failed"` with only the
+  fixed `failure` code from `RUN_CONTEXT_CODES`. The schema refuses the other fields for each outcome.
+  `finalize.ts` puts `context.json` into the manifest's files, so `verifyEvidence` checks it by its hash
+  like every other file: a changed `context.json` is `file-changed`.
+- **Policy (#638).** For a written bundle, the hook then asks `context.select` with `contextSelectFacts`:
+  the source count, the byte total (`contextTotalBytes`), the left-out count and the highest
+  classification of the sources (left out when there are none). The decision is recorded as a
+  `policy.decided` event with no step, like `run.start`. A failed selection is not asked. The engine
+  does not act on the answer: the run goes on whatever the decision is, also in `enforce` mode. The
+  fail-closed rules (`privilegedBoundary`) do not cover this boundary.
+- **Old runs.** A run without the event verifies as before; `EVENT_MIGRATIONS` 4 → 5 only sets the version.
 
 ### Tool profiles
 
@@ -956,6 +1060,8 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
   - `publicKeyLine(key)` gives `ssh-ed25519 AAAA…`.
   - `verifySshSignature(message, armoured, publicKeyLine, namespace)` never throws. It checks the
     signature against the key inside it first, then against the trusted key.
+  - `publicKeyFingerprint(line)` gives `SHA256:` and the unpadded base64 of the SHA-256 of the key blob,
+    as `ssh-keygen -l` shows it. It is `undefined` for anything but a valid `ssh-ed25519` line.
 - **Verify** (`verifyDeliveryContract(text, sigText, publicKey, eventsText?)`): never throws. It returns
   the first fault in this order: `unreadable` (not JSON, not an object, not canonical, or not valid),
   `wrong-version`, `signature-missing`, `signature-bad`, `wrong-key`, and `evidence-head-mismatch`
@@ -1007,6 +1113,37 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     of #667 writes this marker, so the format is fixed.
   - **No writes.** The script never writes a file, and never fixes or regenerates a contract.
   - **Not yet.** No run writes the comment yet, so the validator is used only where a CI job runs it.
+- **PR comment (`src/delivery/comment.ts`, #697).** A library that builds
+  and reads the comment that carries a signed contract on a pull request. Nothing posts it yet.
+  - **Layout.** A first line (`reportFirst("info")` for `ok` and `unsigned`; a "what you need to do" line
+    for `stop`), a `### Delivery contract` heading, a status line (`**Verified.**`, `**Not verified.**`
+    for an unsigned contract, or ``**Stopped:** `<condition>` — <reason>``), bullets for the run, sequence,
+    digest, commit, branch, evidence count and terminal hash, and the key fingerprint or `unsigned`. Then
+    up to 50 check lines (more get an "and N more" line), a `<details>` block with the contract and the
+    signature, and the markers as the last two lines.
+  - **Two markers.** The validator marker `<!-- claude-factory delivery-contract digest=… evidence=… -->`
+    is the one `validate.mjs --comment` reads (`VALIDATOR_MARKER_RE` matches its `MARKER`). The delivery
+    marker `<!-- <product> delivery-contract run=<id> -->` is always the last line, and only the Foundry
+    writes it. `isDeliveryComment` accepts it only as the last line (LF or CRLF), so a quoted or mid-body
+    copy does not count.
+  - **One comment per pull request.** `upsertStatusComment` with `on: "pr"` and `match: isDeliveryComment`
+    finds any run's delivery marker, so a later run edits the same comment and the others are left alone.
+    `on` (`"issue"` by default, or `"pr"`) picks the comment list and the posting call (`prComments`,
+    `commentOnPullRequest`). `match` picks which comments count (`isStatusComment` by default).
+  - **Contract and signature blocks.** `json scf-delivery-contract` holds the canonical text and
+    `text scf-delivery-signature` the signature. Each fence is longer than any backtick run in its content,
+    so the content cannot close it.
+  - **Safe text.** Reasons and check lines go through `safeLine`: secrets are taken out (`scrub`, which
+    throws when it cannot be sure), white space is folded, `<` and `>` become `‹` and `›`, backticks become `'`, mentions are neutralised, and the
+    result is at most 300 characters with the ellipsis counted. Nothing is deleted, so no delimiter can be
+    rebuilt. The signed contract bytes are never changed: a contract with a secret in a string field is refused.
+  - **Too long.** Above 60 000 characters the details block is replaced by a pointer to
+    `delivery/contract-<n>.json` in the run folder.
+  - **Reading.** `readDeliveryComment` returns the contract, signature, digest and evidence from a body. It
+    never throws, and a body with two validator markers gives no digest or evidence.
+  - **Checks.** `deliveryCommentBody` throws when the run id is bad, the contract fails its schema, the
+    digest is not the digest of the text, or the signature is not in SSH-signature form.
+- **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
 - **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
   - **Trigger.** `deliveryAfterStep` runs from `recordStep` (`execute.ts`) after the step outputs are read,
     for top-level steps only. It needs `outputs.pull_request` to be a pull request of the run's repository
@@ -1050,6 +1187,59 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
   signature, refused keys, the real `ssh-keygen`). Both are unit tests: no server, no git, no run.
 
 ---
+
+### Handoff (#698)
+
+`src/delivery/handoff.ts` and `tools/delivery-handoff` run the `handoff` step of `release-daily` (after
+`checks`). The step checks the run's latest contract, keeps one delivery comment on the release pull request and
+then marks the pull request ready or draft. `handoffCommand(args, io, deps?, env)` never throws; the tool sets
+`process.exitCode` and does not call `process.exit`.
+
+- **Trust.** The public key comes only from the engine environment (`stepEnv` in `src/engine/execute.ts` sets
+  `FACTORY_DELIVERY_PUBLIC_KEY` and `SCF_DELIVERY_PUBLIC_KEY` from `deliveryKeyEnv`). It is `""` by default and
+  `-` for a key that cannot be used; a `FACTORY_DELIVERY_PUBLIC_KEY` in `process.env` is overwritten. The private
+  key never reaches a step. A sandboxed step cannot write `<run>/delivery/`, so the contract the handoff reads is
+  the one the engine wrote.
+- **Without a key** the handoff prints `HANDOFF: skipped (…)` and exits 0. With a key but no usable input or no
+  pull request it prints `HANDOFF: stop …` and exits 1; gh is not called in either case.
+- **After-step write.** `deliveryAfterStep` still runs after `handoff`. It writes a contract only when a stated
+  fact changed (`writeContract`, `write.ts`), and the handoff changes none. A test (`tests/delivery-write.test.ts`)
+  holds that no `contract-<n>.json` is added, even when the remote head has moved. The step is not special-cased
+  in `recordStep`.
+- **Draft while checking.** With a key, the step makes the pull request a draft before the check and marks it ready
+  only after `HANDOFF: ok`. A killed step (timeout or cancel) therefore fails closed. Without a key nothing is made
+  a draft first, so unsigned installs keep today's behaviour. A failed draft or ready call is reported; the ready
+  call fails the step.
+- **Verdict.** `checkHandoff` runs the checks in this order: `signature` (`parseSshSignature`, the trusted key,
+  `verifyDeliveryContract`), `superseded` (a newer `contract-<n>.json`, another `.sig` copy, or another
+  repository, pull request or run id), `commit` (`remoteHead` via `git ls-remote origin refs/heads/<branch>`,
+  then `readCommitFacts`), `locks` and `workflows` (compared with the contract's hashes and blob ids, sorted with
+  `compareCodeUnits`), `checks` (`waitForChecks`, then the validator's rule), and `evidence` (the bounded read of
+  `evidence.jsonl` and `evidenceHeadProblem`). The first stop wins; with none the verdict is `ok`.
+- **Head re-read.** If the check runs were polled more than once and the commit check passed, `remoteHead` is read
+  again. A changed, missing or unreadable head is a `commit-changed` stop. The window that remains is the seconds
+  between that read and `gh pr ready`; the CI validator is the hard check for it.
+- **Waiting.** `waitForChecks` polls `checkRuns` every `CHECKS_POLL_MS` (15 s) until every required name has a
+  completed run, or one required check has finished without success. It returns the last good read when the
+  deadline would pass before the next poll, and `{ok:false}` when there was none. `checksWaitSec` reads
+  `FACTORY_DELIVERY_CHECKS_WAIT_SEC` (integer 0 to 3600, otherwise 600). Only the first 100 check runs are read; a
+  required check beyond them counts as missing, which fails closed. `sleep` and `now` are injected.
+- **Output.** Every reason and `why` goes through `safeLine` (`comment.ts`, the secret scrub) before it is cut to
+  `HANDOFF_TEXT_MAX` (300) characters, and control characters become `?`. Scrubbing comes before the cut, so a cut
+  cannot leave half a token unrecognised. If the scrub throws, the text is the fixed `the reason cannot be shown`.
+- **Comment.** Unless the result is `none`, `deliveryCommentBody` builds the body; when it throws `DeliveryCommentError`
+  the body is built again without the contract, and `upsertStatusComment` with `on: "pr"` and `isDeliveryComment` as the match
+  edits the one delivery comment in place. An identical body is not patched (`upsertStatusComment` compares it).
+  Failures print `delivery comment: could not be updated` and keep the verdict; gh output is never printed.
+- **Flow.** `release_pr` only prints `PR:` and `TITLE:`. The `handoff` step has `repo_access: true` and
+  `timeout_sec: 1800`. The ready mark (without `--undo`) comes after the handoff in the step's shell script; a test
+  checks that order.
+- **Rejected.** A handoff in the engine would need a new step kind. Running `validate.mjs` cannot read the remote
+  head or poll the check runs. `--draft` on `gh pr create` fails on private repos on free plans.
+- **Tests.** `tests/delivery-handoff.test.ts` (every stop, the head re-read, the wait with a fake clock, the scrub,
+  and the in-process command against a fake `gh` and a bare `origin`), `tests/delivery-write.test.ts`
+  (`deliverySigningKey`, `deliveryKeyEnv`, the no-write after-step case), `tests/untrusted-output.test.ts`
+  (`stepEnv`) and `tests/gitflow.test.ts` (the step order and flow checks).
 
 ### Telemetry
 

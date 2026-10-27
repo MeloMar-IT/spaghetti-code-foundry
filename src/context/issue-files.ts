@@ -1,5 +1,5 @@
 /**
- * The strict reader for the issue files in the run folder: `issue.json` and `issue-comments.jsonl`, as `pull_ticket`
+ * The strict reader for the issue files in the run folder: `issue.json`, `issue-comments.jsonl` and the optional `issue-foundry-comments.json` (ids of the Foundry's own comments), as `pull_ticket`
  * saves them. It gives back the issue part of a context task, so a later step can build the context bundle from the
  * raw files without calling `gh`. It only reads: it never follows a link, never waits for a pipe, and a failure is
  * never read as empty text.
@@ -12,6 +12,7 @@ import type { ContextTask } from "./select.js";
 
 export const ISSUE_FILE = "issue.json";
 export const ISSUE_COMMENTS_FILE = "issue-comments.jsonl";
+export const ISSUE_FOUNDRY_COMMENTS_FILE = "issue-foundry-comments.json";
 export const ISSUE_FILE_MAX_BYTES = 16 * 1024 * 1024;
 const MAX_COMMENTS = 10_000;
 
@@ -56,6 +57,20 @@ function readStrict(path: string, max: number): Buffer | null {
   }
 }
 
+/** The ids in issue-foundry-comments.json; empty when the file is missing, unreadable or not a list of at most MAX_COMMENTS safe integer ids ≥ 1. */
+function readFoundryIds(runDir: string, maxBytes: number): Set<number> {
+  const bytes = readStrict(join(runDir, ISSUE_FOUNDRY_COMMENTS_FILE), maxBytes);
+  if (!bytes) return new Set();
+  try {
+    const v: unknown = JSON.parse(bytes.toString("utf8"));
+    if (!Array.isArray(v) || v.length > MAX_COMMENTS) return new Set();
+    for (const id of v) if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1) return new Set();
+    return new Set(v as number[]);
+  } catch {
+    return new Set();
+  }
+}
+
 function parseObject(line: string): Record<string, unknown> | null {
   try {
     const v: unknown = JSON.parse(line);
@@ -79,6 +94,7 @@ export function readIssueFiles(runDir: string, issue: number, retrievedAt: strin
 
   const commentBytes = readStrict(join(runDir, ISSUE_COMMENTS_FILE), maxBytes);
   if (!commentBytes) return { failed: "comments-unreadable" };
+  const foundry = readFoundryIds(runDir, maxBytes);
   const comments: NonNullable<ContextTask["issue"]>["comments"] = [];
   const seen = new Set<number>();
   let leftComments = 0;
@@ -102,7 +118,7 @@ export function readIssueFiles(runDir: string, issue: number, retrievedAt: strin
       continue;
     }
     seen.add(id);
-    comments.push({ id, text: body, version: version.data, retrievedAt });
+    comments.push({ id, text: body, version: version.data, retrievedAt, ...(foundry.has(id) ? { foundry: true as const } : {}) });
   }
   return { ok: { issue: { number: issue, text: `${head.title}\n\n${head.body}`, version: head.updatedAt, retrievedAt, comments }, leftComments } };
 }

@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { publicKeyLine } from "../src/delivery/sshsig.js";
 import { BLOCKED, emptyRedactor, makeRedactor } from "../src/credentials/redact.js";
 import { ranOrder, stepEnv, type Engine, type Scope } from "../src/engine/execute.js";
 import {
@@ -178,6 +183,21 @@ describe("classifier", () => {
   });
 });
 
+describe("the context index", () => {
+  it("is operator text; any other context path is untrusted", () => {
+    expect(trustOf("context.index")).toEqual({ trust: "operator" });
+    for (const p of ["context", "context.other", "context.index.x"]) expect(trustOf(p).trust).toBe("untrusted");
+  });
+  it("renders inline in a prompt, with no data envelope", () => {
+    const b = boundAgentPrompt({ prompt: "A {{context.index}} B" }, { ...ctx, context: { index: "=== CONTEXT ===" } }, { stepTypes: types, stored });
+    expect(b.prompt).toBe("A === CONTEXT === B");
+    expect(b.items).toHaveLength(0);
+  });
+  it("is refused in a system_prompt", () => {
+    expect(() => boundAgentPrompt({ prompt: "p", system_prompt: "S {{context.index}}" }, { ...ctx, context: { index: "x" } }, { stepTypes: types, stored })).toThrow(UntrustedRefusal);
+  });
+});
+
 describe("renderTrusted", () => {
   const rt = (t: string) => renderTrusted(t, ctx, types);
   it("refuses untrusted placeholders", () => {
@@ -293,6 +313,45 @@ describe("stepEnv with bound", () => {
   it("size-checks the output of a shell step", () => {
     const big = { ...scope, ctx: { ...scope.ctx, steps: { a: { output: "z".repeat(250_000) } } } } as Scope;
     expect(stepEnv(big, engine, { id: "a" }).FACTORY_OUT_A).toMatch(/^\[withheld: /);
+  });
+});
+
+describe("stepEnv delivery key", () => {
+  const sc = { flow: { steps: [] }, ctx: { ...ctx, steps: {} }, visits: {}, prefix: "", depth: 0 } as unknown as Scope;
+  const dir = mkdtempSync(join(tmpdir(), "step-env-key-"));
+  const keys = join(dir, "delivery-keys");
+  mkdirSync(keys);
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const keyPath = join(keys, "k");
+  writeFileSync(keyPath, privateKey.export({ type: "pkcs8", format: "pem" }) as string);
+  const engineWith = (delivery: unknown) => ({ baseEnv: {}, config: { help: {} }, deliverySettings: () => delivery }) as unknown as Engine;
+  const home = process.env.FACTORY_HOME;
+  beforeAll(() => {
+    process.env.FACTORY_HOME = dir;
+  });
+  afterAll(() => {
+    if (home === undefined) delete process.env.FACTORY_HOME;
+    else process.env.FACTORY_HOME = home;
+    delete process.env.FACTORY_DELIVERY_PUBLIC_KEY;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  it("gives a usable key as the public line, in both forms", () => {
+    const e = stepEnv(sc, engineWith({ signing_key_path: keyPath }));
+    expect(e.FACTORY_DELIVERY_PUBLIC_KEY).toBe(publicKeyLine(privateKey));
+    expect(e.SCF_DELIVERY_PUBLIC_KEY).toBe(e.FACTORY_DELIVERY_PUBLIC_KEY);
+    for (const v of Object.values(e)) expect(v).not.toMatch(/BEGIN|PRIVATE/);
+  });
+  it("gives '-' for a key that cannot be used and '' for none", () => {
+    expect(stepEnv(sc, engineWith({ signing_key_path: join(dir, "outside") })).FACTORY_DELIVERY_PUBLIC_KEY).toBe("-");
+    const none = stepEnv(sc, engineWith({}));
+    expect(none.FACTORY_DELIVERY_PUBLIC_KEY).toBe("");
+    expect(none.SCF_DELIVERY_PUBLIC_KEY).toBe("");
+  });
+  it("overrides a value planted in the server's environment, and does not throw without settings", () => {
+    process.env.FACTORY_DELIVERY_PUBLIC_KEY = "ssh-ed25519 planted";
+    expect(stepEnv(sc, engineWith({})).FACTORY_DELIVERY_PUBLIC_KEY).toBe("");
+    expect(stepEnv(sc, { baseEnv: { FACTORY_DELIVERY_PUBLIC_KEY: "ssh-ed25519 planted" }, config: { help: {} } } as unknown as Engine).FACTORY_DELIVERY_PUBLIC_KEY).toBe("");
+    delete process.env.FACTORY_DELIVERY_PUBLIC_KEY;
   });
 });
 

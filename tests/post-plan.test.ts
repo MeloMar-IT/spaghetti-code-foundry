@@ -83,6 +83,7 @@ describe("post-plan", () => {
       expect(c!.startsWith(reportFirst("decided"))).toBe(true);
       expect(c).toContain("decided these technical questions itself and plans the issue again:");
       expect(c).toContain("_Want a different answer?");
+      expect(c).toContain("Reply `/overrule Q<n> <your answer>` on this issue.");
       expect(go(["post-plan", dir], ALL, env()).status).toBe(3);
       expect(comments()).toHaveLength(1);
       expect(readRecord(dir).rounds).toHaveLength(1);

@@ -1,7 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config } from "../config.js";
-import { deliveryAfterStep } from "../delivery/write.js";
+import { deliveryAfterStep, deliveryKeyEnv } from "../delivery/write.js";
+import { FACTORY_HOME } from "../home.js";
 import { loadFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
 import { runAgentStep } from "../agents/run.js";
@@ -14,6 +15,7 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { stepContextUncited } from "./context-index.js";
 import { claimAfterResolve } from "./release-claim.js";
 import { readDecidedQuestions } from "./questions.js";
 import { readRunOutputs } from "./run-outputs.js";
@@ -74,6 +76,8 @@ export interface Engine {
   /** The declared tool profile saved with the run (`null`: it could not be read). Undefined: generated profiles. */
   toolProfile?: unknown;
   signal?: AbortSignal;
+  /** Asked before each top-level step: a non-empty answer stops the run there with that reason (the step runs on resume). */
+  stopBefore?: (stepId: string) => string | undefined;
   /** Set once a budget is used up and a free fallback exists: all agent steps run there. */
   budgetFallback?: Target;
   /** Today's spend in US dollars, for the policy's daily budget rule. Only set when a daily budget is in effect. */
@@ -130,7 +134,9 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   // Every consumer gets untrusted values scrubbed (secrets and configured patterns) before the step's own credentials are
   // added by the callers. An agent step may also quarantine them (`bound`). The SCF_ aliases get the same values.
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
-  return withScfAliases(o.bound ? o.bound(scrubbed) : scrubbed);
+  // The trusted public key comes only from the engine, never from the server's own environment: a missing value is blank.
+  const keyEnv = { FACTORY_DELIVERY_PUBLIC_KEY: "", ...deliveryKeyEnv((engine.deliverySettings ?? (() => engine.config?.delivery))(), process.env.FACTORY_HOME ?? FACTORY_HOME) };
+  return withScfAliases({ ...(o.bound ? o.bound(scrubbed) : scrubbed), ...keyEnv });
 }
 
 export function historySummary(summary: RunSummary): string {
@@ -217,6 +223,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       runCostUsd: engine.summary.totalCostUsd,
       dailyCostUsd: daily,
       paths,
+      contextUncited: stepContextUncited({ summary: engine.summary, step, topLevel: !scope.prefix, output: res.output }),
     },
     identity,
   );

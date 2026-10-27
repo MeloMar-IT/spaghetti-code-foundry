@@ -7,6 +7,7 @@ import { allNext } from "../src/server/next.js";
 import { turnFor } from "../src/server/your-turn.js";
 import { STOPPED_CANCEL_REASON } from "../src/engine/state.js";
 import { needsUser } from "../src/your-turn.js";
+import { isPaused } from "../src/queue/waiting-issues.js";
 import { ago, cfg, issuesWatcher, NOW, run, scenarioCtx, track } from "./helpers/scenarios.js";
 
 let home: string;
@@ -59,6 +60,22 @@ describe("a parked story", () => {
     const ctx = scenarioCtx({ config: c, runs: [fresh, old], active: ["r2"], tracked: [track(c, [], [{ issue: 7, title: "Seven", runId: "r2" }])] });
     expect(recordOf(ctx, "r1")?.kind).toBe("superseded");
     expect(recordOf(ctx, "r2")?.kind).toBe("running");
+  });
+});
+
+describe("a story waiting for another story", () => {
+  it("is a dependency, asks nobody, and the watcher counts it as paused", () => {
+    const r = run("r1", {
+      vars, status: "stopped", reason: 'stopped at step "wait_for_story" — needs attention',
+      history: [{ id: "wait_for_story", type: "shell", visit: 1, ok: true, output: "WAITS_FOR: #12\nPARKED" }],
+    });
+    const ctx = scenarioCtx({ config: c, runs: [r], tracked: [track(c, [], [{ issue: 7, title: "Seven", runId: "r1" }])] });
+    const rec = recordOf(ctx, "r1")!;
+    expect(rec.kind).toBe("dependency");
+    expect(rec.why).toContain("waits for #12");
+    expect(needsUser(rec)).toBe(false);
+    expect(items(ctx).filter((i) => i.next.issue === 7)).toEqual([]);
+    expect(isPaused(r)).toBe(true);
   });
 });
 

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
@@ -434,7 +434,12 @@ describe("gitflow pipeline", () => {
     // the step waits five minutes at most and keeps a value that is set: a short one here
     const script = JSON.stringify(flow.steps.find((s) => s.id === "verify"));
     expect(script).toContain('FACTORY_TEST_SLOT_WAIT_SEC=\\"${FACTORY_TEST_SLOT_WAIT_SEC:-300}\\"');
-    expect(script).not.toContain("FACTORY_VAR_TEST_SLOTS=0");
+    // the tests take a slot; only the build runs without one
+    const verifyStep = flow.steps.find((s) => s.id === "verify")!;
+    const lines = (verifyStep.type === "shell" ? verifyStep.run : "").split("\n");
+    const testsLine = lines.find((l) => l.includes("test-slot") && l.includes("tests.log"))!;
+    expect(testsLine).not.toContain("FACTORY_VAR_TEST_SLOTS=0");
+    expect(lines.find((l) => l.includes("build.log") && l.includes("test-slot"))).toContain("FACTORY_VAR_TEST_SLOTS=0");
     process.env.FACTORY_TEST_SLOT_WAIT_SEC = "1";
     process.env.FACTORY_TEST_SLOT_POLL_MS = "100";
     try {
@@ -453,16 +458,52 @@ describe("gitflow pipeline", () => {
     }
   });
 
+  it("fails the handoff step when gh cannot mark the pull request ready or a draft", async () => {
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const flow = loadFlow("release-daily", gh.tmp).flow;
+    process.env.FAKE_GH_FAIL_ON = "pr ready";
+    process.env.FAKE_GH_FAIL_TEXT = "boom";
+    try {
+      const green = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
+      expect(green.status).toBe("failed");
+      expect(green.history.at(-1)!.output).toContain("PR #99 could not be marked ready");
+      expect(green.history.at(-1)!.output).not.toContain("ready to merge");
+      const red = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
+      // failed checks: the switch to a draft is reported, as before, and does not fail the run
+      expect(red.status).toBe("succeeded");
+      expect(red.history.at(-1)!.output).toContain("checks failed — could not mark PR #99 as a draft");
+    } finally {
+      delete process.env.FAKE_GH_FAIL_ON;
+      delete process.env.FAKE_GH_FAIL_TEXT;
+    }
+  });
+
   it("opens one release pull request develop → main that closes the merged issues", async () => {
     issues(5);
     await watcher().tick();
     await settle();
     const flow = loadFlow("release-daily", gh.tmp).flow;
-    const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
+    const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true", reuse_test_results: "no" } });
     expect(r.status).toBe("succeeded");
+    expect(r.history.at(-1)!.id).toBe("handoff");
+    expect(r.history.at(-1)!.output).toContain("HANDOFF: skipped (");
     expect(r.history.at(-1)!.output).toMatch(/checks passed — PR #99 \(Release \d{4}-\d\d-\d\d: #5\) is ready to merge/);
+    expect(r.history.find((h) => h.id === "release_pr")!.output).toMatch(/^PR: 99\nTITLE: Release \d{4}-\d\d-\d\d: #5$/m);
+    // the flow: no ready mark in release_pr; the key-guarded draft comes before the check, the ready mark only after it
+    const rp = flow.steps.find((s) => s.id === "release_pr") as { run: string };
+    const ho = flow.steps.find((s) => s.id === "handoff") as { run: string; repo_access?: boolean; timeout_sec?: number };
+    expect(rp.run).not.toContain("gh pr ready");
+    expect(ho.repo_access).toBe(true);
+    expect(ho.timeout_sec).toBe(1800);
+    const at = (s: string) => ho.run.indexOf(s);
+    expect(at('if [ -n "$FACTORY_DELIVERY_PUBLIC_KEY" ]; then draft')).toBeGreaterThan(-1);
+    expect(at('if [ -n "$FACTORY_DELIVERY_PUBLIC_KEY" ]; then draft')).toBeLessThan(at("delivery-handoff"));
+    expect(at('gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" >')).toBeGreaterThan(at("delivery-handoff"));
     const log = gh.ghLog();
     expect(log).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release/);
+    expect(log).not.toMatch(/gh pr create[^\n]*--draft/);
     expect(log).toContain("Closes #5");
     expect(log).toContain("Spaghetti Code Foundry daily release check");
     // the green run left the checked record that self-update reads
@@ -480,6 +521,61 @@ describe("gitflow pipeline", () => {
     expect(green.at(-1)).toBe(`<!-- claude-factory run=${r.runId} daily -->`);
     expect(first(checks[1]!.body)).toBe(reportFirst("draft"));
     expect(checks[1]!.body).toContain("⚠ **Checks failed**");
+
+    // when the switch to a draft fails, the run says so
+    process.env.FAKE_GH_FAIL_PR_READY = "1";
+    try {
+      const stuck = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
+      expect(stuck.status).toBe("succeeded");
+      expect(stuck.history.at(-1)!.output).toContain("checks failed — could not mark PR #99 as a draft");
+      expect(stuck.history.at(-1)!.output).not.toContain("PR #99 is a draft");
+    } finally {
+      delete process.env.FAKE_GH_FAIL_PR_READY;
+    }
+
+    // a later run on the same code does not run the tests again: the record of the first run is the hit
+    const again = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "true" } });
+    expect(again.status).toBe("succeeded");
+    const reused = again.history.find((h) => h.id === "verify")!.output;
+    expect(reused).toContain("not run again");
+    expect(reused).toContain("CHECKS: yes");
+  });
+
+  it("creates the release pull request as a draft when the checks fail", async () => {
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const flow = loadFlow("release-daily", gh.tmp).flow;
+    const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
+    expect(r.status).toBe("succeeded");
+    expect(r.history.at(-1)!.output).toContain("checks failed — PR #99 is a draft");
+    const log = gh.ghLog();
+    expect(log).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release[^\n]* --draft/);
+    expect(log).not.toMatch(/gh pr ready 99 [^\n]*--undo/);
+  });
+
+  it("a release check that runs past its time limit still opens a draft pull request", async () => {
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const flow = loadFlow("release-daily", gh.tmp).flow;
+    process.env.FACTORY_CHECK_LIMIT_SEC = "1";
+    try {
+      const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "sleep 30" } });
+      expect(r.status).toBe("succeeded");
+      const verify = r.history.find((h) => h.id === "verify")!;
+      expect(verify.output).toContain("CHECKS: no");
+      expect(verify.durationMs).toBeLessThan(20_000);
+      expect(gh.ghLog()).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release[^\n]* --draft/);
+      const check = gh.comments().find((c) => c.issue === 99 && c.body.includes("daily release check"))!;
+      expect(check.body).toContain("did not finish in time");
+      expect(check.body).not.toContain("⚠ **Checks failed**");
+      const tested = join(gh.tmp, "tested");
+      const records = existsSync(tested) ? readdirSync(tested).map((n) => readFileSync(join(tested, n), "utf8")) : [];
+      expect(records.some((c) => c.includes(`run ${r.runId},`))).toBe(false);
+    } finally {
+      delete process.env.FACTORY_CHECK_LIMIT_SEC;
+    }
   });
 });
 

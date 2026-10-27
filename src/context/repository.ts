@@ -49,6 +49,13 @@ export interface OpenRepositoryOptions {
   timeoutMs?: number;
   /** The most bytes the list of the commit may have. */
   listBytes?: number;
+  /**
+   * An absolute time, in the ms of `now`, by which every git call must have ended (`read()` included): each call gets
+   * the smaller of its timeout and the time left, and with none left it throws "timeout" without starting git.
+   */
+  deadlineMs?: number;
+  /** The clock for `deadlineMs`. Default `Date.now`; only read when `deadlineMs` is set. */
+  now?: () => number;
 }
 
 const COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -113,6 +120,27 @@ function parseRecord(rec: Buffer): Listed | undefined {
 }
 
 /**
+ * The full id of the commit HEAD names in `dir`, by `deadlineMs` (in the ms of `now`). Git is not started when no
+ * time is left, and gets the smaller of 10 s and the time left. Throws ContextRepositoryError.
+ */
+export function gitHead(dir: string, deadlineMs: number, now: () => number = Date.now, base: NodeJS.ProcessEnv = process.env): string {
+  let top: string;
+  try {
+    top = realpathSync(dir);
+  } catch {
+    throw new ContextRepositoryError("not-a-repository");
+  }
+  const left = Math.floor(deadlineMs - now());
+  if (!(left >= 1)) throw new ContextRepositoryError("timeout");
+  const r = spawnSync("git", [...OPTIONS, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"], { cwd: top, env: gitEnv(base, top), timeout: Math.min(10_000, left), maxBuffer: 4096, stdio: ["ignore", "pipe", "ignore"] });
+  const err = failure(r, "no-commit");
+  if (err) throw err;
+  const id = r.stdout.toString("latin1").trim();
+  if (!COMMIT.test(id)) throw new ContextRepositoryError("no-commit");
+  return id;
+}
+
+/**
  * Opens the repository in folder `dir` at `commit` (a full commit id, never a branch or a tag). `dir` must itself be
  * the repository (its root, or a bare repository): a repository in a folder above it is not used.
  * Throws ContextRepositoryError.
@@ -127,7 +155,14 @@ export function openRepositoryAt(dir: string, commit: string, opts: OpenReposito
   }
   const env = gitEnv(opts.env ?? process.env, top);
   const timeout = opts.timeoutMs ?? REPOSITORY_LIMITS.timeoutMs;
-  const git = (maxBuffer: number, ...args: string[]) => spawnSync("git", [...OPTIONS, ...args], { cwd: top, env, timeout, maxBuffer, stdio: ["ignore", "pipe", "ignore"] });
+  const clock = opts.now ?? Date.now;
+  const limit = (): number => {
+    if (opts.deadlineMs === undefined) return timeout;
+    const left = Math.floor(opts.deadlineMs - clock());
+    if (!(left >= 1)) throw new ContextRepositoryError("timeout"); // also NaN; never 0, which spawnSync reads as "no limit"
+    return timeout > 0 ? Math.min(timeout, left) : left; // a timeout of 0 means none, so the deadline alone applies
+  };
+  const git = (maxBuffer: number, ...args: string[]) => spawnSync("git", [...OPTIONS, ...args], { cwd: top, env, timeout: limit(), maxBuffer, stdio: ["ignore", "pipe", "ignore"] });
 
   // The folder must be the repository itself: its root (the prefix inside the work tree is empty) or a bare one.
   const where = git(4096, "rev-parse", "--is-bare-repository", "--show-prefix");

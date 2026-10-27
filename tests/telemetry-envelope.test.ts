@@ -38,6 +38,7 @@ const SAMPLES: Record<EvidenceEventType, unknown> = {
   "step.completed": { type: "step.completed", ...end },
   "policy.decided": { type: "policy.decided", decision, step },
   "repo.operation": { type: "repo.operation", step, operation: "push", repository: "own/repo", branch: "feat", credential: "repository", policy: "allow", outcome: "done" },
+  "context.bundled": { type: "context.bundled", outcome: "failed", failure: "internal" },
 };
 const NAME_OF: Partial<Record<EvidenceEventType, string>> = { "step.routed": "model.routed", "repo.operation": "tool.called" };
 const made = (type: EvidenceEventType, written?: Pick<EvidenceEvent, "id" | "seq">, repo?: string) =>

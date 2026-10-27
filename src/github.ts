@@ -126,6 +126,8 @@ export interface Comment {
 export interface Issue {
   number: number;
   title: string;
+  /** When the issue was last changed; gh reports it when asked for it. */
+  updatedAt?: string;
   labels: { name: string }[];
   body?: string;
   state?: string;
@@ -144,6 +146,17 @@ export function isStatusComment(c: { body: string }): boolean {
   return last !== undefined && STATUS_MARKERS.includes(last);
 }
 
+/** A comment the Foundry really wrote: its marker, and written by the account gh acts as (a marker alone can be copied). */
+export const isFoundryComment = (c: Pick<Comment, "body" | "viewerDidAuthor">): boolean => isBot(c) && c.viewerDidAuthor === true;
+
+const OVERRULE_REPLY = /^<!-- claude-factory overrule=[\w-]+( followup)? -->$/;
+
+/** The Foundry's reply to an /overrule (its marker is the last line): never a question or an approval request. */
+export function isOverruleReply(c: Pick<Comment, "body" | "viewerDidAuthor">): boolean {
+  const last = c.body.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
+  return isFoundryComment(c) && last !== undefined && OVERRULE_REPLY.test(last);
+}
+
 /** The numeric id in a comment link (…#issuecomment-123). */
 export function commentId(url: string | undefined): string | undefined {
   return /#issuecomment-(\d+)\s*$/.exec(url?.trim() ?? "")?.[1];
@@ -157,6 +170,11 @@ export function sameBody(a: string | undefined, b: string | undefined): boolean 
 
 export async function issueComments(repo: string, issue: number | string, timeoutMs?: number): Promise<Comment[]> {
   const r = await ghJson<{ comments: Comment[] }>(["issue", "view", String(issue), "--repo", repo, "--json", "comments,labels"], undefined, timeoutMs);
+  return r.comments ?? [];
+}
+
+export async function prComments(repo: string, pr: number | string, timeoutMs?: number): Promise<Comment[]> {
+  const r = await ghJson<{ comments: Comment[] }>(["pr", "view", String(pr), "--repo", repo, "--json", "comments"], undefined, timeoutMs);
   return r.comments ?? [];
 }
 
@@ -188,6 +206,12 @@ export async function commentOnIssue(repo: string, issue: number, body: string, 
   return commentId(out.split("\n").map((l) => l.trim()).filter(Boolean).at(-1));
 }
 
+/** Posts a comment on a pull request; the text goes through stdin. Returns the id of the new comment when gh prints its link. */
+export async function commentOnPullRequest(repo: string, pr: number, body: string, timeoutMs?: number): Promise<string | undefined> {
+  const out = await gh(["pr", "comment", String(pr), "--repo", repo, "--body-file", "-"], undefined, timeoutMs, body);
+  return commentId(out.split("\n").map((l) => l.trim()).filter(Boolean).at(-1));
+}
+
 /**
  * The first comment that `match` accepts and that the account gh acts as wrote, or undefined. A comment of another login does not count.
  * An app has no user to compare with: without `viewerDidAuthor` it rejects with `APP_NO_AUTHOR` and does not ask for a login.
@@ -213,6 +237,10 @@ export interface UpsertOptions {
   deadline?: number;
   /** The login gh acts as, when known (saves a call). */
   login?: string;
+  /** Which comments count as ours to keep (besides being written by this account). Default: status comments. */
+  match?: (c: Comment) => boolean;
+  /** Where the comments live: an issue (default) or a pull request. */
+  on?: "issue" | "pr";
 }
 export interface UpsertResult {
   id?: string;
@@ -231,8 +259,8 @@ const MAX_REMOVE = 5;
 export const APP_NO_AUTHOR = "this gh does not tell who wrote a comment, so the app cannot tell its own status comment; update gh";
 
 /**
- * Keeps one status comment of ours on an issue: edits it, or creates it. Ours means: marker on the last line and
- * written by the account gh acts as. Extra ones of ours (an older one exists) are deleted, best effort.
+ * Keeps one status comment of ours on an issue or a pull request (`on`): edits it, or creates it. Ours means: accepted
+ * by `match` (default: marker on the last line, `isStatusComment`) and written by the account gh acts as. Extra ones of ours (an older one exists) are deleted, best effort.
  * Rejects when a needed call fails, the comment has no link, or the deadline has passed.
  */
 export async function upsertStatusComment(repo: string, issue: number, body: string, o: UpsertOptions): Promise<UpsertResult> {
@@ -249,11 +277,12 @@ export async function upsertStatusComment(repo: string, issue: number, body: str
     await edit(o.id);
     return { id: o.id, changed: true, removed: 0, left: 0, login };
   }
-  const comments = await issueComments(repo, issue, limit());
+  const comments = await (o.on === "pr" ? prComments : issueComments)(repo, issue, limit());
   const ours: Comment[] = [];
   const app = ghActsAsApp();
+  const match = o.match ?? isStatusComment;
   for (const c of comments) {
-    if (!isStatusComment(c)) continue;
+    if (!match(c)) continue;
     // An app has no user to compare with: only what gh itself says is ours counts.
     if (app && c.viewerDidAuthor === undefined) throw new Error(APP_NO_AUTHOR);
     if (c.viewerDidAuthor === undefined) login ??= await ghLogin(limit());
@@ -261,7 +290,7 @@ export async function upsertStatusComment(repo: string, issue: number, body: str
   }
   if (!ours.length) {
     if (!o.create) return { changed: false, removed: 0, left: 0, login };
-    const id = await commentOnIssue(repo, issue, body, limit());
+    const id = await (o.on === "pr" ? commentOnPullRequest : commentOnIssue)(repo, issue, body, limit());
     return { id, changed: true, created: true, removed: 0, left: 0, login };
   }
   const first = ours[0]!;

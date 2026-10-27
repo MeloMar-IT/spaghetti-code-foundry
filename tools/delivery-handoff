@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+// Checks the run's signed delivery contract before the release pull request is handed over, and keeps the delivery comment.
+//   delivery-handoff <run-dir>   needs FACTORY_RUN_ID, FACTORY_VAR_GITHUB_REPO and FACTORY_OUT_RELEASE_PR ("PR: <n>") in the environment
+// Exit 0: ok, skipped or unsigned. Exit 1: a stop, or a key is set and the check could not run. The last lines start with "HANDOFF:".
+const key = process.env.FACTORY_DELIVERY_PUBLIC_KEY ?? "";
+try {
+  const lib = await import(new URL("../dist/delivery/handoff.js", import.meta.url).href);
+  const io = { out: (s) => process.stdout.write(s), err: (s) => process.stderr.write(s) };
+  process.exitCode = await lib.handoffCommand(process.argv.slice(2), io);
+} catch {
+  if (key !== "") {
+    process.stdout.write("HANDOFF: stop signature-unverified: the handoff tool could not run\n");
+    process.exitCode = 1;
+  } else {
+    process.stdout.write("HANDOFF: skipped (the handoff tool could not run)\n");
+    process.exitCode = 0;
+  }
+}

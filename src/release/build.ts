@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { closeSync, copyFileSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
+import { addValidator } from "./validator.js";
 import { buildEnv, deniedNames, findCommand, groupAlive, killTree, matchBuild, type Host } from "./host.js";
 import type { Build, CommitInfo, Recipe } from "./recipe.js";
 
@@ -207,6 +208,8 @@ export interface ReleaseRun {
   env: NodeJS.ProcessEnv;
   denied?: Set<string>;
   signal?: AbortSignal;
+  /** The delivery validator added to each release (default: this install's script). */
+  validator?: string;
   log: (line: string) => void;
 }
 
@@ -313,6 +316,13 @@ export async function runRelease(o: ReleaseRun): Promise<boolean> {
   }
   const names = walk(dirs.out);
   if (!names.length) return fail("assemble", "no files in the output folder");
+  try {
+    const v = addValidator(dirs.out, o.validator);
+    names.push(v.name, v.name + ".sha256");
+    log("validator: " + v.name + ", sha256 " + v.sha256);
+  } catch (e) {
+    return fail("validator", (e as Error).message);
+  }
   try {
     await writeSha256Sums(dirs.out);
   } catch (e) {

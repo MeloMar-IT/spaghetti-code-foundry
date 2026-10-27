@@ -75,8 +75,10 @@ describe("policy hooks at the boundaries of a run", () => {
     const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, config: cfg(), decision: { approved: true, by: "someone" } });
     expect(r.status).toBe("succeeded");
     const all = decided(r);
-    expect(new Set(all.map((e) => e.decision.boundary))).toEqual(new Set(BOUNDARIES));
-    for (const b of BOUNDARIES) {
+    // context.select is asked only for an issue run with a context bundle; this flow has no pull_ticket step
+    const asked = BOUNDARIES.filter((b) => b !== "context.select");
+    expect(new Set(all.map((e) => e.decision.boundary))).toEqual(new Set(asked));
+    for (const b of asked) {
       const of = all.filter((e) => e.decision.boundary === b);
       expect(of.length, b).toBeGreaterThan(0);
       // every promised fact was there (the check rule would say input-incomplete) and the values held (the ok rule decided)
@@ -100,7 +102,7 @@ describe("policy hooks at the boundaries of a run", () => {
     // one run per boundary would be slow: the shared run above holds each of them; a single shell step that does not push holds all but three
     const s = await start(SHELL);
     const present = new Set(decided(s).map((e) => e.decision.boundary));
-    const only: Boundary[] = ["agent.write", "approval.consume", "push"];
+    const only: Boundary[] = ["agent.write", "approval.consume", "push", "context.select"];
     expect(present.has(b), b).toBe(!only.includes(b));
   });
 

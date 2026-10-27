@@ -109,6 +109,21 @@ steps:
     expect(buildCodexArgs({ prompt: "p", cwd: "/w", logFile: "/l", sandbox: "read-only", effort: "max" })).toContain('model_reasoning_effort="xhigh"');
   });
 
+  it("lets Claude read the read-only folders and refuses its edits there, through the settings", () => {
+    const base = { prompt: "p", cwd: "/w", logFile: "/l" };
+    const args = buildClaudeArgs({ ...base, readOnlyDirs: ["/runs/r 1/context/", "/real/runs/r1/context"], sandbox: true, writableDirs: ["/req"] });
+    const settings = JSON.parse(args[args.indexOf("--settings") + 1]!);
+    expect(settings.permissions.allow).toEqual(["Read(//runs/r 1/context/**)", "Read(//real/runs/r1/context/**)"]);
+    expect(settings.permissions.deny).toEqual(
+      ["//runs/r 1/context/**", "//real/runs/r1/context/**"].flatMap((p) => [`Edit(${p})`, `Write(${p})`, `NotebookEdit(${p})`]),
+    );
+    expect(settings.sandbox.filesystem.allowWrite).toEqual(["/req"]);
+    expect(args.filter((a) => a === "--add-dir")).toHaveLength(1); // only the writable folder
+    expect(args).not.toContain("--allowedTools");
+    expect(buildClaudeArgs({ ...base, sandbox: true })).not.toContain("--add-dir");
+    expect(buildClaudeArgs(base)).not.toContain("--settings");
+  });
+
   it("the note allows only the Foundry skill block, and keeps the isolation flags", () => {
     expect(FACTORY_AGENT_NOTE).not.toContain("Do not use skills");
     expect(FACTORY_AGENT_NOTE).toContain("<foundry-skills>");

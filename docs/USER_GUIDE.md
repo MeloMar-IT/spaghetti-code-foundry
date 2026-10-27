@@ -380,6 +380,7 @@ The command needs `git` and `gh` on the machine, and `gh` signed in with access 
 - A file with the same name as one already on the release is replaced. The `prerelease` flag is set when the draft is created; an existing draft keeps its own flag.
 - The file names on the release have no folders. `/` becomes `-`, and any character other than a letter, a digit, `.`, `_` or `-` becomes `_`. So `linux-x64/tool` is `linux-x64-tool`. A release takes at most 1000 files, and a name at most 200 characters. Two files that would get the same name fail the run.
 - `SHA256SUMS` is written again with the names as they are on the release. `release/out` itself is not changed.
+- **The delivery validator.** Every release also gets `scf-delivery-validate-<version>.mjs` and `scf-delivery-validate-<version>.mjs.sha256`, both in `SHA256SUMS`. The file is the validator of this Foundry install (see "Check a delivery contract in CI"). A build that already has a file with that name fails at the step `validator`.
 - If the release is published while the files are uploaded, the upload stops and the message says how many files were uploaded.
 
 The upload step uses the Foundry's GitHub login for the repository (repository access). The build steps never get it. A repository that is reached only with a deploy key cannot be uploaded to: the step fails with the message about the missing GitHub login.
@@ -844,7 +845,8 @@ its description, or the kind of step when the flow gives none.
 
 - **Issue files** — when a run pulls a GitHub issue, the Foundry saves the issue as `issue.json`
   (its body, number, title and last update) and its comments as `issue-comments.jsonl` (one comment
-  per line) in the run folder. A step can read these files without calling GitHub again. If a
+  per line) in the run folder, and `issue-foundry-comments.json`, the ids of the comments the Foundry
+  wrote itself. A step can read these files without calling GitHub again. If a
   fetch fails, that file is not written and the run goes on without it.
 
 ### Approvals
@@ -894,7 +896,7 @@ content, or ask for approval. It never gives access that a rule denied.
   The clean folder is `<run folder>/home/.codex`, made 0700, and the step's `HOME` is `<run folder>/home`, so skills in `~/.agents/skills` are not seen either. Session history stays, so a resumed session still works. No Codex session starts with an MCP server, so a server in your personal config is never reached. A step never gets your personal Codex folder when it is isolated. Pushing is blocked: a Foundry command rule forbids `git push`, and Codex's own sandbox has no network. A step with `bypassPermissions` and no sandbox is refused, because it could push. A login kept in the keychain, a linked login file or a missing login refuses the step, with a message that says how to sign in with a file. A refreshed token is written back to your personal file only when that file has not changed meanwhile. `OPENAI_API_KEY` alone does not select the key mode. If the clean folder cannot be made, the step is refused; it never falls back to your personal folder. In a CLI run with `isolate_agents: false`, nothing changes: no note, no "Codex:" line. A step held by the OS sandbox gets no clean folder of its own; its log says that git push is blocked in that session.
 - **The `tools:` line.** Each try of an agent step writes one line, for example `· tools: generated profile 3f2a9c1b8d0e on Codex: partial — Codex cannot hold … (recorded only)`. The twelve characters are the start of the profile's hash; the line never shows its id or rules. `enforced` means the agent holds the step's tool profile in full. `partial` means it cannot hold all of it: the line names what it cannot hold, such as Git and GitHub commands run through the shell, and for Codex the paths and tools it cannot limit one by one. Today's flows get `partial` where it applies, and the line only records it: nothing changes. `refused` means the step does not start (its line starts with `!`). That happens only with a tool profile the run was started with, when the step's settings allow more than the profile, or the agent cannot hold it. A refused step is not retried and no other agent takes it.
 - **Retry from step…** re-runs from any earlier step.
-- **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later. A stopped shell step also stops every process it started, background ones included (its whole process group).
+- **Cancel** stops a running run, or a run that waits for approval or is stopped; you can resume it later. A stopped shell step also stops every process it started, background ones included (its whole process group). A shell step that times out is stopped the same way. Processes that left the group (for example a Gradle daemon) are stopped too, if the step saw them while it ran; a process it never saw is not stopped.
   Removing a queued approval from the queue cancels that run too (Resume brings the approval back).
   A stopped run (for example one that waits for your answers) cancelled this way is saved as "cancelled — nothing to do": nothing continues it and it leaves every list of things that wait. `scf runs cancel <id>` and `POST /api/runs/:id/cancel` do the same. A refinement session is not cancelled this way.
 - **Archive** takes a finished run (succeeded, failed, cancelled or stopped) out of the list of runs,
@@ -1228,6 +1230,98 @@ $ scf evidence verify 20260131-120000-ab12
   (status, the first failure with its code, every check and every file) for a script.
   `--runs-dir <dir>` reads another runs folder.
 
+### Context of a run
+
+An issue run is given a **context bundle**: a record of what the run was given to read, with the
+files themselves. It is made once, from the commit the workspace has, just before the run's first
+agent step (the first step that is not a shell step or an approval). It holds the issue text, its
+comments, the repository's `AGENTS.md` and `CLAUDE.md`, the ownership file, the files the task names,
+the API schema files and the README.
+
+The planner and coder prompts of the built-in issue flows get a list of the bundle's entries instead
+of the pasted issue text. Each entry gives the file to read, and only the entries the step's role may
+use are listed (the planner, coder, reviewer or tester role, by the step's `skill_role`, default
+`coder`). A source that is stale, not there or not for the role is listed as left out, with its
+reason, and the agent is told not to look for it elsewhere. Claude can read the context folder but
+cannot write to it; the workspace stays writable as before. A run with no bundle keeps the issue text
+in its prompt. A comment the Foundry wrote is marked in the list as `by: Foundry`, and in the issue
+text as `(Foundry)` in its header. Any other comment is not marked, so a comment that copies the
+Foundry's header does not get the mark.
+
+**Plans cite their sources.** When the run has a bundle, the planner writes its requirements,
+constraints and acceptance criteria with a citation at the end of each item, such as
+`[source: s-0123456789abcdef]`, naming the entries it rests on. Only entries the planner was given
+can be cited. The plan also has a `## Missing context` section that lists the entries the plan
+needed but did not get, with the reason, or says "none". A READY plan in which some of these three
+sections cite no entry gets a policy **warning** (`context.uncited`): it shows in the run log and in
+**Policy decisions** of the Evidence tab. The plan step does not fail. A run with no bundle gets no
+citations and no warning.
+
+- **The settings.** The `context:` section of `config.yaml` has seven keys, all optional:
+  - `max_sources` (default `200`): the most files in the bundle.
+  - `max_source_bytes` (`262144`): the most bytes of one file.
+  - `max_total_bytes` (`2097152`): the most bytes of all files. It may not be below `max_source_bytes`.
+  - `classification` (`internal`): the privacy the files are given.
+  - `max_classification` (`restricted`): the most private file that may be used. A more private file is
+    left out.
+  - `consumers` (`planner`, `coder`, `reviewer` and `tester`): the roles that may be given the bundle.
+    A list with at least one role, each at most once.
+  - `task_max_age_seconds` (`null`): how long the issue text stays fresh, in seconds. `null` means it
+    never goes stale. The issue's time is the latest fetch of the ticket in this run, so a resumed run
+    is judged by its newest fetch.
+
+  A wrong value is reported when the configuration is checked, at `context.<key>`, and the message
+  never shows the value.
+- **30 seconds.** The bundle must be finished 30 seconds after the step starts. **A bundle not done in
+  time is not written:** the run goes on, and the log gives `CONTEXT_FAILED timeout`.
+- **The log.** One line per run. A success reads, for example,
+  `· context: 12 sources, 3 left out, commit 1a2b3c4d5e6f`, with `, 2 comments skipped` added when
+  some comments could not be read. A failure reads `! context: CONTEXT_FAILED <code>`. Neither line
+  shows a path or a value.
+- **The codes.**
+  - `marker-failed`: the attempt marker could not be written.
+  - `repository-no-commit`: the workspace has no commit yet. `repository-…` otherwise means the
+    repository could not be read in time or is not usable.
+  - `issue-unreadable`, `comments-unreadable`: the issue files that `pull_ticket` saves are missing or
+    not valid.
+  - `select-invalid`: the `context:` settings cannot be used.
+  - `bundle-invalid`: the bundle made did not pass its own check.
+  - `timeout`: not finished within 30 seconds.
+  - `lock-failed`: the files could not be made read-only. The bundle is removed.
+  - `store-…`: the files could not be written. The files written so far are removed.
+  - `internal`: anything else.
+
+  A failure never stops the run.
+- **Evidence and policy.** The run's evidence records the bundle: a `context.bundled` event with the
+  bundle's hash, its limits, its source and byte counts and the number left out per reason, or the failure
+  code. Policy packs are asked at the boundary `context.select` after a bundle is written. The answer is only
+  recorded; the run goes on either way.
+- **Context sources on the run page.** The Evidence tab of a run has a **Context sources** section. It
+  lists the sources the run was given, with the reason each was picked, the time it was read and whether it
+  is **Fresh** or **Stale**. Below them it lists the sources that were left out, each with its status and
+  **What to do**. A run from before the bundle existed says **This run has no context bundle.**
+  - **Statuses.** *Not found*: the file is not in the repository at the run's commit. *Too old*: the copy is
+    past its age limit. *More than one fits*: the name matches several sources. *Over the context limits*: it
+    did not fit `max_sources`, `max_source_bytes` or `max_total_bytes`. *Too private for this run*: it is more
+    private than `max_classification` allows. *Made by a program*: the repository marks it as generated.
+    *Not a text file*: it is a link, a submodule or a binary file.
+  - **Who sees what.** An administrator sees the exact address (`uri`) and id of every entry, and the wording
+    for the limits and the classification tells them which setting to change. A user sees a plain label, for
+    example "Repository file docs/API.md", "Issue #12" or "Comment 34 on issue #12", and no address, id or
+    owners. For a confidential or restricted source a user sees only the kind and the classification, for
+    example "Restricted repository file". Machine folders are never shown.
+  - **Export.** **Export context** saves what the page shows as `context-<run id>.json`. It is the answer of
+    `GET /api/runs/:id/context`, so the export has the same visibility as the page. It has the hashes and the
+    times, but never the text of a source.
+- **Read-only files.** `context.json` is read-only, and so is every file under `context/`. Folders are
+  read-only too. On macOS the OS sandbox of a step also denies writes to these paths.
+- **One attempt.** The file `context.attempt` is written before the bundle is tried, and it stays. A run
+  gets one attempt: a run that has an attempt, a bundle or a `context/` folder gets no other, also after
+  a resume. A run that already took an agent step gets no bundle.
+- **Which runs.** Only runs of flows that save the issue files (the built-in issue flows). A custom flow
+  gets no bundle and no line in the log.
+- **Removal.** `scf clean --purge` removes the bundle with its run.
+
 ### Policy packs in observe mode
 
 A policy pack is a set of rules that is asked at the important moments of a run. The answers are
@@ -1550,6 +1644,7 @@ scf delivery validate --contract contract.json --signature contract.json.sig \
 | `--comment <file>` | The text of the pull request comment that carries the marker (see below) |
 | `--events <file>` | The run's evidence events (`evidence.jsonl`, JSON lines, 256 MiB at most). Checked against the contract's `evidence` (see below). Optional; without it the `evidence` check is skipped |
 | `--json` | Print one JSON object instead of the lines |
+| `--version` | Print the validator version (`N.N.N`) and exit 0. The release file is named after it |
 | `--help` | Print the usage |
 
 **Checks.** The checks run in this order. Each prints one line, `<check>: ok`, `<check>: stop <condition>:
@@ -1627,6 +1722,111 @@ delivery-contract:
 Pass the `--checks`, `--comment` and `--events` files as well when the job has them. The job fails when the exit code is
 not `0`. Do not add `|| true`.
 
+**Pin a version from a release.** Each release of the Foundry's `release-build` carries the validator as
+`scf-delivery-validate-<version>.mjs` and its `.sha256` file (see "Upload to a draft release"). A job can
+download one version, check its hash and run it. The job needs no Foundry server, token or model provider.
+The GitHub Actions example below collects the checks and the marked comment itself. The check results are a
+JSON list of `{"name", "conclusion"}` entries (see "`--checks` format"); this example writes them from the
+check-runs API of the commit.
+
+```yaml
+delivery-contract:
+  runs-on: ubuntu-latest
+  env:
+    VALIDATOR_VERSION: "1.0.0"          # the version you pin
+    RELEASE_BASE: "<download folder of that release>"   # the release's assets, from the release page
+    GH_TOKEN: ${{ github.token }}
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+    - name: Download the validator and check its hash
+      run: |
+        mkdir -p "$RUNNER_TEMP/validator" && cd "$RUNNER_TEMP/validator"
+        curl -fsSLO "$RELEASE_BASE/scf-delivery-validate-${VALIDATOR_VERSION}.mjs"
+        curl -fsSLO "$RELEASE_BASE/scf-delivery-validate-${VALIDATOR_VERSION}.mjs.sha256"
+        sha256sum -c "scf-delivery-validate-${VALIDATOR_VERSION}.mjs.sha256"
+    - name: Collect the check results and the marked comment
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" --paginate \
+          --jq '[.check_runs[] | {name: .name, conclusion: .conclusion}]' | jq -s 'add' > "$RUNNER_TEMP/checks.json"
+        gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+          --jq '[.[] | select(.body | contains("<!-- claude-factory delivery-contract "))] | last | .body // empty' \
+          > "$RUNNER_TEMP/comment.md"
+    - name: Check the delivery contract
+      env:
+        DELIVERY_PUBLIC_KEY: ${{ vars.DELIVERY_PUBLIC_KEY }}
+      run: |
+        node "$RUNNER_TEMP/validator/scf-delivery-validate-${VALIDATOR_VERSION}.mjs" \
+          --contract contract.json --signature contract.json.sig \
+          --public-key "$DELIVERY_PUBLIC_KEY" --repo . \
+          --checks "$RUNNER_TEMP/checks.json" --comment "$RUNNER_TEMP/comment.md"
+```
+
+The contract (`contract.json`, `contract.json.sig`) and the evidence file come from the run's delivery
+folder, which the job gets from the workflow's artifacts or from the pull request. The job fails on exit `1`
+(a stop) and `2` (a usage or read error); do not add `|| true`.
+
+**Generic CI in plain shell.** Any CI with Node.js 22 or later and `sha256sum` can run the same steps:
+
+```sh
+V=1.0.0
+BASE="<download folder of that release>"   # the release's assets, from the release page
+curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs"
+curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs.sha256"
+sha256sum -c "scf-delivery-validate-$V.mjs.sha256" || exit 1
+# checks.json and comment.md are written by your CI from the commit's check results and the pull request comment
+node "scf-delivery-validate-$V.mjs" --contract contract.json --signature contract.json.sig \
+  --public-key "$DELIVERY_PUBLIC_KEY" --repo . --checks checks.json --comment comment.md
+```
+
+**What stays outside the validator.** The validator only says go or stop. Building, signing of artifacts,
+environment promotion, drift checks, deployment and rollback stay in your external delivery system. The
+validator checks the delivery contract and nothing else.
+
+### Delivery handoff of the release pull request
+
+The daily release flow (`release-daily`) ends with a step `handoff`. It checks the latest delivery contract
+of the run before the release pull request (develop → main) is marked ready to merge. It is the same contract
+that `scf delivery verify` checks, and it runs on the Foundry machine.
+
+- **Draft while checking (with a signing key).** When the Foundry has a public key for delivery (see
+  "Delivery contract"), the pull request is made a draft before the check starts. It is marked ready only after
+  the check says `HANDOFF: ok`. If the step is killed (timeout or cancel), the pull request stays a draft.
+- **Without a key.** Nothing is made a draft first, and the step prints `HANDOFF: skipped (…)` with the reason.
+  Unsigned installs keep today's behaviour: the pull request is ready when the checks pass.
+- **One comment per pull request.** The step keeps one delivery comment on the release pull request and edits it
+  in place. A run that repeats the same result leaves the comment as it is ("delivery comment: unchanged").
+  The comment shows the status, the contract (when it can be read), the signature and the key's fingerprint.
+  A line that is not secret-free is scrubbed before it is printed or posted.
+- **Stops.** A stop makes the pull request a draft and fails the run. The first failed check gives the stop, in
+  this order:
+
+  | Stop | Means | Example reason |
+  |---|---|---|
+  | `signature-unverified` | The contract or its signature is missing, changed or signed by another key. | `HANDOFF: stop signature-unverified: …` |
+  | `superseded` | A newer contract exists, or the contract is for another pull request, repository or run. | `the contract is for pull request #12, the run's is #99` |
+  | `commit-changed` | The pushed head, or the checked-out commit, is not the contract's commit. | `the pushed head is X, the contract is for Y` |
+  | `lock-changed` / `workflow-changed` | A dependency lock file or a CI workflow file changed since the contract. | `package-lock.json was changed` |
+  | `required-check-failed` | A required check is missing, failed, or cannot be read. | `test did not pass` |
+  | `evidence-unverified` | The run's evidence does not match the contract. | `the events cannot be read` |
+
+  A head that moves while the checks are waited for also stops the handoff, with the same reason and
+  "(after waiting for the checks)" added. So a push during the wait cannot hand over a pull request whose head
+  is not the contract's commit.
+- **Waiting for checks.** The step waits for the required checks to finish, polling every 15 seconds. The wait is
+  `FACTORY_DELIVERY_CHECKS_WAIT_SEC` seconds: a whole number from 0 to 3600, default 600. Any other value gives
+  the default, and 0 means one read with no wait. The step stops after 30 minutes, and then the pull request
+  stays a draft, so keep the wait below about 1700 seconds.
+- **Output.** The step prints one `HANDOFF:` line for the verdict, then the reasons. Then it prints the result
+  of the checks (`checks passed — PR #… is ready to merge`, or `checks failed — PR #… is a draft`).
+- **CI.** The same contract is checked again in a pull request's CI job with `scf delivery validate` (see
+  "Check a delivery contract in CI"). That check is the hard one; this step is the gate before the release
+  pull request is marked ready.
+
 ### Verify a run's delivery contracts offline
 
 `scf delivery verify <run-id>` checks the delivery contracts in a run folder (`delivery/`) against the trusted
@@ -1698,7 +1898,8 @@ component is a problem.
 - **Where each part comes from.** Flows are the `.yaml` files in `flows/`. Policy packs are `policies/<id>.json`.
   Tool profiles are `tool-profiles/<id>.yaml` and context selectors are `context-selectors/<id>.yaml`. Both
   folders are optional. The model routes are the `router` settings of `config.yaml`. A context selector file
-  holds the settings that `selectContext` reads; no run uses them yet.
+  holds the settings that `selectContext` reads; no run reads it yet. The context of an issue run comes
+  from the `context:` section of `config.yaml` (see [Context of a run](#context-of-a-run)).
 - **Built-ins.** The built-in flows and the built-in baseline pack are listed too, and end with ` builtin`.
   They are never counted or recorded.
 - **Versions.** A flow's version is its `publish.version` when it is published, and `0` when not; a new
@@ -2568,6 +2769,8 @@ watchers:
     at: "17:00"
     timezone: Europe/Berlin
     task: Daily release pull request develop → main
+    vars:
+      verify_timeout_min: "240"    # the daily tests and build may run 4 h (default 180)
 ```
 
 | Option | What it does |
@@ -2738,10 +2941,33 @@ recommendation.
   Foundry decided them and plans the issue again, and the work goes on with no reply from you. If some were
   not, the comment shows the questions that still need you above the decided ones, and the run waits as
   before. The first line of the comment says **Nothing needed from you** when everything was decided.
-- **The planner follows the decisions.** It takes them as answers, unless a later comment from a person says
-  otherwise.
-- **How to answer differently:** cancel the run if it is still going, answer the decided question on the issue,
-  and start the run again. Your answer then goes into the next plan.
+- **The planner follows the decisions.** It takes them as answers. Only a later Foundry comment titled
+  **Overrule accepted** changes a decision. Text copied from a decision into a comment does not change it, and
+  a plain comment does not either.
+- **How to answer differently:** reply `/overrule Q<n> <your answer>` on the issue, where `<n>` is the number
+  of the question. Only a person with **write access** to the repository may do this (#717, part 2 of 2 of #703).
+  The Foundry checks the access first, then posts **Overrule accepted** with your answer and the decision it
+  replaces, and plans the issue again:
+  - **Stopped, failed or waiting run:** the run is resumed from its first step (`pull_ticket`) and the label
+    becomes working.
+  - **Active run that has not started merging:** the run is asked to stop, with the reason "overruled". After it
+    stops, the Foundry plans the issue again.
+  - **Queued run, or a run that has started merging:** the overrule waits for a later check. A run that has
+    started merging is not stopped.
+  - **Finished plan-only run:** its done label is removed and a new run starts.
+  - **Merged code:** nothing changes in the code. The Foundry posts a draft for a follow-up issue instead; you
+    create that issue yourself if you want it.
+  - **Parked or cancelled run:** nothing changes.
+  - **No run yet** (the issue still needs your answers before a run starts): your overrule counts as an answer.
+    The ack is posted, then a new run starts. Dependencies, the lock, the limits and the release pause still apply,
+    and while the run waits, the label stays **needs info**.
+  - **Read-only user:** the overrule is ignored. Nothing is posted; the activity line `#n ignored /overrule from
+    @x (no write access)` is written, and the same line goes into the run's log.
+  - **Malformed command or unknown question number:** the Foundry posts exactly one note, and plans nothing again.
+  - **Failures:** if the access check or a post fails, the Foundry tries again at the next check. An ack is never
+    posted twice, and an accepted overrule is not lost.
+  - An `/overrule` comment is never an answer to the run's questions. A copied **Overrule accepted** marker
+    without the Foundry as its author does not count.
 - **The setting:** **Decide technical questions itself** in the repository's Run settings (field
   `questions.decide_technical`). It is on by default. With it off, the planner's questions all wait for you, as
   before. A run reads the setting when it starts or resumes, so a change applies to the runs that start or
@@ -2823,6 +3049,7 @@ Issues with an excluded label (e.g. `geni`) are never picked up, whatever other 
 |---|---|
 | Build an issue, or a whole epic | Add `Factory_go` to each issue (select them all in GitHub's issue list → Labels). Give stories a **Depends on** section so they are built in order. |
 | Answer the questions | Reply on the issue, or `/defaults` — or in the app, on Home |
+| Change a question the Foundry decided itself | Reply `/overrule Q<n> <your answer>` on the issue (you need write access). See [Questions the Foundry decides itself](#questions-the-foundry-decides-itself) |
 | Check a plan before it is coded | Add `Factory_review_plan` before (or together with) `Factory_go` |
 | Approve / reject a risky plan | `/approve` (+ notes), or `/reject` + what to change — or in the app, on Home |
 | Retry after an error | Remove `Factory_ERROR` to start over, or resume the run on its page to continue at the failed step |
@@ -2911,6 +3138,16 @@ them for every run and issue at `GET /api/next` (and as `next` on each run). The
   an issue whose work already landed, or an issue that is unknown or closed. That question comes with
   a recommendation to plan the issue now without waiting. If the commit history cannot be read, no
   wait is recorded and every such request becomes a question.
+  The planner can also ask for a wait. In `issue-plan` and `issue-gitflow`, when the planner finds
+  that the work must wait for another open issue and that issue is not in **Depends on** yet, it
+  answers with that issue instead of asking about the order. The Foundry adds the issue to the marked
+  part of **Depends on**, prints it, and stops without a comment. When that issue is done, the
+  watcher continues: it reads the issue again and plans again on the current code.
+  The same rules as above apply. The wait becomes one question when the planner names the issue
+  itself, an unknown issue, a closed issue with no commit, work that already landed, an issue it
+  already waited for, or a loop, or when the check hits its limit. The question comes with a
+  recommendation to plan the issue now.
+  A run that you started by hand stays stopped until you resume it.
 - **Another issue is being built.** One issue at a time per repository; the rest start after it.
 - **New issues are being checked for questions** (a few minutes, once per batch).
 - **The usage limit or the daily budget is reached.** Runs pause and continue by themselves
@@ -2979,6 +3216,15 @@ flowchart LR
   once make each of them slow and let timing-sensitive tests fail. `0` switches the limit off.
   Test runs work at a lower priority (`nice` 10; `FACTORY_TEST_NICE` changes it, `0` keeps the
   normal priority), so the server, its pages and the agents stay responsive while tests work.
+  Four environment variables tune the slot runner for the daily checks. `FACTORY_TEST_SLOT_LIMIT_SEC`
+  is the working time of a command in seconds, counted from its start after the slot wait. At the
+  limit the command's whole process tree is stopped (SIGTERM, then SIGKILL 5 s later, at most 6 s in
+  all), the slot is freed, the last line says `test-slot: stopped after <n> s — the time limit is <m> s`
+  and the exit code is 124. With no limit nothing changes. `FACTORY_TEST_SLOT_STARTED_FILE` gets the
+  epoch seconds just before the command starts. `FACTORY_TEST_SLOT_TRACK_FILE` remembers processes
+  that left the command's process group, so a later call with a limit can stop them, and
+  `FACTORY_TEST_SLOT_TRACK_MS` (default `2000`) sets how often they are noted while a limit or a track
+  file is set.
 - **Tests an agent starts itself count too.** In an agent step, `npm`/`pnpm`/`yarn`/`bun` test
   scripts, `npx vitest` (and jest, mocha, playwright …), `pytest`, `python -m pytest`, `gradle`/`mvn`
   test, check, build or verify, and `go test`/`cargo test` go through the same test slots and run at
@@ -2995,8 +3241,10 @@ flowchart LR
   the tests fail after a resolved conflict, the coding session takes over.
 - Every day at **17:00** (`release-daily`) the Foundry runs the full tests and build on `develop`
   and opens (or updates) **one pull request `develop` → `main`** that lists and closes the day's
-  issues — a draft while the checks fail. **You merge it once a day.** When the tests pass on a clean
+  issues — a draft while the checks fail. A red run opens a new pull request as a draft from the start; for an existing one it switches the pull request to a draft. If that switch fails, the run says `checks failed — could not mark PR #<n> as a draft` instead of hiding it. **You merge it once a day.** When the tests pass on a clean
   checkout, the run also records that pass in the data folder, so that [self-update](#self-update) can skip its own test run on the same code.
+- **The time limit of the daily checks.** The full tests and build of `release-daily` and `daily-pr` may work for `verify_timeout_min` minutes (flow variable, 1 to 720, default `180`). The wait for a test slot does not count: the limit starts when the tests start, and the build gets the time that is left. A check never fails just for waiting. `release-daily` waits at most 5 minutes for a slot by default (`FACTORY_TEST_SLOT_WAIT_SEC`) and then runs its tests anyway; the wait is capped at 6 hours in all. When the limit runs out, the processes are stopped, the run still succeeds, and the pull request is a draft with the line `⏱ **Checks did not finish in time** — the time limit of … (verify_timeout_min) ran out before …`. A time-out writes no `tested/` record, so [self-update](#self-update) runs its tests again. Set another limit in the watcher's `vars` (see the watcher examples in [6. Automate with watchers](#6-automate-with-watchers)). The server environment variable `FACTORY_CHECK_LIMIT_SEC` (1 to 43200 seconds) replaces the limit of these checks; a value that is not a whole number is ignored with a message.
+- **Reuse of test results.** `release-daily` skips the full tests when this exact code already passed them in a story run or in an earlier daily check: the same clean tree and the same test command. The log and the checks then say `not run again: this exact code already passed these tests (run <id>, <time>)`. The build still runs, and no new record is written. Set the flow variable `reuse_test_results` to `no` to run the tests every day. `daily-pr` always runs its tests. [Self-update](#self-update) still runs its own tests unless the daily check recorded them, as described there.
 - `develop` is created from `main` the first time, and kept up to date with `main` (for example
   after a hotfix) before new work starts. `develop` must not be in *Protected branches*
   (Settings), since the Foundry pushes to it; `main` stays protected (the one exception is the
@@ -4135,6 +4383,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/runs/:id/events` | yes | own runs | follow a run live (a user: without costs and setup) |
 | `GET /api/runs/:id/diff` | yes | own runs | the changes of a run |
 | `GET /api/runs/:id/evidence` | yes | own runs | the evidence of a run: its manifest, whether it still verifies, and the hashes of the files it names (never their content; a user: without models, policy rules, pack hashes and account ids; `policyDecisions` holds the grouped policy decisions of the run); `state` is `not_available` for a run without a manifest |
+| `GET /api/runs/:id/context` | yes | own runs | the context sources of a run and the ones left out, each with a status and a next action (never source text; a user: no address, id or owners for any entry, and only kind, classification, selection and freshness for confidential and restricted sources); `state` is `absent` for a run without a bundle |
 | `GET /api/runs/:id/transcript/:n` | yes | no | the transcript of a step |
 | `GET /api/next` | yes | no | what happens next, for all runs |
 | `GET /api/health` | yes | no | server health |
@@ -6613,7 +6862,7 @@ or `/reject` with what to change.
 
 **The release pull request is a draft.** The daily full test run or build failed on it; the
 daily report or release check starts with `**Nothing needed from you** — it stays a draft until the checks pass.`
-and has the failing output. It becomes ready again when a later report passes.
+and has the failing output. It becomes ready again when a later report passes. If the checks ran past the time limit (`verify_timeout_min`, default 180 minutes), the report says `⏱ **Checks did not finish in time**` instead: the tests or the build were stopped, and the run did not fail. Raise `verify_timeout_min` in the watcher's `vars` and run the check again, or look at the run log for the step that was stopped. If the Foundry could not switch the pull request to a draft, the run says `checks failed — could not mark PR #<n> as a draft`; then take the pull request out of review by hand before you merge.
 
 **A run failed, or a watcher shows an error.** The message says what happened, why, and what
 you can do first. Find yours in the table:
