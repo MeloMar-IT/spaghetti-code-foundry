@@ -2181,6 +2181,8 @@ write("release-daily", {
         '  | gh pr comment "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null',
         // ready or draft is decided by the handoff step, after the delivery contract is checked
         'echo "PR: $pr"; echo "TITLE: $title"',
+        // a pull request created as a draft needs no switch to a draft later
+        'if [ -n "$created" ] && [ -n "$draft" ]; then echo "DRAFT: yes"; fi',
       ].join("\n"),
     },
     {
@@ -2201,9 +2203,10 @@ write("release-daily", {
         '  if draft; then echo "delivery stopped — PR #$pr is a draft"; else echo "delivery stopped — PR #$pr could not be made a draft"; fi',
         '  exit 1',
         'fi',
-        // a failed draft or ready call fails the step: the pull request is not in the state the output says
+        // failed checks: the run says so when the switch to a draft fails; a failed ready call fails the step, because the output would be wrong
+        'drafted=$(printf \'%s\\n\' "$FACTORY_OUT_RELEASE_PR" | sed -n \'s/^DRAFT: //p\' | tail -1)',
         'if printf \'%s\\n\' "$FACTORY_OUT_VERIFY" | grep -q "^CHECKS: no"; then',
-        '  if draft; then echo "checks failed — PR #$pr is a draft"; else echo "checks failed — PR #$pr could not be made a draft"; exit 1; fi',
+        '  if [ "$drafted" = yes ] || draft; then echo "checks failed — PR #$pr is a draft"; else echo "checks failed — could not mark PR #$pr as a draft"; fi',
         'elif gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" >/dev/null 2>&1; then echo "checks passed — PR #$pr ($title) is ready to merge"',
         'else echo "checks passed — PR #$pr could not be marked ready"; exit 1; fi',
       ].join("\n"),

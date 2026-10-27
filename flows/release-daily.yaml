@@ -97,6 +97,7 @@ steps:
         echo "🤖 **Spaghetti Code Foundry daily release check** — $(date '+%Y-%m-%d %H:%M')"; echo; cat "{{run.dir}}/checks.md"; echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID daily -->"; } \
         | gh pr comment "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null
       echo "PR: $pr"; echo "TITLE: $title"
+      if [ -n "$created" ] && [ -n "$draft" ]; then echo "DRAFT: yes"; fi
   - id: handoff
     type: shell
     repo_access: true
@@ -113,7 +114,8 @@ steps:
         if draft; then echo "delivery stopped — PR #$pr is a draft"; else echo "delivery stopped — PR #$pr could not be made a draft"; fi
         exit 1
       fi
+      drafted=$(printf '%s\n' "$FACTORY_OUT_RELEASE_PR" | sed -n 's/^DRAFT: //p' | tail -1)
       if printf '%s\n' "$FACTORY_OUT_VERIFY" | grep -q "^CHECKS: no"; then
-        if draft; then echo "checks failed — PR #$pr is a draft"; else echo "checks failed — PR #$pr could not be made a draft"; exit 1; fi
+        if [ "$drafted" = yes ] || draft; then echo "checks failed — PR #$pr is a draft"; else echo "checks failed — could not mark PR #$pr as a draft"; fi
       elif gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" >/dev/null 2>&1; then echo "checks passed — PR #$pr ($title) is ready to merge"
       else echo "checks passed — PR #$pr could not be marked ready"; exit 1; fi

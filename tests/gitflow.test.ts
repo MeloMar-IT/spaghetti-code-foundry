@@ -466,8 +466,9 @@ describe("gitflow pipeline", () => {
       expect(green.history.at(-1)!.output).toContain("PR #99 could not be marked ready");
       expect(green.history.at(-1)!.output).not.toContain("ready to merge");
       const red = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "false" } });
-      expect(red.status).toBe("failed");
-      expect(red.history.at(-1)!.output).toContain("PR #99 could not be made a draft");
+      // failed checks: the switch to a draft is reported, as before, and does not fail the run
+      expect(red.status).toBe("succeeded");
+      expect(red.history.at(-1)!.output).toContain("checks failed — could not mark PR #99 as a draft");
     } finally {
       delete process.env.FAKE_GH_FAIL_ON;
       delete process.env.FAKE_GH_FAIL_TEXT;
