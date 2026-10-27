@@ -3,6 +3,7 @@
 // (the logic is in src/release/upload.ts).
 //   release-upload <run-dir>   upload <run-dir>/release/out to the draft for the tag in <run-dir>/release/plan.json, in the
 //                              repository $FACTORY_VAR_GITHUB_REPO; writes release_url and release_tag to <run-dir>/outputs.json
+// The files include the delivery validator (scf-delivery-validate-<version>.mjs) and its .sha256, added by release-build.
 // Needs the gh login, so the flow step has repo_access. $FACTORY_GH_BIN replaces the gh program (tests).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

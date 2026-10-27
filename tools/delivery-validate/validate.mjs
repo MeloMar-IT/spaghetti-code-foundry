@@ -3,7 +3,7 @@
 // so a CI job can run it without `npm ci` and without `dist/`.
 //
 //   node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file>
-//                     [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json] [--help]
+//                     [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json] [--version] [--help]
 //
 // Exit codes: 0 no stop, 1 at least one stop, 2 a usage or read error.
 //
@@ -30,6 +30,9 @@ import { parseArgs, promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const NAMESPACE = "scf-delivery-contract";
+// Raise this when a verdict, an option or the output changes. The release files are named after it
+// (scf-delivery-validate-<version>.mjs). It is not the `version` of the --json output.
+const VALIDATOR_VERSION = "1.0.0";
 const STOP_CONDITIONS = ["commit-changed", "lock-changed", "workflow-changed", "required-check-failed", "evidence-unverified", "signature-unverified", "superseded"];
 const WORKFLOWS_DIR = ".github/workflows/";
 const EVIDENCE_EVENTS_FILE = "evidence.jsonl";
@@ -42,7 +45,7 @@ const GIT_MAX_BUFFER = 256 * 1024 * 1024;
 const UNTRUSTED = "the contract is not trusted";
 
 const USAGE =
-  "usage: node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file> [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json]\n" +
+  "usage: node validate.mjs --contract <file> --signature <file> --public-key <ssh-ed25519 line or file> [--repo <dir>] [--checks <file>] [--comment <file>] [--events <file>] [--json] [--version]\n" +
   "       Checks a delivery contract against the checked-out commit.\n" +
   "       Exit code 0: no stop. 1: at least one stop. 2: a usage or read error.\n";
 
@@ -707,11 +710,13 @@ function readInputs(args) {
         events: { type: "string" },
         json: { type: "boolean" },
         help: { type: "boolean" },
+        version: { type: "boolean" },
       },
     }));
   } catch (e) {
     throw new InputError(true, clean(e instanceof Error ? e.message.split("\n")[0] : "bad options"));
   }
+  if (values.version) return { version: true };
   if (values.help) return { help: true };
   for (const o of ["contract", "signature", "public-key"]) if (values[o] === undefined) throw new InputError(true, `--${o} is required`);
   const repo = values.repo ?? ".";
@@ -855,6 +860,10 @@ async function run(inputs) {
 async function main(args) {
   try {
     const inputs = readInputs(args);
+    if (inputs.version) {
+      process.stdout.write(VALIDATOR_VERSION + "\n");
+      return 0;
+    }
     if (inputs.help) {
       process.stdout.write(USAGE);
       return 0;

@@ -380,6 +380,7 @@ The command needs `git` and `gh` on the machine, and `gh` signed in with access 
 - A file with the same name as one already on the release is replaced. The `prerelease` flag is set when the draft is created; an existing draft keeps its own flag.
 - The file names on the release have no folders. `/` becomes `-`, and any character other than a letter, a digit, `.`, `_` or `-` becomes `_`. So `linux-x64/tool` is `linux-x64-tool`. A release takes at most 1000 files, and a name at most 200 characters. Two files that would get the same name fail the run.
 - `SHA256SUMS` is written again with the names as they are on the release. `release/out` itself is not changed.
+- **The delivery validator.** Every release also gets `scf-delivery-validate-<version>.mjs` and `scf-delivery-validate-<version>.mjs.sha256`, both in `SHA256SUMS`. The file is the validator of this Foundry install (see "Check a delivery contract in CI"). A build that already has a file with that name fails at the step `validator`.
 - If the release is published while the files are uploaded, the upload stops and the message says how many files were uploaded.
 
 The upload step uses the Foundry's GitHub login for the repository (repository access). The build steps never get it. A repository that is reached only with a deploy key cannot be uploaded to: the step fails with the message about the missing GitHub login.
@@ -1640,6 +1641,7 @@ scf delivery validate --contract contract.json --signature contract.json.sig \
 | `--comment <file>` | The text of the pull request comment that carries the marker (see below) |
 | `--events <file>` | The run's evidence events (`evidence.jsonl`, JSON lines, 256 MiB at most). Checked against the contract's `evidence` (see below). Optional; without it the `evidence` check is skipped |
 | `--json` | Print one JSON object instead of the lines |
+| `--version` | Print the validator version (`N.N.N`) and exit 0. The release file is named after it |
 | `--help` | Print the usage |
 
 **Checks.** The checks run in this order. Each prints one line, `<check>: ok`, `<check>: stop <condition>:
@@ -1716,6 +1718,71 @@ delivery-contract:
 
 Pass the `--checks`, `--comment` and `--events` files as well when the job has them. The job fails when the exit code is
 not `0`. Do not add `|| true`.
+
+**Pin a version from a release.** Each release of the Foundry's `release-build` carries the validator as
+`scf-delivery-validate-<version>.mjs` and its `.sha256` file (see "Upload to a draft release"). A job can
+download one version, check its hash and run it. The job needs no Foundry server, token or model provider.
+The GitHub Actions example below collects the checks and the marked comment itself. The check results are a
+JSON list of `{"name", "conclusion"}` entries (see "`--checks` format"); this example writes them from the
+check-runs API of the commit.
+
+```yaml
+delivery-contract:
+  runs-on: ubuntu-latest
+  env:
+    VALIDATOR_VERSION: "1.0.0"          # the version you pin
+    RELEASE_BASE: "<download folder of that release>"   # the release's assets, from the release page
+    GH_TOKEN: ${{ github.token }}
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+    - name: Download the validator and check its hash
+      run: |
+        mkdir -p "$RUNNER_TEMP/validator" && cd "$RUNNER_TEMP/validator"
+        curl -fsSLO "$RELEASE_BASE/scf-delivery-validate-${VALIDATOR_VERSION}.mjs"
+        curl -fsSLO "$RELEASE_BASE/scf-delivery-validate-${VALIDATOR_VERSION}.mjs.sha256"
+        sha256sum -c "scf-delivery-validate-${VALIDATOR_VERSION}.mjs.sha256"
+    - name: Collect the check results and the marked comment
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs" --paginate \
+          --jq '[.check_runs[] | {name: .name, conclusion: .conclusion}]' | jq -s 'add' > "$RUNNER_TEMP/checks.json"
+        gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+          --jq '[.[] | select(.body | contains("<!-- claude-factory delivery-contract "))] | last | .body // empty' \
+          > "$RUNNER_TEMP/comment.md"
+    - name: Check the delivery contract
+      env:
+        DELIVERY_PUBLIC_KEY: ${{ vars.DELIVERY_PUBLIC_KEY }}
+      run: |
+        node "$RUNNER_TEMP/validator/scf-delivery-validate-${VALIDATOR_VERSION}.mjs" \
+          --contract contract.json --signature contract.json.sig \
+          --public-key "$DELIVERY_PUBLIC_KEY" --repo . \
+          --checks "$RUNNER_TEMP/checks.json" --comment "$RUNNER_TEMP/comment.md"
+```
+
+The contract (`contract.json`, `contract.json.sig`) and the evidence file come from the run's delivery
+folder, which the job gets from the workflow's artifacts or from the pull request. The job fails on exit `1`
+(a stop) and `2` (a usage or read error); do not add `|| true`.
+
+**Generic CI in plain shell.** Any CI with Node.js 22 or later and `sha256sum` can run the same steps:
+
+```sh
+V=1.0.0
+BASE="<download folder of that release>"   # the release's assets, from the release page
+curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs"
+curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs.sha256"
+sha256sum -c "scf-delivery-validate-$V.mjs.sha256" || exit 1
+# checks.json and comment.md are written by your CI from the commit's check results and the pull request comment
+node "scf-delivery-validate-$V.mjs" --contract contract.json --signature contract.json.sig \
+  --public-key "$DELIVERY_PUBLIC_KEY" --repo . --checks checks.json --comment comment.md
+```
+
+**What stays outside the validator.** The validator only says go or stop. Building, signing of artifacts,
+environment promotion, drift checks, deployment and rollback stay in your external delivery system. The
+validator checks the delivery contract and nothing else.
 
 ### Delivery handoff of the release pull request
 

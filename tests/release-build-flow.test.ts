@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, reposPath, setRepoSettings } from "../src/auth/repos.js";
@@ -9,11 +10,14 @@ import { loadFlow } from "../src/flow/load.js";
 import { hasCommit, markCommit } from "../src/release/build-claims.js";
 import { TOOLCHAIN_VARS } from "../src/release/host.js";
 import { releaseMarker } from "../src/release/recipe.js";
+import { validatorFileName, validatorVersion } from "../src/release/validator.js";
 import { claudeBin, fakeGithub, fakeRelease } from "./helpers/fake-github.js";
 
 // The flow release-build end to end: a bare git repository as the remote, three recipes of different kinds.
 const MARKERS = { JAVA_HOME: "m-java", GH_TOKEN: "m-gh", GITHUB_TOKEN: "m-github", GH_ENTERPRISE_TOKEN: "m-ent", MY_BOT_TOKEN: "m-bot", FACTORY_VAR_SECRETISH: "m-factory" };
 const DATE = "2026-10-18T20:30:00Z";
+const V = validatorFileName(validatorVersion());
+const VSUM = V + ".sha256";
 const config = ConfigSchema.parse({ protected_branches: ["main"], bot: { gh_token_env: "JAVA_HOME" } });
 
 describe("release-build flow", () => {
@@ -88,8 +92,8 @@ describe("release-build flow", () => {
     expect(r.log).toContain("VERSION: 202610182030");
     expect(r.log).toContain("TAG: v202610182030");
     // without assemble the collected files are used as they are: one folder per build
-    expect(r.files).toEqual(["SHA256SUMS", "cli/build-env.txt", "cli/mycli-202610182030.tgz"]);
-    expect(r.text("SHA256SUMS")).toMatch(/^[0-9a-f]{64} {2}cli\/build-env\.txt\n[0-9a-f]{64} {2}cli\/mycli-202610182030\.tgz\n$/);
+    expect(r.files).toEqual(["SHA256SUMS", "cli/build-env.txt", "cli/mycli-202610182030.tgz", V, VSUM]);
+    expect(r.text("SHA256SUMS")).toMatch(/^[0-9a-f]{64} {2}cli\/build-env\.txt\n[0-9a-f]{64} {2}cli\/mycli-202610182030\.tgz\n[0-9a-f]{64} {2}scf-delivery-validate-[\d.]+\.mjs\n[0-9a-f]{64} {2}scf-delivery-validate-[\d.]+\.mjs\.sha256\n$/);
     const env = r.text("cli/build-env.txt");
     for (const v of Object.values(MARKERS)) expect(env).not.toContain(v);
     const allowed = new Set([
@@ -123,9 +127,17 @@ describe("release-build flow", () => {
     const r = await go();
     expect(r.s.status, r.s.reason).toBe("succeeded");
     expect(r.log).toContain("windows-x64: skipped, needs windows");
-    expect(r.files).toEqual(["SHA256SUMS", "assemble-env.txt", "site.html.gz"]);
+    expect(r.files).toEqual(["SHA256SUMS", "assemble-env.txt", V, VSUM, "site.html.gz"]);
     for (const v of Object.values(MARKERS)) expect(r.text("assemble-env.txt")).not.toContain(v);
     expect(worktrees(r.s)).toHaveLength(1);
+  });
+
+  it("fails when the build's own files already have the validator name", async () => {
+    commit(["builds:", "  - {name: a, run: echo x > a.txt, artifacts: [a.txt]}", "assemble: |", `  echo mine > "$FACTORY_RELEASE_OUT/${V}"`].join("\n"));
+    const r = await go();
+    expect(r.s.status).toBe("failed");
+    expect(r.log).toContain("validator: failed, the release files already have " + V);
+    expect(r.text(V)).toBe("mine\n");
   });
 
   it("builds a binary per platform from a tag, skipping the other platform", async () => {
@@ -145,7 +157,7 @@ describe("release-build flow", () => {
     expect(r.s.status, r.s.reason).toBe("succeeded");
     expect(r.log).toContain(`COMMIT: ${tagged}`);
     expect(r.log).toContain("linux-x64: skipped, needs linux");
-    expect(r.files).toEqual(["SHA256SUMS", "app-macos-arm64"]);
+    expect(r.files).toEqual(["SHA256SUMS", "app-macos-arm64", V, VSUM]);
     expect(r.text("app-macos-arm64")).toBe("mac\n");
   });
 
@@ -217,17 +229,22 @@ describe("release-build flow", () => {
       const rels = gh.releases();
       const made = rels.find((x) => x.tag_name === "v202610182030")!;
       expect(made).toMatchObject({ draft: true, prerelease: true, target_commitish: sha });
-      expect(made.assets.map((a) => [a.name, a.size])).toEqual([["SHA256SUMS", expect.any(Number)], ["cli-a.tgz", 4], ["cli-b.tgz", 7]]);
-      expect(made.assets[0]!.text).toMatch(/^[0-9a-f]{64} {2}cli-a\.tgz\n[0-9a-f]{64} {2}cli-b\.tgz\n$/);
+      expect(made.assets.map((a) => [a.name, a.size])).toEqual([["SHA256SUMS", expect.any(Number)], ["cli-a.tgz", 4], ["cli-b.tgz", 7], [V, expect.any(Number)], [VSUM, expect.any(Number)]]);
+      expect(made.assets[0]!.text).toMatch(/^[0-9a-f]{64} {2}cli-a\.tgz\n[0-9a-f]{64} {2}cli-b\.tgz\n[0-9a-f]{64} {2}scf-delivery-validate-[\d.]+\.mjs\n[0-9a-f]{64} {2}scf-delivery-validate-[\d.]+\.mjs\.sha256\n$/);
+      // the uploaded validator is this install's script, and its .sha256 file matches it
+      const hash = createHash("sha256").update(readFileSync("tools/delivery-validate/validate.mjs")).digest("hex");
+      const asset = (n: string) => made.assets.find((a) => a.name === n)!;
+      expect(createHash("sha256").update(asset(V).text!).digest("hex")).toBe(hash);
+      expect(asset(VSUM).text).toBe(hash + "  " + V + "\n");
       // the two oldest marked drafts went; the newest marked one, the hand-made draft, the published release and "nightly" stayed
       expect(rels.map((x) => x.id).sort((a, b) => a - b)).toEqual([13, 14, 15, 16, made.id]);
       expect(r.s.outputs).toEqual({
         release_url: made.html_url,
         release_tag: "v202610182030",
-        release_files: expect.stringMatching(/^SHA256SUMS \(\d+ B\); cli-a\.tgz \(4 B\); cli-b\.tgz \(7 B\)$/),
+        release_files: expect.stringMatching(/^SHA256SUMS \(\d+ B\); cli-a\.tgz \(4 B\); cli-b\.tgz \(7 B\); scf-delivery-validate-[\d.]+\.mjs \([\d.]+ [KM]?B\); scf-delivery-validate-[\d.]+\.mjs\.sha256 \(\d+ B\)$/),
       });
       expect(made.html_url).toMatch(/^https:\/\/github\.com\/acme\/app\/releases\/tag\/untagged-\d+$/);
-      expect(r.log).toContain("UPLOADED: 3 files");
+      expect(r.log).toContain("UPLOADED: 5 files");
       expect(r.log).toContain("cli-a.tgz  4 B");
       expect(r.log).toContain(`URL: ${made.html_url}`);
       expect(r.log).toContain("PRUNED: v202501020101 (12), v202501010101 (11)");
@@ -263,7 +280,7 @@ describe("release-build flow", () => {
       const rels = gh.releases();
       expect(rels.map((x) => x.id)).toEqual([30]);
       // the old cli-a.tgz (id 300) was deleted by id and uploaded again with its new size
-      expect(rels[0]!.assets.map((a) => [a.name, a.size])).toEqual([["keep.txt", 2], ["SHA256SUMS", expect.any(Number)], ["cli-a.tgz", 4], ["cli-b.tgz", 7]]);
+      expect(rels[0]!.assets.map((a) => [a.name, a.size])).toEqual([["keep.txt", 2], ["SHA256SUMS", expect.any(Number)], ["cli-a.tgz", 4], ["cli-b.tgz", 7], [V, expect.any(Number)], [VSUM, expect.any(Number)]]);
       expect(rels[0]!.assets.some((a) => a.id === 300)).toBe(false);
       expect(gh.ghLog()).toContain("gh api -X DELETE repos/acme/app/releases/assets/300");
     });
@@ -336,7 +353,7 @@ describe("release-build flow", () => {
     commit("builds:\n  - {name: one, run: 'mkdir -p bin && echo 1 > bin/app', artifacts: [bin/app]}\n  - {name: two, run: 'mkdir -p bin && echo 2 > bin/app', artifacts: [bin/app]}\n");
     const r = await go();
     expect(r.s.status, r.s.reason).toBe("succeeded");
-    expect(r.files).toEqual(["SHA256SUMS", "one/bin/app", "two/bin/app"]);
+    expect(r.files).toEqual(["SHA256SUMS", "one/bin/app", V, VSUM, "two/bin/app"]);
     expect(r.text("SHA256SUMS")).toContain("  two/bin/app\n");
   });
 
