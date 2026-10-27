@@ -1,7 +1,7 @@
 import { firstLine, reportFirst } from "../next-step.js";
 // help/guard.js and help/store.js import each other (through the credential store); the store has to load first.
 import "../help/store.js";
-import { scrub } from "../help/guard.js";
+import { scrub, type GuardOptions } from "../help/guard.js";
 import { contractDigest, deliveryContractText } from "./contract.js";
 import { DeliveryContractSchema, STOP_CONDITIONS, type DeliveryContract, type StopCondition } from "./schema.js";
 import { parseSshSignature } from "./sshsig.js";
@@ -69,8 +69,8 @@ export function isDeliveryComment(c: { body: string }): boolean {
  * white space folded, angle brackets and backticks replaced (nothing is deleted, so no delimiter or token can be
  * rebuilt), mentions neutralised, at most MAX_SAFE_CHARS characters counting the ellipsis.
  */
-export function safeLine(t: string): string {
-  const s = scrub(String(t)).text
+export function safeLine(t: string, guard: GuardOptions = {}): string {
+  const s = scrub(String(t), guard).text
     .replace(/\s+/g, " ")
     .trim()
     .replace(/</g, "‹")
@@ -104,11 +104,11 @@ function readBlock(lines: string[], info: string): string | undefined {
 }
 
 /** The contract must fit its schema and hold no secret in any string; it is refused, not redacted, so the signed bytes stay exact. */
-function checkContract(contract: DeliveryContract): void {
+function checkContract(contract: DeliveryContract, guard: GuardOptions): void {
   if (!DeliveryContractSchema.safeParse(contract).success) throw new DeliveryCommentError("the contract does not fit the contract schema");
   const walk = (v: unknown, path: string): void => {
     if (typeof v === "string") {
-      if (scrub(v).removed.length) throw new DeliveryCommentError(`the contract holds a secret at ${path}`);
+      if (scrub(v, guard).removed.length) throw new DeliveryCommentError(`the contract holds a secret at ${path}`);
     } else if (Array.isArray(v)) {
       v.forEach((x, i) => walk(x, `${path}[${i}]`));
     } else if (v && typeof v === "object") {
@@ -118,14 +118,14 @@ function checkContract(contract: DeliveryContract): void {
   walk(contract, "");
 }
 
-export function deliveryCommentBody(input: DeliveryCommentInput, runId: string): string {
+export function deliveryCommentBody(input: DeliveryCommentInput, runId: string, guard: GuardOptions = {}): string {
   const marker = deliveryMarker(runId);
   const { status, contract } = input;
   if (!["ok", "stop", "unsigned"].includes(status?.kind)) throw new DeliveryCommentError("the status is not known");
   let text: string | undefined;
   let digest: string | undefined;
   if (contract) {
-    checkContract(contract);
+    checkContract(contract, guard);
     text = deliveryContractText(contract);
     if (input.text !== undefined && input.text !== text) throw new DeliveryCommentError("the text is not the canonical text of the contract");
     digest = contractDigest(text);
@@ -145,7 +145,7 @@ export function deliveryCommentBody(input: DeliveryCommentInput, runId: string):
   if (status.kind === "ok") statusLine = "**Verified.**";
   else if (status.kind === "unsigned") statusLine = "**Not verified.** No signing key is set, so the contract is unsigned.";
   else {
-    const reason = status.reason ? safeLine(status.reason) : "";
+    const reason = status.reason ? safeLine(status.reason, guard) : "";
     const known = status.condition !== undefined && (STOP_CONDITIONS as readonly string[]).includes(status.condition);
     statusLine = known ? `**Stopped:** \`${status.condition}\`${reason ? ` — ${reason}` : ""}` : `**Stopped.**${reason ? ` ${reason}` : ""}`;
   }
@@ -155,7 +155,7 @@ export function deliveryCommentBody(input: DeliveryCommentInput, runId: string):
     const key = sig !== undefined && input.fingerprint !== undefined && FINGERPRINT_RE.test(input.fingerprint) ? `\`${input.fingerprint}\`` : "unsigned";
     bullets.push(
       `- **Contract:** run \`${contract.runId}\`, sequence ${contract.sequence}, digest \`${digest}\``,
-      `- **Commit:** \`${contract.commit.sha}\` on branch \`${safeLine(contract.commit.branch)}\``,
+      `- **Commit:** \`${contract.commit.sha}\` on branch \`${safeLine(contract.commit.branch, guard)}\``,
       `- **Evidence:** ${contract.evidence.count} events, terminal hash \`${contract.evidence.terminalHash}\``,
       `- **Key:** ${key}`,
     );
@@ -163,7 +163,7 @@ export function deliveryCommentBody(input: DeliveryCommentInput, runId: string):
     bullets.push("- **Contract:** none was written");
   }
 
-  const checks = input.lines.map(safeLine).filter(Boolean);
+  const checks = input.lines.map((l) => safeLine(l, guard)).filter(Boolean);
   const checkLines = checks.slice(0, MAX_CHECK_LINES).map((l) => `- ${l}`);
   if (checks.length > MAX_CHECK_LINES) checkLines.push(`- … and ${checks.length - MAX_CHECK_LINES} more checks`);
 

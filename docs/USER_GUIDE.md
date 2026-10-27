@@ -1717,6 +1717,46 @@ delivery-contract:
 Pass the `--checks`, `--comment` and `--events` files as well when the job has them. The job fails when the exit code is
 not `0`. Do not add `|| true`.
 
+### Delivery handoff of the release pull request
+
+The daily release flow (`release-daily`) ends with a step `handoff`. It checks the latest delivery contract
+of the run before the release pull request (develop → main) is marked ready to merge. It is the same contract
+that `scf delivery verify` checks, and it runs on the Foundry machine.
+
+- **Draft while checking (with a signing key).** When the Foundry has a public key for delivery (see
+  "Delivery contract"), the pull request is made a draft before the check starts. It is marked ready only after
+  the check says `HANDOFF: ok`. If the step is killed (timeout or cancel), the pull request stays a draft.
+- **Without a key.** Nothing is made a draft first, and the step prints `HANDOFF: skipped (…)` with the reason.
+  Unsigned installs keep today's behaviour: the pull request is ready when the checks pass.
+- **One comment per pull request.** The step keeps one delivery comment on the release pull request and edits it
+  in place. A run that repeats the same result leaves the comment as it is ("delivery comment: unchanged").
+  The comment shows the status, the contract (when it can be read), the signature and the key's fingerprint.
+  A line that is not secret-free is scrubbed before it is printed or posted.
+- **Stops.** A stop makes the pull request a draft and fails the run. The first failed check gives the stop, in
+  this order:
+
+  | Stop | Means | Example reason |
+  |---|---|---|
+  | `signature-unverified` | The contract or its signature is missing, changed or signed by another key. | `HANDOFF: stop signature-unverified: …` |
+  | `superseded` | A newer contract exists, or the contract is for another pull request, repository or run. | `the contract is for pull request #12, the run's is #99` |
+  | `commit-changed` | The pushed head, or the checked-out commit, is not the contract's commit. | `the pushed head is X, the contract is for Y` |
+  | `lock-changed` / `workflow-changed` | A dependency lock file or a CI workflow file changed since the contract. | `package-lock.json was changed` |
+  | `required-check-failed` | A required check is missing, failed, or cannot be read. | `test did not pass` |
+  | `evidence-unverified` | The run's evidence does not match the contract. | `the events cannot be read` |
+
+  A head that moves while the checks are waited for also stops the handoff, with the same reason and
+  "(after waiting for the checks)" added. So a push during the wait cannot hand over a pull request whose head
+  is not the contract's commit.
+- **Waiting for checks.** The step waits for the required checks to finish, polling every 15 seconds. The wait is
+  `FACTORY_DELIVERY_CHECKS_WAIT_SEC` seconds: a whole number from 0 to 3600, default 600. Any other value gives
+  the default, and 0 means one read with no wait. The step stops after 30 minutes, and then the pull request
+  stays a draft, so keep the wait below about 1700 seconds.
+- **Output.** The step prints one `HANDOFF:` line for the verdict, then the reasons. Then it prints the result
+  of the checks (`checks passed — PR #… is ready to merge`, or `checks failed — PR #… is a draft`).
+- **CI.** The same contract is checked again in a pull request's CI job with `scf delivery validate` (see
+  "Check a delivery contract in CI"). That check is the hard one; this step is the gate before the release
+  pull request is marked ready.
+
 ### Verify a run's delivery contracts offline
 
 `scf delivery verify <run-id>` checks the delivery contracts in a run folder (`delivery/`) against the trusted

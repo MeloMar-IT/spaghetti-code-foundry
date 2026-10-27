@@ -1170,6 +1170,59 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
 
 ---
 
+### Handoff (#698)
+
+`src/delivery/handoff.ts` and `tools/delivery-handoff` run the `handoff` step of `release-daily` (after
+`checks`). The step checks the run's latest contract, keeps one delivery comment on the release pull request and
+then marks the pull request ready or draft. `handoffCommand(args, io, deps?, env)` never throws; the tool sets
+`process.exitCode` and does not call `process.exit`.
+
+- **Trust.** The public key comes only from the engine environment (`stepEnv` in `src/engine/execute.ts` sets
+  `FACTORY_DELIVERY_PUBLIC_KEY` and `SCF_DELIVERY_PUBLIC_KEY` from `deliveryKeyEnv`). It is `""` by default and
+  `-` for a key that cannot be used; a `FACTORY_DELIVERY_PUBLIC_KEY` in `process.env` is overwritten. The private
+  key never reaches a step. A sandboxed step cannot write `<run>/delivery/`, so the contract the handoff reads is
+  the one the engine wrote.
+- **Without a key** the handoff prints `HANDOFF: skipped (…)` and exits 0. With a key but no usable input or no
+  pull request it prints `HANDOFF: stop …` and exits 1; gh is not called in either case.
+- **After-step write.** `deliveryAfterStep` still runs after `handoff`. It writes a contract only when a stated
+  fact changed (`writeContract`, `write.ts`), and the handoff changes none. A test (`tests/delivery-write.test.ts`)
+  holds that no `contract-<n>.json` is added, even when the remote head has moved. The step is not special-cased
+  in `recordStep`.
+- **Draft while checking.** With a key, the step makes the pull request a draft before the check and marks it ready
+  only after `HANDOFF: ok`. A killed step (timeout or cancel) therefore fails closed. Without a key nothing is made
+  a draft first, so unsigned installs keep today's behaviour. A failed draft or ready call is reported; the ready
+  call fails the step.
+- **Verdict.** `checkHandoff` runs the checks in this order: `signature` (`parseSshSignature`, the trusted key,
+  `verifyDeliveryContract`), `superseded` (a newer `contract-<n>.json`, another `.sig` copy, or another
+  repository, pull request or run id), `commit` (`remoteHead` via `git ls-remote origin refs/heads/<branch>`,
+  then `readCommitFacts`), `locks` and `workflows` (compared with the contract's hashes and blob ids, sorted with
+  `compareCodeUnits`), `checks` (`waitForChecks`, then the validator's rule), and `evidence` (the bounded read of
+  `evidence.jsonl` and `evidenceHeadProblem`). The first stop wins; with none the verdict is `ok`.
+- **Head re-read.** If the check runs were polled more than once and the commit check passed, `remoteHead` is read
+  again. A changed, missing or unreadable head is a `commit-changed` stop. The window that remains is the seconds
+  between that read and `gh pr ready`; the CI validator is the hard check for it.
+- **Waiting.** `waitForChecks` polls `checkRuns` every `CHECKS_POLL_MS` (15 s) until every required name has a
+  completed run, or one required check has finished without success. It returns the last good read when the
+  deadline would pass before the next poll, and `{ok:false}` when there was none. `checksWaitSec` reads
+  `FACTORY_DELIVERY_CHECKS_WAIT_SEC` (integer 0 to 3600, otherwise 600). Only the first 100 check runs are read; a
+  required check beyond them counts as missing, which fails closed. `sleep` and `now` are injected.
+- **Output.** Every reason and `why` goes through `safeLine` (`comment.ts`, the secret scrub) before it is cut to
+  `HANDOFF_TEXT_MAX` (300) characters, and control characters become `?`. Scrubbing comes before the cut, so a cut
+  cannot leave half a token unrecognised. If the scrub throws, the text is the fixed `the reason cannot be shown`.
+- **Comment.** Unless the result is `none`, `deliveryCommentBody` builds the body; when it throws `DeliveryCommentError`
+  the body is built again without the contract, and `upsertStatusComment` with `on: "pr"` and `isDeliveryComment` as the match
+  edits the one delivery comment in place. An identical body is not patched (`upsertStatusComment` compares it).
+  Failures print `delivery comment: could not be updated` and keep the verdict; gh output is never printed.
+- **Flow.** `release_pr` only prints `PR:` and `TITLE:`. The `handoff` step has `repo_access: true` and
+  `timeout_sec: 1800`. The ready mark (without `--undo`) comes after the handoff in the step's shell script; a test
+  checks that order.
+- **Rejected.** A handoff in the engine would need a new step kind. Running `validate.mjs` cannot read the remote
+  head or poll the check runs. `--draft` on `gh pr create` fails on private repos on free plans.
+- **Tests.** `tests/delivery-handoff.test.ts` (every stop, the head re-read, the wait with a fake clock, the scrub,
+  and the in-process command against a fake `gh` and a bare `origin`), `tests/delivery-write.test.ts`
+  (`deliverySigningKey`, `deliveryKeyEnv`, the no-write after-step case), `tests/untrusted-output.test.ts`
+  (`stepEnv`) and `tests/gitflow.test.ts` (the step order and flow checks).
+
 ### Telemetry
 
 `src/telemetry/` writes one value-free event for each lifecycle fact of a run, to a local daily file (#584,

@@ -9,6 +9,8 @@ import {
   DELIVERY_MARKER_RE, DeliveryCommentError, MAX_COMMENT_CHARS, VALIDATOR_MARKER_RE, deliveryCommentBody, deliveryMarker, isDeliveryComment,
   readDeliveryComment, safeLine, validatorMarker, type DeliveryCommentInput,
 } from "../src/delivery/comment.js";
+import { BLOCKED, emptyRedactor, makeRedactor } from "../src/credentials/redact.js";
+import { GuardError } from "../src/help/guard.js";
 import { buildDeliveryContract, contractDigest, deliveryContractText, signDeliveryContract, verifyDeliveryContract } from "../src/delivery/contract.js";
 import type { DeliveryContract } from "../src/delivery/schema.js";
 import { publicKeyFingerprint, publicKeyLine } from "../src/delivery/sshsig.js";
@@ -66,6 +68,16 @@ const body = (over: Partial<DeliveryCommentInput> = {}, run = RUN): string =>
   deliveryCommentBody({ status: { kind: "ok" }, lines: ["build: success", "test: success"], contract: C, signature: SIG, fingerprint: FP, ...over }, run);
 const lines = (b: string): string[] => b.split("\n");
 const MARK = deliveryMarker(RUN);
+
+describe("guard option", () => {
+  it("safeLine takes a value out with the given redactor", () => {
+    expect(safeLine("a s3cr3t-value b", { stored: () => makeRedactor(["s3cr3t-value"]) })).not.toContain("s3cr3t-value");
+  });
+  it("a blocked store makes the comment builder throw, so the handoff passes its own redactor", () => {
+    expect(() => deliveryCommentBody({ status: { kind: "stop", condition: "commit-changed", reason: "x" }, lines: ["a"] }, RUN, { stored: () => BLOCKED })).toThrow(GuardError);
+    expect(deliveryCommentBody({ status: { kind: "stop", condition: "commit-changed", reason: "x" }, lines: ["a"] }, RUN, { stored: () => emptyRedactor })).toContain("commit-changed");
+  });
+});
 
 describe("markers", () => {
   it("have exact strings", () => {
