@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
@@ -434,7 +434,12 @@ describe("gitflow pipeline", () => {
     // the step waits five minutes at most and keeps a value that is set: a short one here
     const script = JSON.stringify(flow.steps.find((s) => s.id === "verify"));
     expect(script).toContain('FACTORY_TEST_SLOT_WAIT_SEC=\\"${FACTORY_TEST_SLOT_WAIT_SEC:-300}\\"');
-    expect(script).not.toContain("FACTORY_VAR_TEST_SLOTS=0");
+    // the tests take a slot; only the build runs without one
+    const verifyStep = flow.steps.find((s) => s.id === "verify")!;
+    const lines = (verifyStep.type === "shell" ? verifyStep.run : "").split("\n");
+    const testsLine = lines.find((l) => l.includes("test-slot") && l.includes("tests.log"))!;
+    expect(testsLine).not.toContain("FACTORY_VAR_TEST_SLOTS=0");
+    expect(lines.find((l) => l.includes("build.log") && l.includes("test-slot"))).toContain("FACTORY_VAR_TEST_SLOTS=0");
     process.env.FACTORY_TEST_SLOT_WAIT_SEC = "1";
     process.env.FACTORY_TEST_SLOT_POLL_MS = "100";
     try {
@@ -505,6 +510,30 @@ describe("gitflow pipeline", () => {
     const log = gh.ghLog();
     expect(log).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release[^\n]* --draft/);
     expect(log).not.toMatch(/gh pr ready 99 [^\n]*--undo/);
+  });
+
+  it("a release check that runs past its time limit still opens a draft pull request", async () => {
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const flow = loadFlow("release-daily", gh.tmp).flow;
+    process.env.FACTORY_CHECK_LIMIT_SEC = "1";
+    try {
+      const r = await runFlow(flow, { task: "", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "sleep 30" } });
+      expect(r.status).toBe("succeeded");
+      const verify = r.history.find((h) => h.id === "verify")!;
+      expect(verify.output).toContain("CHECKS: no");
+      expect(verify.durationMs).toBeLessThan(20_000);
+      expect(gh.ghLog()).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release[^\n]* --draft/);
+      const check = gh.comments().find((c) => c.issue === 99 && c.body.includes("daily release check"))!;
+      expect(check.body).toContain("did not finish in time");
+      expect(check.body).not.toContain("⚠ **Checks failed**");
+      const tested = join(gh.tmp, "tested");
+      const records = existsSync(tested) ? readdirSync(tested).map((n) => readFileSync(join(tested, n), "utf8")) : [];
+      expect(records.some((c) => c.includes(`run ${r.runId},`))).toBe(false);
+    } finally {
+      delete process.env.FACTORY_CHECK_LIMIT_SEC;
+    }
   });
 });
 

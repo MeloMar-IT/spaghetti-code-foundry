@@ -36,6 +36,7 @@ const VAR_INFO = {
   quick_test_cmd: { label: "Quick test command", help: "A faster command for the checks between steps. Empty: use the test command.", kind: "text" },
   build_cmd: { label: "Build command", help: "The command that builds the project. Empty: no build.", kind: "text" },
   test_slots: { label: "Parallel test runs", help: "How many test runs may run at the same time on this machine.", kind: "number", min: 0 },
+  verify_timeout_min: { label: "Check time limit (minutes)", help: "How long the full tests and build of the daily check may work, in minutes. The wait for a test slot does not count. At the limit they are stopped and the pull request stays a draft. 1 to 720.", kind: "number", min: 1, max: 720 },
   reuse_test_results: { label: "Reuse test results", help: "Skip a test run when the same code was already tested.", kind: "yes_no" },
   delete_merged_branches: { label: "Delete merged branches", help: "Delete the feature branch after it is merged.", kind: "yes_no" },
   close_when_merged: { label: "Close issue when merged", help: "Close the issue when its branch is merged.", kind: "yes_no" },
@@ -2098,6 +2099,44 @@ write("issue-plan", {
   });
 }
 
+// ── The time limit of the daily checks (release-daily, daily-pr) ──
+// The wait for a test slot does not count: test-slot starts the limit after the wait. The wait is capped at 6 h, so the
+// engine backstop of the verify step (68400 s = 6 h wait + 12 h largest limit + 1 h margin) always holds.
+const CHECK_LIMIT = [
+  'whole() { case "$1" in ""|0*|*[!0-9]*) return 1 ;; esac; [ "${#1}" -le 6 ] && [ "$1" -le "$2" ]; }',
+  'mins=180; v="$FACTORY_VAR_VERIFY_TIMEOUT_MIN"',
+  'if [ -n "$v" ]; then if whole "$v" 720; then mins=$v; else printf \'verify_timeout_min "%s" is not a whole number from 1 to 720 — using 180\\n\' "$v"; fi; fi',
+  'limit=$((mins * 60))',
+  'v="$FACTORY_CHECK_LIMIT_SEC"',
+  'if [ -n "$v" ]; then if whole "$v" 43200; then limit=$v; else printf \'FACTORY_CHECK_LIMIT_SEC "%s" is not a whole number from 1 to 43200 — ignored\\n\' "$v"; fi; fi',
+  'w="$FACTORY_TEST_SLOT_WAIT_SEC"',
+  'case "$w" in ""|*[!0-9]*) ;; *) if [ "${#w}" -gt 9 ] || [ "$w" -gt 21600 ]; then export FACTORY_TEST_SLOT_WAIT_SEC=21600; echo "the wait for a test slot is capped at 21600 s"; fi ;; esac',
+  'track="{{run.dir}}/check.procs"; : > "$track"',
+  'fmt() { if [ "$1" -lt 60 ]; then printf \'%d s\' "$1"; elif [ "$1" -lt 3600 ]; then printf \'%d min\' $(($1 / 60)); else printf \'%d h %d min\' $(($1 / 3600)) $(($1 % 3600 / 60)); fi; }',
+].join("\n");
+const CHECK_TESTS = [
+  'started="{{run.dir}}/tests.started"; rm -f "$started"; before=$(date +%s); timed=""; bnote=""',
+  'FACTORY_TEST_SLOT_LIMIT_SEC="$limit" FACTORY_TEST_SLOT_STARTED_FILE="$started" FACTORY_TEST_SLOT_TRACK_FILE="$track" "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1; code=$?',
+  '[ "$code" -eq 0 ] || ok=no',
+  'if [ "$code" -eq 124 ] && tail -n 1 "{{run.dir}}/tests.log" | grep -q "^test-slot: stopped after "; then timed=tests; fi',
+  't0=$(head -n 1 "$started" 2>/dev/null); case "$t0" in ""|*[!0-9]*) t0=$before ;; esac',
+  'used=$(($(date +%s) - t0)); [ "$used" -ge 0 ] || used=0',
+].join("\n");
+const CHECK_BUILD = [
+  'if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then',
+  '  left=$((limit - used))',
+  '  if [ -n "$timed" ] || [ "$left" -le 0 ]; then bnote="not run (no time left)"; ok=no; [ -n "$timed" ] || timed=build',
+  '  else FACTORY_VAR_TEST_SLOTS=0 FACTORY_TEST_NICE=0 FACTORY_TEST_SLOT_LIMIT_SEC="$left" FACTORY_TEST_SLOT_TRACK_FILE="$track" "$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$FACTORY_VAR_BUILD_CMD" > "{{run.dir}}/build.log" 2>&1; code=$?',
+  '    [ "$code" -eq 0 ] || ok=no',
+  '    if [ "$code" -eq 124 ] && tail -n 1 "{{run.dir}}/build.log" | grep -q "^test-slot: stopped after "; then timed=build; fi',
+  '  fi',
+  'fi',
+].join("\n");
+const CHECK_BUILD_LINE =
+  '  [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\\$ $FACTORY_VAR_BUILD_CMD → ${bnote:-$(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")}"';
+const CHECK_TIMED_LINE =
+  'if [ -n "$timed" ]; then if [ "$timed" = tests ]; then what="the tests"; else what="the build"; fi; echo "⏱ **Checks did not finish in time** — the time limit of $(fmt "$limit") (verify_timeout_min) ran out before $what finished, so they were stopped. The wait for a test slot does not count. Marked as draft; see the run log."; elif [ "$ok" != yes ]; then echo "⚠ **Checks failed** — marked as draft until they pass. See the run log for details."; fi';
+
 // ── release-daily: develop → main once a day (gitflow) ──
 write("release-daily", {
   title: "Daily release pull request develop → main (gitflow)",
@@ -2106,14 +2145,15 @@ write("release-daily", {
     "(a schedule watcher runs this once a day, e.g. 17:00 Europe/Berlin)",
     "",
     "clone → develop ahead of main? ─┬─ no → end",
-    "                                └─ full tests + build on develop → open / update the PR develop → main",
-    "                                   (lists and closes the merged issues; draft while red) → comment the checks",
+    "                                └─ full tests + build on develop (limit verify_timeout_min, 180 min; the slot wait does not count)",
+    "                                   → open / update the PR develop → main",
+    "                                   (lists and closes the merged issues; draft while red or not finished in time) → comment the checks",
   ],
 }, {
   description: "Once a day: full tests and build on develop, then one pull request develop → main that closes the merged issues",
   workspace: "empty",
   defaults: { timeout_sec: 3600 },
-  vars: { github_repo: "owner/repo", test_cmd: "auto", build_cmd: "", develop_branch: "develop", main_branch: "main" },
+  vars: { github_repo: "owner/repo", test_cmd: "auto", build_cmd: "", develop_branch: "develop", main_branch: "main", verify_timeout_min: "180" },
   steps: [
     clone,
     {
@@ -2133,26 +2173,31 @@ write("release-daily", {
       id: "verify",
       type: "shell",
       description: "Full tests and build on develop",
+      timeout_sec: 68400, // the engine backstop: 6 h slot wait + 12 h largest limit + 1 h; the real limit is verify_timeout_min
       run: [
         // Once a day and with a time limit of its own: it takes a test slot like every test run (so the others count it,
         // and the load governor's limit on test runs holds for it too), but waits five minutes at most instead of
         // queueing behind the stories for as long as it takes; after that it runs anyway. A value that is set stays.
+        // The wait does not count against the time limit.
         'export FACTORY_TEST_SLOT_WAIT_SEC="${FACTORY_TEST_SLOT_WAIT_SEC:-300}"',
         'cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
+        CHECK_LIMIT,
         // A green run on a clean tree is recorded in tested/ (the checked form, with the tree), so that self-update can skip
-        // its own tests on the same code. Every git exit status is checked. It is written right after the tests and before the
-        // build, so the build can neither hide what the tests left behind nor stop the record. A record that fails changes nothing.
+        // its own tests on the same code. Every git exit status is checked. The clean-tree checks run right after the tests, before
+        // the build, so the build cannot hide what the tests left behind; the record itself is written after the build, and only
+        // when no check timed out (a time-out writes no record). A record that fails changes nothing.
         'tree=""; if t=$(git rev-parse "HEAD^{tree}") && st=$(git status --porcelain) && [ -z "$st" ]; then tree="$t"; fi',
         'marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes',
-        '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
-        'if [ "$ok" = yes ] && [ -n "$tree" ] && [ -n "$cmd" ] && st=$(git status --porcelain) && [ -z "$st" ] && after_tree=$(git rev-parse "HEAD^{tree}") && [ "$after_tree" = "$tree" ]; then',
+        CHECK_TESTS,
+        'record=no; if [ "$ok" = yes ] && [ -n "$tree" ] && [ -n "$cmd" ] && st=$(git status --porcelain) && [ -z "$st" ] && after_tree=$(git rev-parse "HEAD^{tree}") && [ "$after_tree" = "$tree" ]; then record=yes; fi',
+        CHECK_BUILD,
+        'if [ "$record" = yes ] && [ -z "$timed" ]; then',
         '  key=$(printf \'%s\\n%s\\n\' "$tree" "$cmd" | shasum | cut -c1-40)',
         '  if [ "${#key}" -eq 40 ]; then { mkdir -p "{{run.dir}}/../../tested" && printf \'run %s, %s, tree %s\\n\' "$FACTORY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%MZ)" "$tree" > "{{run.dir}}/../../tested/$key"; } 2>/dev/null || true; fi',
         'fi',
-        'if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then sh -c "$FACTORY_VAR_BUILD_CMD" > "{{run.dir}}/build.log" 2>&1 || ok=no; fi',
         '{ echo "### Checks on $FACTORY_VAR_DEVELOP_BRANCH"; echo \'```\'; echo "\\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"',
-        '  [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\\$ $FACTORY_VAR_BUILD_CMD → $(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")"',
-        '  echo \'```\'; [ "$ok" = yes ] || echo "⚠ **Checks failed** — marked as draft until they pass. See the run log for details."; } > "{{run.dir}}/checks.md"',
+        CHECK_BUILD_LINE,
+        "  echo '```'; " + CHECK_TIMED_LINE + '; } > "{{run.dir}}/checks.md"',
         'cat "{{run.dir}}/checks.md"; echo "CHECKS: $ok"',
       ].join("\n"),
     },
@@ -2341,14 +2386,15 @@ write("daily-pr", {
     "(a schedule watcher runs this at a set time, e.g. 17:00 Europe/Berlin)",
     "",
     "clone → factory branch not in main yet? ─┬─ none → end",
-    "                                         └─ full tests + build → open the PR if needed → comment the",
-    "                                            result on it (draft while red, ready when green)",
+    "                                         └─ full tests + build (limit verify_timeout_min, 180 min; the slot wait does not count)",
+    "                                            → open the PR if needed → comment the result on it",
+    "                                            (draft while red or not finished in time, ready when green)",
   ],
 }, {
   description: "Every day: full tests and build on the factory branch, result as a comment on its PR (draft while red)",
   workspace: "empty",
   defaults: { timeout_sec: 3600 },
-  vars: { github_repo: "owner/repo", test_cmd: "auto", build_cmd: "", branch_prefix: "factory/daily-", timezone: "Europe/Berlin" },
+  vars: { github_repo: "owner/repo", test_cmd: "auto", build_cmd: "", branch_prefix: "factory/daily-", timezone: "Europe/Berlin", verify_timeout_min: "180" },
   steps: [
     clone,
     {
@@ -2362,16 +2408,18 @@ write("daily-pr", {
       id: "verify",
       type: "shell",
       description: "Full tests and build on the branch; the result goes into the PR",
+      timeout_sec: 68400, // the engine backstop: 6 h slot wait + 12 h largest limit + 1 h; the real limit is verify_timeout_min
       run: [
         'branch=$(printf \'%s\\n\' "$FACTORY_OUT_FIND_BRANCH" | head -1)',
         'git checkout -q -B "$branch" "origin/$branch"',
         'cmd="$FACTORY_VAR_TEST_CMD"; if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi',
+        CHECK_LIMIT,
         'marker="{{run.dir}}/tests.marker"; touch "$marker"; ok=yes',
-        '"$FACTORY_TOOLS/test-slot" "{{run.dir}}/../../test-slots" sh -c "$cmd" > "{{run.dir}}/tests.log" 2>&1 || ok=no',
-        'if [ -n "$FACTORY_VAR_BUILD_CMD" ]; then sh -c "$FACTORY_VAR_BUILD_CMD" > "{{run.dir}}/build.log" 2>&1 || ok=no; fi',
+        CHECK_TESTS,
+        CHECK_BUILD,
         '{ echo "### Checks on this branch"; echo \'```\'; echo "\\$ $cmd"; "$FACTORY_TOOLS/test-summary" "$marker"',
-        '  [ -n "$FACTORY_VAR_BUILD_CMD" ] && echo "\\$ $FACTORY_VAR_BUILD_CMD → $(grep -q "BUILD SUCCESSFUL" "{{run.dir}}/build.log" 2>/dev/null && echo ok || tail -1 "{{run.dir}}/build.log")"',
-        '  echo \'```\'; [ "$ok" = yes ] || echo "⚠ **Checks failed** — marked as draft until they pass. See the run log for details."; } > "{{run.dir}}/checks.md"',
+        CHECK_BUILD_LINE,
+        "  echo '```'; " + CHECK_TIMED_LINE + '; } > "{{run.dir}}/checks.md"',
         'cat "{{run.dir}}/checks.md"; echo "CHECKS: $ok"',
       ].join("\n"),
     },

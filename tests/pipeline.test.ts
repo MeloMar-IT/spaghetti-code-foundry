@@ -364,6 +364,22 @@ describe("label-driven issue pipeline", () => {
     expect(prs()).toHaveLength(1);
   });
 
+  it("opens the daily PR as a draft when the checks run past their time limit", async () => {
+    issues([5, ["Factory_code"]]);
+    await codeWatcher().tick();
+    await settle();
+    process.env.FACTORY_CHECK_LIMIT_SEC = "1";
+    try {
+      const pr = await runFlow(loadFlow("daily-pr", gh.tmp).flow, { task: "daily PR", repo: gh.tmp, runsDir: runsDir(), claudeBin, config, vars: { github_repo: REPO, test_cmd: "sleep 30" } });
+      expect(pr.status).toBe("succeeded");
+      expect(gh.ghLog()).toMatch(/gh pr create [^\n]*--head factory\/daily-[^\n]* --draft/);
+      expect(gh.ghLog()).toContain("did not finish in time");
+      expect(pr.history.at(-1)!.output).toContain("checks failed — https://github.com/owner/repo/pull/99 is a draft");
+    } finally {
+      delete process.env.FACTORY_CHECK_LIMIT_SEC;
+    }
+  });
+
   it("opens the daily PR, pauses coding until it is merged, then starts a new branch", async () => {
     issues([5, ["Factory_code"]]);
     await codeWatcher().tick();
