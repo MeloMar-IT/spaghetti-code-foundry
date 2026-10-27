@@ -3086,7 +3086,7 @@ flowchart LR
   the tests fail after a resolved conflict, the coding session takes over.
 - Every day at **17:00** (`release-daily`) the Foundry runs the full tests and build on `develop`
   and opens (or updates) **one pull request `develop` → `main`** that lists and closes the day's
-  issues — a draft while the checks fail. **You merge it once a day.** When the tests pass on a clean
+  issues — a draft while the checks fail. A red run opens a new pull request as a draft from the start; for an existing one it switches the pull request to a draft. If that switch fails, the run says `checks failed — could not mark PR #<n> as a draft` instead of hiding it. **You merge it once a day.** When the tests pass on a clean
   checkout, the run also records that pass in the data folder, so that [self-update](#self-update) can skip its own test run on the same code.
 - `develop` is created from `main` the first time, and kept up to date with `main` (for example
   after a hotfix) before new work starts. `develop` must not be in *Protected branches*
@@ -6705,7 +6705,7 @@ or `/reject` with what to change.
 
 **The release pull request is a draft.** The daily full test run or build failed on it; the
 daily report or release check starts with `**Nothing needed from you** — it stays a draft until the checks pass.`
-and has the failing output. It becomes ready again when a later report passes.
+and has the failing output. It becomes ready again when a later report passes. If the Foundry could not switch the pull request to a draft, the run says `checks failed — could not mark PR #<n> as a draft`; then take the pull request out of review by hand before you merge.
 
 **A run failed, or a watcher shows an error.** The message says what happened, why, and what
 you can do first. Find yours in the table:

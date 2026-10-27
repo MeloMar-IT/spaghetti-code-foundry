@@ -7,7 +7,7 @@
 //                                      else unfinished work without a PR, else a new branch from main
 //   daily-branch prepare --wait-for-merge
 //                                      old behaviour: "WAIT: <why>" while a factory PR is open
-//   daily-branch ensure-pr <branch>    open the PR for <branch>, or update the open one's title and body
+//   daily-branch ensure-pr <branch> [--draft]   open the PR for <branch> (a draft with --draft), or update the open one's title and body
 //   daily-branch pending               daily branches with commits and no PR yet, newest first ("NONE" if none)
 //   daily-branch latest                newest daily branch not yet in main (no PR, or its PR still open), or "NONE"
 //   daily-branch open-pr <branch> [--draft] [--note-file <file>]
@@ -108,10 +108,10 @@ function openPr(branch, { draft = false, note = "" } = {}) {
 }
 
 /** Open the PR for the branch, or bring the open one's title and issue list up to date. */
-function ensurePr(branch) {
+function ensurePr(branch, { draft = false } = {}) {
   const { openPrOf } = state();
   const pr = openPrOf(branch);
-  if (!pr) return openPr(branch);
+  if (!pr) return openPr(branch, { draft });
   const t = prText(branch);
   run(process.env.FACTORY_GH_BIN || "gh", ["pr", "edit", String(pr.number), "--repo", repo, "--title", t.title, "--body-file", "-"], t.body);
   return pr.url;
@@ -135,7 +135,7 @@ if (cmd === "pending") {
 } else if (cmd === "ensure-pr") {
   const branch = rest[0];
   if (!branch?.startsWith(prefix)) fail(`ensure-pr needs a ${prefix}* branch`);
-  console.log(ensurePr(branch));
+  console.log(ensurePr(branch, { draft: rest.includes("--draft") }));
 } else if (cmd === "prepare") {
   const { branches, prs, pending, open } = state();
   const checkout = (name, from) => git("checkout", "-q", "-B", name, from);
@@ -176,5 +176,5 @@ if (cmd === "pending") {
   }
   fail("no free branch name for today");
 } else {
-  fail("usage: daily-branch prepare [--wait-for-merge] | ensure-pr <branch> | pending | latest | open-pr <branch> [--draft] [--note-file f]");
+  fail("usage: daily-branch prepare [--wait-for-merge] | ensure-pr <branch> [--draft] | pending | latest | open-pr <branch> [--draft] [--note-file f]");
 }
