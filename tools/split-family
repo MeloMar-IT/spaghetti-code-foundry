@@ -1,0 +1,144 @@
+#!/usr/bin/env node
+// Shows the family of the issue: the original it was split from (walking up the "Part N of M of #X" lines) and
+// the open parts of every split on the way. Used by split_gate (ask the owner) and create-split (refuse to pile
+// a new split on an old one).
+// The Part-line rules mirror plainLines and PART_OF_LINE in src/queue/issue-list.ts — keep them the same
+// (tests/split-family.test.ts checks it).
+// Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE, FACTORY_GH_BIN (default gh).
+// Output: a Markdown tree of the family (original → parts → this issue), last line `FAMILY: none | part | open-parts`.
+//   part       this issue is itself a part of a split (also through closed parents)
+//   open-parts open issues name this issue as the original of a split
+// Exit 1 (message on stderr) when the issue or the open list can't be read, or when the open list is full
+// (then it can't know it saw every issue): the caller treats that as "could not check".
+import { execFileSync } from "node:child_process";
+
+const PART_OF = /^[ \t]*Part(?:[ \t]+\d+[ \t]+of[ \t]+\d+)?[ \t]+of[ \t]+#([1-9]\d*)\b/im;
+const LIMIT = 1000;
+const MAX_DEPTH = 10;
+const MAX_NUMBER = 2147483647;
+
+const repo = process.env.FACTORY_VAR_GITHUB_REPO;
+const issueArg = process.env.FACTORY_VAR_ISSUE;
+// The open list carries whole bodies: 1000 issues can be far past Node's default 1 MiB buffer, so it is raised.
+const MAX_BUFFER = 256 * 1024 * 1024;
+const gh = (args) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", maxBuffer: MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+function fail(msg) {
+  console.error(`split-family: ${msg}`);
+  process.exit(1);
+}
+
+if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+if (!/^\d+$/.test(issueArg ?? "")) fail("set var issue to the issue number");
+const self = Number(issueArg);
+
+// The body without carriage returns and without the lines inside code fences (and the fence lines).
+function plainLines(body) {
+  const out = [];
+  let open; // the opening fence: only a fence of the same character and at least that length closes it
+  for (const line of body.replace(/\r/g, "").split("\n")) {
+    const m = /^[ \t]*(`{3,}|~{3,})(.*)$/.exec(line);
+    if (open === undefined) {
+      if (m) { open = m[1]; continue; }
+      out.push(line);
+    } else if (m && m[1][0] === open[0] && m[1].length >= open.length && !m[2].trim()) {
+      open = undefined;
+    }
+  }
+  return out;
+}
+
+// The number named by the first Part line, if it is a real issue number and not the issue itself.
+function partOf(body, number) {
+  const m = PART_OF.exec(plainLines(String(body ?? "")).join("\n"));
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isInteger(n) && n >= 1 && n <= MAX_NUMBER && n !== number ? n : undefined;
+}
+
+// One line, no control characters, no "<" (a title must not fake a <!-- … --> marker), at most 100 characters.
+function title(t) {
+  const s = String(t ?? "").replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim().replace(/</g, "&lt;");
+  return s.length > 100 ? `${s.slice(0, 99)}…` : s;
+}
+
+const isOpen = (i) => !i.state || String(i.state).toUpperCase() === "OPEN";
+const FIELDS = "number,title,state,body";
+
+let openList;
+try {
+  openList = JSON.parse(gh(["issue", "list", "--repo", repo, "--state", "open", "--limit", String(LIMIT), "--json", FIELDS]));
+} catch (e) {
+  fail(`could not read the open issues of ${repo}: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
+}
+if (!Array.isArray(openList)) fail(`could not read the open issues of ${repo}`);
+if (openList.length >= LIMIT) fail(`${repo} has ${LIMIT} or more open issues; could not check them all`);
+const open = new Map(openList.filter(isOpen).map((i) => [i.number, i]));
+
+const kids = new Map(); // original number → open issues naming it
+for (const i of open.values()) {
+  const p = partOf(i.body, i.number);
+  if (p === undefined) continue;
+  if (!kids.has(p)) kids.set(p, []);
+  kids.get(p).push(i);
+}
+
+// An issue from the open list, else read on its own; undefined when it can't be read.
+function node(n) {
+  if (open.has(n)) return open.get(n);
+  try {
+    const i = JSON.parse(gh(["issue", "view", String(n), "--repo", repo, "--json", FIELDS]));
+    return i && typeof i === "object" ? i : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const current = node(self);
+if (!current) fail(`could not read #${self} in ${repo}`);
+
+// chain[0] is this issue, the last entry the original (or the end of the walk).
+const chain = [{ number: self, issue: current }];
+const notes = [];
+const seen = new Set([self]);
+for (;;) {
+  const last = chain.at(-1);
+  if (!last.issue) break;
+  const p = partOf(last.issue.body, last.number);
+  if (p === undefined) break;
+  if (seen.has(p)) { notes.push(`(#${p} loops back; stopped)`); break; }
+  if (chain.length > MAX_DEPTH) { notes.push(`(stopped after ${MAX_DEPTH} levels)`); break; }
+  seen.add(p);
+  chain.push({ number: p, issue: node(p) });
+}
+
+const hasParent = partOf(current.body, self) !== undefined;
+const family = hasParent ? "part" : (kids.get(self) ?? []).length ? "open-parts" : "none";
+
+if (family === "none") {
+  console.log(`No earlier split: #${self} is not a split part and has no open parts.`);
+} else {
+  console.log(`Family of #${self}:`);
+  const state = (e) => (e.issue && !isOpen(e.issue) ? "closed" : "open");
+  const lines = [];
+  // Prints chain[i] and its children (its open parts, plus chain[i-1], sorted by number); only the chain child is expanded.
+  const render = (i, level) => {
+    const e = chain[i];
+    const pad = "  ".repeat(level);
+    const here = e.number === self ? " ← this issue" : "";
+    if (!e.issue) lines.push(`${pad}- #${e.number} (could not read it)`);
+    else {
+      const original = partOf(e.issue.body, e.number) === undefined;
+      lines.push(`${pad}- #${e.number} ${title(e.issue.title)} (${original ? "original, " : ""}${state(e)})${here}`);
+    }
+    const next = i > 0 ? chain[i - 1] : undefined;
+    const children = (kids.get(e.number) ?? []).filter((k) => k.number !== next?.number).map((k) => ({ number: k.number, issue: k }));
+    for (const c of [...children, ...(next ? [next] : [])].sort((x, y) => x.number - y.number)) {
+      if (c === next) render(i - 1, level + 1);
+      else lines.push(`${"  ".repeat(level + 1)}- #${c.number} ${title(c.issue.title)} (open)`);
+    }
+  };
+  render(chain.length - 1, 0);
+  console.log(lines.join("\n"));
+  for (const n of notes) console.log(n);
+}
+console.log(`FAMILY: ${family}`);

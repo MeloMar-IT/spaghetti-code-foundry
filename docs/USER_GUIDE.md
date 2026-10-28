@@ -2930,6 +2930,14 @@ reinterpreting scope, or anything that needs your decision, is high).
 
 The threshold is the `auto_split_max_risk` variable (default 50).
 
+A split part (an issue with a **Part N of M of #X** line) is never split by itself, and neither is an issue that
+still has open parts of an earlier split. The Foundry then asks you before any split, whatever the risk, and the
+comment has an "Earlier splits of this issue" section with the family tree (the original, its parts, and this issue).
+Its recommendation is to reply `/reject`: the Foundry plans the issue again against the existing parts, or
+changes them. Reply `/approve` to split anyway. The same check runs when the split is created, so a split
+without your approval creates no issues. If the Foundry cannot read the issues (or the repository has 1000 or
+more open issues), it asks you too and says "could not check".
+
 A change that is **mechanical** is not split for size, because splitting it would not make it smaller
 (every part would touch most of the same files). A change is mechanical when it only moves, renames or
 changes imports, with no behaviour change. The planner then marks the plan `MECHANICAL: yes` with a reason,

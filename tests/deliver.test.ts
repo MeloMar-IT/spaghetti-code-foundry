@@ -301,13 +301,14 @@ describe("deliver pipeline", () => {
     expect(log).not.toContain("issue close");
   });
 
+  const ONE_ISSUE = JSON.stringify([{ number: 5, title: "Add a feature", body: "" }]); // split-family reads the issue it checks
   const runSplit = (extra: Record<string, string> = {}) =>
     spawnSync(process.execPath, [resolve("tools/create-split")], { input: SPLIT(20), encoding: "utf8",
-      env: { ...process.env, FACTORY_VAR_GITHUB_REPO: REPO, FACTORY_VAR_ISSUE: "5", FACTORY_RUN_ID: "r1", ...extra } });
+      env: { ...process.env, FACTORY_VAR_GITHUB_REPO: REPO, FACTORY_VAR_ISSUE: "5", FACTORY_RUN_ID: "r1", FAKE_GH_ISSUES: ONE_ISSUE, ...extra } });
 
   it("keeps a stray request line out of the created issues when the tool is called directly", () => {
     const r = spawnSync(process.execPath, [resolve("tools/create-split")], { input: SPLIT(20).replace("SPLIT_RISK: 20", 'SKILL_REQUEST: {"version":1,"skills":[]}\nSPLIT_RISK: 20'), encoding: "utf8",
-      env: { ...process.env, FACTORY_VAR_GITHUB_REPO: REPO, FACTORY_VAR_ISSUE: "5", FACTORY_RUN_ID: "r2" } });
+      env: { ...process.env, FACTORY_VAR_GITHUB_REPO: REPO, FACTORY_VAR_ISSUE: "5", FACTORY_RUN_ID: "r2", FAKE_GH_ISSUES: ONE_ISSUE } });
     expect(r.status).toBe(0);
     expect(gh.ghLog()).toContain("created issue: issue create");
     expect(gh.ghLog()).not.toContain("SKILL_REQUEST");
