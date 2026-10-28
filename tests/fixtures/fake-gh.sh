@@ -281,7 +281,7 @@ case "$1 $2" in
       *"--json number,title,state,body"*) node -e 'const fs=require("fs");const [n,repo,f,cf]=process.argv.slice(1);const l=JSON.parse(process.env.FAKE_GH_VIEW_ISSUES||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===Number(n));
 if(!i){console.error("GraphQL: Could not resolve to an Issue with the number of "+n+". (repository.issue)");process.exit(1)}
 const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const k=repo+"#"+n;
-console.log(JSON.stringify({number:i.number,title:i.title,state:(fs.existsSync(cf)&&fs.readFileSync(cf,"utf8").split("\n").includes(n))?"CLOSED":String(i.state||"OPEN").toUpperCase(),labels:i.labels||[],body:k in m?m[k]:(i.body||"")}))' "$3" "$fake_repo" "$FAKE_GH_LOG.issue-bodies.json" "$FAKE_GH_LOG.closed" || exit 1 ;;
+console.log(JSON.stringify({number:i.number,title:i.title,state:(fs.existsSync(cf)&&fs.readFileSync(cf,"utf8").split("\n").includes(n))?"CLOSED":String(i.state||"OPEN").toUpperCase(),...(process.argv[5].includes(",labels")?{labels:i.labels||[]}:{}),body:k in m?m[k]:(i.body||"")}))' "$3" "$fake_repo" "$FAKE_GH_LOG.issue-bodies.json" "$FAKE_GH_LOG.closed" "$*" || exit 1 ;;
       *"-q .title"*) echo "Add a feature" ;;
       *"--json labels --jq"*) [ -n "$FAKE_GH_FAIL_LABELS" ] && { echo boom >&2; exit 1; }; printf '%s\n' ${FAKE_GH_ISSUE_LABELS:-} ;;
       *"--json state") node -e 'const n=Number(process.argv[1]);const l=JSON.parse(process.env.FAKE_GH_FRESH||process.env.FAKE_GH_ISSUES||"[]");const i=l.find(x=>x.number===n)||{state:"OPEN"};console.log(JSON.stringify({state:i.state||"OPEN"}))' "$3" ;;
