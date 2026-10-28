@@ -24,7 +24,7 @@ import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
 import { notCodeStop, parkedComment, wantsPark } from "./park.js";
-import { ackedNotPlanned, acceptedComment, findOverrules, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
+import { ackedNotPlanned, acceptedComment, codeMerged, findOverrules, FOLLOWUP_SEARCH_LIMIT, followUpComment, followUpSearchArgs, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
 import { contentsPath, filesToCheck, openOwnerActions, OWNER_FILE_MARK, type OwnerAsk } from "./owner-action.js";
 import { validBranchName } from "../auth/repo-settings.js";
 
@@ -886,6 +886,92 @@ export class Watcher {
     return { ok, complete };
   }
 
+  /**
+   * /overrule after the merge: one follow-up draft per accepted overrule; no issue, no run, no label change.
+   * "none": nothing open (or no updatedAt: not read); "seen": memo hit; "handled": a draft was posted;
+   * "incomplete": something failed or was skipped, tried again next check; "unread": comments not readable.
+   */
+  private async followUps(n: number, updatedAt: string | undefined, run: RunSummary, reads: CommentReads, alive: () => void): Promise<"none" | "seen" | "handled" | "incomplete" | "unread"> {
+    if (!updatedAt) return "none";
+    if (this.overruleSeen.get(n) === updatedAt) return "seen";
+    const comments = await reads.read(n);
+    alive();
+    if (!comments) { this.overruleSeen.delete(n); return "unread"; }
+    let complete = false;
+    let posted = 0;
+    try {
+      const got = await this.checkOverrules(n, comments, run, alive);
+      complete = got.complete;
+      for (const o of got.ok) {
+        if (await this.postOnce(n, o.key, followUpComment({ number: n }, o), alive)) {
+          posted++;
+          const line = `#${n} overruled by @${o.comment.author.login} after the merge → follow-up draft posted`;
+          this.act(line);
+          appendLiveLog(run.runDir, line);
+        } else complete = false;
+      }
+    } catch (e) {
+      complete = false;
+      alive();
+      this.d.log(`[${this.cfg.id}] ! #${n} /overrule: ${errorLine((e as Error).message)}; tried again at the next check`);
+    }
+    if (complete) this.overruleSeen.set(n, updatedAt);
+    else this.overruleSeen.delete(n);
+    return posted ? "handled" : complete ? "none" : "incomplete";
+  }
+
+  /** /overrule on merged stories outside the trigger list (closed, or label removed): one search per check (#704). Returns the issues it kept. */
+  private async sweepMerged(o: { listed: Set<number>; every?: Issue[]; excluded: Set<string>; reads: CommentReads; followedUp: Set<number>; alive: () => void }): Promise<Set<number>> {
+    o.alive();
+    let found: { number: number; updatedAt?: string }[];
+    try {
+      const got = await ghJson<unknown>(followUpSearchArgs(this.repo, Date.now()), undefined, OVERRULE_GH_MS);
+      found = Array.isArray(got) ? got : [];
+    } catch (e) {
+      o.alive();
+      this.d.log(`[${this.cfg.id}] ! /overrule sweep: ${errorLine((e as Error).message)}`);
+      return new Set();
+    }
+    o.alive();
+    if (found.length >= FOLLOWUP_SEARCH_LIMIT) this.d.log(`[${this.cfg.id}] /overrule sweep: ${FOLLOWUP_SEARCH_LIMIT} issues found, the limit; older ones are skipped`);
+    const idx = this.olderIndex();
+    const sch = this.d.scheduler;
+    const kept = new Set<number>();
+    const done = new Set<number>();
+    for (const f of found) {
+      const n = f?.number;
+      if (!Number.isSafeInteger(n) || n < 1 || done.has(n) || o.listed.has(n)) continue;
+      done.add(n);
+      const dir = idx.get(String(n));
+      const run = dir ? sch.get(dir) : undefined;
+      if (!run || run.runId !== dir || flowRetired(run) || !codeMerged(run)) continue;
+      let labels = o.every?.find((i) => i.number === n)?.labels.map((l) => l.name);
+      if (!labels) {
+        try {
+          const view = await ghJson<{ labels: { name: string }[] }>(["issue", "view", String(n), "--repo", this.repo, "--json", "state,labels"], undefined, OVERRULE_GH_MS);
+          o.alive();
+          labels = view.labels.map((l) => l.name);
+        } catch (e) {
+          o.alive();
+          this.d.log(`[${this.cfg.id}] ! #${n} /overrule sweep: its labels could not be read; tried again at the next check`);
+          continue;
+        }
+      }
+      if (labels.some((l) => o.excluded.has(l))) continue;
+      kept.add(n);
+      const queued = sch.isQueued(run.runId) || sch.queue().pending.some((p) => p.githubRepo === this.repo && p.issue === String(n));
+      const busy = queued ? "queued" as const : sch.isActive(run.runId) ? "active" as const : undefined;
+      const a = overruleAction(run, busy, hasPlanStep(run));
+      if (a === "wait") this.overruleSeen.delete(n);
+      else if (a === "followup") {
+        // A skipped read (budget used up, slow issue) comes back as "unread": the issue is protected from label changes too.
+        const r = await this.followUps(n, f.updatedAt, run, o.reads, o.alive);
+        if (r === "handled" || r === "incomplete" || r === "unread") o.followedUp.add(n);
+      }
+    }
+    return kept;
+  }
+
   /** Posts the ack of each overrule (once) and keeps it in memory until the run is submitted. False: one is being posted elsewhere. */
   private async ackOverrules(n: number, list: Overrule[], alive: () => void): Promise<boolean> {
     for (const o of list) {
@@ -1104,6 +1190,7 @@ export class Watcher {
       onSlow: (n) => this.slowUntil.set(n, Date.now() + SLOW_READ_MS),
     });
     const unknown = new Set<number>(); // issues whose comments could not be read in this check
+    const followedUp = new Set<number>(); // a draft or an unfinished follow-up check: no label change for it in this check
     const quietNow = new Set<number>(); // issues parked (or a park refused) in this check: no status comment change
     const questionCount = (comments: Comment[]) => countQuestions([...comments].reverse().find(asked)?.body);
 
@@ -1217,7 +1304,7 @@ export class Watcher {
       // /overrule: a person with write access replaces a question the Foundry decided itself, and the work is planned again.
       if (run && !mixed && !flowRetired(run)) {
         const busyOf = (r: RunSummary) => (queuedId !== undefined || this.d.scheduler.isQueued(r.runId) || this.d.scheduler.queue().pending.some((j) => j.githubRepo === this.repo && j.issue === String(n)) ? "queued" as const : this.d.scheduler.isActive(r.runId) ? "active" as const : undefined);
-        const actionOf = (r: RunSummary) => { const a = overruleAction(r, busyOf(r), hasPlanStep(r)); return a === "followup" ? "none" : a; };
+        const actionOf = (r: RunSummary) => overruleAction(r, busyOf(r), hasPlanStep(r));
         /** The run as it is now, when it still has this action (the awaits above may have changed it). */
         const recheck = (was: ReturnType<typeof actionOf>) => {
           const now = loadRun(this.d.runsDir, run.runId);
@@ -1229,6 +1316,11 @@ export class Watcher {
           if (issue.updatedAt) this.overruleSeen.set(n, issue.updatedAt);
         } else if (action === "wait") {
           this.overruleSeen.delete(n);
+        } else if (action === "followup") {
+          this.overruleAcked.delete(n);
+          const f = await this.followUps(n, issue.updatedAt, run, reads, alive);
+          if (f === "unread") unknown.add(n);
+          if (f === "handled" || f === "incomplete" || f === "unread") { followedUp.add(n); offNow.delete(n); delete track.labelOff; continue; }
         } else if (this.overruleAcked.has(n) || !issue.updatedAt || this.overruleSeen.get(n) !== issue.updatedAt) {
           let accepted: Overrule[] = [];
           let complete = false;
@@ -1616,6 +1708,7 @@ export class Watcher {
         for (const i of toCheck) if (!prio(i)) holds.push(this.held("bug_first", i));
       } else await this.precheck(toCheck, holds, budgetLeft);
     }
+    const swept = await this.sweepMerged({ listed: new Set(issues.map((i) => i.number)), every: everyIssue, excluded, reads, followedUp, alive });
     // An issue that was answered but cannot start (dependency, release, budget, limit, busy watcher) needs nothing
     // from the person: the needs-info label goes, as the status comment says. Without a run nothing is lost.
     if (reads.exhausted) this.d.log(`[${this.cfg.id}] comment reads: the time for this check is used up, the other issues are listed from their labels`);
@@ -1624,7 +1717,7 @@ export class Watcher {
     let tidyError: Error | undefined;
     const closed: { issue: number; title: string }[] = [];
     let closedWhole = false;
-    await this.tidyClosed(runs, holds, closed).then((w) => { closedWhole = w; }, (e: Error) => { tidyError = e; });
+    await this.tidyClosed(runs, holds, closed, followedUp).then((w) => { closedWhole = w; }, (e: Error) => { tidyError = e; });
     let statesError: Error | undefined;
     await this.checkIssueStates(issues, alive).catch((e: Error) => { statesError = e; });
     // After the states: an issue known to be closed is not asked about again.
@@ -1644,7 +1737,7 @@ export class Watcher {
     this.status.pausedBy = paused ? { number: paused.number, url: paused.url, title: paused.title, createdAt: paused.createdAt } : undefined;
     this.tracked = tracked;
     const listed = new Set(issues.map((i) => i.number));
-    for (const k of [...this.overruleSeen.keys()]) if (!listed.has(k)) this.overruleSeen.delete(k); // overruleAcked is capped instead: the ack must outlive a gap in the list
+    for (const k of [...this.overruleSeen.keys()]) if (!listed.has(k) && !swept.has(k)) this.overruleSeen.delete(k); // overruleAcked is capped instead: the ack must outlive a gap in the list
     this.labelOff = offNow;
     const quiet = [...new Set([...holds.filter((h) => h.byLabel && h.issue !== undefined).map((h) => h.issue!), ...unknown, ...quietNow])];
     if (this.cfg.status_comment) await this.reportStatus(runs, holds, tracked, closed, !tidyError && closedWhole && whole, () => mine === this.tickToken && !this.stopped, quiet);
@@ -1721,7 +1814,7 @@ export class Watcher {
    * A run that waits for a person is kept as it is.
    * Fills `handled` with the closed issues it dealt with; returns true when GitHub's list was whole (not cut at its limit).
    */
-  private async tidyClosed(runs: Map<string, RunSummary>, holds: Hold[], handled: { issue: number; title: string }[]): Promise<boolean> {
+  private async tidyClosed(runs: Map<string, RunSummary>, holds: Hold[], handled: { issue: number; title: string }[], skip: ReadonlySet<number> = new Set()): Promise<boolean> {
     const pending = this.d.scheduler.queue().pending;
     const stale = [this.L.working, this.L.waiting, this.L.needsInfo, this.L.failed];
     const limit = 30;
@@ -1733,6 +1826,7 @@ export class Watcher {
       if (!names.some((l) => stale.includes(l))) continue;
       const run = runs.get(String(issue.number));
       handled.push({ issue: issue.number, title: issue.title ?? "" });
+      if (skip.has(issue.number)) continue; // a follow-up draft in this check: no label change (#704)
       const queuedId = pending.find((p) => p.githubRepo === this.repo && p.issue === String(issue.number))?.runId;
       const working = !!queuedId || (!!run && (this.d.scheduler.isActive(run.runId) || this.d.scheduler.isQueued(run.runId)));
       if (working) {

@@ -6,6 +6,7 @@
 # "pr edit --add-reviewer <handle>" only records the handle in $FAKE_GH_LOG.reviewers.json ({url: [handles]}); "pr view --json reviewRequests,reviews"
 # answers from it ($FAKE_GH_REVIEWERS_FAIL=1 makes that view fail).
 # $FAKE_GH_AUTH_LOG=<file>: every call appends one line, tab separated: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN (each "-" when unset),
+# $FAKE_GH_OVERRULE_SEARCH: the answer of "issue list --search 'overrule in:comments …'" (the /overrule sweep); default [].
 # $FAKE_GH_LIST_LIMIT=<n>: "issue list" (not --search, not --state closed) returns at most the first n issues.
 # "host" when GH_CONFIG_DIR is unset (else the number of entries in that folder), and the arguments.
 if [ -n "$FAKE_GH_AUTH_LOG" ]; then
@@ -305,7 +306,8 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
                   echo "--- created issue: $*" >> "$FAKE_GH_LOG"; case "$*" in *--body-file*) cat >> "$FAKE_GH_LOG" ;; esac
                   echo "https://github.com/owner/repo/issues/$n" ;;
   "issue close") ;;
-  "issue list")  case "$*" in *"--state closed"*) printf '%s' "${FAKE_GH_CLOSED_ISSUES:-[]}" ;;
+  "issue list")  case "$*" in *"overrule in:comments"*) printf '%s' "${FAKE_GH_OVERRULE_SEARCH:-[]}" ;;
+                   *"--state closed"*) printf '%s' "${FAKE_GH_CLOSED_ISSUES:-[]}" ;;
                    *"--search"*) printf '%s' "${FAKE_GH_PRIORITY_ISSUES:-${FAKE_GH_ISSUES:-[]}}" ;;
                    *) if [ -n "$FAKE_GH_LABEL_FILTER" ]; then
                         lab=""; prev=""; for a in "$@"; do [ "$prev" = "--label" ] && lab="$a"; prev="$a"; done

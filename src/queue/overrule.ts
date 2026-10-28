@@ -197,6 +197,17 @@ export function followUpComment(issue: Pick<Issue, "number">, o: Overrule): stri
   ].join("\n\n");
 }
 
+/** How long after its last update a merged story stays watched for /overrule (#704, Q1: 14 days). */
+export const FOLLOWUP_WINDOW_DAYS = 14;
+/** At most this many issues per after-merge sweep. */
+export const FOLLOWUP_SEARCH_LIMIT = 30;
+/** The gh arguments of the after-merge sweep: issues in any state with an /overrule in a comment, updated in the window. */
+export function followUpSearchArgs(repo: string, nowMs: number): string[] {
+  const since = new Date(nowMs - FOLLOWUP_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+  return ["issue", "list", "--repo", repo, "--state", "all", "--search", `overrule in:comments updated:>=${since}`,
+    "--limit", String(FOLLOWUP_SEARCH_LIMIT), "--json", "number,updatedAt"];
+}
+
 /** Does the flow of this run plan (has a `plan` step)? Only then an overrule can change anything. */
 export function hasPlanStep(run: Pick<RunSummary, "flowDef">): boolean {
   return (run.flowDef?.steps ?? []).some((s) => stepIs(s.id, ["plan"]));

@@ -103,7 +103,6 @@ describe("the watcher acts on /overrule", () => {
   });
 
   it.each([
-    ["merged code", { status: "succeeded", history: [{ id: "push_main", type: "shell", visit: 1, ok: true, output: "pushed" }] }],
     ["a parked run", { parkedAt: "2026-01-01T02:00:00.000Z" }],
     ["a run cancelled while stopped", { status: "cancelled", reason: "cancelled by user while stopped" }],
   ])("changes nothing for %s", async (_n, over) => {

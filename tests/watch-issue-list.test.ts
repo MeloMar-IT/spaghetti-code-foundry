@@ -43,7 +43,7 @@ describe("the issue list read of a check", () => {
   };
   const lines = () => gh.ghLog().split("\n");
   const restReads = () => lines().filter((l) => l.includes("state=all") && l.endsWith("page=1"));
-  const fallbackCalls = () => lines().filter((l) => l.includes("--state all"));
+  const fallbackCalls = () => lines().filter((l) => l.includes("--state all") && !l.includes("overrule in:comments"));
   const until = async (cond: () => boolean) => { for (let i = 0; i < 500 && !cond(); i++) await new Promise((r) => setTimeout(r, 20)); expect(cond()).toBe(true); };
   /** "ok" or the error text, when this watcher's issues check ends. Call it before tick(). */
   const issuesCheckEnd = (w: Watcher) => new Promise<string>((done) => {
