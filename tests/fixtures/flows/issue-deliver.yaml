@@ -508,16 +508,19 @@ steps:
       if [ -n "$FACTORY_VAR_REVIEW_PLAN_LABEL" ] && gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "$FACTORY_VAR_REVIEW_PLAN_LABEL"; then
         gate=yes; why="${why:+$why, and }the issue has the \`$FACTORY_VAR_REVIEW_PLAN_LABEL\` label"
       fi
-      plan=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d; /^RISK_SCORE:/d; /^RISK_REASON:/d')
+      size_note=$(printf '%s\n' "$FACTORY_OUT_SIZE_GATE" | grep '^over the size limit, but mechanical' | tail -1)
+      if printf '%s\n' "$FACTORY_OUT_SIZE_GATE" | grep -q "^the owner's exception does not count"; then gate=yes; why="${why:+$why, and }the plan is over the size limit and the owner's exception did not count"; fi
+      plan=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d; /^RISK_SCORE:/d; /^RISK_REASON:/d; /^MECHANICAL:/d')
       reviewed=""; [ -n "$FACTORY_OUT_PLAN_REVIEW" ] && reviewed=" (checked against the code by Codex)"
       [ -n "$notes" ] && reviewed=" (draft — the revision did not finish; Codex's review notes are below)"
       printf '%s\n' "$FACTORY_OUT_REVISE_GATE" | grep -q "^SKIPPED" && reviewed=" (checked against the code by Codex — low risk, so the coder works in Codex's notes below)"
       if [ "$gate" = yes ]; then first="$FACTORY_FIRST_APPROVE_PLAN"; else first="$FACTORY_FIRST_NOTHING"; fi
       { echo "$first"; echo
         echo "🤖 **Spaghetti Code Foundry plan**$reviewed"; echo; echo "**Risk: $risk/100**${reason:+ — $reason}"; echo
+        [ -n "$size_note" ] && { echo "**Size:** $size_note"; echo; }
         printf '%s\n' "$plan"
         echo; printf '%s\n' "$skills"
-        if [ -n "$notes" ]; then echo; echo "## Codex review notes (not yet worked in)"; echo; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d'; fi
+        if [ -n "$notes" ]; then echo; echo "## Codex review notes (not yet worked in)"; echo; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d; /^MECHANICAL:/d'; fi
         echo
         if [ "$gate" = yes ]; then
           echo "✋ **A human decides before coding starts:** $why."
@@ -528,7 +531,7 @@ steps:
           echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID plan -->"
         fi; } | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null
       printf '%s\n' "$plan"
-      [ -n "$notes" ] && { echo; echo "## Review notes to work in"; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d'; }
+      [ -n "$notes" ] && { echo; echo "## Review notes to work in"; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d; /^MECHANICAL:/d'; }
       echo; echo "RISK: $risk"; echo "GATE: $gate"; printf '%s\n' "$skill_line"
     routes:
       - if: "^GATE: yes\\s*$"

@@ -2928,6 +2928,14 @@ reinterpreting scope, or anything that needs your decision, is high).
 
 The threshold is the `auto_split_max_risk` variable (default 50).
 
+A change that is **mechanical** is not split for size, because splitting it would not make it smaller
+(every part would touch most of the same files). A change is mechanical when it only moves, renames or
+changes imports, with no behaviour change. The planner then marks the plan `MECHANICAL: yes` with a reason,
+and the Foundry builds it as one change; the plan comment shows `**Size:** over the size limit, but mechanical — built as one change`.
+You can also ask for it in the issue text, for example "build this as one change". That note counts as
+your exception only when the issue's author or the last person who edited the issue text has write access
+to the repository; a note in a comment does not count. Without that, the plan is split as usual.
+
 #### Questions the Foundry decides itself
 
 When the planner has questions, it sorts them by kind. The Foundry decides a question by itself only when

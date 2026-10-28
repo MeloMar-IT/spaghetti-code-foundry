@@ -227,6 +227,12 @@ fi
 # "api graphql --input -": issue states. Answers every alias i<N> from $FAKE_GH_FRESH, else $FAKE_GH_ISSUES_BY_REPO[owner/name], else $FAKE_GH_ISSUES; default OPEN.
 # $FAKE_GH_GRAPHQL_MISSING="7 9": those aliases are null with a NOT_FOUND error, as gh prints it (exit 1). $FAKE_GH_GRAPHQL_MAX=<n>: a query with more aliases is refused.
 # $FAKE_GH_GRAPHQL_FAIL_AFTER=<n>: the calls after the first n fail.
+# "api graphql … lastEditedBy …": the author and last editor of an issue, as "<author> <editor>".
+# $FAKE_GH_ISSUE_AUTHOR (default foundry-owner; "fail" = the call fails with HTTP 502), $FAKE_GH_ISSUE_EDITOR (default none).
+case "$all" in "api graphql"*lastEditedBy*)
+  if [ "$FAKE_GH_ISSUE_AUTHOR" = fail ]; then echo "gh: HTTP 502" >&2; exit 1; fi
+  echo "${FAKE_GH_ISSUE_AUTHOR-foundry-owner} ${FAKE_GH_ISSUE_EDITOR}"; exit 0 ;;
+esac
 case "$all" in "api graphql"*)
   gn=$(($(cat "$FAKE_GH_LOG.graphql" 2>/dev/null || echo 0) + 1)); echo "$gn" > "$FAKE_GH_LOG.graphql"
   if [ -n "$FAKE_GH_GRAPHQL_FAIL_AFTER" ] && [ "$gn" -gt "$FAKE_GH_GRAPHQL_FAIL_AFTER" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
