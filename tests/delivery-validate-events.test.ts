@@ -201,6 +201,8 @@ const GEN: Rec[] = [
   { type: "step.denied", step: gate, denial: { kind: "approval", by: user } },
   { type: "step.denied", step: shell, denial: { kind: "tool", tool: { name: "mcp__server__tool" } } },
   { type: "step.denied", step: shell, denial: { kind: "policy", policy: { id: "p", version: "1" }, reasonCode: "x.y" } },
+  { type: "step.denied", step: shell, denial: { kind: "policy", policy: { id: "p", version: "1" }, packSha256: H("1"), reasonCode: "x.y" } },
+  { type: "step.denied", denial: { kind: "policy", policy: { id: "p", version: "1" }, packSha256: H("1"), reasonCode: "x.y", tool: { name: "Bash" } } },
   ...REASON_CODES.map((r) => decided(decision(r))),
   ...OUTCOMES.map((outcome) => decided(decision("timeout.exceeded", { outcome }))),
   ...MODES.map((mode) => decided(decision("timeout.exceeded", { mode }))),
@@ -226,7 +228,7 @@ const GEN: Rec[] = [
   // edge values the library accepts
   ...["2024-02-29T00:00:00Z", "2000-02-29T00:00:00Z", "2026-01-31T12:00:59.123456789Z"].map((time) => ({ type: "run.queued", time })),
   ...["00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff", USER.toUpperCase(), "0b8f6a0e-5a52-8a4e-ba57-0f2f3f1f7c11"].map((id) => ({ type: "run.cancelled", by: { kind: "user", id } })),
-  ...[1, 2, 3, 4, 5].map((version) => ({ type: "run.queued", version })),
+  ...[1, 2, 3, 4, 5, 6].map((version) => ({ type: "run.queued", version })),
   ...RUN_CONTEXT_CODES.map((failure) => ({ type: "context.bundled", outcome: "failed", failure })),
   ...CONTEXT_OMISSION_REASONS.map((reason) => ({ ...CTX_WRITTEN, omitted: { ...(CTX_WRITTEN.omitted as object), [reason]: 7 } })),
 ];
@@ -447,6 +449,10 @@ describe("parity: events that are hashed and anchored but break the schema", () 
       one("a decision with another version", dec((d) => (d.version = 2)), "policy.decided"),
       one("approved on a shell step", (e) => (e.step = shell), "step.approved"),
       withBody("an approval denial on a shell step", { type: "step.denied", step: shell, denial: { kind: "approval", by: user } }),
+      withBody("a tool denial without a step", { type: "step.denied", denial: { kind: "tool", tool: { name: "Bash" } } }),
+      withBody("an approval denial without a step", { type: "step.denied", denial: { kind: "approval", by: user } }),
+      withBody("a bad pack hash on a policy denial", { type: "step.denied", step: shell, denial: { kind: "policy", policy: { id: "p", version: "1" }, packSha256: "ABC", reasonCode: "x.y" } }),
+      withBody("a pack hash on a tool denial", { type: "step.denied", step: shell, denial: { kind: "tool", tool: { name: "Bash" }, packSha256: H("1") } }),
     ]);
   });
   it("refuses bad identities the same way", async () => {

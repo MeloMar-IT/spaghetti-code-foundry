@@ -202,6 +202,11 @@ export class RunRecorder {
     this.put(() => ({ type: "step.denied", step, denial }));
   }
 
+  /** A policy refused something about the whole run, not one step: `step.denied` without `step`. Only a policy denial fits. */
+  runDenied(denial: Denial): void {
+    this.put(() => ({ type: "step.denied", denial }));
+  }
+
   /** Something that had to be recorded could not be: the stream stops and the run has no manifest. The run itself goes on. */
   incomplete(e: unknown): void {
     this.stream.stop(e);

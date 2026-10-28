@@ -138,9 +138,9 @@ export const policyIdentityOf = (decision: Pick<PolicyDecision, "policy">): Poli
 /**
  * The `denial` of a `step.denied` evidence event for a decision; undefined when the decision did not refuse anything:
  * any outcome but "deny", or a decision in `observe` mode (it only says what it would have done). `tool` is the tool the
- * question was about, when it was about one.
+ * question was about, when it was about one. It carries the SHA-256 of the pack when the decision has one.
  */
 export function policyDenial(decision: PolicyDecision, tool?: string): Denial | undefined {
   if (decision.outcome !== "deny" || decision.mode !== "enforce") return undefined;
-  return { kind: "policy", policy: policyIdentityOf(decision), reasonCode: decision.reasonCode, ...(tool !== undefined ? { tool: { name: tool } } : {}) };
+  return { kind: "policy", policy: policyIdentityOf(decision), ...(decision.packSha256 !== undefined ? { packSha256: decision.packSha256 } : {}), reasonCode: decision.reasonCode, ...(tool !== undefined ? { tool: { name: tool } } : {}) };
 }

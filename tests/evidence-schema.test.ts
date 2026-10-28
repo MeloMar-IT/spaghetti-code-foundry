@@ -158,7 +158,7 @@ describe("evidence events", () => {
   it("names the events that end a run, and the file names", () => {
     expect(TERMINAL_EVENT_TYPES).toEqual(["run.cancelled", "run.failed", "run.completed"]);
     expect([EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE]).toEqual(["evidence.jsonl", "evidence.json"]);
-    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([6, 1]);
+    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([7, 1]);
     expect(STEP_TYPES).toEqual(["claude", "shell", "approval", "parallel", "flow"]);
   });
 
@@ -203,6 +203,10 @@ describe("evidence events", () => {
     expect(EvidenceEventSchema.safeParse({ ...EVENTS["step.denied"], step: shell, denial: { kind: "approval", by: user } }).success).toBe(false);
     expect(EvidenceEventSchema.safeParse({ ...EVENTS["step.denied"], step: gate, denial: { kind: "approval", by: user } }).success).toBe(true);
     expect(EvidenceEventSchema.safeParse({ ...EVENTS["step.denied"], denial: { kind: "tool", tool: { name: "mcp__files__read" } } }).success).toBe(true);
+    const { step: _s, ...stepless } = EVENTS["step.denied"] as Record<string, unknown>;
+    expect(EvidenceEventSchema.safeParse(stepless).success).toBe(true); // a policy denial about the whole run
+    expect(EvidenceEventSchema.safeParse({ ...stepless, denial: { kind: "tool", tool: { name: "Bash" } } }).success).toBe(false);
+    expect(EvidenceEventSchema.safeParse({ ...stepless, denial: { kind: "approval", by: user } }).success).toBe(false);
     expect(problems(() => parseEvidenceEvent({ ...EVENTS["step.failed"], artifacts: [log, log] })).issues[0]).toEqual({ path: "artifacts.1.path", message: "the same file is named twice" });
     expect(EvidenceEventSchema.safeParse({ ...EVENTS["step.retried"], cause: "mood" }).success).toBe(false);
     const profiled = EVENTS["step.profiled"]!;
@@ -317,9 +321,9 @@ describe("the run manifest", () => {
 
 describe("versions and migration", () => {
   it("refuses a version it does not support, in one clear sentence", () => {
-    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 7 }));
+    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 8 }));
     expect([e.kind, e.code]).toEqual(["event", "unsupported-version"]);
-    expect(e.message).toBe("evidence event: version 7 is not supported; this Foundry reads versions 1 to 6. It was written by a newer Foundry: update to read it");
+    expect(e.message).toBe("evidence event: version 8 is not supported; this Foundry reads versions 1 to 7. It was written by a newer Foundry: update to read it");
     expect(problems(() => upgradeEvidence({ version: 9 }, "manifest", 3, {})).message).toContain("this Foundry reads versions 1 to 3");
   });
 
@@ -352,10 +356,11 @@ describe("versions and migration", () => {
   });
 
   it("checks a migrated record against the current schema", () => {
-    // A version 6 record is current, so the step table is only used for lower versions.
+    // A version 7 record is current, so the step table is only used for lower versions.
     const typed: EvidenceEvent = parseEvidenceEvent(EVENTS["run.queued"], { 1: () => ({ version: 2 }) });
-    expect(typed.version).toBe(6);
-    // version 1 and 2 lines of an older Foundry read as version 6 (the real migrations only set the version)
+    expect(typed.version).toBe(7);
+    // version 1, 2 and 6 lines of an older Foundry read as version 7 (the real migrations only set the version)
+    expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 6 })).toEqual(EVENTS["run.queued"]);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 2 })).toEqual(EVENTS["run.queued"]);
     const old = parseEvidenceEvent({ ...EVENTS["run.queued"], version: 1 });
     expect(old).toEqual(EVENTS["run.queued"]);

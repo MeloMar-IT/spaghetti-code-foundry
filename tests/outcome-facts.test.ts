@@ -56,6 +56,14 @@ describe("outcomeFactsOf", () => {
     expect(f.observeDenies).toBe(1);
   });
 
+  it("counts a policy denial about the whole run, which has no step, and keeps the other facts", () => {
+    const wide = ev("step.denied", 3, { denial: { kind: "policy", policy: { id: "p", version: "1" }, packSha256: "a".repeat(64), reasonCode: "x.y" } });
+    const approved = ev("step.approved", 40, { step: step("approve", "approval"), by: {} });
+    const f = outcomeFactsOf(run(), [ev("run.stopped", 10, { at: "approve" }), wide, approved], EV);
+    expect(f.policyBlocks).toBe(1);
+    expect(f.approvals.decided).toBe(1);
+  });
+
   it("lists models and policies once, sorted", () => {
     const f = outcomeFactsOf(run(), [ev("step.routed", 1, { step: step("a"), model }), ev("step.completed", 2, { step: step("a"), model: { ...model, model: "haiku" }, durationMs: 1, artifacts: [] }), ev("step.routed", 3, { step: step("b"), model }), decide("push", "allow", "enforce", "q"), decide("push", "allow", "enforce", "p")], EV);
     expect(f.models).toEqual(["claude:anthropic:haiku", "claude:anthropic:opus"]);

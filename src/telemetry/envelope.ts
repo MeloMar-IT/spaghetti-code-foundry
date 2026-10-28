@@ -181,7 +181,7 @@ function parts(body: EvidenceEventBody): { kind: TelemetryKind; name: string; fi
       return { kind: "step", name: type, fields: { step: body.step, cause: body.cause } };
     case "step.denied": {
       const d = body.denial;
-      const fields: Draft = { step: body.step, outcome: "denied", cause: d.kind };
+      const fields: Draft = { ...(body.step ? { step: body.step } : {}), outcome: "denied", cause: d.kind };
       if (d.kind === "approval") fields.actor = d.by;
       else if (d.tool) fields.tool = d.tool;
       return { kind: "step", name: type, fields };

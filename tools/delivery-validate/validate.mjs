@@ -368,7 +368,7 @@ function checkContract(text, sigText, key) {
 // same commit. tests/delivery-validate-events.test.ts builds a valid event for every type and enum value and fails if not.
 
 /** The newest event version this script reads. A higher version is refused, so a validator that falls behind stops delivery. */
-const EVIDENCE_EVENT_VERSION = 6;
+const EVIDENCE_EVENT_VERSION = 7;
 const EVENTS_MAX = 256 * 1024 * 1024;
 const ARTIFACT_KINDS = ["log", "transcript", "diff", "flow", "skill-lock", "test-report", "other"];
 const STEP_TYPES = ["claude", "shell", "approval", "parallel", "flow"];
@@ -462,7 +462,7 @@ const contextBudget = obj({ maxSources: (v) => int(1)(v) && v <= 1000, maxSource
 const denial = union("kind", {
   approval: obj({ kind: any, by: actor }),
   tool: obj({ kind: any, tool }),
-  policy: obj({ kind: any, policy: policyIdentity, reasonCode: slug, tool: opt(tool) }),
+  policy: obj({ kind: any, policy: policyIdentity, packSha256: opt(isSha256), reasonCode: slug, tool: opt(tool) }),
 });
 const policyDecision = both(
   obj({ version: (v) => v === 1, policy: policyIdentity, packSha256: opt(isSha256), mode: oneOf(MODES), boundary: oneOf(BOUNDARIES), inputSha256: isSha256, outcome: oneOf(OUTCOMES), reasonCode: oneOf(REASON_CODES), rule: opt(slug), evaluatedAt: time }),
@@ -511,7 +511,7 @@ const EVENT_TYPES = {
     personalSetup: bool,
   }),
   "step.retried": event({ step, cause: oneOf(RETRY_CAUSES) }),
-  "step.denied": event({ step, denial }),
+  "step.denied": event({ step: opt(step), denial }),
   "step.approved": event({ step, by: actor }),
   "step.failed": event(stepEnd),
   "step.completed": event({ ...stepEnd, commit: opt(gitIdentity), pullRequest: opt(pullRequest) }),
@@ -569,12 +569,13 @@ function eventRules(e) {
     } else if (e.failure === undefined || data.some((x) => x !== undefined)) return false;
   }
   if (e.type === "step.approved" && e.step.type !== "approval") return false;
-  if (e.type === "step.denied" && e.denial.kind === "approval" && e.step.type !== "approval") return false;
+  if (e.type === "step.denied" && !e.step && e.denial.kind !== "policy") return false;
+  if (e.type === "step.denied" && e.step && e.denial.kind === "approval" && e.step.type !== "approval") return false;
   return true;
 }
 const isEvent = both(union("type", EVENT_TYPES), eventRules);
 
-/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→3→4→5→6 only set the version), then the schema holds. */
+/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→…→7 only set the version), then the schema holds. */
 function readEvent(raw) {
   const v = raw.version;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > EVIDENCE_EVENT_VERSION) return false;
