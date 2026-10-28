@@ -8,10 +8,13 @@
 // Each new issue gets the original's labels (minus claude-factory status labels), the build label
 // (FACTORY_VAR_TRIGGER_LABEL), the review label if the original had it, and a "Depends on" section
 // with the real issue numbers. Safe to run twice: a second run finds its earlier comment and stops.
-// Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE, FACTORY_VAR_TRIGGER_LABEL,
+// An issue that is itself a split part, or whose parts are still open (tools/split-family), is not split again,
+// unless FACTORY_SPLIT_CONFIRMED=1 (the flow sets it when the owner approved this split).
+// Env: FACTORY_SPLIT_CONFIRMED, FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE, FACTORY_VAR_TRIGGER_LABEL,
 //      FACTORY_VAR_REVIEW_PLAN_LABEL, FACTORY_RUN_ID, FACTORY_FIRST_INFO (the first line of the comment).
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const repo = process.env.FACTORY_VAR_GITHUB_REPO;
 const parentNo = process.env.FACTORY_VAR_ISSUE;
@@ -62,6 +65,13 @@ const done = (parent.comments ?? []).find((c) => ours(c.body) && DONE_RE.test(c.
 if (done) {
   console.log(`already split: ${(done.body.match(/#\d+/g) ?? []).join(" ")}`);
   process.exit(0);
+}
+// ── never split on top of an earlier split, unless the owner approved it (split_gate → approve_split) ──
+if (process.env.FACTORY_SPLIT_CONFIRMED !== "1") {
+  const r = spawnSync(process.execPath, [fileURLToPath(new URL("./split-family", import.meta.url))], { encoding: "utf8", env: process.env });
+  const family = /^FAMILY: *(\S+)\s*$/m.exec(r.stdout ?? "")?.[1];
+  if (r.status !== 0 || !family) fail(`could not check #${parentNo} for earlier splits (${(r.stderr || "").trim()}); not creating new parts`);
+  if (family !== "none") fail(`#${parentNo} ${family === "part" ? "is itself a part of an earlier split" : "still has open parts from an earlier split"} — not creating new parts. Plan it again against those parts, or let the owner approve the split in the flow.\n${r.stdout.trim()}`);
 }
 const isStatus = (l) => /^factory[:_]/i.test(l);
 const labels = new Set((parent.labels ?? []).map((l) => l.name).filter((l) => !isStatus(l)));

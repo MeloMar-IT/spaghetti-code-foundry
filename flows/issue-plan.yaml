@@ -293,7 +293,7 @@ steps:
       fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""
       fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""
       fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""
-      out=$(printf '%s\n' "${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}"| sed '/^SKILL_REQUEST:/d; /^DECIDED:/d')
+      out=$(printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}"| sed '/^SKILL_REQUEST:/d; /^DECIDED:/d')
       status=$(printf '%s\n' "$out" | sed -n 's/^PLAN_STATUS: *\([A-Z_]*\).*/\1/p' | tail -1)
       # NEEDS_INFO: tools/decide-questions.mjs decides the technical questions, posts the one comment and records the round.
       if [ "$status" = NEEDS_INFO ]; then
