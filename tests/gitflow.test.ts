@@ -401,6 +401,21 @@ describe("gitflow pipeline", () => {
     expect(gh.ghLog()).not.toMatch(/^SKILL_REQUEST:/m);
   });
 
+  it("builds a mechanical plan over the size limit as one change", async () => {
+    process.env.FAKE_SIZE = "40 files, 3000 lines";
+    process.env.FAKE_ISSUE_PLAN = "## Goal\nMove files\nMECHANICAL: yes — only moves files and changes imports\nPLAN_STATUS: READY";
+    issues(8);
+    await watcher().tick();
+    await settle();
+    const run = runOf("8")!;
+    expect(run.status).toBe("succeeded");
+    const ids = run.history.map((h) => h.id);
+    expect(ids).toEqual(expect.arrayContaining(["size_gate", "risk_gate", "implement"]));
+    expect(ids).not.toContain("force_split");
+    expect(run.history.find((h) => h.id === "size_gate")!.output).toContain("but mechanical — built as one change");
+    expect(gh.comments().find((c) => c.body.includes("Foundry plan**"))!.body).toContain("**Size:** over the size limit, but mechanical");
+  });
+
   it("reads the skill request of a normal plan and posts the section", async () => {
     const request = { version: 1, skills: [{ id: "python-lang", reason: "The change is in src/*.py.", evidence: ["path:src/a.py"] }] };
     process.env.FAKE_SKILL_REQUEST = JSON.stringify(request);
