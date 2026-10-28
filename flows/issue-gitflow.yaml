@@ -7,6 +7,7 @@
 #       too big (limit or planner) → split: low split risk creates the issues itself, else /approve
 #       WAITS_FOR #N → recorded in Depends on → stop (continues when #N is done; an invalid wait is asked)
 #   → risk > 75 or Factory_review_plan → wait for /approve
+#   → a split parent built as one change: close its open parts, their dependants wait for it
 #   → lock the plan's code areas (runs on other areas code at the same time)
 #   → Sonnet codes → tests ⟲ fix → 2 × Codex review → docs → commit → push the feature branch
 #   → merge into develop (one at a time; changelog merges keep both sides; conflicts → agent resolves)
@@ -922,13 +923,22 @@ steps:
     routes:
       - if: "^GATE: yes\\s*$"
         goto: approve_plan
-    on_success: claim_areas
+    on_success: close_parts
   - id: approve_plan
     type: approval
     jump_only: true
     message: Approve the plan for {{vars.github_repo}}#{{vars.issue}} (reply /approve or /reject on the issue)
-    on_success: claim_areas
+    on_success: close_parts
     on_failure: pull_ticket
+  - id: close_parts
+    type: shell
+    repo_access: true
+    jump_only: true
+    description: "Building a split parent as one change: close its open parts as duplicates, rewire their dependants"
+    run: |-
+      # tools/split-family close-parts does nothing without open parts and never stops the run.
+      node "$FACTORY_TOOLS/split-family" close-parts || echo "could not close the open parts of an earlier split (above); coding goes on"
+    on_success: claim_areas
   - id: claim_areas
     type: shell
     description: Lock the code areas the plan changes; if another run holds one, step aside (free the slot) and continue when it is free

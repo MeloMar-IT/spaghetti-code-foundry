@@ -2946,6 +2946,15 @@ You can also ask for it in the issue text, for example "build this as one change
 your exception only when the issue's author or the last person who edited the issue text has write access
 to the repository; a note in a comment does not count. Without that, the plan is split as usual.
 
+When an issue is built **as one change** after all, and it is a split parent or its text says `Build #N as one change`
+(N is the split parent), the Foundry closes the open parts of that split before it codes. This happens after the plan
+is approved and before the code areas are locked. Each open part gets the comment "Closed as a duplicate of #P: it is
+built as one change.", loses its status and trigger labels, and is closed as not planned. An open issue that depended
+on a closed part then depends on #P instead, so no chain waits for a part that will never be built. A part that
+cannot be closed, because it has an open pull request, a run in progress or waiting for approval, or the done label,
+stays open. The comment on #P then says which part stayed open and why. The Foundry writes one summary comment on #P;
+when it runs again it finds that comment and does nothing. This step never stops the run.
+
 #### Questions the Foundry decides itself
 
 When the planner has questions, it sorts them by kind. The Foundry decides a question by itself only when
