@@ -2955,8 +2955,14 @@ recommendation.
   - **Queued run, or a run that has started merging:** the overrule waits for a later check. A run that has
     started merging is not stopped.
   - **Finished plan-only run:** its done label is removed and a new run starts.
-  - **Merged code:** nothing changes in the code. The Foundry posts a draft for a follow-up issue instead; you
-    create that issue yourself if you want it.
+  - **Merged code:** nothing changes in the code, no issue is created, no run starts and no label changes. The
+    Foundry posts one comment with a draft follow-up issue (a title and acceptance criteria); you create that issue
+    yourself if you want it. A run that has started merging is not stopped, and the draft comes once the run has
+    ended merged. A merged story stays watched after its issue is closed or loses its trigger label, for 14 days
+    after the issue's last update, at most 30 such issues per check. Excluded labels still apply: an issue with one
+    gets no draft. GitHub search can lag a few minutes, so a draft on a closed issue can come a few minutes later.
+    While a check for a merged story is unfinished, the issue gets no label change and no new run; the check is
+    tried again at the next check.
   - **Parked or cancelled run:** nothing changes.
   - **No run yet** (the issue still needs your answers before a run starts): your overrule counts as an answer.
     The ack is posted, then a new run starts. Dependencies, the lock, the limits and the release pause still apply,
