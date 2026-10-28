@@ -1301,6 +1301,16 @@ write("issue-plan", {
     // Rejected: read the issue again (with the feedback) and plan again.
     on_failure: "pull_ticket",
   };
+  // Building a split parent (or "Build #N as one change") as one change: its open parts become duplicates. Never stops the run.
+  const closeParts = {
+    id: "close_parts",
+    type: "shell",
+    repo_access: true,
+    jump_only: true,
+    description: "Building a split parent as one change: close its open parts as duplicates, rewire their dependants",
+    run: '# tools/split-family close-parts does nothing without open parts and never stops the run.\nnode "$FACTORY_TOOLS/split-family" close-parts || echo "could not close the open parts of an earlier split (above); coding goes on"',
+    on_success: "claim_areas",
+  };
   const implement = byId("implement");
   implement.prompt = swap(implement.prompt,
     FOLLOW_PLAN,
@@ -2086,6 +2096,7 @@ write("issue-plan", {
     forceSplit,
     hotfixRiskGate(riskGate),
     approvePlan,
+    closeParts,
     claimAreas,
     waitForArea,
     implement,
@@ -2107,8 +2118,8 @@ write("issue-plan", {
     byId("baseline_failed"),
   ];
   // push_develop is followed by the report; the plan steps by risk_gate etc. (their jumps are explicit)
-  gitflowSteps.find((x) => x.id === "risk_gate").on_success = "claim_areas";
-  gitflowSteps.find((x) => x.id === "approve_plan").on_success = "claim_areas";
+  gitflowSteps.find((x) => x.id === "risk_gate").on_success = "close_parts";
+  gitflowSteps.find((x) => x.id === "approve_plan").on_success = "close_parts";
   for (const id of ["plan", "revise_plan"]) gitflowSteps.find((x) => x.id === id).max_budget_usd = 8;
   for (const x of gitflowSteps) if (["merge_develop", "resolve_conflicts", "finish_merge", "test_develop", "fix_develop", "commit_develop_fix"].includes(x.id)) x.jump_only = true;
   gitflowSteps.splice(gitflowSteps.findIndex((x) => x.id === "review_2"), 0, reviewGate);
@@ -2124,6 +2135,7 @@ write("issue-plan", {
       "      too big (limit or planner) → split: low split risk creates the issues itself, else /approve",
       "      WAITS_FOR #N → recorded in Depends on → stop (continues when #N is done; an invalid wait is asked)",
       "  → risk > 75 or Factory_review_plan → wait for /approve",
+      "  → a split parent built as one change: close its open parts, their dependants wait for it",
       "  → lock the plan's code areas (runs on other areas code at the same time)",
       "  → Sonnet codes → tests ⟲ fix → 2 × Codex review → docs → commit → push the feature branch",
       "  → merge into develop (one at a time; changelog merges keep both sides; conflicts → agent resolves)",

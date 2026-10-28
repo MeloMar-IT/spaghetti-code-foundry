@@ -5,6 +5,19 @@
 // The Part-line rules mirror plainLines and PART_OF_LINE in src/queue/issue-list.ts — keep them the same
 // (tests/split-family.test.ts checks it).
 // Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE, FACTORY_GH_BIN (default gh).
+//
+// `split-family close-parts` (step close_parts, before the code areas are locked): the issue being built is P.
+// When open issues are parts of P (a reopened split parent), or P's text has a line "Build #N as one change" and #N has
+// open parts, those parts are built as part of P. Each one is rewired and closed as a duplicate of P:
+//   1. every open issue that depends on the part also depends on P (so nobody is released early),
+//   2. the part gets a comment and is closed ("not planned"),
+//   3. only then its status labels and the build label are removed, and the part is taken out of the dependants.
+// A part with an open pull request, a run in progress (label factory:working or factory:waiting-approval, or a name in
+// FACTORY_WORKING_LABELS, comma separated), the done label, or a failing gh call stays open; the comment on P says why.
+// P gets one comment that ends with `<!-- claude-factory parts-closed run=<id> handled=<n,n> -->`; when the newest such
+// comment names every open part, a second run does nothing.
+// Env (also): FACTORY_VAR_TRIGGER_LABEL, FACTORY_RUN_ID, FACTORY_FIRST_INFO, FACTORY_WORKING_LABELS.
+// Output: lines for each action, last line `CLOSE_PARTS: none | already done | closed #a #b; left open #c`.
 // Output: a Markdown tree of the family (original → parts → this issue), last line `FAMILY: none | part | open-parts`.
 //   part       this issue is itself a part of a split (also through closed parents)
 //   open-parts open issues name this issue as the original of a split
@@ -21,7 +34,7 @@ const repo = process.env.FACTORY_VAR_GITHUB_REPO;
 const issueArg = process.env.FACTORY_VAR_ISSUE;
 // The open list carries whole bodies: 1000 issues can be far past Node's default 1 MiB buffer, so it is raised.
 const MAX_BUFFER = 256 * 1024 * 1024;
-const gh = (args) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", maxBuffer: MAX_BUFFER, stdio: ["ignore", "pipe", "pipe"] }).trim();
+const gh = (args, input) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", input, maxBuffer: MAX_BUFFER, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] }).trim();
 
 function fail(msg) {
   console.error(`split-family: ${msg}`);
@@ -31,6 +44,8 @@ function fail(msg) {
 if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
 if (!/^\d+$/.test(issueArg ?? "")) fail("set var issue to the issue number");
 const self = Number(issueArg);
+const mode = process.argv[2];
+if (mode !== undefined && mode !== "close-parts") fail("usage: split-family [close-parts]");
 
 // The body without carriage returns and without the lines inside code fences (and the fence lines).
 function plainLines(body) {
@@ -63,10 +78,11 @@ function title(t) {
 
 const isOpen = (i) => !i.state || String(i.state).toUpperCase() === "OPEN";
 const FIELDS = "number,title,state,body";
+const LIST_FIELDS = "number,title,state,body,labels";
 
 let openList;
 try {
-  openList = JSON.parse(gh(["issue", "list", "--repo", repo, "--state", "open", "--limit", String(LIMIT), "--json", FIELDS]));
+  openList = JSON.parse(gh(["issue", "list", "--repo", repo, "--state", "open", "--limit", String(LIMIT), "--json", LIST_FIELDS]));
 } catch (e) {
   fail(`could not read the open issues of ${repo}: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
 }
@@ -82,19 +98,262 @@ for (const i of open.values()) {
   kids.get(p).push(i);
 }
 
-// An issue from the open list, else read on its own; undefined when it can't be read.
+// An issue from the open list, else read on its own (once); undefined when it can't be read.
+const nodes = new Map();
 function node(n) {
   if (open.has(n)) return open.get(n);
-  try {
-    const i = JSON.parse(gh(["issue", "view", String(n), "--repo", repo, "--json", FIELDS]));
-    return i && typeof i === "object" ? i : undefined;
-  } catch {
-    return undefined;
+  if (!nodes.has(n)) {
+    try {
+      const i = JSON.parse(gh(["issue", "view", String(n), "--repo", repo, "--json", FIELDS]));
+      nodes.set(n, i && typeof i === "object" ? i : undefined);
+    } catch {
+      nodes.set(n, undefined);
+    }
   }
+  return nodes.get(n);
+}
+
+// ── close-parts (see the top) ──
+
+const HEADING = "🤖 **Spaghetti Code Foundry** closed the open parts";
+const MARK_RE = /^<!-- (?:claude-factory|spaghetti-code-foundry) parts-closed run=\S* handled=([\d,]*)(?: pending=([\d,]*))? -->\s*$/m;
+const BUILD_ONE = /\bbuild\s+#(\d+)\s+as\s+one\s+change\b/gi;
+const oneLine = (e) => title(String(e?.stderr || e?.message || e).trim().split("\n")[0]);
+const labelNames = (i) => (i.labels ?? []).map((l) => (typeof l === "string" ? l : l?.name)).filter(Boolean);
+const cacheUp = new Map();
+
+// The Part chain above an issue (nearest first), at most MAX_DEPTH levels, stopping on a loop.
+function ancestors(issue) {
+  if (cacheUp.has(issue.number)) return cacheUp.get(issue.number);
+  const out = [];
+  const seenUp = new Set([issue.number]);
+  for (let cur = issue; cur && out.length < MAX_DEPTH; ) {
+    const p = partOf(cur.body, cur.number);
+    if (p === undefined || seenUp.has(p)) break;
+    out.push(p);
+    seenUp.add(p);
+    cur = node(p);
+  }
+  cacheUp.set(issue.number, out);
+  return out;
+}
+
+// The N of each "Build #N as one change" on plain lines (not in code fences or backticks), without the issue itself.
+function oneChangeRoots(body, number) {
+  const roots = [];
+  for (const line of plainLines(String(body ?? ""))) {
+    for (const m of line.replace(/`[^`]*`/g, "").matchAll(BUILD_ONE)) {
+      const n = Number(m[1]);
+      if (n >= 1 && n <= MAX_NUMBER && n !== number && !roots.includes(n)) roots.push(n);
+    }
+  }
+  return roots;
+}
+
+// Does the open pull request close issue n (a closing keyword in title or body, or a branch named after it)?
+function prFor(pr, n) {
+  const keyword = new RegExp(`\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s*:?\\s+#${n}\\b`, "i");
+  const text = `${pr.title ?? ""}\n${pr.body ?? ""}`;
+  if (keyword.test(text) || new RegExp(`^\\s*Resolve #${n}\\b`, "i").test(String(pr.title ?? ""))) return true;
+  const last = String(pr.headRefName ?? "").split("/").at(-1);
+  return last === String(n) || last.startsWith(`${n}-`);
+}
+
+// Why a part stays open, or undefined. prs is undefined when the pull requests could not be checked.
+function blocker(n, labels, prs) {
+  if (!prs) return "could not check its pull requests";
+  const pr = prs.find((p) => prFor(p, n));
+  if (pr) return `it has an open pull request (#${pr.number})`;
+  const names = labels.map((l) => l.toLowerCase());
+  if (names.some((l) => /^factory[:_]done$/.test(l))) return "it already has the done label";
+  const extra = (process.env.FACTORY_WORKING_LABELS ?? "").split(",").map((l) => l.trim().toLowerCase()).filter(Boolean);
+  if (names.some((l) => /^factory[:_](?:working|waiting[-_]approval)$/.test(l) || extra.includes(l))) return "a run is working on it or waiting for approval on it";
+  return undefined;
+}
+
+const freshIssue = (n) => JSON.parse(gh(["issue", "view", String(n), "--repo", repo, "--json", LIST_FIELDS]));
+
+// Reads the body again, changes it, writes it only when it changed and reads it back (as writeSafely in src/queue/waits-for.ts).
+function editBody(n, change, done) {
+  let body = String(freshIssue(n).body ?? "");
+  if (done(body)) return;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const next = change(body);
+    if (next === body) return;
+    gh(["issue", "edit", String(n), "--repo", repo, "--body-file", "-"], next);
+    body = String(freshIssue(n).body ?? "");
+    if (done(body)) return;
+  }
+  throw new Error(`#${n} did not read back with the change`);
+}
+
+async function closeParts() {
+  const first = process.env.FACTORY_FIRST_INFO;
+  const trigger = process.env.FACTORY_VAR_TRIGGER_LABEL ?? "";
+  const runId = process.env.FACTORY_RUN_ID ?? "";
+  const openIssues = [...open.values()];
+  const roots = new Set(oneChangeRoots(current.body, self));
+  if (openIssues.some((i) => i.number !== self && ancestors(i).includes(self))) roots.add(self);
+  const own = new Set([self, ...ancestors(current)]);
+  const targets = openIssues.filter((i) => !own.has(i.number) && ancestors(i).some((a) => roots.has(a))).sort((a, b) => a.number - b.number);
+  const numbers = targets.map((t) => t.number);
+  // Our newest summary on the issue: the parts it handled, and the closed parts it could not clean up.
+  // A read error counts as "no earlier comment".
+  let comments = [];
+  try {
+    comments = JSON.parse(gh(["issue", "view", String(self), "--repo", repo, "--json", "comments,labels"])).comments ?? [];
+  } catch {
+    comments = [];
+  }
+  const earlier = comments.filter((c) => String(c.body ?? "").split("\n").some((l) => l.startsWith(HEADING)) && MARK_RE.test(String(c.body))).at(-1);
+  const mark = earlier ? MARK_RE.exec(earlier.body) : undefined;
+  const numList = (s) => (s ?? "").split(",").filter(Boolean).map(Number);
+  const handledBefore = new Set(numList(mark?.[1]));
+  const pendingBefore = numList(mark?.[2]);
+  if (!targets.length && !pendingBefore.length) {
+    console.log("CLOSE_PARTS: none");
+    return;
+  }
+  // An earlier summary that names every open part, with nothing pending, means nothing is left to do.
+  if (targets.length && !pendingBefore.length && numbers.every((n) => handledBefore.has(n))) {
+    console.log("CLOSE_PARTS: already done");
+    return;
+  }
+  const { dependencies, mergeDependsOn, removeFromDependsOn, foundryDependsOn } = await import(new URL("../dist/queue/deps.js", import.meta.url).href);
+
+  let prs;
+  try {
+    const list = JSON.parse(gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", String(LIMIT), "--json", "number,title,body,headRefName"]));
+    if (Array.isArray(list) && list.length < LIMIT) prs = list;
+  } catch {
+    prs = undefined;
+  }
+
+  // Parts closed in this run are not read as dependants again. Sibling parts count as dependants too: a part that
+  // stays open and depends on a closed part must wait for the built issue as well.
+  const gone = new Set();
+  const dependantsOf = (n) => openIssues.filter((d) => !own.has(d.number) && !gone.has(d.number) && d.number !== n
+    && dependencies(String(d.body ?? ""), d.number, openIssues).includes(n));
+  // Takes the part's status labels and the build label off it, then its number out of the dependants' Depends on
+  // sections. Throws on the first failure, so the caller keeps the part pending.
+  const cleanUp = (n) => {
+    const remove = labelNames(freshIssue(n)).filter((l) => /^factory[:_]/i.test(l) || (trigger && l === trigger));
+    if (remove.length) gh(["issue", "edit", String(n), "--repo", repo, ...remove.flatMap((l) => ["--remove-label", l])]);
+    for (const d of openIssues) {
+      if (own.has(d.number) || gone.has(d.number) || d.number === n) continue;
+      if (!foundryDependsOn(String(d.body ?? "")).includes(n)) continue;
+      editBody(d.number, (b) => removeFromDependsOn(b, [n]), (b) => !foundryDependsOn(b).includes(n));
+    }
+  };
+  const closed = [];
+  const cleaned = [];
+  const handled = [];
+  const pending = [];
+  const left = [];
+  const rewired = new Set();
+  const notes = [];
+  // Parts an earlier run closed but could not finish: their cleanup is retried before anything else.
+  for (const n of pendingBefore.filter((x) => !numbers.includes(x))) {
+    try {
+      if (isOpen(freshIssue(n))) continue; // reopened by someone: not ours to clean up any more
+      cleanUp(n);
+      cleaned.push(n);
+      handled.push(n);
+      console.log(`cleaned up #${n}`);
+    } catch (e) {
+      pending.push(n);
+      notes.push(`#${n} is still not cleaned up: ${oneLine(e)}`);
+    }
+  }
+  for (const t of targets) {
+    const n = t.number;
+    let reason = blocker(n, labelNames(t), prs);
+    let fresh = t;
+    if (!reason) {
+      try {
+        fresh = freshIssue(n);
+        reason = isOpen(fresh) ? blocker(n, labelNames(fresh), prs) : "it was closed meanwhile";
+      } catch (e) {
+        reason = `could not read it again: ${oneLine(e)}`;
+      }
+    }
+    const dependants = reason ? [] : dependantsOf(n);
+    if (!reason) {
+      try {
+        for (const d of dependants) {
+          editBody(d.number, (b) => mergeDependsOn(b, [self], "waits for the issue that is built as one change"),
+            (b) => dependencies(b, d.number, openIssues).includes(self));
+          rewired.add(d.number);
+        }
+        const partComment = [
+          ...(first ? [first, ""] : []),
+          `Closed as a duplicate of #${self}: it is built as one change.`,
+          "",
+          `<!-- claude-factory part-closed of=${self} run=${runId} -->`,
+        ].join("\n");
+        gh(["issue", "comment", String(n), "--repo", repo, "--body-file", "-"], partComment);
+        gh(["issue", "close", String(n), "--repo", repo, "--reason", "not planned"]);
+      } catch (e) {
+        reason = oneLine(e);
+      }
+    }
+    if (reason) {
+      left.push({ n, reason });
+      console.log(`left open #${n}: ${reason}`);
+      continue;
+    }
+    gone.add(n);
+    closed.push(n);
+    console.log(`closed #${n} as a duplicate of #${self}`);
+    // The part is closed now, so a failure from here is kept pending: the next run finishes the cleanup.
+    try {
+      cleanUp(n);
+      handled.push(n);
+    } catch (e) {
+      pending.push(n);
+      notes.push(`#${n} is closed, but its labels or Depends on are not cleaned up yet: ${oneLine(e)}`);
+    }
+  }
+
+  const lines = [
+    `${HEADING} of a split, because #${self} is built as one change:`,
+    "",
+    ...closed.map((n) => `- #${n} closed as a duplicate of #${self}`),
+    ...cleaned.map((n) => `- #${n} cleaned up (labels and Depends on)`),
+    ...left.map((l) => `- #${l.n} left open: ${l.reason}`),
+    ...(rewired.size ? ["", `Waiting for #${self} now: ${[...rewired].sort((a, b) => a - b).map((n) => `#${n}`).join(", ")}`] : []),
+    ...notes.map((x) => `- ${x}`),
+    "",
+    `<!-- claude-factory parts-closed run=${runId} handled=${handled.join(",")} pending=${pending.join(",")} -->`,
+  ];
+  const comment = [...(first ? [first, ""] : []), ...lines].join("\n");
+  try {
+    gh(["issue", "comment", String(self), "--repo", repo, "--body-file", "-"], comment);
+  } catch (e) {
+    console.log(`could not comment on #${self}: ${oneLine(e)}`);
+  }
+  for (const x of notes) console.log(x);
+  const sum = [
+    ...(closed.length ? [`closed ${closed.map((n) => `#${n}`).join(" ")}`] : []),
+    ...(cleaned.length ? [`cleaned ${cleaned.map((n) => `#${n}`).join(" ")}`] : []),
+    ...(left.length ? [`left open ${left.map((l) => `#${l.n}`).join(" ")}`] : []),
+    ...(pending.length ? [`pending ${pending.map((n) => `#${n}`).join(" ")}`] : []),
+  ];
+  console.log(`CLOSE_PARTS: ${sum.join("; ")}`);
 }
 
 const current = node(self);
 if (!current) fail(`could not read #${self} in ${repo}`);
+
+if (mode === "close-parts") {
+  try {
+    await closeParts();
+  } catch (e) {
+    fail(`close-parts: ${oneLine(e)}`);
+  }
+  await new Promise((done) => process.stdout.write("", done));
+  process.exit(0);
+}
 
 // chain[0] is this issue, the last entry the original (or the end of the walk).
 const chain = [{ number: self, issue: current }];
