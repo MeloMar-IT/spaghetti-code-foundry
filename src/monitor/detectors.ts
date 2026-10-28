@@ -4,6 +4,7 @@ import type { RunSummary } from "../engine/state.js";
 import { cleanLine, errorKind, explainError, GITHUB_LIMIT_RE, NOT_EXPLAINED } from "../errors.js";
 import { classifyFailure, failedIndex } from "../failure.js";
 import type { RateReading } from "../github.js";
+import type { IssueRecord } from "../queue/issue-list.js";
 import type { Scheduler } from "../queue/scheduler.js";
 import { parseInterval, type TrackedIssue, type WatcherStatus } from "../queue/watcher.js";
 import type { UpdateState } from "../self-update-state.js";
@@ -44,6 +45,8 @@ export interface DetectorInput {
   lastStart?: string;
   /** Open issues with a waiting label that Needs you does not list; undefined: not known (then nothing is judged). */
   unlisted?: WaitingUnlisted[];
+  /** Saved issue lists of watched repositories; undefined: not known (then nothing is judged). */
+  issueLists?: IssueListInput[];
   /** Set while the server waits to restart. */
   restart?: { why: "new_version" | "data_folder" | "settings"; since: string };
   /** Usual step times from older succeeded runs. */
@@ -54,6 +57,23 @@ export interface DetectorInput {
   measures?: MeasuredRun[];
   /** The evidence files of the runs that ended within the SLO windows. */
   evidence?: EvidenceState[];
+}
+
+/** A saved issue list of a repository that enabled issue watchers check (for `dead-chain`). */
+export interface IssueListInput {
+  repo: string;
+  /** Ids of the eligible watchers of this repository, sorted. */
+  watchers: string[];
+  /** Their trigger labels: an open issue with one of them is built by the Foundry. */
+  labels: string[];
+  /** Completion labels: an open issue with one of them is done (`dependency_done_labels`, the gitflow done label). Sorted. */
+  done?: string[];
+  cut: boolean;
+  issues: IssueRecord[];
+  /** Open issues with a trigger label, named as a dependency, whose newest run is parked. Sorted. */
+  parked: number[];
+  /** Issues of the monitor's own bug stories (their repair stories): never a waiting story. Sorted. */
+  skip?: number[];
 }
 
 /** An open issue with a waiting label that Needs you did not list; `since`: when the monitor first saw it so. */

@@ -358,6 +358,20 @@ describe("monitor", () => {
         const withTrigger = [...waiting, "claude-factory"];
         const run = (over: Record<string, unknown>) => ({ runId: "r14", runDir: "/tmp/none", ...over });
 
+        it("reports a story that waits for a parked issue as a dead chain, and only then", async () => {
+          const dead = async (get: () => unknown) => {
+            saveIssueList("acme/app", [rec(12, ["claude-factory"]), { ...rec(14, ["claude-factory"]), dependsOn: [] }, { ...rec(13, ["claude-factory"]), dependsOn: [14] }], new Date(T0), false);
+            const m = mon({ scheduler: fake(get) });
+            await checkAt(m, 0);
+            return loadFindings(file).findings.find((f) => f.fingerprint === "dead-chain|acme/app#14");
+          };
+          const f = await dead(() => run({ parkedAt: new Date(T0).toISOString() }));
+          expect(f!.summary).toBe("1 story waits for #14, which is parked.");
+          expect(f!.evidence.lines).toEqual(["#13 → #14"]);
+          rmSync(file, { force: true });
+          expect(await dead(() => run({}))).toBeUndefined();
+        });
+
         it("leaves the issue out when run.json is missing, unreadable or another run, with and without the trigger label", async () => {
           const bad = [() => undefined, () => { throw new Error("broken"); }, () => run({ runId: "other" })];
           for (const get of bad) {
