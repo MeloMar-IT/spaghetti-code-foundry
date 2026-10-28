@@ -4,6 +4,7 @@ import { slowVisits } from "../estimate.js";
 import { failedIndex } from "../failure.js";
 import type { RunSummary } from "../engine/state.js";
 import { parseInterval } from "../queue/watcher.js";
+import { deadChains } from "./chains.js";
 import { DETECTORS, failure, HOUR, iso, latest, ownerRepo, plural, uniq, when, type Detector } from "./detectors.js";
 import type { FindingInput } from "./findings.js";
 import type { MeasureOwner } from "./measures.js";
@@ -391,7 +392,38 @@ const slowStep: Detector = {
   },
 };
 
-export const WORK_DETECTORS: Detector[] = [stuckRun, sameStepFailing, labelMismatch, waitingUnlisted, orphanLock, queueStalled, restartOverdue, developRed, slowStep];
+/** `#120 → #118 → #7`; a chain of more than 6 issues keeps the first 2 and the last 3. */
+function chainLine(c: number[]): string {
+  const at = (n: number) => `#${n}`;
+  return (c.length > 6 ? [...c.slice(0, 2).map(at), "…", ...c.slice(-3).map(at)] : c.map(at)).join(" → ");
+}
+
+/** Open stories wait for an issue that will never be built: the chain behind it stands still. */
+const deadChain: Detector = {
+  name: "dead-chain",
+  description: "Open stories with the trigger label wait, directly or through other issues, for an issue that will never be built. The whole chain stands still until someone builds, labels or closes that issue.",
+  run({ issueLists }) {
+    const out: FindingInput[] = [];
+    for (const list of issueLists ?? []) {
+      for (const { issue, reason, chains } of deadChains(list)) {
+        const k = chains.length;
+        const why = reason === "no-label" ? `has no ${list.labels.join(" or ")} label` : reason === "not-planned" ? "was closed as not planned" : "is parked";
+        out.push({
+          detector: "dead-chain",
+          fingerprint: `dead-chain|${list.repo}#${issue}`,
+          severity: "minor",
+          summary: `${k === 1 ? "1 story waits" : `${k} stories wait`} for #${issue}, which ${why}.`,
+          evidence: { counts: { stories: k }, lines: chains.slice(0, 5).map(chainLine), watchers: list.watchers, repos: [list.repo] },
+          about: "foundry",
+          repo: list.repo,
+        });
+      }
+    }
+    return out;
+  },
+};
+
+export const WORK_DETECTORS: Detector[] = [stuckRun, sameStepFailing, labelMismatch, waitingUnlisted, deadChain, orphanLock, queueStalled, restartOverdue, developRed, slowStep];
 
 export const ALL_DETECTORS: Detector[] = [...DETECTORS, ...WORK_DETECTORS, ...SLO_DETECTORS];
 

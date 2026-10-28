@@ -7476,6 +7476,7 @@ These are the names as they appear in the log and in mutes. The thresholds are i
 - `same-step-failing` (major): the same step ended runs as failed for different issues.
 - `label-mismatch` (major): an issue's status label does not match its newest run.
 - `waiting-unlisted` (minor): an open issue has a waiting label, but Needs you does not list it.
+- `dead-chain` (minor): open stories with the trigger label wait, directly or through other issues, for an issue that will never be built: one closed as not planned, a parked one, or an open one without the trigger label. One finding per such issue; the evidence shows up to five chains like `#120 → #118 → #7`.
 - `orphan-lock` (major): a lock is held by a run that is not running. The server frees such markers and locks itself, at start and every minute (only those whose run is gone or has a dead process). Each one is named in the server log and the monitor's activity, and the finding clears at the next check.
 - `queue-stalled` (critical): jobs are queued, slots are free, and nothing starts.
 - `restart-overdue` (major): a new version is installed and the server has not restarted.

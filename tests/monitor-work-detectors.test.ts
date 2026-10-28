@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { saveRun, type RunSummary, type StepRecord } from "../src/engine/state.js";
 import { buildHistory } from "../src/estimate.js";
-import { runDetectors, type ActiveRun, type DetectorInput } from "../src/monitor/detectors.js";
+import { runDetectors, type ActiveRun, type DetectorInput, type IssueListInput } from "../src/monitor/detectors.js";
+import type { IssueRecord } from "../src/queue/issue-list.js";
 import type { FindingInput } from "../src/monitor/findings.js";
 import { ALL_DETECTORS, detectorInfo, WORK_DETECTORS } from "../src/monitor/work-detectors.js";
 import { Scheduler } from "../src/queue/scheduler.js";
@@ -446,11 +447,103 @@ describe("waiting label not under Needs you", () => {
   });
 });
 
+describe("a chain that can never start", () => {
+  const T = "claude-factory";
+  const issue = (number: number, dependsOn: number[] = [], over: Partial<IssueRecord> = {}): IssueRecord =>
+    ({ number, title: `t${number}`, state: "open", labels: [T], createdAt: ago(HOUR), dependsOn, ...over });
+  const L = (issues: IssueRecord[], over: Partial<IssueListInput> = {}): IssueListInput =>
+    ({ repo: "acme/app", watchers: ["w"], labels: [T], cut: false, issues, parked: [], ...over });
+  const go = (...lists: IssueListInput[]) => find("dead-chain", { issueLists: lists });
+  const bare = (n: number, over: Partial<IssueRecord> = {}) => issue(n, [], { labels: [], ...over });
+
+  it("reports a chain that waits for an issue without the trigger label", () => {
+    const out = go(L([issue(120, [118]), issue(118, [7]), bare(7)]));
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      detector: "dead-chain", fingerprint: "dead-chain|acme/app#7", severity: "minor", about: "foundry", repo: "acme/app",
+      summary: "2 stories wait for #7, which has no claude-factory label.",
+      evidence: { lines: ["#118 → #7", "#120 → #118 → #7"], counts: { stories: 2 }, watchers: ["w"], repos: ["acme/app"] },
+    });
+  });
+
+  it("reports a blocker closed as not planned, and a parked one", () => {
+    expect(go(L([issue(1, [7]), bare(7, { state: "closed", stateReason: "not_planned" })]))[0]!.summary).toBe("1 story waits for #7, which was closed as not planned.");
+    expect(go(L([issue(1, [7]), issue(7)], { parked: [7] }))[0]!.summary).toBe("1 story waits for #7, which is parked.");
+  });
+
+  it("is quiet when every dependency is buildable or done", () => {
+    expect(go(L([issue(1, [7]), issue(7)]))).toEqual([]);
+    expect(go(L([issue(1, [7]), bare(7, { state: "closed", stateReason: "completed" })]))).toEqual([]);
+    expect(go(L([issue(1, [7]), bare(7, { state: "closed" })]))).toEqual([]);
+    // a done issue is not followed past
+    expect(go(L([issue(1, [7]), bare(7, { state: "closed", dependsOn: [8] }), bare(8)]))).toEqual([]);
+  });
+
+  it("does not judge a dependency that is not in the list, a cut list or an unknown list", () => {
+    expect(go(L([issue(1, [999])]))).toEqual([]);
+    expect(go(L([issue(1, [7]), bare(7)], { cut: true }))).toEqual([]);
+    expect(find("dead-chain")).toEqual([]);
+  });
+
+  it("treats an open issue with a completion label as done, and does not follow it", () => {
+    const L2 = (issues: IssueRecord[]) => L(issues, { done: ["Factory_done"] });
+    expect(go(L2([issue(1, [7]), issue(7, [], { labels: [T, "Factory_done"] })]))).toEqual([]);
+    expect(go(L2([issue(1, [7]), bare(7, { labels: ["Factory_done"] })]))).toEqual([]);
+    // done, so the walk stops there: its own dependency is not judged
+    expect(go(L2([issue(1, [7]), issue(7, [8], { labels: [T, "Factory_done"] }), bare(8)]))).toEqual([]);
+    // without the completion label it is a blocker again
+    expect(go(L2([issue(1, [7]), issue(7, [], { labels: [T, "Factory_go"] })])).map((f) => f.fingerprint)).toEqual([]);
+    expect(go(L2([issue(1, [7]), bare(7)]))[0]!.fingerprint).toBe("dead-chain|acme/app#7");
+  });
+
+  it("is quiet when only issues without the trigger label wait", () => {
+    expect(go(L([bare(1, { dependsOn: [7] }), bare(7)]))).toEqual([]);
+  });
+
+  it("ends a cycle, and still finds a blocker behind it", () => {
+    expect(go(L([issue(1, [2]), issue(2, [1])]))).toEqual([]);
+    expect(go(L([issue(1, [2]), issue(2, [1, 7]), bare(7)]))[0]).toMatchObject({ fingerprint: "dead-chain|acme/app#7", evidence: { counts: { stories: 2 } } });
+  });
+
+  it("gives one finding per blocker", () => {
+    const out = go(L([issue(1, [7, 8]), bare(7), bare(8)]));
+    expect(out.map((f) => f.fingerprint)).toEqual(["dead-chain|acme/app#7", "dead-chain|acme/app#8"]);
+  });
+
+  it("counts 7 stories and shows the 5 lowest", () => {
+    const out = go(L([...[9, 3, 5, 1, 7, 2, 4].map((n) => issue(n, [50])), bare(50)]));
+    expect(out[0]!.evidence.counts).toEqual({ stories: 7 });
+    expect(out[0]!.evidence.lines).toEqual(["#1 → #50", "#2 → #50", "#3 → #50", "#4 → #50", "#5 → #50"]);
+  });
+
+  it("shortens a long chain", () => {
+    const issues = [1, 2, 3, 4, 5, 6, 7].map((n) => issue(n, [n + 1]));
+    expect(go(L([...issues, bare(8)]))[0]!.evidence.lines).toContain("#1 → #2 → … → #6 → #7 → #8");
+  });
+
+  it("names every trigger label", () => {
+    expect(go(L([issue(1, [7]), bare(7)], { labels: [T, "b"] }))[0]!.summary).toBe("1 story waits for #7, which has no claude-factory or b label.");
+  });
+
+  it("counts a parked story that waits, whoever else names it", () => {
+    const alone = go(L([issue(120, [7]), issue(7)], { parked: [7, 120] }));
+    const named = go(L([issue(120, [7]), issue(7), issue(130, [120])], { parked: [7, 120] }));
+    expect(alone[0]!.evidence.counts).toEqual({ stories: 1 });
+    expect(named.find((f) => f.fingerprint.endsWith("#7"))!.evidence.counts).toEqual({ stories: 1 });
+    expect(named.find((f) => f.fingerprint.endsWith("#120"))!.evidence.counts).toEqual({ stories: 1 });
+  });
+
+  it("leaves out the monitor's own repair stories as waiting stories", () => {
+    expect(go(L([issue(1, [7]), issue(2, [7]), bare(7)], { skip: [1] }))[0]!.evidence.counts).toEqual({ stories: 1 });
+    expect(go(L([issue(1, [7]), bare(7)], { skip: [1] }))).toEqual([]);
+  });
+});
+
 describe("descriptions", () => {
   it("every detector has a unique name and a description of two sentences, at most 240 characters", () => {
     const info = detectorInfo();
-    expect(info).toHaveLength(22); // 20 (with the 5 SLO detectors), the self-update detector and the skill source check
-    expect(new Set(info.map((d) => d.name)).size).toBe(22);
+    expect(info).toHaveLength(23); // 21 (with the 5 SLO detectors), the self-update detector and the skill source check
+    expect(new Set(info.map((d) => d.name)).size).toBe(23);
     expect(info.map((d) => d.name)).toContain("skill-source-check");
     expect(info.map((d) => d.name)).toContain("detector-failed");
     for (const d of info) {
