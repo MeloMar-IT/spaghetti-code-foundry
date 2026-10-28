@@ -43,7 +43,7 @@ export function setupOverrule() {
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    for (const k of ["FAKE_GH_FAIL_ON", "FAKE_GH_COMMENTS", "FAKE_GH_PERMISSION", "FAKE_GH_READONLY", "FAKE_GH_LABEL_FILTER", "FAKE_GH_HOLD", "FAKE_GH_HOLD_ON", "FAKE_GH_COMMENTS_PLUS_LOG", "FAKE_GH_ISSUES", "FAKE_GH_FAIL_TEXT", "FAKE_GH_PRS"]) delete process.env[k];
+    for (const k of ["FAKE_GH_FAIL_ON", "FAKE_GH_COMMENTS", "FAKE_GH_PERMISSION", "FAKE_GH_READONLY", "FAKE_GH_LABEL_FILTER", "FAKE_GH_HOLD", "FAKE_GH_HOLD_ON", "FAKE_GH_COMMENTS_PLUS_LOG", "FAKE_GH_ISSUES", "FAKE_GH_FAIL_TEXT", "FAKE_GH_PRS", "FAKE_GH_OVERRULE_SEARCH", "FAKE_GH_CLOSED_ISSUES", "FAKE_GH_FAIL_API"]) delete process.env[k];
     t.gh.restore();
   });
 
@@ -66,11 +66,12 @@ export function setupOverrule() {
   };
   const log = () => t.gh.ghLog();
   const acks = () => (log().match(/overrule=901 -->/g) ?? []).length;
-  const notes = () => (log().match(/this overrule was not used/g) ?? []).length;
+  const drafts = () => (log().match(/overrule=901 followup -->/g) ?? []).length;
+  const notes =() => (log().match(/this overrule was not used/g) ?? []).length;
   const acts = (w: Watcher) => w.status.lastActions.join("\n");
   const runLog = () => readLiveLog(runDir());
   const untouched = () => {
     if (log().includes("comment on #4") || t.submit.mock.calls.length) throw new Error(`expected nothing to happen:\n${log()}`);
   };
-  return { t, watcher, issues, comments, plant, runDir, log, acks, notes, acts, runLog, untouched };
+  return { t, watcher, issues, comments, plant, runDir, log, acks, drafts, notes, acts, runLog, untouched };
 }

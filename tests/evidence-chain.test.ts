@@ -260,15 +260,16 @@ describe("the manifest of a chain", () => {
       { type: "step.denied", step: step("code", "claude"), denial: { kind: "tool", tool: { name: "Bash" } } },
       { type: "step.denied", step: step("code", "claude"), denial: { kind: "policy", policy: { id: "baseline", version: "1.2" }, reasonCode: "no-push" } },
       { type: "step.denied", step: step("code", "claude"), denial: { kind: "policy", policy: { id: "baseline", version: "1.2" }, reasonCode: "no-network" } },
+      { type: "step.denied", denial: { kind: "policy", policy: { id: "zeta", version: "2" }, packSha256: "8".repeat(64), reasonCode: "no-run" } },
       { type: "run.completed", final: { commit: "b".repeat(40), branch: "factory/y", repository: "acme/app" }, pullRequest: pr, time: "2026-01-31T12:03:00.000Z" },
     ]);
     const diff = { kind: "diff" as const, path: "evidence.diff", sha256: "5".repeat(64), bytes: 10, required: false };
     const m = build(lines, { diff });
     expect(RunEvidenceSchema.safeParse(m).success).toBe(true);
-    expect(m).toMatchObject({ status: "succeeded", startedAt: "2026-01-31T12:00:00.000Z", finishedAt: "2026-01-31T12:03:00.000Z", flow: { name: "demo", version: 3, sha256: FLOW }, events: { count: 17 } });
+    expect(m).toMatchObject({ status: "succeeded", startedAt: "2026-01-31T12:00:00.000Z", finishedAt: "2026-01-31T12:03:00.000Z", flow: { name: "demo", version: 3, sha256: FLOW }, events: { count: 18 } });
     expect(m.git).toEqual({ repository: "acme/app", branch: "factory/y", base: "a".repeat(40), final: "b".repeat(40) });
     expect(m.models).toEqual([opus, gpt]);
-    expect(m.policies).toEqual([{ id: "baseline", version: "1.2" }]);
+    expect(m.policies).toEqual([{ id: "baseline", version: "1.2" }, { id: "zeta", version: "2" }]);
     expect(m.approvals).toEqual([
       { step: step("ok", "approval"), time: "2026-01-31T12:01:00.000Z", decision: "approved", by: { kind: "user", id: USER } },
       { step: step("ok2", "approval"), time: "2026-01-31T12:02:00.000Z", decision: "rejected", by: { kind: "cli" } },

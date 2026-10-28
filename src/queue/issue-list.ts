@@ -89,6 +89,8 @@ function storiesOf(lines: string[], valid: (n: number) => boolean): number[] {
 const validFor = (self: number) => (n: number): boolean => Number.isInteger(n) && n >= 1 && n <= MAX_NUMBER && n !== self;
 const EPIC_LINE = /^\*\*Epic:\*\* #([1-9]\d*)\s*$/m;
 const PARENT_LINE = /^[ \t]*(?:\*\*)?Parent:(?:\*\*)?[ \t]*#([1-9]\d*)\b/im;
+/** "Part of #N" / "Part 2 of 4 of #N" at the start of a line (outside code fences). tools/split-family has a copy (tests/split-family.test.ts checks it). */
+export const PART_OF_LINE = /^[ \t]*Part(?:[ \t]+\d+[ \t]+of[ \t]+\d+)?[ \t]+of[ \t]+#([1-9]\d*)\b/im;
 export const EPIC_LABEL = "epic";
 
 /** The stories an issue body lists (the same rule as `toRecord`), sorted. */
@@ -129,7 +131,7 @@ export function toRecord(issue: RestIssue, ctx: RecordContext): IssueRecord {
   if (epic !== undefined) r.epic = epic;
   const parent = pick(PARENT_LINE);
   if (parent !== undefined) r.parent = parent;
-  const partOf = pick(/^[ \t]*Part(?:[ \t]+\d+[ \t]+of[ \t]+\d+)?[ \t]+of[ \t]+#([1-9]\d*)\b/im);
+  const partOf = pick(PART_OF_LINE);
   if (partOf !== undefined) r.partOf = partOf;
   for (const l of labels) {
     const m = /^epic:\s*(.+)$/i.exec(l);

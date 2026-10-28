@@ -192,7 +192,9 @@ if (prompt.includes("You are Ask SCF, the help assistant")) {
   const r = process.env.FAKE_ROUND;
   canned = r === "ECHO" ? JSON.stringify({ ...round, echo: `args=${args.join(" ")}\ncwd=${process.cwd()}\ngh_token=${ghSeen}\nPROMPT<<${prompt}>>` }) : r ?? JSON.stringify(round);
 } else if (prompt.includes("You triage tickets")) canned = process.env.FAKE_TRIAGE ?? "Small change.\nROUTE: SMALL";
-else if (prompt.includes("PLAN_STATUS: NEEDS_INFO")) canned = process.env.FAKE_PLAN ?? "1. change feature.txt\nPLAN_STATUS: READY";
+else if (prompt.includes("Your plan is over the size limit")) { // before the generic planner branch: the forced-split prompt may name NEEDS_INFO
+  canned = process.env.FAKE_FORCED_SPLIT ?? "## Split\n### ISSUE 1: Small part one\nDEPENDS_ON: none\nDo one.\n### ISSUE 2: Small part two\nDEPENDS_ON: 1\nDo two.\nSPLIT_RISK: 20\nPLAN_STATUS: TOO_BIG";
+} else if (prompt.includes("PLAN_STATUS: NEEDS_INFO")) canned = process.env.FAKE_PLAN ?? "1. change feature.txt\nPLAN_STATUS: READY";
 else if (prompt.includes("VERDICT: APPROVE")) canned = "Looks good.\nVERDICT: APPROVE";
 else if (prompt.includes("CI failed on this branch")) {
   writeFileSync("ci-fix.txt", "fixed\n");
@@ -211,8 +213,6 @@ else if (prompt.includes("CI failed on this branch")) {
   const ask = (process.env.FAKE_QUESTIONS_FOR ?? "").split(" ");
   canned = [...prompt.matchAll(/ISSUE #(\d+)/g)].map(([, n]) =>
     ask.includes(n) ? `### #${n}\n**Q1. Which package format?**\ndmg or pkg\n**Recommendation:** dmg — no admin prompt` : `### #${n}\nNO_QUESTIONS`).join("\n");
-} else if (prompt.includes("Your plan is over the size limit")) {
-  canned = process.env.FAKE_FORCED_SPLIT ?? "## Split\n### ISSUE 1: Small part one\nDEPENDS_ON: none\nDo one.\n### ISSUE 2: Small part two\nDEPENDS_ON: 1\nDo two.\nSPLIT_RISK: 20\nPLAN_STATUS: TOO_BIG";
 } else if (prompt.includes("is being merged into the develop branch")) {
   // Resolve by keeping both sides: drop the conflict markers from every conflicted file.
   const files = execFileSync("git", ["diff", "--name-only", "--diff-filter=U"], { encoding: "utf8" }).split("\n").filter(Boolean);

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { STOPPED_CANCEL_REASON, type RunSummary } from "../src/engine/state.js";
 import { isFoundryComment, isOverruleReply, isStatusComment, type Comment } from "../src/github.js";
 import {
-  EPIC_NOTE, OVERRULE_ANSWER_MAX, PLANNED_LINE, ackedNotPlanned, acceptedComment, codeMerged, decidedItems, findOverrules, followUpComment, hasPlanStep, mergeStarted,
+  EPIC_NOTE, OVERRULE_ANSWER_MAX, PLANNED_LINE, ackedNotPlanned, acceptedComment, codeMerged, decidedItems, findOverrules, followUpComment, followUpSearchArgs, hasPlanStep, mergeStarted,
   noteComment, overruleAction, overruleKey, overruleMarker, parseOverrule, plannedKeys, type Overrule,
 } from "../src/queue/overrule.js";
 // @ts-expect-error a plain ES module of the tools folder, without types
@@ -276,5 +276,14 @@ describe("ackedNotPlanned", () => {
   });
   it("reads the planned lines of a run log", () => {
     expect([...plannedKeys(["x", PLANNED_LINE("5"), "overrule 6 planned again "])]).toEqual(["5", "6"]);
+  });
+});
+
+describe("followUpSearchArgs", () => {
+  it("searches issues in any state with an overrule in a comment, updated in the last 14 days, at most 30", () => {
+    expect(followUpSearchArgs("acme/app", Date.parse("2026-10-27T12:00:00Z"))).toEqual([
+      "issue", "list", "--repo", "acme/app", "--state", "all", "--search", "overrule in:comments updated:>=2026-10-13",
+      "--limit", "30", "--json", "number,updatedAt",
+    ]);
   });
 });

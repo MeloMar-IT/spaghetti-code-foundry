@@ -21,6 +21,7 @@ import { withStory } from "./state.js";
 import { SloInputCache, sloLookbackHours } from "./slo-input.js";
 import { markerHash } from "./story.js";
 import { ALL_DETECTORS } from "./work-detectors.js";
+import { chainLists } from "./chains.js";
 import { unlistedCandidates, UnlistedTracker, type RunState } from "./unlisted.js";
 
 export interface MonitorDeps {
@@ -292,7 +293,7 @@ export class Monitor {
       // A queued story job is not looked at either; the active jobs stay, they fill the slots.
       queue: { ...queue, pending: queue.pending.filter((p) => !isStoryRun({ githubRepo: p.githubRepo, issue: p.issue }, stories)) }, monitorId: this.cfg.id,
       ...(this.wokeAt ? { wokeAt: this.wokeAt } : {}),
-      active: seen.active, areaLocks: this.areaLocks(start, activeIds, seen.locks), unlisted: this.waitingUnlisted(start, briefs, seen.watchers, stories), lastStart: this.d.scheduler.lastStart?.(), restart: this.d.restart?.(), history,
+      active: seen.active, areaLocks: this.areaLocks(start, activeIds, seen.locks), unlisted: this.waitingUnlisted(start, briefs, seen.watchers, stories), issueLists: this.issueLists(briefs, seen.watchers, stories), lastStart: this.d.scheduler.lastStart?.(), restart: this.d.restart?.(), history,
       update: (this.d.selfUpdate ?? loadUpdateState)(), measures: sloIn.measures, evidence: sloIn.evidence,
     });
     const merged = mergeFindings(stored.findings, found, start, new Set([...freedNow.keys()].map((r) => `orphan-lock|area|${r}`)));
@@ -446,8 +447,13 @@ export class Monitor {
   private waitingUnlisted(now: Date, briefs: RunBrief[], watchers: Seen["watchers"], stories: Set<string>): WaitingUnlisted[] | undefined {
     let listed: readonly { repo: string; issue: number }[] | undefined;
     try { listed = this.d.needsYou?.(); } catch { listed = undefined; }
+    return this.unlisted.build(now, () => unlistedCandidates({ watchers, listed: listed!, stories, runState: this.runStateOf(briefs) }), listed);
+  }
+
+  /** The newest run of an issue, as `RunState`. Reads a run.json only when asked. */
+  private runStateOf(briefs: RunBrief[]): (repo: string, issue: number) => RunState {
     let newest: Map<string, RunBrief> | undefined; // briefs are newest first
-    const runState = (repo: string, issue: number): RunState => {
+    return (repo, issue) => {
       if (!newest) {
         newest = new Map();
         for (const b of briefs) {
@@ -465,7 +471,15 @@ export class Monitor {
         return "unknown";
       }
     };
-    return this.unlisted.build(now, () => unlistedCandidates({ watchers, listed: listed!, stories, runState }), listed);
+  }
+
+  /** Saved issue lists for the dead-chain detector (see chains.ts). Never throws. */
+  private issueLists(briefs: RunBrief[], watchers: Seen["watchers"], stories: Set<string>): DetectorInput["issueLists"] {
+    try {
+      return chainLists({ watchers, stories, runState: this.runStateOf(briefs) });
+    } catch {
+      return undefined;
+    }
   }
 
   /**

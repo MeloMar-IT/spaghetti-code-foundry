@@ -75,8 +75,8 @@ export const DenialSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("approval"), by: ActorSchema }).strict(),
   /** The agent was refused the use of a tool. */
   z.object({ kind: z.literal("tool"), tool: ToolIdentitySchema }).strict(),
-  /** A policy said no. `tool` is set when the decision was about one tool. */
-  z.object({ kind: z.literal("policy"), policy: PolicyIdentitySchema, reasonCode: ReasonCodeSchema, tool: ToolIdentitySchema.optional() }).strict(),
+  /** A policy said no. `tool` is set when the decision was about one tool. `packSha256` is the pack that decided; absent when no pack could be read. */
+  z.object({ kind: z.literal("policy"), policy: PolicyIdentitySchema, packSha256: Sha256Schema.optional(), reasonCode: ReasonCodeSchema, tool: ToolIdentitySchema.optional() }).strict(),
 ]);
 export type Denial = z.infer<typeof DenialSchema>;
 
@@ -120,8 +120,8 @@ const EventUnion = z.discriminatedUnion("type", [
   }),
   /** The same visit is tried again: "outage" after the service could not be reached, "limit" on another model after a usage limit. */
   event("step.retried", { step, cause: z.enum(["outage", "limit"]) }),
-  /** Something in the step was refused (see DenialSchema). The step itself may still go on; its end is its own event. */
-  event("step.denied", { step, denial: DenialSchema }),
+  /** Something in the step was refused (see DenialSchema). The step itself may still go on; its end is its own event. `step` is absent only for a policy denial about the whole run. */
+  event("step.denied", { step: step.optional(), denial: DenialSchema }),
   /** A person approved the approval step. */
   event("step.approved", { step, by: ActorSchema }),
   /** The visit ended without success. */
@@ -216,8 +216,9 @@ export const EvidenceEventSchema = EventUnion.superRefine((e, ctx) => {
     }
   }
   if (e.type === "step.approved" && e.step.type !== "approval") ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be approved" });
-  if (e.type === "step.denied" && e.denial.kind === "approval" && e.step.type !== "approval") {
-    ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be rejected" });
+  if (e.type === "step.denied") {
+    if (!e.step && e.denial.kind !== "policy") ctx.addIssue({ code: "custom", path: ["step"], message: "is missing: only a policy denial can be about the whole run" });
+    if (e.step && e.denial.kind === "approval" && e.step.type !== "approval") ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be rejected" });
   }
 });
 export type EvidenceEvent = z.infer<typeof EvidenceEventSchema>;

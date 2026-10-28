@@ -80,7 +80,7 @@ async function readFacts(runDir: string, runId: string): Promise<EventFacts | un
       facts.segments.set(k, [...(facts.segments.get(k) ?? []), { tools: new Map() }]);
     } else if (e.type === "step.denied") {
       const tool = e.denial.kind === "tool" ? e.denial.tool.name : e.denial.kind === "policy" ? e.denial.tool?.name : undefined;
-      if (!tool) return;
+      if (!tool || !e.step) return;
       const k = keyOf(e.step);
       const list = facts.segments.get(k) ?? [];
       if (!list.length) list.push({ tools: new Map() });

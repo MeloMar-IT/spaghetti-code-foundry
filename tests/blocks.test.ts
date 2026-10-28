@@ -267,7 +267,7 @@ describe("every posted comment starts with a first-line variable", () => {
   });
   it("accepts good Node tools", () => {
     expect(scanNode(node(array + call))).toEqual([]);
-    for (const f of ["tools/post-questions", "tools/create-split", "tools/decide-questions.mjs"]) expect(scanTool(readFileSync(f, "utf8")), f).toEqual([]);
+    for (const f of ["tools/post-questions", "tools/create-split", "tools/split-family", "tools/decide-questions.mjs"]) expect(scanTool(readFileSync(f, "utf8")), f).toEqual([]);
   });
   it("accepts one plain condition between two first-line variables", () => {
     const src = (first: string, arr = array) => `#!/usr/bin/env node\nconst first = ${first};\n${arr}${call}`;

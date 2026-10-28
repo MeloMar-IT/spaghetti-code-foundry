@@ -6,6 +6,7 @@
 # "pr edit --add-reviewer <handle>" only records the handle in $FAKE_GH_LOG.reviewers.json ({url: [handles]}); "pr view --json reviewRequests,reviews"
 # answers from it ($FAKE_GH_REVIEWERS_FAIL=1 makes that view fail).
 # $FAKE_GH_AUTH_LOG=<file>: every call appends one line, tab separated: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN (each "-" when unset),
+# $FAKE_GH_OVERRULE_SEARCH: the answer of "issue list --search 'overrule in:comments …'" (the /overrule sweep); default [].
 # $FAKE_GH_LIST_LIMIT=<n>: "issue list" (not --search, not --state closed) returns at most the first n issues.
 # "host" when GH_CONFIG_DIR is unset (else the number of entries in that folder), and the arguments.
 if [ -n "$FAKE_GH_AUTH_LOG" ]; then
@@ -227,6 +228,12 @@ fi
 # "api graphql --input -": issue states. Answers every alias i<N> from $FAKE_GH_FRESH, else $FAKE_GH_ISSUES_BY_REPO[owner/name], else $FAKE_GH_ISSUES; default OPEN.
 # $FAKE_GH_GRAPHQL_MISSING="7 9": those aliases are null with a NOT_FOUND error, as gh prints it (exit 1). $FAKE_GH_GRAPHQL_MAX=<n>: a query with more aliases is refused.
 # $FAKE_GH_GRAPHQL_FAIL_AFTER=<n>: the calls after the first n fail.
+# "api graphql … lastEditedBy …": the author and last editor of an issue, as "<author> <editor>".
+# $FAKE_GH_ISSUE_AUTHOR (default foundry-owner; "fail" = the call fails with HTTP 502), $FAKE_GH_ISSUE_EDITOR (default none).
+case "$all" in "api graphql"*lastEditedBy*)
+  if [ "$FAKE_GH_ISSUE_AUTHOR" = fail ]; then echo "gh: HTTP 502" >&2; exit 1; fi
+  echo "${FAKE_GH_ISSUE_AUTHOR-foundry-owner} ${FAKE_GH_ISSUE_EDITOR}"; exit 0 ;;
+esac
 case "$all" in "api graphql"*)
   gn=$(($(cat "$FAKE_GH_LOG.graphql" 2>/dev/null || echo 0) + 1)); echo "$gn" > "$FAKE_GH_LOG.graphql"
   if [ -n "$FAKE_GH_GRAPHQL_FAIL_AFTER" ] && [ "$gn" -gt "$FAKE_GH_GRAPHQL_FAIL_AFTER" ]; then echo "gh: HTTP 502" >&2; exit 1; fi
@@ -305,7 +312,8 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:String(i.state||
                   echo "--- created issue: $*" >> "$FAKE_GH_LOG"; case "$*" in *--body-file*) cat >> "$FAKE_GH_LOG" ;; esac
                   echo "https://github.com/owner/repo/issues/$n" ;;
   "issue close") ;;
-  "issue list")  case "$*" in *"--state closed"*) printf '%s' "${FAKE_GH_CLOSED_ISSUES:-[]}" ;;
+  "issue list")  case "$*" in *"overrule in:comments"*) printf '%s' "${FAKE_GH_OVERRULE_SEARCH:-[]}" ;;
+                   *"--state closed"*) printf '%s' "${FAKE_GH_CLOSED_ISSUES:-[]}" ;;
                    *"--search"*) printf '%s' "${FAKE_GH_PRIORITY_ISSUES:-${FAKE_GH_ISSUES:-[]}}" ;;
                    *) if [ -n "$FAKE_GH_LABEL_FILTER" ]; then
                         lab=""; prev=""; for a in "$@"; do [ "$prev" = "--label" ] && lab="$a"; prev="$a"; done

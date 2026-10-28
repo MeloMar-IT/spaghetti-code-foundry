@@ -392,6 +392,14 @@ steps:
       Size limit: one issue must stay reviewable — at most {{vars.max_files}} files changed and about
       {{vars.max_code_lines}} lines of new or changed production code (tests and docs don't count). If your plan
       would exceed that, the issue is TOO_BIG: split it instead.
+      Exception: a change that only moves, renames or changes imports, with no behaviour change, is not split for
+      size — splitting it does not make it smaller. Answer READY and add the line
+      MECHANICAL: yes — <one sentence why the file limit does not apply> (do not give the issue's request as the reason).
+      The same holds when the issue's own text (above its comments; a comment does not count) asks to build it as
+      one change, e.g. "build this as one change": write exactly
+      MECHANICAL: yes — owner's exception: <one sentence> and do not answer TOO_BIG for size. The Foundry accepts it
+      only when the issue's author or the last editor of its text has write access.
+      In every other case leave the MECHANICAL line out.
       - TOO_BIG: cannot be done well as one focused, reviewable change. Propose a split into smaller
         issues (title + 2-3 lines each) that can each be built and tested on their own, in order.
         For TOO_BIG, write the split in exactly this format so the factory can create the issues:
@@ -407,6 +415,9 @@ steps:
         boundary choices; 51-75 some scope is deferred or reinterpreted; 76-100 the split changes what the issue
         asks for, or needs decisions only the owner can make. Write it as the line: SPLIT_RISK: <0-100>
         If the owner already agreed to split this issue (in the comments above), also write: SPLIT_APPROVED: yes
+        Never split on top of an earlier split: if this issue is itself a split part (a "Part N of M of #X" line) or
+        parts of the same original are still open, do not propose new parts. Re-plan it against those parts, or ask
+        (NEEDS_INFO) for the changes to them you need.
       - NEEDS_INFO: a decision only the owner can make, or missing requirements. Ask specific questions
         with the options you see and your recommendation. Do not guess on things that matter.
         Write each question in this form:
@@ -458,6 +469,7 @@ steps:
       AREAS: <comma-separated directories or files you will change, as specific as possible; list single shared
         files such as Main.kt or a settings screen by their path; list test FILES, never a whole tests folder;
         leave out docs, the changelog and the user guide>
+      Only for the size exception above: MECHANICAL: yes — <one sentence>
       For READY, also write exactly one line that names the skills the coder needs, as JSON on that one line:
       SKILL_REQUEST: {"version":1,"skills":[{"id":"<skill id>","reason":"<one sentence>","evidence":["path:<file in the repository>"]}]}
         Request only ids from a skill catalogue given in this prompt. With no catalogue, or when no skill is needed,
@@ -557,8 +569,8 @@ steps:
       rejected, with one line why.
       Keep the "## Risk" section and the RISK_SCORE / RISK_REASON lines, updated if the review changed
       the picture (never lower the score just because the reviewer scored lower).
-      Keep the SIZE and AREAS lines, updated to the final plan. If the final plan is over the size limit
-      ({{vars.max_files}} files / about {{vars.max_code_lines}} lines of production code), answer TOO_BIG with a split instead.
+      Keep the SIZE, AREAS and MECHANICAL lines, updated to the final plan (keep MECHANICAL only if it still applies). If the final plan is over the size limit
+      ({{vars.max_files}} files / about {{vars.max_code_lines}} lines of production code) and has no `MECHANICAL: yes` line, answer TOO_BIG with a split instead.
       A READY plan has these three sections, each with its own heading: ## Requirements, ## Constraints and ## Acceptance criteria.
       When a CONTEXT list is given above (between === CONTEXT and === END CONTEXT ===), end each item under
         ## Requirements, ## Constraints and ## Acceptance criteria with the ids of the entries it rests on, as
@@ -597,6 +609,9 @@ steps:
         boundary choices; 51-75 some scope is deferred or reinterpreted; 76-100 the split changes what the issue
         asks for, or needs decisions only the owner can make. Write it as the line: SPLIT_RISK: <0-100>
         If the owner already agreed to split this issue (in the comments above), also write: SPLIT_APPROVED: yes
+        Never split on top of an earlier split: if this issue is itself a split part (a "Part N of M of #X" line) or
+        parts of the same original are still open, do not propose new parts. Re-plan it against those parts, or ask
+        (NEEDS_INFO) for the changes to them you need.
 
       {{context.index}}
 
@@ -657,7 +672,7 @@ steps:
       fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""
       fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""
       fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""
-      out=$(printf '%s\n' "${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}"| sed '/^SKILL_REQUEST:/d; /^DECIDED:/d')
+      out=$(printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}"| sed '/^SKILL_REQUEST:/d; /^DECIDED:/d')
       status=$(printf '%s\n' "$out" | sed -n 's/^PLAN_STATUS: *\([A-Z_]*\).*/\1/p' | tail -1)
       # NEEDS_INFO: tools/decide-questions.mjs decides the technical questions, posts the one comment and records the round.
       if [ "$status" = NEEDS_INFO ]; then
@@ -691,7 +706,7 @@ steps:
     type: shell
     repo_access: true
     jump_only: true
-    description: "Low-risk split (or already agreed): create the issues; otherwise ask the owner"
+    description: "Low-risk split of an issue without earlier splits (or already agreed): create the issues; otherwise ask the owner"
     run: |-
       fresh() { [ "${1:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ]; }
       fresh "$FACTORY_RAN_PLAN_REVIEW" || FACTORY_OUT_PLAN_REVIEW=""
@@ -705,13 +720,19 @@ steps:
       limit=${FACTORY_VAR_AUTO_SPLIT_MAX_RISK:-50}; agreed=""; forced=""
       printf '%s\n' "$out" | grep -q "^SPLIT_APPROVED: *yes" && agreed=yes
       if [ -n "$FACTORY_VAR_REVIEW_PLAN_LABEL" ] && gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "$FACTORY_VAR_REVIEW_PLAN_LABEL"; then forced=yes; fi
-      if [ -n "$agreed" ]; then echo "The owner already agreed to the split — creating the issues."; echo "GATE: no"; exit 0; fi
-      if [ "$risk" -le "$limit" ] && [ -z "$forced" ] && [ ! -f "{{run.dir}}/hotfix" ]; then echo "Split risk $risk/100 (≤ $limit) — creating the issues without asking."; echo "GATE: no"; exit 0; fi
+      # A split part, or an issue with open parts of an earlier split, is always the owner's decision (tools/split-family).
+      fam=$(node "$FACTORY_TOOLS/split-family" 2>&1) || fam=$(printf '%s\nFAMILY: unknown' "$fam")
+      family=$(printf '%s\n' "$fam" | sed -n 's/^FAMILY: *\([a-z-]*\).*/\1/p' | tail -1); family=${family:-unknown}
+      tree=$(printf '%s\n' "$fam" | sed '/^FAMILY:/d')
+      if [ -n "$agreed" ] && [ "$family" = none ]; then echo "The owner already agreed to the split — creating the issues."; echo "GATE: no"; exit 0; fi
+      if [ "$family" = none ] && [ "$risk" -le "$limit" ] && [ -z "$forced" ] && [ ! -f "{{run.dir}}/hotfix" ]; then echo "Split risk $risk/100 (≤ $limit) — creating the issues without asking."; echo "GATE: no"; exit 0; fi
       why="the split risk is $risk/100 (above $limit)"; [ -n "$forced" ] && why="the issue has the \`$FACTORY_VAR_REVIEW_PLAN_LABEL\` label"
+      case "$family" in none) ;; part) why="this issue is itself a part of an earlier split" ;; open-parts) why="parts of an earlier split of this issue are still open" ;; *) why="the Foundry could not check this issue for earlier splits" ;; esac
       [ -f "{{run.dir}}/hotfix" ] && why="this is a hotfix, and a hotfix is never split by itself"
       { echo "$FACTORY_FIRST_APPROVE_SPLIT"; echo
         echo "🤖 **Spaghetti Code Foundry** thinks this issue is too big for one change and proposes splitting it (**split risk: $risk/100**):"; echo
         printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d; /^SPLIT_RISK:/d; /^SPLIT_APPROVED:/d'
+        if [ "$family" != none ]; then echo; echo "### Earlier splits of this issue"; echo; printf '%s\n' "$tree"; echo; echo "**Recommendation:** do not create new issues. /reject makes the Foundry plan this issue again against the parts above (or change them); /approve creates the new parts anyway."; fi
         echo; echo "✋ **You decide** ($why)."
         echo; echo "_${FACTORY_NEXT_APPROVE_SPLIT}_"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID approval -->"; } | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null
@@ -740,11 +761,14 @@ steps:
       fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""
       fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""
       fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""
+      # Only an approve_split after the last split_gate (and an approval, not a rejection) lets create-split split a family.
+      if [ "${FACTORY_RAN_APPROVE_SPLIT:-0}" -gt "${FACTORY_RAN_SPLIT_GATE:-0}" ] && printf '%s\n' "$FACTORY_OUT_APPROVE_SPLIT" | grep -q "^approved"; then export FACTORY_SPLIT_CONFIRMED=1; fi
       printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}" | sed '/^SKILL_REQUEST:/d' | "$FACTORY_TOOLS/create-split"
     on_success: end
   - id: size_gate
     type: shell
-    description: Plans over the size limit are split instead of built
+    repo_access: true
+    description: Plans over the size limit are split instead of built (unless the change is mechanical)
     run: |-
       fresh() { [ "${1:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ]; }
       fresh "$FACTORY_RAN_PLAN_REVIEW" || FACTORY_OUT_PLAN_REVIEW=""
@@ -758,7 +782,23 @@ steps:
       size=$(printf '%s\n' "$out" | sed -n 's/^SIZE: *//p' | tail -1)
       files=$(printf '%s\n' "$size" | sed -n 's/^\([0-9][0-9]*\) *files.*/\1/p'); lines=$(printf '%s\n' "$size" | sed -n 's/.*[, ] *\([0-9][0-9]*\) *lines.*/\1/p')
       echo "planned size: ${files:-?} files, ${lines:-?} lines of production code (limit ${FACTORY_VAR_MAX_FILES} files, ${FACTORY_VAR_MAX_CODE_LINES} lines)"
-      if [ -n "$files" ] && [ "$files" -gt "$FACTORY_VAR_MAX_FILES" ] || { [ -n "$lines" ] && [ "$lines" -gt "$FACTORY_VAR_MAX_CODE_LINES" ]; }; then echo "SIZE: over"; else echo "SIZE: ok"; fi
+      over=no; if [ -n "$files" ] && [ "$files" -gt "$FACTORY_VAR_MAX_FILES" ] || { [ -n "$lines" ] && [ "$lines" -gt "$FACTORY_VAR_MAX_CODE_LINES" ]; }; then over=yes; fi
+      [ "$over" = yes ] || { echo "SIZE: ok"; exit 0; }
+      mech=$(printf '%s\n' "$out" | grep -E '^MECHANICAL: *[Yy][Ee][Ss]([^A-Za-z]|$)' | tail -1)
+      [ -n "$mech" ] || { echo "SIZE: over"; exit 0; }
+      why=$(printf '%s\n' "$mech" | sed 's/^MECHANICAL: *[Yy][Ee][Ss] *//; s/^— *//; s/^- *//; s/^: *//')
+      if printf '%s\n' "$mech" | grep -qiE 'owner.s exception|one change'; then
+        who=$(gh api graphql -F n="$FACTORY_VAR_ISSUE" -f o="${FACTORY_VAR_GITHUB_REPO%%/*}" -f r="${FACTORY_VAR_GITHUB_REPO#*/}" -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){author{login} lastEditedBy{login}}}}' --jq '.data.repository.issue | [(.author.login // ""), (.lastEditedBy.login // "")] | join(" ")' 2>/dev/null)
+        ok=""; checked=""
+        for l in $who; do case "$l" in *[!A-Za-z0-9-]*) continue ;; esac
+          p=$(gh api "repos/$FACTORY_VAR_GITHUB_REPO/collaborators/$l/permission" --jq .permission 2>/dev/null)
+          checked="${checked:+$checked, }$l (${p:-could not check})"
+          case "$p" in admin|maintain|write) ok=$l; break ;; esac
+        done
+        [ -n "$ok" ] || { echo "the owner's exception does not count: nobody with write access wrote or last edited the issue text (${checked:-could not check})"; echo "SIZE: over"; exit 0; }
+      fi
+      echo "over the size limit, but mechanical — built as one change${why:+: $why}"
+      echo "SIZE: mechanical"
     routes:
       - if: "^SIZE: over\\s*$"
         goto: force_split
@@ -782,6 +822,7 @@ steps:
     prompt: |-
       Your plan is over the size limit for one issue:
       {{steps.size_gate.output}}
+      If your plan had a MECHANICAL line, the size gate did not accept it (reason above); do not keep the plan for that reason.
 
       Split this issue into smaller issues instead, each within the limit and buildable and testable on its
       own, in order. Use the plan you made (and the review notes, if any) for the parts.
@@ -798,13 +839,30 @@ steps:
       boundary choices; 51-75 some scope is deferred or reinterpreted; 76-100 the split changes what the issue
       asks for, or needs decisions only the owner can make. Write it as the line: SPLIT_RISK: <0-100>
       If the owner already agreed to split this issue (in the comments above), also write: SPLIT_APPROVED: yes
+      Never split on top of an earlier split: if this issue is itself a split part (a "Part N of M of #X" line) or
+      parts of the same original are still open, do not propose new parts. Re-plan it against those parts, or ask
+      (NEEDS_INFO) for the changes to them you need.
+
+      Only when the rule above stops you from proposing new parts, answer NEEDS_INFO instead: ask the owner how to change the existing parts, with the questions in this form:
+      Write each question in this form:
+        **Q<n>. <question>**
+        **Kind:** technical | product | policy | owner_action
+        **Needs:** file <path>   (only an owner_action question that waits for a file in the repository)
+        <context and the options you see>
+        **Recommendation:** <option> — <why>
+      Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.
+      policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).
+      An owner_action question that waits for a file adds `**Needs:** file <path>` (the path from the repository root): the Foundry goes on by itself once the file is there.
+      Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
 
       Do not write a SKILL_REQUEST line.
 
-      End with exactly one line: PLAN_STATUS: TOO_BIG
+      End with exactly one line: PLAN_STATUS: TOO_BIG (or PLAN_STATUS: NEEDS_INFO in the case above)
     routes:
       - if: "^PLAN_STATUS: TOO_BIG\\s*$"
         goto: split_gate
+      - if: "^PLAN_STATUS: NEEDS_INFO\\s*$"
+        goto: send_back
     on_success: risk_gate
     on_failure: risk_gate
   - id: risk_gate
@@ -835,7 +893,9 @@ steps:
       if [ -n "$FACTORY_VAR_REVIEW_PLAN_LABEL" ] && gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "$FACTORY_VAR_REVIEW_PLAN_LABEL"; then
         gate=yes; why="${why:+$why, and }the issue has the \`$FACTORY_VAR_REVIEW_PLAN_LABEL\` label"
       fi
-      plan=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d; /^RISK_SCORE:/d; /^RISK_REASON:/d')
+      size_note=$(printf '%s\n' "$FACTORY_OUT_SIZE_GATE" | grep '^over the size limit, but mechanical' | tail -1)
+      if printf '%s\n' "$FACTORY_OUT_SIZE_GATE" | grep -q "^the owner's exception does not count"; then gate=yes; why="${why:+$why, and }the plan is over the size limit and the owner's exception did not count"; fi
+      plan=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d; /^RISK_SCORE:/d; /^RISK_REASON:/d; /^MECHANICAL:/d')
       [ "$gate" = yes ] && [ -f "{{run.dir}}/hotfix" ] && why="$why. This is a hotfix: after the reviews it goes straight to \`$FACTORY_VAR_MAIN_BRANCH\`, so a person should look at the plan first"
       reviewed=""; [ -n "$FACTORY_OUT_PLAN_REVIEW" ] && reviewed=" (checked against the code by Codex)"
       [ -n "$notes" ] && reviewed=" (draft — the revision did not finish; Codex's review notes are below)"
@@ -843,9 +903,10 @@ steps:
       if [ "$gate" = yes ]; then first="$FACTORY_FIRST_APPROVE_PLAN"; else first="$FACTORY_FIRST_NOTHING"; fi
       { echo "$first"; echo
         echo "🤖 **Spaghetti Code Foundry plan**$reviewed"; echo; echo "**Risk: $risk/100**${reason:+ — $reason}"; echo
+        [ -n "$size_note" ] && { echo "**Size:** $size_note"; echo; }
         printf '%s\n' "$plan"
         echo; printf '%s\n' "$skills"
-        if [ -n "$notes" ]; then echo; echo "## Codex review notes (not yet worked in)"; echo; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d'; fi
+        if [ -n "$notes" ]; then echo; echo "## Codex review notes (not yet worked in)"; echo; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d; /^MECHANICAL:/d'; fi
         echo
         if [ "$gate" = yes ]; then
           echo "✋ **A human decides before coding starts:** $why."
@@ -856,7 +917,7 @@ steps:
           echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID plan -->"
         fi; } | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null
       printf '%s\n' "$plan"
-      [ -n "$notes" ] && { echo; echo "## Review notes to work in"; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d'; }
+      [ -n "$notes" ] && { echo; echo "## Review notes to work in"; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d; /^MECHANICAL:/d'; }
       echo; echo "RISK: $risk"; echo "GATE: $gate"; printf '%s\n' "$skill_line"
     routes:
       - if: "^GATE: yes\\s*$"

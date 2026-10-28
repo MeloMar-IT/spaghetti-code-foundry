@@ -1139,7 +1139,9 @@ can be found.
   test run, passed or failed.
 - **Older builds.** Evidence version 3 adds `step.profiled`. Version 2 lines are read as before. A
   Foundry from before this change refuses the evidence of a run that has version 3 lines, so it
-  cannot verify that run.
+  cannot verify that run. Version 7 adds `packSha256` to a policy denial (the pack that denied, when
+  known) and allows a policy `step.denied` without a step, for a denial about the whole run. Versions
+  1 to 6 are read as before; a delivery validator that only knows version 6 refuses version 7 lines.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
@@ -2928,6 +2930,22 @@ reinterpreting scope, or anything that needs your decision, is high).
 
 The threshold is the `auto_split_max_risk` variable (default 50).
 
+A split part (an issue with a **Part N of M of #X** line) is never split by itself, and neither is an issue that
+still has open parts of an earlier split. The Foundry then asks you before any split, whatever the risk, and the
+comment has an "Earlier splits of this issue" section with the family tree (the original, its parts, and this issue).
+Its recommendation is to reply `/reject`: the Foundry plans the issue again against the existing parts, or
+changes them. Reply `/approve` to split anyway. The same check runs when the split is created, so a split
+without your approval creates no issues. If the Foundry cannot read the issues (or the repository has 1000 or
+more open issues), it asks you too and says "could not check".
+
+A change that is **mechanical** is not split for size, because splitting it would not make it smaller
+(every part would touch most of the same files). A change is mechanical when it only moves, renames or
+changes imports, with no behaviour change. The planner then marks the plan `MECHANICAL: yes` with a reason,
+and the Foundry builds it as one change; the plan comment shows `**Size:** over the size limit, but mechanical — built as one change`.
+You can also ask for it in the issue text, for example "build this as one change". That note counts as
+your exception only when the issue's author or the last person who edited the issue text has write access
+to the repository; a note in a comment does not count. Without that, the plan is split as usual.
+
 #### Questions the Foundry decides itself
 
 When the planner has questions, it sorts them by kind. The Foundry decides a question by itself only when
@@ -2955,8 +2973,14 @@ recommendation.
   - **Queued run, or a run that has started merging:** the overrule waits for a later check. A run that has
     started merging is not stopped.
   - **Finished plan-only run:** its done label is removed and a new run starts.
-  - **Merged code:** nothing changes in the code. The Foundry posts a draft for a follow-up issue instead; you
-    create that issue yourself if you want it.
+  - **Merged code:** nothing changes in the code, no issue is created, no run starts and no label changes. The
+    Foundry posts one comment with a draft follow-up issue (a title and acceptance criteria); you create that issue
+    yourself if you want it. A run that has started merging is not stopped, and the draft comes once the run has
+    ended merged. A merged story stays watched after its issue is closed or loses its trigger label, for 14 days
+    after the issue's last update, at most 30 such issues per check. Excluded labels still apply: an issue with one
+    gets no draft. GitHub search can lag a few minutes, so a draft on a closed issue can come a few minutes later.
+    While a check for a merged story is unfinished, the issue gets no label change and no new run; the check is
+    tried again at the next check.
   - **Parked or cancelled run:** nothing changes.
   - **No run yet** (the issue still needs your answers before a run starts): your overrule counts as an answer.
     The ack is posted, then a new run starts. Dependencies, the lock, the limits and the release pause still apply,
@@ -7476,6 +7500,7 @@ These are the names as they appear in the log and in mutes. The thresholds are i
 - `same-step-failing` (major): the same step ended runs as failed for different issues.
 - `label-mismatch` (major): an issue's status label does not match its newest run.
 - `waiting-unlisted` (minor): an open issue has a waiting label, but Needs you does not list it.
+- `dead-chain` (minor): open stories with the trigger label wait, directly or through other issues, for an issue that will never be built: one closed as not planned, a parked one, or an open one without the trigger label. One finding per such issue; the evidence shows up to five chains like `#120 → #118 → #7`.
 - `orphan-lock` (major): a lock is held by a run that is not running. The server frees such markers and locks itself, at start and every minute (only those whose run is gone or has a dead process). Each one is named in the server log and the monitor's activity, and the finding clears at the next check.
 - `queue-stalled` (critical): jobs are queued, slots are free, and nothing starts.
 - `restart-overdue` (major): a new version is installed and the server has not restarted.

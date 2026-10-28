@@ -155,6 +155,10 @@ describe("telemetry envelope", () => {
     expect(d).toMatchObject({ cause: "tool", tool: { name: "Bash" }, outcome: "denied" });
     const [a] = telemetryFromEvidence("r1", { type: "step.denied", step: approval, denial: { kind: "approval", by } }, undefined, TIME);
     expect(a).toMatchObject({ cause: "approval", actor: by });
+    const [w] = telemetryFromEvidence("r1", { type: "step.denied", denial: { kind: "policy", policy: { id: "p", version: "1" }, packSha256: "a".repeat(64), reasonCode: "x.y" } }, undefined, TIME);
+    expect(w).toMatchObject({ cause: "policy", outcome: "denied" });
+    expect(w!.step).toBeUndefined();
+    expect(TelemetryEventSchema.safeParse(w).success).toBe(true);
     const [ok] = made("step.profiled");
     expect(ok).toMatchObject({ kind: "step", name: "step.profiled", outcome: "ok" });
     expect(ok!.cause).toBeUndefined();

@@ -102,7 +102,7 @@ function deniedBySegment(events: readonly EvidenceEvent[]): Map<string, number[]
     if (e.type === "step.started") {
       const k = keyOf(e.step);
       out.set(k, [...(out.get(k) ?? []), 0]);
-    } else if (e.type === "step.denied") {
+    } else if (e.type === "step.denied" && e.step) {
       const segs = out.get(keyOf(e.step));
       if (segs?.length) segs[segs.length - 1]!++;
     }
@@ -162,11 +162,11 @@ function approvalMeasures(run: RunSummary, events: readonly EvidenceEvent[]): No
   events.forEach((e, i) => {
     if (e.type === "step.started" && e.step.type === "approval") started.set(keyOf(e.step), e.time);
     if (e.type === "run.stopped" && e.at && waits.has(e.at)) waitingSince.set(e.at, e.time);
-    const decided = e.type === "step.approved" || (e.type === "step.denied" && e.denial.kind === "approval");
-    if (decided) {
-      const t = ms(waitingSince.get(e.step.id) ?? started.get(keyOf(e.step)), e.time);
-      waitingSince.delete(e.step.id);
-      started.delete(keyOf(e.step));
+    const decidedStep = e.type === "step.approved" || (e.type === "step.denied" && e.denial.kind === "approval") ? e.step : undefined;
+    if (decidedStep) {
+      const t = ms(waitingSince.get(decidedStep.id) ?? started.get(keyOf(decidedStep)), e.time);
+      waitingSince.delete(decidedStep.id);
+      started.delete(keyOf(decidedStep));
       if (t !== undefined) {
         a.decided++;
         a.totalMs += t;
