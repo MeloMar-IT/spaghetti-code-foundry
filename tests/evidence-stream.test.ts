@@ -204,6 +204,18 @@ describe("what the engine records", () => {
     expect(said).toEqual([]);
   });
 
+  it("records a denial about the whole run without a step, and only for a policy", () => {
+    const r = new RunRecorder(stream(), runDir);
+    r.runDenied({ kind: "policy", policy: { id: "p", version: "1" }, packSha256: "a".repeat(64), reasonCode: "x.y" });
+    const all = lines();
+    expect(all.map((e) => e.type)).toEqual(["step.denied"]);
+    expect("step" in all[0]!).toBe(false);
+    expect(all[0]).toMatchObject({ denial: { kind: "policy", packSha256: "a".repeat(64) } });
+    r.runDenied({ kind: "tool", tool: { name: "Bash" } });
+    expect(lines()).toHaveLength(1);
+    expect(existsSync(join(runDir, "evidence.incomplete"))).toBe(true);
+  });
+
   it("marks a test step, and hashes only a plain file", () => {
     writeFileSync(join(runDir, "logs", "001-a.log"), "x");
     const r = new RunRecorder(stream(), runDir);

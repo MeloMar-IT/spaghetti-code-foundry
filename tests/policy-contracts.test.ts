@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { PolicyIdentitySchema, sha256Hex, ReasonCodeSchema as EvidenceReasonCodeSchema } from "../src/evidence/identity.js";
 import { parseEvidenceEvent } from "../src/evidence/parse.js";
+import { EVIDENCE_EVENT_VERSION, EvidenceSchemaError } from "../src/evidence/version.js";
 import { DenialSchema } from "../src/evidence/schema.js";
 import { canonicalJson, evaluatePolicy, factsNeeded, matchesPattern, policyDenial, policyIdentityOf, policyInputSha256, policyPackSha256 } from "../src/policy/evaluate.js";
 import { parsePolicyDecision, parsePolicyInput, parsePolicyPack } from "../src/policy/parse.js";
@@ -466,10 +467,31 @@ describe("a decision as evidence", () => {
 
   it("gives the denial of a step.denied event, which the evidence format accepts", () => {
     const denial = policyDenial(denied, "Bash");
-    expect(denial).toEqual({ kind: "policy", policy: { id: "baseline", version: "2026.1" }, reasonCode: "branch.protected", tool: { name: "Bash" } });
-    expect(DenialSchema.parse(policyDenial(denied))).toEqual({ kind: "policy", policy: { id: "baseline", version: "2026.1" }, reasonCode: "branch.protected" });
+    expect(denied.packSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(denial).toEqual({ kind: "policy", policy: { id: "baseline", version: "2026.1" }, packSha256: denied.packSha256, reasonCode: "branch.protected", tool: { name: "Bash" } });
+    expect(DenialSchema.parse(policyDenial(denied))).toEqual({ kind: "policy", policy: { id: "baseline", version: "2026.1" }, packSha256: denied.packSha256, reasonCode: "branch.protected" });
     const event = { version: 1, id: "e0001", seq: 1, runId: "20260131-120000-abc", time: T, type: "step.denied", step: { id: "push", visit: 1, type: "shell" }, denial };
     expect(parseEvidenceEvent(event).type).toBe("step.denied");
+  });
+
+  it("gives a denial with no pack hash when no pack was read", () => {
+    const unread = parsePolicyDecision({ version: 1, policy: { id: "baseline", version: "2026.1" }, mode: "enforce", boundary: "push", inputSha256: H, outcome: "deny", reasonCode: "policy.unavailable", evaluatedAt: T });
+    const denial = policyDenial(unread)!;
+    expect(denial).toEqual({ kind: "policy", policy: { id: "baseline", version: "2026.1" }, reasonCode: "policy.unavailable" });
+    expect("packSha256" in denial).toBe(false);
+  });
+
+  it("is a version 7 step.denied event with or without a step, and a version 6 one without the pack hash", () => {
+    const base = { version: EVIDENCE_EVENT_VERSION, id: "e0001", seq: 1, runId: "20260131-120000-abc", time: T, type: "step.denied" };
+    const step = { id: "push", visit: 1, type: "shell" };
+    const denial = policyDenial(denied)!;
+    expect(parseEvidenceEvent({ ...base, step, denial }).type).toBe("step.denied");
+    expect(parseEvidenceEvent({ ...base, denial }).type).toBe("step.denied");
+    const err = (() => { try { parseEvidenceEvent({ ...base, denial: { kind: "tool", tool: { name: "Bash" } } }); } catch (e) { return e; } })();
+    expect(err).toBeInstanceOf(EvidenceSchemaError);
+    expect((err as EvidenceSchemaError).issues.map((i) => i.path)).toContain("step");
+    const { packSha256: _drop, ...old } = denial as typeof denial & { packSha256?: string };
+    expect(parseEvidenceEvent({ ...base, version: 6, step, denial: old }).version).toBe(EVIDENCE_EVENT_VERSION);
   });
 
   it("gives no denial for a decision that refused nothing", () => {

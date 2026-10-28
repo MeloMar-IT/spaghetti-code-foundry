@@ -1139,7 +1139,9 @@ can be found.
   test run, passed or failed.
 - **Older builds.** Evidence version 3 adds `step.profiled`. Version 2 lines are read as before. A
   Foundry from before this change refuses the evidence of a run that has version 3 lines, so it
-  cannot verify that run.
+  cannot verify that run. Version 7 adds `packSha256` to a policy denial (the pack that denied, when
+  known) and allows a policy `step.denied` without a step, for a denial about the whole run. Versions
+  1 to 6 are read as before; a delivery validator that only knows version 6 refuses version 7 lines.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run

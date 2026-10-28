@@ -56,6 +56,7 @@ describe("measureRun", () => {
       ev("run.started", 5),
       ev("step.started", 6, { step: step("a") }),
       ev("step.denied", 7, { step: step("a"), denial: { kind: "tool", tool: { name: "Bash" } } }),
+      ev("step.denied", 7, { denial: { kind: "policy", policy: { id: "p", version: "1" }, packSha256: "a".repeat(64), reasonCode: "x.y" } }), // about the whole run: no step
       ev("step.denied", 8, { step: step("a"), denial: { kind: "tool", tool: { name: "Bash" } } }),
       decision("allow"),
       decision("deny"),

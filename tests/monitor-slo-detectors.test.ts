@@ -272,6 +272,14 @@ describe("files", () => {
       expect(total("Write")).toBe(1);
     });
 
+    it("ignores a policy denial about the whole run, which has no step", async () => {
+      const id = "20261001-110006-abcd";
+      const wide = line(1, "step.denied", 19, id, { denial: { kind: "policy", policy: { id: "p", version: "1" }, packSha256: sha, reasonCode: "x.y", tool: { name: "Bash" } } });
+      const r = makeRun({ runId: id, history: [] as never }, [started(0, 20, id, "a"), wide, toolDenied(2, 19, id, "Bash", "a")]);
+      const out = await new SloInputCache().build([r], stamps([r]), NOW, config);
+      expect(out.measures[0]!.toolDenials.filter((d) => d.tool === "Bash").reduce((s, d) => s + d.count, 0)).toBe(1);
+    });
+
     it("matches the denials of a nested step in the record and in the evidence, and counts them once", async () => {
       const id = "20261001-110005-abcd";
       const nested = (type: string, minutesAgo: number) => line(0, type, minutesAgo, id, { step: { id: "test", visit: 1, type: "shell", parent: "build" }, ...(type === "step.denied" ? { denial: { kind: "tool", tool: { name: "Bash" } } } : {}) });
