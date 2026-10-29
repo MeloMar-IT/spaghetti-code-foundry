@@ -50,8 +50,8 @@ describe("nextActionCode", () => {
 
 describe("enforced rule denials by boundary", () => {
   const at = (boundary?: Boundary) => ({ ...ex("deny", "enforce", "path.forbidden"), ...(boundary ? { boundary } : {}) });
-  const STOPPED: Boundary[] = ["repository.access", "agent.write", "approval.consume"];
-  const RECORDED: Boundary[] = ["run.start", "run.complete", "step.before", "step.after", "context.select"];
+  const STOPPED: Boundary[] = ["run.start", "run.complete", "step.before", "step.after", "repository.access", "agent.write", "approval.consume"];
+  const RECORDED: Boundary[] = ["context.select"];
   it("says the step is stopped only where the callers stop it", () => {
     for (const b of STOPPED) expect(nextActionCode(at(b))).toBe("enforced-deny");
     for (const b of RECORDED) expect(nextActionCode(at(b))).toBe("enforced-deny-recorded");

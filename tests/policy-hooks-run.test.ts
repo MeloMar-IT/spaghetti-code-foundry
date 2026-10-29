@@ -88,7 +88,7 @@ describe("policy hooks at the boundaries of a run", () => {
     expect(at(r)).toEqual([
       "run.start", "repository.access", "step.before:write", "repository.access:write", "agent.write:write", "step.after:write",
       "run.start", "step.before:ok", "approval.consume:ok", "step.after:ok",
-      "step.before:check", "repository.access:check", "push:check", "step.after:check", "run.complete",
+      "step.before:check", "repository.access:check", "step.after:check", "push:check", "run.complete",
     ]);
     // the identity is the one of the step's own events
     for (const e of all.filter((d) => d.step)) {
@@ -109,7 +109,7 @@ describe("policy hooks at the boundaries of a run", () => {
   it("keeps the order of the events around a step", async () => {
     const s = await start(SHELL);
     expect(events(s).map((e) => (e.type === "policy.decided" ? `policy:${e.decision.boundary}` : e.type))).toEqual([
-      "run.created", "policy:run.start", "policy:repository.access", "run.started", "step.started", "policy:step.before", "policy:repository.access", "step.completed", "policy:step.after", "policy:run.complete", "run.completed",
+      "run.created", "policy:run.start", "policy:repository.access", "run.started", "step.started", "policy:step.before", "policy:repository.access", "policy:step.after", "step.completed", "policy:run.complete", "run.completed",
     ]);
   });
 
@@ -131,7 +131,7 @@ steps:
     // after the push decisions of a step, the end of the step
     const kinds = events(s).map((e) => (e.type === "policy.decided" ? e.decision.boundary : e.type));
     const i = kinds.indexOf("push");
-    expect(kinds.slice(i - 2, i + 3)).toEqual(["repository.access", "step.completed", "push", "push", "step.after"].slice(0, 5));
+    expect(kinds.slice(i - 3, i + 2)).toEqual(["repository.access", "step.after", "step.completed", "push", "push"]);
   });
 
   it("asks push with the branch and no repository for a push, whatever the run's repository", async () => {

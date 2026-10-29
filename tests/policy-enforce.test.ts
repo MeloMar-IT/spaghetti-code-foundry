@@ -241,7 +241,7 @@ describe("an unusable baseline with enforced rules", () => {
   it("words the scope", () => {
     expect(outageScope([])).toBe("this mandatory policy denies steps with a sign-in and writing agents");
     expect(outageScope(["branch-protected"])).toBe("this mandatory policy denies steps with a sign-in and writing agents");
-    expect(outageScope(["path-forbidden", "workspace-admin-only"])).toBe("this mandatory policy denies steps with a sign-in and writing agents; the enforced rules path-forbidden, workspace-admin-only are only recorded at step.before, step.after, run.start");
+    expect(outageScope(["path-forbidden", "workspace-admin-only"])).toBe("this mandatory policy denies steps with a sign-in and writing agents; for the enforced rules path-forbidden, workspace-admin-only it also denies step.before, step.after, run.start");
     expect(outageScope(["credential-scope-exceeded", "branch-protected"])).toBe("this mandatory policy denies steps with a sign-in and writing agents");
   });
 });

@@ -488,6 +488,17 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   at startup and every 60 s on an unref'd timer, logs while a record is active (first check, a new `startedAt`,
   every 15 minutes), writes the `expired` line through `endExpiredBreakGlass` on expiry and logs when the record
   is gone. It never throws. Counting break-glass decisions in the SLO input (`slo-input.ts`) is not done yet.
+- **Enforced rules (#728).** `policy.enforce` (`BaselineRuleId`s) makes the listed baseline rules decide in
+  `enforce` mode (`controls.enforce`, `RunPolicy.enforcedAt`). Their denials set `denied` at the boundaries
+  they guard, and `refuseByPolicy` acts on it at `step.before` and `step.after` (`execute.ts`, also in the
+  parallel branch and the approval branch of `runner.ts`), while `refuseRunByPolicy` acts at `run.start`
+  (`runFlow` and `drive`, which also covers a resume). `completeRun` (`runner.ts`) turns a succeeded result into
+  a failed one on a `run.complete` denial. `beginStep` returns the `step.before` answer, so a refused step runs
+  no command and no `approval.consume` is asked. `recordStep` asks `step.after` right after the first save and
+  before `evidence.stepEnded`, the delivery checks and the push decisions. On a denial it sets `ok` false,
+  `error` and `accessFailed`, drops `held` and `limited`, updates `scope.ctx.steps` and saves again; the
+  checkout is not rolled back. `push` is not in the enforced set: it is recorded only. An unusable baseline denies
+  the enforced rules' boundaries (`outageScope`), with the same `denied` path. Break-glass never covers these.
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
@@ -880,7 +891,9 @@ Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
   while it waits, so the event is written at the start with the time it was queued), then
   `run.created` and `run.started`. A resume adds `run.queued` (when queued) and `run.resumed`. Every
   visit of a step is `step.started`, then what happened in it, then `step.completed` or
-  `step.failed`. A run that waits for approval or pauses ends with `run.stopped`; the approval
+  `step.failed`. The `step.after` question is asked before that end event (#728): its `policy.decided`, and a
+  `step.denied` when it denies, come before `step.completed` or `step.failed`, and the event shows the result
+  after the denial (failed). The delivery checks and push decisions come after the end event. A run that waits for approval or pauses ends with `run.stopped`; the approval
   step itself starts when the decision is there.
 - **One writer, one line.** An event is one `write` of one line to a file opened for append. The
   writes of a run come one after the other, also when parallel steps end together. `seq` is the
