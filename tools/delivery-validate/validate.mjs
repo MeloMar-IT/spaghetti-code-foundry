@@ -415,7 +415,7 @@ const RUN_CONTEXT_CODES = [
   "repository-no-git", "repository-not-a-repository", "repository-no-commit", "repository-too-large", "repository-timeout", "repository-bad-listing", "repository-read-failed",
   "store-no-folder", "store-exists", "store-texts-do-not-match", "store-write-failed",
 ];
-const REPO_REFUSALS = ["invalid-request", "no-target", "not-in-profile", "approval-required", "deploy-key", "no-credential", "unsafe-git-settings", "policy", "not-empty"];
+const REPO_REFUSALS = ["invalid-request", "no-target", "not-in-profile", "approval-required", "deploy-key", "no-credential", "unsafe-git-settings", "policy", "not-empty", "other-repository"];
 
 // The patterns of zod's z.uuid() (no version) and z.iso.datetime() (no options), copied from node_modules/zod/v4/core/regexes.js (zod 4.6.5).
 const UUID = /^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/;

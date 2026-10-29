@@ -3,7 +3,8 @@ import type { ToolKind } from "../tool-profile/schema.js";
 
 /**
  * The requests the repository broker accepts, and the rules about their words. Pure: no file, process or network.
- * A request never names a repository, URL or remote: the target is the run's own (see repo-broker.ts).
+ * A request may name a repository, but only the run's own counts; another one is refused (see repo-broker.ts).
+ * It never names a URL or remote: the target is always the run's own.
  */
 
 export const REPO_OPERATIONS = ["clone", "fetch", "branch", "commit", "push", "pull-request", "status"] as const;
@@ -16,7 +17,7 @@ export type RepoEvidenceOperation = (typeof REPO_EVIDENCE_OPERATIONS)[number];
 /** Operations that touch no network, so never get a credential. */
 export const LOCAL_OPERATIONS: readonly RepoOperation[] = ["branch", "commit", "status"];
 
-export const REPO_REFUSALS = ["invalid-request", "no-target", "not-in-profile", "approval-required", "deploy-key", "no-credential", "unsafe-git-settings", "policy", "not-empty"] as const;
+export const REPO_REFUSALS = ["invalid-request", "no-target", "not-in-profile", "approval-required", "deploy-key", "no-credential", "unsafe-git-settings", "policy", "not-empty", "other-repository"] as const;
 export type RepoRefusal = (typeof REPO_REFUSALS)[number];
 
 export const REPO_OUTCOMES = ["done", "failed", "refused"] as const;
@@ -35,16 +36,25 @@ const branch = z.string().refine(validBranchName, "must be a valid branch name")
 const text = z.string().refine((s) => s.length >= 1 && s.length <= 5000 && !s.includes("\0"), "must be 1 to 5000 characters without NUL");
 const title = z.string().refine((s) => s.length >= 1 && s.length <= 256 && !/[\u0000-\u001f\u007f-\u009f]/.test(s), "must be 1 to 256 characters on one line");
 
+// Mirrors RepositorySchema in evidence/identity.ts; not imported, because identity → flow/schema → this file would be a cycle.
+const repository = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9_.-]{1,100}$/, 'must be a repository as "owner/name"');
+
 export const RepoRequestSchema = z.discriminatedUnion("op", [
-  z.object({ op: z.literal("clone") }).strict(),
-  z.object({ op: z.literal("fetch"), branch: branch.optional() }).strict(),
-  z.object({ op: z.literal("branch"), name: branch, from: branch.optional() }).strict(),
-  z.object({ op: z.literal("commit"), message: text }).strict(),
-  z.object({ op: z.literal("push"), branch }).strict(),
-  z.object({ op: z.literal("pull-request"), head: branch, base: branch, title, body: text.optional(), draft: z.boolean().optional() }).strict(),
-  z.object({ op: z.literal("status") }).strict(),
+  z.object({ op: z.literal("clone"), repository: repository.optional() }).strict(),
+  z.object({ op: z.literal("fetch"), branch: branch.optional(), repository: repository.optional() }).strict(),
+  z.object({ op: z.literal("branch"), name: branch, from: branch.optional(), repository: repository.optional() }).strict(),
+  z.object({ op: z.literal("commit"), message: text, repository: repository.optional() }).strict(),
+  z.object({ op: z.literal("push"), branch, repository: repository.optional() }).strict(),
+  z.object({ op: z.literal("pull-request"), head: branch, base: branch, title, body: text.optional(), draft: z.boolean().optional(), repository: repository.optional() }).strict(),
+  z.object({ op: z.literal("status"), repository: repository.optional() }).strict(),
 ]);
 export type RepoRequest = z.infer<typeof RepoRequestSchema>;
+
+/** The repository a request names (lower case) when it is not the target (lower case); otherwise undefined. */
+export function otherRepository(req: RepoRequest, target: string): string | undefined {
+  const named = req.repository?.toLowerCase();
+  return named !== undefined && named !== target ? named : undefined;
+}
 
 /** The tool of the profile an operation is: `git.<op>`, or `github.pull-request.write` for a pull request. */
 export function repoToolOf(op: RepoOperation): { kind: Extract<ToolKind, "git" | "github">; operation: string } {

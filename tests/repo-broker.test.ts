@@ -8,10 +8,11 @@ import { createUser } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
 import { NO_COMMIT_IDENTITY, TOKEN_REFUSED_RUN } from "../src/engine/guards.js";
 import type { Engine, Scope } from "../src/engine/execute.js";
-import { RunPolicy } from "../src/engine/policy-hooks.js";
+import { baselineEntry, RunPolicy } from "../src/engine/policy-hooks.js";
+import { FactsSchema } from "../src/policy/schema.js";
 import { APP_PERMISSIONS, brokerRequest, type BrokerContext, type BrokerExec, type ExecResult, type RepoGrant } from "../src/engine/repo-broker.js";
-import { REPO_OPERATIONS, RepoRequestSchema, tailBytes, unsafeGitSettings, validBranchName } from "../src/engine/repo-request.js";
-import { BASELINE_PACK, BASELINE_POLICY_ID } from "../src/policy/baseline.js";
+import { otherRepository, REPO_OPERATIONS, RepoRequestSchema, tailBytes, unsafeGitSettings, validBranchName } from "../src/engine/repo-request.js";
+import { BASELINE_PACK, BASELINE_POLICY_ID, NO_BASELINE_CONTROLS } from "../src/policy/baseline.js";
 import { parseEvidenceEventLine } from "../src/evidence/parse.js";
 import { closeEvidenceStream } from "../src/evidence/stream.js";
 import { GitIdentitySchema } from "../src/evidence/identity.js";
@@ -167,6 +168,22 @@ describe("the request", () => {
     expect(RepoRequestSchema.safeParse({ op: "delete" }).success).toBe(false);
   });
 
+  it("accepts a repository as owner/name on every operation, and nothing else", () => {
+    for (const v of [{ op: "clone" }, { op: "fetch" }, { op: "branch", name: "x" }, { op: "commit", message: "m" }, { op: "push", branch: "x" }, { op: "pull-request", head: "a", base: "b", title: "T" }, { op: "status" }]) {
+      expect(RepoRequestSchema.safeParse({ ...v, repository: "Other/Repo" }).success, v.op).toBe(true);
+      for (const bad of ["https://github.com/a/b", "a/b/c", "a", "", "-a/b"]) expect(RepoRequestSchema.safeParse({ ...v, repository: bad }).success, `${v.op} ${bad}`).toBe(false);
+    }
+    expect(FactsSchema.shape.repository.safeParse("other/repo").success).toBe(true);
+  });
+
+  it("finds a repository other than the target", () => {
+    const req = (repository?: string) => RepoRequestSchema.parse({ op: "status", ...(repository ? { repository } : {}) });
+    expect(otherRepository(req(), "acme/app")).toBeUndefined();
+    expect(otherRepository(req("acme/app"), "acme/app")).toBeUndefined();
+    expect(otherRepository(req("ACME/App"), "acme/app")).toBeUndefined();
+    expect(otherRepository(req("Other/Repo"), "acme/app")).toBe("other/repo");
+  });
+
   it("refuses the branch names git refuses", () => {
     const bad = ["-x", "/x", "a..b", "a@{1}", "a b", "a\tb", "a b", "a\u0085b", "x".repeat(256), "a.lock", ".a", "a/", "*", "HEAD", "a//b", "a~b", "a:b", "a\\b", "a\0b", ""];
     for (const b of bad) expect(validBranchName(b), JSON.stringify(b)).toBe(false);
@@ -204,7 +221,59 @@ describe("the request", () => {
 });
 
 describe("the target", () => {
-  it("refuses a request that names a repository, URL or remote, and starts nothing", async () => {
+  it("refuses a request for another repository, asks policy at repository.access, and starts nothing", async () => {
+    tokenRepo(admin);
+    const f = fakeExec();
+    const r = rig({ exec: f.exec });
+    (r.engine as { policy?: RunPolicy }).policy = new RunPolicy({ runId: "r", packs: [baselineEntry("1", { ...NO_BASELINE_CONTROLS, repository: "acme/app" })], base: { repository: "acme/app" }, log: () => {}, evidence: r.engine.evidence });
+    const res = await brokerRequest(r.ctx, { op: "push", branch: "x", repository: "Other/Repo" }, grant());
+    expect(res).toMatchObject({ outcome: "refused", refusal: "other-repository" });
+    expect(f.calls).toEqual([]);
+    expect(app.calls).toEqual([]);
+    expect(repoEvents(r).map((e) => [e.operation, e.outcome, e.refusal, e.credential, e.repository])).toEqual([["push", "refused", "other-repository", "none", "acme/app"]]);
+    expect(repoEvents(r)[0]).toMatchObject({ policy: "deny" });
+    const decided = r.events().filter((e) => e.type === "policy.decided").map((e) => e.decision as { boundary: string; reasonCode: string });
+    expect(decided).toMatchObject([{ boundary: "repository.access", reasonCode: "repository.not-allowed" }]);
+    expect(r.engine.accessFailed).toBeUndefined();
+
+    // refused whatever the profile says
+    const bare = rig({ exec: f.exec });
+    expect(await brokerRequest(bare.ctx, { op: "push", branch: "x", repository: "other/repo" }, undefined)).toMatchObject({ refusal: "other-repository" });
+
+    // an enforced rule also stops the step
+    const hard = rig({ exec: f.exec });
+    (hard.engine as { policy?: RunPolicy }).policy = new RunPolicy({
+      runId: "r",
+      packs: [baselineEntry("1", { ...NO_BASELINE_CONTROLS, repository: "acme/app", enforce: ["repository-not-allowed"] })],
+      base: { repository: "acme/app" },
+      log: () => {},
+      evidence: hard.engine.evidence,
+    });
+    expect(await brokerRequest(hard.ctx, { op: "push", branch: "x", repository: "other/repo" }, grant())).toMatchObject({ refusal: "other-repository" });
+    expect(hard.engine.accessFailed).toBe(true);
+    expect(hard.events().filter((e) => e.type === "step.denied")).toHaveLength(1);
+    expect(f.calls).toEqual([]);
+  });
+
+  it("treats the run's own repository, in any case, like a request with no repository", async () => {
+    tokenRepo(admin);
+    const plain = fakeExec();
+    await brokerRequest(rig({ exec: plain.exec }).ctx, { op: "push", branch: "x" }, grant());
+    const named = fakeExec();
+    const r = rig({ exec: named.exec });
+    expect(await brokerRequest(r.ctx, { op: "push", branch: "x", repository: "ACME/App" }, grant())).toMatchObject({ outcome: "done" });
+    expect(named.calls.map((c) => c.args)).toEqual(plain.calls.map((c) => c.args));
+    expect(repoEvents(r)[0]).toMatchObject({ outcome: "done", repository: "acme/app" });
+  });
+
+  it("still says no-target for a run with no repository, even if the request names one", async () => {
+    const f = fakeExec();
+    const r = rig({ vars: {}, exec: f.exec });
+    expect(await brokerRequest(r.ctx, { op: "push", branch: "x", repository: "other/repo" }, grant())).toMatchObject({ refusal: "no-target" });
+    expect(f.calls).toEqual([]);
+  });
+
+  it("refuses a request that names a repo, URL or remote field, and starts nothing", async () => {
     const f = fakeExec();
     const r = rig({ exec: f.exec });
     for (const extra of ["repo", "url", "remote"]) {

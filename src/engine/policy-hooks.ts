@@ -39,7 +39,7 @@ export const MAX_PACK_BYTES = 1 << 20;
 export const UNKNOWN_POLICY_VERSION = "unknown";
 
 export type LoadedPack =
-  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push whose repository is not known. */ pushWithoutRepository?: PolicyPack; /** Asked instead of `pack` at `step.before` when the `sandboxed` fact is not known. */ stepWithoutSandbox?: PolicyPack; /** Asked instead of `pack` at `step.after` when the `contextUncited` fact is not known. */ stepWithoutCitations?: PolicyPack }
+  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push or a repository access whose repository is not known. */ pushWithoutRepository?: PolicyPack; /** Asked instead of `pack` at `step.before` when the `sandboxed` fact is not known. */ stepWithoutSandbox?: PolicyPack; /** Asked instead of `pack` at `step.after` when the `contextUncited` fact is not known. */ stepWithoutCitations?: PolicyPack }
   | { id: string; problem: "policy.unavailable" | "policy.invalid"; detail: string };
 
 export type LayeredPack = LoadedPack & { layer: Layer };
@@ -479,7 +479,7 @@ export class RunPolicy {
     const at = this.now();
     if ("problem" in loaded) return this.noPack(loaded.id, loaded.problem, input, mode, at);
     let pack = loaded.pack;
-    if (input.boundary === "push") {
+    if (input.boundary === "push" || input.boundary === "repository.access") {
       if (input.facts.repository === undefined && loaded.pushWithoutRepository) pack = loaded.pushWithoutRepository;
     } else if (input.boundary === "step.before" && input.facts.sandboxed === undefined && loaded.stepWithoutSandbox) pack = loaded.stepWithoutSandbox;
     else if (input.boundary === "step.after" && input.facts.contextUncited === undefined && loaded.stepWithoutCitations) pack = loaded.stepWithoutCitations;

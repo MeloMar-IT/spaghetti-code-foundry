@@ -89,6 +89,46 @@ describe("policy", () => {
   });
 });
 
+describe("repo_operations", () => {
+  const refusedOp = (operation: string, refusal: string) => ({ type: "repo.operation", time: T, step: step("work"), operation, credential: "none", outcome: "refused", refusal });
+  const i = withEvents([refusedOp("push", "other-repository"), repoOp("status", "none")]);
+  it("accepts the block, and refuses an unknown key, a refusal without refused and an unknown refusal", () => {
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "other-repository" }] }).success).toBe(true);
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [{ operation: "push", outcome: "refused", extra: 1 }] }).success).toBe(false);
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [{ operation: "push", outcome: "done", refusal: "other-repository" }] }).success).toBe(false);
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "nope" }] }).success).toBe(false);
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [] }).success).toBe(false);
+  });
+  it("matches on outcome, and on outcome and refusal", () => {
+    expect(evaluateControls(i, parse({ repo_operations: [{ operation: "push", outcome: "refused" }] })).ok).toBe(true);
+    expect(evaluateControls(i, parse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "other-repository" }, { operation: "status", outcome: "done" }] })).ok).toBe(true);
+  });
+  it("names what was expected and seen", () => {
+    const msg = (x: object, inp = i) => evaluateControls(inp, parse({ repo_operations: [x] })).firstMismatch?.message;
+    expect(msg({ operation: "status", outcome: "refused", refusal: "other-repository" })).toBe("repo status: expected refused (other-repository), saw done");
+    expect(msg({ operation: "push", outcome: "refused", refusal: "policy" })).toBe("repo push: expected refused (policy), saw refused (other-repository)");
+    expect(msg({ operation: "clone", outcome: "done" })).toBe("repo clone: expected done, saw no operation");
+    expect(evaluateControls(i, parse({ repo_operations: [{ operation: "clone", outcome: "done" }] })).firstMismatch?.kind).toBe("repo");
+  });
+  it("shows a push that was done when a refusal was expected", () => {
+    const done = withEvents([repoOp("push", "repository")]);
+    expect(evaluateControls(done, parse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "other-repository" }] })).firstMismatch?.message).toBe("repo push: expected refused (other-repository), saw done");
+  });
+  it("fails closed on a stream that is absent, cut off or broken", () => {
+    for (const stream of [{ state: "absent" }, { state: "cut-off" }, { state: "broken", line: 2, fault: "not-json" }] as const) {
+      const r = evaluateControls({ ...i, stream }, parse({ repo_operations: [{ operation: "push", outcome: "refused" }] }));
+      expect(r.ok, stream.state).toBe(false);
+      expect(r.firstMismatch?.kind).toBe("repo");
+    }
+  });
+  it("comes after policy and before tools", () => {
+    const both = parse({ policy: [{ boundary: "push", outcome: "deny" }], repo_operations: [{ operation: "clone", outcome: "done" }], allowed_tools: [] });
+    expect(evaluateControls(i, both).firstMismatch?.kind).toBe("policy");
+    const second = parse({ repo_operations: [{ operation: "clone", outcome: "done" }], allowed_tools: ["files"] });
+    expect(evaluateControls(input({ ...i, profiles: [{ step: "c", sha12: "a1b2c3d4e5f6" }] }), second).firstMismatch?.kind).toBe("repo");
+  });
+});
+
 describe("tools", () => {
   const profile = (grants: { kind: never; operations: string[] }[], extra = {}) => ({ step: "code", sha12: "a1b2c3d4e5f6", resolved: { grants, sandboxed: true }, ...extra });
   const g = (kind: string, ...operations: string[]) => ({ kind: kind as never, operations });
@@ -260,6 +300,14 @@ describe("reading a synthetic run folder", () => {
   ])("fails closed for %s", (_n, kind, text) => {
     const r = run(kind as EvidenceFixture);
     expect(evaluateControls(read(r, pol), pol).firstMismatch?.message).toContain(text);
+  });
+  it("reads the stream for repo_operations alone", () => {
+    const r = run("old");
+    writeStream(r.runDir, [created, { type: "repo.operation", time: T, step: step("work"), operation: "push", credential: "none", outcome: "refused", refusal: "other-repository" }]);
+    const e = parse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "other-repository" }] });
+    const i = read(r, e);
+    expect(i.stream.state).toBe("ok");
+    expect(evaluateControls(i, e).ok).toBe(true);
   });
   it("fails closed for a changed, cut-off and incomplete stream and a manifest that disagrees", () => {
     const r = run("old");
