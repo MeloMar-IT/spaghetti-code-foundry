@@ -7,6 +7,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 import type { Config } from "./config.js";
 import { BASELINE_RULE_IDS } from "./policy/baseline.js";
+import { FakeSecretSchema, registerFakeSecrets } from "./eval-secrets.js";
 import { ControlsExpectSchema, evaluateControls, readControlsInput, type ControlsResult } from "./eval-controls.js";
 import type { RunSummary } from "./engine/state.js";
 import { FACTORY_HOME, loadFlow, parseFlow } from "./flow/load.js";
@@ -30,6 +31,10 @@ const CaseSchema = z
     controls: ControlsExpectSchema.optional(),
     /** A fresh copy of the fixture with its own local bare repository as `origin`, per run; the check sees its path in `$FACTORY_EVAL_REMOTE`. Plain fixture folders only. */
     fake_remote: z.boolean().default(false),
+    /** A fake key set in the server's environment for the eval and hidden in logs, outputs and the stored diff. */
+    fake_secret: FakeSecretSchema.optional(),
+    /** Start the runs as a user's run (short environment, no sign-in). The flow needs `workspace: empty` and clones `$FACTORY_VAR_EVAL_REPO`. */
+    user_run: z.boolean().default(false),
   })
   .strict();
 
@@ -112,6 +117,9 @@ export interface EvalReport {
   results: EvalResult[];
   summary: VariantSummary[];
 }
+
+/** The account a `user_run` case starts its runs as: it has no user record, so it counts as a plain user. */
+export const EVAL_USER = "safety-evaluation";
 
 export const evalsDir = () => join(process.env.FACTORY_HOME ?? FACTORY_HOME, "evals");
 
@@ -300,6 +308,9 @@ export async function runEval(o: {
     const flow = loadSuiteFlow(name, suiteDir);
     return models?.length ? models.map((m) => withModel(flow, m)) : [flow];
   }).map((f) => ({ ...f, one_per_repo: false })); // cases get their own worktrees: run them in parallel
+  for (const c of cases) {
+    if (c.user_run && variants.some((f) => f.workspace !== "empty")) throw new Error(`case ${c.name}: user_run needs flows with workspace: empty (a user's run may not use a worktree)`);
+  }
   // Routing rules would override the model under test.
   const config = withSuiteConfig(models?.length ? { ...o.config, router: { ...o.config.router, rules: [] } } : o.config, suite.config);
   // Prepare every repo before the first run starts: a failure here must not leave live runs behind.
@@ -330,7 +341,9 @@ export async function runEval(o: {
   const startedAt = new Date().toISOString();
   const jobs: Promise<EvalResult>[] = [];
   let settled: PromiseSettledResult<EvalResult>[];
+  let restoreSecrets = () => {};
   try {
+  restoreSecrets = registerFakeSecrets(cases.flatMap((c) => (c.fake_secret ? [c.fake_secret] : [])));
   const scheduler = new Scheduler({ runsDir: o.runsDir, config: () => config, claudeBin: programs.claudeBin, codexBin: programs.codexBin, ...(binDir ? { pathPrefix: [binDir] } : {}) });
 
   o.log(`eval ${suite.name}: ${variants.length} variant(s) × ${cases.length} case(s) × ${suite.repeat} = ${variants.length * cases.length * suite.repeat} runs (concurrency ${o.config.concurrency})`);
@@ -338,7 +351,7 @@ export async function runEval(o: {
     for (const [ci, c] of cases.entries()) {
       for (let attempt = 1; attempt <= suite.repeat; attempt++) {
         const caseRepo: CaseRepo = c.fake_remote ? perRun.get(runKey(v, ci, attempt))! : repos.get(c.repo)!;
-        const runId = scheduler.submit({ kind: "run", flow, task: c.task, repo: caseRepo.dir, vars: c.vars }, { source: `eval ${suite.name}` });
+        const runId = scheduler.submit({ kind: "run", flow, task: c.task, repo: caseRepo.dir, vars: { ...c.vars, ...(c.user_run ? { eval_repo: caseRepo.remote ?? caseRepo.dir } : {}) } }, { source: `eval ${suite.name}`, ...(c.user_run ? { owner: EVAL_USER } : {}) });
         jobs.push((async () => {
           try {
           const s = (await scheduler.wait(runId))!;
@@ -376,6 +389,9 @@ export async function runEval(o: {
   // Wait for every run, also after one failed: the fake `gh` folder must outlive them all.
   settled = await Promise.allSettled(jobs);
   } finally {
+    // Every submitted run ends before the environment is put back, also when a later submit failed.
+    await Promise.allSettled(jobs);
+    restoreSecrets();
     if (binDir) rmSync(binDir, { recursive: true, force: true });
   }
   const failedJob = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
@@ -401,7 +417,10 @@ export function safetyConfig(config: Config): Config {
     ...rest,
     router: { ...config.router, rules: [], fallback_on: [] },
     cost_limits: false,
-    bot,
+    // A fallback identity: without one an isolated step is refused (NO_COMMIT_IDENTITY).
+    bot: { ...bot, name: bot.name || "scf safety evaluation", email: bot.email || "safety-evaluation@invalid" },
+    // The fake remotes live in the temp folder, which the OS sandbox of a user's run hides.
+    sandbox: { ...config.sandbox, user_runs: "off" },
     notify: { ...notify, macos: false },
   };
 }
