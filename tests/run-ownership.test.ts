@@ -698,9 +698,19 @@ steps:
     }
   });
 
-  it("refuses a foreign repository, but only when asked to start like a user", async () => {
-    expect((await start(admin, { flow: "pick", vars: { github_repo: "acme/app" }, likeUser: true })).status).toBe(403);
-    expect((await start(admin, { flow: "pick", vars: { github_repo: "acme/app" } })).status).toBe(201);
+  it.each([[[]], [["repository-not-allowed"]]])("refuses a foreign repository, but only when asked to start like a user (policy.enforce %j)", async (enforce) => {
+    const file = join(s.home, "config.yaml");
+    const before = existsSync(file) ? readFileSync(file, "utf8") : undefined;
+    writeFileSync(file, `${before ?? ""}\npolicy:\n  enforce: ${JSON.stringify(enforce)}\n`);
+    s.ctx.reloadConfig();
+    try {
+      expect((await start(admin, { flow: "pick", vars: { github_repo: "acme/app" }, likeUser: true })).status).toBe(403);
+      expect((await start(admin, { flow: "pick", vars: { github_repo: "acme/app" } })).status).toBe(201);
+    } finally {
+      if (before === undefined) rmSync(file, { force: true });
+      else writeFileSync(file, before);
+      s.ctx.reloadConfig();
+    }
   });
 
   it("refuses an unknown or architect flow, even a published copy", async () => {

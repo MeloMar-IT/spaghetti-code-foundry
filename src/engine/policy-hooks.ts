@@ -70,16 +70,19 @@ export const ruleDeniedReason = (d: Pick<PolicyDecision, "policy" | "boundary" |
   `policy ${d.policy.id} denies ${d.boundary}: ${reasonText(d.reasonCode as ReasonCode)} (${d.reasonCode}${d.rule ? `, rule ${d.rule}` : ""})`;
 
 /**
- * The log text for what an unusable mandatory policy denies: sign-ins and writing agents are stopped; the boundaries of the
- * enforced rules (other than push) are only recorded, because their callers do not stop the step on a denial yet.
+ * The log text for what an unusable mandatory policy denies: sign-ins and writing agents always; with enforced rules also
+ * the other stopping boundaries of those rules (push is only recorded).
  */
 export function outageScope(enforce: readonly BaselineRuleId[]): string {
   const base = "this mandatory policy denies steps with a sign-in and writing agents";
   if (!enforce.length) return base;
   const boundaries = new Set<Boundary>();
-  for (const id of enforce) for (const b of BASELINE_RULE_BOUNDARIES[id]) if (b !== "push" && !STOPPING_BOUNDARIES.includes(b)) boundaries.add(b);
-  return boundaries.size ? `${base}; the enforced rules ${enforce.join(", ")} are only recorded at ${[...boundaries].join(", ")}` : base;
+  for (const id of enforce) for (const b of BASELINE_RULE_BOUNDARIES[id]) if (STOPPING_BOUNDARIES.includes(b) && !PRIVILEGED_BOUNDARIES.includes(b)) boundaries.add(b);
+  return boundaries.size ? `${base}; for the enforced rules ${enforce.join(", ")} it also denies ${[...boundaries].join(", ")}` : base;
 }
+
+/** The boundaries an unusable mandatory policy always denies, with or without enforced rules. */
+const PRIVILEGED_BOUNDARIES: readonly Boundary[] = ["repository.access", "agent.write", "approval.consume"];
 
 const unavailable = (id: string, detail: string): LoadedPack => ({ id, problem: "policy.unavailable", detail });
 const invalid = (id: string, detail: string): LoadedPack => ({ id, problem: "policy.invalid", detail });

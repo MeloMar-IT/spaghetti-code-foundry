@@ -25,7 +25,7 @@ import type { RunSummary, StepRecord } from "./state.js";
 import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } from "../evidence/identity.js";
 import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
 import { stepIdentity, type RunRecorder } from "../evidence/record.js";
-import { drainPushLog, pushLogFile, repositoryFact, type PolicyDenied, type RunPolicy } from "./policy-hooks.js";
+import { drainPushLog, pushLogFile, repositoryFact, type PolicyAnswer, type PolicyDenied, type RunPolicy } from "./policy-hooks.js";
 import { outputEnvName, ranEnvName, varEnvName, withScfAliases, type TemplateContext } from "./template.js";
 import { boundEnv, capEnvValue, labelOutput, renderTrusted, stepTypesOf, trustOf, type OutputClassifier } from "./untrusted.js";
 
@@ -191,19 +191,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   const decided = readDecidedQuestions(engine.summary.runDir, engine.log);
   if (decided?.length) engine.summary.decidedQuestions = decided;
   engine.save();
-  engine.evidence?.stepEnded(rec);
-  if (!scope.prefix) deliveryAfterStep(engine);
   const identity = stepIdentity(step, scope.prefix, visit);
-  const pushed = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
-  engine.policy?.pushes(identity, pushed);
-  for (const p of pushed) {
-    emitLiveTelemetry("delivery", "delivery.push_attempted", {
-      runId: engine.summary.runId,
-      step: identity,
-      ...(p.repository && RepositorySchema.safeParse(p.repository).success ? { repository: p.repository } : {}),
-      ...(GitIdentitySchema.shape.branch.safeParse(p.branch).success ? { branch: p.branch } : {}),
-    });
-  }
   let daily: number | undefined;
   try {
     daily = engine.dailyCostUsd?.();
@@ -212,7 +200,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
   }
   // A process step counts only the final attempt's process time (no setup, no retries); a shell step counts what it printed, also when the call was rejected.
   const measured = step.type === "claude" || step.type === "shell";
-  engine.policy?.at(
+  // step.after is asked before the step's end is recorded: an enforced deny can still turn the step into a failed one.
+  const after = engine.policy?.at(
     "step.after",
     {
       repository: repositoryFact(scope.ctx.vars),
@@ -227,9 +216,32 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     },
     identity,
   );
-  const secs = (rec.durationMs / 1000).toFixed(1);
+  if (after?.denied) {
+    const reason = refuseByPolicy(engine, identity, after.denied).error!;
+    rec.error = res.ok || !rec.error ? reason : `${rec.error}; ${reason}`;
+    rec.ok = false;
+    rec.accessFailed = true;
+    delete rec.held;
+    delete rec.limited;
+    scope.ctx.steps[step.id]!.ok = false;
+    scope.ctx.steps[step.id]!.error = rec.error;
+    engine.save();
+  }
+  engine.evidence?.stepEnded(rec);
+  if (!scope.prefix) deliveryAfterStep(engine);
+  const pushed = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
+  engine.policy?.pushes(identity, pushed);
+  for (const p of pushed) {
+    emitLiveTelemetry("delivery", "delivery.push_attempted", {
+      runId: engine.summary.runId,
+      step: identity,
+      ...(p.repository && RepositorySchema.safeParse(p.repository).success ? { repository: p.repository } : {}),
+      ...(GitIdentitySchema.shape.branch.safeParse(p.branch).success ? { branch: p.branch } : {}),
+    });
+  }
+  const secs =(rec.durationMs / 1000).toFixed(1);
   const tok = res.tokens ? `, ${Math.round((res.tokens.input + res.tokens.output) / 1000)}k tok` : "";
-  engine.log(`${res.ok ? "✔" : "✘"} ${rec.id} (${secs}s${res.costUsd ? `, $${res.costUsd.toFixed(4)}` : ""}${tok})${res.error ? ` — ${res.error}` : ""}`);
+  engine.log(`${rec.ok ? "✔" : "✘"} ${rec.id} (${secs}s${res.costUsd ? `, $${res.costUsd.toFixed(4)}` : ""}${tok})${rec.error ? ` — ${rec.error}` : ""}`);
   return rec;
 }
 
@@ -251,9 +263,9 @@ export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">,
 }
 
 /** A visit of a step begins: the evidence event, then the policy question for `step.before`. Every step visit passes here. */
-export function beginStep(engine: Engine, scope: Scope, step: Pick<Step, "id" | "type"> & { sandbox?: boolean }, identity: StepIdentity): void {
+export function beginStep(engine: Engine, scope: Scope, step: Pick<Step, "id" | "type"> & { sandbox?: boolean }, identity: StepIdentity): PolicyAnswer | undefined {
   engine.evidence?.stepStarted(identity);
-  engine.policy?.at("step.before", { repository: repositoryFact(scope.ctx.vars), step: step.id, sandboxed: shellSandboxed(engine, scope, step) }, identity);
+  return engine.policy?.at("step.before", { repository: repositoryFact(scope.ctx.vars), step: step.id, sandboxed: shellSandboxed(engine, scope, step) }, identity);
 }
 
 /** A mandatory policy cannot be used at a privileged boundary: the step is refused and the run ends there (`on_failure` is not followed). */
@@ -262,6 +274,13 @@ export function refuseByPolicy(engine: Engine, step: StepIdentity, denied: Polic
   if (denied.denial) engine.evidence?.stepDenied(step, denied.denial);
   engine.log(`    ! ${denied.reason}`);
   return { ok: false, output: denied.reason, error: denied.reason };
+}
+
+/** An enforced policy refused the run itself (run.start, run.complete): logged and recorded as a step.denied without a step. Returns the reason. */
+export function refuseRunByPolicy(to: Pick<Engine, "log" | "evidence">, denied: PolicyDenied): string {
+  if (denied.denial) to.evidence?.runDenied(denied.denial);
+  to.log(`! ${denied.reason}`);
+  return denied.reason;
 }
 
 /** Log file of the step that runs after `historyLength` finished steps. */
@@ -430,16 +449,22 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           const visit = (scope.visits[id] = (scope.visits[id] ?? 0) + 1);
           const started = new Date();
           const lf = newLogFile(engine, scope.prefix + id);
-          beginStep(engine, scope, sub, stepIdentity(sub, scope.prefix, visit));
+          const identity = stepIdentity(sub, scope.prefix, visit);
+          const began = beginStep(engine, scope, sub, identity);
           const meter: ProcessMeter = {};
           let res: StepResult;
-          try {
-            res = await executeStep(sub, scope, engine, lf, meter);
-          } catch (e) {
-            res = { ok: false, output: "", error: (e as Error).message };
+          if (began?.denied) {
+            res = refuseByPolicy(engine, identity, began.denied);
+          } else {
+            try {
+              res = await executeStep(sub, scope, engine, lf, meter);
+            } catch (e) {
+              res = { ok: false, output: "", error: (e as Error).message };
+            }
+            res = applyChecks(sub, res);
           }
-          res = applyChecks(sub, res);
-          recordStep(sub, scope, engine, res, started, lf, visit, meter, await stepAfterPaths(engine));
+          const rec = recordStep(sub, scope, engine, res, started, lf, visit, meter, await stepAfterPaths(engine));
+          res = { ...res, ok: rec.ok, error: rec.error, held: rec.held, limited: rec.limited };
           return { id, res };
         }),
       );

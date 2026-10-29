@@ -52,10 +52,10 @@ export function nextActionCode(d: Explainable): NextActionCode {
 export const nextActionText = (d: Explainable): string => NEXT_ACTIONS[nextActionCode(d)];
 
 /**
- * The boundaries whose callers stop the step on a denial (they read `denied`). At every other boundary an enforced denial
- * is only recorded: the callers ignore it, so the explanation must not say the step was stopped.
+ * The boundaries whose callers stop the step or the run on a denial (they read `denied`). At every other boundary
+ * (`context.select`, `push`) an enforced denial is only recorded: the callers ignore it, so the explanation must not say the step was stopped.
  */
-export const STOPPING_BOUNDARIES: readonly Boundary[] = ["repository.access", "agent.write", "approval.consume"];
+export const STOPPING_BOUNDARIES: readonly Boundary[] = ["run.start", "step.before", "step.after", "repository.access", "agent.write", "approval.consume", "run.complete"];
 
 /** A boundary is known and its callers do not stop the step on a denial (push is handled by the pre-push hook). */
 const unapplied = (d: Pick<Explainable, "boundary">): boolean => d.boundary !== undefined && !STOPPING_BOUNDARIES.includes(d.boundary);

@@ -1421,8 +1421,9 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   and when the run succeeded. This is the same for built-in and custom flows.
 - **Observe and block mode.** A pack and each rule are in `observe` mode: the answer is recorded and
   nothing is stopped, except as described under [When the mandatory policy cannot be read](#when-the-mandatory-policy-cannot-be-read).
-  `block` mode (a rule or pack in `enforce`) is **not available yet**: such a pack or rule is refused when it is
-  loaded or restored. Until then, a `deny` in a pack is only a record, and the line says `observe only, nothing was stopped`.
+  A pack or rule in `enforce` mode, from an overlay file, is **not available yet**: such a pack or rule is refused when it is
+  loaded or restored, and a `deny` in an overlay is only a record, with the line `observe only, nothing was stopped`.
+  The built-in baseline's rules can decide in enforce mode with `policy.enforce`; see [Enforcing a baseline rule](#enforcing-a-baseline-rule).
 - **What you see.** Every run has a line in the live log for each answer, at each boundary, also when no
   pack is configured. The line names the layer, and the answer that counts has ` · wins`. For example:
 
@@ -1558,6 +1559,51 @@ active, and so does any other layer's pack.
   that is ended with `--end` is logged as `policy: break-glass ended` by the server's next check. If the policy
   is still broken, the steps that need trust stay stopped. Fix or restore the policy first when you can; see
   [Restore the last-known-good copy](#restore-the-last-known-good-copy).
+
+#### Enforcing a baseline rule
+
+By default every rule of the built-in baseline only observes. `policy.enforce` lists the rules that
+**decide**: a denial by one of them stops the step or the run. The list is empty by default, and then
+every run behaves as before.
+
+```yaml
+policy:
+  enforce: [path-forbidden, sandbox-required]
+```
+
+- **Valid ids.** `branch-hotfix-exception`, `branch-protected`, `secret-detected`, `identity-missing`,
+  `repository-not-allowed`, `sandbox-required`, `workspace-admin-only`, `credential-scope-exceeded`,
+  `output-limit-exceeded`, `timeout-exceeded`, `budget-step-exceeded`, `budget-run-exceeded`,
+  `budget-daily-exceeded`, `path-forbidden` and `context-uncited`. Any other id is ignored.
+- **Before you add an id.** Keep the rule in observe mode first and read its decisions: the **Policy
+  decisions** of a run on the Evidence tab, or the `policy.decided` events in `evidence.jsonl`. Compare each
+  `deny` with what really happened in that run. A deny on a run that succeeded would have stopped it.
+- **What each boundary does.** An enforced denial:
+
+  | Boundary | What happens |
+  |---|---|
+  | `run.start` | The run fails before any step. Its evidence has one `step.denied` with no step. |
+  | `step.before` | The step is refused: its command does not run, it is recorded as failed, and `on_failure` is not followed. An approval is not used. |
+  | `step.after` | The step is recorded as failed, and `on_failure` is not followed. The run fails. The checkout is left as it is, with no rollback. |
+  | `run.complete` | A run that succeeded is marked failed. Work it already pushed stays pushed. |
+  | `repository.access`, `agent.write`, `approval.consume` | As before: the step is stopped. |
+  | `push` | Only recorded. The pre-push hook is what blocks a push. |
+
+- **Each denial is recorded.** The run log gets a `!` line with the reason, and the evidence gets a
+  `step.denied` with the reason code, the policy id and version, and `packSha256`. For example, a step that
+  writes `secret/a.txt` with `path-forbidden` enforced leaves this order in `evidence.jsonl`:
+  `policy.decided` (mode `enforce`, reason `path.forbidden`), then `step.denied` with the same `packSha256`,
+  then `step.failed`.
+- **A missing fact stops the step.** When a rule needs a fact the step did not give, the answer is
+  `policy.input-incomplete`, and an enforced rule stops the step with it.
+- **An invalid baseline stops the enforced boundaries.** If the built-in baseline cannot be used (`policy.unavailable`
+  or `policy.invalid`, for example one with more than 500 rules), the steps at the boundaries of the enforced
+  rules are denied, as sign-ins and writing agents already are. Push is not stopped by this.
+- **Break-glass is for outages only.** A break-glass lets through only the outage denials described in
+  [Break-glass](#break-glass). It never lets through a denial by an enforced rule.
+- **Overlay files still refuse `enforce`.** A pack or rule from `policy.packs`, `policy.repositories` or
+  `policy.mandatory` in `enforce` mode is refused. Only the built-in baseline's rules are enforced, and only
+  through `policy.enforce`.
 
 ### Delivery contract
 

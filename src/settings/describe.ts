@@ -166,7 +166,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "delivery.required_checks": G("Required checks", "The CI checks a delivery contract requires; applies from the next step."),
   "delivery.artifacts": G("Required artifacts", "The artifacts a delivery contract requires; applies from the next step."),
   "delivery.provenance": G("Provenance required", "Whether a delivery contract requires provenance; applies from the next step."),
-  "policy.enforce": N("Enforced built-in rules", "Rule ids of the built-in policy (foundry.baseline), such as path-forbidden, that decide in block mode and are asked first; if the built-in policy cannot be used, their steps are denied; for now only sign-ins, writing agents and approvals are stopped, and elsewhere the denial is recorded."),
+  "policy.enforce": N("Enforced built-in rules", "Rule ids of the built-in policy (foundry.baseline), such as path-forbidden, that decide in block mode and are asked first; a deny stops the step or the run (at a push it is only recorded), and if the built-in policy cannot be used, the steps of those rules are denied."),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
   "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
   "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),

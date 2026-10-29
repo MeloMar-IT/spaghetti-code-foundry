@@ -21,6 +21,7 @@ import {
   newLogFile,
   recordStep,
   refuseByPolicy,
+  refuseRunByPolicy,
   type ApprovalDecision,
   type Engine,
   type LoopResult,
@@ -48,7 +49,7 @@ import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { runPolicy, type RunPolicy } from "./policy-hooks.js";
 import type { ProcessMeter } from "../steps/process.js";
-import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR } from "../evidence/record.js";
+import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR, type RunRecorder } from "../evidence/record.js";
 import { snapshotToolProfile } from "../tool-profile/session.js";
 import { configureTelemetry } from "../telemetry/telemetry.js";
 import { emitRunMeasured } from "../monitor/measures.js";
@@ -188,8 +189,10 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   evidence.queued(opts.queuedAt);
   evidence.created(summary, opts.actor ?? actorOf(opts.source, opts.source === "ui" ? opts.owner : undefined));
   // policy (observe mode): the run starts here, before any refusal and before the workspace is made
-  const policy = runPolicy(summary, config, liveLog(summary, opts), evidence);
-  policy?.at("run.start");
+  const log = liveLog(summary, opts);
+  const policy = runPolicy(summary, config, log, evidence);
+  const start = policy?.at("run.start");
+  if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: null, lastOutput: "" });
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
 
   try {
@@ -271,7 +274,10 @@ async function drive(
   const evidence = runRecorder(summary);
   // before anything else of this start, also before the early failure paths below
   const policy = early ? early.policy : runPolicy(summary, config, log, evidence);
-  if (!early) policy?.at("run.start");
+  if (!early) {
+    const start = policy?.at("run.start");
+    if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: summary.state.next, lastOutput: "" });
+  }
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
   const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: summary.state.next, lastOutput: "" });
@@ -407,8 +413,19 @@ async function drive(
   } finally {
     unmarkRunning(summary.runId, marker);
   }
-  if (result.outcome === "succeeded") policy?.at("run.complete", { runCostUsd: summary.totalCostUsd });
+  result = completeRun(policy, evidence, result, summary.totalCostUsd, log);
   return finish(summary, opts, config, result);
+}
+
+export const RUN_COMPLETE_DENIED = "the run is marked failed; work it already pushed stays";
+
+/** run.complete for a succeeded result: an enforced deny marks the run failed. Any other result is returned unchanged. Never throws. */
+export function completeRun(policy: Pick<RunPolicy, "at"> | undefined, evidence: RunRecorder | undefined, result: LoopResult, runCostUsd: number, log: (msg: string) => void): LoopResult {
+  if (result.outcome !== "succeeded") return result;
+  const done = policy?.at("run.complete", { runCostUsd });
+  if (!done?.denied) return result;
+  const reason = refuseRunByPolicy({ log, evidence }, done.denied);
+  return { outcome: "failed", reason: `${reason} — ${RUN_COMPLETE_DENIED}`, next: null, lastOutput: result.lastOutput };
 }
 
 /** Cancel a run that waits for approval (no process runs for it). Returns the saved run; undefined when it is not waiting. */
@@ -593,9 +610,10 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       if (top && d && d.stepId === step.id) {
         engine.decision = undefined;
         engine.accessFailed = false;
-        beginStep(engine, scope, step, identity);
-        const consumed = engine.policy?.at("approval.consume", { step: step.id }, identity);
-        if (consumed?.denied) res = refuseByPolicy(engine, identity, consumed.denied);
+        const began = beginStep(engine, scope, step, identity);
+        const consumed = began?.denied ? undefined : engine.policy?.at("approval.consume", { step: step.id }, identity);
+        if (began?.denied) res = refuseByPolicy(engine, identity, began.denied);
+        else if (consumed?.denied) res = refuseByPolicy(engine, identity, consumed.denied);
         else {
           engine.evidence?.stepDecided(identity, d.approved, engine.actor ?? SYSTEM_ACTOR);
           res = { ok: d.approved, output: `${d.approved ? "approved" : "rejected"} by ${d.by ?? "someone"}${d.note ? `: ${d.note}` : ""}` };
@@ -611,18 +629,22 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       }
     } else {
       engine.accessFailed = false;
-      beginStep(engine, scope, step, identity);
-      try {
-        res = await executeStep(step, scope, engine, logFile, meter);
-      } catch (e) {
-        res = { ok: false, output: "", error: (e as Error).message };
+      const began = beginStep(engine, scope, step, identity);
+      if (began?.denied) res = refuseByPolicy(engine, identity, began.denied);
+      else {
+        try {
+          res = await executeStep(step, scope, engine, logFile, meter);
+        } catch (e) {
+          res = { ok: false, output: "", error: (e as Error).message };
+        }
+        // a step with repo_ops was checked before its requests ran (repo-requests.ts)
+        if (!(step.type === "claude" && stepRepoOps(step))) res = applyChecks(step, res);
       }
-      // a step with repo_ops was checked before its requests ran (repo-requests.ts)
-      if (!(step.type === "claude" && stepRepoOps(step))) res = applyChecks(step, res);
     }
     if (top) summary.stepStartedAt = undefined; // recordStep saves it
     res = { ...res, output: redactText(res.output), ...(res.error === undefined ? {} : { error: redactText(res.error) }) };
-    recordStep(step, scope, engine, res, startedAt, logFile, visit, meter, await stepAfterPaths(engine));
+    const rec = recordStep(step, scope, engine, res, startedAt, logFile, visit, meter, await stepAfterPaths(engine));
+    res = { ...res, ok: rec.ok, error: rec.error, held: rec.held, limited: rec.limited };
     lastOutput = res.output;
     if (res.held && top) {
       // Content waits for a person: stop here, keep the hold in run.json, and run this step again on resume.
