@@ -3,11 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { StepIdSchema } from "../evidence/identity.js";
 import { parsePolicyPack } from "./parse.js";
-import { FactsSchema, MAX_PATTERNS, MAX_RULES, PatternSchema, type PolicyPack } from "./schema.js";
+import { FactsSchema, MAX_PATTERNS, MAX_RULES, PatternSchema, type Boundary, type PolicyPack } from "./schema.js";
 import { POLICY_PACK_VERSION, PolicySchemaError } from "./version.js";
 
 /**
- * The baseline pack: built in, owned by the Foundry, asked at every boundary of every run in observe mode.
+ * The baseline pack: built in, owned by the Foundry, asked at every boundary of every run. Its rules are observe unless
+ * their id is listed in `policy.enforce` (#727); the pack itself stays observe.
  * Admins cannot replace it; they can only add stricter packs (see compose.ts).
  * The one file in src/policy/ that reads a file: package.json, once, for the version.
  */
@@ -40,6 +41,40 @@ export interface BaselineLimits extends Partial<StepLimits> {
   dailyBudget?: number;
 }
 
+/** The base ids of the rules `baselinePack` emits (a chunk of a long rule only adds `-<n>`). `policy.enforce` takes these. */
+export const BASELINE_RULE_IDS = [
+  "branch-hotfix-exception", "branch-protected", "secret-detected", "identity-missing", "repository-not-allowed",
+  "sandbox-required", "workspace-admin-only", "credential-scope-exceeded",
+  "output-limit-exceeded", "timeout-exceeded", "budget-step-exceeded", "budget-run-exceeded", "budget-daily-exceeded",
+  "path-forbidden", "context-uncited",
+] as const;
+export type BaselineRuleId = (typeof BASELINE_RULE_IDS)[number];
+
+/**
+ * The boundaries an enforced rule guards when the baseline cannot be used. A control that is only checked after a step
+ * (limits, budgets, paths, citations) also guards `step.before`: it fails closed before the step runs.
+ */
+export const BASELINE_RULE_BOUNDARIES: Record<BaselineRuleId, readonly Boundary[]> = {
+  "branch-hotfix-exception": ["push"],
+  "branch-protected": ["push"],
+  "secret-detected": ["push"],
+  "identity-missing": ["push"],
+  "repository-not-allowed": ["push"],
+  "sandbox-required": ["agent.write", "step.before"],
+  "workspace-admin-only": ["run.start"],
+  "credential-scope-exceeded": ["repository.access"],
+  "output-limit-exceeded": ["step.before", "step.after"],
+  "timeout-exceeded": ["step.before", "step.after"],
+  "budget-step-exceeded": ["step.before", "step.after"],
+  "budget-run-exceeded": ["step.before", "step.after"],
+  "budget-daily-exceeded": ["step.before", "step.after"],
+  "path-forbidden": ["step.before", "step.after"],
+  "context-uncited": ["step.before", "step.after"],
+};
+
+/** The base id of a rule id: without the `-<n>` of a chunk. */
+export const baselineRuleBase = (id: string): string => id.replace(/-\d+$/, "");
+
 /** What the baseline of one run is built from. Later policy issues add optional fields. */
 export interface BaselineControls {
   limits?: BaselineLimits;
@@ -50,6 +85,8 @@ export interface BaselineControls {
   repository?: string;
   /** Patterns of the `forbidden_paths` run variable, as written (`*` is the only wildcard). Left out when empty. */
   forbiddenPaths?: readonly string[];
+  /** Base ids of the rules that decide in enforce mode (`policy.enforce`). Left out when empty. */
+  enforce?: readonly BaselineRuleId[];
 }
 
 export const NO_BASELINE_CONTROLS: BaselineControls = { protectedBranches: [], secretScan: true, shippedHotfixFlow: false };
@@ -60,7 +97,7 @@ export const NO_BASELINE_CONTROLS: BaselineControls = { protectedBranches: [], s
  * go to `leftOut`; empty entries and duplicates are dropped. No count limit is applied here.
  */
 export function baselineControls(
-  config: { protected_branches?: readonly string[]; secret_scan?: boolean },
+  config: { protected_branches?: readonly string[]; secret_scan?: boolean; policy?: { enforce?: readonly unknown[] } },
   run: { repository?: string; shippedHotfixFlow: boolean; limits?: BaselineLimits; forbiddenPaths?: string },
 ): { controls: BaselineControls; leftOut: string[]; leftOutPaths: string[] } {
   const protectedBranches: string[] = [];
@@ -83,9 +120,11 @@ export function baselineControls(
     if (PatternSchema.safeParse(token).success) forbiddenPaths.push(token);
     else leftOutPaths.push(token);
   }
+  const known: readonly string[] = BASELINE_RULE_IDS;
+  const enforce = [...new Set((config.policy?.enforce ?? []).filter((id): id is BaselineRuleId => typeof id === "string" && known.includes(id)))];
   const repository = run.repository !== undefined && FactsSchema.shape.repository.safeParse(run.repository).success ? run.repository : undefined;
   return {
-    controls: { protectedBranches, secretScan: config.secret_scan !== false, shippedHotfixFlow: run.shippedHotfixFlow, ...(repository ? { repository } : {}), ...(run.limits ? { limits: run.limits } : {}), ...(forbiddenPaths.length ? { forbiddenPaths } : {}) },
+    controls: { protectedBranches, secretScan: config.secret_scan !== false, shippedHotfixFlow: run.shippedHotfixFlow, ...(repository ? { repository } : {}), ...(run.limits ? { limits: run.limits } : {}), ...(forbiddenPaths.length ? { forbiddenPaths } : {}), ...(enforce.length ? { enforce } : {}) },
     leftOut,
     leftOutPaths,
   };
@@ -158,6 +197,17 @@ function pathRules(patterns: readonly string[] | undefined): unknown[] {
   return rules;
 }
 
+/** Marks the listed rules enforce (copies) and orders: hotfix exception first, then the enforced rules, then the rest. The same array when nothing is listed. */
+function applyEnforce(rules: unknown[], enforce?: readonly BaselineRuleId[]): unknown[] {
+  if (!enforce?.length) return rules;
+  const baseOf = (r: unknown) => baselineRuleBase((r as { id: string }).id);
+  const listed = (r: unknown) => (enforce as readonly string[]).includes(baseOf(r));
+  const mark = (r: unknown) => ({ ...(r as object), mode: "enforce" });
+  const hotfix = rules.filter((r) => baseOf(r) === "branch-hotfix-exception");
+  const others = rules.filter((r) => baseOf(r) !== "branch-hotfix-exception");
+  return [...hotfix.map((r) => (listed(r) ? mark(r) : r)), ...others.filter(listed).map(mark), ...others.filter((r) => !listed(r))];
+}
+
 /** The baseline pack of one run (pure): protected branches first, as the hook checks the branch before it scans. */
 export function baselinePack(version: string, controls: BaselineControls, o: { stepSandbox?: boolean; contextCitations?: boolean } = {}): PolicyPack {
   const chunks: string[][] = [];
@@ -187,7 +237,7 @@ export function baselinePack(version: string, controls: BaselineControls, o: { s
   rules.push(...pathRules(controls.forbiddenPaths));
   // Last, so a limit or path deny at `step.after` still wins over this warning.
   if (o.contextCitations !== false) rules.push(CONTEXT_UNCITED_RULE);
-  return { version: POLICY_PACK_VERSION, policy: { id: BASELINE_POLICY_ID, version }, mode: "observe", defaultOutcome: "allow", rules } as PolicyPack;
+  return { version: POLICY_PACK_VERSION, policy: { id: BASELINE_POLICY_ID, version }, mode: "observe", defaultOutcome: "allow", rules: applyEnforce(rules, controls.enforce) } as PolicyPack;
 }
 
 export interface RunBaseline {

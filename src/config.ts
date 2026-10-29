@@ -8,7 +8,7 @@ import { z } from "zod";
 import { editYamlText, removeYamlKey } from "./config-edit.js";
 import { validGithubName } from "./auth/repo-url.js";
 import { FACTORY_HOME } from "./flow/load.js";
-import { BASELINE_POLICY_ID } from "./policy/baseline.js";
+import { BASELINE_POLICY_ID, BASELINE_RULE_IDS } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { ContextSettingsSchema } from "./context/settings.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
@@ -677,7 +677,8 @@ export const ConfigSchema = z
     /** The running Foundry updates itself from main of its own repository after a hotfix. Off by default. */
     self_update: SelfUpdateSchema,
     /**
-     * Policy packs asked at every boundary of a run, in observe mode (decisions are recorded, nothing is stopped).
+     * Policy packs asked at every boundary of a run, in observe mode (decisions are recorded, nothing is stopped), except the
+     * baseline rules listed in `enforce`.
      * The built-in baseline (foundry.baseline) is always asked. Files: <data folder>/policies/<id>.json, in three layers:
      * `mandatory` (overlays), `repositories` (per "owner/name"), `packs` (optional). The most restrictive decision wins.
      */
@@ -689,6 +690,11 @@ export const ConfigSchema = z
           .record(z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,99}\/[a-z0-9_.-]{1,100}$/, 'must be a repository as "owner/name" in lower case'), policyIds())
           .refine((r) => Object.keys(r).length <= 20, "at most 20 repositories")
           .default({}),
+        /** Rule ids of the built-in baseline that decide in enforce mode and are asked first (#727). */
+        enforce: z
+          .array(z.enum(BASELINE_RULE_IDS, { error: "must be a rule id of the built-in policy (foundry.baseline), without a -<n> suffix" }))
+          .refine((l) => new Set(l).size === l.length, "names the same rule twice")
+          .default([]),
       })
       .strict()
       .prefault({}),

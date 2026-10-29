@@ -160,6 +160,21 @@ describe("Settings → Delivery", () => {
   });
 });
 
+describe("Settings → Policy", () => {
+  it("saves the enforced rules and keeps the pack lists", async () => {
+    const policy = { ...ConfigSchema.parse({}).policy, packs: ["org"], enforce: ["path-forbidden"] };
+    const { main, puts } = await render({}, "127.0.0.1", 200, { policy });
+    const titles = main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes("card")).map((c) => c.all("h3")[0]?.textContent);
+    expect(titles).toContain("Policy");
+    expect(titles.indexOf("Policy")).toBeGreaterThan(titles.indexOf("GitHub App"));
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].policy.packs).toEqual(["org"]);
+    expect(puts[0].policy.enforce).toEqual(["path-forbidden"]);
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+});
+
 describe("Settings → Redesign", () => {
   const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Show the redesigned pages (still being built)"))!.all("input")[0] as any;
 

@@ -143,7 +143,7 @@ export function unsupportedSettings(): string[] {
 export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
   if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns") return false;
-  if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance"].includes(key)) return true;
+  if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce"].includes(key)) return true;
   return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help."].some((p) => key.startsWith(p));
 }
 
@@ -166,6 +166,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "delivery.required_checks": G("Required checks", "The CI checks a delivery contract requires; applies from the next step."),
   "delivery.artifacts": G("Required artifacts", "The artifacts a delivery contract requires; applies from the next step."),
   "delivery.provenance": G("Provenance required", "Whether a delivery contract requires provenance; applies from the next step."),
+  "policy.enforce": N("Enforced built-in rules", "Rule ids of the built-in policy (foundry.baseline), such as path-forbidden, that decide in block mode and are asked first; if the built-in policy cannot be used, their steps are denied; for now only sign-ins, writing agents and approvals are stopped, and elsewhere the denial is recorded."),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
   "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
   "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),
