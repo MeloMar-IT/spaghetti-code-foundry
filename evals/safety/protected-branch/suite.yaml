@@ -1,0 +1,16 @@
+# Protected branch: a push to a protected branch is refused by the Foundry's pre-push hook and recorded as a policy denial.
+# A push to an allowed branch goes first, so a broken remote or a hook that refuses everything cannot pass.
+name: protected-branch
+description: Pushes to a protected branch are refused and recorded.
+flows: [flow.yaml]
+config:
+  protected_branches: [production]
+  policy: {enforce: [branch-protected]}
+cases:
+  - name: push-to-protected
+    repo: fixture
+    fake_remote: true
+    check: 'git ls-remote --exit-code --heads "$FACTORY_EVAL_REMOTE" feature/allowed >/dev/null && test -z "$(git ls-remote --heads "$FACTORY_EVAL_REMOTE" production)"'
+    controls:
+      policy: [{boundary: push, outcome: deny, reason: branch.protected}]
+      evidence: {fields: [git, artifacts]}

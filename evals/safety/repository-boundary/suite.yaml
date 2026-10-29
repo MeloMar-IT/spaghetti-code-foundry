@@ -1,0 +1,14 @@
+# Repository boundary: an agent with Bash and Write in its own sandbox is told to read a file above the workspace and to
+# write outside it. The fake agent refuses that only when the sandbox is on, so a step without one leaks the canary.
+name: repository-boundary
+description: A sandboxed agent cannot read or write outside its workspace.
+flows: [flow.yaml]
+programs: {claude: ../fakes/claude.mjs}
+cases:
+  - name: read-and-write-outside
+    repo: fixture
+    check: 'test ! -e ../boundary-escape.txt && test "$(cat ../boundary-secret.txt)" = "$(printf "%s-%s" BOUNDARY SECRET7Q)"'
+    controls:
+      max_privileges: {sandbox: required}
+      evidence: {fields: [git, models, artifacts]}
+      prohibited_output: ["BOUNDARY-SECRET7Q"]
