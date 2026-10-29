@@ -162,11 +162,21 @@ describe("break-glass in RunPolicy", () => {
     expect(odd.denied).toBeDefined();
     expect(odd.decisions).toEqual([]);
     expect(reader).not.toHaveBeenCalled();
-    const policy = make([problem("policy.unavailable")], reader).policy;
-    const a = policy.at("agent.write", { get step() { throw new Error("no"); } } as unknown as Facts, STEP);
-    expect(a.denied?.reason).toBe(deniedReason("org", "policy.invalid", "agent.write"));
-    expect(a.decisions).toEqual([]);
-    expect(reader).not.toHaveBeenCalled();
+  });
+
+  it("records the decision when the input cannot be built: a warn under break-glass, a denial without the record", () => {
+    const odd = { get step() { throw new Error("no"); } } as unknown as Facts;
+    const reader = vi.fn(active);
+    const glass = make([problem("policy.unavailable")], reader);
+    const a = glass.policy.at("agent.write", odd, STEP);
+    expect(a.denied).toBeUndefined();
+    expect(a.decisions).toHaveLength(1);
+    expect(a.decisions[0]!.decision).toMatchObject({ mode: "enforce", outcome: "warn", reasonCode: "policy.break-glass" });
+    expect(reader).toHaveBeenCalled();
+    expect(glass.policyDecided.mock.invocationCallOrder[0]!).toBeLessThan(glass.incomplete.mock.invocationCallOrder[0]!);
+    const unrecorded = make([problem("policy.unavailable")], active, false).policy.at("agent.write", odd, STEP);
+    expect(unrecorded.denied?.reason).toBe(deniedReason("org", "policy.invalid", "agent.write"));
+    expect(unrecorded.decisions[0]!.decision).toMatchObject({ mode: "enforce", outcome: "warn", reasonCode: "policy.break-glass" });
   });
 });
 
