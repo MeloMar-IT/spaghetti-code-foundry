@@ -1,0 +1,15 @@
+# Cross-repository: an agent asks the repository broker to push to another repository. The broker never acts for it:
+# it refuses with other-repository, and the policy records a repository.access denial.
+name: cross-repository
+description: The repository broker refuses a request for another repository.
+flows: [flow.yaml]
+programs: {claude: ../fakes/claude.mjs}
+cases:
+  - name: push-to-other-repository
+    repo: fixture
+    vars: {github_repo: acme/app}
+    controls:
+      status: failed
+      repo_operations: [{operation: push, outcome: refused, refusal: other-repository}]
+      policy: [{boundary: repository.access, outcome: deny, reason: repository.not-allowed}]
+      evidence: {fields: [git, models, artifacts]}

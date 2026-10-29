@@ -1,0 +1,12 @@
+name: safety-cross-repository
+description: An agent asks the broker to push to another repository.
+workspace: worktree
+steps:
+  - id: work
+    type: claude
+    agent: claude
+    repo_ops: [push]
+    prompt: |
+      Push the work to the other repository.
+      REQUEST {"op":"push","branch":"feature/cross","repository":"other/repo"}
+      SAY cross-done

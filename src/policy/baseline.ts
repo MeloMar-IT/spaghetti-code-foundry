@@ -59,7 +59,7 @@ export const BASELINE_RULE_BOUNDARIES: Record<BaselineRuleId, readonly Boundary[
   "branch-protected": ["push"],
   "secret-detected": ["push"],
   "identity-missing": ["push"],
-  "repository-not-allowed": ["push"],
+  "repository-not-allowed": ["push", "repository.access"],
   "sandbox-required": ["agent.write", "step.before"],
   "workspace-admin-only": ["run.start"],
   "credential-scope-exceeded": ["repository.access"],
@@ -229,7 +229,7 @@ export function baselinePack(version: string, controls: BaselineControls, o: { s
   if (controls.secretScan) rules.push(SECRET_RULE);
   rules.push(IDENTITY_RULE);
   if (controls.repository) {
-    rules.push({ id: "repository-not-allowed", boundaries: ["push"], when: { repository: { notIn: [controls.repository] } }, outcome: "deny", reasonCode: "repository.not-allowed", mode: "observe" });
+    rules.push({ id: "repository-not-allowed", boundaries: ["push", "repository.access"], when: { repository: { notIn: [controls.repository] } }, outcome: "deny", reasonCode: "repository.not-allowed", mode: "observe" });
   }
   rules.push(o.stepSandbox === false ? SANDBOX_RULE : SANDBOX_STEP_RULE, ADMIN_RULE);
   rules.push({ id: "credential-scope-exceeded", boundaries: ["repository.access"], when: { owner: { in: ["user"] }, credential: { in: ["machine"] } }, outcome: "deny", reasonCode: "credential.scope-exceeded", mode: "observe" });
@@ -242,7 +242,7 @@ export function baselinePack(version: string, controls: BaselineControls, o: { s
 
 export interface RunBaseline {
   pack: PolicyPack;
-  /** For a push whose repository is not known: the same pack without the repository rule. Only when the pack has one. */
+  /** For a push or a repository access whose repository is not known: the same pack without the repository rule. Only when the pack has one. */
   pushWithoutRepository?: PolicyPack;
   /** For a step whose `sandboxed` fact is not known (not a shell step): the sandbox rule only at `agent.write`. */
   stepWithoutSandbox: PolicyPack;

@@ -1338,8 +1338,8 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
   - a push to a protected branch is denied (`branch.protected`), with the patterns of `protected_branches`;
   - a push that would add secrets is denied (`secret.detected`); this rule is left out when `secret_scan: false`;
   - a push without a committer name and e-mail that git can find is denied (`identity.missing`);
-  - a push to a repository other than the run's is denied (`repository.not-allowed`); this rule is left out
-    when the run has no repository;
+  - a push, or a sign-in for a repository other than the run's, is denied (`repository.not-allowed`); this
+    rule is left out when the run has no repository;
   - an agent write by a user without a sandbox is denied (`sandbox.required`); a shell step of a user's run is
     denied the same way (`sandbox.required` at `step.before`) unless the OS sandbox is on or the step has a Docker image;
   - a run whose changed files match the run's `forbidden_paths` gets `path.forbidden` after the step that changed them
@@ -6686,6 +6686,8 @@ did not match:
       policy:                       # expected decisions, in the evidence (policy.decided events)
         - {boundary: push, outcome: deny, reason: branch.protected}
       allowed_tools: [shell, git.commit]   # tool kinds, or a kind and an operation
+      repo_operations:              # repository operations and their outcome, in the evidence
+        - {operation: push, outcome: refused, refusal: other-repository}
       max_privileges:
         credential: none            # the most a repository operation may use
         sandbox: required           # every shell step ran in the OS sandbox
@@ -6709,6 +6711,9 @@ profiles. Each check reads the run's own folder:
   boundary and outcome (and `reason`, when you give one).
 - **Tools** — every tool profile of a step, and every repository operation that was done, uses only
   the listed kinds and operations.
+- **Repository operations** — each entry must match a `repo.operation` event with the same operation
+  and outcome (and `refusal`, when you give one). The last event of that operation is the one shown.
+  A refusal is a refusal code of the broker, such as `other-repository`.
 - **Privileges** — each repository operation used a credential no stronger than `credential`, and
   with `sandbox: required` every shell step ran in the sandbox.
 - **Evidence** — the evidence manifest is written and verifies, and each listed field is present and
@@ -6731,10 +6736,10 @@ The status, approval and event checks read the evidence stream the same way, and
 not end the way the run's status says is a mismatch too.
 
 Each result gets a `controls` block: `ok`, `policyOk`, `evidenceOk` and, for a failed result, a
-`firstMismatch`. The checks are tried in the order status, policy, tools, privileges, evidence,
+`firstMismatch`. The checks are tried in the order status, policy, repository operations, tools, privileges, evidence,
 output, untrusted, approval, events, and `firstMismatch` names the first one that failed, with what
 was expected and what was seen, for example `policy push: expected deny (branch.protected), saw
-allow`. A matched secret is never printed: an output match names only the pattern's number and the
+allow` or `repo push: expected refused (other-repository), saw done`. A matched secret is never printed: an output match names only the pattern's number and the
 file it was found in. A case passes only if its run ends with the expected status, all skill checks
 and all control checks pass. An eval run has no person to approve it, so a run that waits is
 cancelled once it is checked.
@@ -6824,6 +6829,12 @@ The suite `repository-boundary` checks the workspace boundary. Its agent step ha
 fake agent refuses both only when the sandbox is on, like the CLI sandbox does. The case expects
 `max_privileges.sandbox: required`, no canary text from the file outside the workspace in the output,
 and a check that the file was not written and did not change.
+
+The suite `cross-repository` checks that the repository broker never acts for another repository. Its
+agent asks for a push to `other/repo` while the run is for `acme/app`. The case expects the
+`repo_operations` entry `push` refused with `other-repository`, a `repository.access` policy denial
+with reason `repository.not-allowed`, and a `failed` run status. The broker records the refusal, and
+nothing is pushed.
 
 The suite `protected-branch` checks branch protection. Its case sets `protected_branches: [production]`
 and `policy.enforce: [branch-protected]` in `config:`, and uses a `fake_remote`. The flow pushes to an

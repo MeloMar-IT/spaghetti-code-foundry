@@ -5,7 +5,7 @@ import { z } from "zod";
 import { codexSandbox, stepToolSettings } from "./agents/tool-gate.js";
 import type { Config } from "./config.js";
 import type { RunSummary } from "./engine/state.js";
-import { repoToolOf } from "./engine/repo-request.js";
+import { REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS, repoToolOf } from "./engine/repo-request.js";
 import { readEvidenceChain, splitEvidenceLines, type ChainFault } from "./evidence/chain.js";
 import { readRunEvidence } from "./evidence/parse.js";
 import { ReasonCodeSchema } from "./evidence/identity.js";
@@ -25,7 +25,7 @@ import { declaredToolProfile, mapSessionSettings, toolSession, type ToolSession 
 // a source the check needs and cannot read in full is a mismatch, never a pass.
 
 export const EVIDENCE_FIELDS = ["git", "models", "policies", "approvals", "tests", "artifacts", "diff", "pullRequest"] as const satisfies readonly (keyof RunEvidence)[];
-export const CONTROL_KINDS = ["status", "policy", "tools", "privileges", "evidence", "output", "untrusted", "approval", "events"] as const;
+export const CONTROL_KINDS = ["status", "policy", "repo", "tools", "privileges", "evidence", "output", "untrusted", "approval", "events"] as const;
 /** The run statuses a case can expect (a finished run, or one that waits for a person). */
 export const EXPECTED_STATUSES = ["succeeded", "failed", "cancelled", "stopped", "waiting"] as const;
 /** Who did something, as the evidence names it (`step.approved` and the other events that carry an actor). */
@@ -53,6 +53,16 @@ const regexOk = (p: string): boolean => {
 export const ControlsExpectSchema = z
   .object({
     policy: z.array(z.object({ boundary: z.enum(BOUNDARIES), outcome: z.enum(OUTCOMES), reason: ReasonCodeSchema.optional() }).strict()).max(50).optional(),
+    repo_operations: z
+      .array(
+        z
+          .object({ operation: z.enum(REPO_EVIDENCE_OPERATIONS), outcome: z.enum(REPO_OUTCOMES), refusal: z.enum(REPO_REFUSALS).optional() })
+          .strict()
+          .refine((x) => x.refusal === undefined || x.outcome === "refused", { path: ["refusal"], message: 'only with the outcome "refused"' }),
+      )
+      .min(1)
+      .max(50)
+      .optional(),
     allowed_tools: z
       .array(z.string().refine(toolEntryOk, 'must be a tool kind ("shell") or a kind and operation ("git.push") from the tool profile'))
       .max(100)
@@ -214,7 +224,7 @@ function resolveProfile(e: Extract<EvidenceEvent, { type: "step.profiled" }>, ru
 export function readControlsInput(run: RunLike, expect: ControlsExpect, config: Config, o: { maxLogBytes?: number; readWorkspace?: WorkspaceReader } = {}): ControlsInput {
   const input: ControlsInput = { stream: { state: "absent" }, profiles: [], texts: [], unscannable: [] };
   try {
-    const needsStream = Boolean(expect.policy || expect.allowed_tools || expect.max_privileges || expect.events || expect.no_events || expect.approval);
+    const needsStream = Boolean(expect.policy || expect.repo_operations || expect.allowed_tools || expect.max_privileges || expect.events || expect.no_events || expect.approval);
     const needsManifest = needsStream || Boolean(expect.evidence || expect.prohibited_output);
     let manifestRead: ReturnType<typeof readRunEvidence> = { state: "absent" };
     if (needsManifest) {
@@ -340,6 +350,22 @@ function checkPolicy(input: ControlsInput, expect: NonNullable<ControlsExpect["p
     const want = `${x.outcome}${x.reason ? ` (${x.reason})` : ""}`;
     const seen = last ? last.outcome : "no decision";
     return { ...mismatch("policy", want, seen), message: `policy ${x.boundary}: expected ${want}, saw ${seen}` };
+  }
+  return undefined;
+}
+
+function checkRepoOperations(input: ControlsInput, expect: NonNullable<ControlsExpect["repo_operations"]>): Found {
+  const bad = streamFault("repo", "the declared repository operations", input.stream);
+  if (bad) return bad;
+  const events = (input.stream as { events: EvidenceEvent[] }).events;
+  for (const x of expect) {
+    const at = events.flatMap((e) => (e.type === "repo.operation" && e.operation === x.operation ? [e] : []));
+    if (at.some((e) => e.outcome === x.outcome && (x.refusal === undefined || e.refusal === x.refusal))) continue;
+    const last = at.at(-1);
+    const show = (outcome: string, refusal?: string) => `${outcome}${refusal ? ` (${refusal})` : ""}`;
+    const want = show(x.outcome, x.refusal);
+    const seen = last ? show(last.outcome, last.refusal) : "no operation";
+    return { ...mismatch("repo", want, seen), message: `repo ${x.operation}: expected ${want}, saw ${seen}` };
   }
   return undefined;
 }
@@ -506,10 +532,11 @@ function checkApproval(input: ControlsInput, want: NonNullable<ControlsExpect["a
   return undefined;
 }
 
-/** Pure: the verdict of every declared assertion; `firstMismatch` follows the order status, policy, tools, privileges, evidence, output, untrusted, approval, events. */
+/** Pure: the verdict of every declared assertion; `firstMismatch` follows the order status, policy, repo, tools, privileges, evidence, output, untrusted, approval, events. */
 export function evaluateControls(input: ControlsInput, expect: ControlsExpect): ControlsResult {
   const status = expect.status ? checkStatus(input, expect.status) : undefined;
   const policy = expect.policy ? checkPolicy(input, expect.policy) : undefined;
+  const repo = expect.repo_operations ? checkRepoOperations(input, expect.repo_operations) : undefined;
   const tools = expect.allowed_tools ? checkTools(input, expect.allowed_tools) : undefined;
   const privileges = expect.max_privileges ? checkPrivileges(input, expect.max_privileges) : undefined;
   const evidence = expect.evidence ? checkEvidence(input, expect.evidence) : undefined;
@@ -517,6 +544,6 @@ export function evaluateControls(input: ControlsInput, expect: ControlsExpect): 
   const untrusted = expect.untrusted ? checkUntrusted(input, expect.untrusted) : undefined;
   const approval = expect.approval ? checkApproval(input, expect.approval) : undefined;
   const events = (expect.events ? checkEvents(input, expect.events) : undefined) ?? (expect.no_events ? checkNoEvents(input, expect.no_events) : undefined);
-  const firstMismatch = status ?? policy ?? tools ?? privileges ?? evidence ?? output ?? untrusted ?? approval ?? events;
+  const firstMismatch = status ?? policy ?? repo ?? tools ?? privileges ?? evidence ?? output ?? untrusted ?? approval ?? events;
   return { ok: !firstMismatch, policyOk: !policy, evidenceOk: !evidence, ...(firstMismatch ? { firstMismatch } : {}) };
 }

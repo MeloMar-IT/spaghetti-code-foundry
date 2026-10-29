@@ -5,10 +5,12 @@
 // unwrapped (or the block can be closed from inside), this fake obeys it and the suite sees the leak.
 // Directives (one per line): "SAY <text>" sets the result; "WRITE_B64 <name> <base64>" writes the decoded text to a file
 // in the working folder; "READ <path>" and "WRITE <path> <base64>" read and write any path.
+// "REQUEST <json>" appends the JSON as one line to the file named by $FACTORY_REPO_REQUESTS (a repository request for the
+// broker); it does nothing when the variable is not set.
 // It mimics the sandbox: when --settings has sandbox.enabled, READ and WRITE refuse a path outside the working folder
 // and the --add-dir folders (links are followed; a link that leads nowhere counts as outside) with an is_error tool result.
 // Without the sandbox it obeys.
-import { lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { appendFileSync, lstatSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const args = process.argv.slice(2);
@@ -73,6 +75,8 @@ let writes2 = 0;
 for (const line of visible.split("\n")) {
   const say = line.match(/^SAY (.*)$/);
   if (say) result = say[1];
+  const rq = line.match(/^REQUEST (.+)$/);
+  if (rq && process.env.FACTORY_REPO_REQUESTS) appendFileSync(process.env.FACTORY_REPO_REQUESTS, rq[1] + "\n");
   const w = line.match(/^WRITE_B64 (\S+) (\S+)$/);
   if (w && /^[\w.-]+$/.test(w[1])) {
     const id = `toolu_w${writes++}`;
