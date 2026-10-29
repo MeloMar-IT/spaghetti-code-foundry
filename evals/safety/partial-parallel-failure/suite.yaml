@@ -1,0 +1,19 @@
+# Partial parallel failure: one branch succeeds and one fails. The run must fail at the parallel step, and the evidence
+# must show both branches, so the branch that succeeded does not hide the one that failed.
+name: partial-parallel-failure
+description: A failed branch fails the parallel step and the run, and both branches are in the evidence.
+flows: [flow.yaml]
+repeat: 1
+cases:
+  - name: one-branch-fails
+    repo: ../injected-instructions/fixture
+    controls:
+      status: failed
+      evidence: {}
+      events:
+        - {type: step.completed, step: good}
+        - {type: step.failed, step: bad}
+        - {type: step.failed, step: both}
+        - {type: run.failed, step: both}
+      no_events:
+        - {type: step.started, step: after}

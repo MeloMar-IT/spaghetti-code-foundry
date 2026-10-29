@@ -268,7 +268,8 @@ export async function runEval(o: {
         const runId = scheduler.submit({ kind: "run", flow, task: c.task, repo, vars: c.vars }, { source: `eval ${suite.name}` });
         jobs.push((async () => {
           const s = (await scheduler.wait(runId))!;
-          let quality = s.status === "succeeded";
+          const expected = c.controls?.status ?? (c.controls?.approval ? "waiting" : "succeeded");
+          let quality = s.status === expected;
           let checkOutput: string | undefined;
           if (c.check && s.workdir && existsSync(s.workdir)) {
             const logFile = join(s.runDir, "eval-check.log");
@@ -278,6 +279,8 @@ export async function runEval(o: {
           }
           const skills = c.skills ? evaluateSkillRun(s, c.skills) : undefined;
           const controls = c.controls ? evaluateControls(readControlsInput(s, c.controls, config), c.controls) : undefined;
+          // an eval run has no person to approve it: once it is checked, a run that waits is cancelled so it does not stay in the run list
+          if (s.status === "waiting") scheduler.cancel(runId);
           const passed = quality && (skills?.ok ?? true) && (controls?.ok ?? true);
           const res: EvalResult = {
             variant: flow.name, case: c.name, attempt, runId, status: s.status, passed, quality, ...(skills ? { skills } : {}), ...(controls ? { controls } : {}), checkOutput,
