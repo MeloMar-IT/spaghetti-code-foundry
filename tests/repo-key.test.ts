@@ -226,6 +226,19 @@ describe("a deploy key that is gone or refused", { timeout: 60_000 }, () => {
     expect(good.status).toBe("succeeded");
   });
 
+  it("keeps the oversize label when the refusal comes after output that was cut", async () => {
+    keyRepo(user);
+    // more than the default 20,000 characters, then the host's refusal at the end of the stream
+    // (on stderr: a step that exits 0 is refused by what it wrote there)
+    const noisy = `yes x | head -c 30000; echo 'git@github.com: Permission denied (publickey).' >&2`;
+    const s = await go(mini(one("marked", noisy)));
+    expect(s.reason).toBe(`step "marked" failed: ${KEY_REFUSED_RUN}`);
+    const rec = s.history.find((h) => h.id === "marked")!;
+    expect(rec.output.length).toBeLessThanOrEqual(20_000);
+    expect(rec.label).toMatchObject({ partial: true, risk: "high" });
+    expect(rec.label?.signals).toContain("oversize");
+  });
+
   it("recognises what hosts say, and nothing else", () => {
     const samples = ["git@github.com: Permission denied (publickey).", "ERROR: Permission to acme/app.git denied to deploy key.", "ERROR: Repository not found.", "remote: Write access to repository not granted.", "ERROR: The key you are authenticating with has been marked as read only."];
     for (const t of samples) {

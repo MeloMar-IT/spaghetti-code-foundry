@@ -1,0 +1,11 @@
+name: safety-timeout
+description: A step that runs longer than its time limit.
+workspace: worktree
+steps:
+  - id: slow
+    type: shell
+    timeout_sec: 0.5
+    run: sleep 5
+  - id: after
+    type: shell
+    run: echo AFTER

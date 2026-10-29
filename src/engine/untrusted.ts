@@ -120,13 +120,14 @@ function riskOf(signals: readonly Signal[], base: RiskLevel = "low"): RiskLevel 
 const higher = (a: RiskLevel, b: RiskLevel): RiskLevel => (RISK_LEVELS.indexOf(a) >= RISK_LEVELS.indexOf(b) ? a : b);
 
 /** The label of a text. The text is not changed; `orders` is detected here when the text is short enough to check. */
-export function labelOutput(text: string, source: SourceInfo, o: { timedOut?: boolean; trust?: TrustClass } = {}): OutputLabel {
+export function labelOutput(text: string, source: SourceInfo, o: { timedOut?: boolean; oversize?: boolean; trust?: TrustClass } = {}): OutputLabel {
   const signals: Signal[] = [];
   try {
     if (text.length <= GUARD_MAX && looksLikeOrders(text)) signals.push("orders");
   } catch {
     signals.push("orders");
   }
+  if (o.oversize) signals.push("oversize");
   if (o.timedOut) signals.push("timed-out");
   const trust = o.trust ?? "untrusted";
   return {
@@ -138,7 +139,7 @@ export function labelOutput(text: string, source: SourceInfo, o: { timedOut?: bo
     consumers: trust === "untrusted" ? ["prompt", "env"] : [...CONSUMERS],
     risk: riskOf(signals),
     signals,
-    ...(o.timedOut ? { partial: true as const } : {}),
+    ...(o.timedOut || o.oversize ? { partial: true as const } : {}),
   };
 }
 

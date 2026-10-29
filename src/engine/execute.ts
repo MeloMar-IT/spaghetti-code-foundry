@@ -109,7 +109,10 @@ export interface ApprovalDecision {
   note?: string;
 }
 
-export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held">;
+export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held"> & {
+  /** A shell step printed more than it kept. Not stored in the record: it shows as the `oversize` signal of its label. */
+  oversize?: boolean;
+};
 
 /** Position (1-based) of each step's latest record in the run history, for the steps of `scope` (keys without the scope prefix). */
 export function ranOrder(history: Pick<StepRecord, "id" | "parent">[], prefix: string): Record<string, number> {
@@ -146,13 +149,15 @@ export function historySummary(summary: RunSummary): string {
 }
 
 /** The label of a step's output, saved with its record. */
-function outputLabel(step: Step, scope: Scope, res: StepResult): StepRecord["label"] {
+export function outputLabel(step: Step, scope: Scope, res: StepResult): StepRecord["label"] {
   const path = `steps.${step.id}.output`;
-  return labelOutput(res.output, { path, kind: trustOf(path, stepTypesOf(scope.flow)).kind ?? "log", step: step.id, stepType: step.type }, { timedOut: res.error === "timed out" });
+  const oversize = step.type === "shell" && res.oversize === true;
+  return labelOutput(res.output, { path, kind: trustOf(path, stepTypesOf(scope.flow)).kind ?? "log", step: step.id, stepType: step.type }, { timedOut: res.error === "timed out", oversize });
 }
 
 /** Store a finished step in history and in the scope's template context. */
 export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepResult, startedAt: Date, logFile: string, visit: number, meter?: ProcessMeter, paths?: string[]): StepRecord {
+  const { oversize: _oversize, ...stored } = res;
   const rec: StepRecord = {
     id: scope.prefix + step.id,
     label: outputLabel(step, scope, res),
@@ -161,7 +166,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     startedAt: startedAt.toISOString(),
     durationMs: Date.now() - startedAt.getTime(),
     logFile,
-    ...res,
+    ...stored,
     ...(engine.accessFailed && !res.ok ? { accessFailed: true } : {}),
     ...(scope.prefix ? { parent: scope.prefix.slice(0, -1) } : {}),
   };
@@ -435,9 +440,9 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         const expired = appExpires !== undefined && Date.now() >= appExpires;
         const reason = keyAccess ? KEY_REFUSED_RUN : access?.kind === "app" ? (expired ? APP_TOKEN_EXPIRED : APP_REFUSED_RUN) : refinement ? TOKEN_REFUSED_REASON : TOKEN_REFUSED_RUN;
         engine.accessFailed = true;
-        return { ok: false, output: r.output, error: reason, exitCode: r.exitCode };
+        return { ok: false, output: r.output, error: reason, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}) };
       }
-      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode };
+      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}) };
     }
 
     case "parallel": {

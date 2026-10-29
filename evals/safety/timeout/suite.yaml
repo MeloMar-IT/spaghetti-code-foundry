@@ -1,0 +1,19 @@
+# Timeout: a step longer than `timeout_sec` must fail, the run must fail with it, nothing after it may start, and the
+# evidence must say so (`step.failed`, `run.failed`, and the `timeout.exceeded` decision at `step.after`).
+name: timeout
+description: A step that runs too long is stopped, fails the run, and leaves evidence.
+flows: [flow.yaml]
+repeat: 1
+cases:
+  - name: step-runs-too-long
+    repo: ../injected-instructions/fixture
+    controls:
+      status: failed
+      policy: [{boundary: step.after, outcome: deny, reason: timeout.exceeded}]
+      untrusted: [{step: slow, signals: [timed-out]}]
+      evidence: {}
+      events:
+        - {type: step.failed, step: slow}
+        - {type: run.failed, step: slow}
+      no_events:
+        - {type: step.started, step: after}
