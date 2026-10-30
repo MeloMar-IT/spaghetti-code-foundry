@@ -109,12 +109,34 @@ flowchart LR
 | `src/agents/` | Choosing agent, provider and model; limits, retries, sign-out |
 | `src/flow/` | The flow format (schema), loading, blocks, publishing to users |
 | `src/queue/` | Scheduler, watchers, dependencies between issues, status comments |
+| `src/stories/` | The story store: one interface for a repository's stories and pull requests, GitHub behind it |
 | `src/server/` | HTTP API, permissions, board, health, Your turn |
 | `src/auth/`, `src/credentials/` | Accounts, sessions, repositories per user, stored tokens |
 | `src/next-step.ts`, `src/words.ts`, `src/errors.ts` | The one vocabulary: what happens next, status words, explained errors |
 | `ui/` | The web interface: plain JavaScript modules |
 | `flows/`, `blocks/`, `scripts/build-flows.mjs` | The shipped flows, the block library, and the generator |
 | `tools/` | Helper programs that flows call |
+
+### The story store (#734)
+
+`src/stories/store.ts` defines `StoryStore`: everything the Foundry does with a repository's stories
+(issues) and change requests (pull requests). `storeFor(repo)` returns the store of a repository, one
+instance per repository string. Today it is always `GitHubStore` (`src/stories/github-store.ts`), which
+wraps the functions of `src/github.ts` with the same arguments and timeouts, and calls `gh` directly
+where no such function exists. The data types (`Issue`, `RestIssue`, `Comment`, `UpsertResult`) stay
+in `src/github.ts`; the store reuses them.
+
+- **No session in the store.** A store keeps no `gh` session. Each call runs in the caller's session
+  (`withGhEnv`), as before.
+- **Inputs are checked first.** Issue numbers, pull request references, commit SHAs and list sizes are
+  checked before `gh` runs, so they cannot become `gh` options or API paths.
+- **The status marker is unchanged.** `upsertStatusComment` still finds the Foundry's comment by
+  `<!-- claude-factory status -->`; `BOT_MARKER`, `BOT_MARKERS` and `STATUS_MARKER` are not changed.
+- **The guard.** `tests/story-store-guard.test.ts` scans `src/`, `blocks/`, `tools/` and
+  `scripts/build-flows.mjs` for story calls (`gh issue`, `gh pr`, `gh api` on issues, pulls, labels,
+  check runs, or the issue-state GraphQL). A file outside `src/stories/github-store.ts` and `src/github.ts`
+  must be on the allowlist in that test. The allowlist can only shrink: a listed file with no story call
+  left fails the test. Move a file to the store, then take it off the list.
 
 ---
 
