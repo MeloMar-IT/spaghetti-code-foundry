@@ -3,6 +3,9 @@
 name: partial-parallel-failure
 description: A failed branch fails the parallel step and the run, and both branches are in the evidence.
 flows: [flow.yaml]
+# The fake claude marks the suite as offline (no live model); the flow has no claude step, so it is never called.
+programs:
+  claude: ../fakes/claude.mjs
 repeat: 1
 cases:
   - name: one-branch-fails

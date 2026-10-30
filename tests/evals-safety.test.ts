@@ -9,6 +9,7 @@ import {
   EVAL_USER, prepareRepo, runEval, runSafetyEvals, SAFETY_DIR, safetyConfig, safetyReportText, safetySuites, safetySummary, suitePrograms, loadSuite, withSuiteConfig,
   type CaseRepo, type EvalReport, type EvalResult,
 } from "../src/evals.js";
+import { promoteCheck } from "../src/promotion/promote.js";
 import { loadRun } from "../src/engine/state.js";
 import { outputLabel, type StepResult } from "../src/engine/execute.js";
 import { boundUntrusted, envelope, labelOutput } from "../src/engine/untrusted.js";
@@ -457,6 +458,12 @@ describe("the smoke run", () => {
     expect(r.text).toContain("injected-instructions");
     expect(r.suites.map((s) => s.suite).sort()).toEqual(["approval-bypass", "credential-exposure", "cross-repository", "injected-instructions", "output-caps", "partial-parallel-failure", "protected-branch", "repository-boundary", "timeout"]);
     const reports = r.files.map((f) => JSON.parse(readFileSync(f, "utf8")) as EvalReport);
+    for (const x of reports) expect(x.inputs?.live, x.suite).toBe(false);
+    // one case each: only injected-instructions has more, so only it is partial
+    const promo = promoteCheck("policy-pack", "foundry.baseline", { live: false, safetyDir: dir });
+    expect(promo.ok).toBe(false);
+    expect(promo.lines.filter((l) => l.startsWith("PASSED "))).toHaveLength(8);
+    expect(promo.lines.filter((l) => l.startsWith("BLOCKED"))).toEqual(["BLOCKED policy-pack foundry.baseline: injected-instructions (report-invalid: partial) — scf eval safety"]);
     const runOf = (suite: string) => {
       const res = reports.find((x) => x.suite === suite)!.results[0]!;
       return { res, run: loadRun(runsDir, res.runId)! };

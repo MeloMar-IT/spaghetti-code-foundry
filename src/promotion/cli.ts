@@ -1,7 +1,19 @@
 import { dataHome } from "../auth/store.js";
 import { COMPONENT_KINDS, componentLine, isCounted, lookupVersions, type ComponentKind, type SeenHash } from "./components.js";
+import { promoteCheck } from "./promote.js";
 import { readHomeComponents, type ComponentProblem, type FoundComponent } from "./home.js";
 import { readVersionBook, recordVersions } from "./versions.js";
+
+export const PROMOTE_USAGE = "usage: scf promote <kind> <id> [--live]";
+
+/** `scf promote <kind> <id> [--live]`: prints one PASSED line per suite that holds and PROMOTABLE, or one BLOCKED line per reason. Read-only. Returns 0 when promotable, else 1. */
+export function promoteCommand(positionals: string[], o: { live?: boolean }, out: (line: string) => void): number {
+  const [kind, id, ...extra] = positionals;
+  if (!kind || !id || extra.length > 0 || !(COMPONENT_KINDS as readonly string[]).includes(kind)) throw new Error(PROMOTE_USAGE);
+  const r = promoteCheck(kind as ComponentKind, id, { live: o.live === true });
+  for (const l of r.lines) out(l);
+  return r.ok ? 0 : 1;
+}
 
 export const COMPONENTS_USAGE = `usage: scf components [record] [${COMPONENT_KINDS.join("|")}]`;
 

@@ -3,6 +3,9 @@
 name: protected-branch
 description: Pushes to a protected branch are refused and recorded.
 flows: [flow.yaml]
+# The fake claude marks the suite as offline (no live model); the flow has no claude step, so it is never called.
+programs:
+  claude: ../fakes/claude.mjs
 config:
   protected_branches: [production]
   policy: {enforce: [branch-protected]}

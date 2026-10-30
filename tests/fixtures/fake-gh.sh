@@ -229,7 +229,8 @@ if [ -n "$FAKE_GH_STORIES" ]; then
 fi
 # "api graphql --input -": issue states. Answers every alias i<N> from $FAKE_GH_FRESH, else $FAKE_GH_ISSUES_BY_REPO[owner/name], else $FAKE_GH_ISSUES; default OPEN.
 # $FAKE_GH_GRAPHQL_MISSING="7 9": those aliases are null with a NOT_FOUND error, as gh prints it (exit 1). $FAKE_GH_GRAPHQL_MAX=<n>: a query with more aliases is refused.
-# $FAKE_GH_GRAPHQL_FAIL_AFTER=<n>: the calls after the first n fail.
+# $FAKE_GH_GRAPHQL_FAIL_AFTER=<n>: the calls after the first n fail. $FAKE_GH_GRAPHQL_LOG=<file>: every request body (query and variables) is appended there, one JSON per line.
+# "pr close <n|url>" appends its argument to $FAKE_GH_LOG.prclosed.
 # "api graphql … lastEditedBy …": the author and last editor of an issue, as "<author> <editor>".
 # $FAKE_GH_ISSUE_AUTHOR (default foundry-owner; "fail" = the call fails with HTTP 502), $FAKE_GH_ISSUE_EDITOR (default none).
 case "$all" in "api graphql"*lastEditedBy*)
@@ -242,6 +243,7 @@ case "$all" in "api graphql"*)
   node -e '
     const input = JSON.parse(require("fs").readFileSync(0, "utf8"));
     const e = process.env, q = input.query || "", v = input.variables || {};
+    if (e.FAKE_GH_GRAPHQL_LOG) require("fs").appendFileSync(e.FAKE_GH_GRAPHQL_LOG, JSON.stringify(input) + "\n");
     const aliases = [...q.matchAll(/i(\d+): issue\(number: (\d+)\)/g)];
     if (e.FAKE_GH_GRAPHQL_MAX && aliases.length > Number(e.FAKE_GH_GRAPHQL_MAX)) { console.error("gh: query too large"); process.exit(1); }
     let list;
@@ -376,6 +378,7 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:(fs.existsSync(c
   "run list")    case "$*" in *workflowName*) printf '%s' "${FAKE_GH_RUNS:-[]}" ;; *) echo 123 ;; esac ;;
   "run view")    echo "FAIL src/app.test.js: expected 2, got 3" ;;
   "pr merge")    echo "merged" ;;
+  "pr close")    echo "$3" >> "$FAKE_GH_LOG.prclosed" ;;
   "pr checkout") git fetch -q origin "factory/pr-$3" && git checkout -q -B "factory/pr-$3" FETCH_HEAD && git branch -q --set-upstream-to="origin/factory/pr-$3" 2>/dev/null; git config "branch.factory/pr-$3.remote" origin; git config "branch.factory/pr-$3.merge" "refs/heads/factory/pr-$3" ;;
   "api "*)       if [ "$FAKE_GH_PERMISSION" = fail ]; then case "$2" in *permission*) echo "gh: Bad Gateway (HTTP 502)" >&2; exit 1 ;; esac; fi
                  case "$2" in user) echo "${FAKE_GH_LOGIN:-foundry-owner}" ;; *permission*) l=${2#*collaborators/}; l=${l%/permission}
