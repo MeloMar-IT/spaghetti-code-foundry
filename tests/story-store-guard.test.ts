@@ -41,13 +41,7 @@ export const ALLOWLIST: readonly string[] = [
   "blocks/ci.yaml",
   "blocks/merge.yaml",
   "blocks/open-pr.yaml",
-  "blocks/plan.yaml",
   "blocks/pr-comments.yaml",
-  "blocks/pull-ticket.yaml",
-  "blocks/push-plan.yaml",
-  "blocks/push-result.yaml",
-  "blocks/request-approval.yaml",
-  "blocks/triage.yaml",
   "scripts/build-flows.mjs",
   "src/delivery/handoff.ts",
   "src/engine/repo-broker.ts",
@@ -67,6 +61,13 @@ export const ALLOWLIST: readonly string[] = [
 ];
 
 const EXEMPT = ["src/github.ts", "src/stories/github-store.ts"];
+
+/** Lines a file may keep: push-result still finds its pull request with `gh pr view`. Any other call in it fails the test. */
+const KEPT_LINES: Record<string, RegExp> = { "blocks/push-result.yaml": /\bgh\s+pr\s+view\b/ };
+export function withoutKept(text: string, file: string): string {
+  const keep = KEPT_LINES[file];
+  return keep ? text.split("\n").filter((l) => !keep.test(l)).join("\n") : text;
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -121,9 +122,22 @@ describe("storyCallIn", () => {
   });
 });
 
+describe("withoutKept", () => {
+  const block = "blocks/push-result.yaml";
+  it("lets push-result keep gh pr view", () => {
+    expect(storyCallIn(withoutKept("gh pr view 3 --json url", block), block)).toBe(false);
+  });
+  it("still finds an issue call added to push-result", () => {
+    expect(storyCallIn(withoutKept("gh pr view 3\ngh issue comment 3 --body x", block), block)).toBe(true);
+  });
+  it("keeps nothing in other files", () => {
+    expect(storyCallIn(withoutKept("gh pr view 3", "blocks/ci.yaml"), "blocks/ci.yaml")).toBe(true);
+  });
+});
+
 describe("story calls outside the story store", () => {
   const files = [...walk("src"), ...walk("blocks"), ...walk("tools"), "scripts/build-flows.mjs"].map((f) => relative(".", f).split("\\").join("/"));
-  const found = files.filter((f) => !EXEMPT.includes(f) && storyCallIn(readFileSync(f, "utf8"), f)).sort();
+  const found = files.filter((f) => !EXEMPT.includes(f) && storyCallIn(withoutKept(readFileSync(f, "utf8"), f), f)).sort();
 
   it("lists no file that is gone", () => {
     expect(ALLOWLIST.filter((f) => !existsSync(f))).toEqual([]);

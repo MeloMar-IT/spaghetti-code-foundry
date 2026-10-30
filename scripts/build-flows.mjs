@@ -1151,9 +1151,8 @@ write("issue-plan", {
   patch(s, "pull_ticket", {
     run: swap(
       s.find((x) => x.id === "pull_ticket").run,
-      'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json number,',
-      'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json body --jq .body > "{{run.dir}}/issue-body.md" 2>/dev/null || rm -f "{{run.dir}}/issue-body.md"\n' +
-        'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json number,',
+      'node "$FACTORY_TOOLS/story" text',
+      'node "$FACTORY_TOOLS/story" body > "{{run.dir}}/issue-body.md" 2>/dev/null || rm -f "{{run.dir}}/issue-body.md"\n' + 'node "$FACTORY_TOOLS/story" text',
     ),
   });
   s.find((x) => x.id === "docs").max_visits = 2;

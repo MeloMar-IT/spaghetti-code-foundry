@@ -38,6 +38,14 @@ export interface StoryStore {
   labels(timeoutMs?: number): Promise<string[]>;
   comments(issue: number, timeoutMs?: number): Promise<Comment[]>;
   comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined>;
+  // What flow steps save and print (tools/story): the text of gh, unchanged. A later store makes the same text itself.
+  stepIssue(issue: number, timeoutMs?: number): Promise<string>;
+  stepBody(issue: number, timeoutMs?: number): Promise<string>;
+  stepText(issue: number, timeoutMs?: number): Promise<string>;
+  stepComments(issue: number, timeoutMs?: number): Promise<string>;
+  stepFoundryComments(issue: number, timeoutMs?: number): Promise<string>;
+  stepComment(issue: number, body: string, timeoutMs?: number): Promise<string>;
+  stepCreate(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<string>;
   upsertStatusComment(issue: number, body: string, o: UpsertOptions): Promise<UpsertResult>;
   close(issue: number, reason: "completed" | "not_planned", timeoutMs?: number): Promise<RestIssue>;
   reopen(issue: number, timeoutMs?: number): Promise<RestIssue>;

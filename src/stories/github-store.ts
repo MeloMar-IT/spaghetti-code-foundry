@@ -19,6 +19,12 @@ function changeRef(pr: ChangeId): string {
   throw new Error("not a pull request");
 }
 
+// The jq programs of the old pull_ticket step, byte for byte: what tools/story saves must not change.
+const FOUNDRY_IDS = String.raw`[.comments[] | select(.viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry"))) | (.url // "") | select(test("#issuecomment-[0-9]+$")) | capture("#issuecomment-(?<id>[0-9]+)$").id | tonumber]`;
+const TICKET_TEXT = String.raw`
+  "# #\(.number): \(.title)\n\(.url)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body // "" | gsub("(?m)^--- comment by"; "> --- comment by"))\n"
+  + ([.comments[] | "\n--- comment by \(.author.login)\(if .viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry")) then " (Foundry)" else "" end):\n\(.body // "" | gsub("(?m)^--- comment by"; "> --- comment by"))"] | join("\n"))`;
+
 /**
  * The stories of one GitHub repository. It wraps the functions of src/github.ts (same arguments, same timeouts) and calls gh
  * itself where there is no such function. It holds no gh session: gh reads the session of the caller (`withGhEnv`) at each call.
@@ -84,6 +90,35 @@ export class GitHubStore implements StoryStore {
   }
   comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined> {
     return github.commentOnIssue(this.repo, issue, body, timeoutMs);
+  }
+  async stepIssue(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "body,number,title,updatedAt"], undefined, timeoutMs);
+  }
+  async stepBody(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "body", "--jq", ".body"], undefined, timeoutMs);
+  }
+  async stepText(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "number,title,body,url,labels,comments", "--jq", TICKET_TEXT], undefined, timeoutMs);
+  }
+  async stepComments(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["api", "--paginate", `repos/${this.repo}/issues/${issue}/comments?per_page=100`, "--jq", ".[] | {id, html_url, created_at, updated_at, body}"], undefined, timeoutMs);
+  }
+  async stepFoundryComments(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "comments", "--jq", FOUNDRY_IDS], undefined, timeoutMs);
+  }
+  async stepComment(issue: number, body: string, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "comment", String(issue), "--repo", this.repo, "--body-file", "-"], undefined, timeoutMs, body);
+  }
+  /** Creates the issue with gh itself (not the REST call), so a label that cannot be set fails the call. The text goes through stdin. */
+  async stepCreate(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<string> {
+    const labels = o.labels.flatMap((l) => ["--label", l]);
+    return gh(["issue", "create", "--repo", this.repo, "--title", o.title, "--body-file", "-", ...labels], undefined, timeoutMs, o.body);
   }
   upsertStatusComment(issue: number, body: string, o: UpsertOptions): Promise<UpsertResult> {
     return github.upsertStatusComment(this.repo, issue, body, o);

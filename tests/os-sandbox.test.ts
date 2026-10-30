@@ -41,6 +41,28 @@ const readable = (text: string, path: string): boolean => {
   return ok;
 };
 
+describe("compiled code for the tools (tools/story loads dist/)", () => {
+  const installed: SandboxPaths = { ...base, tools: "/Users/mac/app/tools", compiled: { dir: "/Users/mac/app/dist", files: ["/Users/mac/app/package.json"] } };
+  const text = sandboxProfile(installed, same);
+
+  it("an installation under the denied home can read dist and package.json, and nothing else beside tools", () => {
+    expect(readable(text, "/Users/mac/app/dist/stories/store.js")).toBe(true);
+    expect(readable(text, "/Users/mac/app/package.json")).toBe(true);
+    expect(readable(text, "/Users/mac/app/tools/story")).toBe(true);
+    expect(readable(text, "/Users/mac/app/src/github.ts")).toBe(false);
+    expect(readable(text, "/Users/mac/app/.env")).toBe(false);
+  });
+
+  it("without compiled paths dist stays denied", () => {
+    expect(readable(sandboxProfile({ ...installed, compiled: undefined }, same), "/Users/mac/app/dist/stories/store.js")).toBe(false);
+  });
+
+  it("stepSandboxPaths names dist and package.json next to the tools folder", () => {
+    const p = stepSandboxPaths({ runDir: "/x/runs/r1", learnings: "/x/l.md" });
+    expect(p.compiled).toEqual({ dir: join(p.tools, "../dist"), files: [join(p.tools, "../package.json")] });
+  });
+});
+
 describe("sandboxProfile", () => {
   const text = sandboxProfile(base, same);
 

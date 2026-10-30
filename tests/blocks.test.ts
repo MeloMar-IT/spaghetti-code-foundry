@@ -78,9 +78,11 @@ describe("comment wording comes from the next-step module", () => {
   it("pull_ticket marks the Foundry's own comments and quotes fake headers", () => {
     for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
       const run = stepRun(flowPath(f), "pull_ticket");
-      for (const s of [".viewerDidAuthor", " (Foundry)", "<!-- claude-factory", "<!-- spaghetti-code-foundry", 'gsub("(?m)^--- comment by"; "> --- comment by")', "issue-foundry-comments.json"]) {
+      // The jq programs live in the store (tests/story-store.test.ts); the step only calls the tool.
+      for (const s of ['node "$FACTORY_TOOLS/story" text', 'story" foundry-comments > "{{run.dir}}/issue-foundry-comments.json"']) {
         expect(run, `${f}: ${s}`).toContain(s);
       }
+      expect(run, f).not.toMatch(/\bgh\s/);
     }
     expect(stepRun(flowPath("epic-questions"), "read_issues")).not.toContain("(Foundry)");
   });
@@ -109,7 +111,7 @@ describe("comment wording comes from the next-step module", () => {
     }
     const asked = (file: string) => {
       const run = stepRun(file, "ask_for_info");
-      expect(run, file).toContain(post);
+      expect(run, file).toContain(file === "blocks/plan.yaml" || file.includes("github-") ? 'story" comment >/dev/null || exit 1\n' : post);
       expect(run.trimEnd(), file).toMatch(/\nprintf '%s\\n' "\$out" \| sed -E '\/\^\(PLAN_STATUS\|ROUTE\):\/d'$/);
       const def = parseYaml(readFileSync(file, "utf8")) as { steps: { id: string; on_success?: string; repo_access?: boolean }[] };
       expect(def.steps.find((x) => x.id === "ask_for_info"), file).toMatchObject({ on_success: "stop", repo_access: true });
@@ -227,7 +229,12 @@ describe("every posted comment starts with a first-line variable", () => {
 
   const bad = (label: string, script: string) => it(`catches: ${label}`, () => expect(scanShell(script).length).toBeGreaterThanOrEqual(1));
   bad("no first line", '{ echo "🤖 **X**"; echo; } | gh issue comment 1 --body-file -');
-  bad("a heading before the first line", '{ echo "🤖 **X**"; echo "$FACTORY_FIRST_INFO"; echo; } | gh pr comment 1 --body-file -');
+  bad("a story comment without a first line", '{ echo "🤖 **X**"; echo; } | node "$FACTORY_TOOLS/story" comment');
+  it("accepts a story comment with a first line, and ignores foundry-comments", () => {
+    expect(scanShell('{ echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } | node "$FACTORY_TOOLS/story" comment')).toEqual([]);
+    expect(scanShell('node "$FACTORY_TOOLS/story" foundry-comments > x.json')).toEqual([]);
+  });
+  bad("a heading before the first line",'{ echo "🤖 **X**"; echo "$FACTORY_FIRST_INFO"; echo; } | gh pr comment 1 --body-file -');
   bad("--body with text", 'gh issue comment 1 --body "text"');
   bad("first= that is not a first-line variable", 'first="**Do it**"\n{ echo "$first"; echo\n  echo x; } | gh issue comment 1 --body-file -');
   bad("one good and one bad first=", 'if a; then first="$FACTORY_FIRST_INFO"; else first="nope"; fi\n{ echo "$first"; echo\n  echo x; } | gh issue comment 1 --body-file -');

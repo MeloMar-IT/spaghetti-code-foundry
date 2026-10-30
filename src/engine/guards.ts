@@ -320,6 +320,21 @@ export async function identityEnv(config: Config): Promise<Record<string, string
 /** Wrap a shell command so it runs in a container with only the workspace mounted. */
 export const TOOLS_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../tools");
 
+/**
+ * The compiled code the tools load (tools/story imports ../dist/…, and node reads ../package.json for the module type).
+ * In the container the tools sit at /factory-tools, so the same relative layout is /dist and /package.json.
+ * A file that is not there is not mounted: Docker would create an empty folder on the host in its place.
+ */
+export function toolsMounts(): string[] {
+  const root = join(TOOLS_DIR, "..");
+  const pairs: [string, string][] = [
+    [TOOLS_DIR, "/factory-tools"],
+    [join(root, "dist"), "/dist"],
+    [join(root, "package.json"), "/package.json"],
+  ];
+  return pairs.filter(([host], i) => i === 0 || existsSync(host)).flatMap(([host, target]) => ["-v", `${host}:${target}:ro`]);
+}
+
 export function dockerCommand(image: string, workdir: string, command: string, envNames: string[]): { cmd: string; args: string[] } {
   const uid = process.getuid?.() ?? 1000;
   const gid = process.getgid?.() ?? 1000;
@@ -327,7 +342,7 @@ export function dockerCommand(image: string, workdir: string, command: string, e
     "run", "--rm", "-i",
     "--user", `${uid}:${gid}`,
     "-v", `${workdir}:/work`,
-    "-v", `${TOOLS_DIR}:/factory-tools:ro`,
+    ...toolsMounts(),
     "-w", "/work",
     "-e", "HOME=/tmp",
     "-e", "FACTORY_TOOLS=/factory-tools",

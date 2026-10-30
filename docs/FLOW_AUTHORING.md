@@ -495,6 +495,9 @@ Every `FACTORY_…` variable is also set as `SCF_…` (e.g. `$SCF_TASK`); the bu
 | `"$FACTORY_TOOLS/detect-commands" test` | Prints the repository's test command (also `build`, `lint`) — use when `test_cmd` is `auto` |
 | `"$FACTORY_TOOLS/test-summary" <marker-file>` | Summarises test reports newer than the marker file |
 | `"$FACTORY_TOOLS/secret-scan" [range]` | Checks commits for secrets (pushes are always checked anyway) |
+| `node "$FACTORY_TOOLS/story" <view\|body\|text\|comments\|foundry-comments>` | Prints the run's story (issue) as the store answers: `view` is JSON, the others are text or JSON lines. Reads `FACTORY_VAR_GITHUB_REPO` and `FACTORY_VAR_ISSUE` |
+| `node "$FACTORY_TOOLS/story" comment` | Posts stdin as a comment on the story and prints the link |
+| `node "$FACTORY_TOOLS/story" create --title <title> [--label <label>]...` | Creates a story from stdin and prints its address. Built-in blocks use it instead of `gh issue`, so a flow step does not need `gh` for stories |
 
 The Foundry always blocks pushes to protected branches (`main`, `master`, …) and pushes that
 contain secrets — a flow cannot turn that off. Push to a new branch and open a pull request.

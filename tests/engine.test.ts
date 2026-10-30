@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { learningsFile, resumeRun, runFlow } from "../src/engine/runner.js";
-import { dockerCommand } from "../src/engine/guards.js";
+import { dockerCommand, TOOLS_DIR } from "../src/engine/guards.js";
 import { USER_BUDGET_REASON, liveLogFile, saveRun } from "../src/engine/state.js";
 import { mirrorEnvPrefixes, withScfAliases } from "../src/engine/template.js";
 import { dropIssueStates, markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
@@ -664,6 +664,17 @@ steps:
     expect(args[i - 1]).toBe("-e");
     expect(args).not.toContain("SCF_TOOLS");
     expect(args).not.toContain("FACTORY_TOOLS");
+  });
+
+  it("dockerCommand mounts the compiled store where tools/story looks for it in the container", () => {
+    const { args } = dockerCommand("img", "/w", "c", []);
+    const mounts = args.flatMap((a, i) => (args[i - 1] === "-v" ? [a] : []));
+    // tools/story imports ../dist/stories/store.js from /factory-tools/story: the container path is /dist/stories/store.js.
+    const inContainer = new URL("../dist/stories/store.js", "file:///factory-tools/story").pathname;
+    expect(inContainer).toBe("/dist/stories/store.js");
+    if (existsSync(resolve("dist/stories/store.js"))) expect(mounts).toContain(`${resolve("dist")}:/dist:ro`);
+    if (existsSync(resolve("package.json"))) expect(mounts).toContain(`${resolve("package.json")}:/package.json:ro`);
+    expect(mounts).toContain(`${TOOLS_DIR}:/factory-tools:ro`);
   });
 
   it("notify commands get both names", async () => {
