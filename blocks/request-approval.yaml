@@ -16,7 +16,7 @@ steps:
         echo; echo '```'; git diff --stat origin/HEAD 2>/dev/null | tail -20; echo '```'
         echo; echo "_${FACTORY_NEXT_APPROVAL}_"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID approval -->"
-      } | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -
+      } | node "$FACTORY_TOOLS/story" comment
 
   - id: approve
     type: approval

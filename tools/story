@@ -1,0 +1,71 @@
+#!/usr/bin/env node
+// Reads and writes the story (issue) of a flow run through the story store, so a step does not call gh itself.
+// Usage (run it with node):
+//   story view | body | text | comments | foundry-comments     print what the store answers, unchanged (no other arguments)
+//   story comment                                              post stdin as a comment; prints what gh prints (the link)
+//   story create --title <title> [--label <label>]...          create a story from stdin; prints its address
+// Exit 1 (message on stderr as `story: …`): bad input or environment. When the store fails, its own text is on stderr, exit 1.
+// The store is dist/stories/store.js (build first). Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE (not for create), FACTORY_GH_BIN.
+import { readFileSync } from "node:fs";
+
+// The tools treat an empty value as "gh" (src/github.ts takes only an unset one).
+process.env.FACTORY_GH_BIN ||= "gh";
+
+function fail(msg) {
+  process.stderr.write(`story: ${msg}\n`);
+  process.exit(1);
+}
+
+const READS = new Map([
+  ["view", "stepIssue"],
+  ["body", "stepBody"],
+  ["text", "stepText"],
+  ["comments", "stepComments"],
+  ["foundry-comments", "stepFoundryComments"],
+]);
+const USAGE = "usage: story view|body|text|comments|foundry-comments | comment | create --title <title> [--label <label>]...";
+
+const [sub, ...rest] = process.argv.slice(2);
+if (sub === undefined || !(READS.has(sub) || sub === "comment" || sub === "create")) fail(USAGE);
+
+let title = "";
+const labels = [];
+if (sub === "create") {
+  for (let i = 0; i < rest.length; i += 2) {
+    const value = rest[i + 1];
+    if (value === undefined) fail(`${rest[i]} needs a value`);
+    if (rest[i] === "--title") title = value;
+    else if (rest[i] === "--label") labels.push(value);
+    else fail(USAGE);
+  }
+  if (!title) fail("create needs --title <title>");
+} else if (rest.length > 0) {
+  fail(USAGE);
+}
+
+const repo = process.env.FACTORY_VAR_GITHUB_REPO ?? "";
+if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+const issueText = process.env.FACTORY_VAR_ISSUE ?? "";
+if (sub !== "create" && !/^[1-9]\d{0,8}$/.test(issueText)) fail("set var issue to the issue number");
+const issue = Number(issueText);
+
+const text = sub === "comment" || sub === "create" ? readFileSync(0, "utf8") : "";
+let store;
+try {
+  const lib = await import(new URL("../dist/stories/store.js", import.meta.url).href);
+  store = lib.storeFor(repo);
+} catch (e) {
+  fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+}
+
+try {
+  let out;
+  if (READS.has(sub)) out = await store[READS.get(sub)](issue);
+  else if (sub === "comment") out = await store.stepComment(issue, text);
+  else out = await store.stepCreate({ title, body: text, labels });
+  process.stdout.write(out);
+} catch (e) {
+  // gh's own text, with no prefix: a step that matches on it keeps working.
+  process.stderr.write(String(e?.stderr || e?.message || e));
+  process.exitCode = 1;
+}

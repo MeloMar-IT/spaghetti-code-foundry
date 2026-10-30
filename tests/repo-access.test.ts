@@ -11,7 +11,7 @@ import { listBlocks } from "../src/flow/blocks.js";
 import { claudeBin, fakeGithub, flowPath } from "./helpers/fake-github.js";
 import { remoteTools, runsTestsOrBuild, scanRepoAccess, scanSteps, usesRepo } from "./helpers/repo-access-scan.js";
 
-const TOOLS = ["create-split", "daily-branch", "decide-questions.mjs", "post-questions", "release-upload", "split-family", "waits-for"];
+const TOOLS = ["create-split", "daily-branch", "decide-questions.mjs", "post-questions", "release-upload", "split-family", "story", "waits-for"];
 
 describe("repo-access scan helpers", () => {
   it("usesRepo sees gh, the remote and the remote tools", () => {

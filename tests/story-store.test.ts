@@ -199,6 +199,52 @@ describe("methods that call gh themselves send exactly these arguments", () => {
   });
 });
 
+describe("step methods send the arguments of the old flow steps and return gh's text unchanged", () => {
+  const OLD_FOUNDRY = String.raw`[.comments[] | select(.viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry"))) | (.url // "") | select(test("#issuecomment-[0-9]+$")) | capture("#issuecomment-(?<id>[0-9]+)$").id | tonumber]`;
+
+  it("stepIssue", async () => {
+    await withEnv({ FAKE_GH_ISSUE_JSON: '{"number":7}' }, async () => {
+      expect(await callsOf(async () => expect(await store.stepIssue(7)).toBe('{"number":7}\n'))).toEqual([`gh issue view 7 --repo ${R} --json body,number,title,updatedAt`]);
+    });
+  });
+  it("stepBody", async () => {
+    expect(await callsOf(async () => expect(await store.stepBody(7)).toBe("Please add feature.txt\n"))).toEqual([`gh issue view 7 --repo ${R} --json body --jq .body`]);
+  });
+  it("stepText", async () => {
+    const log = await logOf(async () => expect(await store.stepText(7)).toContain("# #7: Add a feature"));
+    expect(log).toContain(`gh issue view 7 --repo ${R} --json number,title,body,url,labels,comments --jq \n  "# #\\(.number): \\(.title)`);
+    expect(log).toContain(String.raw`(if .viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry")) then " (Foundry)" else "" end)`);
+  });
+  it("stepComments", async () => {
+    await withEnv({ FAKE_GH_ISSUE_COMMENTS_JSONL: '{"id":1}\n' }, async () => {
+      expect(await callsOf(async () => expect(await store.stepComments(7)).toBe('{"id":1}\n'))).toEqual([
+        `gh api --paginate repos/${R}/issues/7/comments?per_page=100 --jq .[] | {id, html_url, created_at, updated_at, body}`,
+      ]);
+    });
+  });
+  it("stepFoundryComments", async () => {
+    await withEnv({ FAKE_GH_FOUNDRY_COMMENTS_JSON: "[2]" }, async () => {
+      expect(await callsOf(async () => expect(await store.stepFoundryComments(7)).toBe("[2]"))).toEqual([`gh issue view 7 --repo ${R} --json comments --jq ${OLD_FOUNDRY}`]);
+    });
+  });
+  it("stepComment sends the text on stdin and returns the link", async () => {
+    const log = await logOf(async () => expect(await store.stepComment(7, "a $(x)\nb")).toMatch(/^https:\/\/\S+#issuecomment-\d+\n$/));
+    expect(log.split("\n").filter((l) => l.startsWith("gh "))).toEqual([`gh issue comment 7 --repo ${R} --body-file -`]);
+    expect(log).toContain("--- comment on #7:\na $(x)\nb");
+  });
+  it("stepCreate runs gh issue create with the text on stdin", async () => {
+    const log = await logOf(async () => expect(await store.stepCreate({ title: "T $(x)", body: "B", labels: ["a", "b"] })).toMatch(/^https:\/\/\S+\/issues\/\d+\n$/));
+    expect(log).toContain(`--- created issue: issue create --repo ${R} --title T $(x) --body-file - --label a --label b\nB`);
+  });
+
+  it.each([0, -1, 1.5])("each refuses %s before gh runs", async (n) => {
+    const calls = [() => store.stepIssue(n), () => store.stepBody(n), () => store.stepText(n), () => store.stepComments(n), () => store.stepFoundryComments(n), () => store.stepComment(n, "x")];
+    for (const call of calls) {
+      expect(await logOf(async () => void (await call().then(() => expect.unreachable(), (e) => expect(e).toBeInstanceOf(Error))))).toBe("");
+    }
+  });
+});
+
 describe("input that could become a gh option is refused before gh runs", () => {
   it.each<[string, () => Promise<unknown>]>([
     ["reopen(0)", () => store.reopen(0)],

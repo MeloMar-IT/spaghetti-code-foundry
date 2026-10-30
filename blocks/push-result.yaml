@@ -25,4 +25,4 @@ steps:
         echo "### Commits"
         git log --oneline origin/HEAD..HEAD 2>/dev/null || git log --oneline -3
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"
-      } | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -
+      } | node "$FACTORY_TOOLS/story" comment

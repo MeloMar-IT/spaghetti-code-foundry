@@ -7,13 +7,14 @@ const VAR = "FACTORY_FIRST_[A-Z]+(?:_[A-Z]+)*";
 /** Problems of the comments a shell script posts; empty when each prints a first-line variable first. Fails closed: an unknown shape is a problem. */
 export function scanShell(run: string): string[] {
   const problems: string[] = [];
-  const calls = [...run.matchAll(/\bgh(?:[ \t]|\\\r?\n)+(?:issue|pr)(?:[ \t]|\\\r?\n)+comment\b/g)];
+  // `gh issue comment`, `gh pr comment`, and the story tool: node "$FACTORY_TOOLS/story" comment (its text always comes on stdin).
+  const calls = [...run.matchAll(/\bgh(?:[ \t]|\\\r?\n)+(?:issue|pr)(?:[ \t]|\\\r?\n)+comment\b|\bnode "\$FACTORY_TOOLS\/story" comment\b/g)];
   let prev = 0;
   let usesFirst = false;
   for (const m of calls) {
     const at = m.index!;
     const call = run.slice(at).replace(/\\\r?\n/g, " ").split("\n")[0]!;
-    if (!/--body-file\s+-(?=[\s)]|$)/.test(call)) problems.push(`"${call.trim()}" does not read its text from stdin (--body-file -)`);
+    if (!call.startsWith("node ") && !/--body-file\s+-(?=[\s)]|$)/.test(call)) problems.push(`"${call.trim()}" does not read its text from stdin (--body-file -)`);
     const before = run.slice(prev, at);
     prev = at;
     // The text can be built first, in `name=$( { … } )`, and piped from `printf '%s\n' "$name"`.
