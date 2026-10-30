@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { FACTORY_HOME } from "../flow/load.js";
-import { currentGhSession, listAllIssues, type RestIssue } from "../github.js";
+import { currentGhSession, type RestIssue } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import { DEP_REF_SOURCE, dependencies, titleIndex, type DepIssue, type TitleIndex } from "./deps.js";
 
 /**
@@ -260,7 +261,7 @@ function saveStep(repo: string, e: Entry): void {
 
 async function runRead(repo: string, who: string, e: Entry, o: { pages?: number; timeoutMs?: number }): Promise<void> {
   try {
-    const r = await listAllIssues(repo, { pages: o.pages ?? 20, timeoutMs: o.timeoutMs ?? 30_000 });
+    const r = await storeFor(repo).listAll({ pages: o.pages ?? 20, timeoutMs: o.timeoutMs ?? 30_000 });
     const ctx = recordContext(r.issues.map((i) => ({
       number: i.number, title: i.title, state: i.state, labels: (i.labels ?? []).map((l) => ({ name: typeof l === "string" ? l : l.name ?? "" })),
     })));

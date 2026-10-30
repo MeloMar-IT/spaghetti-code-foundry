@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { commentId, isFoundryComment, isOverruleReply, type Comment, type Issue } from "../github.js";
+import { overruleSearchArgs } from "../stories/github-store.js";
 import { DECIDED_HEADING, stepIs } from "../next-step.js";
 import { isStoppedCancel, type RunSummary } from "../engine/state.js";
 
@@ -201,11 +202,13 @@ export function followUpComment(issue: Pick<Issue, "number">, o: Overrule): stri
 export const FOLLOWUP_WINDOW_DAYS = 14;
 /** At most this many issues per after-merge sweep. */
 export const FOLLOWUP_SEARCH_LIMIT = 30;
-/** The gh arguments of the after-merge sweep: issues in any state with an /overrule in a comment, updated in the window. */
+/** The first day (YYYY-MM-DD) of the after-merge window that ends now. */
+export function followUpSince(nowMs: number): string {
+  return new Date(nowMs - FOLLOWUP_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+}
+/** The gh arguments of the sweep. No production code calls this (the watcher uses `store.searchOverrules`); kept for the tests that pin the arguments. */
 export function followUpSearchArgs(repo: string, nowMs: number): string[] {
-  const since = new Date(nowMs - FOLLOWUP_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
-  return ["issue", "list", "--repo", repo, "--state", "all", "--search", `overrule in:comments updated:>=${since}`,
-    "--limit", String(FOLLOWUP_SEARCH_LIMIT), "--json", "number,updatedAt"];
+  return overruleSearchArgs(repo, followUpSince(nowMs), FOLLOWUP_SEARCH_LIMIT);
 }
 
 /** Does the flow of this run plan (has a `plan` step)? Only then an overrule can change anything. */

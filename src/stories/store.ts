@@ -13,6 +13,28 @@ export interface ReviewComment { body: string; created_at: string; user?: { logi
 /** A pull request by number, or its https address. */
 export type ChangeId = number | string;
 
+/** Runs gh with these arguments (and the text on stdin) and returns its output. It throws when gh fails; the error's `stderr`, or its `message`, carries gh's text. */
+export type GhCall = (args: string[], input?: string) => string;
+/** A story as the synchronous part sees it. `state` is upper case. */
+export interface SyncStory { number: number; title: string; state: string; body: string }
+/** The synchronous view of the stories, bound to the runner of the caller (for tools that run gh themselves). */
+export interface SyncStories {
+  /** undefined only for a confirmed not-found; a malformed answer or another gh error throws. */
+  get(issue: number): SyncStory | undefined;
+  /** Malformed entries are dropped; an answer that is not a list throws. */
+  list(limit: number): SyncStory[];
+  /** The body goes on stdin. */
+  setBody(issue: number, body: string): void;
+}
+/** An open pull request as the watcher lists it. */
+export interface OpenChange { number: number; headRefName: string; state: string; url?: string; title?: string; createdAt?: string }
+/** The conversation of a pull request. */
+export interface ChangeActivity {
+  comments: Comment[];
+  reviews: { author: { login: string }; body: string; state: string; submittedAt: string }[];
+  commits: { committedDate: string }[];
+}
+
 /**
  * Everything the Foundry does with the stories (issues) of one repository and with their change requests (pull requests).
  * A store is bound to one repository. It keeps no gh session: each call runs in the session of the caller (`withGhEnv`).
@@ -22,6 +44,12 @@ export interface StoryStore {
   // stories
   listByLabel(label: string, timeoutMs?: number): Promise<RestIssue[]>;
   listOpenWithLabel(label: string, o: { limit: number; timeoutMs?: number }): Promise<Issue[]>;
+  listOpenWithAnyLabel(label: string, anyOf: string[], o: { limit: number; timeoutMs?: number }): Promise<Issue[]>;
+  listClosedWithAnyLabel(anyOf: string[], o: { limit: number; timeoutMs?: number }): Promise<Issue[]>;
+  listWithBodies(limit: number, timeoutMs?: number): Promise<Issue[]>;
+  isClosed(issue: number, timeoutMs?: number): Promise<boolean>;
+  stateAndLabels(issue: number, timeoutMs?: number): Promise<{ state: string; labels: { name: string }[] }>;
+  searchOverrules(o: { since: string; limit: number; timeoutMs?: number }): Promise<{ number: number; updatedAt?: string }[]>;
   listOpenByLabelPages(label: string, o: { fromPage: number; pages: number; timeoutMs?: number }): Promise<{ pages: Map<number, RestIssue[]>; next: number }>;
   listOpen(o: { pages: number; timeoutMs?: number }): Promise<{ issues: RestIssue[]; cut: boolean }>;
   listAll(o: { pages: number; timeoutMs?: number }): Promise<{ issues: RestIssue[]; cut: boolean }>;
@@ -61,6 +89,10 @@ export interface StoryStore {
   mergedChanges(limit: number, timeoutMs?: number): Promise<MergedChange[]>;
   checks(sha: string, timeoutMs?: number): Promise<CheckRun[]>;
   reviewComments(pr: number, timeoutMs?: number): Promise<ReviewComment[]>;
+  openChanges(limit: number, timeoutMs?: number): Promise<OpenChange[]>;
+  changeActivity(pr: number, timeoutMs?: number): Promise<ChangeActivity>;
+  // synchronous part
+  sync(run: GhCall): SyncStories;
 }
 
 const stores = new Map<string, StoryStore>();

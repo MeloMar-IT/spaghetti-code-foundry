@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import type { RunSummary } from "../engine/state.js";
 import { errorLine } from "../errors.js";
 import { FACTORY_HOME } from "../flow/load.js";
-import { sameBody, STATUS_MARKER, upsertStatusComment, withGhEnv } from "../github.js";
+import { sameBody, STATUS_MARKER, withGhEnv } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import { issueRank, issueRecord } from "../issue-record.js";
 import { firstLine, nextStep, runNextStep, type NextBase, type NextData, type NextKind, type NextStep } from "../next-step.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
@@ -331,7 +332,7 @@ export class StatusComments {
       }
       const have = this.known.get(t.issue);
       try {
-        const r = await upsertStatusComment(this.repo, t.issue, t.body, { id: have?.id, create: t.create, timeoutMs: GH_TIMEOUT_MS, deadline, login: this.login });
+        const r = await storeFor(this.repo).upsertStatusComment(t.issue, t.body, { id: have?.id, create: t.create, timeoutMs: GH_TIMEOUT_MS, deadline, login: this.login });
         this.login = r.login ?? this.login;
         if (t.final) this.known.delete(t.issue);
         else this.known.set(t.issue, { id: r.left > 0 ? undefined : r.id, body: r.left > 0 ? undefined : t.body, owners: owners.get(t.issue) ?? have?.owners ?? [] });

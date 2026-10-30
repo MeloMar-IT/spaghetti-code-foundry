@@ -46,9 +46,6 @@ export const ALLOWLIST: readonly string[] = [
   "src/delivery/handoff.ts",
   "src/engine/repo-broker.ts",
   "src/ops/cli.ts",
-  "src/queue/overrule.ts",
-  "src/queue/waits-for.ts",
-  "src/queue/watcher.ts",
   "src/release/git.ts",
   "src/repos/connect.ts",
   "src/server/since.ts",
@@ -132,6 +129,37 @@ describe("withoutKept", () => {
   });
   it("keeps nothing in other files", () => {
     expect(storyCallIn(withoutKept("gh pr view 3", "blocks/ci.yaml"), "blocks/ci.yaml")).toBe(true);
+  });
+});
+
+describe("the queue uses the store", () => {
+  // None of these files imports a story function from github.ts: they use storeFor(repo). Helpers that are not story calls
+  // (withGhEnv, ghJson, canWrite, isBot, …) are fine.
+  const QUEUE_FILES = [
+    "src/queue/watcher.ts", "src/queue/status-comment.ts", "src/queue/issue-list.ts", "src/queue/waits-for.ts", "src/queue/overrule.ts",
+    "src/run-gate.ts", "src/turn-actions.ts", "src/queue/waiting-issues.ts", "src/queue/owner-action.ts", "src/queue/watchers.ts",
+    "src/queue/scheduler.ts", "src/queue/release-trigger.ts",
+  ];
+  const STORY_FUNCTIONS = [
+    "issueComments", "prComments", "commentOnIssue", "commentOnPullRequest", "upsertStatusComment", "setLabels", "ensureLabel",
+    "createLabelIfMissing", "listOpenIssuesByLabelPages", "listOpenIssues", "listAllIssues", "listNewestIssuesCut", "listIssuesByLabel",
+    "listNewestIssues", "restIssue", "pullState", "createIssue", "updateIssue", "closeIssue", "issueStates", "issueState", "repoLabels",
+  ];
+  /** The names imported from a github.js module (any depth), without `type` imports. */
+  const importedFromGithub = (text: string): string[] =>
+    [...text.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'][./]*\/github\.js["']/g)]
+      .filter((m) => !/^import\s+type/.test(m[0]))
+      .flatMap((m) => m[1]!.split(",").map((s) => s.trim()).filter((s) => s && !s.startsWith("type ")).map((s) => s.split(/\s+as\s+/)[0]!));
+
+  it("finds the imports it checks", () => {
+    expect(importedFromGithub('import { a, type B, c as d } from "../github.js";')).toEqual(["a", "c"]);
+    expect(importedFromGithub('import type { x } from "../github.js";')).toEqual([]);
+  });
+
+  it.each(QUEUE_FILES)("%s imports no story function from github.ts", (file) => {
+    expect(existsSync(file)).toBe(true);
+    const used = importedFromGithub(readFileSync(file, "utf8")).filter((n) => STORY_FUNCTIONS.includes(n));
+    expect(used, "use storeFor(repo) instead").toEqual([]);
   });
 });
 
