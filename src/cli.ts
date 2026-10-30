@@ -100,6 +100,7 @@ Usage:
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
   scf components [kind]                          Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector
   scf components record [kind]                   Give new hashes of tool profiles, model routes and context selectors a version
+  scf promote <kind> <id> [--live]               Check that the newest safety reports allow promoting a component (read-only; exit 1 when blocked)
   scf policy restore <id> [--force]             Put back the last-known-good copy of a mandatory policy overlay
   scf policy break-glass --reason "<text>" --for <n>m|<n>h   Start a time-limited, audited break-glass (no effect on runs yet)
   scf policy break-glass --end                 End the break-glass
@@ -295,7 +296,7 @@ async function main(argv: string[]): Promise<number> {
   // write only into skill-evaluations/ and skill-effects/, and `release publish …` only into skill-releases/, all through claimHomeWrite: they run without choosing or moving the data folder.
   // `scf components` only reads; `components record` writes only promotions/versions.json, through withAuthLock (claimHomeWrite).
   // `scf delivery verify` and `public-key` only read: no migration, no config load before the command, no path in a message.
-  if (cmd !== "components" && cmd !== "delivery" &&!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
+  if (cmd !== "components" && cmd !== "promote" && cmd !== "delivery" &&!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
@@ -667,6 +668,11 @@ async function main(argv: string[]): Promise<number> {
     case "monitor": {
       const { monitorCommand } = await import("./monitor/cli.js");
       return monitorCommand(positionals.slice(1), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "promote": {
+      const { promoteCommand } = await import("./promotion/cli.js");
+      return promoteCommand(positionals.slice(1), { live: values.live === true }, (line) => void process.stdout.write(line + "\n"));
     }
 
     case "components": {
