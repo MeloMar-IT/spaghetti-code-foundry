@@ -85,6 +85,20 @@ describe("gitflow pipeline", () => {
     expect(log).toMatch(/gh issue edit 5 .*--add-label Factory_done/);
   });
 
+  it("an issue that cannot be closed after the merge is said in the report, and the run still succeeds", async () => {
+    process.env.FAKE_GH_FAIL = "issue close";
+    onTestFinished(() => { delete process.env.FAKE_GH_FAIL; });
+    issues(5);
+    await watcher().tick();
+    await settle();
+    const run = runOf("5")!;
+    expect(run.status, run.reason).toBe("succeeded");
+    const result = gh.comments().find((c) => c.issue === 5 && c.body.includes("merged it into"))!.body;
+    expect(result).toContain("⚠ This issue could not be closed — close it by hand.");
+    expect(run.history.find((h) => h.id === "report")!.output).not.toContain("closed #5");
+    expect(gh.ghLog()).toMatch(/gh issue edit 5 .*--add-label Factory_done/);
+  });
+
   it("codes two issues in parallel on different areas and merges both into develop, resolving conflicts", async () => {
     issues(6, 7);
     await watcher().tick();
