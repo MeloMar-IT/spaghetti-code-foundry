@@ -287,7 +287,7 @@ describe("runPolicy and the config", () => {
   });
 
   it("defaults to no packs and refuses odd lists", () => {
-    expect(ConfigSchema.parse({}).policy).toEqual({ packs: [], mandatory: [], repositories: {} });
+    expect(ConfigSchema.parse({}).policy).toEqual({ packs: [], mandatory: [], repositories: {}, enforce: [] });
     for (const packs of [["a", "a"], ["../x"], ["Upper"], Array.from({ length: 21 }, (_, i) => `p${i}`), [BASELINE_POLICY_ID]]) {
       expect(ConfigSchema.safeParse({ policy: { packs } }).success, JSON.stringify(packs)).toBe(false);
       expect(ConfigSchema.safeParse({ policy: { mandatory: packs } }).success, JSON.stringify(packs)).toBe(false);

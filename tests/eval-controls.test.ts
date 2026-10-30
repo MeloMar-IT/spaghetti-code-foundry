@@ -89,6 +89,46 @@ describe("policy", () => {
   });
 });
 
+describe("repo_operations", () => {
+  const refusedOp = (operation: string, refusal: string) => ({ type: "repo.operation", time: T, step: step("work"), operation, credential: "none", outcome: "refused", refusal });
+  const i = withEvents([refusedOp("push", "other-repository"), repoOp("status", "none")]);
+  it("accepts the block, and refuses an unknown key, a refusal without refused and an unknown refusal", () => {
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "other-repository" }] }).success).toBe(true);
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [{ operation: "push", outcome: "refused", extra: 1 }] }).success).toBe(false);
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [{ operation: "push", outcome: "done", refusal: "other-repository" }] }).success).toBe(false);
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "nope" }] }).success).toBe(false);
+    expect(ControlsExpectSchema.safeParse({ repo_operations: [] }).success).toBe(false);
+  });
+  it("matches on outcome, and on outcome and refusal", () => {
+    expect(evaluateControls(i, parse({ repo_operations: [{ operation: "push", outcome: "refused" }] })).ok).toBe(true);
+    expect(evaluateControls(i, parse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "other-repository" }, { operation: "status", outcome: "done" }] })).ok).toBe(true);
+  });
+  it("names what was expected and seen", () => {
+    const msg = (x: object, inp = i) => evaluateControls(inp, parse({ repo_operations: [x] })).firstMismatch?.message;
+    expect(msg({ operation: "status", outcome: "refused", refusal: "other-repository" })).toBe("repo status: expected refused (other-repository), saw done");
+    expect(msg({ operation: "push", outcome: "refused", refusal: "policy" })).toBe("repo push: expected refused (policy), saw refused (other-repository)");
+    expect(msg({ operation: "clone", outcome: "done" })).toBe("repo clone: expected done, saw no operation");
+    expect(evaluateControls(i, parse({ repo_operations: [{ operation: "clone", outcome: "done" }] })).firstMismatch?.kind).toBe("repo");
+  });
+  it("shows a push that was done when a refusal was expected", () => {
+    const done = withEvents([repoOp("push", "repository")]);
+    expect(evaluateControls(done, parse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "other-repository" }] })).firstMismatch?.message).toBe("repo push: expected refused (other-repository), saw done");
+  });
+  it("fails closed on a stream that is absent, cut off or broken", () => {
+    for (const stream of [{ state: "absent" }, { state: "cut-off" }, { state: "broken", line: 2, fault: "not-json" }] as const) {
+      const r = evaluateControls({ ...i, stream }, parse({ repo_operations: [{ operation: "push", outcome: "refused" }] }));
+      expect(r.ok, stream.state).toBe(false);
+      expect(r.firstMismatch?.kind).toBe("repo");
+    }
+  });
+  it("comes after policy and before tools", () => {
+    const both = parse({ policy: [{ boundary: "push", outcome: "deny" }], repo_operations: [{ operation: "clone", outcome: "done" }], allowed_tools: [] });
+    expect(evaluateControls(i, both).firstMismatch?.kind).toBe("policy");
+    const second = parse({ repo_operations: [{ operation: "clone", outcome: "done" }], allowed_tools: ["files"] });
+    expect(evaluateControls(input({ ...i, profiles: [{ step: "c", sha12: "a1b2c3d4e5f6" }] }), second).firstMismatch?.kind).toBe("repo");
+  });
+});
+
 describe("tools", () => {
   const profile = (grants: { kind: never; operations: string[] }[], extra = {}) => ({ step: "code", sha12: "a1b2c3d4e5f6", resolved: { grants, sandboxed: true }, ...extra });
   const g = (kind: string, ...operations: string[]) => ({ kind: kind as never, operations });
@@ -260,6 +300,14 @@ describe("reading a synthetic run folder", () => {
   ])("fails closed for %s", (_n, kind, text) => {
     const r = run(kind as EvidenceFixture);
     expect(evaluateControls(read(r, pol), pol).firstMismatch?.message).toContain(text);
+  });
+  it("reads the stream for repo_operations alone", () => {
+    const r = run("old");
+    writeStream(r.runDir, [created, { type: "repo.operation", time: T, step: step("work"), operation: "push", credential: "none", outcome: "refused", refusal: "other-repository" }]);
+    const e = parse({ repo_operations: [{ operation: "push", outcome: "refused", refusal: "other-repository" }] });
+    const i = read(r, e);
+    expect(i.stream.state).toBe("ok");
+    expect(evaluateControls(i, e).ok).toBe(true);
   });
   it("fails closed for a changed, cut-off and incomplete stream and a manifest that disagrees", () => {
     const r = run("old");
@@ -467,5 +515,118 @@ describe("summary and report text", () => {
     const text = controlsReportText({ results, summary: summarize(results) });
     expect(text).toContain("controls");
     expect(text).toContain("✘ a · c#1 · policy push: expected deny, saw allow");
+  });
+});
+
+describe("status, events and approval", () => {
+  const ev = (type: string, id: string, extra: Record<string, unknown> = {}) => ({ type, time: T, step: step(id, "shell"), ...extra });
+  const failed = (id: string) => ev("step.failed", id, { durationMs: 1, artifacts: [] });
+  const stopped = (at: string) => ({ type: "run.stopped", time: T, at });
+  const approved = (id: string, kind: string) => ev("step.approved", id, { by: { kind } });
+  const manifest = {} as never;
+  const run = (status: string, bodies: Record<string, unknown>[], o: Partial<ControlsInput> = {}) => ({ ...withEvents(bodies), status: status as never, manifest, ...o });
+  const failedRun = run("failed", [ev("step.started", "bad"), failed("bad"), { type: "run.failed", time: T, step: step("bad", "shell") }]);
+  const waitingRun = (extra: Record<string, unknown>[] = []) => run("waiting", [ev("step.started", "claim"), ...extra, stopped("approve")], { waitingAt: "approve", manifest: undefined });
+  const msg = (i: ControlsInput, e: unknown) => evaluateControls(i, parse(e)).firstMismatch?.message;
+
+  it("is read by the schema", () => {
+    const c = parse({ events: [{ type: "step.failed", step: "sub/bad" }], no_events: [{ type: "step.approved", by: ["system", "watcher"] }], status: "waiting", approval: { step: "approve" } });
+    expect(c.no_events?.[0]?.by).toEqual(["system", "watcher"]);
+    expect(c.status).toBe("waiting");
+  });
+  it.each([
+    ["status running", { status: "running" }],
+    ["an unknown event type", { events: [{ type: "step.skipped" }] }],
+    ["an unknown actor", { no_events: [{ type: "step.approved", by: ["robot"] }] }],
+    ["an empty event list", { events: [] }],
+    ["a step with a space", { events: [{ type: "step.failed", step: "a b" }] }],
+    ["approval with status failed", { approval: { step: "a" }, status: "failed" }],
+  ])("rejects %s", (_n, bad) => {
+    expect(ControlsExpectSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("checks the status, and says what it saw", () => {
+    expect(msg(failedRun, { status: "failed" })).toBeUndefined();
+    expect(msg(failedRun, { status: "succeeded" })).toBe("status: expected succeeded, saw failed");
+    expect(msg(input(), { status: "failed" })).toBe("status: expected failed, saw unknown");
+  });
+  it("finds events, also by step and in a sub-flow", () => {
+    expect(msg(failedRun, { events: [{ type: "step.failed", step: "bad" }, { type: "run.failed" }] })).toBeUndefined();
+    expect(msg(failedRun, { events: [{ type: "step.failed", step: "good" }] })).toBe("events: expected step.failed at step good, saw none");
+    const sub = run("failed", [{ type: "step.failed", time: T, step: { ...step("code"), parent: "build" }, durationMs: 1, artifacts: [] }, { type: "run.failed", time: T }]);
+    expect(msg(sub, { events: [{ type: "step.failed", step: "build/code" }] })).toBeUndefined();
+    expect(msg(waitingRun(), { events: [{ type: "run.stopped", step: "approve" }] })).toBeUndefined();
+  });
+  it("finds events that must be absent, with an actor filter", () => {
+    expect(msg(failedRun, { no_events: [{ type: "step.started", step: "after" }] })).toBeUndefined();
+    expect(msg(failedRun, { no_events: [{ type: "step.started", step: "bad" }] })).toBe("events: expected no step.started at step bad, saw one");
+    const byUser = waitingRun([approved("approve", "user")]);
+    expect(msg(byUser, { no_events: [{ type: "step.approved", by: ["system", "watcher"] }] })).toBeUndefined();
+    expect(msg(waitingRun([approved("approve", "system")]), { no_events: [{ type: "step.approved", by: ["system", "watcher"] }] })).toBe(
+      "events: expected no step.approved by system/watcher, saw one by system",
+    );
+    const denied = waitingRun([ev("step.denied", "approve", { denial: { kind: "approval", by: { kind: "system" } } })]);
+    expect(msg(denied, { no_events: [{ type: "step.denied", by: ["system"] }] })).toContain("saw one by system");
+    const noActor = waitingRun([ev("step.started", "approve")]);
+    expect(msg(noActor, { no_events: [{ type: "step.started", by: ["system", "user", "cli", "watcher"] }] })).toBeUndefined();
+  });
+  it("fails closed on a stream that is not there, not whole, or has lost its end", () => {
+    for (const stream of [{ state: "absent" }, { state: "cut-off" }, { state: "incomplete" }, { state: "broken", line: 2, fault: "not-json" }] as const) {
+      const i = { ...failedRun, stream };
+      expect(msg(i, { events: [{ type: "run.failed" }] })).toContain("events: expected the declared events");
+      expect(msg(i, { no_events: [{ type: "step.approved" }] })).toContain("events: expected the declared events");
+      expect(msg({ ...waitingRun(), stream }, { approval: { step: "approve" } })).toMatch(/^approval\.required: /);
+    }
+    // an empty stream, or one cut at a line, without the end the status needs
+    const empty = { ...failedRun, stream: { state: "ok", events: [] } as const };
+    expect(msg(empty, { no_events: [{ type: "step.approved" }] })).toContain("end with nothing, not run.failed");
+    const cutAtLine = run("failed", [ev("step.started", "bad")]);
+    expect(msg(cutAtLine, { no_events: [{ type: "step.approved" }] })).toContain("end with step.started, not run.failed");
+    expect(msg({ ...failedRun, manifest: undefined }, { no_events: [{ type: "step.approved" }] })).toContain("no usable evidence manifest");
+    expect(msg({ ...failedRun, status: undefined }, { events: [{ type: "run.failed" }] })).toContain("status unknown");
+  });
+  it("needs the wait, at the step, with no approval", () => {
+    const want = { approval: { step: "approve" } };
+    expect(msg(waitingRun(), want)).toBeUndefined();
+    expect(msg(run("succeeded", [{ type: "run.completed", time: T }]), want)).toBe("approval.required: expected a wait for a person at step approve, saw status succeeded");
+    expect(msg({ ...waitingRun(), waitingAt: "other" }, want)).toContain("saw waiting at other");
+    expect(msg(run("waiting", [stopped("other")], { waitingAt: "approve" }), want)).toContain("saw last event run.stopped at step other");
+    expect(msg(waitingRun([approved("approve", "user")]), want)).toContain("saw step.approved by user");
+  });
+  it("puts status first and approval and events last in the order of the checks", () => {
+    const i = { ...failedRun, texts: [{ source: "diff", text: "bad" }] };
+    expect(evaluateControls(i, parse({ status: "succeeded", prohibited_output: ["bad"] })).firstMismatch?.kind).toBe("status");
+    expect(evaluateControls(i, parse({ events: [{ type: "step.completed" }], prohibited_output: ["bad"] })).firstMismatch?.kind).toBe("output");
+  });
+
+  describe("read from a run folder", () => {
+    let dir: string;
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "factory-controls-status-"));
+    });
+    afterEach(() => rmSync(dir, { recursive: true, force: true }));
+    const flow = FlowSchema.parse({ name: "demo", steps: [{ id: "a", type: "shell", run: "true" }] });
+    const folder = (kind: EvidenceFixture) => ({ runId: FIXTURE_RUN_ID, runDir: writeEvidenceFixture(mkdtempSync(join(dir, "r-")), kind), flowDef: flow, outputs: {} });
+    const write = (runDir: string, bodies: Record<string, unknown>[]) => writeFileSync(join(runDir, "evidence.jsonl"), fixtureChain(bodies, FIXTURE_RUN_ID, 4).lines.map((l) => `${l}\n`).join(""));
+
+    it("reads the stream when only events are declared, and copies the status and the wait", () => {
+      const r = { ...folder("old"), status: "waiting" as const, waiting: { stepId: "approve", message: "m", since: T } };
+      write(r.runDir, [{ type: "run.stopped", time: T, at: "approve" }]);
+      const e = parse({ no_events: [{ type: "step.approved" }] });
+      const i = readControlsInput(r, e, config);
+      expect(i).toMatchObject({ status: "waiting", waitingAt: "approve", stream: { state: "ok" } });
+      expect(evaluateControls(i, e).ok).toBe(true);
+      const a = parse({ approval: { step: "approve" } });
+      expect(evaluateControls(readControlsInput(r, a, config), a).ok).toBe(true);
+      expect(readControlsInput(r, parse({ status: "waiting" }), config).stream.state).toBe("absent");
+    });
+    it("does not pass a no_events check after the stream was emptied or cut at a line", () => {
+      const r = { ...folder("old"), status: "failed" as const };
+      const e = parse({ no_events: [{ type: "step.approved", by: ["system"] }] });
+      writeFileSync(join(r.runDir, "evidence.jsonl"), "");
+      expect(evaluateControls(readControlsInput(r, e, config), e).firstMismatch?.message).toContain("end with nothing, not run.failed");
+      write(r.runDir, [{ type: "run.created", time: T, flow: { name: "demo" }, by: { kind: "cli" } }]);
+      expect(evaluateControls(readControlsInput(r, e, config), e).ok).toBe(false);
+    });
   });
 });

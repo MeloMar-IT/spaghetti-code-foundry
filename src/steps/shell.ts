@@ -18,6 +18,8 @@ export interface ShellRunResult {
   scanned?: { output: boolean; stderr: boolean };
   exitCode: number | null;
   error?: string;
+  /** The command printed more than was kept: `output` is only its tail. */
+  truncated?: boolean;
 }
 
 export async function runShell(o: {
@@ -75,9 +77,10 @@ export async function runShell(o: {
   const fullErr = res.stderr.replace(ANSI, "");
   const output = fullOut.slice(-keep);
   const stderr = fullErr.slice(-keep);
+  const truncated = fullOut.length > keep ? { truncated: true } : {};
   const scanned = o.scan ? { output: o.scan(fullOut), stderr: o.scan(fullErr) } : undefined;
-  if (res.aborted) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "cancelled" };
-  if (res.timedOut) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "timed out" };
+  if (res.aborted) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "cancelled", ...truncated };
+  if (res.timedOut) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "timed out", ...truncated };
   return {
     ok: res.exitCode === 0,
     output,
@@ -85,5 +88,6 @@ export async function runShell(o: {
     scanned,
     exitCode: res.exitCode,
     error: res.exitCode === 0 ? undefined : `exit code ${res.exitCode}`,
+    ...truncated,
   };
 }

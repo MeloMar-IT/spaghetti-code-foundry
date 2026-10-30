@@ -1,0 +1,18 @@
+name: safety-partial-parallel-failure
+description: A parallel step where one branch succeeds and one fails.
+workspace: worktree
+steps:
+  - id: both
+    type: parallel
+    steps: [good, bad]
+  - id: good
+    type: shell
+    jump_only: true
+    run: echo GOOD
+  - id: bad
+    type: shell
+    jump_only: true
+    run: echo BAD; exit 3
+  - id: after
+    type: shell
+    run: echo AFTER

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { BASELINE_POLICY_ID } from "../src/policy/baseline.js";
-import { MAX_GROUP_STEPS, MAX_POLICY_GROUPS, NEXT_ACTIONS, explanationLine, groupPolicyDecisions, isExplanationLine, logNote, nextActionCode, nextActionText, type NextActionCode } from "../src/policy/explain.js";
+import { MAX_GROUP_STEPS, MAX_POLICY_GROUPS, NEXT_ACTIONS, explanationLine, groupPolicyDecisions, isExplanationLine, LOG_NOTES, logNote, nextActionCode, nextActionText, type NextActionCode } from "../src/policy/explain.js";
 import { REASON_CODES, reasonText, type ReasonCode } from "../src/policy/reasons.js";
-import { OUTCOMES, type Mode, type Outcome, type PolicyDecision } from "../src/policy/schema.js";
+import { BOUNDARIES, OUTCOMES, type Boundary, type Mode, type Outcome, type PolicyDecision } from "../src/policy/schema.js";
 
 const H = "a".repeat(64);
 const T = (n: number) => `2026-01-31T12:00:${String(n).padStart(2, "0")}.000Z`;
@@ -44,6 +44,47 @@ describe("nextActionCode", () => {
   it("gives every code and every outcome a sentence from the list", () => {
     for (const code of REASON_CODES) {
       for (const outcome of OUTCOMES) for (const mode of ["observe", "enforce"] as const) expect(Object.values(NEXT_ACTIONS)).toContain(nextActionText(ex(outcome, mode, code)));
+    }
+  });
+});
+
+describe("enforced rule denials by boundary", () => {
+  const at = (boundary?: Boundary) => ({ ...ex("deny", "enforce", "path.forbidden"), ...(boundary ? { boundary } : {}) });
+  const STOPPED: Boundary[] = ["run.start", "run.complete", "step.before", "step.after", "repository.access", "agent.write", "approval.consume"];
+  const RECORDED: Boundary[] = ["context.select"];
+  it("says the step is stopped only where the callers stop it", () => {
+    for (const b of STOPPED) expect(nextActionCode(at(b))).toBe("enforced-deny");
+    for (const b of RECORDED) expect(nextActionCode(at(b))).toBe("enforced-deny-recorded");
+    expect(nextActionCode(at())).toBe("enforced-deny");
+    expect(nextActionCode(at("push"))).toBe("enforced-deny-push");
+  });
+  it("keeps the outage actions where the step is stopped, and says 'recorded' elsewhere", () => {
+    for (const b of STOPPED) {
+      expect(nextActionCode({ ...ex("deny", "enforce", "policy.invalid", BASELINE_POLICY_ID), boundary: b })).toBe("fix-baseline");
+      expect(nextActionCode({ ...ex("deny", "enforce", "policy.unavailable"), boundary: b })).toBe("fix-mandatory");
+    }
+    for (const b of RECORDED) {
+      expect(nextActionCode({ ...ex("deny", "enforce", "policy.invalid", BASELINE_POLICY_ID), boundary: b })).toBe("fix-baseline-recorded");
+      expect(nextActionCode({ ...ex("deny", "enforce", "policy.unavailable"), boundary: b })).toBe("fix-mandatory-recorded");
+    }
+    expect(NEXT_ACTIONS["fix-baseline-recorded"]).not.toContain("stopped");
+    expect(NEXT_ACTIONS["fix-mandatory-recorded"]).not.toContain("stopped");
+  });
+  it("does not claim a stop that no caller makes yet", () => {
+    expect(NEXT_ACTIONS["enforced-deny-recorded"]).toContain("not yet applied");
+    for (const b of RECORDED) {
+      expect(logNote({ mode: "enforce", outcome: "deny", reasonCode: "path.forbidden", boundary: b })).toBe("enforced: denial recorded, not yet applied at this boundary");
+      expect(logNote({ mode: "enforce", outcome: "deny", reasonCode: "policy.invalid", boundary: b })).toBe("enforced: denial recorded, not yet applied at this boundary");
+    }
+    expect(logNote({ mode: "enforce", outcome: "deny", reasonCode: "branch.protected", boundary: "push" })).toBe("enforced: recorded only, the pre-push hook decides");
+    for (const b of STOPPED) expect(logNote({ mode: "enforce", outcome: "deny", reasonCode: "path.forbidden", boundary: b })).toBe("enforced: the step is stopped");
+    expect(LOG_NOTES).toContain("enforced: recorded only, the pre-push hook decides");
+    expect(LOG_NOTES).toContain("enforced: denial recorded, not yet applied at this boundary");
+  });
+  it("gives lines that pass the filter for every boundary", () => {
+    for (const b of BOUNDARIES) {
+      expect(isExplanationLine(explanationLine(at(b)))).toBe(true);
+      expect(isExplanationLine(explanationLine({ ...ex("deny", "enforce", "policy.invalid", BASELINE_POLICY_ID), boundary: b }))).toBe(true);
     }
   });
 });

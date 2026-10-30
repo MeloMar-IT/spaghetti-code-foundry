@@ -488,6 +488,17 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   at startup and every 60 s on an unref'd timer, logs while a record is active (first check, a new `startedAt`,
   every 15 minutes), writes the `expired` line through `endExpiredBreakGlass` on expiry and logs when the record
   is gone. It never throws. Counting break-glass decisions in the SLO input (`slo-input.ts`) is not done yet.
+- **Enforced rules (#728).** `policy.enforce` (`BaselineRuleId`s) makes the listed baseline rules decide in
+  `enforce` mode (`controls.enforce`, `RunPolicy.enforcedAt`). Their denials set `denied` at the boundaries
+  they guard, and `refuseByPolicy` acts on it at `step.before` and `step.after` (`execute.ts`, also in the
+  parallel branch and the approval branch of `runner.ts`), while `refuseRunByPolicy` acts at `run.start`
+  (`runFlow` and `drive`, which also covers a resume). `completeRun` (`runner.ts`) turns a succeeded result into
+  a failed one on a `run.complete` denial. `beginStep` returns the `step.before` answer, so a refused step runs
+  no command and no `approval.consume` is asked. `recordStep` asks `step.after` right after the first save and
+  before `evidence.stepEnded`, the delivery checks and the push decisions. On a denial it sets `ok` false,
+  `error` and `accessFailed`, drops `held` and `limited`, updates `scope.ctx.steps` and saves again; the
+  checkout is not rolled back. `push` is not in the enforced set: it is recorded only. An unusable baseline denies
+  the enforced rules' boundaries (`outageScope`), with the same `denied` path. Break-glass never covers these.
 - **Evidence.** `policy.decided` has the decision and the step for every boundary about a step. It has no
   step for `run.start` and `run.complete`, nor for `repository.access` when it is asked for the run's workspace.
   The event is in `EVIDENCE_EVENT_TYPES`; `EVIDENCE_EVENT_VERSION` is 2 for it.
@@ -807,7 +818,9 @@ so a run's behaviour does not change.
 - **Request.** `RepoRequestSchema` is strict and discriminated on `op`. Unknown fields are refused.
   Branch names follow `git check-ref-format --branch` (checked in code, at most 255 characters); a
   commit message or PR body is 1–5000 characters with no NUL; a title is 1–256 characters on one line.
-  A request never names a repository, URL or remote.
+  A request may name a `repository` (`owner/name`) on any operation, but never a URL or remote. The
+  named repository is never the target: one other than the run's is refused (`other-repository`, see
+  Refusals).
 - **Target.** Always the run's `github_repo` variable, resolved on the server. The URL is the stored
   sign-in's (`repoAccess`), otherwise `https://github.com/<owner>/<name>.git`. A missing or
   placeholder repository is refused (`no-target`).
@@ -816,9 +829,14 @@ so a run's behaviour does not change.
   5. the workspace's git settings; 6. the commit identity; 7. policy; 8. run the operation; 9. record
   one `repo.operation` event. The result is `{ outcome: "done" | "failed" | "refused", refusal?, output, pullRequest? }`.
 - **Refusals** (`REPO_REFUSALS`): `invalid-request`, `no-target`, `not-in-profile`,
-  `approval-required`, `deploy-key`, `no-credential`, `unsafe-git-settings`, `policy`, `not-empty`.
-  A profile `deny` or `require_approval` also records `step.denied` through `toolCallDenial`. A policy
+  `approval-required`, `deploy-key`, `no-credential`, `unsafe-git-settings`, `policy`, `not-empty`,
+  `other-repository`. A profile `deny` or `require_approval` also records `step.denied` through `toolCallDenial`. A policy
   denial goes through `refuseByPolicy`.
+- **Another repository** (`otherRepository`, step 2b, before the profile): a request whose `repository`
+  differs from the run's (compared in lower case) asks `repository.access` with that repository as the
+  `repository` fact, is refused as `other-repository` whatever the grant, and records `repo.operation`
+  refused. An enforced deny from that question goes through `refuseByPolicy` first. No process starts and
+  no credential is picked. The baseline rule `repository-not-allowed` guards `push` and `repository.access`.
 - **Credential.** The narrowest one available, never wider than the grant's `credential`:
   - `none`: no sign-in.
   - `repository`: only the repository's own stored sign-in. A GitHub App gives a fresh installation
@@ -880,7 +898,9 @@ Every run appends its events to `runs/<run-id>/evidence.jsonl` (#135).
   while it waits, so the event is written at the start with the time it was queued), then
   `run.created` and `run.started`. A resume adds `run.queued` (when queued) and `run.resumed`. Every
   visit of a step is `step.started`, then what happened in it, then `step.completed` or
-  `step.failed`. A run that waits for approval or pauses ends with `run.stopped`; the approval
+  `step.failed`. The `step.after` question is asked before that end event (#728): its `policy.decided`, and a
+  `step.denied` when it denies, come before `step.completed` or `step.failed`, and the event shows the result
+  after the denial (failed). The delivery checks and push decisions come after the end event. A run that waits for approval or pauses ends with `run.stopped`; the approval
   step itself starts when the decision is there.
 - **One writer, one line.** An event is one `write` of one line to a file opened for append. The
   writes of a run come one after the other, also when parallel steps end together. `seq` is the

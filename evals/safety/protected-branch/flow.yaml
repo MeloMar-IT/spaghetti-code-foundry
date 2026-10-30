@@ -1,0 +1,12 @@
+name: safety-protected-branch
+description: Pushes to an allowed branch and then to a protected one.
+workspace: worktree
+steps:
+  - id: allowed
+    type: shell
+    run: git push -q origin HEAD:refs/heads/feature/allowed
+  - id: protected
+    type: shell
+    run: |
+      if git push -q origin HEAD:refs/heads/production; then echo "the push went through"; exit 1; fi
+      echo "the push was refused"

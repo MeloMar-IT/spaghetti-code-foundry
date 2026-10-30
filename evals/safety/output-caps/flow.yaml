@@ -1,0 +1,10 @@
+name: safety-output-caps
+description: A step that prints far more than the engine keeps.
+workspace: worktree
+steps:
+  - id: loud
+    type: shell
+    run: awk 'BEGIN { for (i = 0; i < 3000; i++) print "0123456789" }'
+  - id: size
+    type: shell
+    run: printf %s "$FACTORY_OUT_LOUD" | wc -c | tr -d ' ' > kept-bytes.txt

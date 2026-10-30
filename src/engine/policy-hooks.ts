@@ -5,13 +5,14 @@ import type { Config } from "../config.js";
 import type { StepIdentity } from "../evidence/identity.js";
 import type { Denial } from "../evidence/schema.js";
 import type { RunRecorder } from "../evidence/record.js";
-import { BASELINE_POLICY_ID, BASELINE_VERSION, baselineControls, runBaseline, type BaselineControls } from "../policy/baseline.js";
+import { BASELINE_POLICY_ID, BASELINE_RULE_BOUNDARIES, BASELINE_VERSION, baselineControls, runBaseline, type BaselineControls, type BaselineRuleId } from "../policy/baseline.js";
 import type { Flow } from "../flow/schema.js";
 import { HOTFIX_FLOW, isShippedFlow } from "./guards.js";
 import { baselineLimits, NO_STEP_LIMITS, scopedPacks, stepLimits } from "./policy-limits.js";
 import { combineDecisions, layeredPackIds, type Layer, type LayeredDecision } from "../policy/compose.js";
 import { parsePolicyDecision, parsePolicyPack } from "../policy/parse.js";
-import { explanationLine, logNote } from "../policy/explain.js";
+import { explanationLine, logNote, STOPPING_BOUNDARIES } from "../policy/explain.js";
+import { reasonText, type ReasonCode } from "../policy/reasons.js";
 import { evaluatePolicy, policyDenial, policyInputSha256 } from "../policy/evaluate.js";
 import { FactsSchema, type Boundary, type FactName, type Facts, type Mode, type PolicyDecision, type PolicyInput, type PolicyPack } from "../policy/schema.js";
 import { POLICY_INPUT_VERSION, PolicySchemaError } from "../policy/version.js";
@@ -24,6 +25,8 @@ import type { RunSummary } from "./state.js";
  * The baseline and the policy packs (and their rules) asked at the boundaries of a run, in observe mode: every decision is logged and
  * recorded as evidence, and nothing in the run changes because of it. The one exception is fail closed: a pack in the
  * mandatory layer that cannot be loaded or evaluated denies the privileged boundaries (see `privilegedBoundary`).
+ * With `policy.enforce` (#727) the listed baseline rules decide in enforce mode and are asked first; when the baseline cannot be
+ * used, the boundaries of those rules fail closed too (`push` excepted: the pre-push hook decides there).
  * The one way out is an active break-glass (#626): it turns that denial into a recorded `warn`, but only when the
  * decision can be written to the run's evidence. Nothing here throws into the engine.
  * The baseline is built in and always asked; it is asked at `push` only when the pre-push hook is installed.
@@ -36,7 +39,7 @@ export const MAX_PACK_BYTES = 1 << 20;
 export const UNKNOWN_POLICY_VERSION = "unknown";
 
 export type LoadedPack =
-  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push whose repository is not known. */ pushWithoutRepository?: PolicyPack; /** Asked instead of `pack` at `step.before` when the `sandboxed` fact is not known. */ stepWithoutSandbox?: PolicyPack; /** Asked instead of `pack` at `step.after` when the `contextUncited` fact is not known. */ stepWithoutCitations?: PolicyPack }
+  | { id: string; pack: PolicyPack; /** Asked instead of `pack` at a push or a repository access whose repository is not known. */ pushWithoutRepository?: PolicyPack; /** Asked instead of `pack` at `step.before` when the `sandboxed` fact is not known. */ stepWithoutSandbox?: PolicyPack; /** Asked instead of `pack` at `step.after` when the `contextUncited` fact is not known. */ stepWithoutCitations?: PolicyPack }
   | { id: string; problem: "policy.unavailable" | "policy.invalid"; detail: string };
 
 export type LayeredPack = LoadedPack & { layer: Layer };
@@ -61,6 +64,25 @@ export function privilegedBoundary(boundary: Boundary, facts: Facts): boolean {
 }
 
 export const deniedReason = (id: string, code: NoPackCode, boundary: Boundary): string => `mandatory policy ${id} cannot be used (${code}): ${boundary} is denied`;
+
+/** Why an enforced rule of a usable policy denied a boundary. */
+export const ruleDeniedReason = (d: Pick<PolicyDecision, "policy" | "boundary" | "reasonCode" | "rule">): string =>
+  `policy ${d.policy.id} denies ${d.boundary}: ${reasonText(d.reasonCode as ReasonCode)} (${d.reasonCode}${d.rule ? `, rule ${d.rule}` : ""})`;
+
+/**
+ * The log text for what an unusable mandatory policy denies: sign-ins and writing agents always; with enforced rules also
+ * the other stopping boundaries of those rules (push is only recorded).
+ */
+export function outageScope(enforce: readonly BaselineRuleId[]): string {
+  const base = "this mandatory policy denies steps with a sign-in and writing agents";
+  if (!enforce.length) return base;
+  const boundaries = new Set<Boundary>();
+  for (const id of enforce) for (const b of BASELINE_RULE_BOUNDARIES[id]) if (STOPPING_BOUNDARIES.includes(b) && !PRIVILEGED_BOUNDARIES.includes(b)) boundaries.add(b);
+  return boundaries.size ? `${base}; for the enforced rules ${enforce.join(", ")} it also denies ${[...boundaries].join(", ")}` : base;
+}
+
+/** The boundaries an unusable mandatory policy always denies, with or without enforced rules. */
+const PRIVILEGED_BOUNDARIES: readonly Boundary[] = ["repository.access", "agent.write", "approval.consume"];
 
 const unavailable = (id: string, detail: string): LoadedPack => ({ id, problem: "policy.unavailable", detail });
 const invalid = (id: string, detail: string): LoadedPack => ({ id, problem: "policy.invalid", detail });
@@ -258,8 +280,14 @@ export class RunPolicy {
   /** The scoped baseline of each sub-flow, by the parent prefix of its steps. */
   private readonly scoped = new Map<string, LayeredPack>();
   private fallbackEntry?: LayeredPack;
+  /** `policy.enforce`: the baseline rules that decide in enforce mode. */
+  private readonly enforce: readonly BaselineRuleId[];
+  /** Boundaries (not `push`) at which an unusable mandatory baseline is denied because of `enforce`. */
+  private readonly enforcedAt: ReadonlySet<Boundary>;
 
-  constructor(o: { scopedBaseline?: (scope?: { flow: Flow; depth: number }) => LayeredPack; breakGlass?: () => BreakGlass | undefined; runId: string; packs: LayeredPack[]; base: Facts; log: (line: string) => void; evidence?: RunRecorder; now?: () => string; observesPushes?: boolean }) {
+  constructor(o: { scopedBaseline?: (scope?: { flow: Flow; depth: number }) => LayeredPack; breakGlass?: () => BreakGlass | undefined; runId: string; packs: LayeredPack[]; base: Facts; log: (line: string) => void; evidence?: RunRecorder; now?: () => string; observesPushes?: boolean; enforce?: readonly BaselineRuleId[] }) {
+    this.enforce = o.enforce ?? [];
+    this.enforcedAt = new Set(this.enforce.flatMap((id) => BASELINE_RULE_BOUNDARIES[id] ?? []).filter((b) => b !== "push"));
     this.observesPushes = o.observesPushes ?? false;
     this.mandatoryUnusable = o.packs.some((p) => p.layer === "mandatory" && "problem" in p);
     this.runId = o.runId;
@@ -286,7 +314,7 @@ export class RunPolicy {
       entry = { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, "could not be built") };
     }
     this.scoped.set(parent, entry);
-    if ("problem" in entry) this.log(`! policy ${entry.id}: sub-flow ${parent}: ${entry.detail} — this mandatory policy denies steps with a sign-in and writing agents in this sub-flow`);
+    if ("problem" in entry) this.log(`! policy ${entry.id}: sub-flow ${parent}: ${entry.detail} — ${outageScope(this.enforce)} in this sub-flow`);
   }
 
   /** Does any usable pack have a rule at this boundary that uses this fact? Never throws. */
@@ -315,7 +343,8 @@ export class RunPolicy {
 
   /**
    * Asks every pack at one boundary; logs and records each decision; returns them and the winner. Never throws.
-   * Observe only, except: a mandatory pack that cannot be loaded or evaluated at a privileged boundary sets `denied`.
+   * Observe only, except: a mandatory pack that cannot be loaded or evaluated at a privileged boundary (or, for the baseline, at a
+   * boundary of an enforced rule) sets `denied`, and so does a deny of an enforced baseline rule (not at `push`).
    * While a break-glass is active, that denial becomes a `warn` (policy.break-glass), but only once the decision is recorded.
    */
   at(boundary: Boundary, facts: Facts = {}, step?: StepIdentity): PolicyAnswer {
@@ -326,18 +355,13 @@ export class RunPolicy {
     try {
       input = { version: POLICY_INPUT_VERSION, boundary, runId: this.runId, facts: policyFacts({ ...this.base, ...facts }) };
     } catch (e) {
+      // recorded first: `fail` stops the evidence stream, and a break-glass needs its record
+      const answer = this.inputFailed(boundary, facts, step);
       this.fail(e);
-      let privileged = true;
-      try {
-        privileged = privilegedBoundary(boundary, facts);
-      } catch {
-        // counts as privileged
-      }
-      const first = this.packs.find((p) => p.layer === "mandatory");
-      return privileged && first ? { decisions, denied: { reason: deniedReason(first.id, "policy.invalid", boundary) } } : { decisions };
+      return answer;
     }
     for (const loaded of this.packsFor(step)) {
-      const mode: Mode = loaded.layer === "mandatory" && privilegedBoundary(boundary, input.facts) ? "enforce" : "observe";
+      const mode: Mode = loaded.layer === "mandatory" && (privilegedBoundary(boundary, input.facts) || (loaded.id === BASELINE_POLICY_ID && this.enforcedAt.has(boundary))) ? "enforce" : "observe";
       try {
         const raw = this.decide(loaded, input, mode);
         const o = loaded.layer === "mandatory" ? this.outage(loaded.id, raw, boundary) : { decision: raw };
@@ -345,10 +369,7 @@ export class RunPolicy {
         const entry: LayeredDecision = { layer: loaded.layer, decision };
         decisions.push(entry);
         if (o.breakGlass) glass.set(entry, { id: loaded.id, original: raw, bg: o.breakGlass });
-        if (decision.mode === "enforce" && decision.outcome === "deny") {
-          const denial = policyDenial(decision);
-          denied ??= { reason: deniedReason(loaded.id, decision.reasonCode as NoPackCode, boundary), decision, ...(denial ? { denial } : {}) };
-        }
+        denied ??= this.deniedFor(loaded.id, decision, boundary);
       } catch (e) {
         // the answer is not lost silently: a decision that says so is recorded, and when even that fails the evidence is marked incomplete
         try {
@@ -359,16 +380,18 @@ export class RunPolicy {
           const entry: LayeredDecision = { layer: loaded.layer, decision };
           decisions.push(entry);
           if (o.breakGlass) glass.set(entry, { id: loaded.id, original: raw, bg: o.breakGlass });
-          if (decision.mode === "enforce" && decision.outcome === "deny") {
-            const denial = policyDenial(decision);
-            denied ??= { reason: deniedReason(loaded.id, "policy.invalid", boundary), decision, ...(denial ? { denial } : {}) };
-          }
+          denied ??= this.deniedFor(loaded.id, decision, boundary);
         } catch (e2) {
           this.fail(e2 ?? e);
           if (mode === "enforce") denied ??= { reason: deniedReason(loaded.id, "policy.invalid", boundary) };
         }
       }
     }
+    return this.settle(boundary, decisions, glass, denied, step);
+  }
+
+  /** Records and logs the decisions of one question and applies break-glass where it was recorded. Never throws. */
+  private settle(boundary: Boundary, decisions: LayeredDecision[], glass: Map<LayeredDecision, { id: string; original: PolicyDecision; bg: BreakGlass }>, denied: PolicyDenied | undefined, step?: StepIdentity): PolicyAnswer {
     const combined = combineDecisions(decisions);
     for (const ld of decisions) {
       let recorded = false;
@@ -388,15 +411,46 @@ export class RunPolicy {
       // the override needs its audit record: without it the original denial stands
       this.log(`! policy ${g.id}: the break-glass decision could not be recorded — ${boundary} is denied`);
       this.logDecision({ layer: ld.layer, decision: g.original }, step, false);
-      const reason = deniedReason(g.id, g.original.reasonCode as NoPackCode, boundary);
-      try {
-        const denial = policyDenial(g.original);
-        denied ??= { reason, decision: g.original, ...(denial ? { denial } : {}) };
-      } catch {
-        denied ??= { reason };
-      }
+      denied ??= this.deniedFor(g.id, g.original, boundary) ?? { reason: deniedReason(g.id, g.original.reasonCode as NoPackCode, boundary) };
     }
     return { decisions, ...(combined ? { combined } : {}), ...(denied ? { denied } : {}) };
+  }
+
+  /** What stops the step for one decision: nothing, the outage reason, or the reason of an enforced rule (never at `push`, where the pre-push hook decides). */
+  private deniedFor(id: string, d: PolicyDecision, boundary: Boundary): PolicyDenied | undefined {
+    if (d.mode !== "enforce" || d.outcome !== "deny") return undefined;
+    const outage = d.reasonCode === "policy.unavailable" || d.reasonCode === "policy.invalid";
+    if (!outage && boundary === "push") return undefined;
+    const reason = outage ? deniedReason(id, d.reasonCode as NoPackCode, boundary) : ruleDeniedReason(d);
+    try {
+      const denial = policyDenial(d);
+      return { reason, decision: d, ...(denial ? { denial } : {}) };
+    } catch {
+      return { reason };
+    }
+  }
+
+  /** The question could not even be built: a recorded `policy.invalid` for the mandatory pack that guards this boundary, if any. Never throws. */
+  private inputFailed(boundary: Boundary, facts: Facts, step?: StepIdentity): PolicyAnswer {
+    let privileged = true;
+    try {
+      privileged = privilegedBoundary(boundary, facts);
+    } catch {
+      // counts as privileged
+    }
+    const mandatory = this.packs.filter((p) => p.layer === "mandatory");
+    const entry = privileged ? mandatory[0] : this.enforcedAt.has(boundary) ? mandatory.find((p) => p.id === BASELINE_POLICY_ID) : undefined;
+    if (!entry) return { decisions: [] };
+    try {
+      const raw = this.noPack(entry.id, "policy.invalid", { version: POLICY_INPUT_VERSION, boundary, runId: this.runId, facts: {} }, "enforce");
+      const o = this.outage(entry.id, raw, boundary);
+      const ld: LayeredDecision = { layer: entry.layer, decision: o.decision };
+      const glass = new Map<LayeredDecision, { id: string; original: PolicyDecision; bg: BreakGlass }>();
+      if (o.breakGlass) glass.set(ld, { id: entry.id, original: raw, bg: o.breakGlass });
+      return this.settle(boundary, [ld], glass, this.deniedFor(entry.id, o.decision, boundary), step);
+    } catch {
+      return { decisions: [], denied: { reason: deniedReason(entry.id, "policy.invalid", boundary) } };
+    }
   }
 
   /**
@@ -425,7 +479,7 @@ export class RunPolicy {
     const at = this.now();
     if ("problem" in loaded) return this.noPack(loaded.id, loaded.problem, input, mode, at);
     let pack = loaded.pack;
-    if (input.boundary === "push") {
+    if (input.boundary === "push" || input.boundary === "repository.access") {
       if (input.facts.repository === undefined && loaded.pushWithoutRepository) pack = loaded.pushWithoutRepository;
     } else if (input.boundary === "step.before" && input.facts.sandboxed === undefined && loaded.stepWithoutSandbox) pack = loaded.stepWithoutSandbox;
     else if (input.boundary === "step.after" && input.facts.contextUncited === undefined && loaded.stepWithoutCitations) pack = loaded.stepWithoutCitations;
@@ -538,7 +592,7 @@ export function runPolicy(
     log(`! policy ${BASELINE_POLICY_ID}: forbidden path patterns ${shown}${leftOutPaths.length > 10 ? ` and ${leftOutPaths.length - 10} more` : ""} cannot be expressed in the baseline (spaces, control characters, or over 255 characters) and are not in it — the guard step still checks them`);
   }
   const entry: LayeredPack = limitsFailed ? { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, "its limits could not be read") } : baselineEntry(BASELINE_VERSION, controls);
-  if ("problem" in entry) log(`! policy ${entry.id}: ${entry.detail} — recorded as ${entry.problem}; this mandatory policy denies steps with a sign-in and writing agents`);
+  if ("problem" in entry) log(`! policy ${entry.id}: ${entry.detail} — recorded as ${entry.problem}; ${outageScope(controls.enforce ?? [])}`);
   const ids = layeredPackIds({ mandatory: config.policy?.mandatory, repositories: config.policy?.repositories, packs: config.policy?.packs }, base.repository);
   const loaded = ids.length
     ? loadPolicyPacks(
@@ -555,5 +609,5 @@ export function runPolicy(
   const packs: LayeredPack[] = [entry,...loaded.map((l, i) => ({ ...l, layer: ids[i]!.layer }))];
   const scopedBaseline = (s?: { flow: Flow; depth: number }): LayeredPack =>
     baselineEntry(BASELINE_VERSION, { ...controls, limits: { ...limits, ...(s ? stepLimits(s.flow, s.depth, config) : NO_STEP_LIMITS) } });
-  return new RunPolicy({ runId: summary.runId, packs, base, log, evidence, observesPushes: ids.length > 0, breakGlass: () => activeBreakGlass(home ?? dataHome()), scopedBaseline });
+  return new RunPolicy({ runId: summary.runId, packs, base, log, evidence, observesPushes: ids.length > 0, enforce: controls.enforce, breakGlass: () => activeBreakGlass(home ?? dataHome()), scopedBaseline });
 }

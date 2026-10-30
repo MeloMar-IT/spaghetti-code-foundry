@@ -123,7 +123,9 @@ describe("what is described", () => {
     for (const k of ["help.disabled_accounts", "help.pilot_accounts", "help.sensitive_patterns", "providers", "router.rules"]) expect(isCovered(k), k).toBe(false);
     for (const k of ["delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance"]) expect(isCovered(k), k).toBe(true);
     expect(isCovered("delivery.repositories")).toBe(false);
-    expect(described).toHaveLength(130);
+    expect(isCovered("policy.enforce")).toBe(true);
+    expect(described.find((d) => d.key === "policy.enforce")).toMatchObject({ kind: "list", default: [], effect: "new-runs" });
+    expect(described).toHaveLength(131);
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {

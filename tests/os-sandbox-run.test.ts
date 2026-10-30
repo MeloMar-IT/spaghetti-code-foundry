@@ -21,7 +21,7 @@ const basic = process.platform === "darwin" && spawnSync("/usr/bin/sandbox-exec"
 if (!basic) console.warn(`os-sandbox-run tests skipped: ${process.platform === "darwin" ? "sandbox-exec does not work here (perhaps this process is already inside a sandbox)" : "they need macOS"}`);
 
 const hereGit = spawnSync("/usr/bin/which", ["git"], { encoding: "utf8" }).stdout.trim();
-const config = () => ConfigSchema.parse({ protected_branches: [], sandbox: { user_read: [resolve("tests/fixtures"), ...(hereGit ? [resolve(hereGit, "..")] : [])] } });
+const config = (enforce: string[] = []) => ConfigSchema.parse({ protected_branches: [], policy: { enforce }, sandbox: { user_read: [resolve("tests/fixtures"), ...(hereGit ? [resolve(hereGit, "..")] : [])] } });
 
 let gh: ReturnType<typeof fakeGithub>;
 let kc: FakeKeychain;
@@ -59,20 +59,20 @@ describe.skipIf(!basic)("a user's shell step in the OS sandbox", () => {
 
   const flowOf = (...cmds: string[]) =>
     parseFlow(`name: box\nworkspace: empty\nvars: { github_repo: acme/app }\nsteps:\n${cmds.map((c, i) => `  - id: s${i + 1}\n    type: shell\n    run: ${JSON.stringify(c)}\n`).join("")}`, "box.yaml");
-  const go = (flow: ReturnType<typeof flowOf>, owner: string, runId?: string) =>
-    runFlow(flow, { task: "idea", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app" }, config: config(), owner, ...(runId ? { runId } : {}) });
+  const go = (flow: ReturnType<typeof flowOf>, owner: string, runId?: string, enforce: string[] = []) =>
+    runFlow(flow, { task: "idea", repo: gh.tmp, runsDir: runs(), claudeBin, vars: { github_repo: "acme/app" }, config: config(enforce), owner, ...(runId ? { runId } : {}) });
   const out = (s: { history: { id: string; output: string }[] }, id = "s1") => (s.history.find((h) => h.id === id)?.output ?? "").trim();
 
   it("holds the generated profile: sandboxAvailable() is true", () => {
     expect(sandboxAvailable()).toBe(true);
   });
 
-  it("cannot read another run, users.json or the gh folder of another step", async () => {
+  it.each([[[]], [["sandbox-required"]]])("cannot read another run, users.json or the gh folder of another step (policy.enforce %j)", async (enforce: string[]) => {
     mkdirSync(join(runs(), "other"), { recursive: true });
     writeFileSync(join(runs(), "other", "secret.txt"), "OTHER-RUN-SECRET");
     mkdirSync(join(gh.tmp, "scf-gh-other"));
     writeFileSync(join(gh.tmp, "scf-gh-other", "hosts.yml"), "GH-SECRET");
-    const s = await go(flowOf(`cat ${runs()}/other/secret.txt; cat "$FACTORY_HOME/users.json"; cat ${gh.tmp}/scf-gh-other/hosts.yml; echo done`), user.id);
+    const s = await go(flowOf(`cat ${runs()}/other/secret.txt; cat "$FACTORY_HOME/users.json"; cat ${gh.tmp}/scf-gh-other/hosts.yml; echo done`), user.id, undefined, enforce);
     const text = out(s);
     expect(text).not.toContain("OTHER-RUN-SECRET");
     expect(text).not.toContain("GH-SECRET");
@@ -80,9 +80,9 @@ describe.skipIf(!basic)("a user's shell step in the OS sandbox", () => {
     expect(text).toMatch(/Operation not permitted/);
   });
 
-  it("cannot write outside its run folder, to its own run.json or to tools/", async () => {
+  it.each([[[]], [["sandbox-required"]]])("cannot write outside its run folder, to its own run.json or to tools/ (policy.enforce %j)", async (enforce: string[]) => {
     const outside = join(gh.tmp, "outside.txt");
-    const s = await go(flowOf(`echo x > ${outside}; echo x >> "{{run.dir}}/run.json"; echo x > "$FACTORY_TOOLS/zz-probe"; echo x > "{{run.dir}}/live.log"; echo end`), user.id);
+    const s = await go(flowOf(`echo x > ${outside}; echo x >> "{{run.dir}}/run.json"; echo x > "$FACTORY_TOOLS/zz-probe"; echo x > "{{run.dir}}/live.log"; echo end`), user.id, undefined, enforce);
     expect(out(s)).toMatch(/Operation not permitted/);
     expect(existsSync(outside)).toBe(false);
     expect(existsSync(join(TOOLS_DIR, "zz-probe"))).toBe(false);

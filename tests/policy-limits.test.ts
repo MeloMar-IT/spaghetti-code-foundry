@@ -268,3 +268,75 @@ describe("recordStep facts", () => {
     expect(run("a", { daily: () => { throw new Error("x"); } }).facts.dailyCostUsd).toBeUndefined();
   });
 });
+
+describe("recordStep with a denied step.after", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "record-step-deny-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const R = "step.after is denied: path.forbidden";
+  const denial = { kind: "policy", policy: { id: "foundry.baseline", version: "1" }, reasonCode: "path.forbidden", packSha256: "a".repeat(64) };
+
+  const go = (over: { denied?: boolean; withDenial?: boolean; res?: Partial<StepResult> } = {}) => {
+    const order: string[] = [];
+    const logs: string[] = [];
+    let saves = 0;
+    const policy = {
+      pushes() {
+        order.push("pushes");
+      },
+      at(b: string) {
+        if (b !== "step.after") return { decisions: [] };
+        order.push("step.after");
+        return over.denied ? { decisions: [], denied: { reason: R, ...(over.withDenial === false ? {} : { denial }) } } : { decisions: [] };
+      },
+    };
+    const evidence = {
+      stepDenied() {
+        order.push("denied");
+      },
+      stepEnded() {
+        order.push("ended");
+      },
+    };
+    const summary = { runDir: dir, history: [], totalCostUsd: 0, outputs: {}, flow: "t", runId: "r" } as never;
+    const engine = { summary, config: CFG, log: (l: string) => logs.push(l), save: () => saves++, policy, evidence, accessFailed: false } as unknown as Engine;
+    const stepDef = { id: "a", type: "shell", run: "echo" } as never;
+    const scope = { flow: flowOf(`name: t\nsteps:\n  - { id: a, type: shell, run: "echo" }\n`), ctx: { vars: {}, steps: {}, run: {} }, visits: {}, prefix: "", depth: 0 } as never;
+    const res: StepResult = { ok: true, output: "short", ...over.res };
+    const rec = recordStep(stepDef, scope, engine, res, new Date(), join(dir, "l.log"), 1);
+    return { rec, order, logs, saves, engine, ctx: (scope as { ctx: { steps: Record<string, { ok: boolean; error: string }> } }).ctx };
+  };
+
+  it("asks step.after before the step's end and its pushes, and saves once, without a denial", () => {
+    const r = go();
+    expect(r.order).toEqual(["step.after", "ended", "pushes"]);
+    expect(r.saves).toBe(1);
+    expect(r.rec.ok).toBe(true);
+  });
+
+  it("turns an ok step into a failed one, without held or limited, and saves twice", () => {
+    const r = go({ denied: true, res: { held: ["x"], limited: true } });
+    expect(r.rec).toMatchObject({ ok: false, error: R, accessFailed: true });
+    expect(r.rec.held).toBeUndefined();
+    expect(r.rec.limited).toBeUndefined();
+    expect(r.ctx.steps.a).toMatchObject({ ok: false, error: R });
+    expect(r.engine.accessFailed).toBe(true);
+    expect(r.order).toEqual(["step.after", "denied", "ended", "pushes"]);
+    expect(r.saves).toBe(2);
+    expect(r.logs.some((l) => l.includes("✘ a"))).toBe(true);
+    expect(r.logs.some((l) => l.includes(`! ${R}`))).toBe(true);
+  });
+
+  it("keeps the error of a step that failed already", () => {
+    const r = go({ denied: true, res: { ok: false, error: "timed out" } });
+    expect(r.rec.error).toBe(`timed out; ${R}`);
+  });
+
+  it("fails the step also when the denial has no evidence record", () => {
+    const r = go({ denied: true, withDenial: false });
+    expect(r.order).toEqual(["step.after", "ended", "pushes"]);
+    expect(r.rec.ok).toBe(false);
+  });
+});

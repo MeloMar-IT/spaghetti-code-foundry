@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { z } from "zod";
 import type { Config } from "./config.js";
+import { BASELINE_RULE_IDS } from "./policy/baseline.js";
+import { FakeSecretSchema, registerFakeSecrets } from "./eval-secrets.js";
 import { ControlsExpectSchema, evaluateControls, readControlsInput, type ControlsResult } from "./eval-controls.js";
 import type { RunSummary } from "./engine/state.js";
 import { FACTORY_HOME, loadFlow, parseFlow } from "./flow/load.js";
@@ -27,8 +29,32 @@ const CaseSchema = z
     skills: SkillExpectSchema.optional(),
     /** Control checks: policy decisions, tools, privileges, evidence and output the run must (not) show. */
     controls: ControlsExpectSchema.optional(),
+    /** A fresh copy of the fixture with its own local bare repository as `origin`, per run; the check sees its path in `$FACTORY_EVAL_REMOTE`. Plain fixture folders only. */
+    fake_remote: z.boolean().default(false),
+    /** A fake key set in the server's environment for the eval and hidden in logs, outputs and the stored diff. */
+    fake_secret: FakeSecretSchema.optional(),
+    /** Start the runs as a user's run (short environment, no sign-in). The flow needs `workspace: empty` and clones `$FACTORY_VAR_EVAL_REPO`. */
+    user_run: z.boolean().default(false),
   })
   .strict();
+
+export const SuiteConfigSchema = z
+  .object({
+    protected_branches: z.array(z.string().min(1).max(255)).max(100).optional(),
+    secret_scan: z.boolean().optional(),
+    policy: z
+      .object({
+        enforce: z
+          .array(z.enum(BASELINE_RULE_IDS))
+          .refine((l) => new Set(l).size === l.length, "names the same rule twice")
+          .optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+export type SuiteConfig = z.infer<typeof SuiteConfigSchema>;
 
 export const SuiteSchema = z
   .object({
@@ -40,6 +66,8 @@ export const SuiteSchema = z
     repeat: z.number().int().positive().max(20).default(1),
     /** Fake programs for offline suites, relative to the suite file. */
     programs: z.object({ claude: z.string().min(1).max(500).optional(), codex: z.string().min(1).max(500).optional(), gh: z.string().min(1).max(500).optional() }).strict().optional(),
+    /** Settings this suite runs with, over the config it is given (only these keys). */
+    config: SuiteConfigSchema.optional(),
     cases: z.array(CaseSchema).min(1),
   })
   .strict();
@@ -90,6 +118,9 @@ export interface EvalReport {
   summary: VariantSummary[];
 }
 
+/** The account a `user_run` case starts its runs as: it has no user record, so it counts as a plain user. */
+export const EVAL_USER = "safety-evaluation";
+
 export const evalsDir = () => join(process.env.FACTORY_HOME ?? FACTORY_HOME, "evals");
 
 export function loadSuite(path: string): Suite {
@@ -114,28 +145,61 @@ export function withModel(flow: Flow, model: string): Flow {
   return f;
 }
 
-/** A git repo for the case: fixtures are copied and committed, URLs cloned once per eval. */
-function prepareRepo(spec: string, suiteDir: string, cache: Map<string, string>): string {
-  if (cache.has(spec)) return cache.get(spec)!;
-  const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, stdio: "pipe" });
-  let dir: string;
-  if (/^(https?:|git@|ssh:)/.test(spec)) {
-    dir = mkdtempSync(join(tmpdir(), "factory-eval-"));
-    git(dir, "clone", "-q", spec, ".");
+/** The config with the suite's settings over it. Without settings it is the same object; the input is never changed. */
+export function withSuiteConfig(config: Config, over: SuiteConfig | undefined): Config {
+  if (!over) return config;
+  return {
+    ...config,
+    ...(over.protected_branches ? { protected_branches: [...over.protected_branches] } : {}),
+    ...(over.secret_scan !== undefined ? { secret_scan: over.secret_scan } : {}),
+    ...(over.policy?.enforce ? { policy: { ...config.policy, enforce: [...over.policy.enforce] } } : {}),
+  };
+}
+
+export interface CaseRepo {
+  dir: string;
+  /** The local bare repository that is `origin` of `dir`. Only with `fake_remote`. */
+  remote?: string;
+}
+
+const gitIn = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, stdio: "pipe" });
+
+/** Copies a fixture folder to a new temp dir and commits it. */
+function copyFixture(src: string, branch?: string): string {
+  const dir = mkdtempSync(join(tmpdir(), `factory-eval-${basename(src)}-`));
+  cpSync(src, dir, { recursive: true });
+  gitIn(dir, "init", "-q", ...(branch ? ["-b", branch] : []));
+  gitIn(dir, "add", "-A");
+  gitIn(dir, "-c", "user.email=eval@factory", "-c", "user.name=eval", "commit", "-qm", "fixture");
+  return dir;
+}
+
+/** A git repo for the case: fixtures are copied and committed, URLs cloned once per eval. With `fakeRemote` the copy is new every time, with its own bare `origin`. */
+export function prepareRepo(spec: string, suiteDir: string, cache: Map<string, CaseRepo>, fakeRemote = false): CaseRepo {
+  if (!fakeRemote && cache.has(spec)) return cache.get(spec)!;
+  const isUrl = /^(https?:|git@|ssh:)/.test(spec);
+  const src = isUrl ? spec : resolve(suiteDir, spec);
+  if (fakeRemote && (isUrl || existsSync(join(src, ".git")))) throw new Error(`case repo ${spec}: fake_remote needs a plain fixture folder`);
+  let repo: CaseRepo;
+  if (isUrl) {
+    const dir = mkdtempSync(join(tmpdir(), "factory-eval-"));
+    gitIn(dir, "clone", "-q", spec, ".");
+    repo = { dir };
   } else {
-    const src = resolve(suiteDir, spec);
     if (!existsSync(src)) throw new Error(`case repo not found: ${src}`);
-    if (existsSync(join(src, ".git"))) dir = src;
+    if (existsSync(join(src, ".git"))) repo = { dir: src };
+    else if (!fakeRemote) repo = { dir: copyFixture(src) };
     else {
-      dir = mkdtempSync(join(tmpdir(), `factory-eval-${basename(src)}-`));
-      cpSync(src, dir, { recursive: true });
-      git(dir, "init", "-q");
-      git(dir, "add", "-A");
-      git(dir, "-c", "user.email=eval@factory", "-c", "user.name=eval", "commit", "-qm", "fixture");
+      const dir = copyFixture(src, "main");
+      const remote = mkdtempSync(join(tmpdir(), "factory-eval-remote-"));
+      gitIn(remote, "init", "-q", "--bare");
+      gitIn(dir, "remote", "add", "origin", remote);
+      gitIn(dir, "-c", "core.hooksPath=/dev/null", "push", "-q", "origin", "HEAD");
+      return { dir, remote };
     }
   }
-  cache.set(spec, dir);
-  return dir;
+  cache.set(spec, repo);
+  return repo;
 }
 
 export function summarize(results: EvalResult[]): VariantSummary[] {
@@ -244,11 +308,31 @@ export async function runEval(o: {
     const flow = loadSuiteFlow(name, suiteDir);
     return models?.length ? models.map((m) => withModel(flow, m)) : [flow];
   }).map((f) => ({ ...f, one_per_repo: false })); // cases get their own worktrees: run them in parallel
+  for (const c of cases) {
+    if (c.user_run && variants.some((f) => f.workspace !== "empty")) throw new Error(`case ${c.name}: user_run needs flows with workspace: empty (a user's run may not use a worktree)`);
+  }
   // Routing rules would override the model under test.
-  const config = models?.length ? { ...o.config, router: { ...o.config.router, rules: [] } } : o.config;
+  const config = withSuiteConfig(models?.length ? { ...o.config, router: { ...o.config.router, rules: [] } } : o.config, suite.config);
   // Prepare every repo before the first run starts: a failure here must not leave live runs behind.
-  const repos = new Map<string, string>();
-  for (const c of cases) prepareRepo(c.repo, suiteDir, repos);
+  const repos = new Map<string, CaseRepo>();
+  for (const c of cases) if (!c.fake_remote) prepareRepo(c.repo, suiteDir, repos);
+  // A fake remote is per run: every run gets its own copy and bare remote, made here, before any run is submitted.
+  const perRun = new Map<string, CaseRepo>();
+  const runKey = (v: number, ci: number, attempt: number) => `${v}:${ci}:${attempt}`;
+  const copies: CaseRepo[] = [];
+  try {
+    variants.forEach((_, v) => cases.forEach((c, ci) => {
+      if (!c.fake_remote) return;
+      for (let attempt = 1; attempt <= suite.repeat; attempt++) {
+        const r = prepareRepo(c.repo, suiteDir, new Map(), true);
+        copies.push(r);
+        perRun.set(runKey(v, ci, attempt), r);
+      }
+    }));
+  } catch (e) {
+    for (const r of copies) for (const d of [r.dir, r.remote]) if (d) rmSync(d, { recursive: true, force: true });
+    throw e;
+  }
   // The fake `gh` is found by name, so it goes first on the PATH of the runs, in a folder that lives as long as they do.
   const binDir = programs.ghBin ? mkdtempSync(join(tmpdir(), "factory-eval-bin-")) : undefined;
   if (binDir) symlinkSync(programs.ghBin!, join(binDir, "gh"));
@@ -257,27 +341,33 @@ export async function runEval(o: {
   const startedAt = new Date().toISOString();
   const jobs: Promise<EvalResult>[] = [];
   let settled: PromiseSettledResult<EvalResult>[];
+  let restoreSecrets = () => {};
   try {
+  restoreSecrets = registerFakeSecrets(cases.flatMap((c) => (c.fake_secret ? [c.fake_secret] : [])));
   const scheduler = new Scheduler({ runsDir: o.runsDir, config: () => config, claudeBin: programs.claudeBin, codexBin: programs.codexBin, ...(binDir ? { pathPrefix: [binDir] } : {}) });
 
   o.log(`eval ${suite.name}: ${variants.length} variant(s) × ${cases.length} case(s) × ${suite.repeat} = ${variants.length * cases.length * suite.repeat} runs (concurrency ${o.config.concurrency})`);
-  for (const flow of variants) {
-    for (const c of cases) {
-      const repo = repos.get(c.repo)!;
+  for (const [v, flow] of variants.entries()) {
+    for (const [ci, c] of cases.entries()) {
       for (let attempt = 1; attempt <= suite.repeat; attempt++) {
-        const runId = scheduler.submit({ kind: "run", flow, task: c.task, repo, vars: c.vars }, { source: `eval ${suite.name}` });
+        const caseRepo: CaseRepo = c.fake_remote ? perRun.get(runKey(v, ci, attempt))! : repos.get(c.repo)!;
+        const runId = scheduler.submit({ kind: "run", flow, task: c.task, repo: caseRepo.dir, vars: { ...c.vars, ...(c.user_run ? { eval_repo: caseRepo.remote ?? caseRepo.dir } : {}) } }, { source: `eval ${suite.name}`, ...(c.user_run ? { owner: EVAL_USER } : {}) });
         jobs.push((async () => {
+          try {
           const s = (await scheduler.wait(runId))!;
-          let quality = s.status === "succeeded";
+          const expected = c.controls?.status ?? (c.controls?.approval ? "waiting" : "succeeded");
+          let quality = s.status === expected;
           let checkOutput: string | undefined;
           if (c.check && s.workdir && existsSync(s.workdir)) {
             const logFile = join(s.runDir, "eval-check.log");
-            const r = await runShell({ command: c.check, cwd: s.workdir, env: checkEnv, logFile, timeoutMs: 600_000 });
+            const r = await runShell({ command: c.check, cwd: s.workdir, env: { ...checkEnv, ...(caseRepo.remote ? { FACTORY_EVAL_REMOTE: caseRepo.remote } : {}) }, logFile, timeoutMs: 600_000 });
             quality = r.ok;
             checkOutput = r.output.slice(-2000);
           }
           const skills = c.skills ? evaluateSkillRun(s, c.skills) : undefined;
           const controls = c.controls ? evaluateControls(readControlsInput(s, c.controls, config), c.controls) : undefined;
+          // an eval run has no person to approve it: once it is checked, a run that waits is cancelled so it does not stay in the run list
+          if (s.status === "waiting") scheduler.cancel(runId);
           const passed = quality && (skills?.ok ?? true) && (controls?.ok ?? true);
           const res: EvalResult = {
             variant: flow.name, case: c.name, attempt, runId, status: s.status, passed, quality, ...(skills ? { skills } : {}), ...(controls ? { controls } : {}), checkOutput,
@@ -288,6 +378,10 @@ export async function runEval(o: {
           };
           o.log(`${passed ? "✔" : "✘"} ${flow.name} · ${c.name}#${attempt} · ${s.status} · $${s.totalCostUsd.toFixed(3)} · run ${runId}${skills ? ` · selection ${skills.selection.ok ? "✔" : "✘"} · context ${skills.context.ok ? "✔" : "✘"} · activation ${skills.activation.ok ? "✔" : "✘"} (${skills.activation.status})` : ""}${controls ? ` · controls ${controls.ok ? "✔" : "✘"}` : ""}`);
           return res;
+          } finally {
+            // The copy stays: the run's worktree lives in its git data. Only the remote goes once the checks are done.
+            if (caseRepo.remote) rmSync(caseRepo.remote, { recursive: true, force: true });
+          }
         })());
       }
     }
@@ -295,6 +389,9 @@ export async function runEval(o: {
   // Wait for every run, also after one failed: the fake `gh` folder must outlive them all.
   settled = await Promise.allSettled(jobs);
   } finally {
+    // Every submitted run ends before the environment is put back, also when a later submit failed.
+    await Promise.allSettled(jobs);
+    restoreSecrets();
     if (binDir) rmSync(binDir, { recursive: true, force: true });
   }
   const failedJob = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
@@ -320,7 +417,10 @@ export function safetyConfig(config: Config): Config {
     ...rest,
     router: { ...config.router, rules: [], fallback_on: [] },
     cost_limits: false,
-    bot,
+    // A fallback identity: without one an isolated step is refused (NO_COMMIT_IDENTITY).
+    bot: { ...bot, name: bot.name || "scf safety evaluation", email: bot.email || "safety-evaluation@invalid" },
+    // The fake remotes live in the temp folder, which the OS sandbox of a user's run hides.
+    sandbox: { ...config.sandbox, user_runs: "off" },
     notify: { ...notify, macos: false },
   };
 }

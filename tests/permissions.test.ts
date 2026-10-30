@@ -441,6 +441,24 @@ describe("the walk", () => {
     }
   });
 
+  it("lets only an admin change policy.enforce, and reset it", async () => {
+    type Cfg = { policy: { enforce: string[] } };
+    const first = (await call(admin, "GET", "/api/config")).json() as Cfg;
+    try {
+      const put = await call(admin, "PUT", "/api/config", { ...first, policy: { ...first.policy, enforce: ["path-forbidden"] } });
+      expect(put.status).toBe(200);
+      expect(((await call(admin, "GET", "/api/config")).json() as Cfg).policy.enforce).toEqual(["path-forbidden"]);
+      const bad = await call(admin, "PUT", "/api/config", { ...first, policy: { ...first.policy, enforce: ["nope"] } });
+      expect(bad.status).toBe(400);
+      expect((bad.json() as { issues: { path: string }[] }).issues.map((i) => i.path)).toContain("policy.enforce.0");
+      expect((await call(ann, "PUT", "/api/config", { ...first, policy: { ...first.policy, enforce: ["secret-detected"] } })).status).toBe(403);
+      expect((await call(admin, "POST", "/api/settings/reset", { key: "policy.enforce" })).status).toBe(200);
+      expect(((await call(admin, "GET", "/api/config")).json() as Cfg).policy.enforce).toEqual([]);
+    } finally {
+      await call(admin, "PUT", "/api/config", first);
+    }
+  });
+
   it("gives a user an empty list of credentials", async () => {
     const r = await call(cy, "GET", "/api/credentials");
     expect(r.status).toBe(200);

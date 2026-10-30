@@ -14,13 +14,14 @@ import { refuseByPolicy, stepEnv, type Engine, type Scope } from "./execute.js";
 import { stepIsolated, stepIsolation, noMachineSignIn } from "./isolation.js";
 import { repositoryFact } from "./policy-hooks.js";
 import { appTokenAccess, ghConfigDir, removeGhConfigDir, repoNoCredentialEnv, repoTokenEnv } from "./repo-access.js";
-import { LOCAL_OPERATIONS, REPO_OPERATIONS, RepoRequestSchema, repoToolOf, tailBytes, unsafeGitSettings, type RepoEvidenceOperation, type RepoOperation, type RepoRefusal, type RepoRequest } from "./repo-request.js";
+import { LOCAL_OPERATIONS, otherRepository, REPO_OPERATIONS, RepoRequestSchema, repoToolOf, tailBytes, unsafeGitSettings, type RepoEvidenceOperation, type RepoOperation, type RepoRefusal, type RepoRequest } from "./repo-request.js";
 import { shortEnv, shortEnvRun } from "./short-env.js";
 
 export { REPO_OPERATIONS, RepoRequestSchema, type RepoRefusal, type RepoRequest };
 
 /**
- * The repository broker: carries out one repository operation on the server. The target is always the run's own repository,
+ * The repository broker: carries out one repository operation on the server. The target is always the run's own repository;
+ * a request that names another one is asked at repository.access and always refused (other-repository);
  * the credential is the narrowest one the grant allows, and every outcome is recorded as one `repo.operation` event.
  * No process goes through a shell. Nothing calls it yet.
  */
@@ -77,6 +78,7 @@ const REFUSAL_TEXT: Record<RepoRefusal, string> = {
   "unsafe-git-settings": "the workspace has git settings that are not allowed",
   policy: "a policy refused this operation",
   "not-empty": "the workspace is not empty",
+  "other-repository": "the request names another repository; the broker works only on the run's repository",
 };
 
 type Cred =
@@ -194,10 +196,23 @@ async function attempt(ctx: BrokerContext, req: RepoRequest, grant: RepoGrant | 
   if (!target) return refuse("no-target");
   st.repository = target.fact;
 
-  // 3. the profile
   const tool = repoToolOf(req.op);
-  const call = { kind: tool.kind, operation: tool.operation, target: target.fact };
   const name = toolNameOf(tool.kind, tool.operation);
+
+  // 2b. another repository: ask the policy, never act
+  const other = otherRepository(req, target.fact);
+  if (other) {
+    engine.log(`    ! repository broker: a ${req.op} request for ${other} was refused (the run's repository is ${target.fact})`);
+    const answer = engine.policy?.at("repository.access", { repository: other, step: step.id, tool: name, credential: "none", isolated: stepIsolated(owner, vars.github_repo) }, step);
+    if (answer) {
+      st.policy = combineDecisions(answer.decisions)?.decision.outcome ?? (answer.denied ? "deny" : undefined);
+      if (answer.denied) refuseByPolicy(engine, step, answer.denied);
+    }
+    return refuse("other-repository");
+  }
+
+  // 3. the profile
+  const call = { kind: tool.kind, operation: tool.operation, target: target.fact };
   let decision: ReturnType<typeof checkToolCall>;
   try {
     decision = grant ? checkToolCall({ version: TOOL_PROFILE_VERSION, profile: { id: "repo-broker", version: "1" }, grants: [grant] }, call) : { outcome: "deny", reasonCode: "tool.not-allowed", refusal: "kind-not-granted" };

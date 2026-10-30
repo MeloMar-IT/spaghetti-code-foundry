@@ -4,6 +4,7 @@ import { HOTFIX_FLOW, HOTFIX_PUSH_STEP } from "../src/engine/guards.js";
 import {
   BASELINE_HOTFIX,
   BASELINE_PACK,
+  BASELINE_RULE_BOUNDARIES,
   NO_BASELINE_CONTROLS,
   baselineControls,
   baselinePack,
@@ -11,7 +12,7 @@ import {
   runBaseline,
   type BaselineControls,
 } from "../src/policy/baseline.js";
-import { baselineEntry } from "../src/engine/policy-hooks.js";
+import { baselineEntry, RunPolicy } from "../src/engine/policy-hooks.js";
 import { evaluatePolicy, policyPackSha256 } from "../src/policy/evaluate.js";
 import type { Boundary, Facts } from "../src/policy/schema.js";
 
@@ -19,7 +20,8 @@ const T = "2026-01-31T12:00:00.000Z";
 const FULL: BaselineControls = { protectedBranches: ["main", "release/*"], secretScan: true, shippedHotfixFlow: true, repository: "acme/widgets" };
 const ask = (controls: BaselineControls, boundary: Boundary, facts: Facts, variant = false) => {
   const b = runBaseline("1", controls);
-  let pack = variant && b.pushWithoutRepository ? b.pushWithoutRepository : b.pack;
+  const unknown = variant || (boundary === "repository.access" && facts.repository === undefined);
+  let pack = unknown && b.pushWithoutRepository ? b.pushWithoutRepository : b.pack;
   if (boundary === "step.after" && facts.contextUncited === undefined) pack = b.stepWithoutCitations;
   const d = evaluatePolicy(pack, { version: POLICY_INPUT_VERSION, boundary, runId: "r", facts }, T);
   return { reason: d.reasonCode, outcome: d.outcome, rule: d.rule };
@@ -271,5 +273,19 @@ describe("the forbidden path rules and the step sandbox rule", () => {
     expect(b.stepWithoutCitations.rules.map((r) => r.id)).toEqual(b.pack.rules.map((r) => r.id).filter((id) => id !== "context-uncited"));
     expect(ask(FULL, "step.after", { step: "s" }).reason).toBe("policy.no-rule-matched");
     expect(BASELINE_PACK.rules.map((r) => r.id)).not.toContain("context-uncited");
+  });
+});
+
+describe("repository.access", () => {
+  const access = (repository: string): Facts => ({ repository, owner: "admin", credential: "none", step: "x" });
+  it("denies another repository and leaves the run's own alone", () => {
+    expect(ask(FULL, "repository.access", access("acme/other"))).toMatchObject({ outcome: "deny", reason: "repository.not-allowed", rule: "repository-not-allowed" });
+    expect(ask(FULL, "repository.access", access("acme/widgets")).rule).not.toBe("repository-not-allowed");
+    expect(BASELINE_RULE_BOUNDARIES["repository-not-allowed"]).toEqual(["push", "repository.access"]);
+  });
+  it("is not input-incomplete when the repository is not known", () => {
+    const policy = new RunPolicy({ runId: "r", packs: [baselineEntry("1", FULL)], base: { repository: "acme/widgets" }, log: () => {} });
+    const answer = policy.at("repository.access", { repository: undefined, owner: "admin", credential: "none" });
+    expect(answer.decisions.map((d) => d.decision.reasonCode)).not.toContain("policy.input-incomplete");
   });
 });
