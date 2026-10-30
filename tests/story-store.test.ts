@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import * as github from "../src/github.js";
 import { STATUS_MARKER, withGhEnv } from "../src/github.js";
 import { GitHubStore } from "../src/stories/github-store.js";
-import { storeFor } from "../src/stories/store.js";
+import { storeFor, type GhCall } from "../src/stories/store.js";
 import { fakeGithub, type FakeIssue } from "./helpers/fake-github.js";
 
 // The store must send the same gh calls as the functions it wraps, and the exact arguments of the calls it makes itself.
@@ -192,6 +192,76 @@ describe("methods that call gh themselves send exactly these arguments", () => {
     });
   });
 
+  it("listOpenWithAnyLabel strips quotes from a label", async () => {
+    await withEnv({ FAKE_GH_PRIORITY_ISSUES: JSON.stringify([{ number: 4 }]) }, async () => {
+      expect(await callsOf(async () => expect(await store.listOpenWithAnyLabel("ready", ['p"1', "p2"], { limit: 1000 })).toEqual([{ number: 4 }]))).toEqual([
+        `gh issue list --repo ${R} --label ready --state open --limit 1000 --search label:"p1","p2" sort:created-asc --json number,title,labels,body,createdAt,updatedAt`,
+      ]);
+    });
+  });
+
+  it("listClosedWithAnyLabel", async () => {
+    await withEnv({ FAKE_GH_CLOSED_ISSUES: JSON.stringify([{ number: 5 }]) }, async () => {
+      expect(await callsOf(async () => expect(await store.listClosedWithAnyLabel(["a", "b"], { limit: 30 })).toEqual([{ number: 5 }]))).toEqual([
+        `gh issue list --repo ${R} --state closed --limit 30 --search label:"a","b" sort:updated-desc --json number,title,labels,state`,
+      ]);
+    });
+  });
+
+  it("listWithBodies", async () => {
+    expect(await callsOf(() => store.listWithBodies(500))).toEqual([
+      `gh issue list --repo ${R} --state all --limit 500 --json number,title,labels,state,body`,
+    ]);
+  });
+
+  it("isClosed", async () => {
+    for (const [state, closed] of [["closed", true], ["CLOSED", true], ["OPEN", false]] as const) {
+      await withEnv({ FAKE_GH_ISSUE_STATE: state }, async () => {
+        expect(await callsOf(async () => expect(await store.isClosed(7)).toBe(closed))).toEqual([`gh issue view 7 --repo ${R} --json state --jq .state`]);
+      });
+    }
+  });
+
+  it("isClosed rejects when gh fails", async () => {
+    await withEnv({ FAKE_GH_FAIL: "issue view" }, async () => {
+      await expect(store.isClosed(7)).rejects.toThrow();
+    });
+  });
+
+  it("stateAndLabels", async () => {
+    await withEnv({ FAKE_GH_FRESH: JSON.stringify([{ number: 8, state: "OPEN", labels: [{ name: "x" }] }]) }, async () => {
+      expect(await callsOf(async () => expect(await store.stateAndLabels(8)).toEqual({ state: "OPEN", labels: [{ name: "x" }] }))).toEqual([
+        `gh issue view 8 --repo ${R} --json state,labels`,
+      ]);
+    });
+  });
+
+  it("searchOverrules", async () => {
+    await withEnv({ FAKE_GH_OVERRULE_SEARCH: JSON.stringify([{ number: 3, updatedAt: "t" }]) }, async () => {
+      expect(await callsOf(async () => expect(await store.searchOverrules({ since: "2026-01-02", limit: 30 })).toEqual([{ number: 3, updatedAt: "t" }]))).toEqual([
+        `gh issue list --repo ${R} --state all --search overrule in:comments updated:>=2026-01-02 --limit 30 --json number,updatedAt`,
+      ]);
+    });
+    await withEnv({ FAKE_GH_OVERRULE_SEARCH: "{}" }, async () => {
+      expect(await store.searchOverrules({ since: "2026-01-02", limit: 30 })).toEqual([]);
+    });
+  });
+
+  it("openChanges", async () => {
+    await withEnv({ FAKE_GH_PRS: JSON.stringify([{ number: 9, headRefName: "factory/9", state: "OPEN" }]) }, async () => {
+      expect(await callsOf(async () => expect(await store.openChanges(50)).toEqual([{ number: 9, headRefName: "factory/9", state: "OPEN" }]))).toEqual([
+        `gh pr list --repo ${R} --state open --limit 50 --json number,headRefName,state,url,title,createdAt`,
+      ]);
+    });
+  });
+
+  it("changeActivity", async () => {
+    const view = { comments: [], reviews: [], commits: [{ committedDate: "t" }] };
+    await withEnv({ FAKE_GH_PR_VIEW: JSON.stringify(view) }, async () => {
+      expect(await callsOf(async () => expect(await store.changeActivity(6)).toEqual(view))).toEqual([`gh pr view 6 --repo ${R} --json comments,reviews,commits`]);
+    });
+  });
+
   it("reviewComments", async () => {
     await withEnv({ FAKE_GH_API: JSON.stringify([{ body: "rename", created_at: "t" }]) }, async () => {
       expect(await callsOf(async () => expect(await store.reviewComments(7)).toEqual([{ body: "rename", created_at: "t" }]))).toEqual([`gh api repos/${R}/pulls/7/comments`]);
@@ -212,6 +282,15 @@ describe("input that could become a gh option is refused before gh runs", () => 
     ["findChange empty", () => store.findChange("")],
     ["listOpenWithLabel 0", () => store.listOpenWithLabel("x", { limit: 0 })],
     ["mergedChanges big", () => store.mergedChanges(5000)],
+    ["isClosed(0)", () => store.isClosed(0)],
+    ["stateAndLabels(-1)", () => store.stateAndLabels(-1)],
+    ["changeActivity(1.5)", () => store.changeActivity(1.5)],
+    ["openChanges(0)", () => store.openChanges(0)],
+    ["listWithBodies(5000)", () => store.listWithBodies(5000)],
+    ["listClosedWithAnyLabel 0", () => store.listClosedWithAnyLabel(["a"], { limit: 0 })],
+    ["listOpenWithAnyLabel 0", () => store.listOpenWithAnyLabel("x", ["a"], { limit: 0 })],
+    ["searchOverrules option", () => store.searchOverrules({ since: "--x", limit: 30 })],
+    ["searchOverrules limit", () => store.searchOverrules({ since: "2026-01-01", limit: 0 })],
   ])("%s", async (_name, call) => {
     expect(await logOf(async () => void (await call().then(() => expect.unreachable(), (e) => expect(e).toBeInstanceOf(Error))))).toBe("");
   });
@@ -277,5 +356,61 @@ describe("status comment", () => {
       expect(fake.statusEdits()).toHaveLength(editsBefore + 1);
       expect(fake.statusComments().filter((c) => c.issue === 31)).toHaveLength(1);
     });
+  });
+});
+
+describe("sync(): the synchronous part runs the caller's GhCall", () => {
+  type Call = { args: string[]; input?: string };
+  /** A recording GhCall that answers with `answer` (a string) or throws it (an Error). */
+  function recorder(answer: string | Error) {
+    const calls: Call[] = [];
+    const run: GhCall = (args, input) => {
+      calls.push({ args, input });
+      if (answer instanceof Error) throw answer;
+      return answer;
+    };
+    return { calls, stories: store.sync(run) };
+  }
+  const gone = (stderr: string) => Object.assign(new Error("gh failed"), { stderr });
+
+  it("get sends these arguments and upper-cases the state", () => {
+    const { calls, stories } = recorder(JSON.stringify({ number: 3, title: "t", state: "closed", body: "b" }));
+    expect(stories.get(3)).toEqual({ number: 3, title: "t", state: "CLOSED", body: "b" });
+    expect(calls).toEqual([{ args: ["issue", "view", "3", "--repo", R, "--json", "number,title,state,body"], input: undefined }]);
+  });
+
+  it.each(["GraphQL: Could not resolve to an Issue with the number of 9.", "HTTP 404: Not Found"])("get gives undefined for %s", (text) => {
+    expect(recorder(gone(text)).stories.get(9)).toBeUndefined();
+  });
+
+  it("get throws on another gh error, on text that is not JSON and on the wrong number", () => {
+    expect(() => recorder(gone("rate limit")).stories.get(3)).toThrow("gh failed");
+    expect(() => recorder("not json").stories.get(3)).toThrow("Unexpected answer from gh for #3.");
+    expect(() => recorder(JSON.stringify({ number: 4, title: "t" })).stories.get(3)).toThrow("Unexpected answer from gh for #3.");
+  });
+
+  it("list sends these arguments, drops malformed entries and upper-cases the state", () => {
+    const { calls, stories } = recorder(JSON.stringify([{ number: 1, title: "a", state: "open", body: "x" }, { number: "2", title: "b" }, null, { number: 3, title: "c" }]));
+    expect(stories.list(500)).toEqual([{ number: 1, title: "a", state: "OPEN", body: "x" }, { number: 3, title: "c", state: "OPEN", body: "" }]);
+    expect(calls[0]!.args).toEqual(["issue", "list", "--repo", R, "--state", "all", "--limit", "500", "--json", "number,title,state,body"]);
+  });
+
+  it("list throws when the answer is not a list", () => {
+    expect(() => recorder("{}").stories.list(500)).toThrow("Unexpected answer from gh for the issue list.");
+  });
+
+  it("setBody sends the body on stdin, not in the arguments", () => {
+    const { calls, stories } = recorder("");
+    stories.setBody(5, "text $(x)\nmore");
+    expect(calls).toEqual([{ args: ["issue", "edit", "5", "--repo", R, "--body-file", "-"], input: "text $(x)\nmore" }]);
+  });
+
+  it("refuses a bad number or limit before gh runs", () => {
+    const { calls, stories } = recorder("[]");
+    expect(() => stories.get(0)).toThrow();
+    expect(() => stories.setBody(-1, "b")).toThrow();
+    expect(() => stories.list(0)).toThrow();
+    expect(() => stories.list(5000)).toThrow();
+    expect(calls).toEqual([]);
   });
 });

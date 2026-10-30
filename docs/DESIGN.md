@@ -130,6 +130,10 @@ in `src/github.ts`; the store reuses them.
   (`withGhEnv`), as before.
 - **Inputs are checked first.** Issue numbers, pull request references, commit SHAs and list sizes are
   checked before `gh` runs, so they cannot become `gh` options or API paths.
+- **The synchronous part.** `tools/waits-for` runs `gh` itself, synchronously, so it cannot await the
+  store. `store.sync(run)` returns a `SyncStories` (`get`, `list`, `setBody`) bound to the caller's
+  runner (a `GhCall`). A confirmed not-found gives `undefined`; a malformed answer or another `gh` error
+  throws. The body of `setBody` goes on stdin.
 - **The status marker is unchanged.** `upsertStatusComment` still finds the Foundry's comment by
   `<!-- claude-factory status -->`; `BOT_MARKER`, `BOT_MARKERS` and `STATUS_MARKER` are not changed.
 - **The guard.** `tests/story-store-guard.test.ts` scans `src/`, `blocks/`, `tools/` and

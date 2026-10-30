@@ -3,7 +3,7 @@ import type { Config } from "./config.js";
 import { appTokenAccess, ghConfigDir, removeGhConfigDir, repoTokenEnv, stepRepoAccess } from "./engine/repo-access.js";
 import type { RunSummary } from "./engine/state.js";
 import { flowFiles } from "./flow/load.js";
-import { issueState } from "./github.js";
+import { storeFor } from "./stories/store.js";
 import { type IssueState, knownIssueState, putIssueState } from "./issue-states.js";
 import { runOrigin } from "./your-turn.js";
 
@@ -69,7 +69,7 @@ export async function resumeGate(run: Pick<RunSummary, "vars">, o: GateOptions =
   const repo = githubNameOf(target.repo) ?? target.repo;
   const key = o.storeRepo ?? repo;
   const timeoutMs = o.timeoutMs ?? GATE_TIMEOUT_MS;
-  const read = o.read ?? ((r: string, n: number) => issueState(r, n, timeoutMs, o.env));
+  const read = o.read ?? ((r: string, n: number) => storeFor(r).state(n, { timeoutMs, env: o.env }));
   let state: IssueState;
   try {
     state = await read(repo, issue);

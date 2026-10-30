@@ -9,7 +9,8 @@ import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
 import { commentReads, extraWaitingIssues, EXTRA_READS_PER_CHECK, EXTRA_READ_MEMO_MS, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs, type CommentReads } from "./waiting-issues.js";
-import { canWrite, commentOnIssue, commentsAfter, ensureLabel, gh, ghActsAsApp, ghJson, isBot, isOverruleReply, isStatusComment, issueComments, issueStates, listOpenIssuesByLabelPages, mayWrite, repoPermission, setLabels, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
+import { canWrite, commentsAfter, gh, ghActsAsApp, ghJson, isBot, isOverruleReply, isStatusComment, mayWrite, repoPermission, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
+import { storeFor, type StoryStore } from "../stories/store.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
 import { asksQuestions, countQuestions, firstLine, releaseAtFor, runClosedIssue, LIMIT_RETRY_MS, nextStep, runNextStep, type NextData, type BlockerInfo, type NextKind, type NextStep } from "../next-step.js";
@@ -24,7 +25,7 @@ import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
 import { notCodeStop, parkedComment, wantsPark } from "./park.js";
-import { ackedNotPlanned, acceptedComment, codeMerged, findOverrules, FOLLOWUP_SEARCH_LIMIT, followUpComment, followUpSearchArgs, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
+import { ackedNotPlanned, acceptedComment, codeMerged, findOverrules, FOLLOWUP_SEARCH_LIMIT, followUpComment, followUpSince, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
 import { contentsPath, filesToCheck, openOwnerActions, OWNER_FILE_MARK, type OwnerAsk } from "./owner-action.js";
 import { validBranchName } from "../auth/repo-settings.js";
 
@@ -325,6 +326,11 @@ export class Watcher {
     return this.cfg.github_repo;
   }
 
+  /** The stories of this watcher's repository; each call runs in the caller's gh session. */
+  private get store(): StoryStore {
+    return storeFor(this.repo);
+  }
+
   private flowName() {
     // "default" (the schema default) means the source's own flow.
     if (this.cfg.flow !== "default") return this.cfg.flow;
@@ -376,11 +382,11 @@ export class Watcher {
       const review = this.cfg.vars.review_plan_label ?? "";
       const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase(); // GitHub label names ignore case
       const both = same(review, this.cfg.label); // one label starts the work and asks for a plan check
-      await ensureLabel(this.repo, this.cfg.label, "c2410c", both ? LABEL_WORDS.triggerReview : LABEL_WORDS.trigger);
-      for (const [k, l] of Object.entries(STATUS_LABELS)) await ensureLabel(this.repo, this.L[k as LabelKey], l.color, l.description);
+      await this.store.ensureLabel(this.cfg.label, "c2410c", both ? LABEL_WORDS.triggerReview : LABEL_WORDS.trigger);
+      for (const [k, l] of Object.entries(STATUS_LABELS)) await this.store.ensureLabel(this.L[k as LabelKey], l.color, l.description);
       if (review.trim() && !both) {
         if (this.allStatus.some((s) => same(s, review))) this.act(`label ${review} is the review label and a status label — it keeps the status description`);
-        else await ensureLabel(this.repo, review, "0e7490", LABEL_WORDS.review);
+        else await this.store.ensureLabel(review, "0e7490", LABEL_WORDS.review);
       }
     }
     loadFlow(this.flowName(), this.d.repo); // fail early on a missing flow
@@ -515,7 +521,7 @@ export class Watcher {
   }
 
   private async noteFile(n: number, met: string): Promise<void> {
-    await gh(["issue", "comment", String(n), "--repo", this.repo, "--body", `**Nothing needed from you** — ${met}, so the Foundry goes on.\n\n${OWNER_FILE_MARK}`]);
+    await this.store.comment(n, `**Nothing needed from you** — ${met}, so the Foundry goes on.\n\n${OWNER_FILE_MARK}`);
   }
 
   /** How this watcher judges a dependency done. */
@@ -535,7 +541,7 @@ export class Watcher {
    */
   private async takeDefaults(n: number, comments: Comment[]): Promise<boolean> {
     if (!this.canTakeDefaults(comments)) return false;
-    await gh(["issue", "comment", String(n), "--repo", this.repo, "--body", `/defaults\n\n— taken by the Foundry itself: this watcher answers questions with the recommendations. ${AUTO_DEFAULTS_MARK}`]);
+    await this.store.comment(n, `/defaults\n\n— taken by the Foundry itself: this watcher answers questions with the recommendations. ${AUTO_DEFAULTS_MARK}`);
     this.act(`#${n} questions answered with the recommendations (auto_defaults)`);
     return true;
   }
@@ -747,7 +753,7 @@ export class Watcher {
       await this.asRepo(async () => {
         // Cancelled while the issue is closed: clear the labels, no failure comment.
         if (s.status === "cancelled" && (await this.issueClosed(issue))) {
-          await setLabels(this.repo, issue, undefined, this.allStatus).catch(() => {});
+          await this.store.setLabels(issue, undefined, this.allStatus).catch(() => {});
           this.act(`#${issue} (closed) → cancelled · label → none`);
           return;
         }
@@ -755,7 +761,7 @@ export class Watcher {
         const split = s.status === "succeeded" && s.history.at(-1)?.id === "create_split";
         const label = split ? undefined : labelFor(s, this.L);
         const remove = s.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus;
-        await setLabels(this.repo, issue, label, remove).catch(() => {});
+        await this.store.setLabels(issue, label, remove).catch(() => {});
         if (label === this.L.failed && this.cfg.comment_on_failure) await this.commentFailure(issue, s).catch(() => {});
         const asks = s.status === "stopped" && asksQuestions(s);
         const why = !asks && s.reason ? explainError(s.reason) : undefined;
@@ -766,8 +772,7 @@ export class Watcher {
 
   private async issueClosed(issue: number): Promise<boolean> {
     try {
-      const out = await gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "state", "--jq", ".state"]);
-      return out.trim().toUpperCase() === "CLOSED";
+      return await this.store.isClosed(issue);
     } catch {
       return false; // unknown: count it as open
     }
@@ -777,7 +782,7 @@ export class Watcher {
   private async commentFailure(issue: number, s: RunSummary) {
     const next = this.failedHold({ number: issue, title: "" }, s, s.reason).next;
     const body = failureComment(s, next);
-    await gh(["issue", "comment", String(issue), "--repo", this.repo, "--body", body]);
+    await this.store.comment(issue, body);
   }
 
   /** Lock key for a run on this issue: per issue, or per watcher when runs share a branch. */
@@ -789,7 +794,7 @@ export class Watcher {
   private async pausingPr(): Promise<{ text: string; number: number; url?: string; title?: string; createdAt?: string } | undefined> {
     const prefix = this.cfg.pause_while_pr_open;
     if (!prefix) return undefined;
-    const prs = await ghJson<{ number: number; headRefName: string; state: string; url?: string; title?: string; createdAt?: string }[]>(["pr", "list", "--repo", this.repo, "--state", "open", "--limit", "100", "--json", "number,headRefName,state,url,title,createdAt"]);
+    const prs = await this.store.openChanges(100);
     const pr = prs.find((p) => p.state === "OPEN" && p.headRefName.startsWith(prefix));
     return pr ? { text: `PR #${pr.number} (${pr.headRefName})`, number: pr.number, url: pr.url, title: pr.title, createdAt: pr.createdAt } : undefined;
   }
@@ -843,7 +848,7 @@ export class Watcher {
     alive();
     this.overruleInFlight.add(key);
     try {
-      await commentOnIssue(this.repo, n, body, OVERRULE_GH_MS);
+      await this.store.comment(n, body, OVERRULE_GH_MS);
     } finally {
       this.overruleInFlight.delete(key);
     }
@@ -925,7 +930,7 @@ export class Watcher {
     o.alive();
     let found: { number: number; updatedAt?: string }[];
     try {
-      const got = await ghJson<unknown>(followUpSearchArgs(this.repo, Date.now()), undefined, OVERRULE_GH_MS);
+      const got = await this.store.searchOverrules({ since: followUpSince(Date.now()), limit: FOLLOWUP_SEARCH_LIMIT, timeoutMs: OVERRULE_GH_MS });
       found = Array.isArray(got) ? got : [];
     } catch (e) {
       o.alive();
@@ -948,7 +953,7 @@ export class Watcher {
       let labels = o.every?.find((i) => i.number === n)?.labels.map((l) => l.name);
       if (!labels) {
         try {
-          const view = await ghJson<{ labels: { name: string }[] }>(["issue", "view", String(n), "--repo", this.repo, "--json", "state,labels"], undefined, OVERRULE_GH_MS);
+          const view = await this.store.stateAndLabels(n, OVERRULE_GH_MS);
           o.alive();
           labels = view.labels.map((l) => l.name);
         } catch (e) {
@@ -1022,9 +1027,9 @@ export class Watcher {
   /** The open issues with a waiting label from the label query: a few pages per check, continuing where the last check stopped. */
   private async waitingFromLabels(alive: () => void): Promise<RestIssue[]> {
     for (const label of new Set([this.L.needsInfo, this.L.waiting])) {
-      let r: Awaited<ReturnType<typeof listOpenIssuesByLabelPages>>;
+      let r: Awaited<ReturnType<StoryStore["listOpenByLabelPages"]>>;
       try {
-        r = await listOpenIssuesByLabelPages(this.repo, label, { fromPage: this.waitingCursor.get(label) ?? 1, pages: this.waitingListPages, timeoutMs: 30_000 });
+        r = await this.store.listOpenByLabelPages(label, { fromPage: this.waitingCursor.get(label) ?? 1, pages: this.waitingListPages, timeoutMs: 30_000 });
       } catch (e) {
         alive();
         this.d.log(`[${this.cfg.id}] ! waiting label ${label}: ${errorLine((e as Error).message)}`);
@@ -1100,7 +1105,7 @@ export class Watcher {
     // `mine` is the token of the tick itself, so a check whose sign-in or setup outlasted the timeout is already given up here.
     const alive = () => { if (mine !== this.tickToken || this.retired) throw new Error("this check was given up"); };
     alive();
-    const issues = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--label", this.cfg.label, "--state", "open", "--limit", "100", "--json", "number,title,labels,body,createdAt,updatedAt"]);
+    const issues = await this.store.listOpenWithLabel(this.cfg.label, { limit: 100 });
     alive();
     // All issues, read once per check and shared with the other watchers of this repository; also saved as the issue list file.
     let everyIssue: Issue[] | undefined; // all issues, for the dependency check
@@ -1119,14 +1124,13 @@ export class Watcher {
     const prioLabels = this.cfg.priority_labels.filter((l) => l.trim());
     // The list is cut at 100 and has no order we can use: ask for the bug stories on their own, so none is missed.
     if (!whole && prioLabels.length) {
-      const extra = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--label", this.cfg.label, "--state", "open", "--limit", "1000", // gh pages through the results up to the limit
-        "--search", `label:${prioLabels.map((l) => `"${l.replace(/"/g, "")}"`).join(",")} sort:created-asc`, "--json", "number,title,labels,body,createdAt,updatedAt"]);
+      const extra = await this.store.listOpenWithAnyLabel(this.cfg.label, prioLabels, { limit: 1000 }); // gh pages through the results up to the limit
       const have = new Set(issues.map((i) => i.number));
       for (const i of extra) if (!have.has(i.number)) issues.push(i);
     }
     const prio = (i: Issue) => goesFirst(i, this.cfg.priority_labels);
     let rule: DoneRule | undefined;
-    const allIssues = async () => (everyIssue ??= await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--state", "all", "--limit", "500", "--json", "number,title,labels,state,body"]));
+    const allIssues = async () => (everyIssue ??= await this.store.listWithBodies(500));
     const openDepsOf = async (issue: Issue) => {
       const body = issue.body ?? "";
       if (!/depends\s+on|blocked\s+by/i.test(body) && !body.includes(DEPS_MARK)) return [];
@@ -1184,7 +1188,7 @@ export class Watcher {
     const nowMs = Date.now();
     for (const [k, t] of this.slowUntil) if (t <= nowMs) this.slowUntil.delete(k);
     const reads = commentReads({
-      read: (n, t) => issueComments(this.repo, n, t),
+      read: (n, t) => this.store.comments(n, t),
       perReadMs: this.commentReadMs, budgetMs: this.commentBudgetMs,
       skip: (n) => (this.slowUntil.get(n) ?? 0) > Date.now(),
       onSlow: (n) => this.slowUntil.set(n, Date.now() + SLOW_READ_MS),
@@ -1287,7 +1291,7 @@ export class Watcher {
       if (queuedId === undefined && isTrackingEpic(issue) && !this.issueBusy(n, run)) {
         const leftover = names.filter((l) => this.allStatus.includes(l) && l !== this.L.done);
         if (leftover.length) {
-          await setLabels(this.repo, n, undefined, leftover);
+          await this.store.setLabels(n, undefined, leftover);
           alive();
           this.act(`#${n} is an epic → label ${leftover.join(", ")} removed`);
         }
@@ -1362,7 +1366,7 @@ export class Watcher {
               if (overLimit(isFirst)) { holds.push(limited(issue, run.runId)); continue; }
               if (!recheck(action) || !(await this.ackOverrules(n, accepted, alive))) continue;
               alive();
-              await setLabels(this.repo, n, this.L.working, this.allStatus);
+              await this.store.setLabels(n, this.L.working, this.allStatus);
               alive();
               if (!recheck(action)) continue;
               if (action === "restart") {
@@ -1425,7 +1429,7 @@ export class Watcher {
       if (workingRun || (mixed && queuedId !== undefined)) {
         // Mixed labels: the label goes to working whatever the order (the first status label may be working already).
         if (mixed || (status && status !== this.L.working)) {
-          await setLabels(this.repo, n, this.L.working, this.allStatus);
+          await this.store.setLabels(n, this.L.working, this.allStatus);
           this.act(`#${n} label → ${this.L.working} (its run is working)`);
           this.labelWhenDone(n, workingRun ? run!.runId : queuedId!);
         }
@@ -1463,7 +1467,7 @@ export class Watcher {
       // A run parked while the label was gone, or cancelled while it was stopped: nothing continues it, and a new run replaces it.
       if (run && run.status !== "running" && ((run.parkedAt && (asksQuestions(run) || isStoppedCancel(run.reason))) || (run.status === "cancelled" && isStoppedCancel(run.reason)))) {
         const clear = !!status && status !== this.L.done;
-        if (clear) await setLabels(this.repo, n, undefined, this.allStatus);
+        if (clear) await this.store.setLabels(n, undefined, this.allStatus);
         if (run.parkedAt) {
           // The trigger label is back. With a status label left, it goes first; without one, a new run starts below.
           if (clear) {
@@ -1483,7 +1487,7 @@ export class Watcher {
         const kept = run;
         if (kept && ["failed", "stopped", "waiting"].includes(kept.status)) {
           const label = labelFor(kept, this.L);
-          await setLabels(this.repo, n, label, this.allStatus);
+          await this.store.setLabels(n, label, this.allStatus);
           noteIssueState(this.repo, n, "open");
           this.act(`#${n} was reopened → label → ${label} (run ${kept.runId} is kept)`);
           continue;
@@ -1514,21 +1518,21 @@ export class Watcher {
           const answered = askedRun ? answersOf(comments).length > 0 : !!(await this.findDecision(run.runId, comments));
           if (answered) {
             if (status !== this.L.working) {
-              await setLabels(this.repo, n, this.L.working, this.allStatus);
+              await this.store.setLabels(n, this.L.working, this.allStatus);
               this.act(`#${n} label → ${this.L.working} (answered, waits for its turn)`);
             }
             offNow.delete(n); delete track.labelOff;
             holds.push(this.held("one_at_a_time", issue, { blockingRun, runId: run.runId }));
           } else if (askedRun) {
             if (status !== this.L.needsInfo) {
-              await setLabels(this.repo, n, this.L.needsInfo, this.allStatus);
+              await this.store.setLabels(n, this.L.needsInfo, this.allStatus);
               this.act(`#${n} label → ${this.L.needsInfo}`);
             }
             const ask = openOwnerActions(comments);
             holds.push(ask ? { ...this.held("owner_action", issue, { runId: run.runId, ownerAction: ask.actions[0]!.action }), since: ask.since } : this.heldRun(issue, run, { questions: questionCount(comments) }));
           } else {
             if (status !== this.L.waiting) {
-              await setLabels(this.repo, n, this.L.waiting, this.allStatus);
+              await this.store.setLabels(n, this.L.waiting, this.allStatus);
               this.act(`#${n} label → ${this.L.waiting}`);
             }
             holds.push(this.heldRun(issue, run));
@@ -1559,7 +1563,7 @@ export class Watcher {
         const runId = this.startNew(issue, first);
         if (early.length) this.plannedAgain(n, runId, early);
         track.runId = runId;
-        await setLabels(this.repo, n, this.L.working, this.allStatus);
+        await this.store.setLabels(n, this.L.working, this.allStatus);
         this.labelWhenDone(n, runId);
         started++;
         if (isFirst) firstStarted++;
@@ -1616,7 +1620,7 @@ export class Watcher {
         } else if (!late) {
           // The comments could not be read: change nothing, say nothing (it is listed from its label).
         } else if (!resumable && labelFor(run, this.L) !== this.L.working) {
-          await setLabels(this.repo, n, labelFor(run, this.L), this.allStatus);
+          await this.store.setLabels(n, labelFor(run, this.L), this.allStatus);
           this.act(`#${n} label → ${labelFor(run, this.L)}`);
         } else if (!resumable) {
           // Paused on a limit, a code area or an interruption: say why nothing happens.
@@ -1630,7 +1634,7 @@ export class Watcher {
         // Reconcile: the label does not match the newest run (e.g. approved in the UI, or the
         // server restarted meanwhile). A done label is left alone.
         const label = labelFor(run, this.L);
-        await setLabels(this.repo, n, label, run.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus);
+        await this.store.setLabels(n, label, run.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus);
         this.act(`#${n} label → ${label}`);
       } else if (status === this.L.needsInfo && run?.status === "stopped") {
         const comments = await reads.read(n);
@@ -1645,7 +1649,7 @@ export class Watcher {
         if (owner && "hold" in owner) { holds.push(owner.hold); continue; }
         if ((answers.length || owner || (!notCodeStop(run) && this.canTakeDefaults(comments))) && (await holdForDeps(issue, run.runId))) {
           if (answers.length) {
-            await setLabels(this.repo, n, this.L.working, this.allStatus);
+            await this.store.setLabels(n, this.L.working, this.allStatus);
             this.act(`#${n} label → ${this.L.working} (answered by @${answers[0]!.author.login}, waits for its dependencies)`);
             offNow.delete(n); delete track.labelOff;
           } else keepAsking.add(n);
@@ -1656,7 +1660,7 @@ export class Watcher {
         const auto = !answers.length && !owner && !notCodeStop(run) && !overLimit(isFirst) && (await this.takeDefaults(n, comments));
         if ((answers.length || auto || owner) && !overLimit(isFirst)) {
           // The file a question waited for is there: say so once (the mark limits it), then go on.
-          await setLabels(this.repo, n, this.L.working, this.allStatus);
+          await this.store.setLabels(n, this.L.working, this.allStatus);
           this.resume(n, run.runId, why(n, owner ? owner.met : auto ? "answered with the recommendations (auto_defaults)" : `answered by @${answers[0]!.author.login}`), undefined, true, first);
           this.labelWhenDone(n, run.runId);
           // Written only after the resume went out: a failed resume must not use up the note limit.
@@ -1673,7 +1677,7 @@ export class Watcher {
           holds.push(this.heldRun(issue, run, { questions: questionCount(comments) }));
         } else {
           // Answered; waits for the per-check limit. Nothing is needed from the person: the label says working.
-          await setLabels(this.repo, n, this.L.working, this.allStatus);
+          await this.store.setLabels(n, this.L.working, this.allStatus);
           this.act(`#${n} label → ${this.L.working} (answered by @${answers[0]!.author.login}, waits for its turn)`);
           offNow.delete(n); delete track.labelOff;
           holds.push(limited(issue, run.runId));
@@ -1683,13 +1687,13 @@ export class Watcher {
         if (!comments) { unknown.add(n); holds.push({ ...this.heldRun(issue, run), byLabel: true }); continue; }
         const decision = await this.findDecision(run.runId, comments);
         if (decision && (await holdForDeps(issue, run.runId))) {
-          await setLabels(this.repo, n, this.L.working, this.allStatus);
+          await this.store.setLabels(n, this.L.working, this.allStatus);
           this.act(`#${n} label → ${this.L.working} (${decision.approved ? "approved" : "rejected"} by @${decision.by}, waits for its dependencies)`);
           offNow.delete(n); delete track.labelOff;
           continue;
         }
         if (decision) {
-          await setLabels(this.repo, n, this.L.working, this.allStatus);
+          await this.store.setLabels(n, this.L.working, this.allStatus);
           this.resume(n, run.runId, why(n, `${decision.approved ? "approved" : "rejected"} by @${decision.by}`), decision, true, first);
           this.labelWhenDone(n, run.runId);
         } else {
@@ -1762,7 +1766,7 @@ export class Watcher {
     for (const n of candidates) if (listed.has(n)) states.set(n, "open"); else ask.push(n);
     try {
       // alive() runs before every chunk, so a check that was given up asks and writes nothing more.
-      for (const [n, s] of await issueStates(this.repo, ask, 60_000, alive)) states.set(n, s);
+      for (const [n, s] of await this.store.states(ask, { timeoutMs: 60_000, before: alive })) states.set(n, s);
       alive();
     } catch (e) {
       try {
@@ -1788,7 +1792,7 @@ export class Watcher {
       const hold = holds.find((h) => h.issue === n);
       if (!hold || !notYours.includes(hold.next.kind)) continue;
       alive();
-      await setLabels(this.repo, n, undefined, [this.L.needsInfo]);
+      await this.store.setLabels(n, undefined, [this.L.needsInfo]);
       this.act(`#${n} label ${this.L.needsInfo} removed (it no longer waits for you)`);
     }
   }
@@ -1818,8 +1822,7 @@ export class Watcher {
     const pending = this.d.scheduler.queue().pending;
     const stale = [this.L.working, this.L.waiting, this.L.needsInfo, this.L.failed];
     const limit = 30;
-    const closed = await ghJson<Issue[]>(["issue", "list", "--repo", this.repo, "--state", "closed", "--limit", String(limit),
-      "--search", `label:${stale.map((l) => `"${l}"`).join(",")} sort:updated-desc`, "--json", "number,title,labels,state"]);
+    const closed = await this.store.listClosedWithAnyLabel(stale, { limit });
     for (const issue of closed) {
       if (issue.state && issue.state.toUpperCase() !== "CLOSED") continue;
       const names = issue.labels.map((l) => l.name);
@@ -1835,7 +1838,7 @@ export class Watcher {
         continue;
       }
       const done = run?.status === "succeeded" && run.history.at(-1)?.id !== "create_split";
-      await setLabels(this.repo, issue.number, done ? this.L.done : undefined, [...this.allStatus, ...this.cfg.remove_on_done].filter((l) => names.includes(l)));
+      await this.store.setLabels(issue.number, done ? this.L.done : undefined, [...this.allStatus, ...this.cfg.remove_on_done].filter((l) => names.includes(l)));
       this.act(`#${issue.number} (closed) label → ${done ? this.L.done : "none"}`);
     }
     return closed.length < limit;
@@ -1921,7 +1924,7 @@ export class Watcher {
   /** The issue as GitHub has it right now: open, and without the trigger label. False when it cannot be told. */
   private async reallyParked(n: number): Promise<boolean> {
     try {
-      const fresh = await ghJson<{ state: string; labels: { name: string }[] }>(["issue", "view", String(n), "--repo", this.repo, "--json", "state,labels"]);
+      const fresh = await this.store.stateAndLabels(n);
       return fresh.state.toUpperCase() === "OPEN" && !fresh.labels.some((l) => l.name === this.cfg.label);
     } catch {
       return false;
@@ -1931,7 +1934,7 @@ export class Watcher {
   /** The issue as GitHub has it right now (not the search list): open, and without a status label. */
   private async reallyStartable(n: number): Promise<boolean> {
     try {
-      const fresh = await ghJson<{ state: string; labels: { name: string }[] }>(["issue", "view", String(n), "--repo", this.repo, "--json", "state,labels"]);
+      const fresh = await this.store.stateAndLabels(n);
       return fresh.state.toUpperCase() === "OPEN" && !fresh.labels.some((l) => this.allStatus.includes(l.name));
     } catch {
       return false; // can't tell: try again at the next check rather than start twice
@@ -1983,7 +1986,7 @@ export class Watcher {
     const remove = [...new Set([this.cfg.label, ...this.allStatus])];
     let removed = false;
     for (let i = 0; i < 2 && !removed; i++) {
-      try { await setLabels(this.repo, n, undefined, remove); removed = true; } catch (e) {
+      try { await this.store.setLabels(n, undefined, remove); removed = true; } catch (e) {
         this.d.log(`[${id}] #${n} parking: removing the labels failed: ${errorLine((e as Error).message)}`);
       }
     }
@@ -1993,7 +1996,7 @@ export class Watcher {
       this.act(`#${n} /park by @${by} not done: the labels could not be removed; it is tried again at the next check`);
       return "refused";
     }
-    await commentOnIssue(this.repo, n, parkedComment(this.cfg.label, run?.runId)).catch((e: Error) => {
+    await this.store.comment(n, parkedComment(this.cfg.label, run?.runId)).catch((e: Error) => {
       this.d.log(`[${id}] ! #${n} parked, but the comment could not be posted: ${errorLine(e.message)}`);
     });
     this.act(`#${n} parked by @${by}${run ? ` → run ${run.runId} is parked` : ""} · labels removed`);
@@ -2017,18 +2020,14 @@ export class Watcher {
   }
 
   private async tickPrs() {
-    const prs = await ghJson<{ number: number; headRefName: string }[]>(["pr", "list", "--repo", this.repo, "--state", "open", "--limit", "50", "--json", "number,headRefName"]);
+    const prs = await this.store.openChanges(50);
     const runs = this.latestRuns("pr");
     let started = 0;
     for (const pr of prs) {
       if (!pr.headRefName.startsWith("factory/") || started >= this.cfg.max_per_tick) continue;
       if (this.d.scheduler.isLocked(`${this.repo}#${pr.number}`)) continue;
-      const view = await ghJson<{
-        comments: Comment[];
-        reviews: { author: { login: string }; body: string; state: string; submittedAt: string }[];
-        commits: { committedDate: string }[];
-      }>(["pr", "view", String(pr.number), "--repo", this.repo, "--json", "comments,reviews,commits"]);
-      const lineComments = await ghJson<{ body: string; created_at: string }[]>(["api", `repos/${this.repo}/pulls/${pr.number}/comments`]);
+      const view = await this.store.changeActivity(pr.number);
+      const lineComments = await this.store.reviewComments(pr.number);
       const t = (s: string | undefined) => (s ? new Date(s).getTime() : 0);
       const human = [
         ...view.comments.filter((c) => !isBot(c)).map((c) => t(c.createdAt)),

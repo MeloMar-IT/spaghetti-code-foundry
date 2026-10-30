@@ -2,7 +2,7 @@ import type { CheckRun } from "../delivery/handoff.js";
 import * as github from "../github.js";
 import { gh, ghJson } from "../github.js";
 import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../github.js";
-import type { ChangeId, ChangeRef, ChangeState, MergedChange, ReviewComment, StoryState, StoryStore } from "./store.js";
+import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
 
 const whole = (n: unknown, max = Number.MAX_SAFE_INTEGER): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 1 && n <= max;
 
@@ -17,6 +17,29 @@ function changeRef(pr: ChangeId): string {
   if (typeof pr === "number" && whole(pr)) return String(pr);
   if (typeof pr === "string" && (/^[0-9]{1,15}$/.test(pr) || /^https:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/pull\/[0-9]+$/.test(pr))) return pr;
   throw new Error("not a pull request");
+}
+
+const listSize = (n: unknown, max = 1000): number => {
+  if (!whole(n, max)) throw new Error("not a list size");
+  return n;
+};
+
+/** The gh arguments of the after-merge sweep: issues in any state with an /overrule in a comment, updated since `since` (YYYY-MM-DD). */
+export function overruleSearchArgs(repo: string, since: string, limit: number): string[] {
+  return ["issue", "list", "--repo", repo, "--state", "all", "--search", `overrule in:comments updated:>=${since}`,
+    "--limit", String(limit), "--json", "number,updatedAt"];
+}
+
+/** A story from a gh answer; undefined when it is not one. */
+function toStory(x: unknown): SyncStory | undefined {
+  const o = x as Record<string, unknown> | null;
+  if (!o || typeof o !== "object" || !Number.isInteger(o.number) || (o.number as number) <= 0 || typeof o.title !== "string") return undefined;
+  return { number: o.number as number, title: o.title, state: typeof o.state === "string" ? o.state.toUpperCase() : "OPEN", body: typeof o.body === "string" ? o.body : "" };
+}
+
+function isNotFound(e: unknown): boolean {
+  const o = e as { stderr?: unknown; message?: unknown } | undefined;
+  return /Could not resolve to an Issue|Not Found|HTTP 404/i.test(`${typeof o?.stderr === "string" ? o.stderr : ""}\n${typeof o?.message === "string" ? o.message : ""}`);
 }
 
 /**
@@ -36,6 +59,48 @@ export class GitHubStore implements StoryStore {
       undefined,
       o.timeoutMs,
     );
+  }
+  async listOpenWithAnyLabel(label: string, anyOf: string[], o: { limit: number; timeoutMs?: number }): Promise<Issue[]> {
+    const limit = listSize(o.limit);
+    const any = anyOf.map((l) => `"${l.replace(/"/g, "")}"`).join(",");
+    return ghJson<Issue[]>(
+      ["issue", "list", "--repo", this.repo, "--label", label, "--state", "open", "--limit", String(limit),
+        "--search", `label:${any} sort:created-asc`, "--json", "number,title,labels,body,createdAt,updatedAt"],
+      undefined,
+      o.timeoutMs,
+    );
+  }
+  async listClosedWithAnyLabel(anyOf: string[], o: { limit: number; timeoutMs?: number }): Promise<Issue[]> {
+    const limit = listSize(o.limit);
+    const any = anyOf.map((l) => `"${l}"`).join(",");
+    return ghJson<Issue[]>(
+      ["issue", "list", "--repo", this.repo, "--state", "closed", "--limit", String(limit),
+        "--search", `label:${any} sort:updated-desc`, "--json", "number,title,labels,state"],
+      undefined,
+      o.timeoutMs,
+    );
+  }
+  async listWithBodies(limit: number, timeoutMs?: number): Promise<Issue[]> {
+    return ghJson<Issue[]>(
+      ["issue", "list", "--repo", this.repo, "--state", "all", "--limit", String(listSize(limit)), "--json", "number,title,labels,state,body"],
+      undefined,
+      timeoutMs,
+    );
+  }
+  async isClosed(issue: number, timeoutMs?: number): Promise<boolean> {
+    number(issue, "an issue number");
+    const out = await gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "state", "--jq", ".state"], undefined, timeoutMs);
+    return out.trim().toUpperCase() === "CLOSED";
+  }
+  async stateAndLabels(issue: number, timeoutMs?: number): Promise<{ state: string; labels: { name: string }[] }> {
+    number(issue, "an issue number");
+    return ghJson<{ state: string; labels: { name: string }[] }>(["issue", "view", String(issue), "--repo", this.repo, "--json", "state,labels"], undefined, timeoutMs);
+  }
+  async searchOverrules(o: { since: string; limit: number; timeoutMs?: number }): Promise<{ number: number; updatedAt?: string }[]> {
+    const limit = listSize(o.limit);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(o.since)) throw new Error("not a date");
+    const got = await ghJson<unknown>(overruleSearchArgs(this.repo, o.since, limit), undefined, o.timeoutMs);
+    return Array.isArray(got) ? (got as { number: number; updatedAt?: string }[]) : [];
   }
   listOpenByLabelPages(label: string, o: { fromPage: number; pages: number; timeoutMs?: number }) {
     return github.listOpenIssuesByLabelPages(this.repo, label, o);
@@ -164,5 +229,42 @@ export class GitHubStore implements StoryStore {
   async reviewComments(pr: number, timeoutMs?: number): Promise<ReviewComment[]> {
     number(pr, "a pull request number");
     return ghJson<ReviewComment[]>(["api", `repos/${this.repo}/pulls/${pr}/comments`], undefined, timeoutMs);
+  }
+  async openChanges(limit: number, timeoutMs?: number): Promise<OpenChange[]> {
+    return ghJson<OpenChange[]>(
+      ["pr", "list", "--repo", this.repo, "--state", "open", "--limit", String(listSize(limit)), "--json", "number,headRefName,state,url,title,createdAt"],
+      undefined,
+      timeoutMs,
+    );
+  }
+  async changeActivity(pr: number, timeoutMs?: number): Promise<ChangeActivity> {
+    number(pr, "a pull request number");
+    return ghJson<ChangeActivity>(["pr", "view", String(pr), "--repo", this.repo, "--json", "comments,reviews,commits"], undefined, timeoutMs);
+  }
+
+  sync(run: GhCall): SyncStories {
+    const repo = this.repo;
+    return {
+      get(n) {
+        number(n, "an issue number");
+        let out: string;
+        try { out = run(["issue", "view", String(n), "--repo", repo, "--json", "number,title,state,body"]); }
+        catch (e) { if (isNotFound(e)) return undefined; throw e; }
+        let story: SyncStory | undefined;
+        try { story = toStory(JSON.parse(out)); } catch { story = undefined; }
+        if (!story || story.number !== n) throw new Error(`Unexpected answer from gh for #${n}.`);
+        return story;
+      },
+      list(limit) {
+        const out = run(["issue", "list", "--repo", repo, "--state", "all", "--limit", String(listSize(limit)), "--json", "number,title,state,body"]);
+        const parsed: unknown = JSON.parse(out);
+        if (!Array.isArray(parsed)) throw new Error("Unexpected answer from gh for the issue list.");
+        return parsed.map(toStory).filter((i): i is SyncStory => !!i);
+      },
+      setBody(n, body) {
+        number(n, "an issue number");
+        run(["issue", "edit", String(n), "--repo", repo, "--body-file", "-"], body);
+      },
+    };
   }
 }
