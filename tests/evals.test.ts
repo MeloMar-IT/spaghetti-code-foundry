@@ -59,6 +59,13 @@ describe("evals", () => {
     expect(forgets.passed).toBe(false);
     expect(file).toMatch(/evals\/t-.*\.json$/);
     expect(listEvalReports()[0]!.suite).toBe("t");
+    expect(listEvalReports()[0]).not.toHaveProperty("inputs");
+    expect(report.inputs).toMatchObject({ version: 1, live: false, models: ["haiku", "opus"] });
+    expect(report.inputs!.cases).toHaveLength(3);
+    expect(report.inputs!.flows[0]).toMatchObject({ entry: "one", kind: "flow", id: "one" });
+    expect(report.inputs!.suite.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(report.inputs!.fixtures).toHaveLength(1);
+    expect(report.inputs!.components.some((c) => c.kind === "policy-pack")).toBe(true);
     expect(lines[0]).toContain("2 variant(s) × 3 case(s) × 1 = 6 runs");
     for (const s of report.summary) {
       expect(s.skills).toBeUndefined();

@@ -3,6 +3,9 @@
 name: output-caps
 description: Output over the limit is cut, labelled oversize, and flagged by policy.
 flows: [flow.yaml]
+# The fake claude marks the suite as offline (no live model); the flow has no claude step, so it is never called.
+programs:
+  claude: ../fakes/claude.mjs
 repeat: 1
 cases:
   - name: step-prints-too-much

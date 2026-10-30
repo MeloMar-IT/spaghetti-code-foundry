@@ -3,6 +3,9 @@
 name: timeout
 description: A step that runs too long is stopped, fails the run, and leaves evidence.
 flows: [flow.yaml]
+# The fake claude marks the suite as offline (no live model); the flow has no claude step, so it is never called.
+programs:
+  claude: ../fakes/claude.mjs
 repeat: 1
 cases:
   - name: step-runs-too-long

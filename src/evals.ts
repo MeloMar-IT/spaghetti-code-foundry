@@ -7,6 +7,7 @@ import { parse } from "yaml";
 import { z } from "zod";
 import type { Config } from "./config.js";
 import { BASELINE_RULE_IDS } from "./policy/baseline.js";
+import { evalLive, homeInputs, suiteInputs, type EvalInputs } from "./eval-inputs.js";
 import { FakeSecretSchema, registerFakeSecrets } from "./eval-secrets.js";
 import { ControlsExpectSchema, evaluateControls, readControlsInput, type ControlsResult } from "./eval-controls.js";
 import type { RunSummary } from "./engine/state.js";
@@ -114,6 +115,8 @@ export interface EvalReport {
   suite: string;
   startedAt: string;
   finishedAt: string;
+  /** What the eval ran against. Absent in reports from before #640. */
+  inputs?: EvalInputs;
   results: EvalResult[];
   summary: VariantSummary[];
 }
@@ -277,7 +280,7 @@ export function suitePrograms(suite: Pick<Suite, "programs">, suiteDir: string, 
 }
 
 /** A flow entry that is a file (`flow.yaml`) next to the suite is loaded from there; any other entry is a flow name. */
-function loadSuiteFlow(name: string, suiteDir: string): Flow {
+export function loadSuiteFlow(name: string, suiteDir: string): Flow {
   if (/\.ya?ml$/.test(name)) {
     const path = resolve(suiteDir, name);
     if (existsSync(path)) return parseFlow(readFileSync(path, "utf8"), path);
@@ -304,10 +307,8 @@ export async function runEval(o: {
   const cases = o.maxCases ? suite.cases.slice(0, o.maxCases) : suite.cases;
   const flowNames = o.flowsFilter?.length ? o.flowsFilter : suite.flows;
   const models = o.modelsOverride?.length ? o.modelsOverride : suite.models;
-  const variants: Flow[] = flowNames.flatMap((name) => {
-    const flow = loadSuiteFlow(name, suiteDir);
-    return models?.length ? models.map((m) => withModel(flow, m)) : [flow];
-  }).map((f) => ({ ...f, one_per_repo: false })); // cases get their own worktrees: run them in parallel
+  const base = flowNames.map((entry) => ({ entry, flow: loadSuiteFlow(entry, suiteDir) }));
+  const variants: Flow[] = base.flatMap(({ flow }) => (models?.length ? models.map((m) => withModel(flow, m)) : [flow])).map((f) => ({ ...f, one_per_repo: false })); // cases get their own worktrees: run them in parallel
   for (const c of cases) {
     if (c.user_run && variants.some((f) => f.workspace !== "empty")) throw new Error(`case ${c.name}: user_run needs flows with workspace: empty (a user's run may not use a worktree)`);
   }
@@ -316,6 +317,8 @@ export async function runEval(o: {
   // Prepare every repo before the first run starts: a failure here must not leave live runs behind.
   const repos = new Map<string, CaseRepo>();
   for (const c of cases) if (!c.fake_remote) prepareRepo(c.repo, suiteDir, repos);
+  // What the report is about: taken now, before the first run, so it is the home folder as the eval runs in it.
+  const inputs: EvalInputs = { version: 1, live: evalLive(suite, o.claudeBin), ...suiteInputs(suite, suiteDir, base, cases.map((c) => c.name), models), components: homeInputs() };
   // A fake remote is per run: every run gets its own copy and bare remote, made here, before any run is submitted.
   const perRun = new Map<string, CaseRepo>();
   const runKey = (v: number, ci: number, attempt: number) => `${v}:${ci}:${attempt}`;
@@ -397,7 +400,7 @@ export async function runEval(o: {
   const failedJob = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
   if (failedJob) throw failedJob.reason;
   const results = settled.map((r) => (r as PromiseFulfilledResult<EvalResult>).value);
-  const report: EvalReport = { suite: suite.name, startedAt, finishedAt: new Date().toISOString(), results, summary: summarize(results) };
+  const report: EvalReport = { suite: suite.name, startedAt, finishedAt: new Date().toISOString(), inputs, results, summary: summarize(results) };
   mkdirSync(evalsDir(), { recursive: true });
   const file = join(evalsDir(), `${suite.name}-${startedAt.replace(/[:.]/g, "-")}.json`);
   writeFileSync(file, JSON.stringify(report, null, 2));
@@ -508,7 +511,7 @@ export async function runSafetyEvals(o: {
   return { suites, files, failed, text: safetyReportText(suites, broken) };
 }
 
-export function listEvalReports(limit = 20): (Omit<EvalReport, "results"> & { file: string })[] {
+export function listEvalReports(limit = 20): (Omit<EvalReport, "results" | "inputs"> & { file: string })[] {
   const dir = evalsDir();
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -517,7 +520,7 @@ export function listEvalReports(limit = 20): (Omit<EvalReport, "results"> & { fi
     .reverse()
     .slice(0, limit)
     .map((f) => {
-      const { results: _results, ...rest } = JSON.parse(readFileSync(join(dir, f), "utf8")) as EvalReport;
+      const { results: _results, inputs: _inputs, ...rest } = JSON.parse(readFileSync(join(dir, f), "utf8")) as EvalReport;
       return { ...rest, file: join(dir, f) };
     })
     .sort((a, b) => b.startedAt.localeCompare(a.startedAt));

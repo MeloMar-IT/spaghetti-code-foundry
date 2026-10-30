@@ -1964,6 +1964,33 @@ component is a problem.
 - **Problems.** A file that cannot be read or checked gives one `! <kind> <id>: <reason>` line. The reason
   never shows the file's content or its place on the disk. The other components still print.
 
+### Promote a component
+
+`scf promote <kind> <id> [--live]` says whether a component may be promoted, from the safety reports
+already on disk. It is read-only: it promotes nothing and writes nothing, not even `versions.json`.
+
+```
+PASSED timeout <report file>
+BLOCKED tool-profile my-profile: output-caps (suite-failed) — scf eval safety
+```
+
+It prints one `PASSED` line per suite that holds, then either `PROMOTABLE <kind> <id> v<version> sha256:<hash>`
+or one `BLOCKED` line per problem.
+
+- **Required suites.** Every kind needs the whole safety catalogue: `approval-bypass`, `credential-exposure`,
+  `cross-repository`, `injected-instructions`, `output-caps`, `partial-parallel-failure`, `protected-branch`,
+  `repository-boundary` and `timeout`. For each one the newest report decides. The fix is always `scf eval safety`.
+- **A report counts** when it is valid, complete, passed, and still matches what is there now: the suite file,
+  its fixtures, its flows, its cases and models. The component being promoted must also have the same hash as
+  when the eval ran. A report from before this change has no record of its inputs and counts as missing.
+- **Blocked reasons.** `suite-missing`, `report-invalid`, `suite-failed` and `report-stale` name a suite. A
+  counted kind (`tool-profile`, `model-routes`, `context-selector`) without a recorded version is
+  `BLOCKED <kind> <id>: (unrecorded) — scf components record <kind>`.
+- **Live reports.** A report is live when its suite names no fake `claude` and no `--claude-bin` was given. Such
+  a report blocks with `report-invalid: live` unless `--live` is passed. No suite in the catalogue is live.
+
+The command exits 0 when the component is promotable and 1 when it is blocked.
+
 ### Lifecycle telemetry
 
 The Foundry writes one short telemetry line for each important fact of a run: a run starting or
@@ -6918,6 +6945,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf components [kind]` / `scf components record [kind]` | Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
+| `scf promote <kind> <id> [--live]` | Check that the newest safety reports allow promoting a component; read-only; prints `PASSED` and `PROMOTABLE`, or `BLOCKED` per problem; exits 1 when blocked ([Promote a component](#promote-a-component)) |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
 | `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
