@@ -987,6 +987,9 @@ write("issue-plan", {
     {
       id: "implement",
       type: "claude",
+      // The coding turn runs the tests itself, and on a busy machine it waits for a test slot: 40 minutes
+      // (the flow default) was too short for one run in ten. Other steps keep the default.
+      timeout_sec: 3600,
       prompt: [
         "Implement GitHub issue below in this repository.",
         "",

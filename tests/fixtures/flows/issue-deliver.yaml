@@ -554,6 +554,7 @@ steps:
     on_failure: pull_ticket
   - id: implement
     type: claude
+    timeout_sec: 3600
     prompt: |-
       Implement GitHub issue below in this repository.
 
