@@ -39,7 +39,7 @@ steps:
     run: |-
       r="$FACTORY_VAR_GITHUB_REPO"
       fail() { rm -f issues.json issues.md; echo "could not read the open issues of $r"; exit 1; }
-      gh issue list --repo "$r" --state open --limit 201 --json number,title,body,labels,comments > issues.json || fail
+      node "$FACTORY_TOOLS/story" open-stories --limit 201 --comments > issues.json || fail
       node "$FACTORY_TOOLS/issue-digest" issues.md < issues.json || fail
       rm -f issues.json
   - id: brief

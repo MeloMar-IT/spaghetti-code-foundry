@@ -144,6 +144,10 @@ describe("open_pr shell text", () => {
     expect(existsSync(outFile())).toBe(false);
   });
 
+  it("fails the step with the exit code of gh pr create", () => {
+    expect(exec({ FAKE_CREATE_EXIT: "4", FAKE_CREATE_OUT: "boom" }).status).toBe(4);
+  });
+
   it("passes and records nothing when create prints no URL", () => {
     const r = exec({ FAKE_CREATE_OUT: "Warning: something" });
     expect(r.status).toBe(0);

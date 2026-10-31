@@ -336,6 +336,73 @@ describe("step methods send the arguments of the old flow steps and return gh's 
     expect(log).toContain(`--- created issue: issue create --repo ${R} --title T $(x) --body-file - --label a --label b\nB`);
   });
 
+  // The calls that print through gh(): gh may fail in the fake; the arguments are what counts.
+  const sent = (fn: () => Promise<unknown>) => callsOf(() => fn().catch(() => undefined));
+  // The fake logs with echo, which turns a backslash-n into a line break.
+  const logged = (s: string) => s.replace(/\\n/g, "\n");
+  const OLD_PLAIN =String.raw`
+    "# #\(.number): \(.title)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body)\n"
+    + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))`;
+  const OLD_QUERY = String.raw`query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){author{login} lastEditedBy{login}}}}`;
+  const OLD_AUTHORS = String.raw`.data.repository.issue | [(.author.login // ""), (.lastEditedBy.login // "")] | join(" ")`;
+  const OLD_PR_TEXT = String.raw`"# PR #\(.number // "") \(.title)\n\(.body)\n"`;
+  const OLD_LINES = String.raw`.[] | select(.body | (contains("claude-factory") or contains("spaghetti-code-foundry")) | not) | "--- \(.user.login) on \(.path):\(.line // .original_line):\n\(.body)\n"`;
+  const OLD_REVIEWS = String.raw`
+  (.reviews[] | select(.body != "") | "--- review by \(.author.login) (\(.state)):\n\(.body)\n"),
+  (.comments[] | select(.body | (contains("claude-factory") or contains("spaghetti-code-foundry")) | not) | "--- \(.author.login):\n\(.body)\n")`;
+
+  it("the issue steps send the old arguments", async () => {
+    expect(await sent(() => store.stepTitle(7))).toEqual([`gh issue view 7 --repo ${R} --json title -q .title`]);
+    expect(await sent(() => store.stepLabels(7))).toEqual([`gh issue view 7 --repo ${R} --json labels --jq .labels[].name`]);
+    expect(await sent(() => store.stepCommentsAndLabels(7))).toEqual([`gh issue view 7 --repo ${R} --json comments,labels`]);
+    const plain = await logOf(() => store.stepPlainText(7).catch(() => undefined));
+    expect(plain).toContain(`gh issue view 7 --repo ${R} --json number,title,body,labels,comments --jq ${logged(OLD_PLAIN)}`);
+    expect(plain).not.toContain("(Foundry)");
+    expect(await logOf(() => store.stepAuthors(7).catch(() => undefined))).toContain(`gh api graphql -F n=7 -f o=o -f r=r -f query=${OLD_QUERY} --jq ${OLD_AUTHORS}`);
+    expect(await sent(() => store.stepClose(7, "completed"))).toEqual([`gh issue close 7 --repo ${R} --reason completed`]);
+    expect(await sent(() => store.stepClose(7, "not planned"))).toEqual([`gh issue close 7 --repo ${R} --reason not planned`]);
+  });
+
+  it("the pull request steps send the old arguments", async () => {
+    expect(await sent(() => store.stepFindChange("b"))).toEqual([`gh pr view b --repo ${R} --json url -q .url`]);
+    expect(await sent(() => store.stepFindChange(""))).toEqual([`gh pr view  --repo ${R} --json url -q .url`]);
+    expect(await sent(() => store.stepReviewDecision("b"))).toEqual([`gh pr view b --repo ${R} --json reviewDecision -q .reviewDecision`]);
+    expect(await sent(() => store.stepListChanges({ head: "dev", base: "main" }))).toEqual([`gh pr list --repo ${R} --head dev --base main --state open --json number,headRefName,state`]);
+    expect(await sent(() => store.stepSetReady(5, true))).toEqual([`gh pr ready 5 --repo ${R}`]);
+    expect(await sent(() => store.stepSetReady(5, false))).toEqual([`gh pr ready 5 --repo ${R} --undo`]);
+    const comment = await logOf(() => store.stepCommentOnChange(5, "a $(x)\nb").catch(() => undefined));
+    expect(comment).toContain(`gh pr comment 5 --repo ${R} --body-file -`);
+    expect(await logOf(() => store.stepChangeText(5).catch(() => undefined))).toContain(`gh pr view 5 --repo ${R} --json number,title,body -q ${logged(OLD_PR_TEXT)}`);
+    const lines = await logOf(() => store.stepReviewComments(5).catch(() => undefined));
+    expect(lines).toContain(`gh api repos/${R}/pulls/5/comments --jq ${logged(OLD_LINES)}`);
+    const reviews = await logOf(() => store.stepReviews(5).catch(() => undefined));
+    expect(reviews).toContain(`gh pr view 5 --repo ${R} --json reviews,comments --jq ${logged(OLD_REVIEWS)}`);
+    // The new marker is left out of both lists, once each.
+    for (const log of [lines, reviews]) expect(log.split('contains("spaghetti-code-foundry")')).toHaveLength(2);
+  });
+
+  it.each<[string, () => Promise<unknown>]>([
+    ["stepClose(0)", () => store.stepClose(0, "completed")],
+    ["stepClose reason", () => store.stepClose(7, "x" as "completed")],
+    ["stepTitle(1.5)", () => store.stepTitle(1.5)],
+    ["stepMerge option", () => store.stepMerge("--admin")],
+    ["stepFindChange option", () => store.stepFindChange("-x")],
+    ["stepReviewDecision space", () => store.stepReviewDecision("a b")],
+    ["stepChecks space", () => store.stepChecks("a b")],
+    ["stepListChanges option", () => store.stepListChanges({ head: "-x", base: "main" })],
+    ["stepOpenChange option", () => store.stepOpenChange({ head: "--x", title: "T", body: "b" })],
+    ["stepCommentOnChange option", () => store.stepCommentOnChange("--x", "b")],
+    ["stepSetReady 0", () => store.stepSetReady(0, true)],
+    ["stepCheckout option", () => store.stepCheckout("--x")],
+    ["stepChangeText(0)", () => store.stepChangeText(0)],
+    ["stepReviews(-1)", () => store.stepReviews(-1)],
+    ["stepReviewComments(1.5)", () => store.stepReviewComments(1.5)],
+    ["stepOpenStories 0", () => store.stepOpenStories({ limit: 0, comments: false })],
+    ["stepOpenStories 5000", () => store.stepOpenStories({ limit: 5000, comments: true })],
+  ])("%s is refused before gh runs", async (_name, call) => {
+    expect(await logOf(async () => void (await call().then(() => expect.unreachable(), (e) => expect(e).toBeInstanceOf(Error))))).toBe("");
+  });
+
   it.each([0, -1, 1.5])("each refuses %s before gh runs", async (n) => {
     const calls = [() => store.stepIssue(n), () => store.stepBody(n), () => store.stepText(n), () => store.stepComments(n), () => store.stepFoundryComments(n), () => store.stepComment(n, "x")];
     for (const call of calls) {

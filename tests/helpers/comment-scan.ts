@@ -8,7 +8,7 @@ const VAR = "FACTORY_FIRST_[A-Z]+(?:_[A-Z]+)*";
 export function scanShell(run: string): string[] {
   const problems: string[] = [];
   // `gh issue comment`, `gh pr comment`, and the story tool: node "$FACTORY_TOOLS/story" comment (its text always comes on stdin).
-  const calls = [...run.matchAll(/\bgh(?:[ \t]|\\\r?\n)+(?:issue|pr)(?:[ \t]|\\\r?\n)+comment\b|\bnode "\$FACTORY_TOOLS\/story" comment\b/g)];
+  const calls = [...run.matchAll(/\bgh(?:[ \t]|\\\r?\n)+(?:issue|pr)(?:[ \t]|\\\r?\n)+comment\b|\bnode "\$FACTORY_TOOLS\/story" (?:pr-)?comment\b/g)];
   let prev = 0;
   let usesFirst = false;
   for (const m of calls) {

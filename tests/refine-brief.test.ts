@@ -369,7 +369,8 @@ describe("refine-brief definition", () => {
     expect(shell).toHaveLength(3);
     const all = shell.map((s) => s.run).join("\n");
     expect(all).not.toContain("{{");
-    expect([...all.matchAll(/\bgh\s+\w+\s+\w+/g)].map((m) => m[0])).toEqual(["gh repo clone", "gh auth git", "gh issue list"]);
+    expect([...all.matchAll(/\bgh\s+\w+\s+\w+/g)].map((m) => m[0])).toEqual(["gh repo clone", "gh auth git"]);
+    expect(all).toContain('story" open-stories --limit 201 --comments');
     const clone = (flow.steps.find((s) => s.id === "clone") as { run: string }).run;
     expect(clone).toContain('"https://github.com/$r"');
     expect(clone).toContain("-c credential.helper=");

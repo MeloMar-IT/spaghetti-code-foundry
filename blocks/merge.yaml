@@ -9,6 +9,6 @@ steps:
     repo_access: true
     run: |
       branch=$(git branch --show-current)
-      decision=$(gh pr view "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --json reviewDecision -q .reviewDecision)
+      decision=$(node "$FACTORY_TOOLS/story" pr-review-decision "$branch")
       if [ "$decision" != "APPROVED" ]; then echo "PR not approved yet (reviewDecision: ${decision:-none})"; exit 1; fi
-      gh pr merge "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --squash --delete-branch && echo "merged"
+      node "$FACTORY_TOOLS/story" pr-merge "$branch" && echo "merged"

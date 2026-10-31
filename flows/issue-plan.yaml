@@ -316,7 +316,7 @@ steps:
           if [ -n "$park" ]; then echo; echo "$park"; fi
           echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"
           echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
-          | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null || exit 1
+          | node "$FACTORY_TOOLS/story" comment >/dev/null || exit 1
         body=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'; if [ -n "$extra" ]; then echo; printf '%s\n' "$extra"; fi)
       fi
       printf '%s\n' "$body"
@@ -351,7 +351,7 @@ steps:
         echo "remove the planned label and add \`$FACTORY_VAR_READY_LABEL\` again._"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID plan -->"; } )
       comment_hash=$(printf '%s\n' "$body" | node "$FACTORY_TOOLS/plan-comment" hash) || { printf '%s\n' "$comment_hash"; exit 1; }
-      posted=$(printf '%s\n' "$body" | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -) || { printf '%s\n' "$posted"; exit 1; }
+      posted=$(printf '%s\n' "$body" | node "$FACTORY_TOOLS/story" comment) || { printf '%s\n' "$posted"; exit 1; }
       printf '%s\n' "$posted"
       printf 'PLAN_COMMENT_SHA256: %s\n' "$comment_hash"
       printf '%s\n' "$skill_line"

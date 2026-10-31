@@ -639,7 +639,9 @@ describe("generated issue flows", () => {
   });
 
   it("pr-feedback leaves out comments with the new marker", () => {
-    expect(step("pr-feedback", "pr_comments").split('contains(\\"spaghetti-code-foundry\\")')).toHaveLength(3);
+    const run = step("pr-feedback", "pr_comments");
+    expect(run).toContain("pr-review-comments");
+    expect(run).toContain("pr-reviews");
   });
 
   it("writes the old marker only", () => {

@@ -679,7 +679,8 @@ describe("refine-round definition", () => {
       expect(s.run).not.toContain("FACTORY_TASK");
     }
     const gh = shells.flatMap((s) => [...s.run.matchAll(/\bgh ([a-z]+(?: [a-z-]+)?)/g)].map((m) => m[1]));
-    expect(gh.sort()).toEqual(["auth git-credential", "issue list", "repo clone"]);
+    expect(gh.sort()).toEqual(["auth git-credential", "repo clone"]);
+    expect(text).toContain('story" open-stories --limit 50');
     expect(step("check_round")).not.toHaveProperty("repo_access");
     expect(step("check_round")).toHaveProperty("run", 'node "$FACTORY_TOOLS/refine-round-check"');
     expect(text).not.toMatch(/git push|gh (api|pr)|gh issue (?!list)/);

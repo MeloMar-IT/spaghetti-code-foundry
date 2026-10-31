@@ -103,7 +103,7 @@ describe("comment wording comes from the next-step module", () => {
   });
 
   it("the asking steps print the planner's text after the comment", () => {
-    const post = "--body-file - >/dev/null || exit 1\n";
+    const post = 'story" comment >/dev/null || exit 1\n';
     for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
       const run = stepRun(flowPath(f), "send_back");
       expect(run, f).toContain(post);
@@ -111,7 +111,7 @@ describe("comment wording comes from the next-step module", () => {
     }
     const asked = (file: string) => {
       const run = stepRun(file, "ask_for_info");
-      expect(run, file).toContain(file === "blocks/plan.yaml" || file.includes("github-") ? 'story" comment >/dev/null || exit 1\n' : post);
+      expect(run, file).toContain(post);
       expect(run.trimEnd(), file).toMatch(/\nprintf '%s\\n' "\$out" \| sed -E '\/\^\(PLAN_STATUS\|ROUTE\):\/d'$/);
       const def = parseYaml(readFileSync(file, "utf8")) as { steps: { id: string; on_success?: string; repo_access?: boolean }[] };
       expect(def.steps.find((x) => x.id === "ask_for_info"), file).toMatchObject({ on_success: "stop", repo_access: true });
@@ -130,7 +130,7 @@ describe("comment wording comes from the next-step module", () => {
       expect(run, f).toContain("/^DECIDED:/d");
       expect(run, f).toContain('node "$FACTORY_TOOLS/decide-questions.mjs" post-plan "{{run.dir}}"');
       expect(run, f).toContain('echo "DECIDED: went_on"');
-      expect(run, f).toContain("--body-file - >/dev/null || exit 1");
+      expect(run, f).toContain('story" comment >/dev/null || exit 1');
       expect(run.trim().split("\n").at(-1), f).toBe(`printf '%s\\n' "$body"`);
       const def = parseYaml(readFileSync(flowPath(f), "utf8")) as { steps: { id: string; prompt?: string }[] };
       expect(def.steps.find((s) => s.id === "send_back"), f).toMatchObject({
@@ -230,6 +230,10 @@ describe("every posted comment starts with a first-line variable", () => {
   const bad = (label: string, script: string) => it(`catches: ${label}`, () => expect(scanShell(script).length).toBeGreaterThanOrEqual(1));
   bad("no first line", '{ echo "🤖 **X**"; echo; } | gh issue comment 1 --body-file -');
   bad("a story comment without a first line", '{ echo "🤖 **X**"; echo; } | node "$FACTORY_TOOLS/story" comment');
+  bad("a pull request comment without a first line", '{ echo "🤖 **X**"; echo; } | node "$FACTORY_TOOLS/story" pr-comment "$pr"');
+  it("accepts a pull request comment with a first line", () => {
+    expect(scanShell('{ echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } | node "$FACTORY_TOOLS/story" pr-comment "$pr"')).toEqual([]);
+  });
   it("accepts a story comment with a first line, and ignores foundry-comments", () => {
     expect(scanShell('{ echo "$FACTORY_FIRST_INFO"; echo\n  echo x; } | node "$FACTORY_TOOLS/story" comment')).toEqual([]);
     expect(scanShell('node "$FACTORY_TOOLS/story" foundry-comments > x.json')).toEqual([]);

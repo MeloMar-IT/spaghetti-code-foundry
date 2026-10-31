@@ -498,6 +498,21 @@ Every `FACTORY_…` variable is also set as `SCF_…` (e.g. `$SCF_TASK`); the bu
 | `node "$FACTORY_TOOLS/story" <view\|body\|text\|comments\|foundry-comments>` | Prints the run's story (issue) as the store answers: `view` is JSON, the others are text or JSON lines. Reads `FACTORY_VAR_GITHUB_REPO` and `FACTORY_VAR_ISSUE` |
 | `node "$FACTORY_TOOLS/story" comment` | Posts stdin as a comment on the story and prints the link |
 | `node "$FACTORY_TOOLS/story" create --title <title> [--label <label>]...` | Creates a story from stdin and prints its address. Built-in blocks use it instead of `gh issue`, so a flow step does not need `gh` for stories |
+| `node "$FACTORY_TOOLS/story" <title\|labels\|comments-labels\|plain-text\|authors>` | Prints one part of the run's story (its title, labels, comments and labels, the plain-text read, or the commenters). Reads `FACTORY_VAR_ISSUE` |
+| `node "$FACTORY_TOOLS/story" close --reason <completed\|"not planned">` | Closes the run's story and prints gh's output |
+| `node "$FACTORY_TOOLS/story" label [--add <label>] [--remove <label>]...` | Changes the story's labels. Give at least one flag; at most one `--add` |
+| `node "$FACTORY_TOOLS/story" open-stories --limit <1-1000> [--comments]` | Prints the repository's open stories as JSON |
+| `node "$FACTORY_TOOLS/story" pr-find <branch>` / `pr-review-decision <branch>` | Prints the address of the branch's pull request, or its review decision |
+| `node "$FACTORY_TOOLS/story" pr-list --head <branch> --base <branch>` | Prints the open pull requests of a branch pair as JSON |
+| `node "$FACTORY_TOOLS/story" pr-open --head <branch> [--base <branch>] --title <title> [--draft] < body.md` | Opens a pull request with stdin as its text. Prints gh's output; the exit status is gh's |
+| `node "$FACTORY_TOOLS/story" pr-edit <pr> --title <title> < body.md` | Changes a pull request's title and text |
+| `node "$FACTORY_TOOLS/story" pr-comment <pr> < comment.md` | Posts stdin as a comment on a pull request and prints the link |
+| `node "$FACTORY_TOOLS/story" pr-ready <pr> [--undo]` | Marks a pull request ready for review, or back to a draft with `--undo` |
+| `node "$FACTORY_TOOLS/story" pr-text <pr>` / `pr-review-comments <pr>` / `pr-reviews <pr>` | Prints what the pull request holds: its text, its review comments, its reviews and comments |
+| `node "$FACTORY_TOOLS/story" pr-merge <branch>` / `pr-checks <branch>` / `pr-checkout <pr>` | Squash-merges the branch, waits for its checks, or checks the pull request out. Live gh: the exit status is gh's |
+
+Story and pull request subcommands refuse bad input before gh runs (exit 1, `story: …` on stderr): a
+pull request number must be digits, and a branch must not start with `-` or contain spaces.
 
 The Foundry always blocks pushes to protected branches (`main`, `master`, …) and pushes that
 contain secrets — a flow cannot turn that off. Push to a new branch and open a pull request.

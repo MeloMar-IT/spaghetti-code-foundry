@@ -77,6 +77,26 @@ export interface StoryStore {
   stepFoundryComments(issue: number, timeoutMs?: number): Promise<string>;
   stepComment(issue: number, body: string, timeoutMs?: number): Promise<string>;
   stepCreate(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<string>;
+  // Those returning a number run gh with the stdout and stderr of this process and return its exit status (a shell's: 128 + the signal).
+  stepTitle(issue: number, timeoutMs?: number): Promise<string>;
+  stepLabels(issue: number, timeoutMs?: number): Promise<string>;
+  stepCommentsAndLabels(issue: number, timeoutMs?: number): Promise<string>;
+  stepPlainText(issue: number, timeoutMs?: number): Promise<string>;
+  stepAuthors(issue: number, timeoutMs?: number): Promise<string>;
+  stepClose(issue: number, reason: "completed" | "not planned", timeoutMs?: number): Promise<string>;
+  stepFindChange(branch: string, timeoutMs?: number): Promise<string>;
+  stepReviewDecision(branch: string, timeoutMs?: number): Promise<string>;
+  stepListChanges(o: { head: string; base: string }, timeoutMs?: number): Promise<string>;
+  stepCommentOnChange(pr: ChangeId, body: string, timeoutMs?: number): Promise<string>;
+  stepSetReady(pr: ChangeId, ready: boolean, timeoutMs?: number): Promise<string>;
+  stepChangeText(pr: number, timeoutMs?: number): Promise<string>;
+  stepReviewComments(pr: number, timeoutMs?: number): Promise<string>;
+  stepReviews(pr: number, timeoutMs?: number): Promise<string>;
+  stepOpenStories(o: { limit: number; comments: boolean }): Promise<number>;
+  stepOpenChange(o: { head: string; base?: string; title: string; body: string; draft?: boolean }): Promise<number>;
+  stepChecks(branch: string): Promise<number>;
+  stepCheckout(pr: ChangeId): Promise<number>;
+  stepMerge(branch: string): Promise<number>;
   upsertStatusComment(issue: number, body: string, o: UpsertOptions): Promise<UpsertResult>;
   close(issue: number, reason: "completed" | "not_planned", timeoutMs?: number): Promise<RestIssue>;
   reopen(issue: number, timeoutMs?: number): Promise<RestIssue>;

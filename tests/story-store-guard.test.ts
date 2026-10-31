@@ -38,11 +38,6 @@ export function storyCallIn(text: string, file: string): boolean {
 
 /** The files that still make story calls themselves. Remove a path as soon as its calls move to the store. */
 export const ALLOWLIST: readonly string[] = [
-  "blocks/ci.yaml",
-  "blocks/merge.yaml",
-  "blocks/open-pr.yaml",
-  "blocks/pr-comments.yaml",
-  "scripts/build-flows.mjs",
   "src/ops/cli.ts",
   "src/release/git.ts",
   "src/repos/connect.ts",
