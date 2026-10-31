@@ -66,7 +66,7 @@ export const KIND_SEMANTIC = {
   done: "success",
   running: "running", checking: "running", starting: "running",
   failed: "danger", watcher_error: "danger", monitor_stopped: "danger", watcher_stale: "danger",
-  usage_limit: "warning", daily_budget: "warning", user_limit: "warning", interrupted: "warning", restart: "warning", closed_elsewhere: "warning",
+  usage_limit: "warning", daily_budget: "warning", user_limit: "warning", interrupted: "warning", restart: "warning", chore_late: "warning", closed_elsewhere: "warning",
   questions: "waiting", planner_questions: "waiting", owner_action: "waiting", approve_plan: "waiting", approve_split: "waiting", approval: "waiting",
   monitor_needs_you: "waiting", dependency: "waiting", one_at_a_time: "waiting", area_lock: "waiting", queued: "waiting", release: "waiting",
   stopped: "waiting", bug_first: "waiting",

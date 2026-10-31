@@ -14,6 +14,8 @@ import { FACTORY_HOME } from "../flow/load.js";
 import { changesToday } from "../ops/governor.js";
 import { send } from "./http.js";
 import { nextFor, watcherProblem } from "./next.js";
+import { lateChores } from "./late-chores.js";
+import { accountBudgetLeft } from "../queue/watcher.js";
 import type { ApiContext, Route } from "./server.js";
 
 /** What GET /api/health answers: the problems of the Foundry itself, in one sentence each. */
@@ -96,9 +98,8 @@ export function health(ctx: ApiContext, now = new Date()): Health {
     problems.push(RESET_TIME.test(rec.until ?? "") ? rec : nextStep("usage_limit", {}, data));
   }
 
-  if (cfg.cost_limits && cfg.daily_budget_usd !== undefined && spentToday(ctx.opts.runsDir, now) >= cfg.daily_budget_usd) {
-    problems.push(nextStep("daily_budget"));
-  }
+  const budgetUsed = !!cfg.cost_limits && cfg.daily_budget_usd !== undefined && spentToday(ctx.opts.runsDir, now) >= cfg.daily_budget_usd;
+  if (budgetUsed) problems.push(nextStep("daily_budget"));
 
   const seen = new Set<string>();
   for (const w of tracked) {
@@ -116,6 +117,14 @@ export function health(ctx: ApiContext, now = new Date()): Health {
     const p = watcherProblem(w, w.status, t);
     if (p) problems.push(p);
   }
+
+  // The status of a watcher: `tracked()` still has it after stopAll(), `statuses()` does not.
+  problems.push(...lateChores({
+    watchers: ctx.watchers.statuses().map((w) => ({ ...w, status: tracked.find((x) => x.watcher.id === w.id)?.status ?? w.status })),
+    pending: q.pending, active: q.active, briefs: () => ctx.scheduler.briefs(),
+    concurrency: cfg.concurrency, waitsToRestart: !!ctx.restart || !!ctx.scheduler.draining, dailyBudgetUsed: budgetUsed,
+    ownerBudgetUsed: (owner) => !accountBudgetLeft(ctx.scheduler, ctx.opts.runsDir, owner), now,
+  }));
 
   const busy = new Set([...q.active.map((a) => a.runId), ...q.pending.map((p) => p.runId)]);
   const closed = new Set<string>();
