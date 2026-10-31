@@ -100,7 +100,7 @@ admin for a new one.
 
 **Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
-An account with the role `user` works on its own display at `/user/`, with **Home**, **Epics**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
+An account with the role `user` works on its own display at `/user/`, with **Home**, **Epics**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` in the Admin view is sent to `/`; in Simple or Advanced the admin stays on `/user/` (see [Simple, Advanced and Admin view](#simple-advanced-and-admin-view)). With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
 ![Home of a user](images/user-home.png)
 
@@ -169,6 +169,32 @@ Everything the UI does is also available from the command line (see [section 9](
 **When the old one goes away.** It already has. The old menu was replaced in place, and all old addresses keep working.
 
 **More.** The state of the rollout is in [ui-redesign/rollout.md](ui-redesign/rollout.md).
+
+### Simple, Advanced and Admin view
+
+The top bar has a **View** box with three views. The view changes only what your display shows. It never changes what you may do: the server still checks every call by your role.
+
+| View | Display | What it shows |
+|---|---|---|
+| **Simple** | `/user/` | Home, Start work, My runs and My repositories. Epics and Refinement are not in the sidebar |
+| **Advanced** | `/user/` | Everything of the user display: Home, Epics, My runs, My repositories, Refinement and Start work |
+| **Admin** | `/` | The admin display |
+
+**Who may choose which.** A user chooses Simple or Advanced. An admin chooses Simple, Advanced or Admin. With no choice made, a user has Advanced and an admin has Admin.
+
+**Where the switch is.** The **View** box is in the top bar. Below 768 px (phones) it is in the menu, at the bottom of the sidebar. The choice is kept on the server with your account, so every device and browser shows the same view after you sign in. Opening `/` in Simple or Advanced sends you to `/user/`; opening `/user/` in Admin sends you to `/`.
+
+**Pages of another view.** A page that the current view does not have shows a card: "This page is not in the Advanced view." with **Open this in the Advanced view**. The button switches your view. The address stays when the new view has that page.
+
+**Switching.** The page reloads in the new view and keeps the address when the new view has that page. Before the switch:
+
+- Unsaved changes stop it. The page says "You have unsaved changes. Save them first, then switch view." and nothing changes.
+- Text that is not sent asks first with "Switch view?": a Start work draft, the text of a closed new-refinement dialog, or text typed in a field. If you confirm, that text is lost. If you cancel, nothing changes.
+- If the server does not answer, the page reads your stored view back. If the choice was saved, the switch goes on. If not, the page shows the error and stays. If the outcome is not known, the page says so: reload it to see your view.
+
+**Preview.** An admin's preview of a user (**View as user** on the Users page) has no **View** box. It stays in the Advanced display.
+
+**My runs.** An admin in Simple or Advanced sees the runs of all accounts on My runs, as in the admin display. The view does not filter them.
 
 ---
 
@@ -4054,7 +4080,7 @@ An account with the role `user` never sees the link or the page; a user who open
 - **The bar.** A bar at the top says "You are viewing as <name>. Nothing can be changed here." Press **Back to the admin display** to end the view and return to the Users page. The top bar still shows your own name and Sign out.
 - **Read-only.** Buttons that only change things are not shown: Start, Add repository, Remove, Approve, Reject, Retry, Cancel, Send answer and the buttons of a refinement session. A button that is still there, such as Change password, shows "This is a preview. Nothing can be changed here." and sends nothing. The page sends no changing call in this mode.
 - **When the view ends.** A view ends after 30 minutes, or when the server restarts. The page then says so and offers **View again** (a new start, a new audit line) and **Back to the admin display**. It never shows your own data instead. A view opened in another tab, or when the browser cannot keep the user's name, also shows this card.
-- **Other cases.** `/user/` without `as` still sends an admin to the admin display. If a user opens `/user/?as=…`, the parameter is ignored.
+- **Other cases.** `/user/` without `as` sends an admin in the Admin view to the admin display; an admin in Simple or Advanced stays there. If a user opens `/user/?as=…`, the parameter is ignored.
 
 **View as user (server).** The part below is what the server does for the page above.
 
@@ -4505,6 +4531,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/your-turn/act` | yes | no | answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume |
 | `GET /api/clarity` | yes | no | how long items waited for you, and what Your turn missed |
 | `POST /api/password` | yes | yes | change your own password (the other sessions of the account end) |
+| `GET /api/me/view` | yes | yes | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced |
+| `PUT /api/me/view` | yes | yes | choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows |
 | `GET /api/credentials` | yes | yes | your stored credentials |
 | `POST /api/credentials` | yes | yes | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | remove a credential |

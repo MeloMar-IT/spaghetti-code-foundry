@@ -352,6 +352,20 @@ describe("initShell, narrow", () => {
     expect(doc().body.classList.contains("drawer-open")).toBe(false);
   });
 
+  it("Tab reaches the view switch at the end of the drawer, and Shift+Tab goes back to it", () => {
+    const select = new FakeElement("select");
+    side.append(select);
+    start();
+    byId("menu-btn").click();
+    links[2]!.focus();
+    expect(press("Tab")).toBe(false);
+    select.focus();
+    expect(press("Tab")).toBe(true);
+    expect(doc().activeElement).toBe(links[0]);
+    expect(press("Tab", { shiftKey: true })).toBe(true);
+    expect(doc().activeElement).toBe(select);
+  });
+
   it("a change to a wide screen clears the drawer", () => {
     const media = start();
     byId("menu-btn").click();

@@ -15,6 +15,7 @@ beforeAll(async () => {
     auth: await import("../ui/auth.js" as string),
     viewport: await import("../ui/viewport.js" as string),
     runsFilter: await import("../ui/runs-filter.js" as string),
+    viewMode: await import("../ui/view-mode.js" as string),
   };
 });
 afterAll(() => restore());
@@ -89,7 +90,57 @@ describe("user router", () => {
     "/home.js": never,
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
+    "/view-mode.js": real.viewMode,
     ...over,
+  });
+
+  describe("views", () => {
+    const as = (me: Record<string, unknown>) => ({ "/auth.js": { ...real.auth, enterDisplay: async () => me } });
+    const runsStub = () => ({ renderMyRun: vi.fn(), renderMyRuns: vi.fn(async (box: FakeElement) => { real.dom.mount(box, el("runs page")); }) });
+
+    it("offers the Advanced view for a page Simple does not have, and keeps the address", async () => {
+      setup("#/epics");
+      const renderEpics = vi.fn();
+      await loadRouter("user/app.js", deps({ ...as({ id: "u", role: "user", view: "simple" }), "/epics.js": { renderEpics, renderEpic: vi.fn() } }));
+      expect(main().textContent).toContain("Open this in the Advanced view");
+      expect(main().textContent).toContain("This page is not in the Simple view.");
+      expect(renderEpics).not.toHaveBeenCalled();
+      expect(g.location.hash).toBe("#/epics");
+    });
+
+    it("draws the pages Simple has", async () => {
+      const runs = runsStub();
+      await loadRouter("user/app.js", deps({ ...as({ id: "u", role: "user", view: "simple" }), "/user/runs.js": runs }));
+      expect(runs.renderMyRuns).toHaveBeenCalled();
+    });
+
+    it("offers the Admin view to an admin on an admin-only page", async () => {
+      setup("#/settings");
+      await loadRouter("user/app.js", deps({ ...as({ id: "a", role: "admin", view: "advanced" }), "/user/runs.js": runsStub() }));
+      expect(main().textContent).toContain("Open this in the Admin view");
+      expect(main().textContent).toContain("This page is not in the Advanced view.");
+      expect(g.location.hash).toBe("#/settings");
+    });
+
+    it("sends a user from an unknown page to the Runs list", async () => {
+      setup("#/settings");
+      await loadRouter("user/app.js", deps({ ...as({ id: "u", role: "user", view: "advanced" }), "/user/runs.js": runsStub() }));
+      expect(g.location.hash).toBe("#/runs");
+    });
+
+    it("gives Start work the admin flag for an admin, and not in a preview", async () => {
+      setup("#/start");
+      const renderStart = vi.fn();
+      const me = { id: "a", role: "admin", view: "advanced" };
+      await loadRouter("user/app.js", deps({ ...as(me), "/user/start.js": { homeHash: async () => "#/runs", renderStart } }));
+      expect(renderStart).toHaveBeenCalledWith(expect.anything(), { readOnly: false, admin: true });
+      renderStart.mockClear();
+      setup("#/start");
+      const beginView = () => ({ readOnly: true, ready: true });
+      await loadRouter("user/app.js", deps({ ...as(me), "/view-as.js": { beginView }, "/user/start.js": { homeHash: async () => "#/runs", renderStart } }));
+      expect(renderStart).toHaveBeenCalledWith(expect.anything(), { readOnly: true, admin: false });
+      expect(main().textContent).not.toContain("Open this in");
+    });
   });
 
   it("shows an error with Retry, and Retry loads the page", async () => {

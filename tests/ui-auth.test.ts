@@ -656,7 +656,37 @@ describe("roles in the page", () => {
     expect(auth.otherDisplay(admin, "admin", "#/flows", "u1")).toBe("");
   });
 
+  it("otherDisplay follows the view of the account, not its role", () => {
+    expect(auth.otherDisplay({ role: "admin", view: "advanced" }, "admin", "#/settings")).toBe("/user/#/settings");
+    expect(auth.otherDisplay({ role: "admin", view: "simple" }, "user", "#/settings")).toBe("");
+    expect(auth.otherDisplay({ role: "admin", view: "admin" }, "user", "#/settings")).toBe("/#/settings");
+    expect(auth.otherDisplay({ role: "admin", view: "advanced" }, "admin", "")).toBe("/user/");
+    expect(auth.otherDisplay({ role: "user", view: "admin" }, "admin", "")).toBe("/user/");
+    expect(auth.otherDisplay({ role: "user", view: "simple" }, "admin", "#/runs")).toBe("/user/#/runs");
+  });
+
   describe("enterDisplay", () => {
+    const switchBox = () => document.getElementById("view-switch") as unknown as FakeElement;
+    const settleNow = () => new Promise((r) => setTimeout(r, 5));
+    const withBox = async (user: Record<string, unknown>, viewAs: string) => {
+      switchBox().hidden = true;
+      switchBox().replaceChildren();
+      await auth.enterDisplay(user.role === "admin" && !viewAs ? "admin" : "user", { signIn: async () => user, go: vi.fn(), hash: () => "", viewAs });
+      await settleNow();
+    };
+
+    it("fills the view switch, also for a user with an ignored preview, and not for an admin preview", async () => {
+      await withBox({ id: "u", role: "user" }, "");
+      expect(switchBox().hidden).toBe(false);
+      expect(switchBox().all("option")).toHaveLength(2);
+      await withBox({ id: "u", role: "user" }, "x");
+      expect(switchBox().hidden).toBe(false);
+      await withBox({ id: "a", role: "admin" }, "x");
+      expect(switchBox().hidden).toBe(true);
+      await withBox({ id: "a", role: "admin" }, "");
+      expect(switchBox().all("option")).toHaveLength(3);
+    });
+
     const signedOut = () => (document.body as unknown as FakeElement).classList.contains("signed-out");
     const settle = () => new Promise((r) => setTimeout(r, 5));
 

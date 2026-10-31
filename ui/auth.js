@@ -2,6 +2,7 @@ import { api, setCsrf } from "./api.js";
 import { h, modal, mount, showError, toast } from "./dom.js";
 import { appearanceButton, initPrefs } from "./prefs.js";
 import { splitHash } from "./ia.js";
+import { displayOf, displayPath, mountViewSwitch, viewOf } from "./view-mode.js";
 
 const PASSWORD_MIN = 12;
 
@@ -263,20 +264,22 @@ export function userPage(hash) {
 }
 
 /**
- * Where an account must go when it opened the display of the other role, or "" when it is in the right place.
- * `display` is "admin" (the page at /) or "user" (the page at /user/). A hash is kept only when the user display has that page.
+ * Where an account must go when it opened the display of another view, or "" when it is in the right place.
+ * The display follows the view of the account, not its role. `display` is "admin" (the page at /) or "user" (the page at /user/).
+ * A hash is kept when the user display has that page, or when an admin leaves it for a page of its own.
  * An admin on the user display stays there when `viewAs` (the id of the user to preview) is set.
  */
 export function otherDisplay(user, display, hash, viewAs) {
   const admin = isAdmin(user);
-  if (admin === (display === "admin")) return "";
+  const view = viewOf(user);
+  if (displayOf(view) === display) return "";
   if (admin && display === "user" && viewAs) return "";
-  return (admin ? "/" : "/user/") + (isUserHash(hash) ? hash : "");
+  return displayPath(view) + (isUserHash(hash) || (admin && !isNoHash(hash)) ? hash : "");
 }
 
 /**
  * Signs in and keeps only the account that belongs on this display: resolves with it and shows the top bar links.
- * An account of the other role is sent to its own display and this never resolves, so no page is drawn here.
+ * An account whose view belongs on the other display is sent there and this never resolves, so no page is drawn here.
  * `signIn`, `go` and `hash` are arguments so tests can run this without a browser.
  */
 export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to) => location.replace(to), hash = () => location.hash, viewAs = "" } = {}) {
@@ -287,5 +290,6 @@ export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to)
     return new Promise(() => {});
   }
   document.body.classList.remove("signed-out");
+  if (!(viewAs && isAdmin(user))) mountViewSwitch(user);
   return user;
 }

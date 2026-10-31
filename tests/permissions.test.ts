@@ -197,6 +197,8 @@ const EXAMPLES: Record<string, Example> = {
   "GET users/:id/app-repos": no(`users/${UNKNOWN}/app-repos`, 404),
   "PUT users/:id/app-repos": no(`users/${UNKNOWN}/app-repos`, 404, { repos: [] }),
   "POST password": { path: "password", body: {}, user: 400, admin: 400 },
+  "GET me/view": { path: "me/view", user: 200, admin: 200 },
+  "PUT me/view": { path: "me/view", body: {}, user: 400, admin: 400 },
   "DELETE users/:id": no(`users/${UNKNOWN}`, 404),
   "GET skills/lifecycle": no("skills/lifecycle", 200),
   "POST skills/lifecycle": no("skills/lifecycle", 400, {}),
