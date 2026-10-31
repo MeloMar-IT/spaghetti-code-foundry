@@ -67,6 +67,8 @@ export interface SandboxPaths {
   runs: string;
   runDir: string;
   tools: string;
+  /** The compiled code the tools load (`dist/`, read-only) and the files that tell node how to read it (`package.json`). */
+  compiled?: { dir: string; files: string[] };
   hooks: string;
   learnings: string;
   lockDir: string;
@@ -164,8 +166,10 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
     return deepReal(p, real);
   });
   const denied = [home, data, runs, ...(temp ? [temp] : []), ...denyRead];
-  const subpathReads = [runDir, tools, hooks, lockDir, ...(ghDir ? [ghDir] : [])];
-  const literalReads = [learnings, join(data, "known_hosts"), ...new Set([agent ? namedReal(agent, real) : undefined, agentReal].filter((p): p is string => Boolean(p)))];
+  const compiledDir = paths.compiled ? deepReal(paths.compiled.dir, real) : undefined;
+  const compiledFiles = (paths.compiled?.files ?? []).map((f) => deepReal(f, real));
+  const subpathReads = [runDir, tools, hooks, lockDir, ...(ghDir ? [ghDir] : []), ...(compiledDir ? [compiledDir] : [])];
+  const literalReads = [learnings, join(data, "known_hosts"), ...compiledFiles, ...new Set([agent ? namedReal(agent, real) : undefined, agentReal].filter((p): p is string => Boolean(p)))];
 
   // A process needs the metadata of each folder above an allowed path that lies under a denied folder.
   const parents = new Set<string>();
@@ -244,6 +248,7 @@ export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?:
     runs: dirname(o.runDir),
     runDir: o.runDir,
     tools: TOOLS,
+    compiled: { dir: join(TOOLS, "../dist"), files: [join(TOOLS, "../package.json")] },
     hooks: join(data, "hooks"),
     learnings: o.learnings,
     lockDir: process.env.SCF_LOCK_DIR || process.env.FACTORY_LOCK_DIR || join(data, "locks"),

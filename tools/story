@@ -1,0 +1,158 @@
+#!/usr/bin/env node
+// Reads and writes the story (issue) and the pull request of a flow run through the story store, so a step does not call gh itself.
+// Usage (run it with node):
+//   story view | body | text | comments | foundry-comments     print what the store answers, unchanged (no other arguments)
+//   story title | labels | comments-labels | plain-text | authors   the same, for the issue in FACTORY_VAR_ISSUE
+//   story comment                                              post stdin as a comment; prints what gh prints (the link)
+//   story create --title <title> [--label <label>]...          create a story from stdin; prints its address
+//   story close --reason <completed|"not planned">             close the issue
+//   story label [--add <label>] [--remove <label>]...          change the labels of the issue
+//   story open-stories --limit <1-1000> [--comments]           the open stories as JSON (live gh: its exit status)
+//   story pr-find <branch> | pr-review-decision <branch>       print the address or the review decision of the branch's pull request
+//   story pr-list --head <branch> --base <branch>              the open pull requests of a branch pair, as JSON
+//   story pr-open --head <branch> [--base <branch>] --title <title> [--draft]   open a pull request with stdin as its text (live gh)
+//   story pr-edit <pr> --title <title>                         change the title and text (stdin) of a pull request
+//   story pr-comment <pr>                                      post stdin as a comment on a pull request
+//   story pr-ready <pr> [--undo]                               mark a pull request ready, or back to a draft
+//   story pr-text <pr> | pr-review-comments <pr> | pr-reviews <pr>   print what a pull request holds, as text
+//   story pr-merge <branch> | pr-checks <branch> | pr-checkout <pr>   squash-merge, wait for the checks, check out (live gh)
+// Live gh: gh writes straight to this process's stdout and stderr and the exit status is gh's own (128 + n after signal n).
+// Exit 1 (message on stderr as `story: …`): bad input or environment. When the store fails, its own text is on stderr, exit 1.
+// The store is dist/stories/store.js (build first). Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE (only for the issue commands), FACTORY_GH_BIN.
+import { readFileSync } from "node:fs";
+
+// The tools treat an empty value as "gh" (src/github.ts takes only an unset one).
+process.env.FACTORY_GH_BIN ||= "gh";
+
+function fail(msg) {
+  process.stderr.write(`story: ${msg}\n`);
+  process.exit(1);
+}
+
+const PR = /^[1-9]\d{0,14}$/;
+const branchOk = (v) => !v.startsWith("-") && !/\s/.test(v);
+
+// Per subcommand: arg (a positional: "pr" number or "branch"), values (flags with one value), repeats (flags that may repeat),
+// switches, required (flags that must be given; a value may be empty unless it is in `nonEmpty`), branches (flags whose value is a branch),
+// issue (needs FACTORY_VAR_ISSUE), stdin (reads the text), run (the result: a string is printed, a number is the exit status).
+// A Map: a name such as "constructor" must not find an entry.
+const read = (method) => ({ issue: true, run: (c) => c.store[method](c.issue) });
+const prText = (method) => ({ arg: "pr", run: (c) => c.store[method](Number(c.arg)) });
+const live = (method, arg) => ({ arg, run: (c) => c.store[method](arg === "pr" ? Number(c.arg) : c.arg) });
+const COMMANDS = new Map([
+  ["view", read("stepIssue")],
+  ["body", read("stepBody")],
+  ["text", read("stepText")],
+  ["comments", read("stepComments")],
+  ["foundry-comments", read("stepFoundryComments")],
+  ["title", read("stepTitle")],
+  ["labels", read("stepLabels")],
+  ["comments-labels", read("stepCommentsAndLabels")],
+  ["plain-text", read("stepPlainText")],
+  ["authors", read("stepAuthors")],
+  ["comment", { issue: true, stdin: true, run: (c) => c.store.stepComment(c.issue, c.text) }],
+  ["create", {
+    stdin: true, values: ["--title"], repeats: ["--label"], required: ["--title"], nonEmpty: ["--title"],
+    run: (c) => c.store.stepCreate({ title: c.values.get("--title"), body: c.text, labels: c.repeats.get("--label") ?? [] }),
+  }],
+  ["close", {
+    issue: true, values: ["--reason"], required: ["--reason"], oneOf: { "--reason": ["completed", "not planned"] },
+    run: (c) => c.store.stepClose(c.issue, c.values.get("--reason")),
+  }],
+  ["label", {
+    issue: true, values: ["--add"], repeats: ["--remove"], nonEmpty: ["--add", "--remove"], anyOf: ["--add", "--remove"],
+    run: async (c) => { await c.store.setLabels(c.issue, c.values.get("--add"), c.repeats.get("--remove") ?? []); },
+  }],
+  ["open-stories", {
+    values: ["--limit"], switches: ["--comments"], required: ["--limit"], limit: "--limit",
+    run: (c) => c.store.stepOpenStories({ limit: Number(c.values.get("--limit")), comments: c.switches.has("--comments") }),
+  }],
+  ["pr-find", { arg: "branch", run: (c) => c.store.stepFindChange(c.arg) }],
+  ["pr-review-decision", { arg: "branch", run: (c) => c.store.stepReviewDecision(c.arg) }],
+  ["pr-list", {
+    values: ["--head", "--base"], required: ["--head", "--base"], branches: ["--head", "--base"],
+    run: (c) => c.store.stepListChanges({ head: c.values.get("--head"), base: c.values.get("--base") }),
+  }],
+  ["pr-open", {
+    stdin: true, values: ["--head", "--base", "--title"], switches: ["--draft"], required: ["--head", "--title"], branches: ["--head", "--base"],
+    run: (c) => c.store.stepOpenChange({ head: c.values.get("--head"), base: c.values.get("--base") || undefined, title: c.values.get("--title"), body: c.text, draft: c.switches.has("--draft") }),
+  }],
+  ["pr-edit", {
+    arg: "pr", stdin: true, values: ["--title"], required: ["--title"],
+    run: async (c) => { await c.store.updateChange(Number(c.arg), { title: c.values.get("--title"), body: c.text }); },
+  }],
+  ["pr-comment", { arg: "pr", stdin: true, run: (c) => c.store.stepCommentOnChange(Number(c.arg), c.text) }],
+  ["pr-ready", { arg: "pr", switches: ["--undo"], run: (c) => c.store.stepSetReady(Number(c.arg), !c.switches.has("--undo")) }],
+  ["pr-text", prText("stepChangeText")],
+  ["pr-review-comments", prText("stepReviewComments")],
+  ["pr-reviews", prText("stepReviews")],
+  ["pr-merge", live("stepMerge", "branch")],
+  ["pr-checks", live("stepChecks", "branch")],
+  ["pr-checkout", live("stepCheckout", "pr")],
+]);
+const USAGE = `usage: story ${[...COMMANDS.keys()].join("|")} (see the top of tools/story)`;
+
+const [sub, ...rest] = process.argv.slice(2);
+const spec = sub === undefined ? undefined : COMMANDS.get(sub);
+if (!spec) fail(USAGE);
+
+const values = new Map();
+const repeats = new Map();
+const switches = new Set();
+let arg;
+for (let i = 0; i < rest.length; i++) {
+  const t = rest[i];
+  if (spec.values?.includes(t)) {
+    const v = rest[++i];
+    if (v === undefined) fail(`${t} needs a value`);
+    if (values.has(t)) fail(`${t} twice`);
+    values.set(t, v);
+  } else if (spec.repeats?.includes(t)) {
+    const v = rest[++i];
+    if (v === undefined) fail(`${t} needs a value`);
+    repeats.set(t, [...(repeats.get(t) ?? []), v]);
+  } else if (spec.switches?.includes(t)) {
+    switches.add(t);
+  } else if (spec.arg && arg === undefined && !t.startsWith("-")) {
+    arg = t;
+  } else if (spec.arg === "branch" && arg === undefined) {
+    fail(`not a branch: ${t}`);
+  } else {
+    fail(USAGE);
+  }
+}
+if (spec.arg === "pr" && !(arg !== undefined && PR.test(arg))) fail("give the pull request number");
+if (spec.arg === "branch" && arg === undefined) fail("give the branch");
+if (spec.arg === "branch" && !branchOk(arg)) fail(`not a branch: ${arg}`);
+for (const f of spec.required ?? []) if (!values.has(f)) fail(`${sub} needs ${f} <value>`);
+for (const f of spec.nonEmpty ?? []) if (values.get(f) === "" || (repeats.get(f) ?? []).includes("")) fail(`${sub} needs ${f} <value>`);
+for (const f of spec.branches ?? []) if (values.has(f) && !branchOk(values.get(f))) fail(`not a branch: ${values.get(f)}`);
+for (const [f, ok] of Object.entries(spec.oneOf ?? {})) if (!ok.includes(values.get(f))) fail(`${f} must be ${ok.join(" or ")}`);
+if (spec.anyOf && !spec.anyOf.some((f) => values.has(f) || repeats.has(f))) fail(`${sub} needs ${spec.anyOf.join(" or ")}`);
+if (spec.limit && !(/^[1-9]\d{0,3}$/.test(values.get(spec.limit)) && Number(values.get(spec.limit)) <= 1000)) fail(`${spec.limit} must be 1 to 1000`);
+
+const repo = process.env.FACTORY_VAR_GITHUB_REPO ?? "";
+if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+const issueText = process.env.FACTORY_VAR_ISSUE ?? "";
+if (spec.issue && !/^[1-9]\d{0,8}$/.test(issueText)) fail("set var issue to the issue number");
+const issue = Number(issueText);
+
+const text = spec.stdin ? readFileSync(0, "utf8") : "";
+let store;
+try {
+  const lib = await import(new URL("../dist/stories/store.js", import.meta.url).href);
+  store = lib.storeFor(repo);
+} catch (e) {
+  fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+}
+
+try {
+  const out = await spec.run({ store, issue, text, arg, values, repeats, switches });
+  if (typeof out === "number") process.exitCode = out;
+  else if (typeof out === "string") process.stdout.write(out);
+} catch (e) {
+  // What gh printed before it failed, then gh's own text with no prefix: a step that matches on it keeps working.
+  if (typeof e?.stdout === "string") process.stdout.write(e.stdout);
+  process.stderr.write(String(e?.stderr || e?.message || e));
+  process.exitCode = 1;
+}

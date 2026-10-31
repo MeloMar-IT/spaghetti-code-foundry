@@ -8,13 +8,9 @@ import { readIssueFiles } from "../src/context/issue-files.js";
 import { render } from "../src/engine/template.js";
 
 const FLOWS = ["issue-gitflow", "issue-plan", "issue-code-daily"];
-const L1 =
-  'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json body,number,title,updatedAt > "{{run.dir}}/issue.json" 2>/dev/null || rm -f "{{run.dir}}/issue.json"';
-const L2 =
-  'gh api --paginate "repos/$FACTORY_VAR_GITHUB_REPO/issues/$FACTORY_VAR_ISSUE/comments?per_page=100" --jq \'.[] | {id, html_url, created_at, updated_at, body}\' > "{{run.dir}}/issue-comments.jsonl" 2>/dev/null || rm -f "{{run.dir}}/issue-comments.jsonl"';
-
-const L3 =
-  'gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json comments --jq \'[.comments[] | select(.viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry"))) | (.url // "") | select(test("#issuecomment-[0-9]+$")) | capture("#issuecomment-(?<id>[0-9]+)$").id | tonumber]\' > "{{run.dir}}/issue-foundry-comments.json" 2>/dev/null || rm -f "{{run.dir}}/issue-foundry-comments.json"';
+const L1 = 'node "$FACTORY_TOOLS/story" view > "{{run.dir}}/issue.json" 2>/dev/null || rm -f "{{run.dir}}/issue.json"';
+const L2 = 'node "$FACTORY_TOOLS/story" comments > "{{run.dir}}/issue-comments.jsonl" 2>/dev/null || rm -f "{{run.dir}}/issue-comments.jsonl"';
+const L3 = 'node "$FACTORY_TOOLS/story" foundry-comments > "{{run.dir}}/issue-foundry-comments.json" 2>/dev/null || rm -f "{{run.dir}}/issue-foundry-comments.json"';
 
 function pullTicketScript(flow: string): string {
   const doc = parse(readFileSync(resolve("flows", `${flow}.yaml`), "utf8")) as { steps: { id: string; run?: string }[] };
@@ -47,7 +43,7 @@ function runScript(extra: Record<string, string> = {}) {
   const rendered = render(pullTicketScript("issue-gitflow"), { run: { dir: runDir } });
   return spawnSync("sh", ["-c", rendered], {
     encoding: "utf8",
-    env: { PATH: `${bin}:${process.env.PATH}`, FAKE_GH_LOG: log, FACTORY_VAR_ISSUE: "12", FACTORY_VAR_GITHUB_REPO: "owner/repo", ...extra },
+    env: { PATH: `${bin}:${process.env.PATH}`, FACTORY_TOOLS: resolve("tools"), FAKE_GH_LOG: log, FACTORY_VAR_ISSUE: "12", FACTORY_VAR_GITHUB_REPO: "owner/repo", ...extra },
   });
 }
 
@@ -60,13 +56,13 @@ describe("pull_ticket saves the issue files", () => {
     expect(lines[i + 2]).toBe(L2);
     expect(lines[i + 3]).toBe(L3);
     expect(lines.filter((l) => l === L3)).toHaveLength(1);
-    const text = lines.findIndex((l) => l.includes("--json number,title,body,url,labels,comments"));
+    const text = lines.findIndex((l) => l === 'node "$FACTORY_TOOLS/story" text');
     expect(text).toBeGreaterThan(i + 3);
     expect(lines.slice(text + 1).some((l) => l.includes("gh "))).toBe(false);
-    expect(lines.slice(0, i + 1).some((l) => l.includes("gh "))).toBe(false);
+    expect(lines.some((l) => /\bgh\s/.test(l))).toBe(false);
     expect(lines.filter((l) => l === L1)).toHaveLength(1);
     expect(lines.filter((l) => l === L2)).toHaveLength(1);
-    const body = lines.findIndex((l) => l.includes("issue-body.md") && l.includes("gh "));
+    const body = lines.findIndex((l) => l.includes("issue-body.md") && l.includes('story" body'));
     if (flow === "issue-code-daily") expect(body).toBeGreaterThan(i + 2);
   });
 

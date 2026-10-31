@@ -10,15 +10,15 @@ steps:
     repo_access: true
     run: |
       branch=$(git branch --show-current)
-      existing=$(gh pr view "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --json url -q .url 2>/dev/null || true)
+      existing=$(node "$FACTORY_TOOLS/story" pr-find "$branch" 2>/dev/null || true)
       if [ -n "$existing" ]; then echo "$existing"; node "$FACTORY_TOOLS/pr-output" "{{run.dir}}" "$existing" || true; exit 0; fi
-      title=$(gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json title -q .title 2>/dev/null || echo "$FACTORY_TASK")
+      title=$(node "$FACTORY_TOOLS/story" title 2>/dev/null || echo "$FACTORY_TASK")
       out=$( {
         [ -n "$FACTORY_VAR_ISSUE" ] && { echo "Closes #$FACTORY_VAR_ISSUE"; echo; }
         echo "### Changes"
         printf '%s\n' "$FACTORY_OUT_IMPLEMENT"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"
-      } | gh pr create --repo "$FACTORY_VAR_GITHUB_REPO" --head "$branch" --title "${FACTORY_VAR_ISSUE:+#$FACTORY_VAR_ISSUE: }$title" --body-file - ) || exit $?
+      } | node "$FACTORY_TOOLS/story" pr-open --head "$branch" --title "${FACTORY_VAR_ISSUE:+#$FACTORY_VAR_ISSUE: }$title" ) || exit $?
       printf '%s\n' "$out"
       url=$(printf '%s\n' "$out" | tail -1)
       node "$FACTORY_TOOLS/pr-output" "{{run.dir}}" "$url" || true

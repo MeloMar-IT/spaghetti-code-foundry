@@ -1,6 +1,7 @@
 import type { MonitorConfig } from "../config.js";
 import { errorLine } from "../errors.js";
-import { commentOnIssue, createIssue, createLabelIfMissing, ghLogin, issueComments, listIssuesByLabel, restIssue, type RateReading, type RestIssue } from "../github.js";
+import { ghLogin, type RateReading, type RestIssue } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import { LABEL_WORDS } from "../words.js";
 import { cleanLines, type CleanDeps, type Names } from "./clean.js";
 import { dayOf, type Finding, type Severity, type StoryRef } from "./findings.js";
@@ -147,7 +148,7 @@ export class Reporter {
     const core = rate && now.getTime() - Date.parse(rate.at) < HOUR ? rate.resources.core : undefined;
     if (core && core.remaining === 0 && core.reset * 1000 > now.getTime()) return no("github");
     try {
-      const match = storiesByMarker(await listIssuesByLabel(target, BUG.name, CALL_TIMEOUT_MS)).get(markerHash(f.fingerprint));
+      const match = storiesByMarker(await storeFor(target).listByLabel(BUG.name, CALL_TIMEOUT_MS)).get(markerHash(f.fingerprint));
       const afterList = stopped();
       if (afterList) return afterList;
       if (match) {
@@ -159,7 +160,7 @@ export class Reporter {
       const label = this.d.buildLabel(target);
       const wanted = [BUG, ...(label ? [{ name: label, color: "c2410c", description: LABEL_WORDS.trigger }] : [])].filter((l, i, all) => all.findIndex((x) => x.name === l.name) === i);
       for (const l of wanted.filter((x) => !this.labelsOk.has(`${target}|${x.name}`))) {
-        await createLabelIfMissing(target, l.name, l.color, l.description, CALL_TIMEOUT_MS);
+        await storeFor(target).createLabelIfMissing(l.name, l.color, l.description, CALL_TIMEOUT_MS);
         this.labelsOk.add(`${target}|${l.name}`);
         const afterLabel = stopped();
         if (afterLabel) return afterLabel;
@@ -173,7 +174,7 @@ export class Reporter {
       if (muteFor(this.d.mutes?.(now) ?? [], f)) return no(MUTED);
       let issue: RestIssue;
       try {
-        issue = await createIssue(target, { title: story.title, body: story.body, labels: wanted.map((l) => l.name) }, CALL_TIMEOUT_MS);
+        issue = await storeFor(target).create({ title: story.title, body: story.body, labels: wanted.map((l) => l.name) }, CALL_TIMEOUT_MS);
       } catch (e) {
         for (const l of wanted) this.labelsOk.delete(`${target}|${l.name}`);
         throw e;
@@ -354,7 +355,7 @@ export class Reporter {
         commit();
       }
       spend(1);
-      const byHash = storiesByMarker(await listIssuesByLabel(target, BUG.name, CALL_TIMEOUT_MS));
+      const byHash = storiesByMarker(await storeFor(target).listByLabel(BUG.name, CALL_TIMEOUT_MS));
       /** Applies what GitHub says about the story of a finding. */
       const apply = (f: Finding, issue: RestIssue) => {
         if (adoptIssue(f, issue, target, stamp)) actions.push(`bug story #${issue.number} was closed as not planned: muted`);
@@ -375,7 +376,7 @@ export class Reporter {
           unresolved.add(f);
           continue;
         }
-        const issue = await restIssue(target, m.issue, CALL_TIMEOUT_MS);
+        const issue = await storeFor(target).get(m.issue, CALL_TIMEOUT_MS);
         if (issue) apply(f, issue);
         else {
           f.tries = triesOf(f); // a story from before the count still counts as one try
@@ -425,7 +426,7 @@ export class Reporter {
             stopped = true; // switched off while the call before answered: no further call
             break;
           }
-          await createLabelIfMissing(target, l.name, l.color, l.description, CALL_TIMEOUT_MS);
+          await storeFor(target).createLabelIfMissing(l.name, l.color, l.description, CALL_TIMEOUT_MS);
           this.labelsOk.add(`${target}|${l.name}`);
         }
         if (stopped) break;
@@ -444,7 +445,7 @@ export class Reporter {
         }
         let issue: RestIssue;
         try {
-          issue = await createIssue(target, { title: story.title, body: story.body, labels: wanted.map((l) => l.name) }, CALL_TIMEOUT_MS);
+          issue = await storeFor(target).create({ title: story.title, body: story.body, labels: wanted.map((l) => l.name) }, CALL_TIMEOUT_MS);
         } catch (e) {
           // A label may have been deleted: make sure of them again next time.
           for (const l of wanted) this.labelsOk.delete(`${target}|${l.name}`);
@@ -480,7 +481,7 @@ export class Reporter {
         next.report = { ...before, lookedAt: stamp };
         commit(); // saved first: a lost answer must not mean a second comment
         if (go()) {
-          await commentOnIssue(target, mine(next)!.issue, seenAgainComment(next), CALL_TIMEOUT_MS);
+          await storeFor(target).comment(mine(next)!.issue,seenAgainComment(next), CALL_TIMEOUT_MS);
           actions.push(`commented on bug story #${mine(next)!.issue}: seen again`);
         } else {
           // switched off while saving: no comment, and the story is looked at again later
@@ -509,7 +510,7 @@ export class Reporter {
           if (spend(2)) {
             let found = false;
             let login: string | undefined;
-            for (const c of await issueComments(target, number, CALL_TIMEOUT_MS)) {
+            for (const c of await storeFor(target).comments(number, CALL_TIMEOUT_MS)) {
               if (!isFixedComment(c)) continue;
               if (c.viewerDidAuthor === undefined && login === undefined) {
                 if (!spend(1)) {
@@ -534,7 +535,7 @@ export class Reporter {
           setNote("tried");
           commit(); // saved first: a lost answer must not mean a second comment
           if (go()) {
-            await commentOnIssue(target, number, fixedComment(), CALL_TIMEOUT_MS);
+            await storeFor(target).comment(number, fixedComment(),CALL_TIMEOUT_MS);
             written();
             actions.push(`commented on bug story #${number}: not seen since the fix`);
           } else {
@@ -551,7 +552,7 @@ export class Reporter {
         const state = fixState(m);
         if (!(open(f) || state === "waiting" || state === "watched")) continue;
         if (go() && spend(1)) {
-          const issue = await restIssue(target, m.issue, CALL_TIMEOUT_MS);
+          const issue = await storeFor(target).get(m.issue, CALL_TIMEOUT_MS);
           if (issue) apply(f, issue);
           else {
             f.tries = triesOf(f);

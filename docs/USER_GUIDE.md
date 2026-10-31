@@ -100,7 +100,7 @@ admin for a new one.
 
 **Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
-An account with the role `user` works on its own display at `/user/`, with **Home**, **Epics**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` is sent to `/`. With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
+An account with the role `user` works on its own display at `/user/`, with **Home**, **Epics**, **My runs**, **My repositories** and **Refinement** in a sidebar (a menu on narrow screens), **Start work** as a button in the top bar, and an account menu with **Change password** and **Sign out**. It has no admin links, folder name, health line or "since you last looked" line. If a user opens `/`, they are sent to `/user/`; the address is kept when it is Home, Start work, My runs, one run, My repositories, Refinement or one session, and dropped otherwise (an admin never keeps `#/start`). An admin who opens `/user/` in the Admin view is sent to `/`; in Simple or Advanced the admin stays on `/user/` (see [Simple, Advanced and Admin view](#simple-advanced-and-admin-view)). With no address, a user lands on [Home](#home), which offers **Start work** when there is nothing yet.
 
 ![Home of a user](images/user-home.png)
 
@@ -169,6 +169,32 @@ Everything the UI does is also available from the command line (see [section 9](
 **When the old one goes away.** It already has. The old menu was replaced in place, and all old addresses keep working.
 
 **More.** The state of the rollout is in [ui-redesign/rollout.md](ui-redesign/rollout.md).
+
+### Simple, Advanced and Admin view
+
+The top bar has a **View** box with three views. The view changes only what your display shows. It never changes what you may do: the server still checks every call by your role.
+
+| View | Display | What it shows |
+|---|---|---|
+| **Simple** | `/user/` | Home, Start work, My runs and My repositories. Epics and Refinement are not in the sidebar |
+| **Advanced** | `/user/` | Everything of the user display: Home, Epics, My runs, My repositories, Refinement and Start work |
+| **Admin** | `/` | The admin display |
+
+**Who may choose which.** A user chooses Simple or Advanced. An admin chooses Simple, Advanced or Admin. With no choice made, a user has Advanced and an admin has Admin.
+
+**Where the switch is.** The **View** box is in the top bar. Below 768 px (phones) it is in the menu, at the bottom of the sidebar. The choice is kept on the server with your account, so every device and browser shows the same view after you sign in. Opening `/` in Simple or Advanced sends you to `/user/`; opening `/user/` in Admin sends you to `/`.
+
+**Pages of another view.** A page that the current view does not have shows a card: "This page is not in the Advanced view." with **Open this in the Advanced view**. The button switches your view. The address stays when the new view has that page.
+
+**Switching.** The page reloads in the new view and keeps the address when the new view has that page. Before the switch:
+
+- Unsaved changes stop it. The page says "You have unsaved changes. Save them first, then switch view." and nothing changes.
+- Text that is not sent asks first with "Switch view?": a Start work draft, the text of a closed new-refinement dialog, or text typed in a field. If you confirm, that text is lost. If you cancel, nothing changes.
+- If the server does not answer, the page reads your stored view back. If the choice was saved, the switch goes on. If not, the page shows the error and stays. If the outcome is not known, the page says so: reload it to see your view.
+
+**Preview.** An admin's preview of a user (**View as user** on the Users page) has no **View** box. It stays in the Advanced display.
+
+**My runs.** An admin in Simple or Advanced sees the runs of all accounts on My runs, as in the admin display. The view does not filter them.
 
 ---
 
@@ -476,6 +502,7 @@ A line under the top bar of every page says **All good**, or the number of probl
 - **A restart is waiting:** "A new version is waiting — it restarts after 2 runs." The number is the runs that are active or queued.
 - **A usage limit:** one line per agent (Claude, Codex), not per run, with the time it continues. It shows for an hour after the run stopped; a watcher tries again every 30 minutes, so a limit that lasts keeps showing. A used-up daily budget is a problem too; the link goes to Settings.
 - **A watcher error:** it names the repository, for example "The watcher for acme/app can't reach GitHub", with the action to check the network and `gh auth status`. Equal sentences for one repository show once. A watcher that has not checked for 3× its interval shows too, except while the server waits to restart (the watchers are stopped on purpose then).
+- **A schedule run that is late:** a daily schedule run (the release, the daily report) that has not started an hour after its time shows as "The 17:00 release of acme/app is waiting: <why>". The reason names who has the next move: the server waits to restart, another run goes first, the owner's or the daily budget is used up (the link goes to Settings or Users), or the watcher has a problem (its link goes to Watchers). A run that is queued but not started links to its run page. A run that was never queued, because its watcher did not start it, stays until the next day's time. The line goes away when the run starts.
 - **An issue closed on GitHub while its run still works:** with a **Cancel run** button. A dialog asks "Cancel this run?": **Keep running** changes nothing, **Cancel the run** cancels that run and reloads the line. You can resume the run later, unless the issue is still closed (see below).
 - **A run of a closed issue:** Resume, Approve, Reject, **Retry** and **Retry with a hint…** look at the issue on GitHub first. If it is closed they are refused (409) with "The issue is closed — nothing to retry. Reopen the issue if the work is still wanted.", and no label or comment is posted. After a reopen they work again. The check uses the GitHub access of the run's owner (stored token or GitHub App); a run without an owner uses the server's `gh`. With a deploy key, or when access is refused, the Foundry cannot ask GitHub. When GitHub cannot be reached, only an issue stored as closed is refused; otherwise the run continues. The answer is stored only for a repository with an enabled issues watcher. A run without an issue makes no GitHub call. `scf resume`, `scf approve` and `scf reject` print the same sentence plus "Use --force to resume it anyway."; with `--force` they run. If the check cannot be made, they print one line and continue.
 - **A run that failed because of the Foundry:** the newest run per issue that no newer run replaced, from the last 7 days, at most 5. The line says "The Foundry failed, not the code" with the fix and a link to the run; the reason is on the run page.
@@ -1098,6 +1125,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | waiting for you — two fixes did not work | The monitor made two bug stories for this problem and it is still there, so it makes no third. Press Try again to let it try once more, or mute the finding, on the Watchers page. |
 | watcher silent | The watcher has not finished a check for a long time, so its issues do not move. Press Check now on the Watchers page. |
 | closed on GitHub, run still busy | The issue was closed on GitHub, but its run is still working and nothing was changed. Cancel the run on its page if the work is no longer wanted. |
+| schedule run late | A daily schedule run such as the release has not started an hour after its time. The line says why, and it goes away when the run starts. |
 | issue closed | The issue is closed on GitHub, so nothing is left to do for this run. Reopen the issue if you still want the work. |
 | restarting soon | The server waits to restart and starts nothing new until then. Nothing to do — it restarts when the active runs are done. |
 | replaced by a newer run | A newer run took over the same work. Nothing to do with this run. |
@@ -2362,7 +2390,7 @@ running (see [Keep it running](#keep-it-running)). GitHub access uses the `gh` C
 For a **schedule**, the text becomes the run's task. Intervals: `30s`, `5m`, `1h`, `7d`; or set
 **Once a day at** `17:00` with a time zone.
 
-**Schedule runs have their own lane.** A run a schedule watcher starts (the daily release, the daily report) uses no story slot and goes before queued stories, also when a helper's cap or the usage limit holds back new stories: these runs use no agent, so they cost nothing; their only load is one test run, which still waits for a free test slot. One schedule run works at a time on the whole machine, in the order they were queued. A spent daily budget of the watcher's owner still holds them. A daily run belongs to the day it was queued for: a release that waited in the queue past midnight still counts for the day before, so the next day gets its own release.
+**Schedule runs have their own lane.** A run a schedule watcher starts (the daily release, the daily report) uses no story slot and goes before queued stories, also when a helper's cap or the usage limit holds back new stories: these runs use no agent, so they cost nothing; their only load is one test run, which still waits for a free test slot. One schedule run works at a time on the whole machine, in the order they were queued. A spent daily budget of the watcher's owner still holds them. A daily run belongs to the day it was queued for: a release that waited in the queue past midnight still counts for the day before, so the next day gets its own release. A schedule run that has not started an hour after its time shows a late warning on Home and in the [health line](#the-health-line), with the reason it waits; the warning goes away when the run starts. A run that was never queued keeps its warning until the next day's time.
 
 **Build release files after each release.** A schedule watcher has the checkbox **Build release files after each release** (option `release_build`, default off). When it is on, the watcher looks at the head of main at every check, and at least every 5 minutes. A new commit that has a recipe (the file `.factory/release-build.yaml` at the commit, or the recipe stored in the Foundry settings) gives one `release-build` run of the newest commit on main, which then uploads the files to a draft release (see [Build release files on this machine](#build-release-files-on-this-machine)). A new commit without a recipe is only recorded: nothing is built. The first check after you switch the option on only remembers the current commit, so nothing is built for it. Several moves before a build starts give one build, of the newest commit; a queued build is never cancelled. A commit is never built twice, also after a restart: the record is in `release-builds/` in the data folder. A failed build is not retried; start it by hand. A build you start by hand does not count as recorded, so the watcher may build that commit once more. Switching the option off and on keeps the record, so a commit pushed meanwhile is built at the next check.
 
@@ -4052,7 +4080,7 @@ An account with the role `user` never sees the link or the page; a user who open
 - **The bar.** A bar at the top says "You are viewing as <name>. Nothing can be changed here." Press **Back to the admin display** to end the view and return to the Users page. The top bar still shows your own name and Sign out.
 - **Read-only.** Buttons that only change things are not shown: Start, Add repository, Remove, Approve, Reject, Retry, Cancel, Send answer and the buttons of a refinement session. A button that is still there, such as Change password, shows "This is a preview. Nothing can be changed here." and sends nothing. The page sends no changing call in this mode.
 - **When the view ends.** A view ends after 30 minutes, or when the server restarts. The page then says so and offers **View again** (a new start, a new audit line) and **Back to the admin display**. It never shows your own data instead. A view opened in another tab, or when the browser cannot keep the user's name, also shows this card.
-- **Other cases.** `/user/` without `as` still sends an admin to the admin display. If a user opens `/user/?as=…`, the parameter is ignored.
+- **Other cases.** `/user/` without `as` sends an admin in the Admin view to the admin display; an admin in Simple or Advanced stays there. If a user opens `/user/?as=…`, the parameter is ignored.
 
 **View as user (server).** The part below is what the server does for the page above.
 
@@ -4503,6 +4531,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/your-turn/act` | yes | no | answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume |
 | `GET /api/clarity` | yes | no | how long items waited for you, and what Your turn missed |
 | `POST /api/password` | yes | yes | change your own password (the other sessions of the account end) |
+| `GET /api/me/view` | yes | yes | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced |
+| `PUT /api/me/view` | yes | yes | choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows |
 | `GET /api/credentials` | yes | yes | your stored credentials |
 | `POST /api/credentials` | yes | yes | store a credential |
 | `DELETE /api/credentials/:id` | yes | yes | remove a credential |

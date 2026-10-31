@@ -38,26 +38,9 @@ export function storyCallIn(text: string, file: string): boolean {
 
 /** The files that still make story calls themselves. Remove a path as soon as its calls move to the store. */
 export const ALLOWLIST: readonly string[] = [
-  "blocks/ci.yaml",
-  "blocks/merge.yaml",
-  "blocks/open-pr.yaml",
-  "blocks/plan.yaml",
-  "blocks/pr-comments.yaml",
-  "blocks/pull-ticket.yaml",
-  "blocks/push-plan.yaml",
-  "blocks/push-result.yaml",
-  "blocks/request-approval.yaml",
-  "blocks/triage.yaml",
-  "scripts/build-flows.mjs",
-  "src/delivery/handoff.ts",
-  "src/engine/repo-broker.ts",
   "src/ops/cli.ts",
-  "src/queue/overrule.ts",
-  "src/queue/waits-for.ts",
-  "src/queue/watcher.ts",
   "src/release/git.ts",
   "src/repos/connect.ts",
-  "src/server/since.ts",
   "src/skill-import/catalogue-git.ts",
   "tools/create-split",
   "tools/daily-branch",
@@ -67,6 +50,13 @@ export const ALLOWLIST: readonly string[] = [
 ];
 
 const EXEMPT = ["src/github.ts", "src/stories/github-store.ts"];
+
+/** Lines a file may keep: push-result still finds its pull request with `gh pr view`. Any other call in it fails the test. */
+const KEPT_LINES: Record<string, RegExp> = { "blocks/push-result.yaml": /\bgh\s+pr\s+view\b/ };
+export function withoutKept(text: string, file: string): string {
+  const keep = KEPT_LINES[file];
+  return keep ? text.split("\n").filter((l) => !keep.test(l)).join("\n") : text;
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -121,9 +111,69 @@ describe("storyCallIn", () => {
   });
 });
 
+describe("withoutKept", () => {
+  const block = "blocks/push-result.yaml";
+  it("lets push-result keep gh pr view", () => {
+    expect(storyCallIn(withoutKept("gh pr view 3 --json url", block), block)).toBe(false);
+  });
+  it("still finds an issue call added to push-result", () => {
+    expect(storyCallIn(withoutKept("gh pr view 3\ngh issue comment 3 --body x", block), block)).toBe(true);
+  });
+  it("keeps nothing in other files", () => {
+    expect(storyCallIn(withoutKept("gh pr view 3", "blocks/ci.yaml"), "blocks/ci.yaml")).toBe(true);
+  });
+});
+
+const STORY_FUNCTIONS = [
+  "issueComments", "prComments", "commentOnIssue", "commentOnPullRequest", "upsertStatusComment", "setLabels", "ensureLabel",
+  "createLabelIfMissing", "listOpenIssuesByLabelPages", "listOpenIssues", "listAllIssues", "listNewestIssuesCut", "listIssuesByLabel",
+  "listNewestIssues", "restIssue", "pullState", "createIssue", "updateIssue", "closeIssue", "issueStates", "issueState", "repoLabels",
+];
+/** The names imported from a github.js module (any depth), without `type` imports. */
+const importedFromGithub = (text: string): string[] =>
+  [...text.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'][./]*\/github\.js["']/g)]
+    .filter((m) => !/^import\s+type/.test(m[0]))
+    .flatMap((m) => m[1]!.split(",").map((s) => s.trim()).filter((s) => s && !s.startsWith("type ")).map((s) => s.split(/\s+as\s+/)[0]!));
+
+describe("refinement, server, monitor and delivery use the store", () => {
+  const FILES = [
+    "src/server/api-refinement-backlog.ts", "src/server/api-refinement-import.ts", "src/server/api-refinement-publish.ts",
+    "src/server/api-refinement-replace.ts", "src/server/turn-actions.ts", "src/server/since.ts", "src/monitor/report.ts",
+    "src/monitor/monitor.ts", "src/refinement/publish.ts", "src/refinement/dependants.ts", "src/delivery/handoff.ts",
+    "src/engine/repo-broker.ts",
+  ];
+  it.each(FILES)("%s imports no story function from github.ts", (file) => {
+    expect(existsSync(file)).toBe(true);
+    const used = importedFromGithub(readFileSync(file, "utf8")).filter((n) => [...STORY_FUNCTIONS, "gh", "ghJson"].includes(n));
+    expect(used, "use storeFor(repo) instead").toEqual([]);
+  });
+});
+
+describe("the queue uses the store", () => {
+  // None of these files imports a story function from github.ts: they use storeFor(repo). Helpers that are not story calls
+  // (withGhEnv, ghJson, canWrite, isBot, …) are fine.
+  const QUEUE_FILES = [
+    "src/queue/watcher.ts", "src/queue/status-comment.ts", "src/queue/issue-list.ts", "src/queue/waits-for.ts", "src/queue/overrule.ts",
+    "src/run-gate.ts", "src/turn-actions.ts", "src/queue/waiting-issues.ts", "src/queue/owner-action.ts", "src/queue/watchers.ts",
+    "src/queue/scheduler.ts", "src/queue/release-trigger.ts",
+  ];
+
+  it("finds the imports it checks", () => {
+    expect(importedFromGithub('import { a, type B, c as d } from "../github.js";')).toEqual(["a", "c"]);
+    expect(importedFromGithub('import type { x } from "../github.js";')).toEqual([]);
+    expect(importedFromGithub('import { gh, isBot } from "../github.js";')).toEqual(["gh", "isBot"]);
+  });
+
+  it.each(QUEUE_FILES)("%s imports no story function from github.ts", (file) => {
+    expect(existsSync(file)).toBe(true);
+    const used = importedFromGithub(readFileSync(file, "utf8")).filter((n) => STORY_FUNCTIONS.includes(n));
+    expect(used, "use storeFor(repo) instead").toEqual([]);
+  });
+});
+
 describe("story calls outside the story store", () => {
   const files = [...walk("src"), ...walk("blocks"), ...walk("tools"), "scripts/build-flows.mjs"].map((f) => relative(".", f).split("\\").join("/"));
-  const found = files.filter((f) => !EXEMPT.includes(f) && storyCallIn(readFileSync(f, "utf8"), f)).sort();
+  const found = files.filter((f) => !EXEMPT.includes(f) && storyCallIn(withoutKept(readFileSync(f, "utf8"), f), f)).sort();
 
   it("lists no file that is gone", () => {
     expect(ALLOWLIST.filter((f) => !existsSync(f))).toEqual([]);

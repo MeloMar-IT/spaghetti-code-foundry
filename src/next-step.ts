@@ -11,7 +11,10 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic" | "owner_action";
+  | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic" | "owner_action" | "chore_late";
+
+/** Why a daily schedule run that is late has not started. */
+export type ChoreWait = "restart" | "no_runs" | "other_chore" | "other_run" | "owner_budget" | "budget" | "in_queue" | "watcher_error" | "no_check" | "not_queued";
 
 export type NextWho = "You" | "Foundry" | "Another story" | "A time limit" | "Something is wrong";
 
@@ -102,6 +105,10 @@ export interface NextData {
   reason?: string;
   blockers?: BlockerInfo[];
   blockingRun?: string;
+  /** `chore_late`: the time of the slot, the name of the run ("release" or "schedule run") and why it waits. */
+  choreAt?: string;
+  choreName?: "release" | "schedule run";
+  choreWait?: ChoreWait;
   /** `user_limit`: which per-user limit holds the job. */
   userLimit?: "concurrent" | "per_day" | "budget";
   /** `user_limit` budget: the amount, for an administrator only. */
@@ -166,6 +173,20 @@ const RUN_PAGE = (id: string) => `#/runs/${id}`;
 const WATCHERS = { label: "Watchers page", url: "#/watchers" };
 const RUNS = { label: "Runs page", url: "#/runs" };
 const SETTINGS = { label: "Settings page", url: "#/settings" };
+const USERS = { label: "Users page", url: "#/users" };
+
+const CHORE_WAITS: Record<ChoreWait, { reason: string; who: NextWho; action?: string; say?: string; where?: { label: string; url: string }; until?: string }> = {
+  restart: { reason: "the server waits to restart", who: "Foundry", say: "nothing to do, it starts after the restart", where: RUNS },
+  no_runs: { reason: "no run may start (runs at the same time is 0)", who: "Something is wrong", action: "Set the runs at the same time above 0 in Settings", where: SETTINGS },
+  other_chore: { reason: "another schedule run is working", who: "Foundry", say: "nothing to do, it starts when that run is finished" },
+  other_run: { reason: "another run it waits for is not finished", who: "Foundry", say: "nothing to do, it starts when that run is finished" },
+  owner_budget: { reason: "the owner's daily budget is used up", who: "A time limit", action: "Raise the owner's daily budget on the Users page, or wait until tomorrow", where: USERS, until: "tomorrow" },
+  budget: { reason: "the daily budget is used up", who: "A time limit", action: "Raise the daily budget in Settings, or wait until tomorrow", where: SETTINGS, until: "tomorrow" },
+  in_queue: { reason: "it is queued but was not started", who: "Something is wrong", action: "Look at the run in the queue on the Runs page" },
+  watcher_error: { reason: "its watcher's checks fail", who: "Something is wrong", action: "Look at the error on the Watchers page", where: WATCHERS },
+  no_check: { reason: "its watcher has not finished a check since then", who: "Something is wrong", action: "Press Check now on the Watchers page", where: WATCHERS },
+  not_queued: { reason: "its watcher did not queue it", who: "Something is wrong", action: "Look at the last actions of the watcher on the Watchers page", where: WATCHERS },
+};
 
 /** First sentence only, no amounts, one line. */
 function clean(t: string | undefined): string {
@@ -432,6 +453,16 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       until = limitReset(d.reason) ?? limitRetry(d, LIMIT_RETRY_MS);
       say = "nothing to do, it is tried again after the limit resets";
       if (d.limitAgent) w = RUNS;
+      break;
+    }
+    case "chore_late": {
+      const c = CHORE_WAITS[d.choreWait ?? "in_queue"];
+      who = c.who;
+      why = `The ${d.choreAt ?? "scheduled"} ${d.choreName ?? "schedule run"} of ${base.repo || "this repository"} is waiting: ${c.reason}`;
+      if (c.action) action = c.action;
+      say = c.say ?? lowerFirst(action);
+      w = c.where ?? (d.blockingRun ? { label: "Run page", url: RUN_PAGE(d.blockingRun) } : runWhere ?? RUNS);
+      until = c.until;
       break;
     }
     case "daily_budget":
@@ -809,6 +840,7 @@ const RELEASE_PAIRS: { needs: string[]; flow: string }[] = [
   { needs: ["push_develop"], flow: "release-daily" },
   { needs: ["daily_branch", "push"], flow: "daily-pr" },
 ];
+export const RELEASE_FLOWS: readonly string[] = RELEASE_PAIRS.map((p) => p.flow);
 
 /**
  * "HH:MM" of the schedule watcher that releases this run's work. Only a succeeded run waits for a
@@ -860,7 +892,7 @@ export function runClosedIssue(run: RunSummary | undefined): boolean {
   if (stepIs(next, ["merge", "create_split"])) return true;
   if (stepIs(next, ["report"])) {
     const step = (run.flowDef?.steps ?? []).find((x) => x.id === next) as { run?: string } | undefined;
-    return /gh issue close/.test(step?.run ?? "");
+    return /gh issue close|(?:FACTORY|SCF)_TOOLS\}?\/story"? close\b/.test(step?.run ?? "");
   }
   return false;
 }

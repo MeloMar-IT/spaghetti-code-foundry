@@ -53,9 +53,7 @@ steps:
       for n in $FACTORY_VAR_ISSUES; do
         case "$n" in *[!0-9]*) echo "not an issue number: $n"; exit 1;; esac
         echo "=================== ISSUE #$n ==================="
-        gh issue view "$n" --repo "$FACTORY_VAR_GITHUB_REPO" --json number,title,body,labels,comments --jq '
-          "# #\(.number): \(.title)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body)\n"
-          + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))'
+        FACTORY_VAR_ISSUE="$n" node "$FACTORY_TOOLS/story" plain-text
       done
   - id: ask
     type: claude

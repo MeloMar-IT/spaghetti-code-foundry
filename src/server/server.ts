@@ -17,7 +17,7 @@ import { BREAK_GLASS_WATCH_MS, breakGlassWatch } from "../engine/policy-break-gl
 import { Scheduler } from "../queue/scheduler.js";
 import { steppedAsideFor } from "../queue/watcher.js";
 import { WatcherManager } from "../queue/watchers.js";
-import { SESSION_RECHECK_MS, authRoutes, passwordRoutes, requireSession, sessionAlive } from "./api-auth.js";
+import { SESSION_RECHECK_MS, authRoutes, meRoutes, passwordRoutes, requireSession, sessionAlive } from "./api-auth.js";
 import { adminRoutes } from "./api-admin.js";
 import { outcomeRoutes } from "./api-outcomes.js";
 import { skillRoutes } from "./api-skills.js";
@@ -134,7 +134,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, flowRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)

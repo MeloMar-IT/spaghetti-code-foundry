@@ -16,7 +16,8 @@ import { isRefinementRun } from "../auth/run-owner.js";
  * they use no story slot and go before stories, one chore at a time on the whole machine. They run no agent, so they cost
  * nothing; their only load is one test run, which still waits for a test slot.
  */
-export const isChoreRun = (source?: string): boolean => typeof source === "string" && /^watcher \S+ schedule$/.test(source);
+export const choreWatcherOf = (source?: string): string | undefined => /^watcher (\S+) schedule$/.exec(source ?? "")?.[1];
+export const isChoreRun =(source?: string): boolean => typeof source === "string" && /^watcher \S+ schedule$/.test(source);
 /** Runs that use no story slot: architect runs of a refinement session and schedule chores. */
 const ownLane = (source?: string): boolean => isRefinementRun(source) || isChoreRun(source);
 import { runIdsStartedToday } from "./usage.js";
@@ -477,12 +478,16 @@ export class Scheduler {
           // nothing but a helper's cap keeps this new run waiting: on purpose, not a queue that stands still
           ...(capFull && job.kind === "run" && !ownLane(source) && !blocker && !limit ? { capped: true as const } : {}),
           ...(!priority && !limit && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
+          ...(typeof vars?.chore_day === "string" ? { choreDay: vars.chore_day } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
           flow: job.kind === "run" ? job.flow.name : undefined,
           repo: job.kind === "run" ? job.repo : undefined, task: job.kind === "run" ? job.task : undefined,
         };
       }),
-      active: [...this.active.values()].map((a) => ({ runId: a.queued.runId, lockKey: a.queued.lockKey, repoLock: a.queued.repoLock, source: a.queued.source })),
+      active: [...this.active.values()].map((a) => {
+        const cd = a.queued.job.kind === "run" ? a.queued.job.vars?.chore_day : undefined;
+        return { runId: a.queued.runId, lockKey: a.queued.lockKey, repoLock: a.queued.repoLock, source: a.queued.source, ...(typeof cd === "string" ? { choreDay: cd } : {}) };
+      }),
       // the configured number; `cap` is there only while a helper's cap lowers it for new runs
       concurrency,
       ...(cap < concurrency ? { cap } : {}),

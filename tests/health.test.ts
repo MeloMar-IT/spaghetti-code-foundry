@@ -447,3 +447,31 @@ describe("health(): load governor", () => {
     expect(health(ctxOf(), NOW)).not.toHaveProperty("governor");
   });
 });
+
+describe("health(): a late schedule run", () => {
+  const sched = (over: Record<string, unknown> = {}) => wcfg("rel", "acme/app", { source: "schedule", flow: "release-daily", at: "10:00", timezone: "UTC", task: "release", ...over });
+  const status = wstatus("rel", { lastTick: ago(2 * MIN), lastOk: ago(2 * MIN), startedAt: ago(3 * DAY) });
+  const choreJob = { runId: "q1", kind: "run", source: "watcher rel schedule", enqueuedAt: "2026-10-01T10:00:00Z", choreDay: "2026-10-01" };
+
+  it("a queued run that is an hour late is a problem", () => {
+    const ctx = ctxOf({ watchers: [{ cfg: sched(), status }] });
+    (ctx.scheduler as unknown as { queue: () => unknown }).queue = () => ({ active: [], pending: [choreJob], concurrency: 2 });
+    const h = health(ctx, NOW);
+    expect(h.ok).toBe(false);
+    expect(h.summary).toBe("1 problem");
+    expect(h.problems[0]).toMatchObject({ kind: "chore_late", repo: "acme/app" });
+  });
+
+  it("an overdue run that was never queued stays visible while a restart waits, from tracked() alone", () => {
+    const ctx = ctxOf({ watchers: [{ cfg: sched(), status }], restart: { why: "new_version", since: ago(MIN) } });
+    (ctx.watchers as unknown as { statuses: () => unknown }).statuses = () => [sched()];
+    const h = health(ctx, NOW);
+    expect(kinds(h)).toEqual(["restart", "chore_late"]);
+    expect(h.problems[1]!.why).toContain("the server waits to restart");
+  });
+
+  it("a watcher with an empty time zone leaves health() answering", () => {
+    const h = health(ctxOf({ watchers: [{ cfg: sched({ timezone: "" }), status }] }), NOW);
+    expect(h.summary).toMatch(/problem|All good/);
+  });
+});

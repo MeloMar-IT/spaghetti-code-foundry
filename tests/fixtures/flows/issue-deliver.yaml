@@ -77,13 +77,11 @@ steps:
     description: Read the GitHub issue as plain text
     run: |
       case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the 'issue' variable to an issue number (got '$FACTORY_VAR_ISSUE')"; exit 1;; esac
-      gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json body,number,title,updatedAt > "{{run.dir}}/issue.json" 2>/dev/null || rm -f "{{run.dir}}/issue.json"
-      gh api --paginate "repos/$FACTORY_VAR_GITHUB_REPO/issues/$FACTORY_VAR_ISSUE/comments?per_page=100" --jq '.[] | {id, html_url, created_at, updated_at, body}' > "{{run.dir}}/issue-comments.jsonl" 2>/dev/null || rm -f "{{run.dir}}/issue-comments.jsonl"
-      gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json comments --jq '[.comments[] | select(.viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry"))) | (.url // "") | select(test("#issuecomment-[0-9]+$")) | capture("#issuecomment-(?<id>[0-9]+)$").id | tonumber]' > "{{run.dir}}/issue-foundry-comments.json" 2>/dev/null || rm -f "{{run.dir}}/issue-foundry-comments.json"
-      gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json body --jq .body > "{{run.dir}}/issue-body.md" 2>/dev/null || rm -f "{{run.dir}}/issue-body.md"
-      gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json number,title,body,url,labels,comments --jq '
-        "# #\(.number): \(.title)\n\(.url)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body // "" | gsub("(?m)^--- comment by"; "> --- comment by"))\n"
-        + ([.comments[] | "\n--- comment by \(.author.login)\(if .viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry")) then " (Foundry)" else "" end):\n\(.body // "" | gsub("(?m)^--- comment by"; "> --- comment by"))"] | join("\n"))'
+      node "$FACTORY_TOOLS/story" view > "{{run.dir}}/issue.json" 2>/dev/null || rm -f "{{run.dir}}/issue.json"
+      node "$FACTORY_TOOLS/story" comments > "{{run.dir}}/issue-comments.jsonl" 2>/dev/null || rm -f "{{run.dir}}/issue-comments.jsonl"
+      node "$FACTORY_TOOLS/story" foundry-comments > "{{run.dir}}/issue-foundry-comments.json" 2>/dev/null || rm -f "{{run.dir}}/issue-foundry-comments.json"
+      node "$FACTORY_TOOLS/story" body > "{{run.dir}}/issue-body.md" 2>/dev/null || rm -f "{{run.dir}}/issue-body.md"
+      node "$FACTORY_TOOLS/story" text
   - id: daily_branch
     type: shell
     repo_access: true
@@ -424,7 +422,7 @@ steps:
           if [ -n "$park" ]; then echo; echo "$park"; fi
           echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"
           echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
-          | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null || exit 1
+          | node "$FACTORY_TOOLS/story" comment >/dev/null || exit 1
         body=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'; if [ -n "$extra" ]; then echo; printf '%s\n' "$extra"; fi)
       fi
       printf '%s\n' "$body"
@@ -446,7 +444,7 @@ steps:
       risk=$(printf '%s\n' "$out" | sed -n 's/^SPLIT_RISK: *\([0-9][0-9]*\).*/\1/p' | tail -1); risk=${risk:-100}
       limit=${FACTORY_VAR_AUTO_SPLIT_MAX_RISK:-50}; agreed=""; forced=""
       printf '%s\n' "$out" | grep -q "^SPLIT_APPROVED: *yes" && agreed=yes
-      if [ -n "$FACTORY_VAR_REVIEW_PLAN_LABEL" ] && gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "$FACTORY_VAR_REVIEW_PLAN_LABEL"; then forced=yes; fi
+      if [ -n "$FACTORY_VAR_REVIEW_PLAN_LABEL" ] && node "$FACTORY_TOOLS/story" labels 2>/dev/null | grep -qx "$FACTORY_VAR_REVIEW_PLAN_LABEL"; then forced=yes; fi
       # A split part, or an issue with open parts of an earlier split, is always the owner's decision (tools/split-family).
       fam=$(node "$FACTORY_TOOLS/split-family" 2>&1) || fam=$(printf '%s\nFAMILY: unknown' "$fam")
       family=$(printf '%s\n' "$fam" | sed -n 's/^FAMILY: *\([a-z-]*\).*/\1/p' | tail -1); family=${family:-unknown}
@@ -461,7 +459,7 @@ steps:
         if [ "$family" != none ]; then echo; echo "### Earlier splits of this issue"; echo; printf '%s\n' "$tree"; echo; echo "**Recommendation:** do not create new issues. /reject makes the Foundry plan this issue again against the parts above (or change them); /approve creates the new parts anyway."; fi
         echo; echo "✋ **You decide** ($why)."
         echo; echo "_${FACTORY_NEXT_APPROVE_SPLIT}_"
-        echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID approval -->"; } | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null
+        echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID approval -->"; } | node "$FACTORY_TOOLS/story" comment >/dev/null
       echo "asked the owner: $why"; echo "GATE: yes"
     routes:
       - if: "^SPLIT: none"
@@ -516,7 +514,7 @@ steps:
       [ "$risk" -gt 100 ] && risk=100
       limit=${FACTORY_VAR_RISK_THRESHOLD:-75}; gate=no; why=""
       if [ "$risk" -gt "$limit" ]; then gate=yes; why="the risk score is above $limit"; fi
-      if [ -n "$FACTORY_VAR_REVIEW_PLAN_LABEL" ] && gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json labels --jq '.labels[].name' 2>/dev/null | grep -qx "$FACTORY_VAR_REVIEW_PLAN_LABEL"; then
+      if [ -n "$FACTORY_VAR_REVIEW_PLAN_LABEL" ] && node "$FACTORY_TOOLS/story" labels 2>/dev/null | grep -qx "$FACTORY_VAR_REVIEW_PLAN_LABEL"; then
         gate=yes; why="${why:+$why, and }the issue has the \`$FACTORY_VAR_REVIEW_PLAN_LABEL\` label"
       fi
       size_note=$(printf '%s\n' "$FACTORY_OUT_SIZE_GATE" | grep '^over the size limit, but mechanical' | tail -1)
@@ -540,7 +538,7 @@ steps:
         else
           echo "_Coding starts now; the result goes into the Foundry pull request, where you review it._"
           echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID plan -->"
-        fi; } | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null
+        fi; } | node "$FACTORY_TOOLS/story" comment >/dev/null
       printf '%s\n' "$plan"
       [ -n "$notes" ] && { echo; echo "## Review notes to work in"; printf '%s\n' "$notes" | sed '/^VERDICT:/d; /^RISK_SCORE:/d; /^SKILL_REQUEST:/d; /^MECHANICAL:/d'; }
       echo; echo "RISK: $risk"; echo "GATE: $gate"; printf '%s\n' "$skill_line"
@@ -847,7 +845,7 @@ steps:
     repo_access: true
     run: |-
       git add -A
-      title=$(gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json title -q .title 2>/dev/null)
+      title=$(node "$FACTORY_TOOLS/story" title 2>/dev/null)
       git commit -q -m "Resolve #$FACTORY_VAR_ISSUE: $title" -m "Written by Claude, reviewed by Codex, tests passing. Spaghetti Code Foundry run $FACTORY_RUN_ID"
       git log --oneline -1
   - id: push
@@ -879,7 +877,7 @@ steps:
         echo; echo "### Files changed"; echo '```'; git show --stat --format= HEAD | tail -40; echo '```'
         echo; echo "_It is in the release pull request: $FACTORY_OUT_OPEN_PR — merge it whenever you like._"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
-        | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -
+        | node "$FACTORY_TOOLS/story" comment
     on_success: end
   - id: baseline_failed
     type: shell

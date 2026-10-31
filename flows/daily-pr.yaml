@@ -108,6 +108,6 @@ steps:
       { echo "$first"; echo
         echo "🤖 **Spaghetti Code Foundry daily report** — $(date '+%Y-%m-%d %H:%M')"; echo; cat "{{run.dir}}/checks.md"
         if [ "$ok" = yes ]; then echo; echo "_Merge whenever you like — the Foundry keeps working either way; after a merge it continues on a fresh branch._"; fi
-        echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID daily -->"; } | gh pr comment "$n" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file - >/dev/null
-      if [ "$ok" = no ]; then if gh pr ready "$n" --repo "$FACTORY_VAR_GITHUB_REPO" --undo >/dev/null 2>&1; then echo "checks failed — $url is a draft"; else echo "checks failed — could not mark $url as a draft"; fi
-      else gh pr ready "$n" --repo "$FACTORY_VAR_GITHUB_REPO" >/dev/null 2>&1 || true; echo "checks passed — $url is ready to merge"; fi
+        echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID daily -->"; } | node "$FACTORY_TOOLS/story" pr-comment "$n" >/dev/null
+      if [ "$ok" = no ]; then if node "$FACTORY_TOOLS/story" pr-ready "$n" --undo >/dev/null 2>&1; then echo "checks failed — $url is a draft"; else echo "checks failed — could not mark $url as a draft"; fi
+      else node "$FACTORY_TOOLS/story" pr-ready "$n" >/dev/null 2>&1 || true; echo "checks passed — $url is ready to merge"; fi

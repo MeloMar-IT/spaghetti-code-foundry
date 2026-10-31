@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { Scheduler } from "../src/queue/scheduler.js";
-import { Watcher, minutesNow } from "../src/queue/watcher.js";
+import { Watcher, accountBudgetLeft, minutesNow, watcherAccount } from "../src/queue/watcher.js";
 
 /** Which day a daily schedule chore belongs to: the day it was queued for, not the day it started. */
 describe("daily schedule chore", () => {
@@ -62,5 +62,26 @@ describe("daily schedule chore", () => {
     await tickChore();
     await tickChore();
     expect(queued()).toHaveLength(1);
+  });
+
+  it("queue() carries chore_day of a queued and of an active chore, briefs() of a run", async () => {
+    await tickChore();
+    const p = scheduler.queue().pending[0]!;
+    expect(p.choreDay).toBe(today);
+    const job = scheduler.queuedJob(p.runId)!;
+    (scheduler as unknown as { active: Map<string, unknown> }).active.set("x", { queued: job });
+    expect(scheduler.queue().active[0]!.choreDay).toBe(today);
+    lastRun({ chore_day: "2026-01-01" });
+    expect(scheduler.briefs().find((b) => b.runId === "20260101-000000-aaaa")?.choreDay).toBe("2026-01-01");
+  });
+
+  it("works out the account and the budget of a watcher", () => {
+    const base = WatcherSchema.parse({ id: "a", github_repo: "x/y" });
+    expect(watcherAccount(base)).toBeUndefined();
+    expect(watcherAccount({ ...base, repoId: "r1", ownerId: "u1" })).toBe("u1");
+    const cap = (n: number | undefined) => ({ userDailyBudget: () => n });
+    expect(accountBudgetLeft(cap(0), "/nonexistent")).toBe(true);
+    expect(accountBudgetLeft(cap(undefined), "/nonexistent", "u1")).toBe(true);
+    expect(accountBudgetLeft(cap(0), "/nonexistent", "u1")).toBe(false);
   });
 });

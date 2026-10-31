@@ -13,7 +13,7 @@ import { skillsCard } from "../run-skills.js";
 import { dialogOpen, keepScroll, poller } from "../live.js";
 import { decisionDialog } from "../run-dialogs.js";
 import { noRuns, part, partNote, runLoadKind, runLoadState, runStream, runsLiveStates } from "../run-states.js";
-import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce } from "../run-tabs.js";
+import { changesPanel, createTabs, evidencePanel, overviewPanel, showFailedOnce, withQuestions } from "../run-tabs.js";
 import { createTimeline } from "../run-timeline.js";
 import { CAP_NOTE, MATCH_NOTE, RUNS_CAP, askRuns, diffView, statusAnnouncer } from "../runs.js";
 import { archivedSections, listRow, myRunsEntries, readDensity, renderSections, runSections, sectionOf, writeDensity } from "../runs-list.js";
@@ -321,6 +321,7 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
           return;
         }
         if (!s || typeof s !== "object") return;
+        s = withQuestions(s);
         if (staleAfterSend(s)) return;
         runSeq++;
         summary = s;
@@ -439,10 +440,12 @@ export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide 
     let lostRun = false;
     let denied = false;
     if (mineRun === runSeq) {
-      if (runP.status === "fulfilled" && staleAfterSend(runP.value)) {
+      // An admin's summary has no questions: fill them in before the check for an older answer.
+      const got = runP.status === "fulfilled" ? withQuestions(runP.value) : null;
+      if (got && staleAfterSend(got)) {
         // older than the answer just sent: keep what we have
-      } else if (runP.status === "fulfilled") {
-        summary = runP.value;
+      } else if (got) {
+        summary = got;
         runError = null;
       } else {
         runError = runP.reason;

@@ -1,6 +1,6 @@
 import { findOwnedRepo } from "../auth/repos.js";
 import { githubNameOf, validGithubName } from "../auth/repo-url.js";
-import { listNewestIssuesCut, restIssue } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import { dependencyRefs, quickChecks, type BacklogIssue } from "../refinement/backlog.js";
 import type { PullKind } from "../refinement/issue-building.js";
 import { cleanTitle } from "../refinement/issue-import.js";
@@ -35,7 +35,7 @@ export const refinementBacklogRoutes: Route = async (ctx, req, res, seg, method)
     return await asOwnedRepo(ctx, user.id, name, async () => {
       let listed;
       try {
-        listed = await listNewestIssuesCut(name, timeout);
+        listed = await storeFor(name).listNewestCut(timeout);
       } catch (e) {
         throw new HttpError(502, `could not read the issues on GitHub: ${whatHappened(e)} — ${CHECK_SIGN_IN}`);
       }
@@ -66,7 +66,7 @@ export const refinementBacklogRoutes: Route = async (ctx, req, res, seg, method)
       for (const n of outside) {
         let found;
         try {
-          found = await restIssue(name, n, timeout);
+          found = await storeFor(name).get(n, timeout);
         } catch (e) {
           throw new HttpError(502, `could not read issue #${n} on GitHub: ${whatHappened(e)} — ${CHECK_SIGN_IN}`);
         }

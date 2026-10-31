@@ -117,7 +117,7 @@ export function initShell(role, { user, store = safeStore(), media = mediaFor("c
     } else if (e.key === "Tab") {
       if (el("modal-root")?.children?.length) return; // a dialog over the drawer traps Tab itself
       // The drawer is modal: Tab stays inside it.
-      const list = [...(el("side")?.querySelectorAll("a[href], button") ?? [])];
+      const list = [...(el("side")?.querySelectorAll("a[href], button, select") ?? [])];
       if (!list.length) return;
       const at = list.indexOf(document.activeElement);
       const to = at < 0 ? list[0] : e.shiftKey && at === 0 ? list.at(-1) : !e.shiftKey && at === list.length - 1 ? list[0] : null;

@@ -64,7 +64,7 @@ describe("ui/user/app.js", () => {
     walk("user/app.js");
     expect(seen.has("app.js")).toBe(false);
     for (const m of ADMIN_MODULES) expect(seen.has(`${m}.js`), m).toBe(false);
-    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "run-output.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "ia.js", "shell.js", "states.js", "filters.js", "context.js", "context-view.js"]) expect(seen.has(m), m).toBe(true);
+    for (const m of ["user/start.js", "user/runs.js", "auth.js", "runs.js", "run-output.js", "repos.js", "refinement.js", "refinement-talk.js", "refinement-draft.js", "refinement-suggest.js", "dom.js", "view-as.js", "view-mode.js", "ia.js", "shell.js", "states.js", "filters.js", "context.js", "context-view.js"]) expect(seen.has(m), m).toBe(true);
   });
 
   it("starts the context after the view is known, and waits for it before the first page", () => {
@@ -97,7 +97,7 @@ describe("ui/user/app.js", () => {
 
   it("routes Home and Start work, and the empty address opens Home", () => {
     expect(app).toContain('if (page.section === "home") done = await renderHome(box, { readOnly });');
-    expect(app).toContain('else if (page.section === "start") done = await renderStart(box, { readOnly });');
+    expect(app).toContain('else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });');
     expect(app).toContain('if (isNoHash(hash)) hash = "#/home";');
     expect(app).not.toContain("homeHash");
     expect(app.match(/\+\+generation/g)).toHaveLength(1);

@@ -130,6 +130,10 @@ in `src/github.ts`; the store reuses them.
   (`withGhEnv`), as before.
 - **Inputs are checked first.** Issue numbers, pull request references, commit SHAs and list sizes are
   checked before `gh` runs, so they cannot become `gh` options or API paths.
+- **The synchronous part.** `tools/waits-for` runs `gh` itself, synchronously, so it cannot await the
+  store. `store.sync(run)` returns a `SyncStories` (`get`, `list`, `setBody`) bound to the caller's
+  runner (a `GhCall`). A confirmed not-found gives `undefined`; a malformed answer or another `gh` error
+  throws. The body of `setBody` goes on stdin.
 - **The status marker is unchanged.** `upsertStatusComment` still finds the Foundry's comment by
   `<!-- claude-factory status -->`; `BOT_MARKER`, `BOT_MARKERS` and `STATUS_MARKER` are not changed.
 - **The guard.** `tests/story-store-guard.test.ts` scans `src/`, `blocks/`, `tools/` and
@@ -137,6 +141,16 @@ in `src/github.ts`; the store reuses them.
   check runs, or the issue-state GraphQL). A file outside `src/stories/github-store.ts` and `src/github.ts`
   must be on the allowlist in that test. The allowlist can only shrink: a listed file with no story call
   left fails the test. Move a file to the store, then take it off the list.
+- **A caller that owns its process.** `openChangeWith` takes a runner: the store builds the `gh` arguments
+  and the broker starts the process, with its exact environment, pinned secrets and limits.
+- **Flow steps use `tools/story`.** The built-in blocks that read or write a run's story call
+  `node "$FACTORY_TOOLS/story"` (#737) instead of `gh`. Change-request (pull request) steps and the
+  inline steps of the built-in flows use it too (#738): `open-pr`, `merge`, `ci` and `pr-comments`
+  call its `pr-…` subcommands. The tool loads `dist/stories/store.js`, so a step reaches the store
+  through one helper, and bodies go through stdin, never a shell argument. Where gh's output or exit
+  status must reach the step whole (`pr-open`, `pr-merge`, `pr-checks`, `pr-checkout`), the store runs
+  gh with `ghInherit` (`src/github.ts`): gh writes straight to the step's stdout and stderr, and the
+  exit status is gh's (a signal gives 128 plus its number). Every other call goes through `gh()`.
 
 ---
 
@@ -1772,7 +1786,7 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 
 ![A run that waits for a decision on a risky plan](images/run-waiting.png)
 
-**Two displays.** The admin page is `ui/index.html` with `ui/app.js` (the router; the flow editor page is `ui/flow-page.js`, made by `createFlowPage`, with its header and navigator in `ui/flow-shell.js` and its pure state in `ui/flow-state.js`); the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account of the other role is sent to its own display before any page is drawn. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
+**Two displays.** The admin page is `ui/index.html` with `ui/app.js` (the router; the flow editor page is `ui/flow-page.js`, made by `createFlowPage`, with its header and navigator in `ui/flow-shell.js` and its pure state in `ui/flow-state.js`); the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account is sent to the display of its view in effect (`viewOf` in `ui/view-mode.js`) before any page is drawn: Admin is the page at `/`, Simple and Advanced are the user display. Simple is the user display with fewer links (`showViewNav` hides the links it does not have). The view switch is mounted there too (`mountViewSwitch`), except in a preview. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
 

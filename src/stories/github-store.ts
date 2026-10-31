@@ -1,8 +1,8 @@
 import type { CheckRun } from "../delivery/handoff.js";
 import * as github from "../github.js";
-import { gh, ghJson } from "../github.js";
+import { gh, ghInherit, ghJson } from "../github.js";
 import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../github.js";
-import type { ChangeId, ChangeRef, ChangeState, MergedChange, ReviewComment, StoryState, StoryStore } from "./store.js";
+import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
 
 const whole = (n: unknown, max = Number.MAX_SAFE_INTEGER): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 1 && n <= max;
 
@@ -17,6 +17,53 @@ function changeRef(pr: ChangeId): string {
   if (typeof pr === "number" && whole(pr)) return String(pr);
   if (typeof pr === "string" && (/^[0-9]{1,15}$/.test(pr) || /^https:\/\/[^\s/]+\/[^\s/]+\/[^\s/]+\/pull\/[0-9]+$/.test(pr))) return pr;
   throw new Error("not a pull request");
+}
+
+// The jq programs of the old pull_ticket step, byte for byte: what tools/story saves must not change.
+const FOUNDRY_IDS = String.raw`[.comments[] | select(.viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry"))) | (.url // "") | select(test("#issuecomment-[0-9]+$")) | capture("#issuecomment-(?<id>[0-9]+)$").id | tonumber]`;
+const TICKET_TEXT = String.raw`
+  "# #\(.number): \(.title)\n\(.url)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body // "" | gsub("(?m)^--- comment by"; "> --- comment by"))\n"
+  + ([.comments[] | "\n--- comment by \(.author.login)\(if .viewerDidAuthor == true and ((.body // "") | contains("<!-- claude-factory") or contains("<!-- spaghetti-code-foundry")) then " (Foundry)" else "" end):\n\(.body // "" | gsub("(?m)^--- comment by"; "> --- comment by"))"] | join("\n"))`;
+
+// The programs of the flow steps that moved here, as the shell lines had them (without the doubled backslashes of build-flows.mjs).
+const PLAIN_TEXT = String.raw`
+    "# #\(.number): \(.title)\nLabels: \([.labels[].name] | join(", "))\n\n\(.body)\n"
+    + ([.comments[] | "\n--- comment by \(.author.login):\n\(.body)"] | join("\n"))`;
+const AUTHORS_QUERY = String.raw`query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){author{login} lastEditedBy{login}}}}`;
+const AUTHORS_JQ = String.raw`.data.repository.issue | [(.author.login // ""), (.lastEditedBy.login // "")] | join(" ")`;
+const CHANGE_TEXT = String.raw`"# PR #\(.number // "") \(.title)\n\(.body)\n"`;
+const REVIEW_COMMENTS = String.raw`.[] | select(.body | (contains("claude-factory") or contains("spaghetti-code-foundry")) | not) | "--- \(.user.login) on \(.path):\(.line // .original_line):\n\(.body)\n"`;
+const REVIEWS = String.raw`
+  (.reviews[] | select(.body != "") | "--- review by \(.author.login) (\(.state)):\n\(.body)\n"),
+  (.comments[] | select(.body | (contains("claude-factory") or contains("spaghetti-code-foundry")) | not) | "--- \(.author.login):\n\(.body)\n")`;
+
+/** A branch as gh takes it: it must not become an option. Empty passes (a detached HEAD sends one today). */
+function branchRef(branch: string): string {
+  if (typeof branch !== "string" || branch.startsWith("-") || /\s/.test(branch)) throw new Error("not a branch");
+  return branch;
+}
+
+const listSize =(n: unknown, max = 1000): number => {
+  if (!whole(n, max)) throw new Error("not a list size");
+  return n;
+};
+
+/** The gh arguments of the after-merge sweep: issues in any state with an /overrule in a comment, updated since `since` (YYYY-MM-DD). */
+export function overruleSearchArgs(repo: string, since: string, limit: number): string[] {
+  return ["issue", "list", "--repo", repo, "--state", "all", "--search", `overrule in:comments updated:>=${since}`,
+    "--limit", String(limit), "--json", "number,updatedAt"];
+}
+
+/** A story from a gh answer; undefined when it is not one. */
+function toStory(x: unknown): SyncStory | undefined {
+  const o = x as Record<string, unknown> | null;
+  if (!o || typeof o !== "object" || !Number.isInteger(o.number) || (o.number as number) <= 0 || typeof o.title !== "string") return undefined;
+  return { number: o.number as number, title: o.title, state: typeof o.state === "string" ? o.state.toUpperCase() : "OPEN", body: typeof o.body === "string" ? o.body : "" };
+}
+
+function isNotFound(e: unknown): boolean {
+  const o = e as { stderr?: unknown; message?: unknown } | undefined;
+  return /Could not resolve to an Issue|Not Found|HTTP 404/i.test(`${typeof o?.stderr === "string" ? o.stderr : ""}\n${typeof o?.message === "string" ? o.message : ""}`);
 }
 
 /**
@@ -36,6 +83,48 @@ export class GitHubStore implements StoryStore {
       undefined,
       o.timeoutMs,
     );
+  }
+  async listOpenWithAnyLabel(label: string, anyOf: string[], o: { limit: number; timeoutMs?: number }): Promise<Issue[]> {
+    const limit = listSize(o.limit);
+    const any = anyOf.map((l) => `"${l.replace(/"/g, "")}"`).join(",");
+    return ghJson<Issue[]>(
+      ["issue", "list", "--repo", this.repo, "--label", label, "--state", "open", "--limit", String(limit),
+        "--search", `label:${any} sort:created-asc`, "--json", "number,title,labels,body,createdAt,updatedAt"],
+      undefined,
+      o.timeoutMs,
+    );
+  }
+  async listClosedWithAnyLabel(anyOf: string[], o: { limit: number; timeoutMs?: number }): Promise<Issue[]> {
+    const limit = listSize(o.limit);
+    const any = anyOf.map((l) => `"${l}"`).join(",");
+    return ghJson<Issue[]>(
+      ["issue", "list", "--repo", this.repo, "--state", "closed", "--limit", String(limit),
+        "--search", `label:${any} sort:updated-desc`, "--json", "number,title,labels,state"],
+      undefined,
+      o.timeoutMs,
+    );
+  }
+  async listWithBodies(limit: number, timeoutMs?: number): Promise<Issue[]> {
+    return ghJson<Issue[]>(
+      ["issue", "list", "--repo", this.repo, "--state", "all", "--limit", String(listSize(limit)), "--json", "number,title,labels,state,body"],
+      undefined,
+      timeoutMs,
+    );
+  }
+  async isClosed(issue: number, timeoutMs?: number): Promise<boolean> {
+    number(issue, "an issue number");
+    const out = await gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "state", "--jq", ".state"], undefined, timeoutMs);
+    return out.trim().toUpperCase() === "CLOSED";
+  }
+  async stateAndLabels(issue: number, timeoutMs?: number): Promise<{ state: string; labels: { name: string }[] }> {
+    number(issue, "an issue number");
+    return ghJson<{ state: string; labels: { name: string }[] }>(["issue", "view", String(issue), "--repo", this.repo, "--json", "state,labels"], undefined, timeoutMs);
+  }
+  async searchOverrules(o: { since: string; limit: number; timeoutMs?: number }): Promise<{ number: number; updatedAt?: string }[]> {
+    const limit = listSize(o.limit);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(o.since)) throw new Error("not a date");
+    const got = await ghJson<unknown>(overruleSearchArgs(this.repo, o.since, limit), undefined, o.timeoutMs);
+    return Array.isArray(got) ? (got as { number: number; updatedAt?: string }[]) : [];
   }
   listOpenByLabelPages(label: string, o: { fromPage: number; pages: number; timeoutMs?: number }) {
     return github.listOpenIssuesByLabelPages(this.repo, label, o);
@@ -85,6 +174,110 @@ export class GitHubStore implements StoryStore {
   comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined> {
     return github.commentOnIssue(this.repo, issue, body, timeoutMs);
   }
+  async stepIssue(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "body,number,title,updatedAt"], undefined, timeoutMs);
+  }
+  async stepBody(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "body", "--jq", ".body"], undefined, timeoutMs);
+  }
+  async stepText(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "number,title,body,url,labels,comments", "--jq", TICKET_TEXT], undefined, timeoutMs);
+  }
+  async stepComments(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["api", "--paginate", `repos/${this.repo}/issues/${issue}/comments?per_page=100`, "--jq", ".[] | {id, html_url, created_at, updated_at, body}"], undefined, timeoutMs);
+  }
+  async stepFoundryComments(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "comments", "--jq", FOUNDRY_IDS], undefined, timeoutMs);
+  }
+  async stepComment(issue: number, body: string, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "comment", String(issue), "--repo", this.repo, "--body-file", "-"], undefined, timeoutMs, body);
+  }
+  /** Creates the issue with gh itself (not the REST call), so a label that cannot be set fails the call. The text goes through stdin. */
+  async stepCreate(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<string> {
+    const labels = o.labels.flatMap((l) => ["--label", l]);
+    return gh(["issue", "create", "--repo", this.repo, "--title", o.title, "--body-file", "-", ...labels], undefined, timeoutMs, o.body);
+  }
+  async stepTitle(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "title", "-q", ".title"], undefined, timeoutMs);
+  }
+  async stepLabels(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "labels", "--jq", ".labels[].name"], undefined, timeoutMs);
+  }
+  async stepCommentsAndLabels(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "comments,labels"], undefined, timeoutMs);
+  }
+  async stepPlainText(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    return gh(["issue", "view", String(issue), "--repo", this.repo, "--json", "number,title,body,labels,comments", "--jq", PLAIN_TEXT], undefined, timeoutMs);
+  }
+  async stepAuthors(issue: number, timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    const [owner, name] = this.repo.split("/");
+    return gh(["api", "graphql", "-F", `n=${issue}`, "-f", `o=${owner}`, "-f", `r=${name}`, "-f", `query=${AUTHORS_QUERY}`, "--jq", AUTHORS_JQ], undefined, timeoutMs);
+  }
+  async stepClose(issue: number, reason: "completed" | "not planned", timeoutMs?: number): Promise<string> {
+    number(issue, "an issue number");
+    if (reason !== "completed" && reason !== "not planned") throw new Error("not a close reason");
+    return gh(["issue", "close", String(issue), "--repo", this.repo, "--reason", reason], undefined, timeoutMs);
+  }
+  async stepFindChange(branch: string, timeoutMs?: number): Promise<string> {
+    return gh(["pr", "view", branchRef(branch), "--repo", this.repo, "--json", "url", "-q", ".url"], undefined, timeoutMs);
+  }
+  async stepReviewDecision(branch: string, timeoutMs?: number): Promise<string> {
+    return gh(["pr", "view", branchRef(branch), "--repo", this.repo, "--json", "reviewDecision", "-q", ".reviewDecision"], undefined, timeoutMs);
+  }
+  async stepListChanges(o: { head: string; base: string }, timeoutMs?: number): Promise<string> {
+    return gh(["pr", "list", "--repo", this.repo, "--head", branchRef(o.head), "--base", branchRef(o.base), "--state", "open", "--json", "number,headRefName,state"], undefined, timeoutMs);
+  }
+  async stepCommentOnChange(pr: ChangeId, body: string, timeoutMs?: number): Promise<string> {
+    return gh(["pr", "comment", changeRef(pr), "--repo", this.repo, "--body-file", "-"], undefined, timeoutMs, body);
+  }
+  async stepSetReady(pr: ChangeId, ready: boolean, timeoutMs?: number): Promise<string> {
+    return gh(["pr", "ready", changeRef(pr), "--repo", this.repo, ...(ready ? [] : ["--undo"])], undefined, timeoutMs);
+  }
+  async stepChangeText(pr: number, timeoutMs?: number): Promise<string> {
+    number(pr, "a pull request number");
+    return gh(["pr", "view", String(pr), "--repo", this.repo, "--json", "number,title,body", "-q", CHANGE_TEXT], undefined, timeoutMs);
+  }
+  async stepReviewComments(pr: number, timeoutMs?: number): Promise<string> {
+    number(pr, "a pull request number");
+    return gh(["api", `repos/${this.repo}/pulls/${pr}/comments`, "--jq", REVIEW_COMMENTS], undefined, timeoutMs);
+  }
+  async stepReviews(pr: number, timeoutMs?: number): Promise<string> {
+    number(pr, "a pull request number");
+    return gh(["pr", "view", String(pr), "--repo", this.repo, "--json", "reviews,comments", "--jq", REVIEWS], undefined, timeoutMs);
+  }
+  async stepOpenStories(o: { limit: number; comments: boolean }): Promise<number> {
+    const limit = listSize(o.limit);
+    return ghInherit(["issue", "list", "--repo", this.repo, "--state", "open", "--limit", String(limit), "--json", o.comments ? "number,title,body,labels,comments" : "number,title,body,labels"]);
+  }
+  private openChangeArgs(o: { head: string; base?: string; title: string; draft?: boolean }): string[] {
+    return ["pr", "create", "--repo", this.repo, ...(o.base ? ["--base", o.base] : []), "--head", o.head, "--title", o.title, "--body-file", "-", ...(o.draft ? ["--draft"] : [])];
+  }
+  async stepOpenChange(o: { head: string; base?: string; title: string; body: string; draft?: boolean }): Promise<number> {
+    branchRef(o.head);
+    if (o.base) branchRef(o.base);
+    return ghInherit(this.openChangeArgs(o), o.body);
+  }
+  async stepChecks(branch: string): Promise<number> {
+    return ghInherit(["pr", "checks", branchRef(branch), "--repo", this.repo, "--watch", "--fail-fast", "--interval", "20"]);
+  }
+  async stepCheckout(pr: ChangeId): Promise<number> {
+    return ghInherit(["pr", "checkout", changeRef(pr), "--repo", this.repo, "--force"]);
+  }
+  async stepMerge(branch: string): Promise<number> {
+    const ref = branchRef(branch);
+    return ghInherit(["pr", "merge", ref, "--repo", this.repo, "--squash", "--delete-branch"]);
+  }
   upsertStatusComment(issue: number, body: string, o: UpsertOptions): Promise<UpsertResult> {
     return github.upsertStatusComment(this.repo, issue, body, o);
   }
@@ -117,9 +310,12 @@ export class GitHubStore implements StoryStore {
   changeState(pr: number, timeoutMs?: number): Promise<ChangeState> {
     return github.pullState(this.repo, pr, timeoutMs);
   }
+  /** `--name=value`: a head, base or title that starts with "-" stays a value. The caller's runner starts gh. */
+  openChangeWith<R>(o: { head: string; base: string; title: string; body: string; draft?: boolean }, run: GhRunner<R>): Promise<R> {
+    return run(["pr", "create", `--repo=${this.repo}`, `--head=${o.head}`, `--base=${o.base}`, `--title=${o.title}`, "--body-file", "-", ...(o.draft ? ["--draft"] : [])], o.body);
+  }
   async openChange(o: { head: string; base?: string; title: string; body: string; draft?: boolean }, timeoutMs?: number): Promise<string> {
-    const args = ["pr", "create", "--repo", this.repo, ...(o.base ? ["--base", o.base] : []), "--head", o.head, "--title", o.title, "--body-file", "-", ...(o.draft ? ["--draft"] : [])];
-    const out = await gh(args, undefined, timeoutMs, o.body);
+    const out = await gh(this.openChangeArgs(o), undefined, timeoutMs, o.body);
     const url = out.split("\n").map((l) => l.trim()).filter(Boolean).at(-1);
     if (!url || !/^https:\/\/\S+\/pull\/\d+$/.test(url)) throw new Error("GitHub did not report the new pull request");
     return url;
@@ -164,5 +360,42 @@ export class GitHubStore implements StoryStore {
   async reviewComments(pr: number, timeoutMs?: number): Promise<ReviewComment[]> {
     number(pr, "a pull request number");
     return ghJson<ReviewComment[]>(["api", `repos/${this.repo}/pulls/${pr}/comments`], undefined, timeoutMs);
+  }
+  async openChanges(limit: number, timeoutMs?: number): Promise<OpenChange[]> {
+    return ghJson<OpenChange[]>(
+      ["pr", "list", "--repo", this.repo, "--state", "open", "--limit", String(listSize(limit)), "--json", "number,headRefName,state,url,title,createdAt"],
+      undefined,
+      timeoutMs,
+    );
+  }
+  async changeActivity(pr: number, timeoutMs?: number): Promise<ChangeActivity> {
+    number(pr, "a pull request number");
+    return ghJson<ChangeActivity>(["pr", "view", String(pr), "--repo", this.repo, "--json", "comments,reviews,commits"], undefined, timeoutMs);
+  }
+
+  sync(run: GhCall): SyncStories {
+    const repo = this.repo;
+    return {
+      get(n) {
+        number(n, "an issue number");
+        let out: string;
+        try { out = run(["issue", "view", String(n), "--repo", repo, "--json", "number,title,state,body"]); }
+        catch (e) { if (isNotFound(e)) return undefined; throw e; }
+        let story: SyncStory | undefined;
+        try { story = toStory(JSON.parse(out)); } catch { story = undefined; }
+        if (!story || story.number !== n) throw new Error(`Unexpected answer from gh for #${n}.`);
+        return story;
+      },
+      list(limit) {
+        const out = run(["issue", "list", "--repo", repo, "--state", "all", "--limit", String(listSize(limit)), "--json", "number,title,state,body"]);
+        const parsed: unknown = JSON.parse(out);
+        if (!Array.isArray(parsed)) throw new Error("Unexpected answer from gh for the issue list.");
+        return parsed.map(toStory).filter((i): i is SyncStory => !!i);
+      },
+      setBody(n, body) {
+        number(n, "an issue number");
+        run(["issue", "edit", String(n), "--repo", repo, "--body-file", "-"], body);
+      },
+    };
   }
 }

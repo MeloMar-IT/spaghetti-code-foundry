@@ -496,6 +496,35 @@ describe("renderMyRun", () => {
     expect(one(form(), "p", { role: "alert" }).textContent).toBe("");
   });
 
+  describe("an admin's summary", () => {
+    const adminAsking = (over: any = {}) => summaryOf({
+      status: "stopped", reason: 'stopped at step "send_back"', history: [{ id: "send_back", output: "Q1?" }], canAnswer: true, next: rec("planner_questions", "r1", { answerHere: true }), ...over,
+    });
+
+    it("shows the answer form from the run and from a stream update", async () => {
+      state.summary = adminAsking();
+      await open();
+      expect(form().hidden).toBe(false);
+      expect(main.textContent).toContain("Q1?");
+      state.summary = summaryOf({ status: "running" });
+      await open();
+      expect(form().hidden).toBe(true);
+      emit("update", { summary: adminAsking() });
+      expect(form().hidden).toBe(false);
+    });
+
+    it("does not bring the form back from an older summary after sending", async () => {
+      const before = adminAsking();
+      state.summary = before;
+      await open();
+      state.summary = summaryOf({ status: "running", answers: [{ at: "a", text: "use B" }] });
+      await send("use B");
+      expect(form().hidden).toBe(true);
+      emit("update", { summary: before });
+      expect(form().hidden).toBe(true);
+    });
+  });
+
   it("ignores an older update after the answer was sent", async () => {
     const before = asking();
     state.summary = before;

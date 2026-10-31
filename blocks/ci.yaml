@@ -11,7 +11,7 @@ steps:
     run: |
       branch=$(git branch --show-current)
       sleep "${FACTORY_VAR_CI_SETTLE_SEC:-15}"   # let CI register the new commit
-      out=$(gh pr checks "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --watch --fail-fast --interval 20 2>&1); code=$?
+      out=$(node "$FACTORY_TOOLS/story" pr-checks "$branch" 2>&1); code=$?
       printf '%s\n' "$out"
       if printf '%s' "$out" | grep -qi "no checks reported"; then echo "no CI checks configured"; exit 0; fi
       if [ "$code" -ne 0 ]; then

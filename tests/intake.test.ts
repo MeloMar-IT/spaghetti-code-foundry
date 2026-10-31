@@ -39,8 +39,8 @@ describe("github-auto (triage routes)", () => {
     expect(s.status).toBe("succeeded");
     expect(ids(s).at(-1)).toBe("split_ticket");
     const log = gh.ghLog();
-    expect(log).toContain("created issue: issue create --repo acme/app --title Add model --body Part of #7");
-    expect(log).toContain("--label claude-factory");
+    // The text comes on stdin (--body-file -), not on the command line.
+    expect(log).toContain(`created issue: issue create --repo acme/app --title Add model --body-file - --label claude-factory\nPart of #7\n\nCreate the User model.\n\n<!-- claude-factory run=${s.runId} -->`);
     expect(log).toContain("🤖 **Spaghetti Code Foundry** split this ticket into smaller ones:");
     expect(log).toContain("They are labelled `claude-factory` and will be picked up automatically.");
     expect(log).toContain(`<!-- claude-factory run=${s.runId} -->`);

@@ -1,6 +1,7 @@
 import { auditAction, type EventAction } from "../auth/audit.js";
 import type { User } from "../auth/users.js";
-import { canWrite, commentOnIssue, commentsAfter, ghActsAsApp, ghLogin, isBot, issueComments, mayWrite, repoPermission, setLabels, withGhEnv } from "../github.js";
+import { canWrite, commentsAfter, ghActsAsApp, ghLogin, isBot, mayWrite, repoPermission, withGhEnv } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import { labelNames } from "../queue/watcher.js";
 import { gateRun } from "../run-gate.js";
 import { commentDigest, composeComment, findComment, parseProposal, parseQuestions, visibleText, type ComposeAction, type Proposal, type Question } from "../turn-actions.js";
@@ -89,11 +90,11 @@ async function foundryComment(repo: string, issue: number, kind: string, runId?:
   try {
     if (ghActsAsApp()) {
       // An app has no user to ask for: gh says which comments the app wrote itself.
-      const list = await issueComments(repo, issue, GH_TIMEOUT_MS);
+      const list = await storeFor(repo).comments(issue, GH_TIMEOUT_MS);
       comments = { login: undefined, list, own: list.filter((c) => c.viewerDidAuthor === true) };
     } else {
       const login = await ghLogin(GH_TIMEOUT_MS);
-      const list = await issueComments(repo, issue, GH_TIMEOUT_MS);
+      const list = await storeFor(repo).comments(issue, GH_TIMEOUT_MS);
       comments = { login, list, own: list };
     }
   } catch (e) {
@@ -215,7 +216,7 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
       const hintedBefore = g.hinted.get(item.key)?.since === item.stamp;
       if (body && !(req.action === "retry_hint" && hintedBefore)) {
         try {
-          await commentOnIssue(repo, issue, body, GH_TIMEOUT_MS);
+          await storeFor(repo).comment(issue, body, GH_TIMEOUT_MS);
         } catch (e) {
           throw unreachable("could not post on the issue", e);
         }
@@ -223,7 +224,7 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
       }
       if (req.action === "retry" || req.action === "retry_hint") {
         try {
-          await setLabels(repo, issue, undefined, [labelNames(tracked.watcher).failed], GH_TIMEOUT_MS);
+          await storeFor(repo).setLabels(issue,undefined, [labelNames(tracked.watcher).failed], GH_TIMEOUT_MS);
         } catch (e) {
           const first = (e as Error).message.split("\n")[0];
           throw g.hinted.get(item.key)?.since === item.stamp

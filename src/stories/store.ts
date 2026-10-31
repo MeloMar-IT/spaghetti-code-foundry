@@ -13,6 +13,31 @@ export interface ReviewComment { body: string; created_at: string; user?: { logi
 /** A pull request by number, or its https address. */
 export type ChangeId = number | string;
 
+/** Runs gh with these arguments (and the text on stdin) and returns its output. It throws when gh fails; the error's `stderr`, or its `message`, carries gh's text. */
+export type GhCall = (args: string[], input?: string) => string;
+
+/** Runs one gh call for a caller that owns its process: its exact environment, sign-in and limits. The text goes on stdin. */
+export type GhRunner<R> = (args: string[], stdin: string) => Promise<R>;
+/** A story as the synchronous part sees it. `state` is upper case. */
+export interface SyncStory { number: number; title: string; state: string; body: string }
+/** The synchronous view of the stories, bound to the runner of the caller (for tools that run gh themselves). */
+export interface SyncStories {
+  /** undefined only for a confirmed not-found; a malformed answer or another gh error throws. */
+  get(issue: number): SyncStory | undefined;
+  /** Malformed entries are dropped; an answer that is not a list throws. */
+  list(limit: number): SyncStory[];
+  /** The body goes on stdin. */
+  setBody(issue: number, body: string): void;
+}
+/** An open pull request as the watcher lists it. */
+export interface OpenChange { number: number; headRefName: string; state: string; url?: string; title?: string; createdAt?: string }
+/** The conversation of a pull request. */
+export interface ChangeActivity {
+  comments: Comment[];
+  reviews: { author: { login: string }; body: string; state: string; submittedAt: string }[];
+  commits: { committedDate: string }[];
+}
+
 /**
  * Everything the Foundry does with the stories (issues) of one repository and with their change requests (pull requests).
  * A store is bound to one repository. It keeps no gh session: each call runs in the session of the caller (`withGhEnv`).
@@ -22,6 +47,12 @@ export interface StoryStore {
   // stories
   listByLabel(label: string, timeoutMs?: number): Promise<RestIssue[]>;
   listOpenWithLabel(label: string, o: { limit: number; timeoutMs?: number }): Promise<Issue[]>;
+  listOpenWithAnyLabel(label: string, anyOf: string[], o: { limit: number; timeoutMs?: number }): Promise<Issue[]>;
+  listClosedWithAnyLabel(anyOf: string[], o: { limit: number; timeoutMs?: number }): Promise<Issue[]>;
+  listWithBodies(limit: number, timeoutMs?: number): Promise<Issue[]>;
+  isClosed(issue: number, timeoutMs?: number): Promise<boolean>;
+  stateAndLabels(issue: number, timeoutMs?: number): Promise<{ state: string; labels: { name: string }[] }>;
+  searchOverrules(o: { since: string; limit: number; timeoutMs?: number }): Promise<{ number: number; updatedAt?: string }[]>;
   listOpenByLabelPages(label: string, o: { fromPage: number; pages: number; timeoutMs?: number }): Promise<{ pages: Map<number, RestIssue[]>; next: number }>;
   listOpen(o: { pages: number; timeoutMs?: number }): Promise<{ issues: RestIssue[]; cut: boolean }>;
   listAll(o: { pages: number; timeoutMs?: number }): Promise<{ issues: RestIssue[]; cut: boolean }>;
@@ -38,6 +69,34 @@ export interface StoryStore {
   labels(timeoutMs?: number): Promise<string[]>;
   comments(issue: number, timeoutMs?: number): Promise<Comment[]>;
   comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined>;
+  // What flow steps save and print (tools/story): the text of gh, unchanged. A later store makes the same text itself.
+  stepIssue(issue: number, timeoutMs?: number): Promise<string>;
+  stepBody(issue: number, timeoutMs?: number): Promise<string>;
+  stepText(issue: number, timeoutMs?: number): Promise<string>;
+  stepComments(issue: number, timeoutMs?: number): Promise<string>;
+  stepFoundryComments(issue: number, timeoutMs?: number): Promise<string>;
+  stepComment(issue: number, body: string, timeoutMs?: number): Promise<string>;
+  stepCreate(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<string>;
+  // Those returning a number run gh with the stdout and stderr of this process and return its exit status (a shell's: 128 + the signal).
+  stepTitle(issue: number, timeoutMs?: number): Promise<string>;
+  stepLabels(issue: number, timeoutMs?: number): Promise<string>;
+  stepCommentsAndLabels(issue: number, timeoutMs?: number): Promise<string>;
+  stepPlainText(issue: number, timeoutMs?: number): Promise<string>;
+  stepAuthors(issue: number, timeoutMs?: number): Promise<string>;
+  stepClose(issue: number, reason: "completed" | "not planned", timeoutMs?: number): Promise<string>;
+  stepFindChange(branch: string, timeoutMs?: number): Promise<string>;
+  stepReviewDecision(branch: string, timeoutMs?: number): Promise<string>;
+  stepListChanges(o: { head: string; base: string }, timeoutMs?: number): Promise<string>;
+  stepCommentOnChange(pr: ChangeId, body: string, timeoutMs?: number): Promise<string>;
+  stepSetReady(pr: ChangeId, ready: boolean, timeoutMs?: number): Promise<string>;
+  stepChangeText(pr: number, timeoutMs?: number): Promise<string>;
+  stepReviewComments(pr: number, timeoutMs?: number): Promise<string>;
+  stepReviews(pr: number, timeoutMs?: number): Promise<string>;
+  stepOpenStories(o: { limit: number; comments: boolean }): Promise<number>;
+  stepOpenChange(o: { head: string; base?: string; title: string; body: string; draft?: boolean }): Promise<number>;
+  stepChecks(branch: string): Promise<number>;
+  stepCheckout(pr: ChangeId): Promise<number>;
+  stepMerge(branch: string): Promise<number>;
   upsertStatusComment(issue: number, body: string, o: UpsertOptions): Promise<UpsertResult>;
   close(issue: number, reason: "completed" | "not_planned", timeoutMs?: number): Promise<RestIssue>;
   reopen(issue: number, timeoutMs?: number): Promise<RestIssue>;
@@ -45,6 +104,7 @@ export interface StoryStore {
   findChange(branch: string, timeoutMs?: number): Promise<ChangeRef | undefined>;
   changeState(pr: number, timeoutMs?: number): Promise<ChangeState>;
   openChange(o: { head: string; base?: string; title: string; body: string; draft?: boolean }, timeoutMs?: number): Promise<string>;
+  openChangeWith<R>(o: { head: string; base: string; title: string; body: string; draft?: boolean }, run: GhRunner<R>): Promise<R>;
   updateChange(pr: ChangeId, o: { title?: string; body: string }, timeoutMs?: number): Promise<void>;
   mergeChange(pr: ChangeId, timeoutMs?: number): Promise<void>;
   closeChange(pr: ChangeId, timeoutMs?: number): Promise<void>;
@@ -53,6 +113,10 @@ export interface StoryStore {
   mergedChanges(limit: number, timeoutMs?: number): Promise<MergedChange[]>;
   checks(sha: string, timeoutMs?: number): Promise<CheckRun[]>;
   reviewComments(pr: number, timeoutMs?: number): Promise<ReviewComment[]>;
+  openChanges(limit: number, timeoutMs?: number): Promise<OpenChange[]>;
+  changeActivity(pr: number, timeoutMs?: number): Promise<ChangeActivity>;
+  // synchronous part
+  sync(run: GhCall): SyncStories;
 }
 
 const stores = new Map<string, StoryStore>();

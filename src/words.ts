@@ -114,6 +114,7 @@ const GLOSSARY: Record<NextKind, Words> = {
   watcher_stale: { status: "watcher silent", help: "The watcher has not finished a check for a long time, so its issues do not move. Press Check now on the Watchers page." },
   closed_elsewhere: { status: "closed on GitHub, run still busy", help: "The issue was closed on GitHub, but its run is still working and nothing was changed. Cancel the run on its page if the work is no longer wanted." },
   issue_closed: { status: "issue closed", help: "The issue is closed on GitHub, so nothing is left to do for this run. Reopen the issue if you still want the work." },
+  chore_late: { status: "schedule run late", help: "A daily schedule run such as the release has not started an hour after its time. The line says why, and it goes away when the run starts." },
   restart: { status: "restarting soon", help: "The server waits to restart and starts nothing new until then. Nothing to do — it restarts when the active runs are done." },
   superseded: { status: "replaced by a newer run", help: "A newer run took over the same work. Nothing to do with this run." },
   done: { status: "done", help: "The work is finished. Nothing to do." },

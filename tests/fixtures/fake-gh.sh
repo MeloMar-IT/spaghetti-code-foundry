@@ -44,6 +44,7 @@ if [ -n "$FAKE_GH_FAIL" ] && [ "$FAKE_GH_FAIL" = "$1 $2" ]; then printf '%s\n' "
 # $FAKE_GH_VIEW_ISSUES: the list "issue view <n> --json number,title,state,body[,labels]" answers from instead of $FAKE_GH_ISSUES (what the issue looks like now).
 # $FAKE_GH_FAIL_EDIT_AFTER=<n>: the issue body edits after the first n fail with $FAKE_GH_FAIL_TEXT (default "boom"); counted in $FAKE_GH_LOG.edits.
 # $FAKE_GH_FAIL_PR_READY=1:"pr ready" (also with --undo) fails.
+# $FAKE_GH_CI_FAILS=<n>: the first n "pr checks" calls fail with exit code $FAKE_GH_CI_EXIT (default 1); $FAKE_GH_CI_SIGNAL=<name> (TERM…): "pr checks" kills itself with that signal.
 if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s\n' "${FAKE_GH_FAIL_TEXT:-boom}" >&2; exit 1 ;; esac; fi
 # $FAKE_GH_LABEL_FILTER=1: a plain "issue list --label X" answers only the issues of $FAKE_GH_ISSUES that carry label X (else all of them).
 # $FAKE_GH_ISSUES_BY_REPO (JSON {"owner/name": [issues]}): the issue lists and issue states are those of the --repo value.
@@ -372,8 +373,9 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:(fs.existsSync(c
       *) exit 1 ;;
     esac ;;
   "pr checks")
+    [ -n "$FAKE_GH_CI_SIGNAL" ] && kill -s "$FAKE_GH_CI_SIGNAL" $$
     n=$(($(cat "$FAKE_GH_LOG.checks" 2>/dev/null || echo 0) + 1)); echo "$n" > "$FAKE_GH_LOG.checks"
-    if [ -n "$FAKE_GH_CI_FAILS" ] && [ "$n" -le "$FAKE_GH_CI_FAILS" ]; then echo "test  fail  1m"; exit 1; fi
+    if [ -n "$FAKE_GH_CI_FAILS" ] && [ "$n" -le "$FAKE_GH_CI_FAILS" ]; then echo "test  fail  1m"; exit "${FAKE_GH_CI_EXIT:-1}"; fi
     echo "test  pass  1m" ;;
   "run list")    case "$*" in *workflowName*) printf '%s' "${FAKE_GH_RUNS:-[]}" ;; *) echo 123 ;; esac ;;
   "run view")    echo "FAIL src/app.test.js: expected 2, got 3" ;;

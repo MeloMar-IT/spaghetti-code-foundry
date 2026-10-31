@@ -101,7 +101,7 @@ describe("the architect steps cannot write to the repository or to GitHub", { ti
       }
       for (const s of flow.steps.filter((x: any) => x.type === "shell")) {
         const cmd = String(s.run ?? s.command ?? "");
-        expect(cmd, `${name}/${s.id}`).not.toMatch(/git (push|commit|add|apply|am|merge|rebase|reset|checkout)|gh (issue (create|edit|close|comment|reopen|delete|lock|pin|transfer)|pr|label|release) |gh api .*(-X|--method)|tee |>>?\s*repo\//);
+        expect(cmd, `${name}/${s.id}`).not.toMatch(/git (push|commit|add|apply|am|merge|rebase|reset|checkout)|gh (issue (create|edit|close|comment|reopen|delete|lock|pin|transfer)|pr|label|release) |gh api .*(-X|--method)|story" (comment|create|close|label|pr-)|tee|>>?\s*repo\//);
       }
     }
   });

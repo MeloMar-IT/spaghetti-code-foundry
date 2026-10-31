@@ -1,5 +1,5 @@
 import type { RunSummary } from "../engine/state.js";
-import { ghJson } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import { buildSince, isReleaseBody, MAX_REPOS, MAX_RUNS, MERGED_LIMIT, parseSince, type MergedRead, type SinceSummary } from "../since.js";
 import { runOrigin } from "../your-turn.js";
 import { HttpError, send } from "./http.js";
@@ -18,9 +18,7 @@ const cache = new Map<string, { at: number; read: Promise<MergedRead> }>();
 const failed = (repo: string): MergedRead => ({ repo, ok: false, full: false, prs: [] });
 
 async function readMerged(repo: string, timeoutMs: number): Promise<MergedRead> {
-  const raw = await ghJson<{ number?: unknown; title?: unknown; url?: unknown; mergedAt?: unknown; baseRefName?: unknown; body?: unknown }[]>(
-    ["pr", "list", "--repo", repo, "--state", "merged", "--limit", String(MERGED_LIMIT), "--json", "number,title,url,mergedAt,baseRefName,body"],
-    undefined, timeoutMs);
+  const raw = await storeFor(repo).mergedChanges(MERGED_LIMIT, timeoutMs);
   const prs: MergedRead["prs"] = [];
   for (const p of raw) {
     if (typeof p.number !== "number" || typeof p.title !== "string" || typeof p.url !== "string"
