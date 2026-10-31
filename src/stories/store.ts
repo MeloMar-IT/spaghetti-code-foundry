@@ -28,6 +28,22 @@ export interface SyncStories {
   list(limit: number): SyncStory[];
   /** The body goes on stdin. */
   setBody(issue: number, body: string): void;
+  // The rest return the text of gh, unchanged: the caller parses it and keeps its own handling of a bad answer.
+  /** `fields` is a comma list of JSON field names. */
+  view(issue: number, fields: string): string;
+  openList(limit: number, fields: string): string;
+  create(o: { title: string; body: string; labels: string[] }): string;
+  comment(issue: number, body: string): string;
+  /** Removals come first. */
+  setLabels(issue: number, add: string | undefined, remove: string[]): void;
+  close(issue: number, reason: "completed" | "not planned"): void;
+  /** The login gh acts as. */
+  viewer(): string;
+  listChanges(o: { state: "open" | "all"; limit: number; fields: string; head?: string }): string;
+  viewChange(pr: ChangeId, fields: string): string;
+  openChange(o: { head: string; base?: string; title: string; body: string; draft?: boolean }): string;
+  updateChange(pr: ChangeId, o: { title?: string; body: string }): void;
+  requestReview(pr: ChangeId, who: string): void;
 }
 /** An open pull request as the watcher lists it. */
 export interface OpenChange { number: number; headRefName: string; state: string; url?: string; title?: string; createdAt?: string }
@@ -117,6 +133,8 @@ export interface StoryStore {
   changeActivity(pr: number, timeoutMs?: number): Promise<ChangeActivity>;
   // synchronous part
   sync(run: GhCall): SyncStories;
+  /** Reads one page of the stories and of the pull requests with the caller's runner; one failing does not stop the other. */
+  probeAccess<R>(run: GhRunner<R>): Promise<{ stories: PromiseSettledResult<R>; changes: PromiseSettledResult<R> }>;
 }
 
 const stores = new Map<string, StoryStore>();

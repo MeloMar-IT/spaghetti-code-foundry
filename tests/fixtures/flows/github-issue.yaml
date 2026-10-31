@@ -221,7 +221,7 @@ steps:
     repo_access: true
     run: |
       branch=$(git branch --show-current)
-      pr=$(gh pr view "$branch" --repo "$FACTORY_VAR_GITHUB_REPO" --json url -q .url 2>/dev/null || true)
+      pr=$(node "$FACTORY_TOOLS/story" pr-find "$branch" 2>/dev/null || true)
       if [ -n "$pr" ]; then first="$FACTORY_FIRST_MERGE_PR"; else first="$FACTORY_FIRST_OPEN_PR"; fi
       {
         echo "$first"; echo

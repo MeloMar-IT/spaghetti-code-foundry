@@ -35,6 +35,13 @@ const issueArg = process.env.FACTORY_VAR_ISSUE;
 // The open list carries whole bodies: 1000 issues can be far past Node's default 1 MiB buffer, so it is raised.
 const MAX_BUFFER = 256 * 1024 * 1024;
 const gh = (args, input) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", input, maxBuffer: MAX_BUFFER, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] }).trim();
+// Every story call goes through the story store (dist/stories/store.js), on this runner and its limits.
+let storeFor;
+try {
+  ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+} catch (e) {
+  fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+}
 
 function fail(msg) {
   console.error(`split-family: ${msg}`);
@@ -44,6 +51,7 @@ function fail(msg) {
 if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
 if (!/^\d+$/.test(issueArg ?? "")) fail("set var issue to the issue number");
 const self = Number(issueArg);
+const stories = storeFor(repo).sync(gh);
 const mode = process.argv[2];
 if (mode !== undefined && mode !== "close-parts") fail("usage: split-family [close-parts]");
 
@@ -82,7 +90,7 @@ const LIST_FIELDS = "number,title,state,body,labels";
 
 let openList;
 try {
-  openList = JSON.parse(gh(["issue", "list", "--repo", repo, "--state", "open", "--limit", String(LIMIT), "--json", LIST_FIELDS]));
+  openList = JSON.parse(stories.openList(LIMIT, LIST_FIELDS));
 } catch (e) {
   fail(`could not read the open issues of ${repo}: ${String(e.stderr || e.message).trim().split("\n")[0]}`);
 }
@@ -104,7 +112,7 @@ function node(n) {
   if (open.has(n)) return open.get(n);
   if (!nodes.has(n)) {
     try {
-      const i = JSON.parse(gh(["issue", "view", String(n), "--repo", repo, "--json", FIELDS]));
+      const i = JSON.parse(stories.view(n, FIELDS));
       nodes.set(n, i && typeof i === "object" ? i : undefined);
     } catch {
       nodes.set(n, undefined);
@@ -171,7 +179,7 @@ function blocker(n, labels, prs) {
   return undefined;
 }
 
-const freshIssue = (n) => JSON.parse(gh(["issue", "view", String(n), "--repo", repo, "--json", LIST_FIELDS]));
+const freshIssue = (n) => JSON.parse(stories.view(n, LIST_FIELDS));
 
 // Reads the body again, changes it, writes it only when it changed and reads it back (as writeSafely in src/queue/waits-for.ts).
 function editBody(n, change, done) {
@@ -180,7 +188,7 @@ function editBody(n, change, done) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const next = change(body);
     if (next === body) return;
-    gh(["issue", "edit", String(n), "--repo", repo, "--body-file", "-"], next);
+    stories.setBody(n, next);
     body = String(freshIssue(n).body ?? "");
     if (done(body)) return;
   }
@@ -201,7 +209,7 @@ async function closeParts() {
   // A read error counts as "no earlier comment".
   let comments = [];
   try {
-    comments = JSON.parse(gh(["issue", "view", String(self), "--repo", repo, "--json", "comments,labels"])).comments ?? [];
+    comments = JSON.parse(stories.view(self, "comments,labels")).comments ?? [];
   } catch {
     comments = [];
   }
@@ -223,7 +231,7 @@ async function closeParts() {
 
   let prs;
   try {
-    const list = JSON.parse(gh(["pr", "list", "--repo", repo, "--state", "open", "--limit", String(LIMIT), "--json", "number,title,body,headRefName"]));
+    const list = JSON.parse(stories.listChanges({ state: "open", limit: LIMIT, fields: "number,title,body,headRefName" }));
     if (Array.isArray(list) && list.length < LIMIT) prs = list;
   } catch {
     prs = undefined;
@@ -238,7 +246,7 @@ async function closeParts() {
   // sections. Throws on the first failure, so the caller keeps the part pending.
   const cleanUp = (n) => {
     const remove = labelNames(freshIssue(n)).filter((l) => /^factory[:_]/i.test(l) || (trigger && l === trigger));
-    if (remove.length) gh(["issue", "edit", String(n), "--repo", repo, ...remove.flatMap((l) => ["--remove-label", l])]);
+    if (remove.length) stories.setLabels(n, undefined, remove);
     for (const d of openIssues) {
       if (own.has(d.number) || gone.has(d.number) || d.number === n) continue;
       if (!foundryDependsOn(String(d.body ?? "")).includes(n)) continue;
@@ -291,8 +299,8 @@ async function closeParts() {
           "",
           `<!-- claude-factory part-closed of=${self} run=${runId} -->`,
         ].join("\n");
-        gh(["issue", "comment", String(n), "--repo", repo, "--body-file", "-"], partComment);
-        gh(["issue", "close", String(n), "--repo", repo, "--reason", "not planned"]);
+        stories.comment(n, partComment);
+        stories.close(n, "not planned");
       } catch (e) {
         reason = oneLine(e);
       }
@@ -328,7 +336,7 @@ async function closeParts() {
   ];
   const comment = [...(first ? [first, ""] : []), ...lines].join("\n");
   try {
-    gh(["issue", "comment", String(self), "--repo", repo, "--body-file", "-"], comment);
+    stories.comment(self, comment);
   } catch (e) {
     console.log(`could not comment on #${self}: ${oneLine(e)}`);
   }

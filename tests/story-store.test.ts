@@ -555,4 +555,101 @@ describe("sync(): the synchronous part runs the caller's GhCall", () => {
     expect(() => stories.list(5000)).toThrow();
     expect(calls).toEqual([]);
   });
+
+  it("the text methods send these arguments and return gh's text unchanged", () => {
+    const { calls, stories } = recorder(" out\n");
+    expect(stories.view(4, "comments,labels")).toBe(" out\n");
+    expect(stories.openList(300, "number,title")).toBe(" out\n");
+    expect(stories.viewer()).toBe(" out\n");
+    expect(stories.listChanges({ state: "open", limit: 20, head: "feat/x", fields: "url,state" })).toBe(" out\n");
+    expect(stories.listChanges({ state: "all", limit: 300, fields: "number" })).toBe(" out\n");
+    expect(stories.viewChange("https://github.com/a/b/pull/7", "title,body")).toBe(" out\n");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["issue", "view", "4", "--repo", R, "--json", "comments,labels"],
+      ["issue", "list", "--repo", R, "--state", "open", "--limit", "300", "--json", "number,title"],
+      ["api", "user", "--jq", ".login"],
+      ["pr", "list", "--repo", R, "--head", "feat/x", "--state", "open", "--limit", "20", "--json", "url,state"],
+      ["pr", "list", "--repo", R, "--state", "all", "--limit", "300", "--json", "number"],
+      ["pr", "view", "https://github.com/a/b/pull/7", "--repo", R, "--json", "title,body"],
+    ]);
+  });
+
+  it("bodies go on stdin, never in the arguments", () => {
+    const { calls, stories } = recorder("https://github.com/a/b/issues/9\n");
+    expect(stories.create({ title: "T", body: "b $(x)", labels: ["bug", "x"] })).toBe("https://github.com/a/b/issues/9\n");
+    stories.comment(3, "c");
+    stories.openChange({ head: "h", base: "main", title: "T", body: "pb", draft: true });
+    stories.updateChange(8, { title: "T2", body: "nb" });
+    stories.updateChange(8, { body: "only" });
+    expect(calls).toEqual([
+      { args: ["issue", "create", "--repo", R, "--title", "T", "--body-file", "-", "--label", "bug", "--label", "x"], input: "b $(x)" },
+      { args: ["issue", "comment", "3", "--repo", R, "--body-file", "-"], input: "c" },
+      { args: ["pr", "create", "--repo", R, "--base", "main", "--head", "h", "--title", "T", "--body-file", "-", "--draft"], input: "pb" },
+      { args: ["pr", "edit", "8", "--repo", R, "--title", "T2", "--body-file", "-"], input: "nb" },
+      { args: ["pr", "edit", "8", "--repo", R, "--body-file", "-"], input: "only" },
+    ]);
+  });
+
+  it("setLabels puts the removals first and allows only an add or only removals", () => {
+    const { calls, stories } = recorder("");
+    stories.setLabels(723, "new", ["a", "b"]);
+    stories.setLabels(723, undefined, ["a", "b"]);
+    stories.setLabels(723, "new", []);
+    expect(calls.map((c) => c.args)).toEqual([
+      ["issue", "edit", "723", "--repo", R, "--remove-label", "a", "--remove-label", "b", "--add-label", "new"],
+      ["issue", "edit", "723", "--repo", R, "--remove-label", "a", "--remove-label", "b"],
+      ["issue", "edit", "723", "--repo", R, "--add-label", "new"],
+    ]);
+  });
+
+  it("close and requestReview send these arguments", () => {
+    const { calls, stories } = recorder("");
+    stories.close(5, "not planned");
+    stories.close(5, "completed");
+    stories.requestReview(9, "octocat");
+    expect(calls.map((c) => c.args)).toEqual([
+      ["issue", "close", "5", "--repo", R, "--reason", "not planned"],
+      ["issue", "close", "5", "--repo", R, "--reason", "completed"],
+      ["pr", "edit", "9", "--repo", R, "--add-reviewer", "octocat"],
+    ]);
+  });
+
+  it("view and openList pass a gh error through", () => {
+    const { stories } = recorder(gone("rate limit"));
+    expect(() => stories.view(3, "title")).toThrow("gh failed");
+    expect(() => stories.openList(10, "title")).toThrow("gh failed");
+  });
+
+  it("refuses input that could become an option before gh runs", () => {
+    const { calls, stories } = recorder("");
+    expect(() => stories.view(0, "title")).toThrow();
+    expect(() => stories.openList(1001, "title")).toThrow();
+    expect(() => stories.view(1, "--x")).toThrow();
+    expect(() => stories.view(1, "a b")).toThrow();
+    expect(() => stories.listChanges({ state: "open", limit: 5, head: "-x", fields: "url" })).toThrow();
+    expect(() => stories.viewChange("https://github.com/a/b/issues/7", "url")).toThrow();
+    expect(() => stories.viewChange("-1", "url")).toThrow();
+    expect(() => stories.requestReview(1, "-x")).toThrow();
+    expect(() => stories.requestReview(1, "a b")).toThrow();
+    expect(() => stories.openChange({ head: "-h", title: "T", body: "b" })).toThrow();
+    expect(() => stories.close(1, "other" as never)).toThrow();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("probeAccess", () => {
+  it("sends both paths with the host and lets one failure stand beside the other", async () => {
+    const seen: { args: string[]; stdin: string }[] = [];
+    const out = await store.probeAccess(async (args, stdin) => {
+      seen.push({ args, stdin });
+      if (args[1]!.includes("/pulls")) throw new Error("no pulls");
+      return "ok";
+    });
+    expect(seen).toEqual([
+      { args: ["api", `repos/${R}/issues?per_page=1`, "--hostname", "github.com"], stdin: "" },
+      { args: ["api", `repos/${R}/pulls?per_page=1&state=all`, "--hostname", "github.com"], stdin: "" },
+    ]);
+    expect(out.stories).toEqual({ status: "fulfilled", value: "ok" });
+    expect(out.changes.status).toBe("rejected");
+  });
 });
