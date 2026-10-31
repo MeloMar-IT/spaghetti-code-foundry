@@ -4,8 +4,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { adoptRuns } from "../auth/run-owner.js";
 import { writeAudit } from "../auth/audit.js";
 import {
-  changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, redeemPasswordLink, startSession, UserError, type User,
+  changePassword, checkPassword, createUser, checkSignIn, findUserByEmail, getUser, hasAdmin, redeemPasswordLink, setView, startSession, UserError, type User,
 } from "../auth/users.js";
+import { isView, viewOf, viewsFor } from "../auth/views.js";
 import { SESSION_TTL_MS, csrfToken, findSession, revokeSession, sessionId } from "../auth/sessions.js";
 import { StoreError } from "../auth/store.js";
 import { homeMoved } from "../home.js";
@@ -104,7 +105,8 @@ function currentSession(ctx: ApiContext, req: IncomingMessage): Current | undefi
 }
 
 /** What the browser may know about the account: never the hash. */
-const publicFields = (u: User) => ({ id: u.id, name: u.name, email: u.email, role: u.role });
+const viewFields = (u: Pick<User, "role" | "view">) => ({ view: viewOf(u), views: viewsFor(u.role) });
+const publicFields = (u: User) => ({ id: u.id, name: u.name, email: u.email, role: u.role, ...viewFields(u) });
 const sessionBody = (c: Current) => ({ user: publicFields(c.user), csrfToken: csrfToken(c.token) });
 
 const sameToken = (a: string, b: string) => {
@@ -317,6 +319,26 @@ export async function authRoutes(ctx: ApiContext, req: IncomingMessage, res: Ser
   }
   return false;
 }
+
+/** GET and PUT /api/me/view: the account's own view. It changes what the display shows, never what the server allows. */
+export const meRoutes: Route = async (ctx, req, res, seg, method, user) => {
+  if (seg[0] !== "me" || seg[1] !== "view" || seg.length !== 2) return false;
+  if (method === "GET") return send(res, 200, viewFields(user)), true;
+  if (method !== "PUT") return false;
+  const body = await readJson(req);
+  const view = body.view;
+  if (!isView(view)) throw new HttpError(400, '"view" must be simple, advanced or admin');
+  if (!viewsFor(user.role).includes(view)) throw new HttpError(403, "this view is not open to your role");
+  await guarded(ctx, () => {
+    try {
+      send(res, 200, viewFields(setView(user.id, view)));
+    } catch (e) {
+      if (e instanceof UserError) throw new HttpError(e.code === "not-found" ? 404 : 403, e.message);
+      throw e;
+    }
+  });
+  return true;
+};
 
 /**
  * POST /api/password: the signed-in account changes its own password. The current password counts as a sign-in try

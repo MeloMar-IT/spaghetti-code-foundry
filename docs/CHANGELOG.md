@@ -4,6 +4,8 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- View switch in the top bar: Simple, Advanced and Admin (#595). New `GET/PUT /api/me/view`; the session answer has `view` and `views`. The choice is kept per account in `users.json` (new optional `view`; an older build rejects a file that has it, old files load unchanged). It changes only what the display shows, never what the server allows. An admin in Simple or Advanced stays on `/user/`; `/user/` sends an admin to `/` only in the Admin view.
+
 - `tests/watch-overrule-recover.test.ts` works on a busy machine: the check that is given up has 5 seconds, not 1, to reach the held label edit, and the cancelled-run case waits up to 15 seconds for it. Both failed three times in a row under load, which stopped every story at the baseline and held the self-update.
 - The coding turn (`implement`) of the issue flows has 60 minutes instead of 40. It runs the tests itself, and on a busy machine it waits for a test slot: about one run in ten ended on the time limit. Other steps keep the flow default. `tests/implement-time-limit.test.ts` covers it.
 - A feature run whose issue cannot be closed after the merge into develop no longer fails. The report step closes the issue before it posts its comment; when the close fails, the comment says "close it by hand" and the run succeeds, like a hotfix already did. Before, the close was the last command of the step, so a GitHub hiccup turned a finished, merged run into `Factory_ERROR`, and a retry started the story again. `tests/gitflow.test.ts` covers it.

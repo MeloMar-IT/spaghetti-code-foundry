@@ -10,6 +10,7 @@ import { checkAppReposFile, removeAppReposLocked } from "./app-repos.js";
 import { removeLimitsLocked } from "./limits.js";
 import { removeReposLocked, watchersRemovedDetail } from "./repos.js";
 import { addSessionLocked, removeSessionsLocked, sessionId } from "./sessions.js";
+import { ViewSchema, viewsFor, type View } from "./views.js";
 import { dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 
 export type UserErrorCode = "bad-name" | "bad-email" | "bad-password" | "email-taken" | "admin-exists" | "not-found" | "last-admin" | "bad-role" | "has-password" | "wrong-password" | "no-password" | "bad-limits";
@@ -114,6 +115,8 @@ const UserSchema = z
     lastSignIn: z.iso.datetime().nullable(),
     /** The id of a stop-work request the server has not handled yet. */
     stopWork: z.uuid().optional(),
+    /** The view the account chose; missing means the default of its role. */
+    view: ViewSchema.optional(),
   })
   .strict();
 
@@ -171,12 +174,14 @@ export interface NewUser {
   email: string;
   password: string;
   role?: "admin" | "user";
+  view?: View;
 }
 
 /** Hashes first (slow), then checks and writes under the lock. */
 export async function createUser(input: NewUser, opts: { onlyIfNoAdmin?: boolean; by?: string; bySelf?: boolean } = {}): Promise<User> {
   const name = checkName(input.name);
   const email = checkEmail(input.email);
+  if (input.view !== undefined && !viewsFor(input.role ?? "user").includes(input.view)) throw new UserError("bad-role", "this view is not open to this role");
   const passwordHash = await hashPassword(input.password);
   const user: User = {
     id: randomUUID(),
@@ -187,6 +192,7 @@ export async function createUser(input: NewUser, opts: { onlyIfNoAdmin?: boolean
     passwordHash,
     created: new Date().toISOString(),
     lastSignIn: null,
+    ...(input.view !== undefined ? { view: input.view } : {}),
   };
   return withAuthLock(() => {
     const file = read();
@@ -249,6 +255,14 @@ function change(
       writeJsonFile(usersPath(), { ...file, users: file.users.map((u, j) => (j === i ? r.next : u)) });
       return r.next;
     });
+  });
+}
+
+/** The account chooses its own view. Nothing is audited: it is a display preference. */
+export function setView(id: string, view: View): User {
+  return change(id, (u) => {
+    if (!viewsFor(u.role).includes(view)) throw new UserError("bad-role", "this view is not open to your role");
+    return u.view === view ? undefined : { next: { ...u, view } };
   });
 }
 

@@ -88,6 +88,8 @@ export const RULES: Rule[] = [
   r("POST", "your-turn/act", "no", "answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume"),
   r("GET", "clarity", "no", "how long items waited for you, and what Your turn missed"),
   r("POST", "password", "yes", "change your own password (the other sessions of the account end)"),
+  r("GET", "me/view", "yes", "your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced"),
+  r("PUT", "me/view", "yes", "choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows"),
   r("GET", "credentials", "yes", "your stored credentials"),
   r("POST", "credentials", "yes", "store a credential"),
   r("DELETE", "credentials/:id", "yes", "remove a credential"),

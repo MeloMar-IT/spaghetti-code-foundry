@@ -37,7 +37,7 @@ export const withAs = (url) => (viewAs ? `${url}${url.includes("?") ? "&" : "?"}
  * In a preview every other call is a GET with `as=`, and anything else throws before `fetch`.
  * A 403 there means the view has ended: the user display only makes calls the server allows a user, so no other 403 can happen.
  */
-async function req(method, url, body, stay = false, plain = false, extra = undefined) {
+async function req(method, url, body, stay = false, plain = false, extra = undefined, signal = undefined) {
   const preview = Boolean(viewAs) && !plain;
   if (preview && method !== "GET") throw Object.assign(new Error(PREVIEW_TEXT), { preview: true });
   if (preview && viewEnded) throw Object.assign(new Error(VIEW_ENDED_TEXT), { status: 403 });
@@ -45,7 +45,7 @@ async function req(method, url, body, stay = false, plain = false, extra = undef
   const headers = body ? { "content-type": "application/json" } : {};
   if (method !== "GET" && csrf) headers["x-csrf-token"] = csrf;
   if (extra) Object.assign(headers, extra);
-  const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined, signal });
   const data = await r.json().catch(() => ({}));
   const v = r.headers?.get?.("x-config-version");
   if (r.ok && v && data && typeof data === "object") configVersions.set(data, v);
@@ -61,6 +61,9 @@ async function req(method, url, body, stay = false, plain = false, extra = undef
 
 const enc = encodeURIComponent;
 
+/** How long a call about the view may take; a stalled server must not hold the page. */
+export const VIEW_TIMEOUT_MS = 10000;
+
 /** The audit filters as a query: only the ones that are set, in the order user, action, from, to. "" for none. */
 const auditQuery = (f = {}) => {
   const q = ["user", "action", "from", "to"].filter((k) => f[k]).map((k) => `${k}=${enc(f[k])}`).join("&");
@@ -72,6 +75,8 @@ export const api = {
   signIn: (email, password) => req("POST", "/api/session", { email, password }),
   setPassword: (token, password) => req("POST", "/api/set-password", { token, password }),
   changePassword: (current, password) => req("POST", "/api/password", { current, password }),
+  myView: () => req("GET", "/api/me/view", undefined, false, false, undefined, AbortSignal.timeout(VIEW_TIMEOUT_MS)),
+  setView: (view) => req("PUT", "/api/me/view", { view }, false, false, undefined, AbortSignal.timeout(VIEW_TIMEOUT_MS)),
   signOut: () => req("DELETE", "/api/session", undefined, false, true),
   startViewAs: (userId) => req("POST", "/api/admin/view-as", { userId }, false, true),
   stopViewAs: () => req("DELETE", "/api/admin/view-as", undefined, false, true),

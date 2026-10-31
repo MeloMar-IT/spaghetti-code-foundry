@@ -1,6 +1,6 @@
 import { initAsk } from "/ask.js";
 import { initContext } from "/context.js";
-import { enterDisplay, isNoHash, linkToken, userPage } from "/auth.js";
+import { enterDisplay, isAdmin, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
 import { resolve } from "/ia.js";
 import { parseFilter } from "/runs-filter.js";
@@ -16,12 +16,16 @@ import { initPalette } from "/palette.js";
 import { initShell, namePage, showPage } from "/shell.js";
 import { errorState, explainError } from "/states.js";
 import { beginView } from "/view-as.js";
+import { offerCard, offerFor, showViewNav, viewOf } from "/view-mode.js";
 
 const main = document.getElementById("main");
 let cleanup = null;
 let generation = 0;
 // Set after sign-in: an admin who opened /user/?as=<id> sees a read-only preview of that user.
 let readOnly = false;
+// The view in effect (Simple or Advanced here; Admin is the display at /), and whether the account is an admin outside a preview.
+let shownView = "advanced";
+let ownAdmin = false;
 // Nothing is drawn when the view has ended, or when it cannot be named: the card on the page says so.
 let stopped = false;
 // Stops the search dialog when the view ends.
@@ -46,6 +50,17 @@ async function route() {
   const mine = ++generation;
   let hash = location.hash;
   if (isNoHash(hash)) hash = "#/home";
+  // A page this view does not have: offer the view that has it. The address stays.
+  const offer = readOnly ? null : offerFor(shownView, me.role, hash);
+  if (offer) {
+    cleanup?.();
+    cleanup = null;
+    showPage("user", resolve(offer === "admin" ? "admin" : "user", hash));
+    const card = h("div", {});
+    mount(main, card);
+    offerCard(card, offer, shownView);
+    return;
+  }
   const page = userPage(hash);
   // A hash without a page here is never drawn: the address bar goes to the Runs list.
   if (page.hash !== location.hash) history.replaceState(null, "", page.hash);
@@ -64,7 +79,7 @@ async function route() {
   let done = null;
   try {
     if (page.section === "home") done = await renderHome(box, { readOnly });
-    else if (page.section === "start") done = await renderStart(box, { readOnly });
+    else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });
     else if (page.section === "epics" && page.id) done = await renderEpic(box, { id: page.id, admin: false, me, query: to.query, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "epics") done = await renderEpics(box, { admin: false, me, readOnly, query: to.query, go });
     else if (page.section === "refinement") done = await renderRefinement(box, { admin: false, id: page.id, readOnly, query: to.query, go });
@@ -81,7 +96,7 @@ async function route() {
   else cleanup = done;
 }
 
-// `as` is read before sign-in. An admin without it is sent to / (enterDisplay does not return); with it, the admin stays
+// `as` is read before sign-in. An admin in the Admin view without it is sent to / (enterDisplay does not return); with it, the admin stays
 // and gets the read-only preview. A user ignores it.
 const as = new URLSearchParams(location.search).get("as") || "";
 const me = await enterDisplay("user", { viewAs: as });
@@ -100,6 +115,9 @@ const view = beginView(as, me, {
   },
 });
 readOnly = view.readOnly;
+shownView = readOnly ? "advanced" : viewOf(me);
+ownAdmin = isAdmin(me) && !readOnly;
+if (!readOnly) showViewNav(shownView);
 stopped = !view.ready;
 if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: view.readOnly });
 if (view.ready) context = initContext("user", me, { readOnly, go: contextGo });

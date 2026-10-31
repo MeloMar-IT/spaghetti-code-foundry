@@ -189,7 +189,7 @@ describe("setup", () => {
     cookie = `scf_session_${s.port}=${m![2]}`;
     const body = (await r.json()) as { user: Record<string, unknown>; csrfToken: string };
     expect(Object.keys(body).sort()).toEqual(["csrfToken", "user"]);
-    expect(Object.keys(body.user).sort()).toEqual(["email", "id", "name", "role"]);
+    expect(Object.keys(body.user).sort()).toEqual(["email", "id", "name", "role", "view", "views"]);
     expect(body.user).toMatchObject({ name: "Ann", email: "ann@example.com", role: "admin" });
     expect(findSession(m![2])).toBeDefined();
   });
@@ -201,7 +201,7 @@ describe("setup", () => {
     const session = (await (await fetch(s.base + "/api/session", { headers: { cookie } })).json()) as Record<string, unknown>;
     expect(session.setupNeeded).toBe(false);
     expect(Object.keys(session).sort()).toEqual(["csrfToken", "setupNeeded", "user"]);
-    expect(Object.keys(session.user as object).sort()).toEqual(["email", "id", "name", "role"]);
+    expect(Object.keys(session.user as object).sort()).toEqual(["email", "id", "name", "role", "view", "views"]);
     expect((await get(s, "/api/session")).status).toBe(200);
     expect(await (await get(s, "/api/session")).json()).toEqual({ user: null, setupNeeded: false });
   });
@@ -237,7 +237,7 @@ describe("sign-in", () => {
     expect(r.status).toBe(200);
     const body = (await r.json()) as { user: object };
     expect(Object.keys(body).sort()).toEqual(["csrfToken", "user"]);
-    expect(Object.keys(body.user).sort()).toEqual(["email", "id", "name", "role"]);
+    expect(Object.keys(body.user).sort()).toEqual(["email", "id", "name", "role", "view", "views"]);
     expect(r.headers.getSetCookie()[0]).toMatch(/^scf_session_\d+=[A-Za-z0-9_-]{43}; HttpOnly; SameSite=Strict; Path=\/; Max-Age=604800$/);
   });
 
