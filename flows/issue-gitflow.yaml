@@ -971,6 +971,7 @@ steps:
     on_success: stop
   - id: implement
     type: claude
+    timeout_sec: 3600
     prompt: |-
       Implement GitHub issue below in this repository.
 
