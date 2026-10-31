@@ -141,6 +141,8 @@ in `src/github.ts`; the store reuses them.
   check runs, or the issue-state GraphQL). A file outside `src/stories/github-store.ts` and `src/github.ts`
   must be on the allowlist in that test. The allowlist can only shrink: a listed file with no story call
   left fails the test. Move a file to the store, then take it off the list.
+- **A caller that owns its process.** `openChangeWith` takes a runner: the store builds the `gh` arguments
+  and the broker starts the process, with its exact environment, pinned secrets and limits.
 - **Flow steps use `tools/story`.** The built-in blocks that read or write a run's story call
   `node "$FACTORY_TOOLS/story"` (#737) instead of `gh`. The tool loads `dist/stories/store.js`, so a
   step reaches the store through one helper, and bodies go through stdin, never a shell argument.

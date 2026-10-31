@@ -15,6 +15,9 @@ export type ChangeId = number | string;
 
 /** Runs gh with these arguments (and the text on stdin) and returns its output. It throws when gh fails; the error's `stderr`, or its `message`, carries gh's text. */
 export type GhCall = (args: string[], input?: string) => string;
+
+/** Runs one gh call for a caller that owns its process: its exact environment, sign-in and limits. The text goes on stdin. */
+export type GhRunner<R> = (args: string[], stdin: string) => Promise<R>;
 /** A story as the synchronous part sees it. `state` is upper case. */
 export interface SyncStory { number: number; title: string; state: string; body: string }
 /** The synchronous view of the stories, bound to the runner of the caller (for tools that run gh themselves). */
@@ -81,6 +84,7 @@ export interface StoryStore {
   findChange(branch: string, timeoutMs?: number): Promise<ChangeRef | undefined>;
   changeState(pr: number, timeoutMs?: number): Promise<ChangeState>;
   openChange(o: { head: string; base?: string; title: string; body: string; draft?: boolean }, timeoutMs?: number): Promise<string>;
+  openChangeWith<R>(o: { head: string; base: string; title: string; body: string; draft?: boolean }, run: GhRunner<R>): Promise<R>;
   updateChange(pr: ChangeId, o: { title?: string; body: string }, timeoutMs?: number): Promise<void>;
   mergeChange(pr: ChangeId, timeoutMs?: number): Promise<void>;
   closeChange(pr: ChangeId, timeoutMs?: number): Promise<void>;

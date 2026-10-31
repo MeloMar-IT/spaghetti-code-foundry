@@ -43,12 +43,9 @@ export const ALLOWLIST: readonly string[] = [
   "blocks/open-pr.yaml",
   "blocks/pr-comments.yaml",
   "scripts/build-flows.mjs",
-  "src/delivery/handoff.ts",
-  "src/engine/repo-broker.ts",
   "src/ops/cli.ts",
   "src/release/git.ts",
   "src/repos/connect.ts",
-  "src/server/since.ts",
   "src/skill-import/catalogue-git.ts",
   "tools/create-split",
   "tools/daily-branch",
@@ -132,6 +129,31 @@ describe("withoutKept", () => {
   });
 });
 
+const STORY_FUNCTIONS = [
+  "issueComments", "prComments", "commentOnIssue", "commentOnPullRequest", "upsertStatusComment", "setLabels", "ensureLabel",
+  "createLabelIfMissing", "listOpenIssuesByLabelPages", "listOpenIssues", "listAllIssues", "listNewestIssuesCut", "listIssuesByLabel",
+  "listNewestIssues", "restIssue", "pullState", "createIssue", "updateIssue", "closeIssue", "issueStates", "issueState", "repoLabels",
+];
+/** The names imported from a github.js module (any depth), without `type` imports. */
+const importedFromGithub = (text: string): string[] =>
+  [...text.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'][./]*\/github\.js["']/g)]
+    .filter((m) => !/^import\s+type/.test(m[0]))
+    .flatMap((m) => m[1]!.split(",").map((s) => s.trim()).filter((s) => s && !s.startsWith("type ")).map((s) => s.split(/\s+as\s+/)[0]!));
+
+describe("refinement, server, monitor and delivery use the store", () => {
+  const FILES = [
+    "src/server/api-refinement-backlog.ts", "src/server/api-refinement-import.ts", "src/server/api-refinement-publish.ts",
+    "src/server/api-refinement-replace.ts", "src/server/turn-actions.ts", "src/server/since.ts", "src/monitor/report.ts",
+    "src/monitor/monitor.ts", "src/refinement/publish.ts", "src/refinement/dependants.ts", "src/delivery/handoff.ts",
+    "src/engine/repo-broker.ts",
+  ];
+  it.each(FILES)("%s imports no story function from github.ts", (file) => {
+    expect(existsSync(file)).toBe(true);
+    const used = importedFromGithub(readFileSync(file, "utf8")).filter((n) => [...STORY_FUNCTIONS, "gh", "ghJson"].includes(n));
+    expect(used, "use storeFor(repo) instead").toEqual([]);
+  });
+});
+
 describe("the queue uses the store", () => {
   // None of these files imports a story function from github.ts: they use storeFor(repo). Helpers that are not story calls
   // (withGhEnv, ghJson, canWrite, isBot, …) are fine.
@@ -140,20 +162,11 @@ describe("the queue uses the store", () => {
     "src/run-gate.ts", "src/turn-actions.ts", "src/queue/waiting-issues.ts", "src/queue/owner-action.ts", "src/queue/watchers.ts",
     "src/queue/scheduler.ts", "src/queue/release-trigger.ts",
   ];
-  const STORY_FUNCTIONS = [
-    "issueComments", "prComments", "commentOnIssue", "commentOnPullRequest", "upsertStatusComment", "setLabels", "ensureLabel",
-    "createLabelIfMissing", "listOpenIssuesByLabelPages", "listOpenIssues", "listAllIssues", "listNewestIssuesCut", "listIssuesByLabel",
-    "listNewestIssues", "restIssue", "pullState", "createIssue", "updateIssue", "closeIssue", "issueStates", "issueState", "repoLabels",
-  ];
-  /** The names imported from a github.js module (any depth), without `type` imports. */
-  const importedFromGithub = (text: string): string[] =>
-    [...text.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'][./]*\/github\.js["']/g)]
-      .filter((m) => !/^import\s+type/.test(m[0]))
-      .flatMap((m) => m[1]!.split(",").map((s) => s.trim()).filter((s) => s && !s.startsWith("type ")).map((s) => s.split(/\s+as\s+/)[0]!));
 
   it("finds the imports it checks", () => {
     expect(importedFromGithub('import { a, type B, c as d } from "../github.js";')).toEqual(["a", "c"]);
     expect(importedFromGithub('import type { x } from "../github.js";')).toEqual([]);
+    expect(importedFromGithub('import { gh, isBot } from "../github.js";')).toEqual(["gh", "isBot"]);
   });
 
   it.each(QUEUE_FILES)("%s imports no story function from github.ts", (file) => {
