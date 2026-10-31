@@ -222,7 +222,7 @@ export async function runArm(arm: Arm, ctx: ArmContext): Promise<{ runs: ArmRun[
     if (written && "problem" in written) return written;
     if (written) pinArmSkill(arm.key, written.digest);
     let current = ctx.realConfig;
-    scheduler = new Scheduler({ runsDir: join(armDir, "runs"), config: () => current, claudeBin: ctx.claudeBin });
+    scheduler = new Scheduler({ localTest: true, runsDir: join(armDir, "runs"), config: () => current, claudeBin: ctx.claudeBin });
     const denyRead = [...new Set([ctx.realHome, realpathSync(ctx.realHome)])];
     const model = ctx.realConfig.default_model;
     const runs: ArmRun[] = [];

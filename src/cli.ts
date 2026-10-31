@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { parseArgs } from "node:util";
 import { mirrorEnvPrefixes } from "./engine/template.js";
@@ -134,6 +134,7 @@ Run options:
       --ref <branch|sha>   Sets the variable ref (release-build: what to build; default main)
   -v, --var key=value      Override a flow variable (repeatable)
       --runs-dir <dir>     Where run logs/worktrees go (default: ${join(FACTORY_HOME, "runs")})
+      --local-test         A local test: always allowed, even with promotion.enforce: on; never counts as a promoted delivery
 
 Models: a step's model can be a spec like sonnet, codex, codex:gpt-5, ollama:qwen3-coder or
 codex:ollama:gpt-oss:20b (Claude Code or Codex CLI, on Anthropic, OpenAI or a local model).
@@ -253,6 +254,7 @@ async function main(argv: string[]): Promise<number> {
       purge: { type: "boolean" },
       "include-paused": { type: "boolean" },
       "dry-run": { type: "boolean" },
+      "local-test": { type: "boolean" },
       live: { type: "boolean" },
       "no-web": { type: "boolean" },
       models: { type: "string" },
@@ -309,7 +311,7 @@ async function main(argv: string[]): Promise<number> {
       // --repo is a folder, or (flows that clone the repository themselves) "owner/name": see run-target.ts
       const isFolder = !values.repo || existsSync(repo);
       if (!isFolder && !looksLikeGithubRepo(values.repo!)) throw new Error(`repo not found: ${repo}`);
-      const { flow } = loadFlow(arg, isFolder ? repo : process.cwd());
+      const { flow, path: flowPath } = loadFlow(arg, isFolder ? repo : process.cwd());
       const target = runTarget({ repoArg: values.repo, ref: values.ref, vars: parseVars(values.var), cwd: process.cwd(), workspace: flow.workspace });
       // Ctrl+C cancels the run, which stops the step's process group (a detached group gets no Ctrl+C of its own)
       return withSignal(async (signal) => {
@@ -320,6 +322,8 @@ async function main(argv: string[]): Promise<number> {
           vars: target.vars,
           source: "cli",
           signal,
+          flowId: basename(flowPath, extname(flowPath)),
+          ...(values["local-test"] ? { localTest: true } : {}),
           log: (m) => process.stdout.write(m + "\n"),
         });
         return report(summary);

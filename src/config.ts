@@ -698,6 +698,12 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /**
+     * Run start check (#740): does a run use only promoted versions of its flow, sub-flows, policy packs, model routes and tool
+     * profile (the rule of `scf promote`)? `off`: no check. `warn`: log what is not promoted. `on`: refuse the run;
+     * `scf run --local-test` is always allowed.
+     */
+    promotion: z.object({ enforce: z.enum(["off", "warn", "on"]).default("warn") }).strict().prefault({}),
     /** Delivery contracts written at pull-request creation: the signing key and what a contract requires (installation-wide, then per repository). Read from issue 3 on. */
     delivery: z
       .object({

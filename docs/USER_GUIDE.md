@@ -1991,6 +1991,25 @@ or one `BLOCKED` line per problem.
 
 The command exits 0 when the component is promotable and 1 when it is blocked.
 
+### Use only promoted versions
+
+The setting **Use only promoted versions** (`promotion.enforce`) decides what a new run does with the
+components it uses. The check is the rule of `scf promote` above, applied to the flow, its sub-flows,
+the policy packs of the repository, the model routes and the tool profile of the run.
+
+- **`off`.** No check.
+- **`warn`** (the default). Each component that is not promoted prints one line, such as
+  `! flow my-flow v0 is not promoted: <suite> (<code>) — <fix>`, and the run saves the findings with its
+  details. The run goes on.
+- **`on`.** The run ends as `failed` before its first step, with the reason
+  `refused: this run uses components that are not promoted`. A check that cannot run also counts as not promoted.
+- **Local tests.** `scf run --local-test <flow>` is always allowed, even under `on`. Its run says
+  `local test: this run never counts as a promoted delivery`. Evals and skill evals are local tests too,
+  so they are never checked.
+
+Runs started before this setting existed have no findings saved. The check reads the reports on disk and
+changes no component; it only saves its findings in the run.
+
 ### Lifecycle telemetry
 
 The Foundry writes one short telemetry line for each important fact of a run: a run starting or

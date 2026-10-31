@@ -347,7 +347,7 @@ export async function runEval(o: {
   let restoreSecrets = () => {};
   try {
   restoreSecrets = registerFakeSecrets(cases.flatMap((c) => (c.fake_secret ? [c.fake_secret] : [])));
-  const scheduler = new Scheduler({ runsDir: o.runsDir, config: () => config, claudeBin: programs.claudeBin, codexBin: programs.codexBin, ...(binDir ? { pathPrefix: [binDir] } : {}) });
+  const scheduler = new Scheduler({ localTest: true, runsDir: o.runsDir, config: () => config, claudeBin: programs.claudeBin, codexBin: programs.codexBin, ...(binDir ? { pathPrefix: [binDir] } : {}) });
 
   o.log(`eval ${suite.name}: ${variants.length} variant(s) × ${cases.length} case(s) × ${suite.repeat} = ${variants.length * cases.length * suite.repeat} runs (concurrency ${o.config.concurrency})`);
   for (const [v, flow] of variants.entries()) {

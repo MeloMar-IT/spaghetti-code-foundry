@@ -93,6 +93,51 @@ function resultsProblem(report: EvalReport, suite: Suite, inputs: SuiteInputs): 
   return seen.size === expected.size ? undefined : "results";
 }
 
+export interface SuiteBlock {
+  code: PromoteCode;
+  detail?: string;
+}
+
+/** What the newest report says about a suite, apart from any one component: a block, or the passed report's file and inputs. */
+export type SuiteVerdict = { block: SuiteBlock; file?: undefined; inputs?: undefined } | { block?: undefined; file: string; inputs: EvalInputs };
+
+/**
+ * Is the newest report of a suite valid, complete, passed and current for the suite, its fixtures and its flows? With no
+ * report the suite file is not loaded.
+ */
+export function suiteVerdict(name: string, o: { live: boolean; evalsDir?: string; safetyDir?: string }): SuiteVerdict {
+  const blocked = (code: PromoteCode, detail?: string): SuiteVerdict => ({ block: { code, ...(detail ? { detail } : {}) } });
+  const suitePath = join(o.safetyDir ?? SAFETY_DIR, name, "suite.yaml");
+  if (!existsSync(suitePath)) return blocked("suite-missing", "suite file");
+  const newest = newestReport(name, o.evalsDir);
+  if (!newest || (!newest.problem && !newest.inputs)) return blocked("suite-missing");
+  if (newest.problem || !newest.inputs || !newest.report) return blocked("report-invalid", newest.problem);
+  const { report, inputs } = newest;
+  let suite: Suite;
+  let current: SuiteInputs;
+  try {
+    suite = loadSuite(suitePath);
+    current = currentSuiteInputs(suitePath, suite);
+  } catch {
+    return blocked("report-invalid", "suite");
+  }
+  if (report.suite !== name) return blocked("report-invalid", "suite name");
+  if (inputs.live && !o.live) return blocked("report-invalid", "live");
+  const diff = compareInputs(inputs, current);
+  if (diff) return blocked(diff.code, diff.detail);
+  const bad = resultsProblem(report, suite, inputs);
+  if (bad) return blocked("report-invalid", bad);
+  if (!report.results.every((r) => r.passed === true)) return blocked("suite-failed");
+  return { file: newest.file, inputs };
+}
+
+/** The block of a component for a suite verdict: the verdict's own, or `report-stale` when the report lacks this kind, id and hash. */
+export function componentBlock(c: { kind: ComponentKind; id: string; sha256: string }, v: SuiteVerdict): SuiteBlock | undefined {
+  if (v.block) return v.block;
+  const recorded = v.inputs.components.find((x) => x.kind === c.kind && x.id === c.id);
+  return !recorded || recorded.sha256 !== c.sha256 ? { code: "report-stale", detail: `${c.kind} ${c.id}` } : undefined;
+}
+
 export function promoteCheck(
   kind: ComponentKind,
   id: string,
@@ -137,58 +182,10 @@ export function promoteCheck(
       blocked(`${name} (${code}${detail ? `: ${detail}` : ""})`, SUITE_REMEDIATION);
       ok = false;
     };
-    const suitePath = join(safetyDir, name, "suite.yaml");
-    if (!existsSync(suitePath)) {
-      block("suite-missing", "suite file");
-      continue;
-    }
-    let suite: Suite;
-    let current: SuiteInputs;
-    try {
-      suite = loadSuite(suitePath);
-      current = currentSuiteInputs(suitePath, suite);
-    } catch {
-      block("report-invalid", "suite");
-      continue;
-    }
-    const newest = newestReport(name, o.evalsDir);
-    if (!newest || (!newest.problem && !newest.inputs)) {
-      block("suite-missing");
-      continue;
-    }
-    if (newest.problem || !newest.inputs || !newest.report) {
-      block("report-invalid", newest.problem);
-      continue;
-    }
-    const { report, inputs } = newest;
-    if (report.suite !== name) {
-      block("report-invalid", "suite name");
-      continue;
-    }
-    if (inputs.live && !o.live) {
-      block("report-invalid", "live");
-      continue;
-    }
-    const diff = compareInputs(inputs, current);
-    if (diff) {
-      block(diff.code, diff.detail);
-      continue;
-    }
-    const bad = resultsProblem(report, suite, inputs);
-    if (bad) {
-      block("report-invalid", bad);
-      continue;
-    }
-    if (!report.results.every((r) => r.passed === true)) {
-      block("suite-failed");
-      continue;
-    }
-    const recorded = inputs.components.find((c) => c.kind === kind && c.id === id);
-    if (!recorded || recorded.sha256 !== component.sha256) {
-      block("report-stale", `${kind} ${id}`);
-      continue;
-    }
-    lines.push(`PASSED ${name} ${newest.file}`);
+    const verdict = suiteVerdict(name, { live: o.live, evalsDir: o.evalsDir, safetyDir });
+    const stop = componentBlock({ kind, id, sha256: component.sha256 }, verdict);
+    if (stop) block(stop.code, stop.detail);
+    else lines.push(`PASSED ${name} ${verdict.file}`);
   }
 
   if (ok) lines.push(`PROMOTABLE ${kind} ${id} v${version ?? "-"} sha256:${component.sha256}`);
