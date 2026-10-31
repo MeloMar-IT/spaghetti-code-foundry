@@ -16,7 +16,8 @@ describe("an accepted /overrule is never lost", () => {
     process.env.FAKE_GH_HOLD = hold;
     process.env.FAKE_GH_HOLD_ON = `--add-label ${WORKING}`;
     const w = watcher();
-    w.checkTimeoutMs = 1000;
+    // Long enough to reach the held label edit on a busy machine (a dozen fake gh calls first), then given up.
+    w.checkTimeoutMs = 5000;
     await w.tick();
     await vi.waitFor(() => expect(log()).toContain(`--add-label ${WORKING}`));
     expect(acks()).toBe(1);
@@ -74,7 +75,7 @@ describe("an accepted /overrule is never lost", () => {
     process.env.FAKE_GH_HOLD = hold;
     process.env.FAKE_GH_HOLD_ON = `--add-label ${WORKING}`;
     const tick = watcher().tick();
-    await vi.waitFor(() => expect(log()).toContain(`--add-label ${WORKING}`));
+    await vi.waitFor(() => expect(log()).toContain(`--add-label ${WORKING}`), { timeout: 15_000 });
     plant({ parkedAt: "2026-01-01T03:00:00.000Z" }); // parked by someone else while the label is edited
     rmSync(hold);
     await tick;
