@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
+import type { PromotionRecord } from "../promotion/gate.js";
 import type { AppliedChoice } from "../skills/choices.js";
 import type { CanonicalSelectionRecord } from "../skills/run-canonical.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
@@ -76,6 +77,12 @@ export interface RunState {
   visits: Record<string, number>;
 }
 
+/** Why a run that is not a local test was refused at start by `promotion.enforce: on` (#740). Fixed text: no path, no id. */
+export const PROMOTION_REFUSED =
+  "refused: this run uses components that are not promoted (promotion.enforce is on); promote them, or start a local test with scf run --local-test";
+/** The log line of a local test. */
+export const LOCAL_TEST_LINE = "local test: this run never counts as a promoted delivery";
+
 export interface RunSummary {
   runId: string;
   flow: string;
@@ -122,6 +129,10 @@ export interface RunSummary {
   owner?: string;
   /** The declared tool profile saved at start: the parsed profile, or `null` when the supplied one could not be read (`null` always refuses). Trusted like `owner`. Absent: steps get the profile their settings give. */
   toolProfile?: unknown;
+  /** True for a local test (`scf run --local-test`, evals): it is always allowed and never counts as a promoted delivery (#740). */
+  localTest?: true;
+  /** The run start check of `promotion.enforce` (warn or on); absent when it is off, for a local test and for older runs. */
+  promotion?: PromotionRecord;
   /** Answers a person gave on the run page to the questions the run stopped with, oldest first. */
   answers?: RunAnswer[];
   /** Summary of <runDir>/skill-lock.json. Absent on runs without a checked plan and on runs of older versions. */

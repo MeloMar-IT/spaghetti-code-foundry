@@ -144,13 +144,14 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const askScf = generatedSection("Ask SCF", "help.", c, described, { section, readOnly });
   const deliveryCard = generatedSection("Delivery", "delivery.", c, described, { section, readOnly });
   const policyCard = generatedSection("Policy", "policy.", c, described, { section, readOnly });
+  const promotionCard = generatedSection("Promotion", "promotion.", c, described, { section, readOnly });
   // the hand-built controls and the current controls of the described cards (those are drawn again when their message changes)
-  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs(), ...deliveryCard.inputs(), ...policyCard.inputs() });
+  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs(), ...deliveryCard.inputs(), ...policyCard.inputs(), ...promotionCard.inputs() });
   const QUOTED = new Set(["name", "email", "repo", "command", "pass"]);
   const SETTINGS_PAIRS = Object.keys(fieldsNow()).map((k) => [new RegExp(QUOTED.has(k) ? `"${k}"` : `\\b${k}\\b`), k]);
 
   const save = async () => {
-    const bad = extra.check() ?? askScf.check() ?? deliveryCard.check() ?? policyCard.check();
+    const bad = extra.check() ?? askScf.check() ?? deliveryCard.check() ?? policyCard.check() ?? promotionCard.check();
     if (bad) {
       mount(err);
       saveNote.setAttribute("class", "status bad");
@@ -189,6 +190,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       help: askScf.values(),
       delivery: deliveryCard.values(),
       policy: policyCard.values(),
+      promotion: promotionCard.values(),
       isolate_agents: v.isolate_agents,
       failure_summary: v.failure_summary,
       step_env: v.step_env,
@@ -217,6 +219,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       askScf.restore();
       deliveryCard.restore();
       policyCard.restore();
+      promotionCard.restore();
       saveNote.setAttribute("class", "status ok");
       mount(saveNote, `Saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       toast("Settings saved");
@@ -237,6 +240,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       askScf.restore();
       deliveryCard.restore();
       policyCard.restore();
+      promotionCard.restore();
       saveNote.setAttribute("class", "status bad");
       mount(saveNote, "Not saved.");
     } finally {
@@ -306,6 +310,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
         f("Installation ID (optional)", instId, hint("github_app.installation_id"))),
       h("p", { class: "muted flush" }, h("a", { href: "#/all-repos?method=github-app" }, "Repositories that use the app"))),
     ...(policyCard.card ? [policyCard.card] : []),
+    ...(promotionCard.card ? [promotionCard.card] : []),
     ...(startup.length ? [startupSection(startup, section)] : []),
     ],
   }));

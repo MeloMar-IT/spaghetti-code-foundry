@@ -38,7 +38,7 @@ import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
 import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
-import { answerRoom, appendLiveLog, isStoppedCancel, loadRun, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
+import { answerRoom, appendLiveLog, isStoppedCancel, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
@@ -100,6 +100,10 @@ export interface RunOptions extends CommonOptions {
   owner?: string;
   /** A declared tool profile for every agent step: checked and copied when the run starts, then saved in run.json (see snapshotToolProfile). */
   toolProfile?: unknown;
+  /** The id of the custom flow as `scf promote` knows it (its file name); without it the flow's name. */
+  flowId?: string;
+  /** A local test (#740): never checked against `promotion.enforce`, and it never counts as a promoted delivery. Set by `scf run --local-test` and by the Scheduler option for evals; never read from a job. */
+  localTest?: boolean;
 }
 
 export interface ResumeOptions extends CommonOptions {
@@ -179,6 +183,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     ...(owner ? { owner } : {}),
     // never the raw value: JSON would drop a function and the run would quietly get the generated profile
     ...(opts.toolProfile !== undefined ? { toolProfile: snapshotToolProfile(opts.toolProfile) } : {}),
+    ...(opts.localTest ? { localTest: true as const } : {}),
   };
   claimRunStart(opts.runsDir, () => {
     mkdirSync(join(runDir, "logs"), { recursive: true });
@@ -190,10 +195,12 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   evidence.created(summary, opts.actor ?? actorOf(opts.source, opts.source === "ui" ? opts.owner : undefined));
   // policy (observe mode): the run starts here, before any refusal and before the workspace is made
   const log = liveLog(summary, opts);
+  if (opts.localTest) log(LOCAL_TEST_LINE);
   const policy = runPolicy(summary, config, log, evidence);
   const start = policy?.at("run.start");
   if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: null, lastOutput: "" });
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
+  if (await promotionRefused(summary, opts, config, log)) return finish(summary, opts, config, { outcome: "failed", reason: PROMOTION_REFUSED, next: null, lastOutput: "" });
 
   try {
     requireRedaction(); // before the workspace is made: output cannot be hidden when the stored secrets are unreadable
@@ -216,6 +223,30 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: null, lastOutput: "" });
   }
   return drive(summary, opts, config, null, { policy });
+}
+
+/**
+ * The run start check of `promotion.enforce` (#740). True when the run must end: `on`, not a local test, something not promoted.
+ * Under `warn` it logs each finding and saves them in `summary.promotion`. The gate is loaded here, not at the top: it reaches
+ * the evals and the scheduler, which import this file. A gate that cannot be loaded counts as not promoted.
+ */
+async function promotionRefused(summary: RunSummary, opts: RunOptions, config: Config, log: (raw: string) => void): Promise<boolean> {
+  const enforce = config.promotion?.enforce ?? "warn";
+  if (opts.localTest || enforce === "off") return false;
+  let record: Awaited<ReturnType<typeof import("../promotion/gate.js").promotionGate>>;
+  let line: (f: Parameters<typeof import("../promotion/gate.js").findingLine>[0]) => string;
+  try {
+    const gate = await import("../promotion/gate.js");
+    record = gate.promotionGate({ flow: summary.flowDef, flowId: opts.flowId ?? summary.flow, repo: opts.repo, vars: summary.vars, config, toolProfile: opts.toolProfile });
+    line = gate.findingLine;
+  } catch {
+    log("! the promotion check could not run");
+    return enforce === "on";
+  }
+  for (const f of record.findings) log(line(f));
+  summary.promotion = { enforce, ...record };
+  saveRun(summary);
+  return enforce === "on" && !record.promoted;
 }
 
 /** Continue a stopped, failed, cancelled, interrupted or waiting run. */

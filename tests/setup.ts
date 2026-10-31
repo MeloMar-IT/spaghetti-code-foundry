@@ -7,7 +7,7 @@ import { join } from "node:path";
 // fake remotes and set their own FACTORY_* values, so drop the inherited ones
 // (also SCF_*: an inherited SCF_HOME would beat the test home) and a developer's own Codex key and folder.
 for (const k of Object.keys(process.env)) {
-  if (/^(FACTORY_|SCF_|GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$|GH_TOKEN$|GITHUB_TOKEN$|CODEX_API_KEY$|CODEX_HOME$)/.test(k)) delete process.env[k];
+  if (/^(FACTORY_|SCF_|GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$|GH_TOKEN$|GH_CONFIG_DIR$|GITHUB_TOKEN$|CODEX_API_KEY$|CODEX_HOME$)/.test(k)) delete process.env[k];
 }
 // Keep tests away from the real ~/.claude-factory (config, hooks, learnings, locks) and notifications.
 process.env.FACTORY_HOME = mkdtempSync(join(tmpdir(), "factory-home-"));

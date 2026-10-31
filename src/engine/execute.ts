@@ -32,7 +32,7 @@ import { boundEnv, capEnvValue, labelOutput, renderTrusted, stepTypesOf, trustOf
 /** Shell commands may only template trusted values; task and outputs go via env. */
 export const SHELL_TEMPLATE_ROOTS = ["vars", "workdir", "run"] as const;
 export const DEFAULT_PERMISSION_MODE = "acceptEdits";
-const MAX_FLOW_DEPTH = 5;
+export const MAX_FLOW_DEPTH = 5;
 
 export type StepContext = TemplateContext & {
   vars: Record<string, string>;
