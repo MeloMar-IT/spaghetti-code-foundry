@@ -43,6 +43,12 @@ function branchRef(branch: string): string {
   return branch;
 }
 
+/** A comma list of JSON field names for `--json`: it cannot become an option. */
+function fieldList(s: unknown): string {
+  if (typeof s !== "string" || !/^[A-Za-z]+(?:,[A-Za-z]+)*$/.test(s)) throw new Error("not a field list");
+  return s;
+}
+
 const listSize =(n: unknown, max = 1000): number => {
   if (!whole(n, max)) throw new Error("not a list size");
   return n;
@@ -200,8 +206,7 @@ export class GitHubStore implements StoryStore {
   }
   /** Creates the issue with gh itself (not the REST call), so a label that cannot be set fails the call. The text goes through stdin. */
   async stepCreate(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<string> {
-    const labels = o.labels.flatMap((l) => ["--label", l]);
-    return gh(["issue", "create", "--repo", this.repo, "--title", o.title, "--body-file", "-", ...labels], undefined, timeoutMs, o.body);
+    return gh(this.createArgs(o), undefined, timeoutMs, o.body);
   }
   async stepTitle(issue: number, timeoutMs?: number): Promise<string> {
     number(issue, "an issue number");
@@ -259,6 +264,12 @@ export class GitHubStore implements StoryStore {
   async stepOpenStories(o: { limit: number; comments: boolean }): Promise<number> {
     const limit = listSize(o.limit);
     return ghInherit(["issue", "list", "--repo", this.repo, "--state", "open", "--limit", String(limit), "--json", o.comments ? "number,title,body,labels,comments" : "number,title,body,labels"]);
+  }
+  private createArgs(o: { title: string; labels: string[] }): string[] {
+    return ["issue", "create", "--repo", this.repo, "--title", o.title, "--body-file", "-", ...o.labels.flatMap((l) => ["--label", l])];
+  }
+  private updateChangeArgs(pr: ChangeId, o: { title?: string }): string[] {
+    return ["pr", "edit", changeRef(pr), "--repo", this.repo, ...(o.title !== undefined ? ["--title", o.title] : []), "--body-file", "-"];
   }
   private openChangeArgs(o: { head: string; base?: string; title: string; draft?: boolean }): string[] {
     return ["pr", "create", "--repo", this.repo, ...(o.base ? ["--base", o.base] : []), "--head", o.head, "--title", o.title, "--body-file", "-", ...(o.draft ? ["--draft"] : [])];
@@ -321,8 +332,7 @@ export class GitHubStore implements StoryStore {
     return url;
   }
   async updateChange(pr: ChangeId, o: { title?: string; body: string }, timeoutMs?: number): Promise<void> {
-    const ref = changeRef(pr);
-    await gh(["pr", "edit", ref, "--repo", this.repo, ...(o.title !== undefined ? ["--title", o.title] : []), "--body-file", "-"], undefined, timeoutMs, o.body);
+    await gh(this.updateChangeArgs(pr, o), undefined, timeoutMs, o.body);
   }
   async mergeChange(pr: ChangeId, timeoutMs?: number): Promise<void> {
     await gh(["pr", "merge", changeRef(pr), "--repo", this.repo, "--squash", "--delete-branch"], undefined, timeoutMs);
@@ -373,8 +383,17 @@ export class GitHubStore implements StoryStore {
     return ghJson<ChangeActivity>(["pr", "view", String(pr), "--repo", this.repo, "--json", "comments,reviews,commits"], undefined, timeoutMs);
   }
 
+  async probeAccess<R>(run: GhRunner<R>): Promise<{ stories: PromiseSettledResult<R>; changes: PromiseSettledResult<R> }> {
+    const probe = (path: string) => run(["api", `repos/${this.repo}/${path}`, "--hostname", "github.com"], "");
+    const [stories, changes] = await Promise.allSettled([probe("issues?per_page=1"), probe("pulls?per_page=1&state=all")]);
+    return { stories: stories!, changes: changes! };
+  }
+
   sync(run: GhCall): SyncStories {
     const repo = this.repo;
+    const createArgs = (o: { title: string; labels: string[] }) => this.createArgs(o);
+    const updateChangeArgs = (pr: ChangeId, o: { title?: string }) => this.updateChangeArgs(pr, o);
+    const openChangeArgs = (o: { head: string; base?: string; title: string; draft?: boolean }) => this.openChangeArgs(o);
     return {
       get(n) {
         number(n, "an issue number");
@@ -395,6 +414,52 @@ export class GitHubStore implements StoryStore {
       setBody(n, body) {
         number(n, "an issue number");
         run(["issue", "edit", String(n), "--repo", repo, "--body-file", "-"], body);
+      },
+      view(n, fields) {
+        number(n, "an issue number");
+        return run(["issue", "view", String(n), "--repo", repo, "--json", fieldList(fields)]);
+      },
+      openList(limit, fields) {
+        return run(["issue", "list", "--repo", repo, "--state", "open", "--limit", String(listSize(limit)), "--json", fieldList(fields)]);
+      },
+      create(o) {
+        return run(createArgs(o), o.body);
+      },
+      comment(n, body) {
+        number(n, "an issue number");
+        return run(["issue", "comment", String(n), "--repo", repo, "--body-file", "-"], body);
+      },
+      setLabels(n, add, remove) {
+        number(n, "an issue number");
+        run(["issue", "edit", String(n), "--repo", repo, ...remove.flatMap((l) => ["--remove-label", l]), ...(add ? ["--add-label", add] : [])]);
+      },
+      close(n, reason) {
+        number(n, "an issue number");
+        if (reason !== "completed" && reason !== "not planned") throw new Error("not a close reason");
+        run(["issue", "close", String(n), "--repo", repo, "--reason", reason]);
+      },
+      viewer() {
+        return run(["api", "user", "--jq", ".login"]);
+      },
+      listChanges(o) {
+        if (o.state !== "open" && o.state !== "all") throw new Error("not a state");
+        return run(["pr", "list", "--repo", repo, ...(o.head !== undefined ? ["--head", branchRef(o.head)] : []), "--state", o.state,
+          "--limit", String(listSize(o.limit)), "--json", fieldList(o.fields)]);
+      },
+      viewChange(pr, fields) {
+        return run(["pr", "view", changeRef(pr), "--repo", repo, "--json", fieldList(fields)]);
+      },
+      openChange(o) {
+        branchRef(o.head);
+        if (o.base) branchRef(o.base);
+        return run(openChangeArgs(o), o.body);
+      },
+      updateChange(pr, o) {
+        run(updateChangeArgs(pr, o), o.body);
+      },
+      requestReview(pr, who) {
+        if (typeof who !== "string" || !who || who.startsWith("-") || /\s/.test(who)) throw new Error("not a reviewer");
+        run(["pr", "edit", changeRef(pr), "--repo", repo, "--add-reviewer", who]);
       },
     };
   }

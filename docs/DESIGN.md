@@ -136,11 +136,13 @@ in `src/github.ts`; the store reuses them.
   throws. The body of `setBody` goes on stdin.
 - **The status marker is unchanged.** `upsertStatusComment` still finds the Foundry's comment by
   `<!-- claude-factory status -->`; `BOT_MARKER`, `BOT_MARKERS` and `STATUS_MARKER` are not changed.
-- **The guard.** `tests/story-store-guard.test.ts` scans `src/`, `blocks/`, `tools/` and
-  `scripts/build-flows.mjs` for story calls (`gh issue`, `gh pr`, `gh api` on issues, pulls, labels,
-  check runs, or the issue-state GraphQL). A file outside `src/stories/github-store.ts` and `src/github.ts`
-  must be on the allowlist in that test. The allowlist can only shrink: a listed file with no story call
-  left fails the test. Move a file to the store, then take it off the list.
+- **Every story call goes through the store.** The guard, `tests/story-store-guard.test.ts`, scans `src/`,
+  `blocks/`, `tools/` and `scripts/build-flows.mjs` for story calls (`gh issue`, `gh pr`, `gh api` on issues,
+  pulls, labels, check runs, or the issue-state GraphQL). Outside `src/stories/github-store.ts` and
+  `src/github.ts` there is no story call: the allowlist in that test is empty (#739). The helper scripts in
+  `tools/` (`create-split`, `split-family`, `post-questions`, `decide-questions.mjs`, `daily-branch`,
+  `issue-digest`) load `dist/stories/store.js` and use `storeFor(repo).sync(gh)`, with the same `gh` runner
+  and `FACTORY_GH_BIN` as before. A new story call goes into the store, never into a file.
 - **A caller that owns its process.** `openChangeWith` takes a runner: the store builds the `gh` arguments
   and the broker starts the process, with its exact environment, pinned secrets and limits.
 - **Flow steps use `tools/story`.** The built-in blocks that read or write a run's story call

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { loadConfig } from "../config.js";
 import { listRunIds, loadRun, pidAlive, type RunSummary } from "../engine/state.js";
 import { sendDesktop } from "../notify.js";
+import { storeFor } from "../stories/store.js";
 import type { ServiceHost } from "../service.js";
 import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } from "./blockage.js";
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
@@ -69,7 +70,10 @@ interface FlakyState { auto: boolean; label: string; filed: Record<string, strin
 /** Files a bug story with the GitHub sign-in of this machine; returns its address. */
 export type FileStory = (repo: string, story: Story, label: string) => string;
 const ghFile: FileStory = (repo, story, label) =>
-  execFileSync("gh", ["issue", "create", "--repo", repo, "--title", story.title, "--body", story.body, "--label", "bug", "--label", label], { encoding: "utf8", timeout: 60_000 }).trim();
+  storeFor(repo)
+    .sync((args, input) => execFileSync("gh", args, { encoding: "utf8", input, timeout: 60_000 }))
+    .create({ title: story.title, body: story.body, labels: ["bug", label] })
+    .trim();
 
 /** Stories filed per check, and how often filing may be tried for that: a GitHub that does not answer must not hold the check for long. */
 const MAX_FILED = 2;

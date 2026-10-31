@@ -36,6 +36,15 @@ function fail(msg) {
   process.exit(1);
 }
 
+// Every story call goes through the story store (dist/stories/store.js), on the runner above.
+let storeFor;
+try {
+  ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+} catch (e) {
+  fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+}
+const stories = storeFor(repo).sync(gh);
+
 // ── parse the parts ──
 const text = readFileSync(0, "utf8");
 const parts = [];
@@ -58,7 +67,7 @@ for (const line of text.split("\n")) {
 if (parts.length < 2) fail(`expected at least 2 parts, found ${parts.length}`);
 
 // ── the original issue ──
-const parent = JSON.parse(gh(["issue", "view", parentNo, "--repo", repo, "--json", "title,body,labels,comments"]));
+const parent = JSON.parse(stories.view(Number(parentNo), "title,body,labels,comments"));
 // The heading is the first line of older comments, and comes after the bold first line in newer ones.
 const ours = (body) => body.split("\n").some((l) => OURS.some((h) => l.startsWith(h)));
 const done = (parent.comments ?? []).find((c) => ours(c.body) && DONE_RE.test(c.body));
@@ -106,9 +115,7 @@ for (const [i, p] of parts.entries()) {
     "### Depends on",
     deps.length ? deps.join(", ") : "None (can be built on its own).",
   ].join("\n");
-  const args = ["issue", "create", "--repo", repo, "--title", p.title, "--body-file", "-"];
-  for (const l of labels) args.push("--label", l);
-  const url = gh(args, doc).split("\n").pop();
+  const url = stories.create({ title: p.title, body: doc, labels: [...labels] }).trim().split("\n").pop();
   const num = Number(/(\d+)\s*$/.exec(url)?.[1]);
   if (!num) fail(`could not read the new issue number from: ${url}`);
   created.set(p.n, num);
@@ -127,13 +134,13 @@ const comment = [
   "",
   `${MARK} run=${process.env.FACTORY_RUN_ID ?? ""} -->`,
 ].join("\n");
-gh(["issue", "comment", parentNo, "--repo", repo, "--body-file", "-"], comment);
+stories.comment(Number(parentNo), comment);
 // Issues that depended on the original now depend on its parts (else they'd start as soon as the
 // original is closed).
 const partRefs = [...created.values()].map((n) => `#${n}`);
 try {
   const { dependencies } = await import(new URL("../dist/queue/deps.js", import.meta.url).href);
-  const open = JSON.parse(gh(["issue", "list", "--repo", repo, "--state", "open", "--limit", "300", "--json", "number,title,body,labels,state"]));
+  const open = JSON.parse(stories.openList(300, "number,title,body,labels,state"));
   const all = [...open, { number: Number(parentNo), title: parent.title, state: "OPEN" }];
   for (const i of open) {
     if (created.has(i.number) || [...created.values()].includes(i.number) || String(i.number) === parentNo) continue;
@@ -141,13 +148,13 @@ try {
     const body = /^#{2,4}\s*Depends on\b.*$/im.test(i.body)
       ? i.body.replace(/^(#{2,4}\s*Depends on\b.*\n)([\s\S]*?)(?=\n#{2,4}\s|$(?![\s\S]))/im, (_m, head, rest) => `${head}${rest.trimEnd()}${rest.trim() ? ", " : ""}${partRefs.join(", ")} (parts of #${parentNo})\n`)
       : `${i.body}\n\n### Depends on\n${partRefs.join(", ")} (parts of #${parentNo})\n`;
-    gh(["issue", "edit", String(i.number), "--repo", repo, "--body-file", "-"], body);
+    stories.setBody(i.number, body);
     console.log(`#${i.number} now depends on ${partRefs.join(", ")} too`);
   }
 } catch (e) {
   console.log(`note: could not update issues that depend on #${parentNo}: ${e.message.split("\n")[0]}`);
 }
 const statusOnParent = (parent.labels ?? []).map((l) => l.name).filter((l) => isStatus(l) || l === trigger);
-if (statusOnParent.length) gh(["issue", "edit", parentNo, "--repo", repo, ...statusOnParent.flatMap((l) => ["--remove-label", l])]);
-gh(["issue", "close", parentNo, "--repo", repo, "--reason", "not planned"]);
+if (statusOnParent.length) stories.setLabels(Number(parentNo), undefined, statusOnParent);
+stories.close(Number(parentNo), "not planned");
 console.log(`SPLIT: ${[...created.values()].map((n) => `#${n}`).join(" ")} — #${parentNo} closed`);

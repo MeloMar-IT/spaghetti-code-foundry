@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Turn the JSON list of `gh issue list --json number,title,body,labels,comments` (stdin) into a text file the
+// Turn the JSON list of the open stories (stdin, from `story open-stories --comments`) into a text file the
 // architect can read: an index and every issue with all its comments, long texts cut, people's text quoted with "> ".
 // Usage: issue-digest <output-file> [--max N] [--no-comments]   (env FACTORY_VAR_GITHUB_REPO names the repository on the first line)
 // --max N keeps the newest N issues (1 to 200, default 200); --no-comments leaves the comments out.
