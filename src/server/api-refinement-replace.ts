@@ -1,5 +1,6 @@
 import { githubKey } from "../auth/repo-url.js";
-import { closeIssue, commentOnIssue, findOwnComment, issueComments, listOpenIssues, restIssue, setLabels, updateIssue, type RestIssue } from "../github.js";
+import { findOwnComment, type RestIssue } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import { storyKey, storyKeys } from "../monitor/breaker.js";
 import { readFindings } from "../monitor/findings.js";
 import { hashIn } from "../monitor/story.js";
@@ -23,7 +24,7 @@ export async function readOriginal(s: Session, timeout: number): Promise<{ title
   const n = s.source!.issue;
   let issue;
   try {
-    issue = await restIssue(s.repo, n, timeout);
+    issue = await storeFor(s.repo).get(n, timeout);
   } catch (e) {
     throw new HttpError(502, `could not read issue #${n} on GitHub: ${whatHappened(e)}`);
   }
@@ -39,7 +40,7 @@ export async function replacePlan(ctx: ApiContext, s: Session, replaces: { issue
   const live = original ?? (await readOriginal(s, timeout));
   let open;
   try {
-    open = await listOpenIssues(s.repo, { pages: ctx.opts.openIssuePages ?? 10, timeoutMs: timeout });
+    open = await storeFor(s.repo).listOpen({ pages: ctx.opts.openIssuePages ?? 10, timeoutMs: timeout });
   } catch (e) {
     throw new HttpError(502, `could not read the open issues on GitHub: ${whatHappened(e)}`);
   }
@@ -131,7 +132,7 @@ export function auditLines(repo: string, numbers: number[]): string[] {
 /** The body of the own comment with this marker on the issue; undefined when there is none. A comment of another login does not count. Rejects with 502. */
 export async function ownCommentBody(repo: string, issue: number, marker: string, timeout: number): Promise<string | undefined> {
   try {
-    return (await findOwnComment(await issueComments(repo, issue, timeout), (c) => endsWithMarker(c.body, marker), timeout))?.body;
+    return (await findOwnComment(await storeFor(repo).comments(issue, timeout), (c) => endsWithMarker(c.body, marker), timeout))?.body;
   } catch (e) {
     throw new HttpError(502, `could not read the comments of issue #${issue} on GitHub: ${whatHappened(e)}`);
   }
@@ -165,7 +166,7 @@ export async function checkOriginal(ctx: ApiContext, s: Session, timeout: number
   const nothing = started ? "" : "; nothing was written";
   let issue: RestIssue | undefined;
   try {
-    issue = await restIssue(s.repo, n, timeout);
+    issue = await storeFor(s.repo).get(n, timeout);
   } catch (e) {
     throw new HttpError(502, `could not read issue #${n} on GitHub: ${whatHappened(e)}${nothing}`);
   }
@@ -271,7 +272,7 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
   const scan = await replacePlan(ctx, s, { issue: n, parts: parts.map((issue) => ({ issue })) }, timeout, { title: original.title, monitor: original.monitor });
   const journal = keep(() => recordReplacing(actor, s.id, { parts, found: scan.dependants, ...(scan.cut ? { cut: true } : {}) }));
   const ownComment = (issue: number) => github(`could not read the comments of issue #${issue} on GitHub`, () => hasOwnComment(repo, issue, replaceMarker(s.id, issue), timeout));
-  const read = (issue: number) => github(`could not read issue #${issue} on GitHub`, () => restIssue(repo, issue, timeout));
+  const read = (issue: number) => github(`could not read issue #${issue} on GitHub`, () => storeFor(repo).get(issue, timeout));
 
   const entries = journal.source!.replacing!.dependants.filter((d) => !d.done).sort((a, b) => a.issue - b.issue);
   for (const e of entries) {
@@ -305,7 +306,7 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
       if (!b || !rewrite || dependsOnText(b.body ?? "") !== now) {
         throw new HttpError(409, `the "Depends on" text of issue #${k} changed on GitHub while it was read, so that issue was not changed; publish again. ${o.written()}`);
       }
-      await github(`GitHub did not change issue #${k}`, () => updateIssue(repo, k, { body: rewrite.body }, timeout));
+      await github(`GitHub did not change issue #${k}`, () => storeFor(repo).edit(k,{ body: rewrite.body }, timeout));
       o.wrote({ issue: k, what: "rewritten" });
       kind = "rewritten";
       before = ev.before;
@@ -324,7 +325,7 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
     }
     if (!(await ownComment(k))) {
       const text = dependantComment({ kind, original: n, parts, by: o.by, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}), marker: replaceMarker(s.id, k) });
-      await github(`GitHub did not add the comment on issue #${k}`, () => commentOnIssue(repo, k, text, timeout));
+      await github(`GitHub did not add the comment on issue #${k}`, () => storeFor(repo).comment(k, text, timeout));
       o.wrote({ issue: k, what: "commented" });
     }
     keep(() => recordDependantDone(actor, s.id, k, kind === "byHand" ? "by-hand" : kind));
@@ -341,7 +342,7 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
       throw new HttpError(409, `issue #${n} has more trigger labels than the session can keep (${LABELS_MAX}); ${o.written()}. Take them off by hand and publish again.`);
     }
     keep(() => recordOriginalLabels(actor, s.id, found));
-    await github(`GitHub did not take the label off issue #${n}`, () => setLabels(repo, n, undefined, found, timeout));
+    await github(`GitHub did not take the label off issue #${n}`, () => storeFor(repo).setLabels(n,undefined, found, timeout));
     o.wrote({ issue: n, what: "unlabelled" });
   }
 
@@ -363,7 +364,7 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
       ...(replacing.labels?.length ? { labels: replacing.labels } : {}),
       leftBehind: o.leftBehind,
     });
-    await github(`GitHub did not add the comment on issue #${n}`, () => commentOnIssue(repo, n, text, timeout));
+    await github(`GitHub did not add the comment on issue #${n}`, () => storeFor(repo).comment(n, text, timeout));
     o.wrote({ issue: n, what: "commented" });
     announced = announcesClose(text);
   } else {
@@ -375,7 +376,7 @@ export async function replaceOriginal(o: ReplaceInput): Promise<{ issue: number;
   if (now.closed) {
     result = now.reason === "not_planned" && before !== undefined && now.closedAt ? { closed: "not_planned", closedAt: now.closedAt } : { closed: "other" };
   } else if (announced && !keepOpen && !now.monitor) {
-    const done = await github(`GitHub did not close issue #${n}`, () => closeIssue(repo, n, "not_planned", timeout));
+    const done = await github(`GitHub did not close issue #${n}`, () => storeFor(repo).close(n,"not_planned", timeout));
     o.wrote({ issue: n, what: "closed" });
     const at = typeof done.closed_at === "string" ? Date.parse(done.closed_at) : NaN;
     result = { closed: "not_planned", closedAt: new Date(Number.isFinite(at) ? at : Date.now()).toISOString() };

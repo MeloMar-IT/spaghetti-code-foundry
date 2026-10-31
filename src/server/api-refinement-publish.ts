@@ -6,7 +6,8 @@ import { readyListOf, type ReadyItem } from "../refinement/ready-list.js";
 import { UPDATE_COMMENT_MAX, chosenLabels, endsWithMarker, issueText, issueUrl, issueWithMarker, labelsFor, parsePublishInput, parseSourceChoice, planOf, refinedHash, refinedHashIn, refinedMarker, sameVersion, updateComment, updateMarker, versionHash, withoutSplits, type ChangedOnGithub, type IssueVersion, type LabelRules, type SourceChoice } from "../refinement/publish.js";
 import { architectWorking, settleSession } from "../refinement/architect.js";
 import { RefinementError, beginPublishing, endPublishing, getSession, logRoom, clearPendingUpdate, markOf, recordPendingUpdate, recordPublished, refreshSource, type Session } from "../refinement/store.js";
-import { commentOnIssue, createIssue, findOwnComment, isBot, issueComments, listNewestIssues, repoLabels, restIssue, setLabels, updateIssue, type RestIssue } from "../github.js";
+import { findOwnComment, isBot, type RestIssue } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import type { PullKind } from "../refinement/issue-building.js";
 import { HttpError, readJson, send } from "./http.js";
 import { architectDeps, guardedAsync, limitsOf } from "./api-refinement.js";
@@ -35,7 +36,7 @@ function ownedSession(ctx: ApiContext, req: IncomingMessage, id: string) {
 async function readRepoLabels(ctx: ApiContext, s: Session, list: ReadyItem[]) {
   let names: string[];
   try {
-    names = await repoLabels(s.repo, ctx.opts.ghTimeoutMs ?? GH_TIMEOUT_MS);
+    names = await storeFor(s.repo).labels(ctx.opts.ghTimeoutMs ?? GH_TIMEOUT_MS);
   } catch (e) {
     throw new HttpError(502, `could not read the labels on GitHub: ${whatHappened(e)} — check the repository's sign-in under My repositories and try again`);
   }
@@ -77,7 +78,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
       const n = s.source.issue;
       const now = await asOwnedRepo(ctx, s.owner, s.repo, async () => {
         try {
-          return await restIssue(s.repo, n, timeout);
+          return await storeFor(s.repo).get(n, timeout);
         } catch (e) {
           throw new HttpError(502, `could not read issue #${n} on GitHub: ${whatHappened(e)}`);
         }
@@ -185,7 +186,7 @@ async function keepGithub(o: { s: Session; did: string; mine: IssueVersion; keep
   if (s.source!.pending) throw new HttpError(409, `an update of issue #${n} was sent and is not finished; publish again and keep yours, or drop the session`);
   let before: RestIssue | undefined;
   try {
-    before = await restIssue(s.repo, n, timeout);
+    before = await storeFor(s.repo).get(n, timeout);
   } catch (e) {
     throw new HttpError(502, `could not read issue #${n} on GitHub: ${whatHappened(e)}; nothing was written`);
   }
@@ -221,7 +222,7 @@ async function updateOne(o: UpdateInput): Promise<Made> {
     const pulls = new Map<string, PullKind>();
     let before: RestIssue | undefined;
     try {
-      before = await restIssue(s.repo, n, timeout);
+      before = await storeFor(s.repo).get(n, timeout);
     } catch (e) {
       throw new HttpError(502, `could not read issue #${n} on GitHub: ${whatHappened(e)}; nothing was written`);
     }
@@ -266,7 +267,7 @@ async function updateOne(o: UpdateInput): Promise<Made> {
       throw new HttpError(500, `the old text of issue #${n} could not be saved in the session, so nothing was written; publish again, after a moment`);
     }
     try {
-      await updateIssue(s.repo, n, { title: o.text.title, body: text }, timeout);
+      await storeFor(s.repo).edit(n,{ title: o.text.title, body: text }, timeout);
       o.ledger.add({ issue: n, what: "updated" });
     } catch (e) {
       // When GitHub did not answer in time the replacement may have landed: the record stays, and a retry finishes from it.
@@ -285,14 +286,14 @@ async function updateOne(o: UpdateInput): Promise<Made> {
   if (marked) {
     try {
       // Only a comment of the account that publishes counts: the marker is public once the issue has it.
-      commented = (await findOwnComment(await issueComments(s.repo, n, timeout), (c) => endsWithMarker(c.body, marker), timeout)) !== undefined;
+      commented = (await findOwnComment(await storeFor(s.repo).comments(n, timeout), (c) => endsWithMarker(c.body, marker), timeout)) !== undefined;
     } catch (e) {
       throw new HttpError(502, `Issue #${n} was updated, but its comments could not be read: ${whatHappened(e)}; ${o.ledger.text()}. ${again}`);
     }
   }
   if (!commented) {
     try {
-      await commentOnIssue(s.repo, n, comment, timeout);
+      await storeFor(s.repo).comment(n, comment, timeout);
       o.ledger.add({ issue: n, what: "commented" });
     } catch (e) {
       throw new HttpError(502, `Issue #${n} was updated, but the comment could not be added: ${whatHappened(e)}; ${o.ledger.text()}. ${again}`);
@@ -304,7 +305,7 @@ async function updateOne(o: UpdateInput): Promise<Made> {
   const labels = [...o.labels.filter((l) => l.toLowerCase() !== build), ...o.labels.filter((l) => l.toLowerCase() === build)];
   for (const l of labels) {
     try {
-      await setLabels(s.repo, n, l, [], timeout);
+      await storeFor(s.repo).setLabels(n,l, [], timeout);
       o.ledger.add({ issue: n, what: "labelled" });
     } catch (e) {
       throw new HttpError(502, `Issue #${n} was updated, but the label "${l}" could not be added: ${whatHappened(e)}; ${o.ledger.text()}. ${again}`);
@@ -412,7 +413,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
     if (willCreate.length) {
       let recent: RestIssue[];
       try {
-        recent = await listNewestIssues(s.repo, timeout);
+        recent = await storeFor(s.repo).listNewest(timeout);
       } catch (e) {
         throw new HttpError(502, `could not read the issues on GitHub: ${whatHappened(e)}; ${ledger.text()}.`);
       }
@@ -425,7 +426,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
           const text = issueText(d, { ...s, drafts: live }, { accepted: acceptedLines(d, labelsOf.list), by, date, numberOf });
           let issue: RestIssue;
           try {
-            issue = await createIssue(s.repo, { title: text.title, body: `${text.body}\n\n${refinedMarker(s.id, did)}`, labels: labels.get(did)! }, timeout);
+            issue = await storeFor(s.repo).create({ title: text.title, body: `${text.body}\n\n${refinedMarker(s.id, did)}`, labels: labels.get(did)! }, timeout);
           } catch (e) {
             throw new HttpError(502, `GitHub did not make the issue: ${whatHappened(e)}; ${ledger.text()}. Fix the problem and publish again, after a moment.`);
           }

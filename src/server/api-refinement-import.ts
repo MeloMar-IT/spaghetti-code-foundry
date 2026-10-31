@@ -2,7 +2,8 @@ import type { IncomingMessage } from "node:http";
 import { findOwnedRepo } from "../auth/repos.js";
 import { githubKey, githubNameOf, validGithubName } from "../auth/repo-url.js";
 import type { WatcherConfig } from "../config.js";
-import { pullState, restIssue, setLabels, type RestIssue } from "../github.js";
+import type { RestIssue } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import { labelNames } from "../queue/watcher.js";
 import { buildLabelOf } from "../refinement/build-limits.js";
 import { buildingReason, pullsToRead, type PullKind } from "../refinement/issue-building.js";
@@ -55,7 +56,7 @@ export async function whyBuilding(ctx: ApiContext, repo: string, n: number, labe
   const first = foundryFacts(ctx, key, n);
   const early = buildingReason({ labels, runs: first.runs.map(({ pr: _pr, ...r }) => r), queued: first.queued, labelNames: names, pulls });
   if (early) return early;
-  for (const pr of pullsToRead(first.runs)) if (!pulls.has(pr)) pulls.set(pr, await pullState(repo, Number(pr), timeout));
+  for (const pr of pullsToRead(first.runs)) if (!pulls.has(pr)) pulls.set(pr, await storeFor(repo).changeState(Number(pr), timeout));
   // Fresh facts: a run that started while the pull requests were read still counts.
   const f = foundryFacts(ctx, key, n);
   return buildingReason({ labels, runs: f.runs, queued: f.queued, labelNames: names, pulls });
@@ -87,7 +88,7 @@ export async function importIssue(ctx: ApiContext, req: IncomingMessage, body: R
   return await asOwnedRepo(ctx, user.id, repo, async () => {
     let issue: RestIssue | undefined;
     try {
-      issue = await restIssue(repo, n, timeout);
+      issue = await storeFor(repo).get(n, timeout);
     } catch (e) {
       throw new HttpError(502, `could not read the issue on GitHub: ${whatHappened(e)} — check the repository's sign-in under My repositories and try again`);
     }
@@ -114,7 +115,7 @@ export async function importIssue(ctx: ApiContext, req: IncomingMessage, body: R
     // A pull request of a run only blocks when it is not closed without a merge; every one is read.
     for (const pr of pullsToRead(runs)) {
       try {
-        pulls.set(pr, await pullState(repo, Number(pr), timeout));
+        pulls.set(pr, await storeFor(repo).changeState(Number(pr), timeout));
       } catch (e) {
         throw new HttpError(502, `could not read pull request #${pr} on GitHub: ${whatHappened(e)} — try again`);
       }
@@ -173,7 +174,7 @@ export async function removeBuildLabel(ctx: ApiContext, req: IncomingMessage, id
   await asOwnedRepo(ctx, s.owner, s.repo, async () => {
     let issue: RestIssue | undefined;
     try {
-      issue = await restIssue(s.repo, n, timeout);
+      issue = await storeFor(s.repo).get(n, timeout);
     } catch (e) {
       throw new HttpError(502, `could not read the issue on GitHub: ${whatHappened(e)} — check the repository's sign-in under My repositories and try again`);
     }
@@ -184,7 +185,7 @@ export async function removeBuildLabel(ctx: ApiContext, req: IncomingMessage, id
     const found = labelsOf(issue).filter((l) => wanted.includes(l.toLowerCase()));
     if (!found.length) return;
     try {
-      await setLabels(s.repo, n, undefined, found, timeout);
+      await storeFor(s.repo).setLabels(n, undefined, found, timeout);
     } catch (e) {
       throw new HttpError(502, `GitHub did not remove the label: ${whatHappened(e)} — check the repository's sign-in under My repositories and try again`);
     }

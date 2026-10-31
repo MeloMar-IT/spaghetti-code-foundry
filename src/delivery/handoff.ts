@@ -10,7 +10,7 @@ import { TOKEN_MIN } from "../credentials/store.js";
 import { SAFE_OPTIONS } from "../engine/diff.js";
 import { RepositorySchema } from "../evidence/identity.js";
 import { EVIDENCE_EVENTS_FILE } from "../evidence/version.js";
-import { gh, upsertStatusComment } from "../github.js";
+import { storeFor } from "../stories/store.js";
 import type { DeliveryIo } from "./cli.js";
 import { contractDigest, evidenceHeadProblem, verifyDeliveryContract } from "./contract.js";
 import { CommitFactsError, readCommitFacts, type CommitFacts, type CommitFactsOptions } from "./git-facts.js";
@@ -347,19 +347,7 @@ export function defaultRemoteHead(workdir: string): (branch: string) => Promise<
 }
 
 export function defaultCheckRuns(repo: string): (sha: string) => Promise<CheckRun[]> {
-  return async (sha) => {
-    const out = await gh(["api", `repos/${repo}/commits/${sha}/check-runs?per_page=100`], undefined, 30_000);
-    const parsed: unknown = JSON.parse(out);
-    const list = (parsed as { check_runs?: unknown } | null)?.check_runs;
-    if (!Array.isArray(list)) throw new Error("no check runs list");
-    const runs: CheckRun[] = [];
-    for (const e of list as unknown[]) {
-      const r = e as { name?: unknown; status?: unknown; conclusion?: unknown } | null;
-      if (!r || typeof r.name !== "string" || typeof r.status !== "string") continue;
-      runs.push({ name: r.name, status: r.status, conclusion: typeof r.conclusion === "string" ? r.conclusion : null });
-    }
-    return runs;
-  };
+  return (sha) => storeFor(repo).checks(sha, 30_000);
 }
 
 // ---- the command -------------------------------------------------------------------------------------------------
@@ -472,7 +460,7 @@ export async function handoffCommand(args: string[], io: DeliveryIo, deps: Hando
 
   if (body !== undefined) {
     try {
-      const r = await upsertStatusComment(repo, pr, body, { create: true, on: "pr", match: isDeliveryComment, timeoutMs: 30_000, deadline: Date.now() + 60_000 });
+      const r = await storeFor(repo).upsertStatusComment(pr, body, { create: true, on: "pr", match: isDeliveryComment, timeoutMs: 30_000, deadline: Date.now() + 60_000 });
       out(`delivery comment: ${r.changed ? (r.created ? "posted" : "updated") : "unchanged"}`);
     } catch {
       out("delivery comment: could not be updated");

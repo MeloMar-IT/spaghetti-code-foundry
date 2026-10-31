@@ -51,6 +51,35 @@ async function withEnv<T>(vars: Record<string, string>, fn: () => Promise<T>): P
   }
 }
 
+describe("openChangeWith", () => {
+  const o = { head: "f", base: "main", title: "T", body: "B" };
+  const run = async (args: string[], stdin: string) => ({ args, stdin });
+
+  it("gives the runner the gh arguments and the body on stdin", async () => {
+    expect(await store.openChangeWith(o, run)).toEqual({ args: ["pr", "create", "--repo=o/r", "--head=f", "--base=main", "--title=T", "--body-file", "-"], stdin: "B" });
+  });
+
+  it("adds --draft only for draft: true", async () => {
+    expect((await store.openChangeWith({ ...o, draft: true }, run)).args.at(-1)).toBe("--draft");
+    expect((await store.openChangeWith({ ...o, draft: false }, run)).args).not.toContain("--draft");
+  });
+
+  it("keeps a value that starts with - or has spaces in one element", async () => {
+    const r = await store.openChangeWith({ ...o, title: "-x", head: "a b\"c" }, run);
+    expect(r.args).toContain("--title=-x");
+    expect(r.args).toContain("--head=a b\"c");
+  });
+
+  it("passes an empty body on, returns the runner's object and its rejection, and does not run gh", async () => {
+    const res = { x: 1 };
+    const log = await logOf(async () => {
+      expect(await store.openChangeWith({ ...o, body: "" }, async (_a, s) => (expect(s).toBe(""), res))).toBe(res);
+      await expect(store.openChangeWith(o, () => Promise.reject(new Error("boom")))).rejects.toThrow("boom");
+    });
+    expect(log).toBe("");
+  });
+});
+
 describe("storeFor", () => {
   it("gives one GitHubStore per repository", () => {
     expect(storeFor("o/r")).toBe(storeFor("o/r"));

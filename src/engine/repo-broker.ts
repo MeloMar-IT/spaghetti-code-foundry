@@ -15,6 +15,7 @@ import { stepIsolated, stepIsolation, noMachineSignIn } from "./isolation.js";
 import { repositoryFact } from "./policy-hooks.js";
 import { appTokenAccess, ghConfigDir, removeGhConfigDir, repoNoCredentialEnv, repoTokenEnv } from "./repo-access.js";
 import { LOCAL_OPERATIONS, otherRepository, REPO_OPERATIONS, RepoRequestSchema, repoToolOf, tailBytes, unsafeGitSettings, type RepoEvidenceOperation, type RepoOperation, type RepoRefusal, type RepoRequest } from "./repo-request.js";
+import { storeFor } from "../stories/store.js";
 import { shortEnv, shortEnvRun } from "./short-env.js";
 
 export { REPO_OPERATIONS, RepoRequestSchema, type RepoRefusal, type RepoRequest };
@@ -308,8 +309,7 @@ async function attempt(ctx: BrokerContext, req: RepoRequest, grant: RepoGrant | 
     case "push":
       return finish(await net("git", ["push", "--recurse-submodules=no", "--", u, `HEAD:refs/heads/${req.branch}`]));
     case "pull-request": {
-      const args = ["pr", "create", `--repo=${target.fact}`, `--head=${req.head}`, `--base=${req.base}`, `--title=${req.title}`, "--body-file", "-", ...(req.draft ? ["--draft"] : [])];
-      const r = await net("gh", args, req.body ?? "");
+      const r = await storeFor(target.fact).openChangeWith({ head: req.head, base: req.base, title: req.title, body: req.body ?? "", draft: req.draft }, (args, stdin) => net("gh", args, stdin));
       return finish(r, { pr: r.exitCode === 0 ? pullRequestOf(r.stdout, target.fact) : undefined });
     }
     case "branch":

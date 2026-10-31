@@ -2,7 +2,7 @@ import type { CheckRun } from "../delivery/handoff.js";
 import * as github from "../github.js";
 import { gh, ghJson } from "../github.js";
 import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../github.js";
-import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
+import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
 
 const whole = (n: unknown, max = Number.MAX_SAFE_INTEGER): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 1 && n <= max;
 
@@ -216,6 +216,10 @@ export class GitHubStore implements StoryStore {
   }
   changeState(pr: number, timeoutMs?: number): Promise<ChangeState> {
     return github.pullState(this.repo, pr, timeoutMs);
+  }
+  /** `--name=value`: a head, base or title that starts with "-" stays a value. The caller's runner starts gh. */
+  openChangeWith<R>(o: { head: string; base: string; title: string; body: string; draft?: boolean }, run: GhRunner<R>): Promise<R> {
+    return run(["pr", "create", `--repo=${this.repo}`, `--head=${o.head}`, `--base=${o.base}`, `--title=${o.title}`, "--body-file", "-", ...(o.draft ? ["--draft"] : [])], o.body);
   }
   async openChange(o: { head: string; base?: string; title: string; body: string; draft?: boolean }, timeoutMs?: number): Promise<string> {
     const args = ["pr", "create", "--repo", this.repo, ...(o.base ? ["--base", o.base] : []), "--head", o.head, "--title", o.title, "--body-file", "-", ...(o.draft ? ["--draft"] : [])];
