@@ -164,6 +164,17 @@ describe("parking an issue with /park or a do-not-build answer", () => {
   });
 
   describe("when parking cannot be done", () => {
+    /** Waits for the held call, then always lets the check go on and waits for it: a failed wait leaves no check behind for the next attempt. */
+    const finishCheck = async (tick: Promise<void>, hold: string, wait: () => Promise<unknown>, release: () => void) => {
+      try {
+        await wait();
+      } finally {
+        release();
+        rmSync(hold, { force: true });
+        await tick;
+      }
+    };
+
     it("a resume at the same time (setParked refuses): nothing changes on GitHub, also not by the status reporter", async () => {
       vi.spyOn(scheduler, "setParked").mockReturnValue(false);
       plant("NOT_CODE"); issues([TRIGGER, ASKS]); comments(question, said("/park"));
@@ -194,14 +205,27 @@ describe("parking an issue with /park or a do-not-build answer", () => {
       vi.spyOn(scheduler, "queue").mockImplementation(() => ({ pending: queued ? [{ runId: "q1", githubRepo: "acme/app", issue: "4", source: "x" }] : [], active: [] }) as never);
       issues([TRIGGER, ASKS]); comments(preQuestion, said("/park"));
       const w = watcher();
-      const t = w.tick();
-      await vi.waitFor(() => expect(log()).toContain("permission"));
-      queued = true;
-      rmSync(hold);
-      await t;
+      await finishCheck(w.tick(), hold, () => vi.waitFor(() => expect(log()).toContain("permission"), { timeout: 30_000 }), () => { queued = true; });
       expect(log()).not.toContain("issue edit 4 ");
       expect(log()).not.toContain("parked -->");
       expect(acts(w)).toContain("not done");
+    });
+
+    it("a wait that fails ends the check before the test ends", async () => {
+      const hold = join(gh.tmp, "hold");
+      writeFileSync(hold, "");
+      process.env.FAKE_GH_HOLD = hold;
+      process.env.FAKE_GH_HOLD_ON = "permission";
+      let queued = false;
+      vi.spyOn(scheduler, "queue").mockImplementation(() => ({ pending: queued ? [{ runId: "q1", githubRepo: "acme/app", issue: "4", source: "x" }] : [], active: [] }) as never);
+      issues([TRIGGER, ASKS]); comments(preQuestion, said("/park"));
+      const w = watcher();
+      let ended = false;
+      const t = w.tick().then(() => { ended = true; });
+      await expect(finishCheck(t, hold, () => Promise.reject(new Error("too slow")), () => { queued = true; })).rejects.toThrow("too slow");
+      expect(ended).toBe(true);
+      expect(log()).not.toContain("issue edit 4 ");
+      expect(log()).not.toContain("parked -->");
     });
 
     it("a check that was given up during the permission read changes nothing", async () => {

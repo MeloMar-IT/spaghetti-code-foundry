@@ -4,6 +4,10 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- A daily schedule run (the release) that has not started an hour after its time is a problem on Home and in the health line: "The 17:00 release of <repo> is waiting: <why>". It goes away when the run starts; a run that was never queued clears at the next day's time (#679).
+  - **Code.** New `src/server/late-chores.ts`; changed `src/next-step.ts` (`chore_late` kind, `ChoreWait` reasons), `src/server/health.ts`, `src/queue/scheduler.ts` and `src/queue/watcher.ts` (`choreDay` on queued runs and briefs, `watcherAccount`, `accountBudgetLeft`), `src/engine/state.ts`, `src/words.ts` and `ui/icons.js`.
+  - **Tests.** New `tests/late-chores.test.ts`; changed `tests/health.test.ts`, `tests/chore-day.test.ts`, `tests/next-step.test.ts`, `tests/words.test.ts`, `tests/ui-icons.test.ts` and `tests/watch-park.test.ts` (the permission wait is 30 s and the check always ends).
+  - **Docs.** `docs/USER_GUIDE.md` ("The health line", "Schedule runs have their own lane", "Words the Foundry uses").
 - `tests/watch-overrule-recover.test.ts` works on a busy machine: the check that is given up has 5 seconds, not 1, to reach the held label edit, and the cancelled-run case waits up to 15 seconds for it. Both failed three times in a row under load, which stopped every story at the baseline and held the self-update.
 - The coding turn (`implement`) of the issue flows has 60 minutes instead of 40. It runs the tests itself, and on a busy machine it waits for a test slot: about one run in ten ended on the time limit. Other steps keep the flow default. `tests/implement-time-limit.test.ts` covers it.
 - A feature run whose issue cannot be closed after the merge into develop no longer fails. The report step closes the issue before it posts its comment; when the close fails, the comment says "close it by hand" and the run succeeds, like a hotfix already did. Before, the close was the last command of the step, so a GitHub hiccup turned a finished, merged run into `Factory_ERROR`, and a retry started the story again. `tests/gitflow.test.ts` covers it.

@@ -79,7 +79,7 @@ describe("status", () => {
       success: ["done"],
       running: ["running", "checking", "starting"],
       danger: ["failed", "watcher_error", "monitor_stopped", "watcher_stale"],
-      warning: ["usage_limit", "daily_budget", "user_limit", "interrupted", "restart", "closed_elsewhere"],
+      warning: ["usage_limit", "daily_budget", "user_limit", "interrupted", "restart", "chore_late", "closed_elsewhere"],
       waiting: ["questions", "planner_questions", "owner_action","approve_plan", "approve_split", "approval", "monitor_needs_you", "dependency", "one_at_a_time", "area_lock", "queued", "release", "stopped", "bug_first"],
       disabled: ["cancelled", "superseded", "issue_closed", "epic"],
     };

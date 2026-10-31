@@ -256,6 +256,16 @@ export function labelLies(status: string | undefined, busy: boolean, run: RunSum
   return { label: key, run: run.status };
 }
 
+/** The account whose limits a watcher's work counts for. */
+export const watcherAccount = (cfg: WatcherConfig): string | undefined => (cfg.repoId !== undefined ? cfg.ownerId : watcherOwner(cfg.owner));
+
+/** False when the owner's daily budget is used up. True without an owner or a cap. */
+export function accountBudgetLeft(scheduler: Pick<Scheduler, "userDailyBudget">, runsDir: string, owner?: string): boolean {
+  if (!owner) return true;
+  const cap = scheduler.userDailyBudget(owner);
+  return cap === undefined || spentTodayBy(runsDir, owner) < cap;
+}
+
 /** Minutes since midnight in a time zone (default: this machine's). */
 export function minutesNow(timeZone?: string, now = new Date()): { day: string; minutes: number } {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
@@ -589,14 +599,12 @@ export class Watcher {
 
   /** The account whose limits this watcher's work counts for (the same rule as queue()). */
   private ownerAccount(): string | undefined {
-    return this.cfg.repoId !== undefined ? this.cfg.ownerId : watcherOwner(this.cfg.owner);
+    return watcherAccount(this.cfg);
   }
 
   /** False when the owner's daily budget is used up. True without an owner or a cap. */
   private budgetLeftFor(owner?: string): boolean {
-    if (!owner) return true;
-    const cap = this.d.scheduler.userDailyBudget(owner);
-    return cap === undefined || spentTodayBy(this.d.runsDir, owner) < cap;
+    return accountBudgetLeft(this.d.scheduler, this.d.runsDir, owner);
   }
 
   private ownerBudgetLeft(): boolean {

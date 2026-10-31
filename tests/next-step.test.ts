@@ -144,6 +144,7 @@ describe("next-step records, one per kind", () => {
     ["restart", {}, "Foundry", "Nothing — it continues by itself", "#/watchers"],
     ["watcher_error", { reason: "gh failed" }, "Something is wrong", "Look at Error details on the Watchers page", "#/watchers"],
     ["closed_elsewhere", {}, "You", "Cancel the run if the work is no longer wanted", "#/runs/r1"],
+    ["chore_late", { choreAt: "17:00", choreName: "release", choreWait: "other_chore", blockingRun: "r0" }, "Foundry", "Nothing — it continues by itself", "#/runs/r0"],
     ["monitor_stopped", { reason: "7 new findings within 60 minutes" }, "Something is wrong", "Switch bug stories on again on the Watchers page", "#/watchers"],
     ["monitor_needs_you", { reason: "Runs of flow x are resumed again and again." }, "Something is wrong", "Press Try again or mute the finding on the Watchers page", "#/watchers"],
     ["watcher_stale", { lastCheck: "2026-10-01T11:20:00Z", timeZone: "UTC" }, "Something is wrong", "Press Check now on the Watchers page", "#/watchers"],
@@ -235,6 +236,7 @@ describe("next-step records, one per kind", () => {
       ["watcher_error", { reason: "dial tcp" }], ["release", { releaseAt: "17:00" }],
       ["dependency", { blockers: [{ issue: 1, next: nextStep("dependency", {}, { blockers: [{ issue: 2, next: nextStep("running") }] }) }] }],
       ["area_lock", { areaWait: { runId: "r0", areas: "src, tests" } }],
+      ["chore_late", { choreWait: "not_queued" }], ["chore_late", { choreWait: "no_check" }], ["chore_late", { choreWait: "owner_budget" }],
     ];
     for (const [kind, d] of variants) {
       const n = nextStep(kind, base, d);
@@ -260,7 +262,14 @@ describe("next-step records, one per kind", () => {
   });
 
   it("has a kind in the table for every kind", () => {
-    expect(new Set(cases.map((c) => c[0])).size).toBe(30);
+    expect(new Set(cases.map((c) => c[0])).size).toBe(31);
+  });
+
+  it("words a late schedule run by its reason", () => {
+    const late = (choreWait: NonNullable<Parameters<typeof nextStep>[2]>["choreWait"]) => nextStep("chore_late", { repo: "acme/app" }, { choreAt: "17:00", choreName: "release", choreWait });
+    expect(late("no_runs").text).toMatch(/^The 17:00 release of acme\/app is waiting: no run may start/);
+    expect(late("owner_budget")).toMatchObject({ who: "A time limit", until: "tomorrow" });
+    expect(late("not_queued").who).toBe("Something is wrong");
   });
 
   it("says why a closed issue and a silent watcher need attention", () => {
