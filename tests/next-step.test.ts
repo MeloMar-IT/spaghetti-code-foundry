@@ -111,12 +111,14 @@ describe("runClosedIssue", () => {
     expect(runClosedIssue(run({ history: [step("push_main", true, "PUSHED: main abc")] }))).toBe(true);
     expect(runClosedIssue(run({ state: { next: "create_split", steps: {}, visits: {} } }))).toBe(true);
     expect(runClosedIssue(run({ flowDef: flowDef("gh issue close 12"), state: { next: "report", steps: {}, visits: {} } }))).toBe(true);
+    expect(runClosedIssue(run({ flowDef: flowDef('if node "$FACTORY_TOOLS/story" close --reason completed >/dev/null 2>&1; then'), state: { next: "report", steps: {}, visits: {} } }))).toBe(true);
   });
   it("is false otherwise", () => {
     expect(runClosedIssue(run({ history: [step("report", true, "commented")] }))).toBe(false);
     expect(runClosedIssue(run({ history: [step("report", false, "closed #12")] }))).toBe(false);
     expect(runClosedIssue(run({ history: [step("push_main", true, "main moved meanwhile\nMOVED")] }))).toBe(false);
     expect(runClosedIssue(run({ flowDef: flowDef("gh issue comment 12"), state: { next: "report", steps: {}, visits: {} } }))).toBe(false);
+    expect(runClosedIssue(run({ flowDef: flowDef('node "$FACTORY_TOOLS/story" comment'), state: { next: "report", steps: {}, visits: {} } }))).toBe(false);
     expect(runClosedIssue(run({ history: [step("plan")] }))).toBe(false);
     expect(runClosedIssue(undefined)).toBe(false);
     expect(runClosedIssue(run())).toBe(false);

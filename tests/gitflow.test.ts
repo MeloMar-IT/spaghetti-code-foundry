@@ -523,13 +523,13 @@ describe("gitflow pipeline", () => {
     // the flow: no ready mark in release_pr; the key-guarded draft comes before the check, the ready mark only after it
     const rp = flow.steps.find((s) => s.id === "release_pr") as { run: string };
     const ho = flow.steps.find((s) => s.id === "handoff") as { run: string; repo_access?: boolean; timeout_sec?: number };
-    expect(rp.run).not.toContain("gh pr ready");
+    expect(rp.run).not.toContain('story" pr-ready');
     expect(ho.repo_access).toBe(true);
     expect(ho.timeout_sec).toBe(1800);
     const at = (s: string) => ho.run.indexOf(s);
     expect(at('if [ -n "$FACTORY_DELIVERY_PUBLIC_KEY" ]; then draft')).toBeGreaterThan(-1);
     expect(at('if [ -n "$FACTORY_DELIVERY_PUBLIC_KEY" ]; then draft')).toBeLessThan(at("delivery-handoff"));
-    expect(at('gh pr ready "$pr" --repo "$FACTORY_VAR_GITHUB_REPO" >')).toBeGreaterThan(at("delivery-handoff"));
+    expect(at('story" pr-ready "$pr" >')).toBeGreaterThan(at("delivery-handoff"));
     const log = gh.ghLog();
     expect(log).toMatch(/gh pr create --repo acme\/app --base main --head develop --title Release/);
     expect(log).not.toMatch(/gh pr create[^\n]*--draft/);

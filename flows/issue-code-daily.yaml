@@ -117,7 +117,7 @@ steps:
     type: shell
     repo_access: true
     description: Read the plan comments again, to check the skills of the plan against the Foundry's own record
-    run: gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json comments,labels | node "$FACTORY_TOOLS/plan-comment"
+    run: node "$FACTORY_TOOLS/story" comments-labels | node "$FACTORY_TOOLS/plan-comment"
   - id: baseline_tests
     type: shell
     timeout_sec: 7200
@@ -437,7 +437,7 @@ steps:
     repo_access: true
     run: |-
       git add -A
-      title=$(gh issue view "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --json title -q .title 2>/dev/null)
+      title=$(node "$FACTORY_TOOLS/story" title 2>/dev/null)
       git commit -q -m "Resolve #$FACTORY_VAR_ISSUE: $title" -m "Written by Claude, reviewed by Codex, tests passing. Spaghetti Code Foundry run $FACTORY_RUN_ID"
       git log --oneline -1
   - id: push
@@ -464,7 +464,7 @@ steps:
         echo; echo "### Files changed"; echo '```'; git show --stat --format= HEAD | tail -40; echo '```'
         echo; echo "_This goes to main with the release pull request._"
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
-        | gh issue comment "$FACTORY_VAR_ISSUE" --repo "$FACTORY_VAR_GITHUB_REPO" --body-file -
+        | node "$FACTORY_TOOLS/story" comment
     on_success: end
   - id: baseline_failed
     type: shell

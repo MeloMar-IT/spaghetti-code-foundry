@@ -51,7 +51,7 @@ steps:
       [ "$FACTORY_VAR_ASK" = impact ] || { echo "no issues read: only ask=impact reads the open issues"; exit 0; }
       r="$FACTORY_VAR_GITHUB_REPO"
       fail() { rm -f issues.json issues.md; echo "could not read the open issues of $r"; exit 1; }
-      gh issue list --repo "$r" --state open --limit 50 --json number,title,body,labels > issues.json || fail
+      node "$FACTORY_TOOLS/story" open-stories --limit 50 > issues.json || fail
       node "$FACTORY_TOOLS/issue-digest" issues.md --max 50 --no-comments < issues.json || fail
       rm -f issues.json
   - id: round

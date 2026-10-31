@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { constants } from "node:os";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -75,6 +76,22 @@ export async function gh(args: string[], env?: NodeJS.ProcessEnv, timeoutMs?: nu
   } catch (e) {
     throw token ? scrub(e, token) : e;
   }
+}
+
+/** Runs gh with this process's stdout and stderr. Resolves with what a shell shows: gh's exit code, or 128 + the signal number. Rejects when gh cannot start. */
+export function ghInherit(args: string[], input?: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.env.FACTORY_GH_BIN ?? "gh", args, {
+      stdio: [input === undefined ? "ignore" : "pipe", "inherit", "inherit"],
+      env: childEnv(undefined, sessions.getStore()),
+    });
+    child.on("error", reject);
+    child.on("close", (code, signal) => resolve(code ?? 128 + (constants.signals[signal as NodeJS.Signals] ?? 0)));
+    if (input !== undefined) {
+      child.stdin?.on("error", () => {}); // gh may exit before it reads everything; its exit code tells
+      child.stdin?.end(input);
+    }
+  });
 }
 
 /** One resource of GitHub's request limit (`gh api rate_limit`). */

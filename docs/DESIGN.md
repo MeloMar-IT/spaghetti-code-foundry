@@ -144,8 +144,13 @@ in `src/github.ts`; the store reuses them.
 - **A caller that owns its process.** `openChangeWith` takes a runner: the store builds the `gh` arguments
   and the broker starts the process, with its exact environment, pinned secrets and limits.
 - **Flow steps use `tools/story`.** The built-in blocks that read or write a run's story call
-  `node "$FACTORY_TOOLS/story"` (#737) instead of `gh`. The tool loads `dist/stories/store.js`, so a
-  step reaches the store through one helper, and bodies go through stdin, never a shell argument.
+  `node "$FACTORY_TOOLS/story"` (#737) instead of `gh`. Change-request (pull request) steps and the
+  inline steps of the built-in flows use it too (#738): `open-pr`, `merge`, `ci` and `pr-comments`
+  call its `pr-…` subcommands. The tool loads `dist/stories/store.js`, so a step reaches the store
+  through one helper, and bodies go through stdin, never a shell argument. Where gh's output or exit
+  status must reach the step whole (`pr-open`, `pr-merge`, `pr-checks`, `pr-checkout`), the store runs
+  gh with `ghInherit` (`src/github.ts`): gh writes straight to the step's stdout and stderr, and the
+  exit status is gh's (a signal gives 128 plus its number). Every other call goes through `gh()`.
 
 ---
 

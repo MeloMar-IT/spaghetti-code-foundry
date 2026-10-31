@@ -892,7 +892,7 @@ export function runClosedIssue(run: RunSummary | undefined): boolean {
   if (stepIs(next, ["merge", "create_split"])) return true;
   if (stepIs(next, ["report"])) {
     const step = (run.flowDef?.steps ?? []).find((x) => x.id === next) as { run?: string } | undefined;
-    return /gh issue close/.test(step?.run ?? "");
+    return /gh issue close|(?:FACTORY|SCF)_TOOLS\}?\/story"? close\b/.test(step?.run ?? "");
   }
   return false;
 }
