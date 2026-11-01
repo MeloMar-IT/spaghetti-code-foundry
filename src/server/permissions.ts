@@ -52,6 +52,8 @@ export const RULES: Rule[] = [
   r("GET", "flows/:name", "no", "read a flow"),
   r("PUT", "flows/:name", "no", "save a flow"),
   r("DELETE", "flows/:name", "no", "delete a flow"),
+  r("GET", "promotions", "no", "whether each component (`?kind=` and `?id=` narrow the list; `id` needs `kind`) is promoted, can be promoted or is blocked: its kind, id, version and hash, the promotion record (report ids and hashes) or the blocking suites with what to do; no report content"),
+  r("POST", "promotions", "no", "promote one component (`kind`, `id`, `reportId` of a passing safety report) and write its record; a component that is blocked answers 409 with the `blocking` list and writes nothing; writes an audit line"),
   r("GET", "blocks", "no", "list blocks"),
   r("PUT", "blocks/:id", "no", "save a block"),
   r("DELETE", "blocks/:id", "no", "delete a block"),

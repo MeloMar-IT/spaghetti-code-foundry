@@ -305,6 +305,7 @@ describe("the flow page controller", () => {
       "./templates.js": real.templates,
       "./ia.js": real.ia,
       "./graph.js": { renderGraph: (_o: unknown, opts: unknown) => { graphOpts = opts; drawn++; return real.dom.h("div", {}, "graph"); } },
+      "./promotions.js": { promotionNotice: (row: any) => (row ? real.dom.h("div", { class: "promotion-notice" }, row.failed ? "failed" : row.state) : null) },
       "./library.js": library,
       "./run-form.js": { runForm: () => real.dom.h("div") },
     };
