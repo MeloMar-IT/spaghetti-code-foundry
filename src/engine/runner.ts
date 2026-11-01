@@ -47,6 +47,7 @@ import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from
 import { prepareWorkspace } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
+import { recordRunAutonomy, runAutonomyAtStart } from "../governance/run-autonomy.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
 import { flowFileId } from "../promotion/flow-id.js";
@@ -169,8 +170,10 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const refused = workspaceRefused(flow.workspace, owner);
   // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
   const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
+  const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
   const summary: RunSummary = {
     runId,
+    autonomy: autonomy.autonomy,
     pathsTracked: true,
     flow: flow.name,
     flowDef: flow,
@@ -201,6 +204,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   evidence.created(summary, opts.actor ?? actorOf(opts.source, opts.source === "ui" ? opts.owner : undefined));
   // policy (observe mode): the run starts here, before any refusal and before the workspace is made
   const log = liveLog(summary, opts);
+  recordRunAutonomy(autonomy, log, evidence);
   if (opts.localTest) log(LOCAL_TEST_LINE);
   // the packs are read once: the run and the promotion check below use the same list
   const packs = loadRunPacks(summary, config);

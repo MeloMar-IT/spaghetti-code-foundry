@@ -8,6 +8,7 @@ import { CONTEXT_OMISSION_REASONS, type ContextBundle, type ContextOmissionReaso
 import type { RunContextCode } from "../engine/run-context.js";
 import type { RunSummary, StepRecord } from "../engine/state.js";
 import type { Step } from "../flow/schema.js";
+import type { RunAutonomy } from "../governance/autonomy.js";
 import {
   CommitSchema, GitIdentitySchema, isSafeRelativePath, modelIdentityOf, PullRequestIdentitySchema, RepositorySchema, StepIdSchema, ToolIdentitySchema,
   type Actor, type ArtifactRef, type GitIdentity, type ModelIdentity, type PullRequestIdentity, type StepIdentity, type TestResult,
@@ -130,6 +131,11 @@ export class RunRecorder {
       const version = run.flowDef?.publish?.enabled ? run.flowDef.publish.version : undefined;
       return { type: "run.created", flow: { name: run.flow, ...(version !== undefined ? { version } : {}) }, by, ...(run.localTest ? { localTest: true as const } : {}) };
     });
+  }
+
+  /** The autonomy level the run starts with (#643). */
+  runAutonomy(a: RunAutonomy): void {
+    this.put(() => ({ type: "run.autonomy", level: a.level, ...(a.repository ? { repository: a.repository } : {}), flow: a.flow }));
   }
 
   started(run: Pick<RunSummary, "baseSha" | "branch" | "vars">): void {

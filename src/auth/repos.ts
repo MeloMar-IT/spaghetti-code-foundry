@@ -177,6 +177,13 @@ export function findOwnedRepo(userId: string, name: string): RepoRecord | undefi
   return r ? { ...r } : undefined;
 }
 
+/** The ids of every record of a GitHub repository, across all accounts (any case, with or without ".git", https or ssh). Throws like read(). */
+export function repoIdsOf(name: string): string[] {
+  if (!validGithubName(name)) return [];
+  const key = githubKey(name);
+  return read().repos.filter((r) => tryParseRepoUrl(r.url)?.github !== undefined && keyOfRecord(r) === key).map((r) => r.id);
+}
+
 /** True when the account has this GitHub repository with a method other than "none". Reads no secret, sets no "last used". Throws like read(). */
 export function hasStoredSignIn(userId: string, githubName: string): boolean {
   if (!validGithubName(githubName)) return false;
@@ -384,9 +391,10 @@ export function checkNewRepo(userId: string, given: NewRepo | string, opts: { ow
 
 /**
  * Adds a repository. The record is written first and the token second, and a failed second write takes the record back,
- * so no token exists without a record. `ownerOk` says whether the account exists (default: it is in users.json).
+ * so no token exists without a record. `beforeSave` gets the new id under the lock, before anything is written (the API layer
+ * stores the starting autonomy level there; auth/ does not import the governance store). `ownerOk` says whether the account exists (default: it is in users.json).
  */
-export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean; installationId?: string; authorize?: () => void } = {}): PublicRepo {
+export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean; installationId?: string; authorize?: () => void; beforeSave?: (id: string) => void } = {}): PublicRepo {
   const input: NewRepo = typeof given === "string" ? { url: given } : given;
   const { url, auth } = addPlan(input);
   return withAuthLock(() => {
@@ -408,6 +416,7 @@ export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk
       ...(auth.method === "github-app" ? { installationId: opts.installationId } : {}),
       added: new Date().toISOString(),
     };
+    opts.beforeSave?.(id); // under the lock, before anything is saved: a throw saves nothing
     save([...file.repos, record]);
     if (credentialId && secret) {
       try {

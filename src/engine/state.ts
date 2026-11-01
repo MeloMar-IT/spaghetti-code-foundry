@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
+import type { RunAutonomy } from "../governance/autonomy.js";
 import type { PromotionRecord } from "../promotion/gate.js";
 import type { AppliedChoice } from "../skills/choices.js";
 import type { CanonicalSelectionRecord } from "../skills/run-canonical.js";
@@ -142,6 +143,8 @@ export interface RunSummary {
   toolProfile?: unknown;
   /** True for a local test (`scf run --local-test`, evals): it is not checked against `promotion.enforce` and never counts as a promoted delivery (#740). Only evals skip governance (#665). */
   localTest?: true;
+  /** The most autonomy the run may use, worked out once at the start (#643). Absent on older runs, which read as `delivery-handoff` through `autonomyOfRun`. Nothing enforces it yet. */
+  autonomy?: RunAutonomy;
   /** The id of the custom flow as `scf promote` knows it (its file name), saved so a resume checks the same id (#665). Absent: the flow's name. */
   flowId?: string;
   /** The run start check of `promotion.enforce` (warn or on); absent when it is off, for a local test and for older runs. */

@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditPath } from "../src/auth/audit.js";
 import { addRepo } from "../src/auth/repos.js";
+import { autonomyFile, readAutonomy } from "../src/governance/autonomy-store.js";
 import { DEFAULT_READY } from "../src/refinement/ready-list.js";
 import { setStatus } from "../src/auth/users.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
@@ -292,6 +293,20 @@ describe("admin repositories API", () => {
       expect((await call(bob, "DELETE", `/api/repos/${repo.id}`)).status).toBe(200);
       expect((await all()).some((r) => r.id === repo.id)).toBe(false);
     });
+  });
+
+  it("gives a connected repository the guarded-write level, and connects nothing when autonomy.json is broken", async () => {
+    const repo = await addFor(ann, "acme/autonomy");
+    expect(readAutonomy().repos[repo.id]).toMatchObject({ level: "guarded-write", by: "system:connect" });
+    writeFileSync(autonomyFile(), "{");
+    try {
+      const r = await call(ann, "POST", "/api/repos", { url: "acme/autonomy-two" });
+      expect(r.status).toBe(500);
+      expect((await all()).some((x) => x.url.endsWith("acme/autonomy-two"))).toBe(false);
+      expect(logs).toContain("repos: autonomy.json not-json");
+    } finally {
+      rmSync(autonomyFile(), { force: true });
+    }
   });
 
   it("never holds a token in an answer or in the log", () => {

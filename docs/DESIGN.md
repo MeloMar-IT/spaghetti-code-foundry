@@ -279,7 +279,9 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   version 5 (the context bundle of the run was written, or making it failed, see "Writing a run's bundle"),
   and from version 6 the reason code `context.uncited` (see "Policy hooks in observe mode"), and from
   version 8 the optional `localTest: true` on `run.created` (a run started with `--local-test`; the
-  schema accepts only `true`, and the migration 7 → 8 only sets the version).
+  schema accepts only `true`, and the migration 7 → 8 only sets the version), and from version 10 the
+  event `run.autonomy` (the level of the run, the repository's level when there is one, and the flow's;
+  see "Autonomy levels"). `run.autonomy` comes right after `run.created`.
   `prevHash` and `hash` come together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -297,6 +299,31 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   steps in `EVENT_MIGRATIONS` or `MANIFEST_MIGRATIONS` and is then checked. A new field means a new
   version and a step. `readRunEvidence` gives `absent` for a run without a manifest (every run made
   before this), and never throws.
+
+### Autonomy levels
+
+`src/governance/` keeps how far each repository and each flow may go (#643). The module split is:
+
+- `autonomy.ts` is pure: the four levels in order (`observe`, `plan-only`, `guarded-write`,
+  `delivery-handoff`), `lowerLevel`, the run's `RunAutonomy` schema, `autonomyOfRun` (a run without the field
+  reads as `delivery-handoff`, an invalid one as `observe`) and the log line. It imports only zod.
+- `autonomy-store.ts` reads and writes `autonomy.json`: one map of repository ids and one of flow names, each
+  entry with a level, `since`, `by` and an optional reason. Lookups use `Object.hasOwn`, so keys such as
+  `__proto__` are safe. A missing file is an empty store. A file that is a link, larger than 1 MiB, not JSON or
+  not valid is a `StoreError`. A write runs under the data-folder lock (`withAuthLock`), validates the whole
+  store and its size first, then replaces the file with one `writeAtomic` (a temporary file and one rename).
+  A refused write leaves the file as it was.
+- `run-autonomy.ts` works out a run's level when it starts and records it. It never throws. The evidence
+  event is written before the log lines, so a failing logger cannot drop it.
+
+The defaults are in `autonomy.ts`: no entry is `delivery-handoff`, and a repository connected through the API
+gets `guarded-write`. `addRepo` writes that entry through its `beforeSave` hook, under its own lock, before it
+saves `repos.json`; the API passes it in `api-repos.ts`, so `auth/` does not import the store. A repository of an
+existing install (moved from `config.yaml`) gets no entry.
+
+The level is read once per run, when `runFlow` starts, and recorded once: a resume does not read it again. If a
+store cannot be read at that point, the run counts as `observe` (the fail-closed choice), and the log says so.
+Nothing reads the level to allow or refuse a step yet.
 
 ### Policy contracts
 

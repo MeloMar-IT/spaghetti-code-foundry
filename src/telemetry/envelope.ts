@@ -155,6 +155,8 @@ function parts(body: EvidenceEventBody): { kind: TelemetryKind; name: string; fi
   switch (body.type) {
     case "run.created":
       return { kind: "run", name: type, fields: { flow: body.flow, actor: body.by } };
+    case "run.autonomy":
+      return { kind: "run", name: type, fields: {} };
     case "run.queued":
       return { kind: "run", name: type, fields: {} };
     case "run.started":

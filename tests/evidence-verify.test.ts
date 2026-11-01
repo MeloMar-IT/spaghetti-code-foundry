@@ -129,7 +129,7 @@ describe("verifyRunEvidence", () => {
       ["two events the other way round", (d) => edit(join(d, "evidence.jsonl"), (t) => { const l = t.split("\n"); return [l[0], l[2], l[1], ...l.slice(3)].join("\n"); }), "chain", "chain-order"],
       ["an event removed from the middle", (d) => edit(join(d, "evidence.jsonl"), (t) => t.split("\n").filter((_, i) => i !== 3).join("\n")), "chain", "chain-order"],
       ["a space in a line", (d) => edit(join(d, "evidence.jsonl"), (t) => t.replace('"seq":2', '"seq": 2')), "chain", "chain-not-canonical"],
-      ["an event of a newer version", (d) => edit(join(d, "evidence.jsonl"), (t) => t.replace('"version":1}', '"version":10}')), "chain", "chain-unsupported-version"],
+      ["an event of a newer version", (d) => edit(join(d, "evidence.jsonl"), (t) => t.replace('"version":1}', '"version":11}')), "chain", "chain-unsupported-version"],
       ["a last line that was cut off", (d) => edit(join(d, "evidence.jsonl"), (t) => t.slice(0, -1)), "events", "events-cut"],
       ["no event file", (d) => rmSync(join(d, "evidence.jsonl")), "events", "events-missing"],
       ["a folder in place of the event file", (d) => (rmSync(join(d, "evidence.jsonl")), mkdirSync(join(d, "evidence.jsonl"))), "events", "events-unreadable"],
