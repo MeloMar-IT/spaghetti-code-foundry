@@ -16,7 +16,7 @@ import type { RunSkillView } from "./skill-view.js";
  * to the run later stays hidden until it is added here: no costs, no tokens, no agent or model, no step output, no
  * transcripts, no settings, no folders. The log is rebuilt line by line from known shapes.
  */
-export interface UserStep { id: string; type: string; visit: number; ok: boolean; error?: string; startedAt: string; durationMs: number; parent?: string }
+export interface UserStep { id: string; type: string; visit: number; ok: boolean; error?: string; startedAt: string; durationMs: number; slotWaitMs?: number; parent?: string }
 
 export interface UserRun {
   runId: string; flow: string; task: string; status: RunStatus; startedAt: string; finishedAt?: string;
@@ -155,6 +155,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
       id: h.id, type: userType(h.type), visit: h.visit, ok: h.ok,
       ...(h.error ? { error: userError(h.error) } : {}),
       startedAt: h.startedAt, durationMs: h.durationMs,
+      ...(h.slotWaitMs ? { slotWaitMs: h.slotWaitMs } : {}),
       ...(h.parent !== undefined ? { parent: h.parent } : {}),
     })),
     state: { next: s.state?.next ?? null },

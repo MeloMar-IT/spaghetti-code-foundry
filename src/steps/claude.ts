@@ -3,6 +3,7 @@ import { accessSync, constants, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { runProcess, type ProcessMeter } from "./process.js";
+import { timedOutError, type SlotWaitWatch } from "./slot-waits.js";
 
 /** Where the Claude desktop app keeps its bundled Claude Code, one folder per version. */
 const desktopClaudeCodeDir = () => process.env.FACTORY_DESKTOP_CLAUDE_DIR ?? join(homedir(), "Library/Application Support/Claude/claude-code");
@@ -120,6 +121,8 @@ export interface ClaudeRunOptions {
   sandboxProfile?: string;
   /** Filled with the process time and the bytes it printed (see ProcessMeter). */
   meter?: ProcessMeter;
+  /** Where test-slot records its waits: the time limit does not count them. */
+  slotWaits?: SlotWaitWatch;
   /** Sandbox Claude's bash tool (writes limited to the workspace). */
   sandbox?: boolean;
   /** Folders outside the workspace the agent may write (the request folder of a step with repo_ops): added to its folders and to its bash sandbox. */
@@ -156,6 +159,8 @@ export interface ClaudeRunResult {
   tools?: ToolTimes;
   /** The largest input of one model turn (input + cache read + cache creation tokens). Absent without `usage` lines. */
   contextTokens?: number;
+  /** Time the session waited for a test slot (ms). Absent when it did not wait. */
+  slotWaitMs?: number;
 }
 
 /** Calls of a session and the time between each call and its result. A call without a result counts in `calls` only. */
@@ -297,6 +302,7 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
     cleanEnv: o.cleanEnv,
     sandboxProfile: o.sandboxProfile,
     meter: o.meter,
+    slotWaits: o.slotWaits,
     stdin: o.prompt,
     timeoutMs: o.timeoutMs,
     signal: o.signal,
@@ -324,10 +330,10 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
     return { ok: false, output: "", error: msg };
   }
   const res = spawned.res;
-  const measured = meter.end();
+  const measured = { ...meter.end(), ...(res.slotWait ? { slotWaitMs: res.slotWait.waitedMs } : {}) };
 
   if (res.aborted) return { ok: false, output: final?.result ?? "", error: "cancelled", ...measured };
-  if (res.timedOut) return { ok: false, output: final?.result ?? "", error: "timed out", ...measured };
+  if (res.timedOut) return { ok: false, output: final?.result ?? "", error: timedOutError(res.slotWait), ...measured };
   if (!final) {
     return {
       ...measured,

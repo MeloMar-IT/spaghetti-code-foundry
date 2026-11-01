@@ -1379,7 +1379,8 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
     step of `issue-deliver` and `issue-gitflow` has 60,000. The output is counted in bytes, so a warning can come
     before the output is cut;
   - a step that runs longer than its timeout is denied (`timeout.exceeded`). The limit is the step's
-    `timeout_sec`, or the flow's default. It covers shell and agent steps;
+    `timeout_sec`, or the flow's default. It covers shell and agent steps. Time spent waiting for a test
+    slot does not count, up to `FACTORY_TEST_SLOT_WAIT_SEC` (see "A few test runs at a time" above);
   - a step whose cost is over its step budget is denied (`budget.step-exceeded`). The limit is the step's
     `max_budget_usd`, or the flow's default. These budget rules need `cost_limits` (not `false`);
   - a run whose cost is over the flow's `max_cost_usd` is denied (`budget.run-exceeded`);
@@ -3378,6 +3379,13 @@ flowchart LR
   that left the command's process group, so a later call with a limit can stop them, and
   `FACTORY_TEST_SLOT_TRACK_MS` (default `2000`) sets how often they are noted while a limit or a track
   file is set.
+- **A wait for a slot does not use up a step's time limit.** While a step waits for a test slot, its
+  time limit stops: the wait is moved back, at most `FACTORY_TEST_SLOT_WAIT_SEC` seconds (default
+  `5400`, 90 minutes). A step never runs longer than its limit plus that bound, so a step that waits
+  forever still ends. The step log and the run page say how long it waited, for example `waited 18 min
+  for a test slot`. If the step still ends on its limit, the message says that it waited, and whether
+  the wait counted: `timed out (waited 18 min for a test slot, which did not count)`. A read-only Codex
+  session cannot write the record of its wait, so its limit counts every second.
 - **Tests an agent starts itself count too.** In an agent step, `npm`/`pnpm`/`yarn`/`bun` test
   scripts, `npx vitest` (and jest, mocha, playwright …), `pytest`, `python -m pytest`, `gradle`/`mvn`
   test, check, build or verify, and `go test`/`cargo test` go through the same test slots and run at
@@ -7102,6 +7110,8 @@ you can do first. Find yours in the table:
 |---|---|
 | The step … failed: its command ended with an error | Look at the output of the step and fix the cause |
 | The step … failed: it ran longer than its time limit | Look at the output of the step to see what took so long |
+| The step … failed: it ran longer than its time limit; it waited 18 min for a test slot, which did not count | Look at the output of the step to see what took so long |
+| The step … failed: it ran longer than its time limit; it waited 95 min for a test slot, capped at 90 min | Look at the output of the step to see what took so long |
 | The step … failed: the agent stopped without a result | Look at the log of the step on the run page |
 | The step … failed: the agent stopped with an error | Look at the log of the step on the run page |
 | The step … failed: the agent used all its turns | Look at the log of the step on the run page |

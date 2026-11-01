@@ -218,12 +218,13 @@ describe("recordStep facts", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  const run = (step: string, over: { type?: "shell" | "claude" | "approval"; res?: Partial<StepResult>; meter?: { ms?: number; printedBytes?: number }; startedAgo?: number; daily?: () => number; real?: boolean } = {}) => {
+  const run = (step: string, over: { type?: "shell" | "claude" | "approval"; res?: Partial<StepResult>; meter?: { ms?: number; printedBytes?: number; slotWaitMs?: number }; startedAgo?: number; daily?: () => number; real?: boolean; timeoutSec?: number } = {}) => {
     const type = over.type ?? "shell";
     const stepDef = (type === "shell" ? { id: step, type, run: "echo" } : type === "claude" ? { id: step, type, prompt: "p" } : { id: step, type, message: "m" }) as never;
     const facts: Facts[] = [];
     const decisions: string[] = [];
-    const real = over.real ? runPolicy({ runId: "r", vars: {}, flow: "t", flowDef: flowOf(`name: t\nsteps:\n  - { id: ${step}, type: shell, run: "echo" }\n`), owner: undefined } as never, ConfigSchema.parse({}), () => {}) : undefined;
+    const timeout = over.timeoutSec ? `, timeout_sec: ${over.timeoutSec}` : "";
+    const real = over.real ? runPolicy({ runId: "r", vars: {}, flow: "t", flowDef: flowOf(`name: t\nsteps:\n  - { id: ${step}, type: shell, run: "echo"${timeout} }\n`), owner: undefined } as never, ConfigSchema.parse({}), () => {}) : undefined;
     const policy = {
       pushes() {},
       at(b: string, f: Facts, s: unknown) {
@@ -246,6 +247,15 @@ describe("recordStep facts", () => {
     expect(run("a", { startedAgo: 10_000, meter: { ms: 5 } }).facts.elapsedMs).toBe(5);
     expect(run("a", { startedAgo: 10_000 }).facts.elapsedMs).toBe(0);
     expect(run("a", { type: "approval", startedAgo: 2000 }).facts.elapsedMs).toBeGreaterThanOrEqual(2000);
+  });
+
+  it("leaves the wait for a test slot out of the elapsed time, and a step that kept to its limit without it is not refused", () => {
+    expect(run("a", { meter: { ms: 12_000, slotWaitMs: 8000 } }).facts.elapsedMs).toBe(4000);
+    expect(run("a", { meter: { ms: 3000, slotWaitMs: 8000 } }).facts.elapsedMs).toBe(0); // never below 0
+    const over = run("a", { real: true, timeoutSec: 10, meter: { ms: 15_000 } });
+    expect(over.decisions).toEqual(["timeout.exceeded"]);
+    const waited = run("a", { real: true, timeoutSec: 10, meter: { ms: 15_000, slotWaitMs: 8000 }, res: { slotWaitMs: 8000 } });
+    expect(waited.decisions).not.toContain("timeout.exceeded");
   });
 
   it("counts what a shell step printed, also with a short output", () => {

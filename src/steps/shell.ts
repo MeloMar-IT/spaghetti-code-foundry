@@ -1,5 +1,6 @@
 import { dockerCommand } from "../engine/guards.js";
 import { runProcess, type ProcessMeter } from "./process.js";
+import { timedOutError, type SlotWaitWatch } from "./slot-waits.js";
 
 /** Characters of shell output the engine keeps when a step sets no `max_output`. */
 export const DEFAULT_MAX_OUTPUT = 20_000;
@@ -20,6 +21,8 @@ export interface ShellRunResult {
   error?: string;
   /** The command printed more than was kept: `output` is only its tail. */
   truncated?: boolean;
+  /** Time the command waited for a test slot (ms). Absent when it did not wait. */
+  slotWaitMs?: number;
 }
 
 export async function runShell(o: {
@@ -47,6 +50,8 @@ export async function runShell(o: {
   sandboxProfile?: string;
   /** Filled with the process time and the bytes it printed (see ProcessMeter). */
   meter?: ProcessMeter;
+  /** Where test-slot records its waits: the time limit does not count them. */
+  slotWaits?: SlotWaitWatch;
 }):Promise<ShellRunResult> {
   const env: NodeJS.ProcessEnv = { ...NO_COLOR_ENV, ...o.env };
   let cmd = "/bin/sh";
@@ -70,7 +75,9 @@ export async function runShell(o: {
     cleanEnv: o.cleanEnv,
     sandboxProfile: o.dockerImage ? undefined : o.sandboxProfile,
     meter: o.meter,
+    slotWaits: o.slotWaits,
   });
+  const slot = res.slotWait ? { slotWaitMs: res.slotWait.waitedMs } : {};
   // Keep the tail: that's where test failures and stack traces usually are.
   const keep = o.maxOutput ?? DEFAULT_MAX_OUTPUT;
   const fullOut = (res.stdout + res.stderr).replace(ANSI, "");
@@ -79,8 +86,8 @@ export async function runShell(o: {
   const stderr = fullErr.slice(-keep);
   const truncated = fullOut.length > keep ? { truncated: true } : {};
   const scanned = o.scan ? { output: o.scan(fullOut), stderr: o.scan(fullErr) } : undefined;
-  if (res.aborted) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "cancelled", ...truncated };
-  if (res.timedOut) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "timed out", ...truncated };
+  if (res.aborted) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: "cancelled", ...truncated, ...slot };
+  if (res.timedOut) return { ok: false, output, stderr, scanned, exitCode: res.exitCode, error: timedOutError(res.slotWait), ...truncated, ...slot };
   return {
     ok: res.exitCode === 0,
     output,
@@ -89,5 +96,6 @@ export async function runShell(o: {
     exitCode: res.exitCode,
     error: res.exitCode === 0 ? undefined : `exit code ${res.exitCode}`,
     ...truncated,
+    ...slot,
   };
 }

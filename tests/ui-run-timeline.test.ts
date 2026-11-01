@@ -191,6 +191,20 @@ describe("createTimeline", () => {
     expect(a.transcript).not.toHaveBeenCalled();
   });
 
+  it("shows how long a step waited for a test slot, in the admin and the user row, and nothing without the field", () => {
+    expect(mod.waitedText(18 * 60_000)).toBe("waited 18 min for a test slot");
+    expect(mod.waitedText(40_000)).toBe("waited 40 s for a test slot");
+    expect(mod.waitedText(undefined)).toBe("");
+    for (const admin of [true, false]) {
+      const waited = mod.createTimeline({ runId: "r1", admin, a });
+      waited.update(run({ history: [rec("a", 1, { slotWaitMs: 18 * 60_000 })] }));
+      expect(waited.el.textContent).toContain("waited 18 min for a test slot");
+      const plain = mod.createTimeline({ runId: "r1", admin, a });
+      plain.update(run({ history: [rec("a", 1)] }));
+      expect(plain.el.textContent).not.toContain("for a test slot");
+    }
+  });
+
   it("admin: false with records that have output still draws plain rows", () => {
     const t = mod.createTimeline({ runId: "r1", admin: false, a });
     t.update(run({ status: "failed", history: [rec("a", 1, { type: "claude", agent: "claude", costUsd: 1 })] }));

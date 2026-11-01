@@ -35,10 +35,15 @@ const stepWhat = (s: Ctx) => (s.step ? `The step ${s.step} failed` : "The run fa
 const OUTPUT = "Look at the output of the step and fix the cause";
 const LOG = "Look at the log of the step on the run page";
 
-export const NOT_EXPLAINED = "the error is not one the Foundry can explain";
+/** A step error that says the time limit was reached: `timed out`, or `timed out (waited … for a test slot, …)`. */
+export const isTimedOut = (e?: string): boolean => /^timed out\b/.test(e ?? "");
+
+export const NOT_EXPLAINED ="the error is not one the Foundry can explain";
 
 const ROWS: Row[] = [
   { re: /^exit code \S+/, make: (_m, s) => ({ what: stepWhat(s), why: "its command ended with an error", todo: OUTPUT }) },
+  { re: /^timed out \(waited (\d+ (?:s|min)) for a test slot, which did not count\)/, make: (m, s) => ({ what: stepWhat(s), why: `it ran longer than its time limit; it waited ${m[1]} for a test slot, which did not count`, todo: "Look at the output of the step to see what took so long" }) },
+  { re: /^timed out \(waited (\d+ (?:s|min)) for a test slot, more than the (\d+ (?:s|min)) that can be left out\)/, make: (m, s) => ({ what: stepWhat(s), why: `it ran longer than its time limit; it waited ${m[1]} for a test slot, capped at ${m[2]}`, todo: "Look at the output of the step to see what took so long" }) },
   { re: /^timed out\b/, make: (_m, s) => ({ what: stepWhat(s), why: "it ran longer than its time limit", todo: "Look at the output of the step to see what took so long" }) },
   { re: /^claude exited with code/, make: (_m, s) => ({ what: stepWhat(s), why: "the agent stopped without a result", todo: LOG }) },
   { re: /^codex CLI not found/, user: (_m, s) => ({ what: stepWhat(s), why: "an AI tool of the Foundry is not set up", todo: ASK }), make: (_m, s) => ({ what: stepWhat(s), why: "Codex is not installed on this computer", todo: "Install Codex on the computer that runs the Foundry" }) },

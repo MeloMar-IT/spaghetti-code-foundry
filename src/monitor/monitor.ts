@@ -22,6 +22,7 @@ import { SloInputCache, sloLookbackHours } from "./slo-input.js";
 import { markerHash } from "./story.js";
 import { ALL_DETECTORS } from "./work-detectors.js";
 import { chainLists } from "./chains.js";
+import { newestSlotWait } from "../steps/slot-waits.js";
 import { unlistedCandidates, UnlistedTracker, type RunState } from "./unlisted.js";
 
 export interface MonitorDeps {
@@ -64,7 +65,7 @@ const HOUR = 3_600_000;
 export const USUAL_RUNS = 500;
 const MAX_LOCKS = 500;
 
-/** The newest time anything was written to the logs of a run (live.log and the step logs). Undefined when there is none. */
+/** The newest time anything was written to the logs of a run (live.log, the step logs and the wait files of test-slot). Undefined when there is none. */
 export function lastLogWrite(runDir: string): string | undefined {
   let newest = 0;
   const look = (file: string) => {
@@ -80,6 +81,8 @@ export function lastLogWrite(runDir: string): string | undefined {
   } catch {
     // no logs folder yet
   }
+  // a step that waits for a test slot is alive: test-slot touches its wait file at least every 5 s
+  newest = Math.max(newest, newestSlotWait(runDir));
   return newest ? new Date(Math.round(newest)).toISOString() : undefined;
 }
 
