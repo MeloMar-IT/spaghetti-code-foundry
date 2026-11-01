@@ -101,6 +101,7 @@ Usage:
   scf components [kind]                          Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector
   scf components record [kind]                   Give new hashes of tool profiles, model routes and context selectors a version
   scf promote <kind> <id> [--live]               Check that the newest safety reports allow promoting a component (read-only; exit 1 when blocked)
+  scf promote <kind> <id> --report <report-id>   The same check; when nothing blocks, record the promotion in promotions/records.json
   scf policy restore <id> [--force]             Put back the last-known-good copy of a mandatory policy overlay
   scf policy break-glass --reason "<text>" --for <n>m|<n>h   Start a time-limited, audited break-glass (no effect on runs yet)
   scf policy break-glass --end                 End the break-glass
@@ -256,6 +257,7 @@ async function main(argv: string[]): Promise<number> {
       "dry-run": { type: "boolean" },
       "local-test": { type: "boolean" },
       live: { type: "boolean" },
+      report: { type: "string" },
       "no-web": { type: "boolean" },
       models: { type: "string" },
       label: { type: "string" },
@@ -297,6 +299,7 @@ async function main(argv: string[]): Promise<number> {
   // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, `score …` and `effect …`
   // write only into skill-evaluations/ and skill-effects/, and `release publish …` only into skill-releases/, all through claimHomeWrite: they run without choosing or moving the data folder.
   // `scf components` only reads; `components record` writes only promotions/versions.json, through withAuthLock (claimHomeWrite).
+  // `scf promote` only reads; with `--report` it writes only promotions/records.json, the same way.
   // `scf delivery verify` and `public-key` only read: no migration, no config load before the command, no path in a message.
   if (cmd !== "components" && cmd !== "promote" && cmd !== "delivery" &&!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
@@ -676,7 +679,7 @@ async function main(argv: string[]): Promise<number> {
 
     case "promote": {
       const { promoteCommand } = await import("./promotion/cli.js");
-      return promoteCommand(positionals.slice(1), { live: values.live === true }, (line) => void process.stdout.write(line + "\n"));
+      return promoteCommand(positionals.slice(1), { live: values.live === true, ...(values.report !== undefined ? { report: values.report } : {}) },(line) => void process.stdout.write(line + "\n"));
     }
 
     case "components": {

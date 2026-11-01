@@ -2004,7 +2004,25 @@ component is a problem.
 ### Promote a component
 
 `scf promote <kind> <id> [--live]` says whether a component may be promoted, from the safety reports
-already on disk. It is read-only: it promotes nothing and writes nothing, not even `versions.json`.
+already on disk. Without `--report` it is read-only: it promotes nothing and writes nothing, not even `versions.json`.
+
+`scf promote <kind> <id> --report <report-id> [--live]` makes the same check and, when nothing blocks, records the
+promotion in `promotions/records.json`. It then prints `PROMOTED <kind> <id> v<version> sha256:<hash> report:<report-id>`
+and exits 0. A blocked promotion prints the same `BLOCKED` lines, records nothing and exits 1. The report id is the
+report's file name without `.json`, such as `timeout-2026-10-30T07-21-04-123Z`.
+
+### Promote in the Foundry (admins)
+
+An admin can do the same in the web interface:
+
+- **Settings, "Promoted versions".** Lists the published flows and the other components with their state:
+  promoted (with the report id), ready to promote, or blocked (with each blocking suite and what to do).
+  **Promote** appears for a component that is ready to promote. A refused promotion shows the blocking list and writes nothing.
+- **Flow editor.** A published flow shows **Not promoted: <suite> (<reason>). <remediation>** until it is promoted,
+  or the report id once it is. Saving still works, so an unpromoted flow can be saved.
+
+The web interface and `scf promote --report` write the same record and log the same `BLOCKED` line for a refused
+promotion. A promotion in the web interface is audited as `component-promote`.
 
 ```
 PASSED timeout <report file>
@@ -4089,6 +4107,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
+| `component-promote` (admin) | An admin promotes a component with a passing report (`ok`), or the promotion is refused because suites block it (`failed`) | `<kind>/<id>` | `v<version> sha256:<hash> report:<id>`; on `failed` the blocking codes |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
 | `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no story is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
 | `help-action` | An approved action of Ask SCF ran (`ok`) or was refused (`failed`). A token, request text and model text are never logged | `conversation <id>` | `<action>; run <id>; <result>`, or `refused: <code>` |
@@ -4546,6 +4565,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/flows/:name` | yes | no | read a flow |
 | `PUT /api/flows/:name` | yes | no | save a flow |
 | `DELETE /api/flows/:name` | yes | no | delete a flow |
+| `GET /api/promotions` | yes | no | whether each component (`?kind=` and `?id=` narrow the list; `id` needs `kind`) is promoted, can be promoted or is blocked: its kind, id, version and hash, the promotion record (report ids and hashes) or the blocking suites with what to do; no report content |
+| `POST /api/promotions` | yes | no | promote one component (`kind`, `id`, `reportId` of a passing safety report) and write its record; a component that is blocked answers 409 with the `blocking` list and writes nothing; writes an audit line |
 | `GET /api/blocks` | yes | no | list blocks |
 | `PUT /api/blocks/:id` | yes | no | save a block |
 | `DELETE /api/blocks/:id` | yes | no | delete a block |

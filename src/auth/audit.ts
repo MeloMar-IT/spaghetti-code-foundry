@@ -36,6 +36,7 @@ export const EVENT_ACTIONS = [
   "credential-add",
   "credential-remove",
   "flow-publish",
+  "component-promote",
   "settings-change",
   "restart-request",
   "restart-cancel",

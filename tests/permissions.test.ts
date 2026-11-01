@@ -146,6 +146,8 @@ const EXAMPLES: Record<string, Example> = {
   "GET flows/:name": no("flows/walk", 200),
   "PUT flows/:name": no("flows/walk", 400, {}),
   "DELETE flows/:name": no("flows/nope", 404),
+  "GET promotions": no("promotions", 200),
+  "POST promotions": no("promotions", 400, {}),
   "GET blocks": no("blocks", 200),
   "PUT blocks/:id": no("blocks/x", 400, {}),
   "DELETE blocks/:id": no("blocks/nope", 404),

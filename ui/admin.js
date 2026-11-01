@@ -4,6 +4,7 @@ import { describedSections, generatedSection, hintFor, hinted, startupSection } 
 import { skillsSection } from "./settings-skills.js";
 import { check, field as f, input, lockReadOnly } from "./fields.js";
 import { poller } from "./live.js";
+import { promotionPanel } from "./promotions.js";
 import { loadingState } from "./states.js";
 import { settingsPage } from "./templates.js";
 
@@ -316,6 +317,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       h("p", { class: "muted flush" }, h("a", { href: "#/all-repos?method=github-app" }, "Repositories that use the app"))),
     ...(policyCard.card ? [policyCard.card] : []),
     ...(promotionCard.card ? [promotionCard.card] : []),
+    promotionPanel({ readOnly }),
     ...(startup.length ? [startupSection(startup, section)] : []),
     ],
   }));

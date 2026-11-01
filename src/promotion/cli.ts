@@ -1,18 +1,34 @@
 import { dataHome } from "../auth/store.js";
 import { COMPONENT_KINDS, componentLine, isCounted, lookupVersions, type ComponentKind, type SeenHash } from "./components.js";
-import { promoteCheck } from "./promote.js";
+import { promoteCheck, promoteWithReport, REPORT_ID_RE } from "./promote.js";
 import { readHomeComponents, type ComponentProblem, type FoundComponent } from "./home.js";
 import { readVersionBook, recordVersions } from "./versions.js";
 
-export const PROMOTE_USAGE = "usage: scf promote <kind> <id> [--live]";
+export const PROMOTE_USAGE = "usage: scf promote <kind> <id> [--report <report-id>] [--live]";
 
-/** `scf promote <kind> <id> [--live]`: prints one PASSED line per suite that holds and PROMOTABLE, or one BLOCKED line per reason. Read-only. Returns 0 when promotable, else 1. */
-export function promoteCommand(positionals: string[], o: { live?: boolean }, out: (line: string) => void): number {
+/**
+ * `scf promote <kind> <id> [--live]`: prints one PASSED line per suite that holds and PROMOTABLE, or one BLOCKED line per
+ * reason. Read-only. With `--report <report-id>` it also writes the promotion record (promotions/records.json) and prints
+ * PROMOTED. Returns 0 when promotable (and recorded), else 1.
+ */
+export function promoteCommand(positionals: string[], o: { live?: boolean; report?: string }, out: (line: string) => void): number {
   const [kind, id, ...extra] = positionals;
   if (!kind || !id || extra.length > 0 || !(COMPONENT_KINDS as readonly string[]).includes(kind)) throw new Error(PROMOTE_USAGE);
-  const r = promoteCheck(kind as ComponentKind, id, { live: o.live === true });
-  for (const l of r.lines) out(l);
-  return r.ok ? 0 : 1;
+  if (o.report === undefined) {
+    const r = promoteCheck(kind as ComponentKind, id, { live: o.live === true });
+    for (const l of r.lines) out(l);
+    return r.ok ? 0 : 1;
+  }
+  if (!REPORT_ID_RE.test(o.report)) throw new Error(PROMOTE_USAGE);
+  const r = promoteWithReport(kind as ComponentKind, id, o.report, { live: o.live === true, by: "cli" });
+  for (const l of r.decision.lines) out(l);
+  if (!r.ok) {
+    if (r.reason !== undefined) out(`! ${r.reason}`);
+    return 1;
+  }
+  const e = r.entry;
+  out(`PROMOTED ${e.kind} ${e.id} v${e.version} sha256:${e.sha256} report:${e.reportId}`);
+  return 0;
 }
 
 export const COMPONENTS_USAGE = `usage: scf components [record] [${COMPONENT_KINDS.join("|")}]`;

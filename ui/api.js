@@ -137,6 +137,9 @@ export const api = {
   saveDefaultLimits: (body) => req("PUT", "/api/users/limits", body),
   saveUserLimits: (id, body) => req("PUT", `/api/users/${enc(id)}/limits`, body),
   deleteUser: (id) => req("DELETE", `/api/users/${enc(id)}`),
+  /** Which components are promoted, promotable or blocked; `kind` and `id` narrow the list (`id` needs `kind`). */
+  promotions: (kind, id) => req("GET", `/api/promotions${kind ? `?kind=${enc(kind)}${id ? `&id=${enc(id)}` : ""}` : ""}`),
+  promote: (kind, id, reportId) => req("POST", "/api/promotions", { kind, id, reportId }),
   audit: (filters) => req("GET", `/api/audit${auditQuery(filters)}`),
   auditExportUrl: (filters) => `/api/audit/export${auditQuery(filters)}`,
   allRepos: () => req("GET", "/api/admin/repos"),
