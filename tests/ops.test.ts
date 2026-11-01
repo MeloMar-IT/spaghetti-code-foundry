@@ -17,8 +17,8 @@ import type { ServiceHost } from "../src/service.js";
 const NOW = new Date("2026-10-12T12:00:00Z");
 const HOUR = 3_600_000;
 const tmp = () => mkdtempSync(join(tmpdir(), "scf-ops-"));
-const calm: Sample = { load1: 0.5, load5: 0.5, pressure: 1 };
-const hot: Sample = { load1: 3, load5: 3, pressure: 1 };
+const calm: Sample = { load1: 0.5, load5: 0.5, load15: 0.5, pressure: 1 };
+const hot: Sample = { load1: 3, load5: 3, load15: 3, pressure: 1 };
 
 type Shape = Partial<StepRecord> & { id: string };
 function run(id: string, o: Partial<RunSummary> & { issue?: string; steps?: Shape[]; at?: number } = {}): RunSummary {
@@ -101,12 +101,12 @@ describe("the cap on runs at once", () => {
 });
 
 describe("the load governor", () => {
-  const band: Sample = { load1: 2, load5: 2, pressure: 1 };
+  const band: Sample = { load1: 2, load5: 2, load15: 2, pressure: 1 };
 
   it("writes the caps and a log line, and takes everything away on reset", () => {
     const dir = tmp();
     const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 6, now: NOW };
-    runGovernor({ ...o, sample: { load1: 5, load5: 5, pressure: 1 } });
+    runGovernor({ ...o, sample: { load1: 5, load5: 5, load15: 5, pressure: 1 } });
     expect(runLimit(6, NOW, o.capsFile)).toBe(5);
     expect(readFileSync(join(o.slotsDir, "cap"), "utf8")).toBe("1");
     expect(readFileSync(join(o.dir, "changes.log"), "utf8")).toContain("2026-10-12T12:00:00.000Z runs at once 6 → 5");
@@ -118,7 +118,7 @@ describe("the load governor", () => {
 
   it("writes the test cap again at every check while it holds, and also when the cap on runs cannot be written", () => {
     const dir = tmp();
-    const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 6, sample: { load1: 5, load5: 5, pressure: 1 } };
+    const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 6, sample: { load1: 5, load5: 5, load15: 5, pressure: 1 } };
     runGovernor({ ...o, now: NOW });
     const cap = join(o.slotsDir, "cap");
     utimesSync(cap, new Date(0), new Date(0));
@@ -139,7 +139,7 @@ describe("the load governor", () => {
     for (let i = 0; i < 3; i++) runGovernor({ ...o, now: new Date(NOW.getTime() + i * 60_000), sample: hot });
     const last = new Date(NOW.getTime() + 2 * 60_000);
     // the first hot check was 6 → 5 and the others are held back by the pause; a load of 3 is no emergency
-    expect(loadState(o.dir, last)).toEqual({ calm: 0, hot: 3, runs: 5, changedAt: NOW.toISOString() });
+    expect(loadState(o.dir, last)).toEqual({ calm: 0, downs: [NOW.toISOString()], hot: 3, runs: 5, changedAt: NOW.toISOString() });
     const morning = new Date(NOW.getTime() + 9 * HOUR);
     expect(loadState(o.dir, morning)).toEqual({ calm: 0 });
     // neither hot nor calm in the morning: with yesterday's state the cap of 3 would be written again
