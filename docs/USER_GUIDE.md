@@ -2007,6 +2007,38 @@ component is a problem.
 - **Problems.** A file that cannot be read or checked gives one `! <kind> <id>: <reason>` line. The reason
   never shows the file's content or its place on the disk. The other components still print.
 
+### Governance of a component
+
+Each promotable component can have a governance record: its owner, risk, lifecycle, approved version, last
+review and evaluation suite. The records are kept by hand in `promotions/governance.yaml` in the Foundry home,
+and are keyed by `<kind>/<id>`, for example `flow/my-flow` or `policy-pack/foundry.baseline`:
+
+```yaml
+version: 1
+components:
+  flow/my-flow:
+    owner: team-ops
+    risk: medium
+    lifecycle: active
+    approved_version: "2"
+    last_review: 2026-10-01
+    eval_suite: my-flow-smoke
+```
+
+Every field is optional. A record accepts only these fields; an unknown field makes the file a problem.
+
+- **Defaults.** A component with no record, or a missing file, has no owner, risk `low`, lifecycle `active`,
+  no approved version and was never reviewed. Nothing that worked before stops working.
+- **Status.** `scf components` ends each line with `owner=… risk=… lifecycle=… status=…`. The status is:
+  `retired` when the lifecycle is `retired`; `unapproved` when there is no approved version or it is not the
+  component's current version; `review-due` when `last_review` is missing or more than 365 days old; otherwise `ok`.
+- **Records that name nothing.** A record for a component that does not exist gives a
+  `! <kind> <id>: governance record names no component` line, and the command exits 1.
+- **A bad file.** A file that is a link, larger than 1 MiB, or not valid gives one `! ` line with a fixed reason.
+  The components are still listed, and no record is used until the file is fixed.
+- **Changes nothing.** Governance records are only read. They do not change a component's hash or its version,
+  and `promotions/versions.json` is not touched.
+
 ### Promote a component
 
 `scf promote <kind> <id> [--live]` says whether a component may be promoted, from the safety reports
@@ -7052,7 +7084,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
-| `scf components [kind]` / `scf components record [kind]` | Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
+| `scf components [kind]` / `scf components record [kind]` | Print the version, SHA-256 and governance status (owner, risk, lifecycle, review) of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
 | `scf promote <kind> <id> [--live]` | Check that the newest safety reports allow promoting a component; read-only; prints `PASSED` and `PROMOTABLE`, or `BLOCKED` per problem; exits 1 when blocked ([Promote a component](#promote-a-component)) |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
 | `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |

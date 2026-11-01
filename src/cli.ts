@@ -98,7 +98,7 @@ Usage:
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
-  scf components [kind]                          Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector
+  scf components [kind]                          Print the version, SHA-256 and governance of each flow, policy pack, tool profile, model route set and context selector
   scf components record [kind]                   Give new hashes of tool profiles, model routes and context selectors a version
   scf promote <kind> <id> [--live]               Check that the newest safety reports allow promoting a component (read-only; exit 1 when blocked)
   scf promote <kind> <id> --report <report-id>   The same check; when nothing blocks, record the promotion in promotions/records.json
