@@ -128,7 +128,7 @@ describe("what is described", () => {
     expect(isCovered("governor.priority")).toBe(true);
     expect(isCovered("governor.floor")).toBe(true);
     expect(described.find((d) => d.key === "governor.floor")).toMatchObject({ kind: "number", integer: true, min: 0, optional: true, effect: "now", control: "generated" });
-    expect(described).toHaveLength(134);
+    expect(described).toHaveLength(135);
   });
 
   it("keeps a floor of 0, leaves it out when absent, and counts one above concurrency as valid", () => {

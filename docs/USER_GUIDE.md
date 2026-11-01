@@ -918,6 +918,7 @@ content, or ask for approval. It never gives access that a rule denied.
   continue (none was recorded, or Claude no longer has it), the step starts a new session with the
   same note, in the same try. A reviewer step that ran out of time starts a new session, with the
   note. A step that stopped for any other reason works as before.
+- **A story that ran out of time is tried again by itself.** In a story run of a watcher, a Claude or shell step that ends on its time limit does not fail the run. The run stops, with no `Factory_ERROR`, no failure comment and no model call; the watcher resumes it, and the issue gets one comment per retry, such as ``ran out of time in `implement`; trying again (1 of 2)``. The label stays working while the retry waits for a free slot (and while a helper's cap holds it back). A retry that is cancelled while it waits ends the run and is not counted. The limit is `auto_retry.timeouts` (default 2), counted per story over all its runs. After the last retry the run fails and goes to Needs you as before. A time-out is not retried when the step has its own `on_failure` path, when it is inside a sub-flow or a parallel step, when a person stopped the run, a budget stopped it, the baseline failed, or the run is from the UI or the command line. A retry claims its code areas again before it codes; if another run holds them, it waits and keeps its workspace and session.
 - **Codex and your personal setup.** Every Codex step of a run that the server or a watcher starts gets a clean Codex folder of its own, whatever `isolate_agents` says. A local CLI run follows `isolate_agents`. The mode depends on how the step signs in; the log says which one in a line that starts with "Codex:".
 
   | Mode | When | Personal `config.toml`, MCP servers, plugins, hooks, skills, `AGENTS.md`, command rules | Sign-in |
@@ -3848,6 +3849,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
 
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
+
+**Retries after a time limit (auto_retry)** — `auto_retry.timeouts` is how often a story of a watcher is tried again by itself when a step ran out of time: default `2`, `0` turns it off. The count is per story, over all runs of its issue. With `0`, a time-out goes to Needs you at once, as before. A run that a person started is never retried. The settings page shows this as the card "Retries".
 
 **Safety**
 
@@ -7140,6 +7143,7 @@ you can do first. Find yours in the table:
 |---|---|
 | The step … failed: its command ended with an error | Look at the output of the step and fix the cause |
 | The step … failed: it ran longer than its time limit | Look at the output of the step to see what took so long |
+| `ran out of time in …; trying again (1 of 2)` (the run is working again) | Nothing to do: the Foundry tries again by itself. After the last try the step fails and the story goes to Needs you |
 | The step … failed: it ran longer than its time limit; it waited 18 min for a test slot, which did not count | Look at the output of the step to see what took so long |
 | The step … failed: it ran longer than its time limit; it waited 95 min for a test slot, capped at 90 min | Look at the output of the step to see what took so long |
 | The step … failed: the agent stopped without a result | Look at the log of the step on the run page |

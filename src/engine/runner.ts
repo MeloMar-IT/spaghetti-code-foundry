@@ -38,7 +38,8 @@ import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
 import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
-import { answerRoom, appendLiveLog, isStoppedCancel, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
+import { isStoryRun, markRetryStart, pendingRetry, retryEntry, timeLimitAction, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
+import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
@@ -274,6 +275,11 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
     summary.heldContent = undefined;
   }
   const decision = opts.decision && summary.waiting ? { ...opts.decision, stepId: summary.waiting.stepId } : undefined;
+  // A retry after a time limit begins here. The allowance is counted again now, over all runs of the story: two stopped runs of
+  // one issue cannot both use the last retry.
+  const retry = pendingRetry(summary, from, summary.state.next);
+  const retryOver = retry && timeLimitsUsed(summary, listRunBriefs(opts.runsDir)) >= retry.of ? retry : undefined;
+  if (!retryOver) markRetryStart(summary, from, new Date().toISOString());
   Object.assign(summary, { status: "running" as RunStatus, reason: undefined, failureNote: undefined, finishedAt: undefined, archivedAt: undefined, archivedBy: undefined, parkedAt: undefined, resumes: (summary.resumes ?? 0) + 1, resumeLog: [...(summary.resumeLog ?? []), { at: new Date().toISOString(), from }].slice(-50) });
   summary.pid = process.pid;
   summary.stepStartedAt = undefined; // an old step time must not show on the resumed run
@@ -283,6 +289,11 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   evidence.queued(opts.queuedAt);
   evidence.resumed(from, opts.actor ?? SYSTEM_ACTOR);
   summary.state.visits = {}; // fresh loop budget
+  if (retryOver) {
+    // the last retry went to another run of the story: this one fails as it would without retries
+    summary.retryStep = undefined;
+    return finish(summary, opts, config, { outcome: "failed", reason: `step "${retryOver.step}" failed: timed out`, next: summary.state.next, lastOutput: "" });
+  }
   return drive(summary, opts, config, { startAt: from, decision });
 }
 
@@ -699,7 +710,10 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (top && !res.ok) markPlanCheckFailed(summary, step.id);
     const carryStop = top && res.ok ? carryRunSkills(summary, config, step.id, engine.log) : undefined;
     const skillStop = carryStop ?? (top && res.ok ? planRunSkills(summary, config, step.id, engine.log) : undefined);
-    const target = res.ok ? (routed ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
+    // after a retry: once the areas are claimed again, go on at the step that ran out of time (a WAIT_AREA route keeps it)
+    const retryStep = top && res.ok && !routed && step.id === "claim_areas" && summary.retryStep && indexOf.has(summary.retryStep) ? summary.retryStep : undefined;
+    if (retryStep) summary.retryStep = undefined;
+    const target = res.ok ? (routed ?? retryStep ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
     if (skillStop && target === "end") {
       // the gate ends the flow: stop at the gate itself, so a resume runs it again and checks the skills again
       setNext(step.id);
@@ -707,6 +721,26 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     }
     if (target === "end") return { outcome: "succeeded", next: null, lastOutput };
     if (target === "fail") {
+      // A story of a watcher that ran out of time is tried again: the run stops (no failure path, no model call) and the watcher resumes it.
+      const again = timeLimitAction({
+        top,
+        stepType: step.type,
+        ownFailurePath: step.on_failure !== undefined,
+        error: res.error,
+        accessFailed: engine.accessFailed,
+        storyRun: isStoryRun(summary),
+        limit: config.auto_retry?.timeouts ?? 2,
+        used: () => timeLimitsUsed(summary, listRunBriefs(runsDir)),
+      });
+      if (again) {
+        const reason = timeLimitReason(step.id, again.attempt, again.of);
+        summary.timeLimits = [...(summary.timeLimits ?? []), { at: new Date().toISOString(), step: step.id, attempt: again.attempt, of: again.of }];
+        const entry = retryEntry(flow, summary.history, step.id);
+        setNext(entry.next);
+        summary.retryStep = entry.retryStep ?? (step.id === "claim_areas" ? summary.retryStep : undefined);
+        engine.log(`■ ${reason}`);
+        return { outcome: "stopped", reason, ...here() };
+      }
       return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here(), failedStep: identity };
     }
     if (target === "stop") {

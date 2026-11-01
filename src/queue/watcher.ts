@@ -2,7 +2,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
-import { OVERRULED_REASON, appendLiveLog, isOverruledStop, isStoppedCancel, isUserBudgetStop, loadRun, readLiveLog, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { isTimeLimitNote, retryComment, retryNoteMarker } from "../engine/auto-retry.js";
+import { OVERRULED_REASON, appendLiveLog, isOverruledStop, isStoppedCancel, isTimeLimitStop, isUserBudgetStop, loadRun, readLiveLog, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
@@ -712,7 +713,7 @@ export class Watcher {
   }
 
   /** Every run a watcher starts goes through here: a new run belongs to the watcher's owner; a resume keeps the run's own. */
-  private queue(job: Parameters<Scheduler["submit"]>[0], meta: { lockKey?: string; source?: string; priority?: boolean; storyAt?: string }): string {
+  private queue(job: Parameters<Scheduler["submit"]>[0], meta: { lockKey?: string; source?: string; priority?: boolean; storyAt?: string; asNewRun?: boolean }): string {
     if (this.retired) throw new Error("this watcher was stopped");
     // A watcher of a repository passes the repository owner's id; it never falls back to the first admin.
     if (this.cfg.repoId !== undefined && !this.cfg.ownerId) throw new Error("this watcher has no owner (the repository's owner is not an account)");
@@ -732,8 +733,8 @@ export class Watcher {
     return { ...(watcher ? { watcher } : {}), ...(repo.success ? { repository: repo.data } : {}) };
   }
 
-  private submit(n: number, kind: "issue" | "pr", job: Parameters<Scheduler["submit"]>[0], first?: { storyAt?: string }): string {
-    const runId = this.queue(job, { lockKey: kind === "issue" ? this.lockFor(n) : `${this.repo}#${n}`, source: `watcher ${this.cfg.id} ${kind} #${n}`, ...firstMeta(first) });
+  private submit(n: number, kind: "issue" | "pr", job: Parameters<Scheduler["submit"]>[0], first?: { storyAt?: string }, asNewRun = false): string {
+    const runId = this.queue(job, { lockKey: kind === "issue" ? this.lockFor(n) : `${this.repo}#${n}`, source: `watcher ${this.cfg.id} ${kind} #${n}`, ...firstMeta(first), ...(asNewRun ? { asNewRun: true } : {}) });
     if (kind === "pr") {
       const { watcher, repository } = this.teleLabels();
       emitLiveTelemetry("pull_request", "pull_request.feedback", { ...(repository ? { pullRequest: { repository, number: n } } : {}), runId, ...(watcher ? { watcher } : {}) });
@@ -748,6 +749,29 @@ export class Watcher {
       return !!run && (steppedAsideFor(run) === holder || (run.status === "running" && run.state?.next === "claim_areas"));
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * The note of a time-limit retry: posted once the retry is queued or has started, and tried again on every check
+   * while the run works, until the issue shows it (the marker of its retry number). A failed post is only logged.
+   * The comments are read only while a note is due.
+   */
+  private async retryNote(n: number, run: RunSummary, read: () => Promise<Comment[] | undefined>, alive: () => void): Promise<void> {
+    const ev = Array.isArray(run.timeLimits) ? run.timeLimits.at(-1) : undefined;
+    if (!ev) return;
+    const queued = run.status === "stopped" && isTimeLimitStop(run.reason) && this.d.scheduler.isQueued(run.runId);
+    if (!queued && ev.startedAt === undefined) return;
+    // the issue shows the note already (posted before, or before a restart): nothing to post
+    const comments = await read();
+    if (!comments || comments.some((c) => c.body.includes(retryNoteMarker(run.runId, ev.attempt)))) return;
+    const note = retryComment(run);
+    if (!note) return;
+    alive();
+    try {
+      await this.store.comment(n, note);
+    } catch (e) {
+      this.d.log(`[${this.cfg.id}] ! #${n} note for the retry: ${errorLine((e as Error).message)}`);
     }
   }
 
@@ -772,7 +796,7 @@ export class Watcher {
         await this.store.setLabels(issue, label, remove).catch(() => {});
         if (label === this.L.failed && this.cfg.comment_on_failure) await this.commentFailure(issue, s).catch(() => {});
         const asks = s.status === "stopped" && asksQuestions(s);
-        const why = !asks && s.reason ? explainError(s.reason) : undefined;
+        const why = !asks && s.reason && !isTimeLimitStop(s.reason) ? explainError(s.reason) : undefined;
         this.act(`#${issue} → ${s.status}${asks ? " (asks questions)" : why ? ` (${why.what}: ${why.why})` : ""} · $${s.totalCostUsd.toFixed(3)} · label → ${label ?? "none"}`);
       });
     }).catch(() => {}); // prepare() can reject (no sign-in); the next check reconciles the labels
@@ -817,8 +841,8 @@ export class Watcher {
     return runId;
   }
 
-  private resume(issue: number, runId: string, why: string, decision?: { approved: boolean; by: string; note?: string }, labelled = false, first?: { storyAt?: string }, from?: string) {
-    this.submit(issue, "issue", { kind: "resume", runId, ...(from ? { from } : {}), decision }, first);
+  private resume(issue: number, runId: string, why: string, decision?: { approved: boolean; by: string; note?: string }, labelled = false, first?: { storyAt?: string }, from?: string, asNewRun = false) {
+    this.submit(issue, "issue", { kind: "resume", runId, ...(from ? { from } : {}), decision }, first, asNewRun);
     this.act(`#${issue} ${why} → resuming run ${runId}${labelled ? ` · label → ${this.L.working}` : ""}`);
   }
 
@@ -1190,7 +1214,7 @@ export class Watcher {
     const checked = this.prechecked();
     const toCheck: Issue[] = [];
     // The status comment is ours too, and so is an overrule reply, but neither is a question or an approval request: they never end the wait.
-    const asked = (c: Comment) => isBot(c) && !isStatusComment(c) && !isOverruleReply(c);
+    const asked = (c: Comment) => isBot(c) && !isStatusComment(c) && !isOverruleReply(c) && !isTimeLimitNote(c);
     // An /overrule changes a decision of the Foundry: it is never the answer to a question.
     const answersOf = (c: Comment[]) => commentsAfter(c, asked).filter((x) => parseOverrule(x.body) === undefined);
     const nowMs = Date.now();
@@ -1442,6 +1466,7 @@ export class Watcher {
           this.labelWhenDone(n, workingRun ? run!.runId : queuedId!);
         }
         if (workingRun) {
+          await this.retryNote(n, run!, () => reads.read(n), alive);
           const areaWait = run!.status === "running" ? this.d.areaWait?.(run!) : undefined;
           if (areaWait) holds.push(this.heldRun(issue, run!, { areaWait }));
           const claim = isFirst ? steppedAsideFor(run!) ?? areaWait?.runId : undefined;
@@ -1581,7 +1606,9 @@ export class Watcher {
           (run.status === "stopped" && /daily budget/.test(run.reason ?? "") && budgetLeft) ||
           (run.status === "stopped" && isUserBudgetStop(run.reason) && budgetLeft && this.budgetLeftFor(run.owner)) ||
           (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
-          (run.status === "stopped" && isPaused(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
+          (run.status === "stopped" && isPaused(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run) &&
+            // a retry after a time limit waits for the budget like any run that starts again (it would stop at its first step)
+            (!isTimeLimitStop(run.reason) || (budgetLeft && this.budgetLeftFor(run.owner))));
         const asks = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo;
         const decides = !resumable && run.status === "waiting";
         const late = asks || decides ? await reads.read(n) : [];
@@ -1600,7 +1627,7 @@ export class Watcher {
           // A bug story waits for the same code area: it gets the area first.
           holds.push(this.held("bug_first", issue, { runId: run.runId }));
         } else if (resumable && !overLimit(isFirst)) {
-          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : "can continue now"), undefined, false, first);
+          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : isTimeLimitStop(run.reason) ? "trying again after it ran out of time" : "can continue now"), undefined, false, first, undefined, isTimeLimitStop(run.reason));
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
@@ -1634,6 +1661,10 @@ export class Watcher {
           // Paused on a limit, a code area or an interruption: say why nothing happens.
           const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, pr: paused, areaWait: this.d.areaWait?.(run), retired: flowRetired(run) });
           if (["usage_limit", "daily_budget", "user_limit", "interrupted", "release", "area_lock"].includes(next.kind)) holds.push(toHold(next));
+          else if (isTimeLimitStop(run.reason) && !paused) {
+            // a retry after a time limit that waits for the budget
+            holds.push(!budgetLeft ? this.held("daily_budget", issue, { runId: run.runId }) : this.held("user_limit", issue, { userLimit: "budget", runId: run.runId }));
+          }
         } else {
           // Resumable, but max_per_tick is used up: only the per-check limit is in the way.
           holds.push(limited(issue, run.runId));

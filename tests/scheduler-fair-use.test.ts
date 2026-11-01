@@ -216,6 +216,76 @@ describe("scheduler fair use", () => {
     }
   });
 
+  describe("a retry after a time limit (asNewRun)", () => {
+    const plant = (id: string) => {
+      const runDir = join(tmp, "runs", id);
+      mkdirSync(join(runDir, "workspace"), { recursive: true });
+      mkdirSync(join(runDir, "logs"));
+      const run = { runId: id, flow: "plain", flowDef: PLAIN, task: "t", vars: {}, repo: tmp, status: "stopped", reason: "ran out of time in `a`; trying again (1 of 2)", runDir, workdir: join(runDir, "workspace"), startedAt: new Date().toISOString(), totalCostUsd: 0, history: [], state: { next: "a", steps: {} }, timeLimits: [{ at: "t", step: "a", attempt: 1, of: 2 }] };
+      writeFileSync(join(runDir, "run.json"), JSON.stringify(run));
+      return runDir;
+    };
+    const saved = (dir: string) => JSON.parse(readFileSync(join(dir, "run.json"), "utf8"));
+    const capOf = (runs: number) => setCap("load", { runs, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+
+    it("waits for a helper's cap like a new run, while a plain resume goes on", async () => {
+      const dir1 = plant("retry-1");
+      const dir2 = plant("plain-1");
+      capOf(0);
+      try {
+        concurrency = 2;
+        mk({ capRecheckMs: 10 });
+        s.submit({ kind: "resume", runId: "retry-1" }, { source: "r", asNewRun: true });
+        s.submit({ kind: "resume", runId: "plain-1" }, { source: "p" });
+        await waitFor(() => saved(dir2).status === "succeeded");
+        expect(pending().map((p) => [p.runId, p.capped])).toEqual([["retry-1", true]]);
+        expect(saved(dir1).status).toBe("stopped");
+        setCap("load", undefined);
+        await waitFor(() => saved(dir1).status === "succeeded");
+        expect(saved(dir1).timeLimits[0].startedAt).toEqual(expect.any(String));
+      } finally {
+        setCap("load", undefined);
+      }
+    });
+
+    it("is not a run of the day and survives a restart of the scheduler", () => {
+      plant("retry-2");
+      const queueFile = join(tmp, "queue.json");
+      capOf(0);
+      try {
+        concurrency = 1;
+        limits = { [A]: { maxRunsPerDay: 1 } };
+        mk({ queueFile });
+        s.submit({ kind: "resume", runId: "retry-2" }, { source: "r", owner: A, asNewRun: true });
+        expect(pending()[0]).toMatchObject({ runId: "retry-2", capped: true });
+        expect(pending()[0]).not.toHaveProperty("limit");
+        expect(JSON.parse(readFileSync(queueFile, "utf8")).jobs?.[0] ?? JSON.parse(readFileSync(queueFile, "utf8"))[0]).toMatchObject({ asNewRun: true });
+        mk({ queueFile });
+        expect(pending()[0]).toMatchObject({ runId: "retry-2", capped: true });
+      } finally {
+        setCap("load", undefined);
+      }
+    });
+
+    it("ends the run for good when it is cancelled while queued, and a restart does not queue it again", () => {
+      const dir = plant("retry-3");
+      const queueFile = join(tmp, "queue.json");
+      capOf(0);
+      try {
+        concurrency = 2;
+        mk({ queueFile });
+        s.submit({ kind: "resume", runId: "retry-3" }, { source: "r", asNewRun: true });
+        expect(s.cancel("retry-3")).toBe(true);
+        expect(saved(dir)).toMatchObject({ status: "cancelled", reason: "cancelled by user while stopped" });
+        expect(saved(dir).timeLimits[0].startedAt).toBeUndefined();
+        mk({ queueFile });
+        expect(pending()).toEqual([]);
+      } finally {
+        setCap("load", undefined);
+      }
+    });
+  });
+
   it("a closed scheduler holds no timer and starts nothing when a cap ends", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
