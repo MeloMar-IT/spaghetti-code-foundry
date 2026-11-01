@@ -47,6 +47,8 @@ import { prepareWorkspace } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
+import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
+import { flowFileId } from "../promotion/flow-id.js";
 import { loadRunPacks, runPolicy, type LoadedPack, type RunPolicy } from "./policy-hooks.js";
 import type { ProcessMeter } from "../steps/process.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR, type RunRecorder } from "../evidence/record.js";
@@ -84,6 +86,8 @@ interface CommonOptions {
   outputClassifier?: OutputClassifier;
   /** The delivery settings, read again for each step (the scheduler gives its live settings). Default: the run's config. */
   deliverySettings?: () => Config["delivery"];
+  /** Evals only (#665): the run is not checked for governance (a new version can be evaluated before it is approved). Set by the Scheduler option for evals; never read from a job or from run.json, and passed on resume too. */
+  evalRun?: boolean;
 }
 
 export interface RunOptions extends CommonOptions {
@@ -102,7 +106,7 @@ export interface RunOptions extends CommonOptions {
   toolProfile?: unknown;
   /** The id of the custom flow as `scf promote` knows it (its file name); without it the flow's name. */
   flowId?: string;
-  /** A local test (#740): never checked against `promotion.enforce`, and it never counts as a promoted delivery. Set by `scf run --local-test` and by the Scheduler option for evals; never read from a job. */
+  /** A local test (#740): never checked against `promotion.enforce`, and it never counts as a promoted delivery. Governance (#665) still applies to a connected repository, unless `evalRun` is set. Set by `scf run --local-test` and by the Scheduler option for evals; never read from a job. */
   localTest?: boolean;
 }
 
@@ -184,6 +188,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     // never the raw value: JSON would drop a function and the run would quietly get the generated profile
     ...(opts.toolProfile !== undefined ? { toolProfile: snapshotToolProfile(opts.toolProfile) } : {}),
     ...(opts.localTest ? { localTest: true as const } : {}),
+    ...(opts.flowId ? { flowId: opts.flowId } : {}),
   };
   claimRunStart(opts.runsDir, () => {
     mkdirSync(join(runDir, "logs"), { recursive: true });
@@ -202,6 +207,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const start = policy?.at("run.start");
   if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: null, lastOutput: "" });
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
+  const ungoverned = await governanceStop(summary, opts, config, log, evidence, packs);
+  if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: null, lastOutput: "" });
   if (await promotionRefused(summary, opts, config, log, packs)) return finish(summary, opts, config, { outcome: "failed", reason: PROMOTION_REFUSED, next: null, lastOutput: "" });
 
   try {
@@ -225,6 +232,34 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: null, lastOutput: "" });
   }
   return drive(summary, opts, config, null, { policy });
+}
+
+/**
+ * The governance check of a production run (#665), at start and on resume: a retired component, or a high-risk one whose
+ * version is not approved, ends the run. Returns the reason that ends it, or undefined. Development runs and eval runs are
+ * not checked and write nothing. The decision goes to the log and the evidence as kinds, ids, versions and fixed words only.
+ * The gate is loaded here, like the promotion gate; one that cannot be loaded or run refuses (fails closed).
+ */
+async function governanceStop(summary: RunSummary, opts: CommonOptions, config: Config, log: (raw: string) => void, evidence: RunRecorder, packs: readonly LoadedPack[]): Promise<string | undefined> {
+  if (opts.evalRun || !isProductionRun(summary.vars)) return undefined;
+  // a run saved without its id (older runs, CLI runs) gets the file id found by content, saved so a resume checks the same id
+  if (!summary.flowId && summary.flowDef) {
+    const found = flowFileId(summary.flowDef, summary.repo);
+    if (found) {
+      summary.flowId = found;
+      saveRun(summary);
+    }
+  }
+  let decision: GovernanceDecision;
+  try {
+    const gate = await import("../promotion/gate.js");
+    decision = gate.governanceGate({ flow: summary.flowDef, flowId: summary.flowId ?? summary.flow, repo: summary.repo, vars: summary.vars, config, toolProfile: summary.toolProfile, policyPacks: packs });
+  } catch {
+    decision = governanceCheckFailed();
+  }
+  for (const line of decision.lines) log(line);
+  evidence.governanceDecided({ outcome: decision.outcome, ...(decision.failure ? { failure: decision.failure } : {}), components: decision.components });
+  return decision.reason;
 }
 
 /**
@@ -306,10 +341,14 @@ async function drive(
   const log = liveLog(summary, opts);
   const evidence = runRecorder(summary);
   // before anything else of this start, also before the early failure paths below
-  const policy = early ? early.policy : runPolicy(summary, config, log, evidence);
-  if (!early) {
+  // a resume reads the packs once: the policy and the governance check use the same list
+  const packs = early ? undefined : loadRunPacks(summary, config);
+  const policy = early ? early.policy : runPolicy(summary, config, log, evidence, undefined, packs);
+  if (packs) {
     const start = policy?.at("run.start");
     if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: summary.state.next, lastOutput: "" });
+    const ungoverned = await governanceStop(summary, opts, config, log, evidence, packs);
+    if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: summary.state.next, lastOutput: "" });
   }
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
   const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);

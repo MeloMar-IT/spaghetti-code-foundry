@@ -135,7 +135,7 @@ Run options:
       --ref <branch|sha>   Sets the variable ref (release-build: what to build; default main)
   -v, --var key=value      Override a flow variable (repeatable)
       --runs-dir <dir>     Where run logs/worktrees go (default: ${join(FACTORY_HOME, "runs")})
-      --local-test         A local test: always allowed, even with promotion.enforce: on; never counts as a promoted delivery
+      --local-test         A local test: skips promotion.enforce; governance still applies to a connected repository; never counts as a promoted delivery
 
 Models: a step's model can be a spec like sonnet, codex, codex:gpt-5, ollama:qwen3-coder or
 codex:ollama:gpt-oss:20b (Claude Code or Codex CLI, on Anthropic, OpenAI or a local model).

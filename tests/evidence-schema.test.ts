@@ -78,6 +78,7 @@ const EVENTS: Record<EvidenceEventType, Record<string, unknown>> = {
   "policy.decided": { ...base, type: "policy.decided", decision: DECISION, step: shell },
   "repo.operation": { ...base, type: "repo.operation", step: shell, operation: "push", repository: "own/repo", branch: "feat/x", credential: "repository", policy: "allow", outcome: "done" },
   "context.bundled": { ...base, type: "context.bundled", ...WRITTEN },
+  "governance.decided": { ...base, type: "governance.decided", outcome: "refused", components: [{ kind: "flow", id: "deploy", version: "3", status: "retired", refused: true }, { kind: "model-routes", id: "default", status: "unapproved", refused: false }] },
 };
 
 const manifest = (): Record<string, unknown> => ({
@@ -129,6 +130,20 @@ describe("evidence events", () => {
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 3 })).toEqual(EVENTS["run.queued"]);
   });
 
+  it("holds a governance decision to its outcome", () => {
+    const ok = EVENTS["governance.decided"] as Record<string, unknown>;
+    const comp = { kind: "flow", id: "deploy", status: "ok", refused: false };
+    const bad = (raw: Record<string, unknown>) => EvidenceEventSchema.safeParse(raw).success;
+    expect(bad(ok)).toBe(true);
+    expect(bad({ ...ok, outcome: "allowed" })).toBe(false); // a refused component, but allowed
+    expect(bad({ ...ok, outcome: "refused", components: [comp] })).toBe(false); // nothing refused
+    expect(bad({ ...ok, outcome: "allowed", components: [comp] })).toBe(true);
+    expect(bad({ ...ok, outcome: "refused", failure: "book-unreadable", components: [] })).toBe(true);
+    expect(bad({ ...ok, outcome: "allowed", failure: "check-failed", components: [] })).toBe(false);
+    expect(bad({ ...ok, components: [{ ...comp, id: "has space" }] })).toBe(false);
+    expect(bad({ ...ok, outcome: "allowed", components: [{ ...comp, extra: 1 }] })).toBe(false);
+  });
+
   it("holds a written context bundle to its fields and a failed one to its code", () => {
     const written = EVENTS["context.bundled"] as Record<string, unknown>;
     const failed = { ...base, type: "context.bundled", outcome: "failed", failure: "repository-timeout" };
@@ -158,7 +173,7 @@ describe("evidence events", () => {
   it("names the events that end a run, and the file names", () => {
     expect(TERMINAL_EVENT_TYPES).toEqual(["run.cancelled", "run.failed", "run.completed"]);
     expect([EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE]).toEqual(["evidence.jsonl", "evidence.json"]);
-    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([8, 1]);
+    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([9, 1]);
     expect(STEP_TYPES).toEqual(["claude", "shell", "approval", "parallel", "flow"]);
   });
 
@@ -330,9 +345,9 @@ describe("the run manifest", () => {
 
 describe("versions and migration", () => {
   it("refuses a version it does not support, in one clear sentence", () => {
-    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 9 }));
+    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 10 }));
     expect([e.kind, e.code]).toEqual(["event", "unsupported-version"]);
-    expect(e.message).toBe("evidence event: version 9 is not supported; this Foundry reads versions 1 to 8. It was written by a newer Foundry: update to read it");
+    expect(e.message).toBe("evidence event: version 10 is not supported; this Foundry reads versions 1 to 9. It was written by a newer Foundry: update to read it");
     expect(problems(() => upgradeEvidence({ version: 9 }, "manifest", 3, {})).message).toContain("this Foundry reads versions 1 to 3");
   });
 
@@ -365,10 +380,11 @@ describe("versions and migration", () => {
   });
 
   it("checks a migrated record against the current schema", () => {
-    // A version 8 record is current, so the step table is only used for lower versions.
+    // A version 9 record is current, so the step table is only used for lower versions.
     const typed: EvidenceEvent = parseEvidenceEvent(EVENTS["run.queued"], { 1: () => ({ version: 2 }) });
-    expect(typed.version).toBe(8);
-    // version 1, 2, 6 and 7 lines of an older Foundry read as version 8 (the real migrations only set the version)
+    expect(typed.version).toBe(9);
+    // version 1, 2, 6, 7 and 8 lines of an older Foundry read as version 9 (the real migrations only set the version)
+    expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 8 })).toEqual(EVENTS["run.queued"]);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 7 })).toEqual(EVENTS["run.queued"]);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 6 })).toEqual(EVENTS["run.queued"]);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 2 })).toEqual(EVENTS["run.queued"]);

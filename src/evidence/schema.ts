@@ -12,6 +12,7 @@ import { AGENTS } from "../flow/schema.js";
 import { CONTEXT_OMISSION_REASONS, ContextBudgetSchema } from "../context/schema.js";
 import { CONTEXT_BUNDLE_FILE } from "../context/version.js";
 import { RUN_CONTEXT_CODES } from "../engine/run-context.js";
+import { COMPONENT_KINDS, GOVERNANCE_FAILURES, GOVERNANCE_OUTCOMES, GOVERNANCE_STATUSES, MAX_GOVERNED_COMPONENTS } from "../promotion/components.js";
 import { EVIDENCE_EVENT_VERSION, EVIDENCE_EVENTS_FILE, RUN_EVIDENCE_VERSION } from "./version.js";
 
 /**
@@ -54,6 +55,17 @@ export const ContextOmittedCountsSchema = z
   .strict();
 /** What happened to the context bundle of a run: it was written, or making it failed. */
 export const CONTEXT_OUTCOMES = ["written", "failed"] as const;
+
+/** One component of a governance decision: `id` is the display id (letters, digits, . _ ( ) -). */
+export const GovernedComponentSchema = z
+  .object({
+    kind: z.enum(COMPONENT_KINDS),
+    id: z.string().regex(/^[A-Za-z0-9._()-]{1,60}$/, "must be a component id"),
+    version: PolicyIdentitySchema.shape.version.optional(),
+    status: z.enum(GOVERNANCE_STATUSES),
+    refused: z.boolean(),
+  })
+  .strict();
 
 const step = StepIdentitySchema;
 /** What a finished step leaves behind. `artifacts` are its log and transcript; `durationMs` is the time the step took. */
@@ -162,6 +174,16 @@ const EventUnion = z.discriminatedUnion("type", [
     omitted: ContextOmittedCountsSchema.optional(),
     failure: z.enum(RUN_CONTEXT_CODES).optional(),
   }),
+
+  /**
+   * The governance check of a production run (#665): `allowed` or `refused`, with the components it looked at (refused first).
+   * Only kinds, ids, versions and fixed words, never file content. `failure` is set when the check itself could not be made.
+   */
+  event("governance.decided", {
+    outcome: z.enum(GOVERNANCE_OUTCOMES),
+    failure: z.enum(GOVERNANCE_FAILURES).optional(),
+    components: z.array(GovernedComponentSchema).max(MAX_GOVERNED_COMPONENTS),
+  }),
 ]);
 
 const uniquePaths = (refs: { path: string }[], ctx: z.RefinementCtx, at: PropertyKey[]) => {
@@ -215,6 +237,10 @@ export const EvidenceEventSchema = EventUnion.superRefine((e, ctx) => {
       for (const [name, value] of Object.entries(data)) if (value !== undefined) add(name, 'is not allowed when the outcome is "failed"');
     }
   }
+  if (e.type === "governance.decided") {
+    const refusing = e.failure !== undefined || e.components.some((c) => c.refused);
+    if ((e.outcome === "refused") !== refusing) ctx.addIssue({ code: "custom", path: ["outcome"], message: 'is "refused" exactly when the check failed or a component is refused' });
+  }
   if (e.type === "step.approved" && e.step.type !== "approval") ctx.addIssue({ code: "custom", path: ["step", "type"], message: "only an approval step can be approved" });
   if (e.type === "step.denied") {
     if (!e.step && e.denial.kind !== "policy") ctx.addIssue({ code: "custom", path: ["step"], message: "is missing: only a policy denial can be about the whole run" });
@@ -229,7 +255,8 @@ export const STEP_EVENT_TYPES = ["step.started", "step.routed", "step.profiled",
 export const POLICY_EVENT_TYPES = ["policy.decided"] as const satisfies readonly EvidenceEventType[];
 export const REPO_EVENT_TYPES = ["repo.operation"] as const satisfies readonly EvidenceEventType[];
 export const CONTEXT_EVENT_TYPES = ["context.bundled"] as const satisfies readonly EvidenceEventType[];
-export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES, ...REPO_EVENT_TYPES, ...CONTEXT_EVENT_TYPES];
+export const GOVERNANCE_EVENT_TYPES = ["governance.decided"] as const satisfies readonly EvidenceEventType[];
+export const EVIDENCE_EVENT_TYPES: readonly EvidenceEventType[] = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES, ...REPO_EVENT_TYPES, ...CONTEXT_EVENT_TYPES, ...GOVERNANCE_EVENT_TYPES];
 /** The events after which a run is over; exactly one of them ends a finished stream. */
 export const TERMINAL_EVENT_TYPES = ["run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
 

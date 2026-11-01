@@ -241,6 +241,11 @@ export class RunRecorder {
     });
   }
 
+  /** The governance check of a production run (#665): only kinds, ids, versions and fixed words. */
+  governanceDecided(fields: Omit<Extract<EvidenceEventBody, { type: "governance.decided" }>, "type">): void {
+    this.put(() => ({ type: "governance.decided", ...fields }));
+  }
+
   /** The end of one visit: a `step.denied` for every tool the agent was refused, then `step.completed` or `step.failed`. */
   stepEnded(rec: StepRecord): void {
     let step: StepIdentity;

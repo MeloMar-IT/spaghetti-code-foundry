@@ -19,7 +19,7 @@ import { toolNameOf } from "../tool-profile/resolve.js";
 export const TELEMETRY_VERSION = 2;
 
 export const TELEMETRY_NAMES = {
-  run: [...RUN_EVENT_TYPES, "run.measured", "context.bundled"],
+  run: [...RUN_EVENT_TYPES, "run.measured", "context.bundled", "governance.decided"],
   step: ["step.started", "step.profiled", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"],
   model: ["model.routed"],
   policy: ["policy.decided"],
@@ -219,6 +219,8 @@ function parts(body: EvidenceEventBody): { kind: TelemetryKind; name: string; fi
     }
     case "context.bundled":
       return { kind: "run", name: type, fields: { outcome: body.outcome === "written" ? "ok" : "failed" } };
+    case "governance.decided":
+      return { kind: "run", name: type, fields: { outcome: body.outcome === "allowed" ? "ok" : "denied" } };
     default: {
       const never: never = body;
       void never;
