@@ -7,9 +7,10 @@ import { localDay } from "./digest.js";
 
 /** What the governor measures each minute. */
 export interface Sample {
-  /** Load average over 1 and 5 minutes, divided by the number of cores. */
+  /** Load average over 1, 5 and 15 minutes, divided by the number of cores. */
   load1: number;
   load5: number;
+  load15: number;
   /** macOS memory pressure: 1 normal, 2 warning, 4 critical. 1 where it cannot be read. */
   pressure: number;
 }
@@ -20,12 +21,12 @@ export interface GovernorState {
   tests?: number;
   /** Checks in a row in which the machine was calm. */
   calm: number;
-  /** Checks in a row in which it was not under load (calm or in between), since the cap last moved. */
-  cool?: number;
   /** Checks in a row in which the 1-minute load was above `high`. Absent: 0. */
   hot?: number;
   /** When the cap on runs last moved (ISO time). Kept only while a pause after a change can still hold. */
   changedAt?: string;
+  /** When the cap on runs went down in the last hour (ISO times). */
+  downs?: string[];
   /** When this was decided. A state older than the hold time says nothing about the machine now. */
   at?: string;
 }
@@ -39,19 +40,29 @@ export interface Settings {
   testsHigh: number;
   /** Calm checks in a row before the cap goes one up. */
   calmChecks: number;
-  /** Checks in a row without load (calm or in between `low` and `high`) before the cap goes one up all the same. */
-  coolChecks: number;
   /** The cap never goes below this (0 is allowed: nothing new starts); not set: half of the configured number (at least 2). Above the configured number it counts as that number. */
   floor?: number;
   /** Checks in a row with the 1-minute load above `high` before the cap goes down (a spike is shorter). */
   hotChecks: number;
-  /** Minutes after the cap moved before it may go up. */
+  /** Minutes after the cap moved before it may go up; one more period for each step down in the last hour. */
   settleMinutes: number;
   /** Minutes after the cap moved before it may go further down. */
   downPauseMinutes: number;
 }
 
-export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, coolChecks: 15, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3 };
+export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3 };
+
+/** How long a step down makes the next step up wait longer. */
+export const DOWN_WINDOW_MS = 60 * 60_000;
+
+/** The readable step-down times of the last hour. */
+function recentDowns(list: unknown, t: number): string[] {
+  if (!Array.isArray(list)) return [];
+  return list.filter((d): d is string => {
+    const at = typeof d === "string" ? Date.parse(d) : NaN;
+    return at <= t && t - at < DOWN_WINDOW_MS;
+  });
+}
 
 export interface Decision { state: GovernorState; change?: string }
 
@@ -61,8 +72,9 @@ export interface Decision { state: GovernorState; change?: string }
  * a minute or two moves nothing. An emergency (memory pressure critical, 1-minute load above `testsHigh`) acts at
  * once. After the cap moved there is no step down for `downPauseMinutes` and no step up for `settleMinutes`,
  * except for an emergency. Calm for a while: one run more, until the configured number is back and the cap goes
- * away. In between (load between `low` and `high`) nothing moves at first, but after `coolChecks` checks in a row
- * without load the cap goes one up as well, once the pause is over. Memory pressure "warning" alone is no reason
+ * away. The 1- and 5-minute load must be at or below `low` for that; in between (load between `low` and `high`) the
+ * cap never goes up. The last step back to the configured number also needs the 15-minute load below `low`. The
+ * wait before a step up is `settleMinutes` plus one more period for each step down in the last hour. Memory pressure "warning" alone is no reason
  * to go down (macOS reports it for hours on a full but idle machine). Very high load: one test run at a time,
  * because tests are what loads the machine most. The cap goes down to the floor (`set.floor`, which may be 0: then
  * nothing new starts until the machine is calmer; not set: half of the configured number, at least 2). `now` is the time of the check.
@@ -79,6 +91,8 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   const loaded = emergency || s.load1 > set.high || s.load5 > set.high;
   const changed = Date.parse(prev.changedAt ?? "");
   const t = now.getTime();
+  let downs = recentDowns(prev.downs, t);
+  const upWait = set.settleMinutes * 60_000 * (1 + downs.length);
   // no time, an unreadable time or one in the future (the clock moved back): no pause
   const age = Number.isFinite(changed) && changed <= t ? t - changed : Infinity;
   const tests = emergency ? 1 : undefined;
@@ -86,34 +100,33 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   const notes: string[] = [];
   let runs = have;
   let calm = 0;
-  let cool = 0;
   let moved = false;
   if (loaded) {
     if (have > floor && (emergency || (sustained && age >= set.downPauseMinutes * 60_000))) {
       runs = have - 1;
       moved = true;
+      downs = [...downs, now.toISOString()];
       notes.push(`runs at once ${have} → ${runs} (${why})`);
     }
   } else {
-    const isCalm = s.load1 <= set.low && s.load5 <= set.low;
-    calm = isCalm ? prev.calm + 1 : 0;
-    cool = (prev.cool ?? 0) + 1;
-    const up = calm >= set.calmChecks ? `calm: load ${s.load5.toFixed(1)} per core` : cool >= set.coolChecks ? `no load for ${cool} checks: load ${s.load1.toFixed(1)} per core` : "";
-    if (up && have >= configured) calm = cool = 0;
-    else if (up && age >= set.settleMinutes * 60_000) {
-      runs = have + 1;
-      moved = true;
-      notes.push(`runs at once ${have} → ${runs} (${up})`);
-      calm = cool = 0;
+    calm = s.load1 <= set.low && s.load5 <= set.low ? prev.calm + 1 : 0;
+    if (calm >= set.calmChecks) {
+      if (have >= configured) calm = 0;
+      else if (age >= upWait && (have + 1 < configured || s.load15 < set.low)) {
+        runs = have + 1;
+        moved = true;
+        notes.push(`runs at once ${have} → ${runs} (calm: load ${s.load5.toFixed(1)} per core)`);
+        calm = 0;
+      }
+      // held by the wait or the 15-minute load: the count goes on, and the step comes when they are over
     }
-    // held by the pause: the counts go on, and the step comes when the pause is over
   }
   if (tests !== prev.tests) notes.push(tests ? `test runs at once → 1 (${critical ? "memory pressure critical" : `load ${s.load1.toFixed(1)} per core`})` : "test runs at once: back to normal");
-  const keep = Number.isFinite(changed) && age < Math.max(set.settleMinutes, set.downPauseMinutes) * 60_000 ? changed : undefined;
+  const keep = Number.isFinite(changed) && age < Math.max(upWait, set.downPauseMinutes * 60_000) ? changed : undefined;
   const stamp = moved ? t : keep;
   const state: GovernorState = {
     calm,
-    ...(cool ? { cool } : {}),
+    ...(downs.length ? { downs } : {}),
     ...(hot ? { hot } : {}),
     ...(runs < configured ? { runs } : {}),
     ...(tests ? { tests } : {}),
@@ -124,14 +137,14 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
 
 export function sample(): Sample {
   const cores = availableParallelism();
-  const [l1, l5] = loadavg();
+  const [l1, l5, l15] = loadavg();
   let pressure = 1;
   try {
     pressure = Number(execFileSync("/usr/sbin/sysctl", ["-n", "kern.memorystatus_vm_pressure_level"], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] }).trim()) || 1;
   } catch {
     // not macOS
   }
-  return { load1: l1! / cores, load5: l5! / cores, pressure };
+  return { load1: l1! / cores, load5: l5! / cores, load15: l15! / cores, pressure };
 }
 
 /** How long a cap holds without a new check: three missed checks and the Foundry is free again. */
@@ -146,7 +159,8 @@ export function loadState(dir: string, now = new Date()): GovernorState {
     const s = JSON.parse(readFileSync(join(dir, "state.json"), "utf8")) as GovernorState;
     const age = now.getTime() - Date.parse(s.at ?? "");
     if (!(age <= HOLD_MS)) return { calm: 0 };
-    return { calm: Number(s.calm) || 0, ...(Number(s.cool) > 0 ? { cool: Number(s.cool) } : {}), ...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
+    const downs = recentDowns(s.downs, now.getTime());
+    return { calm: Number(s.calm) || 0, ...(downs.length ? { downs } : {}),...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
   } catch {
     return { calm: 0 };
   }

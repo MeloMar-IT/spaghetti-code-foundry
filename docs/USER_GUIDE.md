@@ -3703,20 +3703,24 @@ Two cases act at once, even during a pause: memory pressure critical, and a 1-mi
 per core. Above 4 per core, or under critical memory pressure, only one test run works at a time.
 
 After the cap moved, the governor pauses: no further step down for 3 minutes, and no step up for
-10 minutes. Only an emergency breaks the pause. It still moves one step at a time.
+10 minutes. Only an emergency breaks the pause. It still moves one step at a time. Each step down in
+the last hour makes that wait 10 minutes longer: after two step downs, 30 minutes. Once the step
+downs are more than an hour old, the wait is 10 minutes again.
 
 After five calm checks in a row (1.2 per core or less, on the 1-minute and the 5-minute load) it
-allows one more run, until the configured number is back. In between (a load between 1.2 and 2.5)
-nothing moves at first, but after 15 checks in a row without overload it allows one more as well,
-so a cap does not stay for hours on a machine that is only a little busy. Both rules wait for the
-10-minute pause. These values are built into the governor; they are not set in the configuration.
+allows one more run, until the configured number is back. A load in between (above 1.2 and up to
+2.5 per core) is not calm: it never allows a run more, so a machine that stays busy keeps its cap.
+The last step back to the configured number also needs the 15-minute load below 1.2 per core, so
+the cap stays below the configured number until the machine has been quieter for a quarter of an hour.
+The wait above applies to every step up. These values are built into the governor; they are not set in the configuration.
 
 Every change is a line in `governor/changes.log`. `scf governor status` says how many times the
 governor changed the limits today, and Home's health line shows the same count when it is above 0.
 The daily digest mentions the changes only when there were more than 20 in the last 24 hours. The governor's limits end by themselves
 four minutes after the last check — the cap on runs, the cap on test runs, and what the governor
 remembers — so a governor that stops can never hold the Foundry down, and the first check after the
-machine slept starts fresh. `scf governor reset` takes them away at once. The daily release check
+machine slept starts fresh. The step downs of the last hour are part of what it remembers, so after a
+pause of more than four minutes they are forgotten and the wait before a step up is 10 minutes again. `scf governor reset` takes them away at once. The daily release check
 asks for a test slot like every test run, but waits five minutes at most.
 
 **Unreliable tests.** A test is listed when it failed, or passed only on a retry, in at least three

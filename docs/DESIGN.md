@@ -2556,7 +2556,9 @@ lowest that still holds (`caps.ts`). Every cap carries an end time and is ignore
 the safety rule of this design: a helper that crashes or is removed can only fail towards the
 configured behaviour, never hold the Foundry down. The load governor also writes `test-slots/cap`,
 which `tools/test-slot` reads. Its lowest value is `governor.floor` (`Settings.floor`, optional: unset means half the
-configured number, at least 2). A cap of 0 is valid: `runLimit()` returns it, `pump()` starts no new run (architect runs and
+configured number, at least 2). The governor's state (`governor/state.json`) keeps the times of its step downs for an
+hour (`downs`, read by `loadState()`); the wait before a step up is `settleMinutes` times one plus the number of them, and
+a step up below the configured number also needs the 15-minute load below `low`. A cap of 0 is valid: `runLimit()` returns it, `pump()` starts no new run (architect runs and
 schedule chores included) and resumes still go on. A cap ends without an event, so while a cap holds jobs back the scheduler
 arms a 30-second recheck timer (`CAP_RECHECK_MS`, unref'd), and `Scheduler.close()` stops it and any further start at shutdown.
 The limits forecaster keeps its own minimum of 1. The flaky-test detector and the limit forecaster act only when

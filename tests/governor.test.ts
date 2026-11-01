@@ -7,7 +7,7 @@ import { changesToday, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, type D
 
 const T0 = new Date(2026, 9, 20, 9, 0);
 const at = (min: number) => new Date(T0.getTime() + min * 60_000);
-const s = (load1: number, load5: number, pressure = 1): Sample => ({ load1, load5, pressure });
+const s = (load1: number, load5: number, pressure = 1, load15 = load5): Sample => ({ load1, load5, load15, pressure });
 const calm = s(0.5, 0.5);
 const band = s(1.8, 1.8);
 
@@ -61,14 +61,14 @@ describe("decide: down", () => {
   });
 
   it("memory pressure warning alone, or with load below the sustained level, is no reason to go down", () => {
-    expect(decide({ calm: 0 }, s(0.5, 0.5, 2), 4, at(0))).toEqual({ state: { calm: 1, cool: 1 } });
+    expect(decide({ calm: 0 }, s(0.5, 0.5, 2), 4, at(0))).toEqual({ state: { calm: 1 } });
     expect(decide({ calm: 0 }, s(1.0, 2.0, 2), 4, at(0)).state.runs).toBeUndefined();
     expect(decide({ calm: 0 }, s(2, 3, 2), 4, at(0)).state.runs).toBe(3);
   });
 
   it("does not report a step from a number above the configured one", () => {
     expect(decide({ calm: 0, runs: 6 }, s(3, 3), 5, at(0))).toMatchObject({ state: { runs: 4 }, change: "runs at once 5 → 4 (load 3.0 per core over 5 minutes)" });
-    expect(decide({ calm: 0, runs: 6 }, band, 5, at(0)).state).toEqual({ calm: 0, cool: 1 });
+    expect(decide({ calm: 0, runs: 6 }, band, 5, at(0)).state).toEqual({ calm: 0 });
   });
 
   it("lowers the test cap with the load above testsHigh and lifts it again", () => {
@@ -88,17 +88,70 @@ describe("decide: up", () => {
     expect(r.d.state.changedAt).toBe(at(10).toISOString());
   });
 
-  it("holds the up step for the 15-checks rule as well", () => {
-    const set = { ...DEFAULTS, coolChecks: 4 };
-    const r = feed({ calm: 0, runs: 3, changedAt: at(0).toISOString() }, Array(12).fill(band), 4, 1, set);
-    expect(r.changes).toEqual([10]);
-    expect(r.d.state.changedAt).toBe(at(10).toISOString());
+  it("moves one step up and resets the counts", () => {
+    expect(decide({ calm: 4, runs: 3 }, calm, 6, at(0))).toMatchObject({ state: { calm: 0, runs: 4 }, change: "runs at once 3 → 4 (calm: load 0.5 per core)" });
+    // in between: nothing moves, the calm count starts again
+    expect(decide({ calm: 3, runs: 4 }, band, 6, at(0)).state).toEqual({ calm: 0, runs: 4 });
   });
 
-  it("moves one step up and resets the counts", () => {
-    expect(decide({ calm: 4, cool: 4, runs: 3 }, calm, 6, at(0))).toMatchObject({ state: { calm: 0, runs: 4 }, change: "runs at once 3 → 4 (calm: load 0.5 per core)" });
-    // in between: nothing moves, the calm count starts again
-    expect(decide({ calm: 3, cool: 3, runs: 4 }, band, 6, at(0)).state).toEqual({ calm: 0, cool: 4, runs: 4 });
+  it("never goes up in the band, however many checks pass", () => {
+    const r = feed({ calm: 0, runs: 3 }, Array(200).fill(band), 6);
+    expect(r.changes).toEqual([]);
+    expect(r.d.state).toEqual({ calm: 0, runs: 3 });
+  });
+
+  it("holds the last step while the 15-minute load is not below low, and takes it at once after", () => {
+    const prev: GovernorState = { calm: 4, runs: 3 };
+    const held = decide(prev, s(0.5, 0.5, 1, 1.2), 4, at(0));
+    expect(held.state).toEqual({ calm: 5, runs: 3 });
+    expect(held.change).toBeUndefined();
+    const up = decide(held.state, s(0.5, 0.5, 1, 1.19), 4, at(1));
+    expect(up.state.runs).toBeUndefined();
+    expect(up.change).toBe("runs at once 3 → 4 (calm: load 0.5 per core)");
+  });
+
+  it("ignores the 15-minute load for the steps before the last", () => {
+    expect(decide({ calm: 4, runs: 2 }, s(0.5, 0.5, 1, 2), 4, at(0)).state.runs).toBe(3);
+    const f0: Settings = { ...DEFAULTS, floor: 0 };
+    expect(decide({ calm: 4, runs: 0 }, s(0.5, 0.5, 1, 2), 2, at(0), f0).state.runs).toBe(1);
+    expect(decide({ calm: 4, runs: 1 }, s(0.5, 0.5, 1, 2), 2, at(0), f0).state.runs).toBe(1);
+  });
+
+  it("waits one more period for each step down of the last hour", () => {
+    const base: GovernorState = { calm: 4, runs: 3, changedAt: at(0).toISOString() };
+    const one = { ...base, downs: [at(0).toISOString()] };
+    expect(decide(one, calm, 6, at(19)).state.runs).toBe(3);
+    expect(decide(one, calm, 6, at(20)).state.runs).toBe(4);
+    const two = { ...base, downs: [at(-1).toISOString(), at(0).toISOString()] };
+    expect(decide(two, calm, 6, at(29)).state.runs).toBe(3);
+    expect(decide(two, calm, 6, at(30)).state.runs).toBe(4);
+    // a step up keeps the list: the next one waits as well
+    expect(decide(two, calm, 6, at(30)).state.downs).toEqual(two.downs);
+  });
+
+  it("goes back to the normal wait when the step downs are an hour old, and drops bad times", () => {
+    const base: GovernorState = { calm: 4, runs: 3, changedAt: at(0).toISOString() };
+    const old = decide({ ...base, downs: [at(-60).toISOString()] }, calm, 6, at(10));
+    expect(old.state.runs).toBe(4);
+    expect(old.state.downs).toBeUndefined();
+    const young = decide({ ...base, downs: [at(-50).toISOString()] }, calm, 6, at(5));
+    expect(young.state.downs).toEqual([at(-50).toISOString()]);
+    expect(young.state.runs).toBe(3);
+    const bad = decide({ ...base, downs: [at(15).toISOString(), "nonsense"] }, calm, 6, at(10));
+    expect(bad.state.downs).toBeUndefined();
+    expect(bad.state.runs).toBe(4);
+  });
+
+  it("keeps changedAt while the longer wait holds", () => {
+    const prev: GovernorState = { calm: 0, runs: 3, changedAt: at(0).toISOString(), downs: [at(0).toISOString()] };
+    expect(decide(prev, band, 6, at(15)).state.changedAt).toBe(at(0).toISOString());
+    expect(decide(prev, band, 6, at(20)).state.changedAt).toBeUndefined();
+  });
+
+  it("records step downs, also in an emergency, but not at the floor", () => {
+    expect(decide({ calm: 0 }, s(3, 3), 4, at(0)).state.downs).toEqual([at(0).toISOString()]);
+    expect(decide({ calm: 0 }, s(0.5, 0.5, 4), 4, at(0)).state.downs).toEqual([at(0).toISOString()]);
+    expect(decide({ calm: 0, runs: 2 }, s(3, 3), 4, at(0)).state.downs).toBeUndefined();
   });
 
   it("leaves no cap at the configured number", () => {
@@ -106,8 +159,8 @@ describe("decide: up", () => {
     expect(decide({ calm: 4 }, calm, 1, at(0)).state).toEqual({ calm: 0 });
   });
 
-  it("does not let a spike hold the way up forever: a hot check resets the counts", () => {
-    expect(decide({ calm: 0, cool: 14, runs: 4 }, s(3, 1), 6, at(0)).state).toEqual({ calm: 0, hot: 1, runs: 4 });
+  it("does not let a spike hold the way up forever: a hot check resets the count", () => {
+    expect(decide({ calm: 3, runs: 4 }, s(3, 1), 6, at(0)).state).toEqual({ calm: 0, hot: 1, runs: 4 });
   });
 });
 
@@ -136,7 +189,34 @@ describe("loadState", () => {
     const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 4 };
     runGovernor({ ...o, now: at(0), sample: s(3, 3) });
     runGovernor({ ...o, now: at(1), sample: s(3, 3) });
-    expect(loadState(o.dir, at(1))).toEqual({ calm: 0, hot: 2, runs: 3, changedAt: at(0).toISOString() });
+    expect(loadState(o.dir, at(1))).toEqual({ calm: 0, downs: [at(0).toISOString()], hot: 2, runs: 3, changedAt: at(0).toISOString() });
+  });
+
+  it("keeps the step-down times between checks, so the wait is 20 minutes", () => {
+    const dir = tmp();
+    const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 4 };
+    runGovernor({ ...o, now: at(0), sample: s(3, 3) });
+    const moves: number[] = [];
+    for (let m = 1; m <= 25; m++) {
+      const d = runGovernor({ ...o, now: at(m), sample: calm });
+      if (d.change) moves.push(m);
+    }
+    expect(moves).toEqual([20]);
+  });
+
+  it("starts fresh after the hold time, which resets the wait", () => {
+    const dir = tmp();
+    const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 4 };
+    runGovernor({ ...o, now: at(0), sample: s(3, 3) });
+    expect(loadState(o.dir, new Date(at(0).getTime() + HOLD_MS + 1))).toEqual({ calm: 0 });
+  });
+
+  it("ignores a bad downs list and keeps only readable times of the last hour", () => {
+    const dir = tmp();
+    state(dir, { calm: 1, downs: "x", at: at(0).toISOString() });
+    expect(loadState(dir, at(0))).toEqual({ calm: 1 });
+    state(dir, { calm: 1, downs: [1, "nonsense", at(-1).toISOString(), at(-60).toISOString()], at: at(0).toISOString() });
+    expect(loadState(dir, at(0))).toEqual({ calm: 1, downs: [at(-1).toISOString()] });
   });
 
   it("ignores values of the wrong shape and loads an old file without them", () => {
@@ -144,7 +224,7 @@ describe("loadState", () => {
     state(dir, { calm: 1, hot: "x", changedAt: "nonsense", runs: 3, at: at(0).toISOString() });
     expect(loadState(dir, at(0))).toEqual({ calm: 1, runs: 3 });
     state(dir, { calm: 2, cool: 2, runs: 3, at: at(0).toISOString() });
-    expect(loadState(dir, at(0))).toEqual({ calm: 2, cool: 2, runs: 3 });
+    expect(loadState(dir, at(0))).toEqual({ calm: 2, runs: 3 });
   });
 });
 
@@ -185,7 +265,8 @@ describe("changesToday", () => {
 
 describe("replay of a spiky day", () => {
   /** The rules before #693, frozen for this comparison (old defaults inline). */
-  function decideBefore(prev: GovernorState, x: Sample, configured: number): Decision {
+  function decideBefore(prevState: GovernorState, x: Sample, configured: number): Decision {
+    const prev: GovernorState & { cool?: number } = prevState;
     const set = { high: 2.5, low: 1.5, testsHigh: 4, calmChecks: 5, coolChecks: 15 };
     const floor = Math.min(configured, Math.max(2, Math.ceil(configured / 2)));
     const have = Math.min(prev.runs ?? configured, configured);
@@ -226,13 +307,15 @@ describe("replay of a spiky day", () => {
     const rand = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
     const out: Sample[] = [];
     let l5 = 1.0;
+    let l15 = 1.0;
     for (let i = 0; i < 1440; i++) {
       const hour = i / 60;
       let l1 = hour < 8 || hour >= 20 ? 0.3 + rand() * 0.2 : 0.9 + rand() * 0.5;
       if (hour >= 8 && hour < 20 && i % 23 < 2) l1 = 2.6 + rand() * 0.3;
       if ((hour >= 11 && hour < 11.4) || (hour >= 15 && hour < 15.5)) l1 = 2.9 + rand() * 0.4;
       l5 += (l1 - l5) * (1 - Math.exp(-1 / 5));
-      out.push({ load1: l1, load5: l5, pressure: 1 });
+      l15 += (l1 - l15) * (1 - Math.exp(-1 / 15));
+      out.push({ load1: l1, load5: l5, load15: l15, pressure: 1 });
     }
     return out;
   }
@@ -261,7 +344,7 @@ describe("replay of a spiky day", () => {
     const morning: Sample[] = [];
     for (let m = 9 * 60; m <= 10 * 60 + 15; m++) {
       const l1 = m === 9 * 60 + 33 ? 2.6 : m === 9 * 60 + 34 ? 2.8 : m === 10 * 60 + 6 ? 1.0 : m === 10 * 60 + 11 ? 0.7 : 1.0;
-      morning.push({ load1: l1, load5: l1 === 2.6 || l1 === 2.8 ? 1.4 : 1.0, pressure: 1 });
+      morning.push({ load1: l1, load5: l1 === 2.6 || l1 === 2.8 ? 1.4 : 1.0, load15: 1.0, pressure: 1 });
     }
     let before: Decision = { state: { calm: 0 } };
     let after: Decision = { state: { calm: 0 } };
@@ -364,5 +447,63 @@ describe("the floor (governor.floor)", () => {
       expect(existsSync(join(o.dir, "caps", "load.json"))).toBe(false);
       expect(runLimit(2, at(4), o.capsFile)).toBe(2);
     });
+  });
+});
+
+describe("scenarios (SYNTHETIC one-minute samples, no recorded load)", () => {
+  /** Runs the samples one minute apart; returns the minutes of changes, the lowest cap and the last cap. */
+  function replay(state: GovernorState, samples: Sample[], configured = 4, set: Settings = DEFAULTS) {
+    const changes: number[] = [];
+    let lowest = state.runs ?? configured;
+    let d: Decision = { state };
+    samples.forEach((x, i) => {
+      d = decide(d.state, x, configured, at(i), set);
+      if (d.change?.startsWith("runs at once")) changes.push(i);
+      lowest = Math.min(lowest, d.state.runs ?? configured);
+    });
+    return { changes, lowest, end: d.state.runs ?? configured };
+  }
+  /** Samples from 1-minute loads, with 5- and 15-minute averages that start at the given values. */
+  function withAverages(load1: number[], l5 = load1[0]!, l15 = l5): Sample[] {
+    return load1.map((l1) => {
+      l5 += (l1 - l5) * (1 - Math.exp(-1 / 5));
+      l15 += (l1 - l15) * (1 - Math.exp(-1 / 15));
+      return { load1: l1, load5: l5, load15: l15, pressure: 1 };
+    });
+  }
+  const minutes = (n: number, f: (i: number) => number) => Array.from({ length: n }, (_, i) => f(i));
+
+  it("steady load of 2 per core from other programs: the cap stays where it is", () => {
+    const steady = minutes(480, (i) => 2 + 0.3 * Math.sin(i / 7)).map((l1, i) => s(l1, 2 + 0.1 * Math.sin(i / 7), 1, 2));
+    const r = replay({ calm: 0, runs: 3 }, steady);
+    expect([r.changes, r.lowest, r.end]).toEqual([[], 3, 3]);
+    const zero = replay({ calm: 0, runs: 0 }, steady, 4, { ...DEFAULTS, floor: 0 });
+    expect([zero.changes, zero.lowest, zero.end]).toEqual([[], 0, 0]);
+  });
+
+  it("short spikes: no change", () => {
+    const spikes = withAverages(minutes(480, (i) => (i % 23 < 2 ? 2.8 : 0.8)), 0.8);
+    const r = replay({ calm: 0 }, spikes);
+    expect([r.changes, r.end]).toEqual([[], 4]);
+  });
+
+  it("a quiet night after a busy evening: back to no cap, in few changes", () => {
+    const night = withAverages(minutes(480, () => 0.3), 1.1, 1.6);
+    const r = replay({ calm: 0, runs: 2 }, night);
+    expect(r.changes.length).toBeGreaterThan(0);
+    expect(r.changes.length).toBeLessThanOrEqual(3);
+    expect(r.lowest).toBe(2);
+    expect(r.end).toBe(4);
+  });
+
+  it("critical memory pressure: goes down fast, never below the floor, and comes back", () => {
+    const samples = [...Array.from({ length: 5 }, () => s(0.8, 0.8, 4)), ...Array.from({ length: 120 }, () => s(0.5, 0.5))];
+    const r = replay({ calm: 0 }, samples);
+    expect(r.lowest).toBe(2);
+    expect(r.end).toBe(4);
+    expect(r.changes.length).toBeLessThanOrEqual(6);
+    const one = replay({ calm: 0 }, samples, 4, { ...DEFAULTS, floor: 1 });
+    expect(one.lowest).toBe(1);
+    expect(one.end).toBe(4);
   });
 });
