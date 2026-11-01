@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
 import { blockers, cycles, dependencyWaits, fileWaits, watcherRepos } from "../src/ops/blockage.js";
-import { loadCaps, runLimit, setCap } from "../src/ops/caps.js";
+import { capsPath, loadCaps, runLimit, setCap } from "../src/ops/caps.js";
 import { limitsSet, logTail, opsCommand, runBlockage, runDigest, runFlaky, runLimits } from "../src/ops/cli.js";
 import { digestFacts, localDay } from "../src/ops/digest.js";
 import { collectHits, parsePassed, parseTestLog, stories, suspects } from "../src/ops/flaky.js";
@@ -29,7 +29,7 @@ function run(id: string, o: Partial<RunSummary> & { issue?: string; steps?: Shap
 }
 
 describe("the cap on runs at once", () => {
-  it("lowers the configured number while it holds, never below 1, and ends by itself", () => {
+  it("lowers the configured number while it holds, down to 0, and ends by itself", () => {
     const file = join(tmp(), "governor", "caps.json");
     expect(runLimit(6, NOW, file)).toBe(6);
     setCap("load", { runs: 4, until: new Date(NOW.getTime() + 60_000).toISOString(), why: "x" }, file);
@@ -42,6 +42,21 @@ describe("the cap on runs at once", () => {
     expect(Object.keys(loadCaps(file))).toEqual(["limits"]);
     writeFileSync(join(file, "..", "caps", "limits.json"), "{broken");
     expect(runLimit(6, NOW, file)).toBe(6);
+  });
+
+  it("holds a cap of 0 until it ends, and ignores a cap that is not a whole number of at least 0", () => {
+    const file = join(tmp(), "governor", "caps.json");
+    const until = new Date(NOW.getTime() + 60_000).toISOString();
+    setCap("load", { runs: 0, until, why: "x" }, file);
+    expect(loadCaps(file).load?.runs).toBe(0);
+    expect(runLimit(6, NOW, file)).toBe(0);
+    expect(runLimit(0, NOW, file)).toBe(0);
+    expect(runLimit(6, new Date(NOW.getTime() + 120_000), file)).toBe(6);
+    for (const runs of [-1, 1.5]) {
+      setCap("load", { runs, until, why: "x" }, file);
+      expect(loadCaps(file)).toEqual({});
+      expect(runLimit(6, NOW, file)).toBe(6);
+    }
   });
 
   it("keeps one file per helper, so two helpers never write the same file, and leaves no temp file", () => {
@@ -155,6 +170,48 @@ describe("the load governor", () => {
     expect(await say()).toContain("limits now: 3 runs at once");
     writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 3, tests: 1, at: new Date(Date.now() - 10 * 60_000).toISOString() }));
     expect(await say()).toBe("no limits set: the machine is calm enough");
+  });
+
+  it("scf governor report and status show a cap of 0 as nothing new starts", async () => {
+    const home = process.env.FACTORY_HOME!;
+    const dir = join(home, "governor");
+    mkdirSync(dir, { recursive: true });
+    const lines: string[] = [];
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 0, at: new Date().toISOString() }));
+    await opsCommand("governor", ["report"], "/x/cli.js", (l) => lines.push(l));
+    expect(lines[0]).toContain("limits now: 0 runs at once, so nothing new starts (configured:");
+    expect(lines[0]).not.toContain("no limits set");
+    lines.length = 0;
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 0, at: new Date(Date.now() - 10 * 60_000).toISOString() }));
+    await opsCommand("governor", ["report"], "/x/cli.js", (l) => lines.push(l));
+    expect(lines[0]).toBe("no limits set: the machine is calm enough");
+    rmSync(join(dir, "state.json"));
+
+    lines.length = 0;
+    setCap("load", { runs: 0, until: new Date(Date.now() + 60_000).toISOString(), why: "machine load" }, capsPath(home));
+    try {
+      await opsCommand("governor", ["status"], "/x/cli.js", (l) => lines.push(l), { platform: "darwin", agentsDir: tmp(), domain: "gui/501", launchctl: () => "", writeFile: () => {}, removeFile: () => {} });
+    } finally {
+      setCap("load", undefined, capsPath(home));
+    }
+    expect(lines).toContain("cap by load: 0 runs at once, so nothing new starts (machine load)");
+  });
+
+  it("scf governor run takes the floor from the config", async () => {
+    const home = process.env.FACTORY_HOME!;
+    const dir = join(home, "governor");
+    const config = join(home, "config.yaml");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(config, "concurrency: 6\ngovernor:\n  floor: 4\n");
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 0, at: new Date().toISOString() }));
+    try {
+      await opsCommand("governor", ["run"], "/x/cli.js", () => {});
+      // the cap that was stored below the floor is lifted to it, whatever the load is (the default floor would give 3)
+      expect(loadState(dir).runs).toBe(4);
+    } finally {
+      rmSync(config, { force: true });
+      clearGovernor(dir, join(home, "test-slots"), capsPath(home));
+    }
   });
 });
 
@@ -375,6 +432,16 @@ describe("usage limits", () => {
     expect(runLimit(6, NOW, capsFile)).toBe(6);
   });
 
+  it("runLimits writes a cap of at least 1 while the governor's cap is 0", () => {
+    const dir = tmp();
+    const capsFile = join(dir, "caps.json");
+    const cal = { percent: 50, at: new Date(NOW.getTime() - 30 * HOUR).toISOString(), resetAt: reset };
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ auto: true, calibrations: { claude: cal } }));
+    setCap("load", { runs: 0, until: new Date(NOW.getTime() + HOUR).toISOString(), why: "machine load" }, capsFile);
+    runLimits({ runs: [step(60, 100), step(10, 48)], dir, capsFile, configured: 6, now: NOW });
+    expect(loadCaps(capsFile).limits!.runs).toBeGreaterThanOrEqual(1);
+  });
+
   it("works from the runs at once that made the pace, and lifts its own cap by one per check at most", () => {
     const cal = { percent: 50, at: new Date(NOW.getTime() - 30 * HOUR).toISOString(), resetAt: reset };
     // 52 left at 2 per hour lasts 26 of the 48 hours. That pace came from 3 runs at once (a cap), not from the configured 6:
@@ -515,6 +582,13 @@ describe("what holds work up", () => {
     expect(text).toContain("**5 run slots are empty while stories wait.**");
     expect(text).toContain("| acme/app#10 | 5: acme/app#11, acme/app#12, acme/app#13, acme/app#14, acme/app#15 | working on merge_develop for 20 minutes |");
     expect(runBlockage({ runs: [], dir: tmp(), serviceLog: "", limit: 6, now: NOW })).toContain("Nothing holds other work up.");
+  });
+
+  it("runBlockage says no new run may start at a limit of 0, and does not count empty slots", () => {
+    const text = runBlockage({ runs, dir: tmp(), serviceLog: log, limit: 0, now: NOW, alive, repos });
+    expect(text).toContain("1 run is working and no new run may start; 5 stories wait for another.");
+    expect(text).not.toContain("run slot");
+    expect(text).not.toContain("of 0 runs");
   });
 
   it("reads only the end of the service log", () => {

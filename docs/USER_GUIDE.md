@@ -3682,15 +3682,18 @@ the file is there and nothing runs: run `install` again.
 | `housekeeping` | every 3 hours | Records the memory of the system's file-change tracker and of the Foundry server, and once a night removes the workspaces of old runs. |
 
 **Caps on the runs at once.** The governor and the limits helper can each lower the number of runs
-at once for a while. The lowest cap that still holds counts, never below 1 and never above the
-configured number. A cap holds back new runs only: work that runs is never stopped, and a run that
+at once for a while. The lowest cap that still holds counts, never above the configured number. A cap
+of 0 lets no new run start, not even an architect run or a schedule chore; it is set only by the
+governor, when `governor.floor` is 0. A cap holds back new runs only: work that runs is never stopped, and a run that
 already started and is resumed (after a restart, an answer or a pause) is not held back, because it
 may hold the turn to merge that others wait for. A new run that waits only for a cap is marked so in
 the queue (`capped`, and the queue names the `cap`), and the monitor does not report it as a queue
-that stands still.
+that stands still. While a cap holds jobs back, the queue looks again every 30 seconds, so a cap that
+ends starts the waiting runs even when no run ends.
 
 **The load governor.** Every minute it reads the load average per core and the memory pressure. It
-allows one run fewer per check, down to half the configured number (at least 2), only on sustained
+allows one run fewer per check, down to `governor.floor` (by default half the configured number, at
+least 2; 0 means no run may start), only on sustained
 load: the 5-minute load is above 2.5 per core, or the 1-minute load has been above 2.5 for three
 checks in a row. A spike of a minute or two (a test suite, a build) does not lower the cap. Memory
 pressure "warning" alone does not lower it either: macOS reports it for hours on a full but idle
@@ -3820,6 +3823,8 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
+
+**Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
 
 **Safety**
 

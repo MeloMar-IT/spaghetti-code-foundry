@@ -187,6 +187,67 @@ describe("scheduler fair use", () => {
     expect("cap" in s.queue()).toBe(false);
   });
 
+  it("a cap of 0 holds every new run, also an architect run and a chore, lets a resume go on, and ends by itself", async () => {
+    const runDir = join(tmp, "runs", "stopped-1");
+    mkdirSync(join(runDir, "workspace"), { recursive: true });
+    mkdirSync(join(runDir, "logs"));
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({ runId: "stopped-1", flow: "plain", flowDef: PLAIN, task: "t", vars: {}, repo: tmp, status: "stopped", reason: "interrupted", runDir, workdir: join(runDir, "workspace"), startedAt: new Date().toISOString(), totalCostUsd: 0, history: [], state: { next: "a", steps: {} } }));
+    setCap("load", { runs: 0, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+    try {
+      concurrency = 3;
+      mk({ capRecheckMs: 10 });
+      const story = s.submit(job(), { source: "story-1", owner: A });
+      const chore = s.submit(job(), { source: "watcher rel-a schedule", owner: A, lockKey: "acme/a#chore:rel-a" });
+      const architect = s.submit(job(), { source: `${REFINE}1`, owner: A, lockKey: `architect ${A}` });
+      expect(active()).toEqual([]);
+      // the queue says why it waits, so the monitor does not take it for a queue that stands still
+      expect(pending().map((p) => [p.runId, p.capped])).toEqual([[story, true], [chore, true], [architect, true]]);
+      expect(s.queue()).toMatchObject({ concurrency: 3, cap: 0 });
+      // a run that already started goes on
+      s.submit({ kind: "resume", runId: "stopped-1" }, { source: "c" });
+      await waitFor(() => JSON.parse(readFileSync(join(runDir, "run.json"), "utf8")).status === "succeeded");
+      expect(pending().map((p) => p.runId)).toEqual([story, chore, architect]);
+      // the cap ends: no other call, the queue looks again by itself
+      setCap("load", undefined);
+      await waitFor(() => ["story-1", "watcher rel-a schedule", `${REFINE}1`].every((x) => active().includes(x)));
+      expect(pending()).toEqual([]);
+    } finally {
+      setCap("load", undefined);
+    }
+  });
+
+  it("a closed scheduler holds no timer and starts nothing when a cap ends", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      concurrency = 3;
+      mk({ capRecheckMs: 1000 });
+      const before = vi.getTimerCount();
+      setCap("load", { runs: 0, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+      s.submit(job(), { source: "story-1", owner: A });
+      expect(vi.getTimerCount()).toBe(before + 1);
+      // the cap ends while jobs wait: the timer is not needed any more
+      setCap("load", undefined);
+      s.recheck();
+      expect(vi.getTimerCount()).toBe(before);
+      expect(active()).toEqual(["story-1"]);
+      s.cancel(s.queue().active[0]!.runId);
+
+      setCap("load", { runs: 0, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+      const held = s.submit(job(), { source: "story-2", owner: A });
+      expect(vi.getTimerCount()).toBe(before + 1);
+      s.close();
+      expect(vi.getTimerCount()).toBe(before);
+      setCap("load", undefined);
+      vi.advanceTimersByTime(5000);
+      s.recheck();
+      expect(pending().map((p) => p.runId)).toEqual([held]);
+      expect(active().includes("story-2")).toBe(false);
+    } finally {
+      setCap("load", undefined);
+      vi.useRealTimers();
+    }
+  });
+
   it("shares slots round-robin: a second user's job is the second start", async () => {
     mk();
     for (let i = 0; i < 5; i++) s.submit(job(), { source: `a${i}`, owner: A });

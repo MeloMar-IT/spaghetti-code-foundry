@@ -1,8 +1,9 @@
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { changesToday, DEFAULTS, decide, loadState, runGovernor, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
+import { loadCaps, runLimit } from "../src/ops/caps.js";
+import { changesToday, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
 
 const T0 = new Date(2026, 9, 20, 9, 0);
 const at = (min: number) => new Date(T0.getTime() + min * 60_000);
@@ -276,5 +277,92 @@ describe("replay of a spiky day", () => {
     expect(oldChanges.length).toBeGreaterThan(0);
     expect(newChanges).toEqual([]);
     expect(after.state.runs).toBeUndefined();
+  });
+});
+
+describe("the floor (governor.floor)", () => {
+  const f = (floor?: number): Settings => ({ ...DEFAULTS, floor });
+  const sus = s(3, 3);
+
+  it("is not set by default: half of the configured number, at least 2, and at least 1 for one", () => {
+    expect(DEFAULTS.floor).toBeUndefined();
+    const lowest = (configured: number) => feed({ calm: 0 }, Array.from({ length: 10 }, () => s(5, 5)), configured).d.state.runs ?? configured;
+    expect([1, 3, 4, 5].map(lowest)).toEqual([1, 2, 2, 3]);
+  });
+
+  it("goes down to 0 one step at a time, and says so", () => {
+    const r = feed({ calm: 0 }, [sus, sus, sus, sus, sus, sus, sus], 2, 0, f(0));
+    expect(r.changes).toEqual([0, 3]);
+    expect(r.d.state.runs).toBe(0);
+    expect(feed({ calm: 0 }, [sus, sus, sus, sus], 2, 0, f(0)).d.change).toBe("runs at once 1 → 0 (load 3.0 per core over 5 minutes)");
+  });
+
+  it("moves nothing more at 0, and an emergency still limits the test runs", () => {
+    const prev: GovernorState = { calm: 0, runs: 0 };
+    expect(decide(prev, sus, 2, at(0), f(0)).state.runs).toBe(0);
+    expect(decide(prev, sus, 2, at(0), f(0)).change).toBeUndefined();
+    expect(decide(prev, s(4.5, 4.5), 2, at(0), f(0)).state).toMatchObject({ runs: 0, tests: 1 });
+  });
+
+  it("comes back from 0 after calm checks and the pause", () => {
+    expect(decide({ calm: 4, runs: 0 }, calm, 2, at(0), f(0)).state.runs).toBe(1);
+    const held = decide({ calm: 4, runs: 0, changedAt: at(0).toISOString() }, calm, 2, at(5), f(0));
+    expect(held.state.runs).toBe(0);
+    expect(held.change).toBeUndefined();
+    expect(decide({ calm: 4, runs: 0, changedAt: at(0).toISOString() }, calm, 2, at(10), f(0)).state.runs).toBe(1);
+  });
+
+  it("stops at a floor of 1", () => {
+    expect(feed({ calm: 0 }, Array.from({ length: 10 }, () => s(5, 5)), 4, 0, f(1)).d.state.runs).toBe(1);
+  });
+
+  it("counts a floor above the configured number as the configured number", () => {
+    expect(decide({ calm: 0 }, sus, 4, at(0), f(9)).state.runs).toBeUndefined();
+    expect(decide({ calm: 0, runs: 2 }, calm, 4, at(0), f(9)).state.runs).toBeUndefined();
+  });
+
+  it("lifts a stored cap below a floor that was raised, without a log line", () => {
+    const d = decide({ calm: 0, runs: 0 }, calm, 4, at(0), f(2));
+    expect(d.state.runs).toBe(2);
+    expect(d.change).toBeUndefined();
+  });
+
+  it("sets no cap when nothing is configured", () => {
+    expect(decide({ calm: 0 }, sus, 0, at(0), f(0)).state.runs).toBeUndefined();
+  });
+
+  describe("runGovernor", () => {
+    const dirs: string[] = [];
+    afterEach(() => {
+      for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+    });
+    const setup = () => {
+      const dir = mkdtempSync(join(tmpdir(), "scf-gov-"));
+      dirs.push(dir);
+      return { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 2, settings: f(0) };
+    };
+
+    it("writes a cap of 0, keeps it while it is renewed, and lets it end by itself", () => {
+      const o = setup();
+      for (const m of [0, 3]) runGovernor({ ...o, now: at(m), sample: sus });
+      expect(loadCaps(o.capsFile).load?.runs).toBe(0);
+      expect(runLimit(2, at(3), o.capsFile)).toBe(0);
+      expect(loadState(o.dir, at(3)).runs).toBe(0);
+      // the next check renews it
+      runGovernor({ ...o, now: at(4), sample: sus });
+      expect(loadCaps(o.capsFile).load?.until).toBe(new Date(at(4).getTime() + HOLD_MS).toISOString());
+      // a governor that stopped: after the hold time the configured number is back, and the state is forgotten
+      const later = at(4 + 5);
+      expect(runLimit(2, later, o.capsFile)).toBe(2);
+      expect(loadState(o.dir, later)).toEqual({ calm: 0 });
+    });
+
+    it("takes the cap away when the floor was raised to the configured number", () => {
+      const o = setup();
+      for (const m of [0, 3]) runGovernor({ ...o, now: at(m), sample: sus });
+      runGovernor({ ...o, settings: f(2), now: at(4), sample: sus });
+      expect(existsSync(join(o.dir, "caps", "load.json"))).toBe(false);
+      expect(runLimit(2, at(4), o.capsFile)).toBe(2);
+    });
   });
 });

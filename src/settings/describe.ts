@@ -163,6 +163,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "router.fallback": A("Fallback models", "Models tried in order when an agent step hits a rate or usage limit, or a budget for free targets.", "new-runs", "models.js"),
   "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
   "governor.priority": N("Priority of runs", "How much processor time the agents, builds and tests of a run leave to your other programs; background can slow runs a lot on macOS."),
+  "governor.floor": G("Lowest runs at the same time", "The lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded, not set means half of Runs at the same time (at least 2), and a higher number than that setting counts as that setting."),
   "delivery.signing_key_path": G("Signing key", "An absolute path to an unencrypted Ed25519 key, which must be in delivery-keys in the data folder (sandboxed steps cannot read it); without it, contracts are unsigned; applies from the next step."),
   "delivery.required_checks": G("Required checks", "The CI checks a delivery contract requires; applies from the next step."),
   "delivery.artifacts": G("Required artifacts", "The artifacts a delivery contract requires; applies from the next step."),

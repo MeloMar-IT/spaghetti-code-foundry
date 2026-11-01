@@ -397,8 +397,12 @@ export const ConfigSchema = z
     secret_scan: z.boolean().default(true),
     /** The redesigned pages (still being built); off by default. */
     ui: z.object({ redesign: z.boolean().default(false) }).strict().prefault({}),
-    /** Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy. */
-    governor: z.object({ priority: z.enum(["normal", "low", "background"]).default("low") }).strict().prefault({}),
+    /**
+     * Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy.
+     * `floor`: the lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded.
+     * Not set: half of `concurrency`, at least 2. Above `concurrency` it counts as `concurrency` (clamped when used, so lowering `concurrency` never makes the config invalid).
+     */
+    governor: z.object({ priority: z.enum(["normal", "low", "background"]).default("low"), floor: z.number().int().min(0).optional() }).strict().prefault({}),
     notify: z
       .object({
         macos: z.boolean().default(true),
