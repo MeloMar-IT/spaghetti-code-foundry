@@ -912,6 +912,12 @@ content, or ask for approval. It never gives access that a rule denied.
   the filled main button of the run header, like **Approve** for a run that waits. A Codex step
   with `resume:` continues the earlier session only when it runs with the same Codex folder;
   otherwise it starts a new session and the log says why.
+  A Claude or Codex step that ran out of time continues its own session when you retry, so the
+  work it already did is kept, even if the flow names another step in `resume:`. The step gets a
+  short note before its prompt that says its last attempt ran out of time. Without a session to
+  continue (none was recorded, or Claude no longer has it), the step starts a new session with the
+  same note, in the same try. A reviewer step that ran out of time starts a new session, with the
+  note. A step that stopped for any other reason works as before.
 - **Codex and your personal setup.** Every Codex step of a run that the server or a watcher starts gets a clean Codex folder of its own, whatever `isolate_agents` says. A local CLI run follows `isolate_agents`. The mode depends on how the step signs in; the log says which one in a line that starts with "Codex:".
 
   | Mode | When | Personal `config.toml`, MCP servers, plugins, hooks, skills, `AGENTS.md`, command rules | Sign-in |

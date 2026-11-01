@@ -1,5 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
+import { isTimedOut } from "../errors.js";
+import type { StepRecord } from "../engine/state.js";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
@@ -41,10 +43,50 @@ export { codexSandbox, claudeIsolated, isolationSkills };
 
 type Iso = { who: CommitIdentity };
 
-/** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). */
-type Ran = StepResult & { final?: boolean };
+/** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). `lostSession`: the session it asked to continue is gone. Neither is stored. */
+type Ran = StepResult & { final?: boolean; lostSession?: boolean };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate, meter?: ProcessMeter): Promise<Ran> {
+type Records = Record<string, Record<string, unknown>>;
+
+/** The note in front of the prompt of a step whose last try ran out of time. */
+export const TIMED_OUT_NOTE = "Your last attempt at this step ran out of time. Go on from the work in this folder.";
+
+/** Did the last record of this step end on a time limit? */
+export function stepTimedOut(steps: Records, id: string): boolean {
+  const e = steps[id]?.error;
+  return typeof e === "string" && isTimedOut(e);
+}
+
+/** The step with `resume` on its own session after a time-out. A reviewer never continues a session. Otherwise the same object. */
+export function ownSessionStep<T extends Pick<ClaudeStep, "id" | "resume" | "skill_role">>(step: T, steps: Records): T {
+  if (step.skill_role === "reviewer" || !stepTimedOut(steps, step.id)) return step;
+  return { ...step, resume: step.id };
+}
+
+/**
+ * The records a session is chosen from. A sub-flow starts with none, so the own last record of a step comes from the run's
+ * history, but only when that last record is a time-out: every other outcome behaves as before. `ctx.steps` is never changed.
+ */
+export function sessionRecords(stepId: string, scope: Pick<Scope, "ctx" | "prefix">, history: Pick<StepRecord, "id" | "parent" | "error" | "sessionId" | "codexHome" | "agent" | "skills">[]): Records {
+  const steps = scope.ctx.steps as Records;
+  if (!scope.prefix || steps[stepId]) return steps;
+  const parent = scope.prefix.slice(0, -1);
+  const last = history.filter((h) => h.id === scope.prefix + stepId && (h.parent ?? "") === parent).at(-1);
+  if (!last || !isTimedOut(last.error)) return steps;
+  return {
+    ...steps,
+    [stepId]: {
+      ok: false,
+      error: last.error ?? "",
+      session_id: last.sessionId ?? "",
+      codex_home: last.codexHome ?? "",
+      agent: last.agent ?? "",
+      skills_digest: last.skills?.digest ?? "",
+    },
+  };
+}
+
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate, records: Records, meter?: ProcessMeter): Promise<Ran> {
   // Both agents get the same environment: no token and no Git or GitHub sign-in, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine, undefined, { bound: (e) => boundEnv(e, { stepTypes: stepTypesOf(scope.flow), quarantined: gate.bounded.quarantined, patterns: engine.config.help.sensitive_patterns }) });
   const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
@@ -105,7 +147,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, meter, slotWaits, ...gate });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, meter, slotWaits, records, ...gate });
   } finally {
     removeGhConfigDir(ghDir);
   }
@@ -132,6 +174,8 @@ interface Gate {
 }
 
 interface WithOptions extends Gate {
+  /** The records `resume:` and the time-out note are read from (see sessionRecords). */
+  records: Records;
   /** Filled by the process of this attempt (see ProcessMeter). */
   meter?: ProcessMeter;
   /** Where test-slot records the waits of this try (absent: not recorded). */
@@ -227,14 +271,14 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const tuned = analystSet(step, flow, engine.config, scope.visits[step.id] ?? 1).effort;
   if (tuned && tuned !== (step.effort ?? d.effort)) engine.log(`    · effort ${tuned}: set by the analyst`);
   const effort = tuned ?? step.effort ?? d.effort;
-  const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
+  const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, o.records, t.agent);
   let resumeId = askedId;
-  if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
+  if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: ${prevAgent === t.agent ? "it kept no session id" : `it ran on ${prevAgent}, this step on ${t.agent}`}`);
   if (resumeId && (step.skills === "off" || step.skills === "catalog")) {
     resumeId = undefined;
     engine.log(`    · not resuming ${step.resume}: this step has skills: ${step.skills} and a resumed session may hold a skill block`);
   }
-  const prev = step.resume ? ctx.steps[step.resume] : undefined;
+  const prev = step.resume ? o.records[step.resume] : undefined;
   // A skill left out of this step for its tools must not come back with the transcript of the earlier session.
   if (resumeId && t.agent === "claude" && resumeHoldsLeftOut(o.toolCheck?.check)) {
     resumeId = undefined;
@@ -295,7 +339,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     else engine.log(`    · skill context: ${attach.state} ${keys} (${attach.attachedBytes} bytes, about ${attach.attachedEstimatedTokens} tokens)${attach.state === "reloaded" ? (t.agent === "codex" && resumeId ? ": the full block is sent again" : ": new session") : ""}`);
   };
   const common = {
-    prompt: withSkillPayload(withSkillPayload(o.bounded.prompt, attach?.text ?? ""), o.catalogue?.text ?? ""),
+    prompt: withSkillPayload(withSkillPayload(stepTimedOut(o.records, step.id) ? `${TIMED_OUT_NOTE}\n\n${o.bounded.prompt}` : o.bounded.prompt, attach?.text ?? ""), o.catalogue?.text ?? ""),
     systemPrompt: o.bounded.system,
     cwd: engine.summary.workdir!,
     logFile,
@@ -391,6 +435,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     output: r.output,
     error: r.error,
     sessionId: r.sessionId,
+    ...(r.sessionLost ? { lostSession: true } : {}),
     ...(r.denied ? { denied: r.denied } : {}),
     // Claude Code prices unknown local models as if they were Claude — they cost nothing.
     costUsd: local ? 0 : r.costUsd,
@@ -516,6 +561,10 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     return { ok: false, output: e.message, error: e.message };
   }
   const memo = new Map<string, OutputLabel>();
+  // A step that ran out of time continues its own session; a sub-flow finds its record in the run's history.
+  const records = sessionRecords(step.id, scope, engine.summary.history);
+  let own = ownSessionStep(step, records);
+  let lost = false;
   const heldFor = !scope.prefix && engine.summary.heldContent?.step === step.id ? engine.summary.heldContent.sha256 : undefined;
   for (;;) {
     // only the final attempt counts
@@ -559,9 +608,18 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       }
       return { ok: false, output: reason, error: reason, held: classified.held.sha256, ...tries() };
     }
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified, readOnlyDirs }, meter);
+    const { final, lostSession, ...r } = await runOn(target, own, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0 || lost, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified, readOnlyDirs }, records, meter);
     seen(r);
     if (r.ok || engine.signal?.aborted || final) return await applyRepoRequests({ engine, scope, step, identity, logFile, profile: resolved.session.profile }, { ...r, ...tries() });
+    // The session this step would continue is gone: a new session, in this same try. Never for a flow's own `resume:`.
+    if (lostSession && own !== step) {
+      engine.log(`    · the session of ${step.id} is gone: starting a new session`);
+      engine.summary.totalCostUsd += r.costUsd ?? 0;
+      const { resume: _resume, ...fresh } = own;
+      own = fresh;
+      lost = true;
+      continue;
+    }
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.
     if (isTransientError(r.error, r.output) && !isAuthError(r.error, r.output) && blips < TRANSIENT_RETRIES.length) {
