@@ -38,7 +38,7 @@ import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
 import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
-import { isStoryRun, markRetryStart, pendingRetry, retryEntry, timeLimitAction, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
+import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
 import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
@@ -707,6 +707,11 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason(`cancelled during step "${step.id}"`), ...here() };
 
     const routed = res.ok ? step.routes?.find((r) => new RegExp(r.if, "m").test(res.output))?.goto : undefined;
+    // A story handed over for being too big: only a real split or a real question goes on.
+    const tooBig = top && step.id === "force_split" ? ctx.steps.implement?.too_big : undefined;
+    if (tooBig && !splitAnswered(routed, res.output)) {
+      return { outcome: "failed", reason: `step "force_split" failed: ${res.ok ? "the planner gave no split and no question" : (res.error ?? "the planner failed")} (${tooBig})`, ...here(), failedStep: identity };
+    }
     if (top && !res.ok) markPlanCheckFailed(summary, step.id);
     const carryStop = top && res.ok ? carryRunSkills(summary, config, step.id, engine.log) : undefined;
     const skillStop = carryStop ?? (top && res.ok ? planRunSkills(summary, config, step.id, engine.log) : undefined);
@@ -722,7 +727,7 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (target === "end") return { outcome: "succeeded", next: null, lastOutput };
     if (target === "fail") {
       // A story of a watcher that ran out of time is tried again: the run stops (no failure path, no model call) and the watcher resumes it.
-      const again = timeLimitAction({
+      const asked = {
         top,
         stepType: step.type,
         ownFailurePath: step.on_failure !== undefined,
@@ -731,7 +736,8 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
         storyRun: isStoryRun(summary),
         limit: config.auto_retry?.timeouts ?? 2,
         used: () => timeLimitsUsed(summary, listRunBriefs(runsDir)),
-      });
+      };
+      const again = timeLimitAction(asked);
       if (again) {
         const reason = timeLimitReason(step.id, again.attempt, again.of);
         summary.timeLimits = [...(summary.timeLimits ?? []), { at: new Date().toISOString(), step: step.id, attempt: again.attempt, of: again.of }];
@@ -740,6 +746,17 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
         summary.retryStep = entry.retryStep ?? (step.id === "claim_areas" ? summary.retryStep : undefined);
         engine.log(`■ ${reason}`);
         return { outcome: "stopped", reason, ...here() };
+      }
+      // The retries are used up: a further time-out of `implement` goes to the planner to be split (if the flow can take it).
+      const handover = timeLimitHandover({ ...asked, stepId: step.id, flow, coded: () => timeLimitsUsed(summary, listRunBriefs(runsDir), step.id) + (summary.timeoutHandovers ?? 0) });
+      if (handover) {
+        summary.timeoutHandovers = (summary.timeoutHandovers ?? 0) + 1;
+        ctx.steps.implement = { ...ctx.steps.implement, too_big: handover };
+        engine.log(`■ ${handover}: to the planner`);
+        idx = indexOf.get("force_split")!;
+        setNext("force_split");
+        engine.save();
+        continue;
       }
       return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here(), failedStep: identity };
     }

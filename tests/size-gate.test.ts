@@ -152,6 +152,7 @@ describe("the prompts", () => {
     expect(p).toContain("owner's exception");
     expect(promptOf("revise_plan")).toContain("MECHANICAL");
     expect(promptOf("force_split")).toContain("did not accept it");
+    expect(promptOf("force_split")).toContain("{{steps.implement.too_big}}");
     expect(promptOf("plan", "issue-plan")).not.toContain("MECHANICAL");
   });
 });

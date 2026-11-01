@@ -138,6 +138,8 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   for (const id of Object.keys(scope.ctx.steps)) if (ran[id]) env[ranEnvName(id)] = String(ran[id]);
   // Every consumer gets untrusted values scrubbed (secrets and configured patterns) before the step's own credentials are
   // added by the callers. An agent step may also quarantine them (`bound`). The SCF_ aliases get the same values.
+  // A story handed to the planner for timing out must reach a person with its questions: the Foundry does not decide them itself.
+  if (scope.ctx.steps.implement?.too_big) env.FACTORY_DECIDE_TECHNICAL = "0";
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
   // The trusted public key comes only from the engine, never from the server's own environment: a missing value is blank.
   const keyEnv = { FACTORY_DELIVERY_PUBLIC_KEY: "", ...deliveryKeyEnv((engine.deliverySettings ?? (() => engine.config?.delivery))(), process.env.FACTORY_HOME ?? FACTORY_HOME) };

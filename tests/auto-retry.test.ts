@@ -65,6 +65,14 @@ describe("timeLimitsUsed", () => {
     ];
     expect(timeLimitsUsed(own, briefs)).toBe(2);
   });
+  it("counts only the events of one step when asked", () => {
+    const e = (step: string) => ({ at: "t", step, attempt: 1, of: 2, startedAt: "s" });
+    const mine = { runId: "a", vars: { github_repo: "o/r", issue: "7" }, timeLimits: [e("implement"), e("plan")] };
+    const briefs = [{ runId: "b", githubRepo: "o/r", issue: "7", timeLimits: [e("implement"), e("implement"), e("plan")] }];
+    expect(timeLimitsUsed(mine, briefs)).toBe(5);
+    expect(timeLimitsUsed(mine, briefs, "implement")).toBe(3);
+    expect(timeLimitsUsed(mine, briefs, "claim_areas")).toBe(0);
+  });
   it("counts only its own events when it has no issue", () => {
     expect(timeLimitsUsed({ ...own, vars: {} }, [{ runId: "b", githubRepo: "o/r", issue: "7", timeLimits: [ev("s")] }])).toBe(1);
   });

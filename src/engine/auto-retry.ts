@@ -25,20 +25,21 @@ const startedEvents = (events: unknown): TimeLimitEvent[] =>
 export function timeLimitsUsed(
   own: Pick<RunSummary, "runId" | "timeLimits" | "vars">,
   briefs: readonly Pick<RunBrief, "runId" | "githubRepo" | "issue" | "timeLimits">[],
+  step?: string,
 ): number {
-  let n = startedEvents(own.timeLimits).length;
+  const mine = (events: unknown): number => startedEvents(events).filter((e) => step === undefined || e.step === step).length;
+  let n = mine(own.timeLimits);
   const repo = own.vars?.github_repo;
   const issue = own.vars?.issue;
   if (!repo || !issue) return n;
   for (const b of briefs) {
     if (b.runId === own.runId || b.githubRepo !== repo || b.issue !== issue) continue;
-    n += startedEvents(b.timeLimits).length;
+    n += mine(b.timeLimits);
   }
   return n;
 }
 
-/** Should the step that just failed be answered with a retry? `used` is asked last, and only when everything else says yes. */
-export function timeLimitAction(o: {
+type RetryAsk = {
   top: boolean;
   stepType: Step["type"];
   /** The step names its own failure path (`on_failure`, also `fail`): it decides itself. */
@@ -48,11 +49,46 @@ export function timeLimitAction(o: {
   storyRun: boolean;
   limit: number;
   used: () => number;
-}): { attempt: number; of: number } | undefined {
-  if (!o.top || (o.stepType !== "claude" && o.stepType !== "shell") || o.ownFailurePath) return undefined;
-  if (!isTimedOut(o.error) || o.accessFailed || !o.storyRun || !(o.limit > 0)) return undefined;
+};
+
+/** Everything that must hold before the retries count at all. */
+function retryable(o: RetryAsk): boolean {
+  if (!o.top || (o.stepType !== "claude" && o.stepType !== "shell") || o.ownFailurePath) return false;
+  return isTimedOut(o.error) && !o.accessFailed && o.storyRun && o.limit > 0;
+}
+
+/** Should the step that just failed be answered with a retry? `used` is asked last, and only when everything else says yes. */
+export function timeLimitAction(o: RetryAsk): { attempt: number; of: number } | undefined {
+  if (!retryable(o)) return undefined;
   const used = o.used();
   return used < o.limit ? { attempt: used + 1, of: o.limit } : undefined;
+}
+
+/** The reason the planner gets (only a number: no untrusted text). */
+export function tooBigReason(n: number): string {
+  return `too big for one coding turn: timed out ${n} ${n === 1 ? "time" : "times"}`;
+}
+
+/** The flow's force_split can take a story that keeps timing out: its prompt names the reason. */
+export function takesTooBig(flow: Pick<Flow, "steps">): boolean {
+  const f = flow.steps.find((s) => s.id === "force_split");
+  return !!f && f.type === "claude" && typeof f.prompt === "string" && f.prompt.includes("steps.implement.too_big");
+}
+
+/**
+ * After the retries: the reason to hand `implement` to the planner, or undefined (the run fails as before).
+ * Call it only when timeLimitAction gave no retry. `coded` counts the time-outs of `implement` so far (asked last).
+ */
+export function timeLimitHandover(o: RetryAsk & { stepId: string; flow: Pick<Flow, "steps">; coded: () => number }): string | undefined {
+  if (o.stepId !== "implement" || !retryable(o) || !takesTooBig(o.flow)) return undefined;
+  return tooBigReason(o.coded() + 1);
+}
+
+/** With too_big set: did the planner give a split (parts) or a question? */
+export function splitAnswered(routed: string | undefined, output: string): boolean {
+  if (routed === "split_gate") return /^### ISSUE [0-9]/m.test(output);
+  if (routed === "send_back") return /^\*\*Q\d+\./m.test(output);
+  return false;
 }
 
 /**

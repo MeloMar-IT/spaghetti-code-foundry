@@ -7,6 +7,7 @@
 #   → Codex review 1 → Claude fixes → tests ⟲ fix (max 3)
 #   → Codex review 2 → Claude fixes → tests ⟲ fix (max 3)      (an APPROVE skips ahead)
 #   → docs → guard (+ docs updated) → commit "Resolve #N" → push → report on the issue
+# implement times out again after the retries → the planner splits it (split gate) or asks
 # ────────────────────────────────────────────────────────────────────────
 name: issue-code-daily
 description: "Code a planned issue on the day's branch: tests, 2 Codex reviews, docs, commit, push, report"
@@ -60,6 +61,8 @@ vars:
   forbidden_paths: ""
   docs_required: ""
   agent_env: ""
+  auto_split_max_risk: "50"
+  review_plan_label: Factory_review_plan
 var_info:
   github_repo: &a1
     set_by_run: true
@@ -91,6 +94,16 @@ var_info:
     help: Environment variables for the agent steps, as KEY=value, one per line. A semicolon also separates them.
     kind: list
     separator: line
+  auto_split_max_risk:
+    label: Auto-split risk limit
+    help: A plan above the threshold but not above this score is split into smaller issues instead of waiting for a person. 0 to 100.
+    kind: number
+    min: 0
+    max: 100
+  review_plan_label:
+    label: Review-plan label
+    help: "An issue with this label always waits for a person to approve its plan. Empty: no such label."
+    kind: text
 steps:
   - id: pull_ticket
     type: shell
@@ -479,3 +492,179 @@ steps:
     resume_from: daily_branch
     run: printf '%s\n' "$FACTORY_OUT_DAILY_BRANCH" | grep "^WAIT:"
     on_success: stop
+  - id: force_split
+    type: claude
+    model: claude-opus-5-5
+    effort: high
+    jump_only: true
+    max_budget_usd: 6
+    permission_mode: dontAsk
+    allowed_tools:
+      - Read
+      - Glob
+      - Grep
+      - Bash(git log*)
+      - Bash(git show*)
+      - Bash(git grep*)
+      - Bash(git status*)
+      - Bash(git diff*)
+      - Bash(ls*)
+    prompt: |-
+      This issue has to be split.
+      {{steps.implement.too_big}}
+      If the line above says it is too big for one coding turn, coding ran out of time again and again. The unfinished work is still
+      in this folder: it is not committed and not pushed. See what is done and what is left with `git status` and `git diff --stat`.
+      Change nothing.
+
+      {{steps.pull_ticket.output}}
+
+      Split this issue into smaller issues, each small enough for one coding turn and buildable and testable on its
+      own, in order. If the issue has a comment from the Spaghetti Code Foundry with a plan, use that plan for the parts.
+      For TOO_BIG, write the split in exactly this format so the factory can create the issues:
+        ## Split
+        ### ISSUE 1: <title>
+        DEPENDS_ON: none   (or earlier parts by number, e.g. 1 or 1, 2; or existing issues, e.g. #72)
+        <the issue text: the user story, a "### Acceptance criteria" checklist, and "### Notes for this codebase">
+        ### ISSUE 2: <title>
+        …
+      Each part must be buildable and testable on its own; together they cover every acceptance criterion
+      of this issue. Then score how risky it is to create these issues WITHOUT the owner looking (0-100):
+      0-25 a mechanical split along existing boundaries, nothing dropped or decided; 26-50 only ordering or
+      boundary choices; 51-75 some scope is deferred or reinterpreted; 76-100 the split changes what the issue
+      asks for, or needs decisions only the owner can make. Write it as the line: SPLIT_RISK: <0-100>
+      If the owner already agreed to split this issue (in the comments above), also write: SPLIT_APPROVED: yes
+      Never split on top of an earlier split: if this issue is itself a split part (a "Part N of M of #X" line) or
+      parts of the same original are still open, do not propose new parts. Re-plan it against those parts, or ask
+      (NEEDS_INFO) for the changes to them you need.
+
+      Answer NEEDS_INFO instead only when the rule above stops you from proposing new parts (ask the owner how to change the existing parts), or when coding ran out of time and you advise against a split (say why, and ask the owner what to do). Write the questions in this form:
+      Write each question in this form:
+        **Q<n>. <question>**
+        **Kind:** technical | product | policy | owner_action
+        **Needs:** file <path>   (only an owner_action question that waits for a file in the repository)
+        <context and the options you see>
+        **Recommendation:** <option> — <why>
+      Pick one kind. technical: the code, the docs or common practice can settle it. product: what users get.
+      policy: rules, security, money or legal. owner_action: something only the owner can do (an account, a secret, a setting).
+      An owner_action question that waits for a file adds `**Needs:** file <path>` (the path from the repository root): the Foundry goes on by itself once the file is there.
+      Every question gets a recommendation. For a technical one write the answer you would pick, or `none` if the owner must choose.
+
+      Do not write a SKILL_REQUEST line.
+
+      End with exactly one line: PLAN_STATUS: TOO_BIG (or PLAN_STATUS: NEEDS_INFO in the case above)
+    routes:
+      - if: "^PLAN_STATUS: TOO_BIG\\s*$"
+        goto: split_gate
+      - if: "^PLAN_STATUS: NEEDS_INFO\\s*$"
+        goto: send_back
+    on_success: fail
+    on_failure: fail
+  - id: send_back
+    type: shell
+    repo_access: true
+    jump_only: true
+    description: Decide the technical questions and plan again, or post why the issue can't be planned yet and stop (resumes when someone replies)
+    max_visits: 3
+    routes:
+      - if: "^DECIDED: went_on\\s*$"
+        goto: pull_ticket
+    resume_from: pull_ticket
+    run: |-
+      fresh() { [ "${1:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ]; }
+      fresh "$FACTORY_RAN_PLAN_REVIEW" || FACTORY_OUT_PLAN_REVIEW=""
+      fresh "$FACTORY_RAN_REVISE_GATE" || FACTORY_OUT_REVISE_GATE=""
+      fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""
+      fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""
+      fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""
+      out=$(printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}"| sed '/^SKILL_REQUEST:/d; /^DECIDED:/d')
+      status=$(printf '%s\n' "$out" | sed -n 's/^PLAN_STATUS: *\([A-Z_]*\).*/\1/p' | tail -1)
+      # NEEDS_INFO: tools/decide-questions.mjs decides the technical questions, posts the one comment and records the round.
+      if [ "$status" = NEEDS_INFO ]; then
+        new=1; [ "${FACTORY_RAN_SEND_BACK:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ] && new=0
+        body=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d' | FACTORY_NEW_ROUND="$new" node "$FACTORY_TOOLS/decide-questions.mjs" post-plan "{{run.dir}}" 2>&1); code=$?
+        if [ "$code" -eq 3 ]; then printf '%s\n' "$body"; echo "DECIDED: went_on"; exit 0; fi
+        if [ "$code" -ne 0 ]; then printf '%s\n' "$body"; exit "$code"; fi
+      else
+        park=""; extra=""
+        case "$status" in
+          NOT_CODE) head="thinks this issue is not a coding task:"; park="$FACTORY_PARK_HINT" ;;
+          TOO_BIG) head="thinks this issue is too big for one change and proposes splitting it:" ;;
+          WAITS_FOR) q=$(printf '%s\n' "$FACTORY_OUT_WAIT_FOR_STORY" | sed '/^QUESTION[[:space:]]*$/d')
+            [ -n "$q" ] || { echo "planning failed: WAITS_FOR, but the wait was not checked"; exit 1; }
+            head="wanted this issue to wait for another story, but could not record it:"
+            out=$(printf '%s\n' "$out" | sed -E '/^[[:space:]]*WAITS_FOR(_REASON)?:/d'); park="$q"; extra="$q" ;;
+          *) echo "planning failed: no PLAN_STATUS line"; exit 1 ;;
+        esac
+        { echo "$FACTORY_FIRST_PLANNER_QUESTIONS"; echo
+          echo "🤖 **Spaghetti Code Foundry** $head"; echo
+          printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'
+          if [ -n "$park" ]; then echo; echo "$park"; fi
+          echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"
+          echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
+          | node "$FACTORY_TOOLS/story" comment >/dev/null || exit 1
+        body=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'; if [ -n "$extra" ]; then echo; printf '%s\n' "$extra"; fi)
+      fi
+      printf '%s\n' "$body"
+    on_success: stop
+  - id: split_gate
+    type: shell
+    repo_access: true
+    jump_only: true
+    description: "Low-risk split of an issue without earlier splits (or already agreed): create the issues; otherwise ask the owner"
+    run: |-
+      fresh() { [ "${1:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ]; }
+      fresh "$FACTORY_RAN_PLAN_REVIEW" || FACTORY_OUT_PLAN_REVIEW=""
+      fresh "$FACTORY_RAN_REVISE_GATE" || FACTORY_OUT_REVISE_GATE=""
+      fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""
+      fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""
+      fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""
+      out=$(printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}"| sed '/^SKILL_REQUEST:/d')
+      printf '%s\n' "$out" | grep -q "^### ISSUE [0-9]" || { echo "SPLIT: none (no parts in the answer)"; exit 0; }
+      risk=$(printf '%s\n' "$out" | sed -n 's/^SPLIT_RISK: *\([0-9][0-9]*\).*/\1/p' | tail -1); risk=${risk:-100}
+      limit=${FACTORY_VAR_AUTO_SPLIT_MAX_RISK:-50}; agreed=""; forced=""
+      printf '%s\n' "$out" | grep -q "^SPLIT_APPROVED: *yes" && agreed=yes
+      if [ -n "$FACTORY_VAR_REVIEW_PLAN_LABEL" ] && node "$FACTORY_TOOLS/story" labels 2>/dev/null | grep -qx "$FACTORY_VAR_REVIEW_PLAN_LABEL"; then forced=yes; fi
+      # A split part, or an issue with open parts of an earlier split, is always the owner's decision (tools/split-family).
+      fam=$(node "$FACTORY_TOOLS/split-family" 2>&1) || fam=$(printf '%s\nFAMILY: unknown' "$fam")
+      family=$(printf '%s\n' "$fam" | sed -n 's/^FAMILY: *\([a-z-]*\).*/\1/p' | tail -1); family=${family:-unknown}
+      tree=$(printf '%s\n' "$fam" | sed '/^FAMILY:/d')
+      if [ -n "$agreed" ] && [ "$family" = none ]; then echo "The owner already agreed to the split — creating the issues."; echo "GATE: no"; exit 0; fi
+      if [ "$family" = none ] && [ "$risk" -le "$limit" ] && [ -z "$forced" ]; then echo "Split risk $risk/100 (≤ $limit) — creating the issues without asking."; echo "GATE: no"; exit 0; fi
+      why="the split risk is $risk/100 (above $limit)"; [ -n "$forced" ] && why="the issue has the \`$FACTORY_VAR_REVIEW_PLAN_LABEL\` label"
+      case "$family" in none) ;; part) why="this issue is itself a part of an earlier split" ;; open-parts) why="parts of an earlier split of this issue are still open" ;; *) why="the Foundry could not check this issue for earlier splits" ;; esac
+      { echo "$FACTORY_FIRST_APPROVE_SPLIT"; echo
+        echo "🤖 **Spaghetti Code Foundry** thinks this issue is too big for one change and proposes splitting it (**split risk: $risk/100**):"; echo
+        printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d; /^SPLIT_RISK:/d; /^SPLIT_APPROVED:/d'
+        if [ "$family" != none ]; then echo; echo "### Earlier splits of this issue"; echo; printf '%s\n' "$tree"; echo; echo "**Recommendation:** do not create new issues. /reject makes the Foundry plan this issue again against the parts above (or change them); /approve creates the new parts anyway."; fi
+        echo; echo "✋ **You decide** ($why)."
+        echo; echo "_${FACTORY_NEXT_APPROVE_SPLIT}_"
+        echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID approval -->"; } | node "$FACTORY_TOOLS/story" comment >/dev/null
+      echo "asked the owner: $why"; echo "GATE: yes"
+    routes:
+      - if: "^SPLIT: none"
+        goto: send_back
+      - if: "^GATE: yes\\s*$"
+        goto: approve_split
+    on_success: create_split
+  - id: approve_split
+    type: approval
+    jump_only: true
+    message: Split {{vars.github_repo}}#{{vars.issue}} into the proposed issues? (reply /approve or /reject on the issue)
+    on_success: create_split
+    on_failure: stop
+  - id: create_split
+    type: shell
+    repo_access: true
+    jump_only: true
+    description: Create the parts as issues (in order, with Depends on and the build label), then close this issue
+    run: |-
+      fresh() { [ "${1:-0}" -gt "${FACTORY_RAN_PLAN:-0}" ]; }
+      fresh "$FACTORY_RAN_PLAN_REVIEW" || FACTORY_OUT_PLAN_REVIEW=""
+      fresh "$FACTORY_RAN_REVISE_GATE" || FACTORY_OUT_REVISE_GATE=""
+      fresh "$FACTORY_RAN_REVISE_PLAN" || FACTORY_OUT_REVISE_PLAN=""
+      fresh "$FACTORY_RAN_FORCE_SPLIT" || FACTORY_OUT_FORCE_SPLIT=""
+      fresh "$FACTORY_RAN_WAIT_FOR_STORY" || FACTORY_OUT_WAIT_FOR_STORY=""
+      # Only an approve_split after the last split_gate (and an approval, not a rejection) lets create-split split a family.
+      if [ "${FACTORY_RAN_APPROVE_SPLIT:-0}" -gt "${FACTORY_RAN_SPLIT_GATE:-0}" ] && printf '%s\n' "$FACTORY_OUT_APPROVE_SPLIT" | grep -q "^approved"; then export FACTORY_SPLIT_CONFIRMED=1; fi
+      printf '%s\n' "${FACTORY_OUT_FORCE_SPLIT:-${FACTORY_OUT_REVISE_PLAN:-$FACTORY_OUT_PLAN}}" | sed '/^SKILL_REQUEST:/d' | "$FACTORY_TOOLS/create-split"
+    on_success: end
