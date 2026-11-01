@@ -85,6 +85,9 @@ export const PROMOTION_REFUSED =
 /** The log line of a local test. */
 export const LOCAL_TEST_LINE = "local test: this run never counts as a promoted delivery";
 
+/** One stop at a step's time limit that the Foundry answers with a retry (auto_retry.timeouts). Only an event with `startedAt` (the retry began) counts. */
+export interface TimeLimitEvent { at: string; step: string; attempt: number; of: number; startedAt?: string }
+
 export interface RunSummary {
   runId: string;
   flow: string;
@@ -119,6 +122,10 @@ export interface RunSummary {
   failureNote?: FailureNote;
   /** How many times the run was resumed. */
   resumes?: number;
+  /** The stops at a time limit that were answered with a retry, oldest first (watcher story runs). Absent on older runs. */
+  timeLimits?: TimeLimitEvent[];
+  /** After a time limit: the step to continue at once the areas are claimed again. Absent: none. */
+  retryStep?: string;
   /** The last 50 resumes (when, and the step each restarted at); the monitor reads it to find restart loops. */
   resumeLog?: { at: string; from: string }[];
   /** Process that last started or resumed the run. */
@@ -199,6 +206,8 @@ export interface RunBrief {
   githubRepo?: string;
   /** True when run.json has archivedAt. */
   archived?: boolean;
+  /** `timeLimits` of the run, when it has them. */
+  timeLimits?: TimeLimitEvent[];
   issue?: string;
   /** `vars.pr` and `vars.ci_run` of the run, when it has them. */
   pr?: string;
@@ -266,7 +275,7 @@ function briefOf(runsDir: string, id: string): RunBrief | undefined {
     if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
       const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
       if (!s || typeof s.runId !== "string" || typeof s.status !== "string") return undefined;
-      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}),...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(typeof s.vars?.chore_day === "string" ? { choreDay: s.vars.chore_day } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}) } };
+      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}),...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(Array.isArray(s.timeLimits) ? { timeLimits: s.timeLimits } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(typeof s.vars?.chore_day === "string" ? { choreDay: s.vars.chore_day } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}) } };
       briefCache.set(file, hit);
     }
     return hit.brief;
@@ -454,6 +463,8 @@ export function spentToday(runsDir: string, now = new Date()): number {
 /** The stop reason of a run that reached its owner's daily budget. It carries no amount: it reaches users. */
 export const USER_BUDGET_REASON = "your daily limit is reached — resume tomorrow";
 export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "");
+/** A stop that the Foundry answers with a retry after a step ran out of time (see engine/auto-retry.ts). */
+export const isTimeLimitStop = (reason?: string): boolean => /^ran out of time in /.test(reason ?? "");
 
 /** Total spend of the runs of one account that started today (same day rule, 500-run window and early break as spentToday). */
 export function spentTodayBy(runsDir: string, owner: string, now = new Date()): number {

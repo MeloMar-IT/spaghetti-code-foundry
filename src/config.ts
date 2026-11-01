@@ -710,6 +710,11 @@ export const ConfigSchema = z
      * `scf run --local-test` is always allowed.
      */
     promotion: z.object({ enforce: z.enum(["off", "warn", "on"]).default("warn") }).strict().prefault({}),
+    /**
+     * Retries by themselves: how often a story of a watcher is run again when a step ran out of time (per story, over all
+     * runs of its issue). 0 turns it off. The retry waits for a free slot, and a step with its own failure path is not retried.
+     */
+    auto_retry: z.object({ timeouts: z.number().int().min(0).default(2) }).strict().prefault({}),
     /** Delivery contracts written at pull-request creation: the signing key and what a contract requires (installation-wide, then per repository). Read from issue 3 on. */
     delivery: z
       .object({

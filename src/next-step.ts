@@ -1,6 +1,6 @@
 import type { WatcherConfig } from "./config.js";
 import { explainError } from "./errors.js";
-import { isStoppedCancel, isUserBudgetStop, type RunSummary } from "./engine/state.js";
+import { isStoppedCancel, isTimeLimitStop, isUserBudgetStop, type RunSummary } from "./engine/state.js";
 import { classifyFailure, failureSummary, type FailureCause, type FailureSummary } from "./failure.js";
 import { parseWaitsFor } from "./queue/waits-for.js";
 import { statusHelp, statusName } from "./words.js";
@@ -806,6 +806,8 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
       if (asksQuestions(run) && run.parkedAt) return make("parked");
       // A retired run is not continued by a limit, a answer or a release: only an interruption keeps its own record.
       if (d.retired && !/interrupted/.test(reason)) return make("stopped");
+      // a step ran out of time and the Foundry tries again by itself
+      if (isTimeLimitStop(reason)) return !o.watched ? make("stopped") : o.pr ? make("release") : make("queued");
       if (isUserBudgetStop(reason)) return make("user_limit", { userLimit: "budget" });
       if (/daily budget/.test(reason)) return make("daily_budget");
       if (/usage limit reached|signed out —/.test(reason)) return make("usage_limit", { unreachable: !/signed out —/.test(reason) && !!run.history?.at(-1)?.unreachable });

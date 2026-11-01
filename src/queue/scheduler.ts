@@ -58,9 +58,11 @@ export interface QueuedJob {
   storyAt?: string;
   /** The flow's id under `scf promote`, saved when the job was queued (see flowFileId). Absent: the flow's name, or for older jobs the file found when the run starts. */
   flowId?: string;
+  /** A resume that is a retry after a time limit (auto_retry.timeouts): it waits for a helper's cap like a new run, it is not a run of the day, and a cancel ends the run. */
+  asNewRun?: boolean;
 }
 
-export interface JobMeta { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string }
+export interface JobMeta { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string; asNewRun?: boolean }
 
 /** The time a priority job is ordered by: the issue's creation time, else when it was queued. */
 const storyTime = (q: QueuedJob): number => {
@@ -360,7 +362,8 @@ export class Scheduler {
     if (i >= 0) {
       const [job] = this.pending.splice(i, 1);
       this.persist();
-      if (job?.job.kind === "resume") this.cancelWaiting(runId, by); // a queued approval: the run no longer waits. A queued answer of a stopped run is only dropped: its answer stays and the run still waits for one
+      if (job?.asNewRun) this.cancelStopped(runId, by); // a queued retry after a time limit: the cancel ends the run for good
+      else if (job?.job.kind === "resume") this.cancelWaiting(runId, by); // a queued approval: the run no longer waits. A queued answer of a stopped run is only dropped: its answer stays and the run still waits for one
       return true;
     }
     const a = this.active.get(runId);
@@ -525,7 +528,7 @@ export class Scheduler {
     const capFull = busy >= cap && busy < concurrency;
     const zero = cap < 1 && concurrency >= 1;
     return {
-      pending: this.pending.map(({ runId, lockKey, repoLock, source, enqueuedAt, job, priority }, i) => {
+      pending: this.pending.map(({ runId, lockKey, repoLock, source, enqueuedAt, job, priority, asNewRun }, i) => {
         const limit = this.limited.get(runId);
         const same = (q: QueuedJob) => (repoLock && q.repoLock === repoLock) || (lockKey && q.lockKey === lockKey);
         // The lock owner: an active job, else an earlier job in the queue that holds the same lock.
@@ -536,7 +539,7 @@ export class Scheduler {
           ...(priority ? { priority: true as const } : {}),
           ...(limit ? { limit } : {}),
           // nothing but a helper's cap keeps this new run waiting: on purpose, not a queue that stands still
-          ...(capFull && job.kind === "run" && (zero || !ownLane(source)) && !blocker && !limit ? { capped: true as const } : {}),
+          ...(capFull && (job.kind === "run" || asNewRun) && (zero || !ownLane(source)) && !blocker && !limit ? { capped: true as const } : {}),
           ...(!priority && !limit && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           ...(typeof vars?.chore_day === "string" ? { choreDay: vars.chore_day } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
@@ -840,7 +843,7 @@ export class Scheduler {
 
     while (this.slotsInUse() < limit) {
       const full = this.slotsInUse() >= capped;
-      const ready = this.pending.filter((q) => !ownLane(q.source) && !locked(q) && !held(q) && !limitOf(q) && !(full && q.job.kind === "run"));
+      const ready = this.pending.filter((q) => !ownLane(q.source) && !locked(q) && !held(q) && !limitOf(q) && !(full && (q.job.kind === "run" || q.asNewRun)));
       if (!ready.length) break;
       // priority block first, then the group with the fewest active runs, then the oldest last start, then queue order
       const pool = ready.some((q) => q.priority) ? ready.filter((q) => q.priority) : ready;
