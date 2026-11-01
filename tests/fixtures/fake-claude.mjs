@@ -106,6 +106,26 @@ if (prompt.includes("CLAUDE_LIMIT")) {
   emit({ type: "result", subtype: "success", is_error: true, result: "You've hit your limit · resets 3:50pm (Europe/Amsterdam)", session_id: "s", total_cost_usd: 0, num_turns: 1 });
   process.exit(1);
 }
+// CLAUDE_HANG: the first call in a folder prints an init line with session "sess-hang", then waits until it is killed (a time-out); later calls answer as usual.
+// CLAUDE_HANG_SILENT hangs the same way without the init line.
+if ((prompt.includes("CLAUDE_HANG") || prompt.includes("CLAUDE_HANG_SILENT")) && !existsSync(".fake-claude-hang")) {
+  writeFileSync(".fake-claude-hang", "1");
+  if (!prompt.includes("CLAUDE_HANG_SILENT")) emit({ type: "system", subtype: "init", session_id: "sess-hang" });
+  setInterval(() => {}, 1000); // a pending promise alone lets node exit
+  await new Promise(() => {});
+}
+// CLAUDE_NO_SESSION: with --resume the session is gone: "No conversation found" on stderr and exit 1, no events. CLAUDE_NO_SESSION_RESULT says it in an error result instead.
+if ((prompt.includes("CLAUDE_NO_SESSION") || prompt.includes("CLAUDE_NO_SESSION_RESULT")) && args.includes("--resume")) {
+  const msg = `No conversation found with session ID: ${args[args.indexOf("--resume") + 1]}`;
+  if (prompt.includes("CLAUDE_NO_SESSION_RESULT")) emit({ type: "result", subtype: "error_during_execution", is_error: true, errors: [msg], session_id: "s", total_cost_usd: 0, num_turns: 0 });
+  else process.stderr.write(`${msg}\n`);
+  process.exit(1);
+}
+// CLAUDE_GONE: only a --resume of a session id that starts with "gone-" is refused as gone (the other resumes of the flow still work).
+if (prompt.includes("CLAUDE_GONE") && args.includes("--resume") && String(args[args.indexOf("--resume") + 1]).startsWith("gone-")) {
+  process.stderr.write(`No conversation found with session ID: ${args[args.indexOf("--resume") + 1]}\n`);
+  process.exit(1);
+}
 // Canned answers for the built-in blocks, so whole flows can run offline.
 let canned;
 let cost = 0.01;
