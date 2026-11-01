@@ -2,6 +2,7 @@ import { dataHome } from "../auth/store.js";
 import { COMPONENT_KINDS, componentLine, isCounted, lookupVersions, type ComponentKind, type SeenHash } from "./components.js";
 import { promoteCheck, promoteWithReport, REPORT_ID_RE } from "./promote.js";
 import { readHomeComponents, type ComponentProblem, type FoundComponent } from "./home.js";
+import { emptyGovernanceBook, governanceFields, governanceOrphans, governanceRecord, governanceStatus, readGovernanceBook } from "./governance.js";
 import { readVersionBook, recordVersions } from "./versions.js";
 
 export const PROMOTE_USAGE = "usage: scf promote <kind> <id> [--report <report-id>] [--live]";
@@ -36,9 +37,10 @@ export const COMPONENTS_USAGE = `usage: scf components [record] [${COMPONENT_KIN
 /**
  * `scf components [kind]` lists the components of the data folder and changes nothing; a counted component whose hash is
  * not recorded prints `v-` and ` unrecorded`. `scf components record [kind]` gives new hashes a version. Returns the
- * exit code: 1 when any component is a problem.
+ * exit code: 1 when any component is a problem. Each line ends with the owner, risk, lifecycle and status of its governance
+ * record (governance.ts); a record that names nothing, or a file that cannot be used, is a problem too.
  */
-export function componentsCommand(positionals: string[], out: (line: string) => void, o: { builtinFlowsDir?: string; waitMs?: number } = {}): number {
+export function componentsCommand(positionals: string[], out: (line: string) => void, o: { builtinFlowsDir?: string; waitMs?: number; now?: Date } = {}): number {
   const rest = positionals[0] === "record" ? positionals.slice(1) : positionals;
   const record = rest.length < positionals.length;
   if (rest.length > 1 || (rest[0] !== undefined && !(COMPONENT_KINDS as readonly string[]).includes(rest[0]))) throw new Error(COMPONENTS_USAGE);
@@ -62,11 +64,19 @@ export function componentsCommand(positionals: string[], out: (line: string) => 
     }
   }
 
-  const all: ComponentProblem[] = [...problems];
+  const gov = readGovernanceBook(dataHome());
+  const book = gov.ok ? gov.book : emptyGovernanceBook();
+  const now = o.now ?? new Date();
+  const withGovernance = (line: string, c: { kind: ComponentKind; id: string; version?: string | undefined }): string => {
+    const r = governanceRecord(book, c.kind, c.id);
+    return `${line} ${governanceFields(r, governanceStatus(c, r, now))}`;
+  };
+
+  const all: ComponentProblem[] = [...problems, ...governanceOrphans(book, found, problems, kind ? [kind] : COMPONENT_KINDS)];
   const lines: string[] = [];
   for (const f of found) {
     if (!isCounted(f.kind)) {
-      lines.push(componentLine(f, f.builtin ? "builtin" : undefined));
+      lines.push(withGovernance(componentLine(f, f.builtin ? "builtin" : undefined), f));
       continue;
     }
     if (failure !== undefined) {
@@ -74,9 +84,11 @@ export function componentsCommand(positionals: string[], out: (line: string) => 
       continue;
     }
     const v = versions[counted.indexOf(f as (typeof counted)[number])];
-    lines.push(componentLine({ ...f, ...(v === undefined ? {} : { version: String(v) }) }, v === undefined ? "unrecorded" : undefined));
+    const c = { ...f, ...(v === undefined ? {} : { version: String(v) }) };
+    lines.push(withGovernance(componentLine(c, v === undefined ? "unrecorded" : undefined), c));
   }
   for (const l of lines) out(l);
   for (const p of all) out(`! ${p.kind} ${p.id}: ${p.reason}`);
-  return all.length > 0 ? 1 : 0;
+  if (!gov.ok) out(`! ${gov.reason}`);
+  return all.length > 0 || !gov.ok ? 1 : 0;
 }
