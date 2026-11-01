@@ -3719,6 +3719,18 @@ remembers — so a governor that stops can never hold the Foundry down, and the 
 machine slept starts fresh. `scf governor reset` takes them away at once. The daily release check
 asks for a test slot like every test run, but waits five minutes at most.
 
+**Who uses the CPU.** Each check also measures how much CPU the Foundry uses and how much other
+programs use. The Foundry's share is the step processes of the active runs (including the processes
+that a step started and left its process group), the test slots, and the server with its helpers. Everything
+else is other programs. The governor learns how much CPU one run uses, separately for each repository, from
+these measurements, and keeps that figure across checks. The learned figure is kept by a reset too.
+The measurement changes no limit. The cause is written after the change in `governor/changes.log`,
+for example `… — the Foundry uses 3.2 cores, other programs use 6.1 cores (top: Xcode 3.1, node 1.4)`.
+Only the base name of a program is kept, in the data folder; program names never go to GitHub.
+`scf governor report` shows the same figures as "now" and "a run uses about", when the last check is
+under 4 minutes old. The last check is in `governor/latest.json`. A check gives no figures on its first
+run, after a long gap, or when `ps` fails or takes too long; the limits are then the same as before.
+
 **Unreliable tests.** A test is listed when it failed, or passed only on a retry, in at least three
 different stories of one repository in the last 7 days: one story can break its own test, several
 cannot. A run without an issue is not a story. Where it can see them:

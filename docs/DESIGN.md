@@ -2562,6 +2562,20 @@ arms a 30-second recheck timer (`CAP_RECHECK_MS`, unref'd), and `Scheduler.close
 The limits forecaster keeps its own minimum of 1. The flaky-test detector and the limit forecaster act only when
 switched on (`auto`), because a wrong bug story or a wrong slow-down costs more than a late one.
 
+The load governor also measures who uses the CPU (`src/ops/usage.ts`, `measureUsage()`). Each step process
+leaves an empty mark `<run folder>/step-pids/<pid>` while it runs (`markStep()` in `src/steps/proc-tree.ts`),
+because every run of a server shares one pid; the sandbox keeps that folder read-only for the step. The
+reader takes the active runs from the marks and their `run.json`, the test slots from `test-slots/slot-N/pid`,
+and the server and helpers from their command line (matched against this install's entry points only). Each
+process goes to the first owner that claims it, with its descendants: a run (also through a parent chain that
+leads to the run after the process left its group), a test slot, or the server. The rest is other programs.
+Cores come from CPU-time differences between two checks (`ps -o time=`), not from `%cpu`, which macOS and Linux
+average differently. A check needs a previous baseline less than the hold time old and at least 20 seconds
+long. Only the base name of a program is read (`ucomm`), and the top three are kept. `learn()` moves the
+per-repository figure of one run by a bounded step per check, kept in `governor/usage.json` (not in
+`state.json`, so it survives `reset`). The result goes to `governor/latest.json`, and `runGovernor()` appends the
+usage line as `cause` to the change line. `decide()` does not read the measurement, so no cap changes because of it.
+
 ## 18. Where it is going
 
 - **Refinement:** (story drafts and the session's Epic are stored in the session; `src/refinement/draft.ts`

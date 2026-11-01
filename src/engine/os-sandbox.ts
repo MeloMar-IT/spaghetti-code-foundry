@@ -209,6 +209,7 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   out.push(`(deny file-write* (literal ${quote(join(runDir, EVIDENCE_EVENTS_FILE))}) (literal ${quote(join(runDir, EVIDENCE_MANIFEST_FILE))}) (literal ${quote(join(runDir, EVIDENCE_DIFF_FILE))}) (literal ${quote(join(runDir, EVIDENCE_INCOMPLETE_FILE))}))`);
   out.push(`(deny file-write* (literal ${quote(join(runDir, CONTEXT_BUNDLE_FILE))}) (literal ${quote(join(runDir, CONTEXT_ATTEMPT_FILE))}) (subpath ${quote(join(runDir, CONTEXT_SOURCES_DIR))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(runDir, RUN_DELIVERY_DIR))}))`);
+  out.push(`(deny file-write* (subpath ${quote(join(runDir, "step-pids"))}))`);
   out.push(`(deny file-write* (subpath ${quote(join(lockDir, ".running"))}))`);
   // the run folder and the lock folder themselves cannot be moved or removed
   out.push(`(deny file-write* (literal ${quote(runDir)}) (literal ${quote(lockDir)}))`);

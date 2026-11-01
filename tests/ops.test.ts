@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -212,6 +212,87 @@ describe("the load governor", () => {
       rmSync(config, { force: true });
       clearGovernor(dir, join(home, "test-slots"), capsPath(home));
     }
+  });
+
+  describe("usage in the governor", () => {
+    const START = "Sun Oct 4 08:00:00 2026";
+    const fakePs = (body: string) => {
+      const f = join(tmp(), "ps");
+      writeFileSync(f, `#!/bin/sh\n${body}\n`);
+      chmodSync(f, 0o755);
+      return f;
+    };
+    const withPs = async (ps: string, fn: (dir: string) => Promise<void>) => {
+      const home = process.env.FACTORY_HOME!;
+      const dir = join(home, "governor");
+      const prev = process.env.FACTORY_TEST_SLOT_PS;
+      process.env.FACTORY_TEST_SLOT_PS = ps;
+      mkdirSync(dir, { recursive: true });
+      try {
+        await fn(dir);
+      } finally {
+        if (prev === undefined) delete process.env.FACTORY_TEST_SLOT_PS;
+        else process.env.FACTORY_TEST_SLOT_PS = prev;
+        rmSync(join(dir, "usage.json"), { force: true });
+        rmSync(join(dir, "latest.json"), { force: true });
+        clearGovernor(dir, join(home, "test-slots"), capsPath(home));
+      }
+    };
+    const report = async () => {
+      const lines: string[] = [];
+      await opsCommand("governor", ["report"], "/x/cli.js", (l) => lines.push(l));
+      return lines;
+    };
+
+    it("a failing ps does not fail the check: caps as they would be, no usage, the baseline kept", async () => {
+      await withPs("/usr/bin/false", async (dir) => {
+        const home = process.env.FACTORY_HOME!;
+        const config = join(home, "config.yaml");
+        writeFileSync(config, "concurrency: 6\ngovernor:\n  floor: 4\n");
+        const seeded = JSON.stringify({ at: new Date().toISOString(), procs: { "1": [START, 5] }, learned: { "acme/app": { cores: 1, readings: 2 } } });
+        writeFileSync(join(dir, "usage.json"), seeded);
+        writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 0, at: new Date().toISOString() }));
+        try {
+          await opsCommand("governor", ["run"], "/x/cli.js", () => {});
+          expect(loadState(dir).runs).toBe(4);
+          const latest = JSON.parse(readFileSync(join(dir, "latest.json"), "utf8"));
+          expect(latest.usage).toBeUndefined();
+          expect(typeof latest.at).toBe("string");
+          expect(readFileSync(join(dir, "usage.json"), "utf8")).toBe(seeded);
+        } finally {
+          rmSync(config, { force: true });
+        }
+      });
+    });
+
+    it("writes latest.json with the figures, and report says who uses the cores", async () => {
+      const ps = fakePs(`case "$*" in *ucomm*) echo "  1 make";; *) echo "  1 0 0:30.00 ${START} make -j8";; esac`);
+      await withPs(ps, async (dir) => {
+        writeFileSync(join(dir, "usage.json"), JSON.stringify({ at: new Date(Date.now() - 60_000).toISOString(), procs: { "1": [START, 0] }, learned: { "acme/app": { cores: 1.4, readings: 3 } } }));
+        await opsCommand("governor", ["run"], "/x/cli.js", () => {});
+        const latest = JSON.parse(readFileSync(join(dir, "latest.json"), "utf8"));
+        expect(latest.usage.other.top).toEqual([{ program: "make", cores: expect.closeTo(0.5, 1) }]);
+        expect(latest.usage.perRun).toEqual({ "acme/app": 1.4 });
+        const lines = await report();
+        expect(lines).toContain("now: the Foundry uses 0.0 cores, other programs use 0.5 cores (top: make 0.5)");
+        expect(lines).toContain("a run uses about: acme/app 1.4 cores");
+        expect(lines.join("\n")).not.toContain("-j8");
+      });
+    });
+
+    it("report shows no usage from an old or a malformed latest.json", async () => {
+      await withPs("/usr/bin/false", async (dir) => {
+        const usage = { foundry: { cores: 1, tests: 0, server: 0, runs: [], repos: {} }, other: { cores: 2, top: [] }, perRun: {} };
+        writeFileSync(join(dir, "latest.json"), JSON.stringify({ at: new Date(Date.now() - 10 * 60_000).toISOString(), usage }));
+        expect((await report()).join("\n")).not.toContain("other programs use");
+        writeFileSync(join(dir, "latest.json"), JSON.stringify({ at: new Date().toISOString(), usage }));
+        expect((await report()).join("\n")).toContain("other programs use 2.0 cores");
+        for (const bad of ["{nope", JSON.stringify({ at: new Date().toISOString(), usage: { foundry: 1, other: "x" } }), JSON.stringify({ at: new Date().toISOString(), usage: { foundry: { cores: 1 }, other: { cores: 1 } } })]) {
+          writeFileSync(join(dir, "latest.json"), bad);
+          expect((await report()).join("\n")).not.toContain("other programs use");
+        }
+      });
+    });
   });
 });
 

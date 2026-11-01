@@ -95,6 +95,12 @@ describe("sandboxProfile", () => {
     expect(text).toContain('(deny file-write* (subpath "/Users/mac/.data/locks/.running"))');
   });
 
+  it("keeps step-pids (the marks of step processes) read-only, after the allow for the run folder", () => {
+    const deny = '(deny file-write* (subpath "/Users/mac/.data/runs/r1/step-pids"))';
+    expect(text).toContain(deny);
+    expect(text.indexOf(deny)).toBeGreaterThan(text.indexOf('(allow file-write* (subpath "/Users/mac/.data/runs/r1"))'));
+  });
+
   it("keeps the skill lock of the run read-only", () => {
     expect(text).toContain('(deny file-write* (literal "/Users/mac/.data/runs/r1/skill-lock.json"))');
     expect(text).toContain('(deny file-write* (literal "/Users/mac/.data/runs/r1/evidence.jsonl") (literal "/Users/mac/.data/runs/r1/evidence.json") (literal "/Users/mac/.data/runs/r1/evidence.diff") (literal "/Users/mac/.data/runs/r1/evidence.incomplete"))');

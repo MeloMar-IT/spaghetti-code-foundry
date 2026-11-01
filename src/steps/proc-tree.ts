@@ -1,4 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 
 /** A process as `ps` shows it. `start` (the start time) tells a process from a later one that got the same pid. */
 export interface ProcRow {
@@ -25,8 +27,35 @@ export function parsePs(text: string): ProcRow[] {
   return rows;
 }
 
-const psPath = () => process.env.FACTORY_TEST_SLOT_PS || "ps";
-const psEnv = () => ({ ...process.env, LC_ALL: "C" });
+export const psPath = () => process.env.FACTORY_TEST_SLOT_PS || "ps";
+export const psEnv = () => ({ ...process.env, LC_ALL: "C" });
+
+/** Folder in a run folder where each running step process leaves an empty file named by its pid (all runs of a server share one pid). */
+export const STEP_PIDS_DIR = "step-pids";
+
+/**
+ * Marks a step process of a run: `<run folder>/step-pids/<pid>`. The run folder is the one above `logs/` that holds `logFile`;
+ * any other log file gets no mark. Best effort, never throws. Returns the function that removes the mark.
+ */
+export function markStep(logFile: string, pid: number): () => void {
+  const logs = dirname(logFile);
+  if (basename(logs) !== "logs") return () => {};
+  const dir = join(dirname(logs), STEP_PIDS_DIR);
+  const file = join(dir, String(pid));
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, "");
+  } catch {
+    return () => {};
+  }
+  return () => {
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // left behind: the reader checks the mark against the process table
+    }
+  };
+}
 
 /** Every process now; undefined when ps fails. Blocks: use it only when a step is being stopped. */
 export function processTable(timeoutMs = 5000): ProcRow[] | undefined {

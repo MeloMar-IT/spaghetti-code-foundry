@@ -153,7 +153,7 @@ export function loadState(dir: string, now = new Date()): GovernorState {
 }
 
 /** One check: measure, decide, write the caps, log a change. `dir` is <data folder>/governor. */
-export function runGovernor(o: { dir: string; slotsDir: string; capsFile: string; configured: number; now: Date; sample: Sample; settings?: Settings }): Decision {
+export function runGovernor(o: { dir: string; slotsDir: string; capsFile: string; configured: number; now: Date; sample: Sample; settings?: Settings; cause?: string }): Decision {
   mkdirSync(o.dir, { recursive: true });
   const d = decide(loadState(o.dir, o.now), o.sample, o.configured, o.now, o.settings);
   writeFileSync(join(o.dir, "state.json"), JSON.stringify({ ...d.state, at: o.now.toISOString() }));
@@ -167,7 +167,7 @@ export function runGovernor(o: { dir: string; slotsDir: string; capsFile: string
       mkdirSync(o.slotsDir, { recursive: true });
       writeFileSync(capFile, String(d.state.tests));
     } else rmSync(capFile, { force: true });
-    if (d.change) appendFileSync(join(o.dir, "changes.log"), `${o.now.toISOString()} ${d.change}\n`);
+    if (d.change) appendFileSync(join(o.dir, "changes.log"), `${o.now.toISOString()} ${d.change}${o.cause ? ` — ${o.cause}` : ""}\n`);
   }
   return d;
 }

@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -355,6 +355,19 @@ describe("the floor (governor.floor)", () => {
       const later = at(4 + 5);
       expect(runLimit(2, later, o.capsFile)).toBe(2);
       expect(loadState(o.dir, later)).toEqual({ calm: 0 });
+    });
+
+    it("adds the cause to the change line, and leaves the line as it was without one", () => {
+      const o = setup();
+      const p = setup();
+      const cause = "other programs use 6.1 cores (top: Xcode 3.1)";
+      runGovernor({ ...o, now: at(0), sample: sus, cause });
+      runGovernor({ ...p, now: at(0), sample: sus });
+      const withCause = readFileSync(join(o.dir, "changes.log"), "utf8");
+      const plain = readFileSync(join(p.dir, "changes.log"), "utf8");
+      expect(plain).toMatch(/^\S+ runs at once 2 → 1 \(.*\)\n$/);
+      expect(withCause).toBe(`${plain.slice(0, -1)} — ${cause}\n`);
+      expect(changesToday(o.dir, at(0))).toBe(1);
     });
 
     it("takes the cap away when the floor was raised to the configured number", () => {
