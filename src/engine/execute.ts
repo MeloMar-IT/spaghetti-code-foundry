@@ -402,6 +402,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           cwd: engine.summary.workdir!,
           env: stepEnvVars,
           sandboxProfile: sandboxProfileText,
+          priority: engine.config.governor.priority,
           cleanEnv: short,
           logFile,
           timeoutMs,

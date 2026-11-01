@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { accessSync, constants, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { runProcess, type ProcessMeter } from "./process.js";
+import { runProcess, type ProcessMeter, type RunPriority } from "./process.js";
 
 /** Where the Claude desktop app keeps its bundled Claude Code, one folder per version. */
 const desktopClaudeCodeDir = () => process.env.FACTORY_DESKTOP_CLAUDE_DIR ?? join(homedir(), "Library/Application Support/Claude/claude-code");
@@ -118,6 +118,8 @@ export interface ClaudeRunOptions {
   cleanEnv?: boolean;
   /** Start Claude inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
+  /** Start Claude at this priority (see ProcessOptions). */
+  priority?: RunPriority;
   /** Filled with the process time and the bytes it printed (see ProcessMeter). */
   meter?: ProcessMeter;
   /** Sandbox Claude's bash tool (writes limited to the workspace). */
@@ -296,6 +298,7 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
     env: o.env,
     cleanEnv: o.cleanEnv,
     sandboxProfile: o.sandboxProfile,
+    priority: o.priority,
     meter: o.meter,
     stdin: o.prompt,
     timeoutMs: o.timeoutMs,

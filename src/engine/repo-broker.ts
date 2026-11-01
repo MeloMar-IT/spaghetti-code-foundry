@@ -8,7 +8,7 @@ import type { Credential, ToolGrant } from "../tool-profile/schema.js";
 import { TOOL_PROFILE_VERSION } from "../tool-profile/version.js";
 import { checkToolCall, toolNameOf } from "../tool-profile/resolve.js";
 import { GithubAppError, installationTokenInfo, type AppPermissions } from "../github-app.js";
-import { runProcess } from "../steps/process.js";
+import { runProcess, type RunPriority } from "../steps/process.js";
 import { APP_FAILED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, NO_COMMIT_IDENTITY, TOKEN_REFUSED_RUN, tokenRefused } from "./guards.js";
 import { refuseByPolicy, stepEnv, type Engine, type Scope } from "./execute.js";
 import { stepIsolated, stepIsolation, noMachineSignIn } from "./isolation.js";
@@ -115,8 +115,8 @@ interface State {
 
 const branchOf = (r: RepoRequest): string | undefined => (r.op === "push" ? r.branch : r.op === "branch" ? r.name : r.op === "fetch" ? r.branch : r.op === "pull-request" ? r.head : undefined);
 
-const defaultExec = (logFile: string): BrokerExec => (cmd, args, o) =>
-  runProcess(cmd, args, { cwd: o.cwd, env: o.env, stdin: o.stdin, timeoutMs: o.timeoutMs, signal: o.signal, logFile, cleanEnv: o.cleanEnv, pinnedSecrets: o.pinnedSecrets, ownGroup: true });
+export const defaultExec = (logFile: string, priority?: RunPriority): BrokerExec => (cmd, args, o) =>
+  runProcess(cmd, args, { cwd: o.cwd, env: o.env, stdin: o.stdin, timeoutMs: o.timeoutMs, signal: o.signal, logFile, cleanEnv: o.cleanEnv, pinnedSecrets: o.pinnedSecrets, ownGroup: true, priority });
 
 /** Carries out one request of a run and records it. Never throws. `grant` is the git or github grant of the tool profile. */
 export async function brokerRequest(ctx: BrokerContext, request: unknown, grant: RepoGrant | undefined): Promise<BrokerResult> {
@@ -180,7 +180,7 @@ async function attempt(ctx: BrokerContext, req: RepoRequest, grant: RepoGrant | 
   const { engine, scope, step } = ctx;
   const cap = grant?.outputCapBytes ?? DEFAULT_CAP_BYTES;
   const timeoutMs = grant?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const exec = ctx.exec ?? defaultExec(ctx.logFile);
+  const exec = ctx.exec ?? defaultExec(ctx.logFile, engine.config.governor.priority);
   const vars = scope.ctx.vars;
   const owner = engine.summary.owner;
   const refuse = (refusal: RepoRefusal, text = REFUSAL_TEXT[refusal]): BrokerResult => ({ outcome: "refused", refusal, output: tailBytes(text, cap) });

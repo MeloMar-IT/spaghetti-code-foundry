@@ -397,6 +397,8 @@ export const ConfigSchema = z
     secret_scan: z.boolean().default(true),
     /** The redesigned pages (still being built); off by default. */
     ui: z.object({ redesign: z.boolean().default(false) }).strict().prefault({}),
+    /** Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy. */
+    governor: z.object({ priority: z.enum(["normal", "low", "background"]).default("low") }).strict().prefault({}),
     notify: z
       .object({
         macos: z.boolean().default(true),
