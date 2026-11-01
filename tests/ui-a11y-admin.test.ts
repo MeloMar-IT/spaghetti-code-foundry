@@ -60,6 +60,7 @@ beforeEach(() => {
     const found = key in routes ? key : key.split("?")[0]!;
     // the "Promoted versions" card of Settings loads by itself; these tests are about other things
     if (found === "GET /api/promotions" && !(found in routes)) return { ok: true, status: 200, statusText: "OK", headers: { get: () => null }, json: async () => ({ components: [], problems: [] }) };
+    if (found === "GET /api/admin/components" && !(found in routes)) return { ok: true, status: 200, statusText: "OK", headers: { get: () => null }, json: async () => ({ components: [], problems: [] }) };
     if (!(found in routes)) throw new Error(`unexpected call: ${key}`);
     const version = versions[found]?.shift();
     return { ok: true, status: 200, statusText: "OK", headers: { get: (n: string) => (n === "x-config-version" ? (version ?? null) : null) }, json: async () => routes[found] };
@@ -140,6 +141,20 @@ describe("pages", () => {
       for (let p = b.parent; p; p = p.parent) if (p.tag === "label") inLabel = true;
       expect(inLabel).toBe(true);
     }
+  });
+  it("Settings: the Components table", async () => {
+    const row = { kind: "flow", id: "walk", builtin: true, version: "0", owner: null, risk: "low", lifecycle: "active", approvedVersion: null, lastReview: null, evalSuite: null, status: "unapproved" };
+    routes = {
+      "GET /api/config": config,
+      "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" },
+      "GET /api/settings": settingsAnswer,
+      "GET /api/admin/components": { components: [row], problems: [] },
+    };
+    await m.admin.renderSettings(main());
+    await vi.waitFor(() => expect(main().all("table").length).toBeGreaterThan(0));
+    expect(main().textContent).toContain("No owner");
+    tablesOk(main());
+    noViolations(main());
   });
   it("Settings: names for the approved release rows", async () => {
     const withRelease = structuredClone(config) as any;

@@ -5,6 +5,7 @@ import { skillsSection } from "./settings-skills.js";
 import { check, field as f, input, lockReadOnly } from "./fields.js";
 import { poller } from "./live.js";
 import { promotionPanel } from "./promotions.js";
+import { componentsPanel } from "./admin-components.js";
 import { loadingState } from "./states.js";
 import { settingsPage } from "./templates.js";
 
@@ -318,6 +319,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     ...(policyCard.card ? [policyCard.card] : []),
     ...(promotionCard.card ? [promotionCard.card] : []),
     promotionPanel({ readOnly }),
+    componentsPanel(),
     ...(startup.length ? [startupSection(startup, section)] : []),
     ],
   }));

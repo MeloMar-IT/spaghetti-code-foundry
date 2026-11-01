@@ -26,6 +26,7 @@ export const API_ONLY: Record<string, string> = {
   "GET repos/:id/epics": "the data of the Epics view; no command line use yet (a later part of #408 adds the view)",
   "GET repos/:id/epics/:issue": "the data of the epic page; no command line use yet (a later part of #408 adds the view)",
   "GET promotions": "which component versions are promoted and what blocks the others; shown in the flow editor and on the Settings page, and the command line reads the same with `scf promote <kind> <id>` on the data folder",
+  "GET admin/components": "the governance of each component for the Settings page; the command line reads the same with `scf components` on the data folder",
   "POST promotions": "promotes a component with a passing report; the command line does it with `scf promote <kind> <id> --report <id>` on the data folder",
   "GET settings":"the description the Settings page builds its controls from; no command line use",
   "GET skills/lifecycle": "the skill lifecycle states; the command line reads them with `scf skills lifecycle` on the data folder",
