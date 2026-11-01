@@ -47,7 +47,7 @@ import { prepareWorkspace } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
-import { runPolicy, type RunPolicy } from "./policy-hooks.js";
+import { loadRunPacks, runPolicy, type LoadedPack, type RunPolicy } from "./policy-hooks.js";
 import type { ProcessMeter } from "../steps/process.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR, type RunRecorder } from "../evidence/record.js";
 import { snapshotToolProfile } from "../tool-profile/session.js";
@@ -196,11 +196,13 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   // policy (observe mode): the run starts here, before any refusal and before the workspace is made
   const log = liveLog(summary, opts);
   if (opts.localTest) log(LOCAL_TEST_LINE);
-  const policy = runPolicy(summary, config, log, evidence);
+  // the packs are read once: the run and the promotion check below use the same list
+  const packs = loadRunPacks(summary, config);
+  const policy = runPolicy(summary, config, log, evidence, undefined, packs);
   const start = policy?.at("run.start");
   if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: null, lastOutput: "" });
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
-  if (await promotionRefused(summary, opts, config, log)) return finish(summary, opts, config, { outcome: "failed", reason: PROMOTION_REFUSED, next: null, lastOutput: "" });
+  if (await promotionRefused(summary, opts, config, log, packs)) return finish(summary, opts, config, { outcome: "failed", reason: PROMOTION_REFUSED, next: null, lastOutput: "" });
 
   try {
     requireRedaction(); // before the workspace is made: output cannot be hidden when the stored secrets are unreadable
@@ -230,14 +232,14 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
  * Under `warn` it logs each finding and saves them in `summary.promotion`. The gate is loaded here, not at the top: it reaches
  * the evals and the scheduler, which import this file. A gate that cannot be loaded counts as not promoted.
  */
-async function promotionRefused(summary: RunSummary, opts: RunOptions, config: Config, log: (raw: string) => void): Promise<boolean> {
+async function promotionRefused(summary: RunSummary, opts: RunOptions, config: Config, log: (raw: string) => void, packs: readonly LoadedPack[]): Promise<boolean> {
   const enforce = config.promotion?.enforce ?? "warn";
   if (opts.localTest || enforce === "off") return false;
   let record: Awaited<ReturnType<typeof import("../promotion/gate.js").promotionGate>>;
   let line: (f: Parameters<typeof import("../promotion/gate.js").findingLine>[0]) => string;
   try {
     const gate = await import("../promotion/gate.js");
-    record = gate.promotionGate({ flow: summary.flowDef, flowId: opts.flowId ?? summary.flow, repo: opts.repo, vars: summary.vars, config, toolProfile: opts.toolProfile });
+    record = gate.promotionGate({ flow: summary.flowDef, flowId: opts.flowId ?? summary.flow, repo: opts.repo, vars: summary.vars, config, toolProfile: opts.toolProfile, policyPacks: packs });
     line = gate.findingLine;
   } catch {
     log("! the promotion check could not run");

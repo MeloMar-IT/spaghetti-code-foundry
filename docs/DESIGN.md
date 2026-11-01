@@ -277,7 +277,9 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"), and `repo.operation` from
   version 4 (one repository operation of the broker, see "Repository broker"), and `context.bundled` from
   version 5 (the context bundle of the run was written, or making it failed, see "Writing a run's bundle"),
-  and from version 6 the reason code `context.uncited` (see "Policy hooks in observe mode").
+  and from version 6 the reason code `context.uncited` (see "Policy hooks in observe mode"), and from
+  version 8 the optional `localTest: true` on `run.created` (a run started with `--local-test`; the
+  schema accepts only `true`, and the migration 7 → 8 only sets the version).
   `prevHash` and `hash` come together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -373,6 +375,13 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   every visit of a step through `beginStep` and `recordStep`, and `repository.access` for a step in the
   repository's checkout; `agents/run.ts` asks `agent.write` before a write-capable agent step.
   Built-in and custom flows take the same path.
+- **Packs are a snapshot (new run).** `loadRunPacks(summary, config)` reads the packs once, before
+  `runPolicy` in `runFlow`. `runPolicy` takes that list (`preloaded`) and looks each id up in it; an id that
+  is not in the list becomes `policy.unavailable`, so a mandatory pack fails closed and is never read a second
+  time. The promotion gate takes the same list (`GateInput.policyPacks`) and iterates it without the baseline,
+  so it checks exactly the packs that run. Both sides build the ids with `runPackIds`, so they cannot drift.
+  A resumed run (`resumeRun`) has no promotion check and reads the packs again, so a tightened mandatory pack
+  stays in force.
 - **Pushes.** `push` is asked once for each push a step makes. The pre-push hook (`guards.ts`) appends
   `<branch>\t<remote url>\t<secrets found>\t<identity>` to the file in `FACTORY_PUSH_LOG`. The count is
   empty when the scan did not finish, and the identity is `1` or `0` (whether git can find a committer
@@ -1145,6 +1154,9 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     or changed gives `workflow-changed`. A required check that is missing or not `success` gives
     `required-check-failed`. With `--events`, a chain that fails the library's checks, or whose event at
     `count - 1` lacks `evidence.terminalHash`, gives `evidence-unverified` with `evidence-head-mismatch`.
+    A valid chain of this run that holds `localTest` gives `evidence-unverified` with the fault `local-test`
+    (`deliveryEvidenceProblem` in `src/delivery/contract.ts`, the same rule as the Foundry's own check).
+    A broken chain that holds the marker still gives `evidence-head-mismatch`.
     With `--comment`, a digest that differs gives `superseded`, and an evidence hash that differs from
     `evidence.terminalHash` gives `evidence-unverified`.
   - **Evidence chain (`--events`, #672).** The script reads only the first `count` lines of the events
@@ -1152,7 +1164,9 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     JSON object; the version is upgraded as in `upgradeEvidence` (a version above the script's pinned
     `EVIDENCE_EVENT_VERSION` is refused); the full `EvidenceEventSchema` holds, with every refinement;
     `seq`, `runId` and a unique `id` are right; the hash and `prevHash` link and the content hash match.
-    Lines after `count` do not matter. The schema copy is one marked section of the script, and
+    Lines after `count` do not matter. The script reads the marker from the same chain: `readChain` sets
+    `localTest` only after a line has fully verified, and `checkEvidence` stops with `local-test` after the
+    terminal-hash comparison. The version is 1.1.0, because a verdict changed. The schema copy is one marked section of the script, and
     `tests/delivery-validate-events.test.ts` is the drift guard: it reads the script's constants, compares
     them with the library's enums, and builds one valid event per type and enum value. A new event type,
     enum value or version fails that test until the script is updated.
@@ -1203,6 +1217,11 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     digest is not the digest of the text, or the signature is not in SSH-signature form.
 - **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
 - **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
+  - **Local tests.** `write()` refuses a local-test run in two places: at step 0, when the input says
+    `localTest` (from the run summary, so no folder is made), and after the chain check, when the events
+    have the marker (a run whose `run.json` lost the key). Both log the fixed line from `DELIVERY_WRITE_FAULTS.localTest`
+    and write nothing. The refusal is logged once per top-level step after the pull request exists, so
+    `deliveryAfterStep` stays stateless.
   - **Trigger.** `deliveryAfterStep` runs from `recordStep` (`execute.ts`) after the step outputs are read,
     for top-level steps only. It needs `outputs.pull_request` to be a pull request of the run's repository
     (`parsePullRequestUrl`, case-insensitive) and a workdir that exists. It never throws.
@@ -1233,7 +1252,7 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
   decodes it as strict UTF-8, so a changed byte cannot decode to the signed text. It checks the folder (plain,
   only contract files), the numbering, the signatures against the trusted key, `supersedes`, the latest copy, the
   `evidence.incomplete` marker and the evidence chain up to each contract's `count` (through
-  `evidenceHeadProblem`). The first failure ends the check with one `fault` and a relative path. The result is
+  `deliveryEvidenceProblem`, which also gives `local-test` for a marked chain, signed or not). The first failure ends the check with one `fault` and a relative path. The result is
   `verified`, `failed`, `unsigned` or `none`, and `deliveryVerifyExitCode` maps it to 0, 1 or 2 (none gives 2).
   Events after the last contract are allowed. `deliveryCommand` handles `verify` and `public-key`; the key comes
   from `--public-key` (`readPublicKeyFile`) or from the configured signing key (`readConfiguredSigningKey`).
@@ -1273,7 +1292,10 @@ then marks the pull request ready or draft. `handoffCommand(args, io, deps?, env
   repository, pull request or run id), `commit` (`remoteHead` via `git ls-remote origin refs/heads/<branch>`,
   then `readCommitFacts`), `locks` and `workflows` (compared with the contract's hashes and blob ids, sorted with
   `compareCodeUnits`), `checks` (`waitForChecks`, then the validator's rule), and `evidence` (the bounded read of
-  `evidence.jsonl` and `evidenceHeadProblem`). The first stop wins; with none the verdict is `ok`.
+  `evidence.jsonl` and `deliveryEvidenceProblem`). The first stop wins; with none the verdict is `ok`.
+  Without a signing key there is no signature check, so the `key === ""` branch reads the run's events
+  itself: a valid chain of this run with the marker stops `evidence-unverified` (`local-test`) instead of
+  returning `unsigned`. An unreadable file or an unmarked chain still returns `unsigned`.
 - **Head re-read.** If the check runs were polled more than once and the commit check passed, `remoteHead` is read
   again. A changed, missing or unreadable head is a `commit-changed` stop. The window that remains is the seconds
   between that read and `gh pr ready`; the CI validator is the hard check for it.

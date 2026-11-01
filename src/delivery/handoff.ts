@@ -12,7 +12,7 @@ import { RepositorySchema } from "../evidence/identity.js";
 import { EVIDENCE_EVENTS_FILE } from "../evidence/version.js";
 import { storeFor } from "../stories/store.js";
 import type { DeliveryIo } from "./cli.js";
-import { contractDigest, evidenceHeadProblem, verifyDeliveryContract } from "./contract.js";
+import { contractDigest, deliveryEvidenceProblem, LOCAL_TEST_INELIGIBLE, localTestEvents, verifyDeliveryContract } from "./contract.js";
 import { CommitFactsError, readCommitFacts, type CommitFacts, type CommitFactsOptions } from "./git-facts.js";
 import { compareCodeUnits, DeliveryContractSchema, type DeliveryContract, type StopCondition } from "./schema.js";
 import { parseKeyLine, parseSshSignature, publicKeyFingerprint } from "./sshsig.js";
@@ -163,7 +163,6 @@ async function run(input: HandoffInput): Promise<HandoffResult> {
     if (key === "") return { kind: "none", why: "the run has no delivery contract" };
     return failedStop("the run has no delivery contract");
   }
-  if (key === "") return { kind: "unsigned", why: "no signing key is set; the contract is unsigned", contractText };
 
   const finish = (): HandoffResult => {
     const checks = checksOf();
@@ -171,6 +170,16 @@ async function run(input: HandoffInput): Promise<HandoffResult> {
     if (first) return { kind: "stop", condition: first.condition!, reason: first.reason ?? "", checks, contractText, ...(sigText !== undefined ? { sigText } : {}) };
     return { kind: "ok", checks, contractText, sigText: sigText ?? "", digest: contractDigest(contractText) };
   };
+
+  if (key === "") {
+    // no key: no head check, only "is this a chain of this run that is marked as a local test?"
+    const unsigned: HandoffResult = { kind: "unsigned", why: "no signing key is set; the contract is unsigned", contractText };
+    const eventsText = readBoundedText(join(input.runDir, EVIDENCE_EVENTS_FILE), MAX_EVIDENCE_BYTES);
+    if (eventsText === undefined || !localTestEvents(eventsText, input.runId)) return unsigned;
+    for (const c of CHECK_ORDER) if (c !== "evidence") skip(c, "the run is a local test");
+    stop("evidence", "evidence-unverified", LOCAL_TEST_INELIGIBLE);
+    return finish();
+  }
 
   // 1. signature
   const v = verifyDeliveryContract(contractText, sigText, key);
@@ -258,7 +267,7 @@ async function run(input: HandoffInput): Promise<HandoffResult> {
 
   // 6. evidence
   const events = readBoundedText(join(input.runDir, EVIDENCE_EVENTS_FILE), MAX_EVIDENCE_BYTES);
-  const evidence = events === undefined ? "the events cannot be read" : evidenceHeadProblem(events, contract);
+  const evidence = events === undefined ? "the events cannot be read" : deliveryEvidenceProblem(events, contract)?.message;
   if (evidence !== undefined) stop("evidence", "evidence-unverified", evidence);
   else done("evidence", "ok");
 

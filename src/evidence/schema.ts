@@ -82,7 +82,7 @@ export type Denial = z.infer<typeof DenialSchema>;
 
 const EventUnion = z.discriminatedUnion("type", [
   /** The run got its id and folder. `by` is who asked for it. */
-  event("run.created", { flow: FlowIdentitySchema, by: ActorSchema }),
+  event("run.created", { flow: FlowIdentitySchema, by: ActorSchema, localTest: z.literal(true).optional() }),
   /** The run was put in the queue. */
   event("run.queued", {}),
   /** The first step is about to run. `base` is the commit the workspace started from, when there is one. */

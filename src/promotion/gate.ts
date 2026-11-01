@@ -3,7 +3,7 @@ import { dataHome } from "../auth/store.js";
 import type { Config } from "../config.js";
 import { MAX_FLOW_DEPTH } from "../engine/execute.js";
 import { isShippedFlow } from "../engine/guards.js";
-import { loadPolicyPacks, repositoryFact } from "../engine/policy-hooks.js";
+import { loadPolicyPacks, repositoryFact, type LoadedPack } from "../engine/policy-hooks.js";
 import type { Flow } from "../flow/schema.js";
 import { loadFlow } from "../flow/load.js";
 import { BASELINE_POLICY_ID } from "../policy/baseline.js";
@@ -46,6 +46,8 @@ export interface GateInput {
   vars: Record<string, string>;
   config: Pick<Config, "policy" | "router">;
   toolProfile?: unknown;
+  /** The packs the run read at its start; when given, exactly these are checked and no file is read again. */
+  policyPacks?: readonly LoadedPack[];
 }
 
 export interface GateOptions {
@@ -114,7 +116,8 @@ export function runComponents(input: GateInput, o: GateOptions = {}): { refs: Re
   const { refs, problems } = flowRefs(input);
 
   const ids = layeredPackIds(input.config.policy, repositoryFact(input.vars)).map((p) => p.id).filter((id) => id !== BASELINE_POLICY_ID);
-  for (const loaded of loadPolicyPacks(ids, home)) {
+  const packs = input.policyPacks ? input.policyPacks.filter((p) => p.id !== BASELINE_POLICY_ID) : loadPolicyPacks(ids, home);
+  for (const loaded of packs) {
     if ("problem" in loaded) problems.push(finding("policy-pack", displayId(loaded.id), "-", "problem", fixComponent("policy-pack")));
     else refs.push({ kind: "policy-pack", id: loaded.id, show: displayId(loaded.id), version: loaded.pack.policy.version, sha256: policyPackSha256(loaded.pack) });
   }

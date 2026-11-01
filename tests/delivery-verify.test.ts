@@ -13,10 +13,15 @@ import { canonicalJson, eventHash } from "../src/evidence/canonical.js";
 const RUN = "run-1";
 const PR = { repository: "acme/app", number: 7, url: "https://github.com/acme/app/pull/7" };
 
-const chainLines = (n: number, value = "x"): string[] => {
+const chainLines = (n: number, value = "x", localTest = false): string[] => {
   let prev: string | null = null;
   return Array.from({ length: n }, (_, seq) => {
     const special = value !== "x" && seq === 0;
+    if (localTest && seq === 0) {
+      const first: Record<string, unknown> = { version: 8, id: "ev-000000", seq, runId: RUN, time: "2026-01-31T12:00:00.000Z", type: "run.created", flow: { name: "f" }, by: { kind: "cli" }, localTest: true, prevHash: null };
+      prev = eventHash(first);
+      return canonicalJson({ ...first, hash: prev });
+    }
     const e: Record<string, unknown> = { version: 1, id: `ev-${String(seq).padStart(6, "0")}`, seq, runId: RUN, time: "2026-01-31T12:00:00.000Z", type: special ? "run.started" : "run.queued", prevHash: prev, ...(special ? { base: { commit: "a".repeat(40), branch: value } } : {}) };
     prev = eventHash(e);
     return canonicalJson({ ...e, hash: prev });
@@ -47,13 +52,13 @@ interface Made {
 const w = (m: Made, name: string, body: string | Buffer): void => writeFileSync(join(m.dir, name), body);
 
 /** A run with `contracts` contracts, the k-th stating `k + 1` events (events: `events` in all). */
-function make(o: { contracts?: number; signed?: boolean; events?: number; artifact?: string; signWith?: KeyObject; value?: string } = {}): Made {
-  const { contracts = 2, signed = true, events = 5, artifact = "report", signWith = key, value = "x" } = o;
+function make(o: { contracts?: number; signed?: boolean; events?: number; artifact?: string; signWith?: KeyObject; value?: string; localTest?: boolean } = {}): Made {
+  const { contracts = 2, signed = true, events = 5, artifact = "report", signWith = key, value = "x", localTest = false } = o;
   const runsDir = join(tmp, `case-${n++}`);
   const runDir = join(runsDir, RUN);
   const dir = join(runDir, "delivery");
   mkdirSync(dir, { recursive: true });
-  const lines = chainLines(events, value);
+  const lines = chainLines(events, value, localTest);
   writeFileSync(join(runDir, "evidence.jsonl"), lines.join("\n") + "\n");
   const m: Made = { runsDir, runDir, dir, texts: [], lines };
   for (let k = 1; k <= contracts; k++) {
@@ -109,6 +114,17 @@ describe("verifyRunDelivery", () => {
     const r = check(m);
     expect(r.status).toBe("none");
     expect(deliveryVerifyExitCode(r)).toBe(2);
+  });
+
+  it("fails a contract over the chain of a local-test run, signed or not", () => {
+    for (const signed of [true, false]) {
+      const m = make({ signed, localTest: true });
+      const r = check(m);
+      expect(r.status, `signed ${signed}`).toBe("failed");
+      expect(r.failure).toMatchObject({ fault: "local-test", path: "delivery/contract-1.json" });
+      expect(deliveryVerifyExitCode(r)).toBe(1);
+    }
+    expect(check(make({ signed: false })).status).toBe("unsigned");
   });
 
   it("gives unsigned for unsigned and mixed chains, failed for a bad signature among them", () => {

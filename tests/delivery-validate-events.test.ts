@@ -228,7 +228,7 @@ const GEN: Rec[] = [
   // edge values the library accepts
   ...["2024-02-29T00:00:00Z", "2000-02-29T00:00:00Z", "2026-01-31T12:00:59.123456789Z"].map((time) => ({ type: "run.queued", time })),
   ...["00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff", USER.toUpperCase(), "0b8f6a0e-5a52-8a4e-ba57-0f2f3f1f7c11"].map((id) => ({ type: "run.cancelled", by: { kind: "user", id } })),
-  ...[1, 2, 3, 4, 5, 6].map((version) => ({ type: "run.queued", version })),
+  ...[1, 2, 3, 4, 5, 6, 7].map((version) => ({ type: "run.queued", version })),
   ...RUN_CONTEXT_CODES.map((failure) => ({ type: "context.bundled", outcome: "failed", failure })),
   ...CONTEXT_OMISSION_REASONS.map((reason) => ({ ...CTX_WRITTEN, omitted: { ...(CTX_WRITTEN.omitted as object), [reason]: 7 } })),
 ];
@@ -244,6 +244,8 @@ interface Case {
   eventsText?: string;
   /** What the library must say. A case that is not what it says it is would test nothing. */
   ok: boolean;
+  /** The fault both sides must report when `ok` is false (default: evidence-head-mismatch). */
+  fault?: string;
 }
 const eventsOf = (c: Case): string => c.eventsText ?? c.lines.map((l) => `${l}\n`).join("") + (c.tail ?? "");
 
@@ -263,8 +265,8 @@ async function compare(c: Case): Promise<void> {
     expect(got, c.name).toEqual({ check: "evidence", status: "ok" });
     expect(r.code, c.name).toBe(0);
   } else {
-    expect(lib.fault).toBe("evidence-head-mismatch");
-    expect(got, c.name).toEqual({ check: "evidence", status: "stop", condition: "evidence-unverified", fault: "evidence-head-mismatch", reason: lib.message });
+    expect(lib.fault, c.name).toBe(c.fault ?? "evidence-head-mismatch");
+    expect(got, c.name).toEqual({ check: "evidence", status: "stop", condition: "evidence-unverified", fault: lib.fault, reason: lib.message });
     expect(r.code, c.name).toBe(1);
   }
 }
@@ -342,6 +344,38 @@ describe("parity: the chain", () => {
       { name: "a terminalHash from another index", lines: g, terminalHash: hashOf(g[1]), ok: false },
       { name: "a large ignored suffix", lines: g, eventsText: g.map((l) => `${l}\n`).join("") + suffix, ok: true },
     ]);
+  });
+});
+
+describe("parity: the local-test marker", () => {
+  const marked = { ...BASE["run.created"]!, localTest: true };
+  const lt = (name: string, bodies: Rec[], extra: Partial<Case> = {}): Case => ({ name, lines: chain(bodies), ok: false, fault: "local-test", ...extra });
+  it("refuses a valid chain with the marker, as the library does", async () => {
+    await all([
+      lt("the marker alone", [marked]),
+      lt("the marker and later events", [marked, BASE["run.queued"]!, BASE["run.stopped"]!, BASE["run.resumed"]!, BASE["step.started"]!]),
+      lt("a version 7 line with the marker", [{ ...marked, version: 7 }, BASE["run.queued"]!]),
+      // a marker beyond count is not read
+      { name: "a marker beyond count", lines: chain([BASE["run.created"]!, BASE["run.queued"]!, { ...BASE["run.created"]!, localTest: true }]), count: 2, ok: true },
+    ]);
+  });
+  it("reports a broken chain that holds the marker as a head mismatch", async () => {
+    const g = chain([marked, BASE["run.queued"]!, BASE["run.started"]!]);
+    await all([{ name: "a marked chain with a changed body", lines: [g[0]!, g[1]!.replace("ev-1", "ev-9"), g[2]!], ok: false }]);
+  });
+  it("refuses a marker that is not true on both sides", async () => {
+    await all([false, "true", 1, null].map((v) => ({ name: `localTest ${JSON.stringify(v)}`, lines: chain([{ ...BASE["run.created"]!, localTest: v }]), ok: false }) as Case));
+  });
+  it("shows the reason in the text output", async () => {
+    const lines = chain([marked]);
+    const { text, sig } = contractFor(1, hashOf(lines[0]));
+    const d = folder();
+    writeFileSync(join(d, "contract.json"), text);
+    writeFileSync(join(d, "contract.sig"), sig);
+    writeFileSync(join(d, "events.jsonl"), lines.map((l) => `${l}\n`).join(""));
+    const r = await run(["--contract", join(d, "contract.json"), "--signature", join(d, "contract.sig"), "--public-key", KEY1, "--repo", repo, "--events", join(d, "events.jsonl")]);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain("evidence: stop evidence-unverified: the run is a local test, so it is not eligible for delivery");
   });
 });
 

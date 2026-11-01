@@ -125,10 +125,10 @@ export class RunRecorder {
     if (queuedAt !== undefined) this.put(() => ({ type: "run.queued" }), queuedAt);
   }
 
-  created(run: Pick<RunSummary, "flow" | "flowDef">, by: Actor): void {
+  created(run: Pick<RunSummary, "flow" | "flowDef" | "localTest">, by: Actor): void {
     this.put(() => {
       const version = run.flowDef?.publish?.enabled ? run.flowDef.publish.version : undefined;
-      return { type: "run.created", flow: { name: run.flow, ...(version !== undefined ? { version } : {}) }, by };
+      return { type: "run.created", flow: { name: run.flow, ...(version !== undefined ? { version } : {}) }, by, ...(run.localTest ? { localTest: true as const } : {}) };
     });
   }
 

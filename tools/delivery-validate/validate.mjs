@@ -32,7 +32,7 @@ const execFileAsync = promisify(execFile);
 const NAMESPACE = "scf-delivery-contract";
 // Raise this when a verdict, an option or the output changes. The release files are named after it
 // (scf-delivery-validate-<version>.mjs). It is not the `version` of the --json output.
-const VALIDATOR_VERSION = "1.0.0";
+const VALIDATOR_VERSION = "1.1.0";
 const STOP_CONDITIONS = ["commit-changed", "lock-changed", "workflow-changed", "required-check-failed", "evidence-unverified", "signature-unverified", "superseded"];
 const WORKFLOWS_DIR = ".github/workflows/";
 const EVIDENCE_EVENTS_FILE = "evidence.jsonl";
@@ -368,7 +368,7 @@ function checkContract(text, sigText, key) {
 // same commit. tests/delivery-validate-events.test.ts builds a valid event for every type and enum value and fails if not.
 
 /** The newest event version this script reads. A higher version is refused, so a validator that falls behind stops delivery. */
-const EVIDENCE_EVENT_VERSION = 7;
+const EVIDENCE_EVENT_VERSION = 8;
 const EVENTS_MAX = 256 * 1024 * 1024;
 const ARTIFACT_KINDS = ["log", "transcript", "diff", "flow", "skill-lock", "test-report", "other"];
 const STEP_TYPES = ["claude", "shell", "approval", "parallel", "flow"];
@@ -488,7 +488,7 @@ const event = (shape) =>
   });
 const stepEnd = { step, model: opt(model), exitCode: opt(int()), durationMs: int(0), artifacts: arr(artifactRef), test: opt(testResult) };
 const EVENT_TYPES = {
-  "run.created": event({ flow: flowIdentity, by: actor }),
+  "run.created": event({ flow: flowIdentity, by: actor, localTest: opt((v) => v === true) }),
   "run.queued": event({}),
   "run.started": event({ base: opt(gitIdentity) }),
   "run.stopped": event({ at: opt(stepId) }),
@@ -575,7 +575,7 @@ function eventRules(e) {
 }
 const isEvent = both(union("type", EVENT_TYPES), eventRules);
 
-/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→…→7 only set the version), then the schema holds. */
+/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→…→8 only set the version), then the schema holds. */
 function readEvent(raw) {
   const v = raw.version;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > EVIDENCE_EVENT_VERSION) return false;
@@ -586,6 +586,7 @@ function readEvent(raw) {
 function readChain(lines, runId) {
   const ids = new Set();
   let prev = null;
+  let localTest = false;
   for (const [i, line] of lines.entries()) {
     let raw;
     try {
@@ -607,8 +608,9 @@ function readChain(lines, runId) {
     const { hash, ...rest } = raw;
     if (canonicalHash(rest) !== hash) return { line: i + 1 };
     prev = hash;
+    if (raw.type === "run.created" && raw.localTest === true) localTest = true;
   }
-  return { terminalHash: prev };
+  return { terminalHash: prev, localTest };
 }
 
 /** The first `count` whole lines, or null when the text has fewer line ends. The rest of the text is never split or read. */
@@ -624,6 +626,8 @@ function firstLines(text, count) {
   return lines;
 }
 
+// copied: LOCAL_TEST_INELIGIBLE in src/delivery/contract.ts
+const LOCAL_TEST_INELIGIBLE = "the run is a local test, so it is not eligible for delivery";
 const evidenceStop = (reason) => ({ check: "evidence", status: "stop", condition: "evidence-unverified", fault: "evidence-head-mismatch", reason });
 
 /** Mirrors verifyDeliveryContract with events. Never throws. */
@@ -635,6 +639,7 @@ function checkEvidence(contract, text) {
     const chain = readChain(lines, contract.runId);
     if (chain.line !== undefined) return evidenceStop(`line ${chain.line} of the events is not a chain`);
     if (chain.terminalHash !== terminalHash) return evidenceStop("the event at count - 1 does not have the contract's hash");
+    if (chain.localTest) return { check: "evidence", status: "stop", condition: "evidence-unverified", fault: "local-test", reason: LOCAL_TEST_INELIGIBLE };
     return okResult("evidence");
   } catch {
     return evidenceStop("the events could not be read");

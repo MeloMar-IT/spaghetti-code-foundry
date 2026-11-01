@@ -7,8 +7,9 @@
  * The version of one line of `evidence.jsonl` this Foundry writes. Raise it for any change of shape or meaning.
  * 2 adds the `policy.decided` event. 3 adds `step.profiled`. 4 adds `repo.operation`. 5 adds `context.bundled` and the `context.select` boundary. 6 adds the reason code `context.uncited`.
  * 7 adds `packSha256` on a policy denial, and a policy `step.denied` without `step` (a denial about the whole run).
+ * 8 adds `localTest` on `run.created`.
  */
-export const EVIDENCE_EVENT_VERSION = 7;
+export const EVIDENCE_EVENT_VERSION = 8;
 /** The version of `evidence.json` (the manifest of a finished run) this Foundry writes. */
 export const RUN_EVIDENCE_VERSION = 1;
 

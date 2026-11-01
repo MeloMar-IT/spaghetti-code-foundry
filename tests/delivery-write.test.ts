@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { contractDigest, evidenceHeadProblem, verifyDeliveryContract } from "../src/delivery/contract.js";
 import { publicKeyLine } from "../src/delivery/sshsig.js";
-import { DELIVERY_DIR, DEPENDENCY_LOCK_NAMES, deliveryAfterStep, deliveryKeyEnv, deliveryRequirements, deliverySigningKey, parsePullRequestUrl, readBoundedText, readCommitFacts, writeContract } from "../src/delivery/write.js";
+import { DELIVERY_DIR, DELIVERY_WRITE_FAULTS, DEPENDENCY_LOCK_NAMES, deliveryAfterStep, deliveryKeyEnv, deliveryRequirements, deliverySigningKey, parsePullRequestUrl, readBoundedText, readCommitFacts, writeContract } from "../src/delivery/write.js";
 import { RUN_DELIVERY_DIR } from "../src/engine/os-sandbox.js";
 import type { Engine } from "../src/engine/execute.js";
 import { canonicalJson, eventHash } from "../src/evidence/canonical.js";
@@ -387,6 +387,79 @@ describe("deliveryAfterStep", () => {
     }
     expect(logs).toHaveLength(1);
     expect(logs[0]).toMatch(/^ {2}delivery: the evidence of the run is missing/);
+  });
+});
+
+describe("a local-test run gets no contract", () => {
+  /** n events; the first is a run.created, with the local-test marker when `marked`. */
+  const events = (n: number, marked: boolean): string => {
+    let prev: string | null = null;
+    return (
+      Array.from({ length: n }, (_, seq) => {
+        const body = seq === 0 ? { type: "run.created", flow: { name: "f" }, by: { kind: "cli" }, ...(marked ? { localTest: true } : {}) } : { type: "run.queued" };
+        const e: Record<string, unknown> = { version: 8, id: `ev-${String(seq).padStart(6, "0")}`, seq, runId: RUN, time: "2026-01-31T12:00:00.000Z", ...body, prevHash: prev };
+        prev = eventHash(e);
+        return canonicalJson({ ...e, hash: prev });
+      }).join("\n") + "\n"
+    );
+  };
+  const engineOf = (f: Fixture, key: boolean, localTest: boolean | undefined, logs: string[]): Engine =>
+    ({
+      summary: { runDir: f.runDir, runId: RUN, workdir: f.work, vars: { github_repo: REPO }, outputs: { pull_request: PR.url }, ...(localTest ? { localTest: true } : {}) },
+      config: { delivery: cfg() },
+      deliverySettings: () => cfg(key ? { signing_key_path: f.keyPath } : {}),
+      log: (m: string) => logs.push(m),
+    }) as unknown as Engine;
+  const run = (f: Fixture, key: boolean, localTest: boolean | undefined): string[] => {
+    const logs: string[] = [];
+    const home = process.env.FACTORY_HOME;
+    process.env.FACTORY_HOME = f.dataDir;
+    try {
+      deliveryAfterStep(engineOf(f, key, localTest, logs));
+    } finally {
+      process.env.FACTORY_HOME = home;
+    }
+    return logs;
+  };
+  const contracts = (f: Fixture): string[] => (existsSync(f.file("")) ? names(f).filter((n) => n.startsWith("contract")) : []);
+
+  for (const key of [true, false]) {
+    const how = key ? "with a signing key" : "without a signing key";
+    it(`writes nothing when the summary is marked, ${how}`, () => {
+      const f = fresh();
+      f.put(5, events(5, false));
+      const logs = run(f, key, true);
+      expect(existsSync(f.file(""))).toBe(false);
+      expect(logs).toEqual([`  delivery: ${DELIVERY_WRITE_FAULTS.localTest}`]);
+    });
+
+    it(`writes nothing when only the evidence is marked, ${how}`, () => {
+      const f = fresh();
+      f.put(5, events(5, true));
+      const logs = run(f, key, undefined);
+      expect(contracts(f)).toEqual([]);
+      expect(logs).toEqual([`  delivery: ${DELIVERY_WRITE_FAULTS.localTest}`]);
+    });
+
+    it(`writes nothing when the summary is marked and the evidence is not, ${how}`, () => {
+      const f = fresh();
+      f.put(5, events(5, false));
+      run(f, key, true);
+      expect(contracts(f)).toEqual([]);
+    });
+
+    it(`still writes for an unmarked run, so the refusals above come from the rule, ${how}`, () => {
+      const f = fresh();
+      f.put(5, events(5, false));
+      expect(run(f, key, undefined)).toEqual([`  delivery: contract 1 written (${key ? "signed" : "unsigned"})`]);
+    });
+  }
+
+  it("refuses a marked chain in writeContract before it reads the git facts", () => {
+    const f = fresh();
+    f.put(5, events(5, true));
+    expect(fault(() => writeContract(f.input()))).toBe(DELIVERY_WRITE_FAULTS.localTest);
+    expect(fault(() => writeContract(f.input({ localTest: true })))).toBe(DELIVERY_WRITE_FAULTS.localTest);
   });
 });
 
