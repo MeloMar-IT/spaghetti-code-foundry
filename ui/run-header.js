@@ -64,6 +64,16 @@ export function runTiming(s, now = Date.now()) {
   return { started, duration };
 }
 
+const RETRY_OUTCOMES = { finished: "it finished", split: "it was split", failed: "it failed", cancelled: "it was cancelled", open: "it is still open" };
+
+/** The sentence about automatic retries after a time limit, from `retries` as the server works it out. */
+export function retryText(r) {
+  const n = Number(r?.started) || 0;
+  if (!n) return "An automatic retry after a time limit is waiting";
+  const count = `${n} automatic ${n === 1 ? "retry" : "retries"} after a time limit`;
+  return `${count} — ${r.waiting ? "the next one is waiting" : (RETRY_OUTCOMES[r.outcome] ?? RETRY_OUTCOMES.open)}`;
+}
+
 /** The facts of the header as [{ key, label, text }]. Cost, owner and workspace are read for an administrator only. */
 export function headerFacts(s, { admin = false, names = null, now = Date.now() } = {}) {
   const repo = s?.vars?.github_repo;
@@ -76,6 +86,7 @@ export function headerFacts(s, { admin = false, names = null, now = Date.now() }
     { key: "duration", label: t.live ? "Running for" : "Ran for", text: t.duration },
   ];
   if (s?.resumes) out.push({ key: "resumes", label: "", text: `resumed ${s.resumes}×` });
+  if (s?.retries) out.push({ key: "retries", label: "", text: retryText(s.retries) });
   if (s?.flow) out.push({ key: "flow", label: "Flow", text: s.flow });
   if (admin) {
     const owner = ownerText(s?.owner, names);

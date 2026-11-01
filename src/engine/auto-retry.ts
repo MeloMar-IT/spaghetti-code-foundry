@@ -85,11 +85,32 @@ export function markRetryStart(s: RunSummary, from: string, at: string): void {
   if (last && last.startedAt === undefined) last.startedAt = at;
 }
 
-/** The last retry that is stopped and has not begun yet (the resume that is about to start it), if any. */
-export function pendingRetry(s: Pick<RunSummary, "reason" | "timeLimits">, from: string, next: string | null): TimeLimitEvent | undefined {
-  if (from !== next || !isTimeLimitStop(s.reason)) return undefined;
+/** The last retry event of a run that stopped on a time limit and has not begun yet, if any. */
+function unstartedRetry(s: Pick<RunSummary, "reason" | "timeLimits">): TimeLimitEvent | undefined {
+  if (!isTimeLimitStop(s.reason)) return undefined;
   const last = Array.isArray(s.timeLimits) ? s.timeLimits.at(-1) : undefined;
   return last && last.startedAt === undefined ? last : undefined;
+}
+
+/** The last retry that is stopped and has not begun yet (the resume that is about to start it), if any. */
+export function pendingRetry(s: Pick<RunSummary, "reason" | "timeLimits">, from: string, next: string | null): TimeLimitEvent | undefined {
+  return from === next ? unstartedRetry(s) : undefined;
+}
+
+export type RetryOutcome = "finished" | "split" | "failed" | "cancelled" | "open";
+export interface RunRetries { started: number; waiting: boolean; outcome: RetryOutcome }
+
+/** How a run ended, as the run page and the digest tell it. */
+export function retryOutcome(s: Pick<RunSummary, "status" | "history">): RetryOutcome {
+  if (s.status === "succeeded") return s.history?.at(-1)?.id === "create_split" ? "split" : "finished";
+  return s.status === "failed" || s.status === "cancelled" ? s.status : "open";
+}
+
+/** The automatic retries of one run: how many began, whether one is waiting, and how the run ended. Undefined when there is nothing to tell. */
+export function retriesOf(s: Pick<RunSummary, "status" | "reason" | "history" | "timeLimits">): RunRetries | undefined {
+  const started = startedEvents(s.timeLimits).length;
+  const waiting = s.status === "stopped" && unstartedRetry(s) !== undefined;
+  return started || waiting ? { started, waiting, outcome: retryOutcome(s) } : undefined;
 }
 
 const NOTE_START = "**Nothing needed from you** — ran out of time in ";
