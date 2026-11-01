@@ -124,6 +124,8 @@ export interface RunSummary {
   resumes?: number;
   /** The stops at a time limit that were answered with a retry, oldest first (watcher story runs). Absent on older runs. */
   timeLimits?: TimeLimitEvent[];
+  /** How often `implement` was handed to the planner after its retries (the next count goes on from there). */
+  timeoutHandovers?: number;
   /** After a time limit: the step to continue at once the areas are claimed again. Absent: none. */
   retryStep?: string;
   /** The last 50 resumes (when, and the step each restarted at); the monitor reads it to find restart loops. */

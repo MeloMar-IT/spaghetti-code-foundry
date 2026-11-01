@@ -1160,30 +1160,6 @@ write("issue-plan", {
   });
   s.find((x) => x.id === "docs").max_visits = 2;
   s.find((x) => x.id === "docs").prompt += "\n\n{{steps.final_guard.output}}";
-  write("issue-code-daily", {
-    title: "Code a planned issue on today's branch (label-driven)",
-    lines: [
-      "factory run issue-code-daily --var github_repo=owner/repo --var issue=42 --var test_cmd=\"./gradlew test\"",
-      "",
-      "pull ticket → today's branch (waits while the daily PR is unmerged) → plan check → baseline tests",
-      "  → Claude codes → guard → tests ⟲ fix (max 3)",
-      "  → Codex review 1 → Claude fixes → tests ⟲ fix (max 3)",
-      "  → Codex review 2 → Claude fixes → tests ⟲ fix (max 3)      (an APPROVE skips ahead)",
-      "  → docs → guard (+ docs updated) → commit \"Resolve #N\" → push → report on the issue",
-    ],
-  }, {
-    description: "Code a planned issue on the day's branch: tests, 2 Codex reviews, docs, commit, push, report",
-    workspace: "empty",
-    // Cap each agent step (Claude Code stops the step when it reaches it) so one step can't run away.
-    defaults: { model: "claude-sonnet-5-5", timeout_sec: 2400, max_budget_usd: 6, allowed_tools: CODING_TOOLS },
-    limits: { max_cost_usd: 30 },
-    vars: {
-      github_repo: "owner/repo", issue: "", test_cmd: "auto", branch_prefix: "factory/daily-", timezone: "Europe/Berlin",
-      forbidden_paths: "", docs_required: "", agent_env: "",
-    },
-    steps: s,
-  });
-
   // ── issue-deliver: plan right before coding, in one run; a risky plan waits for a human ──
   const byId = (id) => structuredClone(s.find((x) => x.id === id));
   const riskGate = {
@@ -1407,6 +1383,24 @@ write("issue-plan", {
     routes: [{ if: "^SIZE: over\\s*$", goto: "force_split" }],
     on_success: "risk_gate",
   };
+  // The prompt of force_split: the size limit and a story that keeps timing out in implement ({{steps.implement.too_big}}) both come here.
+  const forceSplitPrompt = (own) => [
+    "This issue has to be split.",
+    "{{steps.implement.too_big}}",
+    "If the line above says it is too big for one coding turn, coding ran out of time again and again. The unfinished work is still",
+    "in this folder: it is not committed and not pushed. See what is done and what is left with \`git status\` and \`git diff --stat\`.",
+    "Change nothing.",
+    "",
+    ...own,
+    ...SPLIT_FORMAT.map((l) => l.replace(/^  /, "")),
+    "",
+    "Answer NEEDS_INFO instead only when the rule above stops you from proposing new parts (ask the owner how to change the existing parts), or when coding ran out of time and you advise against a split (say why, and ask the owner what to do). Write the questions in this form:",
+    ...QUESTION_FORMAT.map((l) => l.replace(/^  /, "")),
+    "",
+    "Do not write a SKILL_REQUEST line.",
+    "",
+    "End with exactly one line: PLAN_STATUS: TOO_BIG (or PLAN_STATUS: NEEDS_INFO in the case above)",
+  ].join("\n");
   const forceSplit = {
     id: "force_split",
     type: "claude",
@@ -1416,27 +1410,60 @@ write("issue-plan", {
     jump_only: true,
     max_budget_usd: 6,
     permission_mode: "dontAsk",
-    allowed_tools: ["Read", "Glob", "Grep", "Bash(git log*)", "Bash(git show*)", "Bash(git grep*)", "Bash(ls*)"],
-    prompt: [
+    allowed_tools: ["Read", "Glob", "Grep", "Bash(git log*)", "Bash(git show*)", "Bash(git grep*)", "Bash(git status*)", "Bash(git diff*)", "Bash(ls*)"],
+    prompt: forceSplitPrompt([
       "Your plan is over the size limit for one issue:",
       "{{steps.size_gate.output}}",
       "If your plan had a MECHANICAL line, the size gate did not accept it (reason above); do not keep the plan for that reason.",
       "",
       "Split this issue into smaller issues instead, each within the limit and buildable and testable on its",
       "own, in order. Use the plan you made (and the review notes, if any) for the parts.",
-      ...SPLIT_FORMAT.map((l) => l.replace(/^  /, "")),
-      "",
-      "Only when the rule above stops you from proposing new parts, answer NEEDS_INFO instead: ask the owner how to change the existing parts, with the questions in this form:",
-      ...QUESTION_FORMAT.map((l) => l.replace(/^  /, "")),
-      "",
-      "Do not write a SKILL_REQUEST line.",
-      "",
-      "End with exactly one line: PLAN_STATUS: TOO_BIG (or PLAN_STATUS: NEEDS_INFO in the case above)",
-    ].join("\n"),
+    ]),
     routes: [{ if: "^PLAN_STATUS: TOO_BIG\\s*$", goto: "split_gate" }, { if: "^PLAN_STATUS: NEEDS_INFO\\s*$", goto: "send_back" }],
     on_success: "risk_gate", // it disagreed and kept the plan: continue with it
     on_failure: "risk_gate",
   };
+  // The daily flow has no plan session to resume and no risk_gate: it reads the issue itself, and an answer without a split or a question ends the run.
+  const dailyForceSplit = {
+    ...structuredClone(forceSplit),
+    on_success: "fail",
+    on_failure: "fail",
+    prompt: forceSplitPrompt([
+      "{{steps.pull_ticket.output}}",
+      "",
+      "Split this issue into smaller issues, each small enough for one coding turn and buildable and testable on its",
+      "own, in order. If the issue has a comment from the Spaghetti Code Foundry with a plan, use that plan for the parts.",
+    ]),
+  };
+  delete dailyForceSplit.resume;
+  write("issue-code-daily", {
+    title: "Code a planned issue on today's branch (label-driven)",
+    lines: [
+      "factory run issue-code-daily --var github_repo=owner/repo --var issue=42 --var test_cmd=\"./gradlew test\"",
+      "",
+      "pull ticket → today's branch (waits while the daily PR is unmerged) → plan check → baseline tests",
+      "  → Claude codes → guard → tests ⟲ fix (max 3)",
+      "  → Codex review 1 → Claude fixes → tests ⟲ fix (max 3)",
+      "  → Codex review 2 → Claude fixes → tests ⟲ fix (max 3)      (an APPROVE skips ahead)",
+      "  → docs → guard (+ docs updated) → commit \"Resolve #N\" → push → report on the issue",
+      "implement times out again after the retries → the planner splits it (split gate) or asks",
+    ],
+  }, {
+    description: "Code a planned issue on the day's branch: tests, 2 Codex reviews, docs, commit, push, report",
+    workspace: "empty",
+    // Cap each agent step (Claude Code stops the step when it reaches it) so one step can't run away.
+    defaults: { model: "claude-sonnet-5-5", timeout_sec: 2400, max_budget_usd: 6, allowed_tools: CODING_TOOLS },
+    limits: { max_cost_usd: 30 },
+    vars: {
+      github_repo: "owner/repo", issue: "", test_cmd: "auto", branch_prefix: "factory/daily-", timezone: "Europe/Berlin",
+      forbidden_paths: "", docs_required: "", agent_env: "",
+      auto_split_max_risk: "50", review_plan_label: "Factory_review_plan",
+    },
+    // A rejected split stops the run and keeps the unfinished work: the daily flow has no planner to plan again,
+    // and pull_ticket → daily_branch would reset the folder and code the issue straight away.
+    steps: [...s, dailyForceSplit, planPhase("risk_gate").find((x) => x.id === "send_back"), ...splitSteps.map((x) => (x.id === "approve_split" ? { ...x, on_failure: "stop" } : x))],
+  });
+
   const featureBranch = {
     id: "feature_branch",
     type: "shell",
@@ -2139,6 +2166,7 @@ write("issue-plan", {
       "  → Opus plans (with size + code areas) → Codex checks (+ risk) → Opus revises",
       "      too big (limit or planner) → split: low split risk creates the issues itself, else /approve",
       "      WAITS_FOR #N → recorded in Depends on → stop (continues when #N is done; an invalid wait is asked)",
+      "      implement times out again after the retries → the planner splits it (split gate) or asks",
       "  → risk > 75 or Factory_review_plan → wait for /approve",
       "  → a split parent built as one change: close its open parts, their dependants wait for it",
       "  → lock the plan's code areas (runs on other areas code at the same time)",
