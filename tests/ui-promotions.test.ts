@@ -27,7 +27,7 @@ describe("the text model", () => {
 
   it("summarizes each state as text", () => {
     expect(ui.promotionSummary(promoted)).toEqual({ tone: "ok", text: `Promoted: report ${LONG}`, more: 0 });
-    expect(ui.promotionSummary(promotable)).toEqual({ tone: "neutral", text: "Ready to promote: every required suite holds.", more: 0 });
+    expect(ui.promotionSummary(promotable)).toEqual({ tone: "neutral", text: "Ready to promote: every required suite passes.", more: 0 });
     expect(ui.promotionSummary(blocked(block("timeout"), block("output-caps", "suite-failed")))).toEqual({
       tone: "warn", text: "Not promoted: timeout (report-stale). scf eval safety", more: 1,
     });
@@ -47,7 +47,7 @@ describe("the editor notice", () => {
   it("says the state in words, for every state", () => {
     expect(text(blocked(block("timeout")))).toContain("Not promoted: timeout (report-stale). scf eval safety");
     expect(text(promoted)).toContain(`Promoted: report ${LONG}`);
-    expect(text(promotable)).toContain("Ready to promote: every required suite holds.");
+    expect(text(promotable)).toContain("Ready to promote: every required suite passes.");
     expect(text({ failed: true })).toContain("The promotion state could not be read.");
   });
 
@@ -119,7 +119,7 @@ describe("the Settings card", () => {
     expect(t).toContain(`Promoted: report ${LONG}`);
     expect(t).toContain("Not promoted: timeout (report-stale). scf eval safety");
     expect(t).toContain("Not promoted: output-caps (suite-failed). scf eval safety");
-    expect(t).toContain("Ready to promote: every required suite holds.");
+    expect(t).toContain("Ready to promote: every required suite passes.");
     expect(t).toContain("flow bad is not valid");
     expect(t).toContain("The promotion records cannot be used: promotions/records.json is not valid");
     expect(el.all("details")).toHaveLength(1);

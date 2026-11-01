@@ -17,7 +17,7 @@ export function blockedLine(b) {
 /** `{ tone: "ok" | "neutral" | "warn", text, more }` for one row of the answer; `more` counts the blocks after the first. */
 export function promotionSummary(row) {
   if (row?.state === "promoted" && row.record) return { tone: "ok", text: `Promoted: report ${row.record.reportId}`, more: 0 };
-  if (row?.state === "promotable") return { tone: "neutral", text: "Ready to promote: every required suite holds.", more: 0 };
+  if (row?.state === "promotable") return { tone: "neutral", text: "Ready to promote: every required suite passes.", more: 0 };
   if (row?.state === "blocked" && Array.isArray(row.blocking) && row.blocking.length) return { tone: "warn", text: blockedLine(row.blocking[0]), more: row.blocking.length - 1 };
   return { tone: "warn", text: FAILED_TEXT, more: 0 };
 }
@@ -82,5 +82,5 @@ export function promotionPanel({ readOnly = false } = {}) {
   };
   void load();
   return h("div", { class: "card mb-14" }, h("h3", {}, "Promoted versions"),
-    h("p", { class: "muted flush" }, "A component version is promoted when a recorded report of every required safety suite holds for it."), body);
+    h("p", { class: "muted flush" }, "A component version is promoted when a recorded report of every required safety suite passes for it."), body);
 }

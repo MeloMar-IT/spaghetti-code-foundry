@@ -639,7 +639,7 @@ describe("promotion state", () => {
     await vi.waitFor(() => expect(shown()).toContain("Not promoted: timeout"));
     await go("#/settings");
     await go("#/flows/a");
-    await vi.waitFor(() => expect(shown()).toContain("Ready to promote: every required suite holds."));
+    await vi.waitFor(() => expect(shown()).toContain("Ready to promote: every required suite passes."));
     expect(promotions).toHaveBeenCalledTimes(2);
     expect(shown()).not.toContain("Not promoted: timeout");
   });
