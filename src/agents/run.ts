@@ -302,6 +302,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     timeoutMs,
     meter: o.meter,
     slotWaits: o.slotWaits,
+    priority: engine.config.governor.priority,
     signal: engine.signal,
     resumeSessionId: resumeId,
     onProgress: (m: string) => engine.log(`    · ${m}`),

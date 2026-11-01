@@ -144,7 +144,7 @@ export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
   if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns") return false;
   if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce", "promotion.enforce"].includes(key)) return true;
-  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help."].some((p) => key.startsWith(p));
+  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor."].some((p) => key.startsWith(p));
 }
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
@@ -162,6 +162,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   default_model: A("Default model", "The model of agent steps that name none in the step, the flow or a routing rule.", "new-runs", "models.js"),
   "router.fallback": A("Fallback models", "Models tried in order when an agent step hits a rate or usage limit, or a budget for free targets.", "new-runs", "models.js"),
   "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
+  "governor.priority": N("Priority of runs", "How much processor time the agents, builds and tests of a run leave to your other programs; background can slow runs a lot on macOS."),
   "delivery.signing_key_path": G("Signing key", "An absolute path to an unencrypted Ed25519 key, which must be in delivery-keys in the data folder (sandboxed steps cannot read it); without it, contracts are unsigned; applies from the next step."),
   "delivery.required_checks": G("Required checks", "The CI checks a delivery contract requires; applies from the next step."),
   "delivery.artifacts": G("Required artifacts", "The artifacts a delivery contract requires; applies from the next step."),

@@ -1437,6 +1437,19 @@ where it runs.
 
 ---
 
+### Run priority (#747)
+
+Every process of a run goes through `spawnTarget()` in `src/steps/process.ts`, its one spawn point. The
+`ProcessOptions.priority` field (from `governor.priority`, passed by the shell, Claude, Codex and broker
+callers) puts the command behind `/usr/bin/nice -n <delta>` and `/usr/sbin/taskpolicy -c <qos>`, in that
+order and outside any `sandbox-exec` profile, so the wrappers cannot be refused by a profile. Both
+exec the command: the pid and the process group stay the same, so cancel, timeout and group kill reach
+the real process. `low` is nice 5 and `utility`; `background` is nice 15 and `background`. The nice
+delta is computed from `os.getPriority(0)`, so a priority is never raised. `priorityMachine()` trial-runs
+each tool once per process (cached) and uses only the ones that work; a command that cannot be found is
+started unwrapped, and a wrapper that fails to start before the command ran falls back to the plain
+start (`WrapperStartError`). The server process is never wrapped.
+
 ## 6. The queue
 
 One scheduler for all runs:

@@ -125,7 +125,8 @@ describe("what is described", () => {
     expect(isCovered("delivery.repositories")).toBe(false);
     expect(isCovered("policy.enforce")).toBe(true);
     expect(described.find((d) => d.key === "policy.enforce")).toMatchObject({ kind: "list", default: [], effect: "new-runs" });
-    expect(described).toHaveLength(132);
+    expect(isCovered("governor.priority")).toBe(true);
+    expect(described).toHaveLength(133);
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {

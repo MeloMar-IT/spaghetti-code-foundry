@@ -175,6 +175,29 @@ describe("Settings → Policy", () => {
   });
 });
 
+describe("Settings → Load governor", () => {
+  const card = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "Load governor")!;
+
+  it("follows Budget & capacity and shows low", async () => {
+    const { main } = await render({});
+    const titles = main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes("card")).map((c) => c.all("h3")[0]?.textContent);
+    expect(titles.indexOf("Load governor")).toBe(titles.indexOf("Budget & capacity") + 1);
+    expect(card(main).all("select")).toHaveLength(1);
+    expect(card(main).textContent).toContain("Default: low.");
+  });
+
+  it("saves the choice", async () => {
+    const { main, puts } = await render({});
+    const sel = card(main).all("select")[0] as any;
+    sel.value = "background";
+    sel.fire("change", { target: sel });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].governor).toEqual({ priority: "background" });
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+});
+
 describe("Settings → Redesign", () => {
   const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Show the redesigned pages (still being built)"))!.all("input")[0] as any;
 

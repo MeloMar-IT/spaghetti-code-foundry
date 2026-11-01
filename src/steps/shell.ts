@@ -1,5 +1,5 @@
 import { dockerCommand } from "../engine/guards.js";
-import { runProcess, type ProcessMeter } from "./process.js";
+import { runProcess, type ProcessMeter, type RunPriority } from "./process.js";
 import { timedOutError, type SlotWaitWatch } from "./slot-waits.js";
 
 /** Characters of shell output the engine keeps when a step sets no `max_output`. */
@@ -48,6 +48,8 @@ export async function runShell(o: {
   cleanEnv?: boolean;
   /** Hold the command in this `sandbox-exec` profile (not used with a Docker image: the container holds it). */
   sandboxProfile?: string;
+  /** Start the process at this priority (see ProcessOptions). */
+  priority?: RunPriority;
   /** Filled with the process time and the bytes it printed (see ProcessMeter). */
   meter?: ProcessMeter;
   /** Where test-slot records its waits: the time limit does not count them. */
@@ -74,6 +76,7 @@ export async function runShell(o: {
     groupKill: true,
     cleanEnv: o.cleanEnv,
     sandboxProfile: o.dockerImage ? undefined : o.sandboxProfile,
+    priority: o.priority,
     meter: o.meter,
     slotWaits: o.slotWaits,
   });

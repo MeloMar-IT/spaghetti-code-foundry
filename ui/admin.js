@@ -145,13 +145,14 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const deliveryCard = generatedSection("Delivery", "delivery.", c, described, { section, readOnly });
   const policyCard = generatedSection("Policy", "policy.", c, described, { section, readOnly });
   const promotionCard = generatedSection("Promotion", "promotion.", c, described, { section, readOnly });
+  const governorCard = generatedSection("Load governor", "governor.", c, described, { section, readOnly });
   // the hand-built controls and the current controls of the described cards (those are drawn again when their message changes)
-  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs(), ...deliveryCard.inputs(), ...policyCard.inputs(), ...promotionCard.inputs() });
+  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs(), ...deliveryCard.inputs(), ...policyCard.inputs(), ...promotionCard.inputs(), ...governorCard.inputs() });
   const QUOTED = new Set(["name", "email", "repo", "command", "pass"]);
   const SETTINGS_PAIRS = Object.keys(fieldsNow()).map((k) => [new RegExp(QUOTED.has(k) ? `"${k}"` : `\\b${k}\\b`), k]);
 
   const save = async () => {
-    const bad = extra.check() ?? askScf.check() ?? deliveryCard.check() ?? policyCard.check() ?? promotionCard.check();
+    const bad = extra.check() ?? askScf.check() ?? deliveryCard.check() ?? policyCard.check() ?? promotionCard.check() ?? governorCard.check();
     if (bad) {
       mount(err);
       saveNote.setAttribute("class", "status bad");
@@ -191,6 +192,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       delivery: deliveryCard.values(),
       policy: policyCard.values(),
       promotion: promotionCard.values(),
+      governor: governorCard.values(),
       isolate_agents: v.isolate_agents,
       failure_summary: v.failure_summary,
       step_env: v.step_env,
@@ -220,6 +222,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       deliveryCard.restore();
       policyCard.restore();
       promotionCard.restore();
+      governorCard.restore();
       saveNote.setAttribute("class", "status ok");
       mount(saveNote, `Saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       toast("Settings saved");
@@ -241,6 +244,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       deliveryCard.restore();
       policyCard.restore();
       promotionCard.restore();
+      governorCard.restore();
       saveNote.setAttribute("class", "status bad");
       mount(saveNote, "Not saved.");
     } finally {
@@ -258,6 +262,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       h("div", { class: "grid" },
         f("Daily budget ($)", budget, hint("daily_budget_usd", `Spent today: $${info.spentToday.toFixed(2)}.`)),
         f("Runs at the same time", conc, hint("concurrency")))),
+    ...(governorCard.card ? [governorCard.card] : []),
     section("Redesign",
       hinted(redesign.row, redesign.el, hint("ui.redesign", "Off by default. Applies after you reload the page."))),
     section("Network",

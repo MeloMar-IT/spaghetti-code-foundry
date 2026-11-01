@@ -3819,6 +3819,8 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
 
+**Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
+
 **Safety**
 
 - **Protected branches** — pushes to these branches (default `main`, `master`, `develop`,
