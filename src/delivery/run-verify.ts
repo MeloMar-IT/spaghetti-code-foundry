@@ -5,7 +5,7 @@ import { readEvidenceChain, splitEvidenceLines } from "../evidence/chain.js";
 import { evidenceIncomplete } from "../evidence/stream.js";
 import { EVIDENCE_EVENTS_FILE } from "../evidence/version.js";
 import { FACTORY_HOME } from "../flow/load.js";
-import { contractDigest, evidenceHeadProblem, verifyDeliveryContract } from "./contract.js";
+import { contractDigest, deliveryEvidenceProblem, LOCAL_TEST_INELIGIBLE, verifyDeliveryContract } from "./contract.js";
 import { DeliveryContractSchema } from "./schema.js";
 import { parseKeyLine, publicKeyLine } from "./sshsig.js";
 import { DELIVERY_DIR, DeliveryWriteError, MAX_CONTRACT_BYTES, MAX_EVIDENCE_BYTES, readBoundedBytes, readConfiguredSigningKey } from "./write.js";
@@ -29,7 +29,7 @@ export type RunDeliveryStatus = "verified" | "failed" | "unsigned" | "none";
 export type RunDeliveryFault =
   | "folder" | "unexpected-file" | "numbering" | "orphan-signature"
   | "evidence-incomplete" | "evidence-missing" | "evidence-truncated" | "evidence-broken"
-  | "unreadable" | "wrong-version" | "signature-bad" | "wrong-key" | "evidence-head-mismatch"
+  | "unreadable" | "wrong-version" | "signature-bad" | "wrong-key" | "evidence-head-mismatch" | "local-test"
   | "run-id" | "sequence" | "supersedes" | "latest-copy";
 
 export interface RunDeliveryResult {
@@ -77,6 +77,7 @@ const FAULT_TEXT: Record<RunDeliveryFault, string> = {
   "signature-bad": "a signature does not verify",
   "wrong-key": "a contract is not signed by the trusted key",
   "evidence-head-mismatch": "the events do not match the evidence a contract states",
+  "local-test": LOCAL_TEST_INELIGIBLE,
   "run-id": "a contract belongs to another run",
   sequence: "a contract has the wrong sequence number",
   supersedes: "a contract does not continue the one before it",
@@ -172,8 +173,8 @@ export function verifyRunDelivery(runDir: string, runId: string, publicKey: stri
         // unsigned: the contract must still be well formed and continue the evidence
         const parsed = DeliveryContractSchema.safeParse(JSON.parse(c.text));
         if (!parsed.success) return fail("unreadable", rel);
-        const problem = evidenceHeadProblem(eventsText, parsed.data);
-        if (problem) return fail("evidence-head-mismatch", rel, problem);
+        const problem = deliveryEvidenceProblem(eventsText, parsed.data);
+        if (problem) return fail(problem.fault, rel, problem.message);
         contract = parsed.data;
       } else {
         const fault: RunDeliveryFault = v.fault === "signature-missing" ? "signature-bad" : v.fault;

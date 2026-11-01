@@ -8,6 +8,8 @@ import { ConfigSchema } from "../src/config.js";
 import { expectedResultKeys, homeInputs, type EvalInputs } from "../src/eval-inputs.js";
 import { LOCAL_TEST_LINE, PROMOTION_REFUSED } from "../src/engine/state.js";
 import { runFlow } from "../src/engine/runner.js";
+import { loadRunPacks, runPolicy } from "../src/engine/policy-hooks.js";
+import { policyPackSha256 } from "../src/policy/evaluate.js";
 import { loadSuite, SAFETY_DIR } from "../src/evals.js";
 import { FACTORY_HOME, parseFlow } from "../src/flow/load.js";
 import { describeSettings } from "../src/settings/describe.js";
@@ -139,6 +141,49 @@ describe("promotionGate", () => {
     expect(at("acme/app").refs.map((r) => `${r.kind} ${r.id} v${r.version}`)).toContain("policy-pack cover v1.4.0");
     expect(at("acme/none").refs.map((r) => r.kind)).not.toContain("policy-pack");
     expect(at("acme/other").problems.map((p) => `${p.kind} ${p.id} ${p.code}`)).toEqual(["policy-pack gone problem"]);
+  });
+
+  describe("the packs of a run are read once", () => {
+    const hash1 = () => policyPackSha256(coverPack("cover", "1.0.0"));
+    const packConfig = () => ConfigSchema.parse({ policy: { packs: ["cover"] } });
+
+    it("checks and runs the same packs when the file is replaced between the two", () => {
+      put("policies/cover.json", JSON.stringify(coverPack("cover", "1.0.0")));
+      const summary = { runId: "r", vars: {}, flow: "deploy" } as never;
+      const config = packConfig();
+      const packs = loadRunPacks(summary, config);
+      put("policies/cover.json", JSON.stringify(coverPack("cover", "2.0.0")));
+      const refs = promotionGate(input(shell("x"), "x", { config, policyPacks: packs }), { home, evalsDir: evals, safetyDir: safety });
+      expect(refs.components.find((c) => c.kind === "policy-pack")).toMatchObject({ id: "cover", version: "1.0.0", sha256: hash1() });
+      const policy = runPolicy(summary, config, () => undefined, undefined, undefined, packs);
+      const decision = policy.at("run.start").decisions.find((d) => d.decision.policy.id === "cover");
+      expect(decision?.decision.packSha256).toBe(hash1());
+      // without the list the second read would see the new file
+      expect(runComponents(input(shell("x"), "x", { config }), { home }).refs.find((r) => r.kind === "policy-pack")?.sha256).not.toBe(hash1());
+    });
+
+    it("end to end: the record and every decision of the run carry the hash that was checked", async () => {
+      put("policies/cover.json", JSON.stringify(coverPack("cover", "1.0.0")));
+      let swapped = false;
+      const log = (m: string) => {
+        // the policy start is done and the promotion check is not: replace the file here
+        if (!swapped && m.includes("policy cover")) {
+          swapped = true;
+          put("policies/cover.json", JSON.stringify(coverPack("cover", "2.0.0")));
+        }
+      };
+      const summary = await runFlow(parseFlow(shell("Deploy application")), { task: "t", repo, runsDir: join(base, "runs"), config: ConfigSchema.parse({ promotion: { enforce: "warn" }, policy: { packs: ["cover"] } }), flowId: "deploy", log });
+      expect(swapped).toBe(true);
+      const saved = JSON.parse(readFileSync(join(summary.runDir, "run.json"), "utf8"));
+      expect(saved.promotion.components.find((c: { kind: string }) => c.kind === "policy-pack").sha256).toBe(hash1());
+      const decided = readFileSync(join(summary.runDir, "evidence.jsonl"), "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((e) => e.type === "policy.decided" && e.decision.policy.id === "cover");
+      expect(decided.length).toBeGreaterThan(0);
+      for (const e of decided) expect(e.decision.packSha256).toBe(hash1());
+    });
   });
 
   it("reports a flow edited after the reports", () => {

@@ -566,12 +566,30 @@ export function baselineEntry(version: string, controls: BaselineControls): Laye
  * Its limit rules come from the flow and the config (`baselineLimits`); a sub-flow gets its own (see `RunPolicy.subFlow`).
  * Logs one "!" line per pack that could not be loaded, and one for patterns the baseline cannot hold.
  */
+const runPackIds = (config: Pick<Config, "policy">, repository: string | undefined) =>
+  layeredPackIds({ mandatory: config.policy?.mandatory, repositories: config.policy?.repositories, packs: config.policy?.packs }, repository);
+
+/**
+ * Reads the packs a new run uses, once. The same list goes to `runPolicy` and to the promotion check, so both see the
+ * same files. A resumed run reads them again.
+ */
+export function loadRunPacks(summary: Pick<RunSummary, "vars" | "flow" | "flowDef" | "owner">, config: Pick<Config, "policy">, home?: string): LoadedPack[] {
+  const ids = runPackIds(config, baseFacts(summary).repository);
+  return ids.length
+    ? loadPolicyPacks(
+        ids.map((i) => i.id),
+        home,
+      )
+    : [];
+}
+
 export function runPolicy(
   summary: RunSummary,
   config: Pick<Config, "policy"> & Partial<Pick<Config, "protected_branches" | "secret_scan" | "cost_limits" | "daily_budget_usd">>,
   log: (line: string) => void,
   evidence?: RunRecorder,
   home?: string,
+  preloaded?: readonly LoadedPack[],
 ): RunPolicy {
   const shipped = isShippedFlow(summary.flowDef);
   const base = policyFacts({ ...baseFacts(summary), shippedFlow: shipped });
@@ -593,13 +611,16 @@ export function runPolicy(
   }
   const entry: LayeredPack = limitsFailed ? { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, "its limits could not be read") } : baselineEntry(BASELINE_VERSION, controls);
   if ("problem" in entry) log(`! policy ${entry.id}: ${entry.detail} — recorded as ${entry.problem}; ${outageScope(controls.enforce ?? [])}`);
-  const ids = layeredPackIds({ mandatory: config.policy?.mandatory, repositories: config.policy?.repositories, packs: config.policy?.packs }, base.repository);
-  const loaded = ids.length
-    ? loadPolicyPacks(
-        ids.map((i) => i.id),
-        home,
-      )
-    : [];
+  const ids = runPackIds(config, base.repository);
+  // looked up by id, so a list and the ids can never drift; an id that was not read at the start fails closed
+  const loaded: LoadedPack[] = preloaded
+    ? ids.map((i) => preloaded.find((p) => p.id === i.id) ?? unavailable(i.id, "it was not read at the start of the run"))
+    : ids.length
+      ? loadPolicyPacks(
+          ids.map((i) => i.id),
+          home,
+        )
+      : [];
   loaded.forEach((p, i) => {
     if ("problem" in p) {
       const tail = ids[i]!.layer === "mandatory" ? "this mandatory policy denies steps with a sign-in and writing agents" : "the run goes on";

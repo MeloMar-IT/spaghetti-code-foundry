@@ -158,7 +158,7 @@ describe("evidence events", () => {
   it("names the events that end a run, and the file names", () => {
     expect(TERMINAL_EVENT_TYPES).toEqual(["run.cancelled", "run.failed", "run.completed"]);
     expect([EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE]).toEqual(["evidence.jsonl", "evidence.json"]);
-    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([7, 1]);
+    expect([EVIDENCE_EVENT_VERSION, RUN_EVIDENCE_VERSION]).toEqual([8, 1]);
     expect(STEP_TYPES).toEqual(["claude", "shell", "approval", "parallel", "flow"]);
   });
 
@@ -171,6 +171,15 @@ describe("evidence events", () => {
     expect(inner.issues[0]!.path).toBe("step");
     expect(inner.message).not.toContain("text of the step");
     expect(EvidenceEventSchema.safeParse({ ...EVENTS["step.denied"], denial: { kind: "tool", tool: { name: "Bash", args: "rm -rf" } } }).success).toBe(false);
+  });
+
+  it("accepts the local-test marker on run.created only as true", () => {
+    expect(parseEvidenceEvent({ ...EVENTS["run.created"], localTest: true })).toEqual({ ...EVENTS["run.created"], localTest: true });
+    for (const bad of [false, "true", 1, null]) {
+      expect(problems(() => parseEvidenceEvent({ ...EVENTS["run.created"], localTest: bad })).issues[0]!.path).toBe("localTest");
+    }
+    expect(problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], localTest: true })).issues.length).toBeGreaterThan(0);
+    expect(RunEvidenceSchema.safeParse({ ...manifest(), localTest: true }).success).toBe(false);
   });
 
   it("refuses an unknown type and a missing or wrong field, with the path of the field", () => {
@@ -321,9 +330,9 @@ describe("the run manifest", () => {
 
 describe("versions and migration", () => {
   it("refuses a version it does not support, in one clear sentence", () => {
-    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 8 }));
+    const e = problems(() => parseEvidenceEvent({ ...EVENTS["run.queued"], version: 9 }));
     expect([e.kind, e.code]).toEqual(["event", "unsupported-version"]);
-    expect(e.message).toBe("evidence event: version 8 is not supported; this Foundry reads versions 1 to 7. It was written by a newer Foundry: update to read it");
+    expect(e.message).toBe("evidence event: version 9 is not supported; this Foundry reads versions 1 to 8. It was written by a newer Foundry: update to read it");
     expect(problems(() => upgradeEvidence({ version: 9 }, "manifest", 3, {})).message).toContain("this Foundry reads versions 1 to 3");
   });
 
@@ -356,10 +365,11 @@ describe("versions and migration", () => {
   });
 
   it("checks a migrated record against the current schema", () => {
-    // A version 7 record is current, so the step table is only used for lower versions.
+    // A version 8 record is current, so the step table is only used for lower versions.
     const typed: EvidenceEvent = parseEvidenceEvent(EVENTS["run.queued"], { 1: () => ({ version: 2 }) });
-    expect(typed.version).toBe(7);
-    // version 1, 2 and 6 lines of an older Foundry read as version 7 (the real migrations only set the version)
+    expect(typed.version).toBe(8);
+    // version 1, 2, 6 and 7 lines of an older Foundry read as version 8 (the real migrations only set the version)
+    expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 7 })).toEqual(EVENTS["run.queued"]);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 6 })).toEqual(EVENTS["run.queued"]);
     expect(parseEvidenceEvent({ ...EVENTS["run.queued"], version: 2 })).toEqual(EVENTS["run.queued"]);
     const old = parseEvidenceEvent({ ...EVENTS["run.queued"], version: 1 });

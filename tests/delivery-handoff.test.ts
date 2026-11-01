@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { generateKeyPairSync, type KeyObject } from "node:crypto";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createPrivateKey, generateKeyPairSync, type KeyObject } from "node:crypto";
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import {
   checkHandoff, checksWaitSec, defaultCheckRuns, handoffCommand, handoffLines, handoffRedactor, handoffText, waitForChecks,
   type CheckRun, type HandoffInput, type HandoffResult, type RemoteHead,
 } from "../src/delivery/handoff.js";
+import { signDeliveryContract } from "../src/delivery/contract.js";
 import { publicKeyLine } from "../src/delivery/sshsig.js";
 import { DELIVERY_DIR, writeContract } from "../src/delivery/write.js";
 import { canonicalJson, eventHash } from "../src/evidence/canonical.js";
@@ -21,11 +22,12 @@ const PR_NUMBER = 99;
 const TOKEN = "ghp_" + "a1B2c3D4".repeat(5);
 const cfg = (delivery: Record<string, unknown> = {}) => ConfigSchema.parse({ delivery }).delivery;
 
-const eventsText = (n: number, runId = RUN): string => {
+const eventsText = (n: number, runId = RUN, marked = false): string => {
   let prev: string | null = null;
   return (
     Array.from({ length: n }, (_, seq) => {
-      const e: Record<string, unknown> = { version: 1, id: `ev-${String(seq).padStart(6, "0")}`, seq, runId, time: "2026-01-31T12:00:00.000Z", type: "run.queued", prevHash: prev };
+      const first = marked && seq === 0 ? { version: 8, type: "run.created", flow: { name: "f" }, by: { kind: "cli" }, localTest: true } : {};
+      const e: Record<string, unknown> = { version: 1, id: `ev-${String(seq).padStart(6, "0")}`, seq, runId, time: "2026-01-31T12:00:00.000Z", type: "run.queued", prevHash: prev, ...first };
       prev = eventHash(e);
       return canonicalJson({ ...e, hash: prev });
     }).join("\n") + "\n"
@@ -309,6 +311,51 @@ describe("evidence and the first stop", () => {
   });
 });
 
+describe("a contract over the evidence of a local-test run", () => {
+  /** A contract the writer would refuse: the same contract, but over a marked chain of five events, signed again. */
+  const markedReady = (): Fixture => {
+    const f = ready();
+    const text = eventsText(5, RUN, true);
+    writeFileSync(join(f.runDir, "evidence.jsonl"), text);
+    const lines = text.trim().split("\n");
+    const c = JSON.parse(readFileSync(dir(f, "contract.json"), "utf8")) as { evidence: { terminalHash: string } };
+    c.evidence.terminalHash = (JSON.parse(lines[4]!) as { hash: string }).hash;
+    const out = canonicalJson(c);
+    const key = createPrivateKey(readFileSync(f.keyPath));
+    for (const name of ["contract.json", "contract-1.json"]) writeFileSync(dir(f, name), out);
+    for (const name of ["contract.json.sig", "contract-1.json.sig"]) writeFileSync(dir(f, name), signDeliveryContract(out, key));
+    return f;
+  };
+  const LOCAL = "the run is a local test, so it is not eligible for delivery";
+
+  it("stops with evidence-unverified when there is a key", async () => {
+    const f = markedReady();
+    const r = await checkHandoff(f.input());
+    expect(stopOf(r)).toMatchObject({ condition: "evidence-unverified", reason: LOCAL });
+    expect(run(r, "evidence")).toMatchObject({ status: "stop", condition: "evidence-unverified", reason: LOCAL });
+    expect(run(r, "signature").status).toBe("ok");
+  });
+
+  it("stops without a key too, and calls nothing", async () => {
+    const f = markedReady();
+    let calls = 0;
+    const r = await checkHandoff(f.input({ publicKey: "", remoteHead: async () => (calls++, { kind: "missing" }), checkRuns: async () => (calls++, []) }));
+    expect(stopOf(r)).toMatchObject({ condition: "evidence-unverified", reason: LOCAL });
+    expect(calls).toBe(0);
+    expect(run(r, "commit").status).toBe("skipped");
+  });
+
+  it("without a key an unmarked, a missing or a broken stream is still unsigned", async () => {
+    const f = markedReady();
+    writeFileSync(join(f.runDir, "evidence.jsonl"), eventsText(5));
+    expect((await checkHandoff(f.input({ publicKey: "" }))).kind).toBe("unsigned");
+    rmSync(join(f.runDir, "evidence.jsonl"));
+    expect((await checkHandoff(f.input({ publicKey: "" }))).kind).toBe("unsigned");
+    writeFileSync(join(f.runDir, "evidence.jsonl"), eventsText(5, RUN, true).replace("run.queued", "run.queuef"));
+    expect((await checkHandoff(f.input({ publicKey: "" }))).kind).toBe("unsigned");
+  });
+});
+
 describe("waitForChecks and checksWaitSec", () => {
   const clock = () => {
     let t = 0;
@@ -505,6 +552,15 @@ describe("handoffCommand", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("HANDOFF: skipped (no signing key is set; the contract is unsigned)");
     expect(gh.ghLog()).toContain("**Not verified.**");
+  });
+
+  it("without a key a marked chain stops the handoff", async () => {
+    const f = ready();
+    const text = eventsText(5, RUN, true);
+    writeFileSync(join(f.runDir, "evidence.jsonl"), text);
+    const r = await exec(f, {}, envOf(f, { FACTORY_DELIVERY_PUBLIC_KEY: "" }));
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("HANDOFF: stop evidence-unverified: the run is a local test, so it is not eligible for delivery");
   });
 
   it("with no contract and no key posts nothing", async () => {

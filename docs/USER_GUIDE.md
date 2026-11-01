@@ -1159,6 +1159,8 @@ can be found.
   profile worked out for a try (`step.profiled`, from version 3: the profile's id, version and hash,
   and what the agent cannot hold, never its rules), tried again (after an outage or a usage limit),
   a tool that was refused, approved or rejected, failed, completed.
+- **A local test is marked.** The `run.created` event of a run started with `--local-test` has
+  `localTest: true`. Such a run never gets a delivery contract: see "Use only promoted versions".
 - **What is in it:** ids, names, times, who asked (an account id, the command line, a watcher or
   the Foundry), the model, the exit code, and for every finished step the path, SHA-256 and size
   of its log or transcript. **What is not:** the task, prompts, outputs, error texts, notes,
@@ -1170,6 +1172,9 @@ can be found.
   cannot verify that run. Version 7 adds `packSha256` to a policy denial (the pack that denied, when
   known) and allows a policy `step.denied` without a step, for a denial about the whole run. Versions
   1 to 6 are read as before; a delivery validator that only knows version 6 refuses version 7 lines.
+  Version 8 adds `localTest` to `run.created`, set only for a run started with `--local-test`. Versions
+  1 to 7 are read as before, and a run from version 7 is never marked. A delivery validator that only knows
+  version 7 refuses version 8 lines, so update it before you use the Foundry for delivery.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
@@ -1735,7 +1740,7 @@ scf delivery validate --contract contract.json --signature contract.json.sig \
 | `locks` | `lock-changed` | A lock file at that commit is changed, missing, or not a file |
 | `workflows` | `workflow-changed` | A file under `.github/workflows/` is added, removed or changed (other files are ignored) |
 | `checks` | `required-check-failed` | A required check is missing or did not pass (see below) |
-| `evidence` | `evidence-unverified` | With `--events`: the events file has fewer events than the contract says, a line is not a valid event of the chain, or the event at `count - 1` does not carry the contract's `terminalHash` |
+| `evidence` | `evidence-unverified` | With `--events`: the events file has fewer events than the contract says, a line is not a valid event of the chain, or the event at `count - 1` does not carry the contract's `terminalHash`. Also when the chain is a local test (`localTest` on `run.created`); the reason is `the run is a local test, so it is not eligible for delivery` |
 | `comment` | `superseded` or `evidence-unverified` | The comment names another contract, or another evidence hash |
 
 - If `contract` or `signature` stops, every later check is `skipped (the contract is not trusted)`, and
@@ -1810,7 +1815,7 @@ check-runs API of the commit.
 delivery-contract:
   runs-on: ubuntu-latest
   env:
-    VALIDATOR_VERSION: "1.0.0"          # the version you pin
+    VALIDATOR_VERSION: "1.1.0"          # the version you pin
     RELEASE_BASE: "<download folder of that release>"   # the release's assets, from the release page
     GH_TOKEN: ${{ github.token }}
   steps:
@@ -1850,7 +1855,7 @@ folder, which the job gets from the workflow's artifacts or from the pull reques
 **Generic CI in plain shell.** Any CI with Node.js 22 or later and `sha256sum` can run the same steps:
 
 ```sh
-V=1.0.0
+V=1.1.0
 BASE="<download folder of that release>"   # the release's assets, from the release page
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs"
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs.sha256"
@@ -1932,6 +1937,9 @@ contract. The evidence (`evidence.jsonl`) must be whole, must not be marked `evi
 contract's `count` events must form the chain its evidence hash names. Events after the last contract's `count`
 may be added, and the result is still verified; a broken event after that count is a failure. A file that is
 not plain UTF-8 or ends in a line that is not complete is a failure.
+
+A contract over a local-test run (its events have `localTest` on `run.created`) fails with the fault `local-test`,
+whether it is signed or not. No contract is written for such a run, so this only applies to a folder made before.
 
 **Exit codes.**
 
@@ -2034,7 +2042,12 @@ the policy packs of the repository, the model routes and the tool profile of the
   `refused: this run uses components that are not promoted`. A check that cannot run also counts as not promoted.
 - **Local tests.** `scf run --local-test <flow>` is always allowed, even under `on`. Its run says
   `local test: this run never counts as a promoted delivery`. Evals and skill evals are local tests too,
-  so they are never checked.
+  so they are never checked. A local-test run gets no delivery contract, and the handoff refuses it
+  (`evidence-unverified`), with or without a signing key. Its evidence carries the marker (see
+  "Evidence of a run").
+- **Packs are read once.** A new run reads its policy packs once, at its start, and the promotion check
+  uses that same list, so the check and the run judge the same pack files, even if a file changes while
+  the run starts. A resumed run reads the packs again.
 
 Runs started before this setting existed have no findings saved. The check reads the reports on disk and
 changes no component; it only saves its findings in the run.
