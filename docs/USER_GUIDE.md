@@ -2040,6 +2040,17 @@ Every field is optional. A record accepts only these fields; an unknown field ma
 - **Changes nothing.** Governance records are only read. They do not change a component's hash or its version,
   and `promotions/versions.json` is not touched.
 
+### Components table (admins)
+
+Settings has a **Components** card, and `GET /api/admin/components` (admin only) gives the same data. Each row is one
+component with its kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status.
+The status is shown as text: **Retired**, **Not approved**, **Review due** or **OK**, the same rules as `scf components`.
+
+- **No record.** A component with no governance record shows **No owner** and **Never reviewed**.
+- **Problems.** The read problems of the components and of the governance file are listed above the table as fixed
+  text, with no paths. A governance file that cannot be used is shown as a red line, and the rows then have no owner.
+- **Read only.** The card only reads. Change owners and review dates in `promotions/governance.yaml`.
+
 ### Promote a component
 
 `scf promote <kind> <id> [--live]` says whether a component may be promoted, from the safety reports
@@ -4689,6 +4700,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/admin/view-as` | yes | no | start a read-only view of one user's display for 30 minutes (GET calls with ?as=<id> are then answered as for that user); writes an audit line |
 | `DELETE /api/admin/view-as` | yes | no | end the view of a user's display |
 | `GET /api/admin/credentials` | yes | no | the stored credentials of all accounts, without any secret |
+| `GET /api/admin/components` | yes | no | the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories, from an idea or from an open issue of it (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it) |
 | `GET /api/refinement/backlog` | yes | yes | the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, "Depends on" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403) |

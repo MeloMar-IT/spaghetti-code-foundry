@@ -267,3 +267,58 @@ describe("POST /api/promotions", () => {
     expect(existsSync(recordsFile())).toBe(false);
   });
 });
+
+describe("GET /api/admin/components", () => {
+  const list = () => call(admin, "GET", "/api/admin/components");
+  const KEYS = ["kind", "id", "builtin", "version", "owner", "risk", "lifecycle", "approvedVersion", "lastReview", "evalSuite", "status"];
+  const govFile = () => join(dataHome(), "promotions", "governance.yaml");
+
+  it("is for admins: 200 for an admin, 403 for a user, 401 without a session, 404 for a POST", async () => {
+    expect((await list()).status).toBe(200);
+    expect((await call(user, "GET", "/api/admin/components")).status).toBe(403);
+    expect((await call(undefined, "GET", "/api/admin/components")).status).toBe(401);
+    expect((await call(admin, "POST", "/api/admin/components", {})).status).toBe(404);
+  });
+
+  it("answers with fixed keys, default values and no promotions folder when there is no governance file", async () => {
+    put(join(globalFlows, "pub.yaml"), flowYaml("pub", 2));
+    const body = (await list()).json();
+    expect(body.problems).toEqual([]);
+    expect("governanceProblem" in body).toBe(false);
+    expect(body.components.length).toBeGreaterThan(1);
+    for (const c of body.components) expect(Object.keys(c)).toEqual(KEYS);
+    expect(body.components.find((c: { id: string }) => c.id === "pub")).toEqual({
+      kind: "flow", id: "pub", builtin: false, version: "2", owner: null, risk: "low", lifecycle: "active", approvedVersion: null, lastReview: null, evalSuite: null, status: "unapproved",
+    });
+    expect(body.components.some((c: { builtin: boolean }) => c.builtin)).toBe(true);
+    expect(existsSync(join(dataHome(), "promotions"))).toBe(false);
+  });
+
+  it("shows a record, and the status ok when the approved version and the review fit", async () => {
+    put(join(globalFlows, "pub.yaml"), flowYaml("pub", 2));
+    const today = new Date().toISOString().slice(0, 10);
+    put(govFile(), JSON.stringify({ version: 1, components: { "flow/pub": { owner: "team", risk: "high", approved_version: "2", last_review: today, eval_suite: "timeout" } } }));
+    const row = (await list()).json().components.find((c: { id: string }) => c.id === "pub");
+    expect(row).toMatchObject({ owner: "team", risk: "high", approvedVersion: "2", lastReview: today, evalSuite: "timeout", status: "ok" });
+  });
+
+  it("answers 200 with a fixed problem for a bad governance file, and leaks nothing", async () => {
+    put(govFile(), "a: [SECRET");
+    const res = await list();
+    expect(res.status).toBe(200);
+    const body = res.json();
+    expect(body.governanceProblem).toBe("promotions/governance.yaml is not valid; no record was used, fix it");
+    expect(body.components.every((c: { owner: unknown }) => c.owner === null)).toBe(true);
+    for (const bad of ["SECRET", dataHome(), tmp, "sha256"]) expect(res.text).not.toContain(bad);
+  });
+
+  it("lists a broken flow and an orphan record as problems without raw text", async () => {
+    put(join(globalFlows, "bad.yaml"), "name: [SECRET");
+    put(govFile(), JSON.stringify({ version: 1, components: { "flow/gone": {} } }));
+    const res = await list();
+    const { problems } = res.json();
+    expect(problems.map((p: { id: string }) => p.id)).toEqual(expect.arrayContaining(["bad", "gone"]));
+    for (const p of problems) expect(Object.keys(p).sort()).toEqual(["id", "kind", "reason"]);
+    for (const bad of ["SECRET", dataHome(), tmp, "sha256"]) expect(res.text).not.toContain(bad);
+  });
+});

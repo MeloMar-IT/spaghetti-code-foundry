@@ -1,9 +1,7 @@
-import { dataHome } from "../auth/store.js";
-import { COMPONENT_KINDS, componentLine, isCounted, lookupVersions, type ComponentKind, type SeenHash } from "./components.js";
+import { COMPONENT_KINDS, componentLine, type ComponentKind } from "./components.js";
 import { promoteCheck, promoteWithReport, REPORT_ID_RE } from "./promote.js";
-import { readHomeComponents, type ComponentProblem, type FoundComponent } from "./home.js";
-import { emptyGovernanceBook, governanceFields, governanceOrphans, governanceRecord, governanceStatus, readGovernanceBook } from "./governance.js";
-import { readVersionBook, recordVersions } from "./versions.js";
+import { governanceFields } from "./governance.js";
+import { listGoverned } from "./governed.js";
 
 export const PROMOTE_USAGE = "usage: scf promote <kind> <id> [--report <report-id>] [--live]";
 
@@ -46,49 +44,16 @@ export function componentsCommand(positionals: string[], out: (line: string) => 
   if (rest.length > 1 || (rest[0] !== undefined && !(COMPONENT_KINDS as readonly string[]).includes(rest[0]))) throw new Error(COMPONENTS_USAGE);
   const kind = rest[0] as ComponentKind | undefined;
 
-  const { found, problems } = readHomeComponents(dataHome(), { ...(kind ? { kinds: [kind] } : {}), ...(o.builtinFlowsDir ? { builtinFlowsDir: o.builtinFlowsDir } : {}) });
-  const counted = found.filter((f): f is FoundComponent & { kind: SeenHash["kind"] } => isCounted(f.kind));
-  const seen: SeenHash[] = counted.map((f) => ({ kind: f.kind, id: f.id, sha256: f.sha256 }));
-
-  let versions: (number | undefined)[] = [];
-  let failure: string | undefined;
-  if (seen.length > 0) {
-    if (record) {
-      const r = recordVersions(seen, o.waitMs === undefined ? {} : { waitMs: o.waitMs });
-      if (r.ok) versions = r.versions;
-      else failure = r.reason;
-    } else {
-      const r = readVersionBook();
-      if (r.ok) versions = lookupVersions(r.book, seen);
-      else failure = r.reason;
-    }
-  }
-
-  const gov = readGovernanceBook(dataHome());
-  const book = gov.ok ? gov.book : emptyGovernanceBook();
-  const now = o.now ?? new Date();
-  const withGovernance = (line: string, c: { kind: ComponentKind; id: string; version?: string | undefined }): string => {
-    const r = governanceRecord(book, c.kind, c.id);
-    return `${line} ${governanceFields(r, governanceStatus(c, r, now))}`;
-  };
-
-  const all: ComponentProblem[] = [...problems, ...governanceOrphans(book, found, problems, kind ? [kind] : COMPONENT_KINDS)];
-  const lines: string[] = [];
-  for (const f of found) {
-    if (!isCounted(f.kind)) {
-      lines.push(withGovernance(componentLine(f, f.builtin ? "builtin" : undefined), f));
-      continue;
-    }
-    if (failure !== undefined) {
-      all.push({ kind: f.kind, id: f.id, reason: failure });
-      continue;
-    }
-    const v = versions[counted.indexOf(f as (typeof counted)[number])];
-    const c = { ...f, ...(v === undefined ? {} : { version: String(v) }) };
-    lines.push(withGovernance(componentLine(c, v === undefined ? "unrecorded" : undefined), c));
-  }
-  for (const l of lines) out(l);
-  for (const p of all) out(`! ${p.kind} ${p.id}: ${p.reason}`);
-  if (!gov.ok) out(`! ${gov.reason}`);
-  return all.length > 0 || !gov.ok ? 1 : 0;
+  const list = listGoverned({
+    ...(kind ? { kinds: [kind] } : {}),
+    record,
+    ...(o.builtinFlowsDir ? { builtinFlowsDir: o.builtinFlowsDir } : {}),
+    ...(o.waitMs === undefined ? {} : { waitMs: o.waitMs }),
+    ...(o.now ? { now: o.now } : {}),
+  });
+  // a counted component whose versions cannot be read has no line, only its problem
+  for (const r of list.rows) if (!r.versionFailed) out(`${componentLine(r.component, r.mark)} ${governanceFields(r.record, r.status)}`);
+  for (const p of list.problems) out(`! ${p.kind} ${p.id}: ${p.reason}`);
+  if (list.bookProblem !== undefined) out(`! ${list.bookProblem}`);
+  return list.problems.length > 0 || list.bookProblem !== undefined ? 1 : 0;
 }

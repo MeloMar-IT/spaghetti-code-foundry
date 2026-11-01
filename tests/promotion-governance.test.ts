@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { componentsCommand } from "../src/promotion/cli.js";
+import { componentsView, listGoverned } from "../src/promotion/governed.js";
 import {
   GovernanceBookSchema,
   governanceOrphans,
@@ -276,5 +277,82 @@ describe("scf components with governance records", () => {
     expect(run().lines.map(key)).toEqual(before);
     expect(run(["record"]).lines.map(key)).toEqual(before);
     expect(readFileSync(join(home, "promotions/versions.json"), "utf8")).toBe(versions);
+  });
+});
+
+describe("listGoverned and componentsView", () => {
+  const list = (o: Parameters<typeof listGoverned>[0] = {}) => listGoverned({ builtinFlowsDir: builtin, now: NOW, ...o });
+  const keys = ["kind", "id", "builtin", "version", "owner", "risk", "lifecycle", "approvedVersion", "lastReview", "evalSuite", "status"];
+
+  it("gives rows in the order of `scf components`, and honours kinds", () => {
+    put("tool-profiles/p.yaml", stringify(profile("p")));
+    const l = list();
+    const lines = run().lines.filter((x) => !x.startsWith("!"));
+    expect(l.rows.map((r) => r.component.id)).toEqual(lines.map((x) => x.split(" ")[2]));
+    expect(l.rows.find((r) => r.component.id === "base")?.mark).toBe("builtin");
+    expect(l.rows.find((r) => r.component.id === "p")?.mark).toBe("unrecorded");
+    expect(list({ kinds: ["tool-profile"] }).rows.map((r) => r.component.kind)).toEqual(["tool-profile"]);
+  });
+
+  it("writes nothing by default, and the version book when record is true", () => {
+    put("tool-profiles/p.yaml", stringify(profile("p")));
+    const before = tree();
+    list();
+    expect(tree()).toEqual(before);
+    const l = list({ record: true });
+    expect(tree()).toContain("promotions/versions.json");
+    expect(l.rows.find((r) => r.component.id === "p")?.component.version).toBe("1");
+  });
+
+  it("keeps a counted component as a row with a fixed reason when the version book is bad", () => {
+    put("tool-profiles/p.yaml", stringify(profile("p")));
+    put("promotions/versions.json", "not json SECRET");
+    const l = list();
+    expect(l.rows.find((r) => r.component.id === "p")?.versionFailed).toBe(true);
+    expect(l.rows.some((r) => r.component.kind === "flow")).toBe(true);
+    const reason = l.problems.find((x) => x.id === "p")?.reason;
+    expect(reason).toBeTruthy();
+    expect(reason).not.toContain("SECRET");
+    const view = componentsView(l);
+    expect(view.components.find((c) => c.id === "p")).toMatchObject({ version: null, status: "unapproved" });
+    expect(view.problems.find((x) => x.id === "p")?.reason).toBe(reason);
+    expect(run().lines.filter((x) => !x.startsWith("!")).join("\n")).not.toContain("tool-profile p");
+  });
+
+  it("gives a book problem and default rows for a bad governance file", () => {
+    gov("a: [SECRET");
+    const l = list();
+    expect(l.bookProblem).toBe("promotions/governance.yaml is not valid; no record was used, fix it");
+    expect(l.rows.every((r) => r.record === undefined)).toBe(true);
+  });
+
+  it("lists an orphan record as a problem", () => {
+    gov(stringify(book({ "flow/gone": {} })));
+    expect(list().problems).toContainEqual({ kind: "flow", id: "gone", reason: "governance record names no component" });
+  });
+
+  it("maps a full record", () => {
+    gov(stringify(book({ "flow/base": { owner: "team", risk: "high", lifecycle: "deprecated", approved_version: "0", last_review: day(3), eval_suite: "timeout" } })));
+    const row = componentsView(list()).components.find((c) => c.id === "base");
+    expect(row).toEqual({ kind: "flow", id: "base", builtin: true, version: "0", owner: "team", risk: "high", lifecycle: "deprecated", approvedVersion: "0", lastReview: day(3), evalSuite: "timeout", status: "ok" });
+  });
+
+  it("gives null for no record, fixed keys, and no hash", () => {
+    const v = componentsView(list());
+    expect(v.components.length).toBeGreaterThan(0);
+    for (const c of v.components) expect(Object.keys(c)).toEqual(keys);
+    expect(v.components[0]).toMatchObject({ owner: null, risk: "low", lifecycle: "active", approvedVersion: null, lastReview: null, evalSuite: null, status: "unapproved" });
+    expect(typeof v.components[0]!.builtin).toBe("boolean");
+    expect(JSON.stringify(v)).not.toContain("sha256");
+    expect("governanceProblem" in v).toBe(false);
+  });
+
+  it("holds only kind, id and reason in a problem, and the governance problem only when set", () => {
+    put("tool-profiles/bad.yaml", "not: a profile");
+    gov("a: [");
+    const v = componentsView(list());
+    expect(v.problems.length).toBeGreaterThan(0);
+    for (const p of v.problems) expect(Object.keys(p).sort()).toEqual(["id", "kind", "reason"]);
+    expect(v.governanceProblem).toContain("promotions/governance.yaml");
   });
 });
