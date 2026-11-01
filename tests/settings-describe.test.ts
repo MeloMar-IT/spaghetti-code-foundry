@@ -126,7 +126,17 @@ describe("what is described", () => {
     expect(isCovered("policy.enforce")).toBe(true);
     expect(described.find((d) => d.key === "policy.enforce")).toMatchObject({ kind: "list", default: [], effect: "new-runs" });
     expect(isCovered("governor.priority")).toBe(true);
-    expect(described).toHaveLength(133);
+    expect(isCovered("governor.floor")).toBe(true);
+    expect(described.find((d) => d.key === "governor.floor")).toMatchObject({ kind: "number", integer: true, min: 0, optional: true, effect: "now", control: "generated" });
+    expect(described).toHaveLength(134);
+  });
+
+  it("keeps a floor of 0, leaves it out when absent, and counts one above concurrency as valid", () => {
+    expect(ConfigSchema.parse({ governor: { floor: 0 } }).governor.floor).toBe(0);
+    expect(ConfigSchema.parse({}).governor.floor).toBeUndefined();
+    expect(ConfigSchema.safeParse({ concurrency: 1, governor: { floor: 99 } }).success).toBe(true);
+    expect(issuesAt("governor.floor", -1)).not.toHaveLength(0);
+    expect(issuesAt("governor.floor", 1.5)).not.toHaveLength(0);
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {

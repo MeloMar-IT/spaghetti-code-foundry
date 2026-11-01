@@ -196,6 +196,34 @@ describe("Settings → Load governor", () => {
     expect(puts[0].governor).toEqual({ priority: "background" });
     expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
   });
+
+  const floorInput = (main: FakeElement) => card(main).all("input").filter((i) => i.attrs.type === "number")[0] as any;
+
+  it("has one number input for the lowest runs, empty when not set", async () => {
+    const { main } = await render({});
+    expect(card(main).all("input").filter((i) => i.attrs.type === "number")).toHaveLength(1);
+    expect(floorInput(main).value ?? "").toBe("");
+  });
+
+  it("saves a floor of 0 as 0, shows a stored 0, and drops the key when it is emptied", async () => {
+    const first = await render({});
+    const input = floorInput(first.main);
+    input.value = "0";
+    input.fire("change", { target: input });
+    first.main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(first.puts[0].governor.floor).toBe(0);
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(first.puts[0]))).data?.governor.floor).toBe(0);
+
+    const stored = await render({}, "127.0.0.1", 200, { governor: { priority: "low", floor: 0 } });
+    expect(String(floorInput(stored.main).value)).toBe("0");
+    const again = floorInput(stored.main);
+    again.value = "";
+    again.fire("change", { target: again });
+    stored.main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect("floor" in stored.puts[0].governor).toBe(false);
+  });
 });
 
 describe("Settings → Redesign", () => {

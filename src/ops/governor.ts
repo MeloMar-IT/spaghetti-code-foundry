@@ -41,8 +41,8 @@ export interface Settings {
   calmChecks: number;
   /** Checks in a row without load (calm or in between `low` and `high`) before the cap goes one up all the same. */
   coolChecks: number;
-  /** The cap never goes below this; 0: half of the configured number (at least 2). */
-  floor: number;
+  /** The cap never goes below this (0 is allowed: nothing new starts); not set: half of the configured number (at least 2). Above the configured number it counts as that number. */
+  floor?: number;
   /** Checks in a row with the 1-minute load above `high` before the cap goes down (a spike is shorter). */
   hotChecks: number;
   /** Minutes after the cap moved before it may go up. */
@@ -51,7 +51,7 @@ export interface Settings {
   downPauseMinutes: number;
 }
 
-export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, coolChecks: 15, floor: 0, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3 };
+export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, coolChecks: 15, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3 };
 
 export interface Decision { state: GovernorState; change?: string }
 
@@ -64,12 +64,14 @@ export interface Decision { state: GovernorState; change?: string }
  * away. In between (load between `low` and `high`) nothing moves at first, but after `coolChecks` checks in a row
  * without load the cap goes one up as well, once the pause is over. Memory pressure "warning" alone is no reason
  * to go down (macOS reports it for hours on a full but idle machine). Very high load: one test run at a time,
- * because tests are what loads the machine most. `now` is the time of the check.
+ * because tests are what loads the machine most. The cap goes down to the floor (`set.floor`, which may be 0: then
+ * nothing new starts until the machine is calmer; not set: half of the configured number, at least 2). `now` is the time of the check.
  */
 export function decide(prev: GovernorState, s: Sample, configured: number, now: Date, set: Settings = DEFAULTS): Decision {
-  const floor = Math.min(configured, set.floor >= 1 ? set.floor : Math.max(2, Math.ceil(configured / 2)));
-  // a stored cap above the configured number is no cap: the number was lowered in the settings meanwhile
-  const have = Math.min(prev.runs ?? configured, configured);
+  const floor = Math.min(configured, set.floor ?? Math.max(2, Math.ceil(configured / 2)));
+  // a stored cap above the configured number is no cap: the number was lowered in the settings meanwhile.
+  // Below the floor is none either: the floor was raised meanwhile (silent, like the clamp above).
+  const have = Math.max(floor, Math.min(prev.runs ?? configured, configured));
   const critical = s.pressure >= 4;
   const emergency = critical || s.load1 > set.testsHigh;
   const hot = s.load1 > set.high ? (prev.hot ?? 0) + 1 : 0;
@@ -156,7 +158,7 @@ export function runGovernor(o: { dir: string; slotsDir: string; capsFile: string
   const d = decide(loadState(o.dir, o.now), o.sample, o.configured, o.now, o.settings);
   writeFileSync(join(o.dir, "state.json"), JSON.stringify({ ...d.state, at: o.now.toISOString() }));
   try {
-    setCap("load", d.state.runs ? { runs: d.state.runs, until: new Date(o.now.getTime() + HOLD_MS).toISOString(), why: "machine load" } : undefined, o.capsFile);
+    setCap("load", d.state.runs !== undefined ? { runs: d.state.runs, until: new Date(o.now.getTime() + HOLD_MS).toISOString(), why: "machine load" } : undefined, o.capsFile);
   } finally {
     // also when the cap on runs could not be written. Written again at every check while it holds: test-slot
     // ignores a cap file that was not touched for the hold time, so a governor that stopped cannot hold tests down.

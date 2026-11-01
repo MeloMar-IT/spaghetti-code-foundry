@@ -434,6 +434,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       clearInterval(staleTimer);
       skillSweep.stop();
       clearTimeout(retryTimer);
+      scheduler.close();
       notifier?.stop();
       watchers.stopAll();
       void closeTelemetry();
