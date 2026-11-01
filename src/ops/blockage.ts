@@ -4,7 +4,7 @@ import { pidAlive, type RunSummary } from "../engine/state.js";
 export interface Wait { story: string; on: string; why: "files" | "depends on" }
 
 /** A story is named with its repository ("acme/app#12"): the same number in two repositories is two stories. */
-const storyOf = (r: RunSummary) => (r.vars?.issue ? `${r.vars.github_repo ?? ""}#${r.vars.issue}` : r.runId);
+export const storyOf = (r: RunSummary) => (r.vars?.issue ? `${r.vars.github_repo ?? ""}#${r.vars.issue}` : r.runId);
 
 /** The newest run of every story. */
 export function newestRuns(runs: RunSummary[]): RunSummary[] {

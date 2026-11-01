@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
-import { isStoryRun, isTimeLimitNote, markRetryStart, pendingRetry, retryComment, retryEntry, timeLimitAction, timeLimitReason, timeLimitsUsed } from "../src/engine/auto-retry.js";
+import { isStoryRun, isTimeLimitNote, markRetryStart, pendingRetry, retriesOf, retryComment, retryEntry, retryOutcome, timeLimitAction, timeLimitReason, timeLimitsUsed } from "../src/engine/auto-retry.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { isTimeLimitStop, type RunSummary, type StepRecord } from "../src/engine/state.js";
 import { isCovered } from "../src/settings/describe.js";
@@ -268,4 +268,36 @@ steps:
     expect(s2.history.map((h) => h.id)).toEqual(["claim_areas", "x", "claim_areas", "x", "after"]);
     expect(s2.retryStep).toBeUndefined();
   }, 30_000);
+});
+
+describe("retriesOf and retryOutcome", () => {
+  const ev = (startedAt?: string) => ({ at: "2026-01-01T00:00:00Z", step: "x", attempt: 1, of: 2, ...(startedAt ? { startedAt } : {}) });
+  const stop = "ran out of time in `x`; trying again (1 of 2)";
+  const r = (o: Record<string, unknown>) => ({ status: "stopped", reason: undefined, history: [], timeLimits: undefined, ...o }) as never;
+
+  it("names each outcome", () => {
+    expect(retryOutcome(r({ status: "succeeded" }))).toBe("finished");
+    expect(retryOutcome(r({ status: "succeeded", history: [{ id: "create_split" }] }))).toBe("split");
+    expect(retryOutcome(r({ status: "failed" }))).toBe("failed");
+    expect(retryOutcome(r({ status: "cancelled" }))).toBe("cancelled");
+    for (const status of ["running", "waiting", "stopped"]) expect(retryOutcome(r({ status }))).toBe("open");
+  });
+
+  it("counts only retries that began", () => {
+    expect(retriesOf(r({}))).toBeUndefined();
+    expect(retriesOf(r({ timeLimits: [] }))).toBeUndefined();
+    expect(retriesOf(r({ timeLimits: [null, 3, "x"] }))).toBeUndefined();
+    expect(retriesOf(r({ status: "succeeded", timeLimits: [ev("2026-01-01T00:01:00Z"), null] }))).toEqual({ started: 1, waiting: false, outcome: "finished" });
+  });
+
+  it("a retry cancelled before it began gives nothing; after one began, it is cancelled", () => {
+    expect(retriesOf(r({ status: "cancelled", reason: "cancelled", timeLimits: [ev()] }))).toBeUndefined();
+    expect(retriesOf(r({ status: "cancelled", timeLimits: [ev("2026-01-01T00:01:00Z"), ev()] }))).toEqual({ started: 1, waiting: false, outcome: "cancelled" });
+  });
+
+  it("a waiting retry is waiting only on a time-limit stop", () => {
+    expect(retriesOf(r({ reason: stop, timeLimits: [ev()] }))).toEqual({ started: 0, waiting: true, outcome: "open" });
+    expect(retriesOf(r({ reason: "your daily limit is reached", timeLimits: [ev()] }))).toBeUndefined();
+    expect(retriesOf(r({ status: "failed", reason: "x", timeLimits: [ev()] }))).toBeUndefined();
+  });
 });

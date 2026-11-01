@@ -621,6 +621,77 @@ describe("the digest", () => {
     expect(digestFacts(runs, NOW, 24, alive)).toEqual({ done: ["#1: Add a page"], split: ["#2"], failed: ["#3 — the tests still fail"], waiting: ["#4 — Approve the plan?"], working: 1, interrupted: ["#7 — its process is gone; resume it"] });
   });
 
+  describe("automatic retries", () => {
+    const ev = (started = true) => ({ at: "x", step: "s", attempt: 1, of: 2, ...(started ? { startedAt: "y" } : {}) });
+    const retry = (id: string, issue: string, o: Partial<RunSummary> & { steps?: Shape[]; at?: number } = {}, n = 1) =>
+      run(id, { issue, timeLimits: Array.from({ length: n }, () => ev()), ...o });
+    const at = (h: number) => NOW.getTime() - h * HOUR;
+    const only = (rs: RunSummary[], now = NOW) => digestFacts(rs, now, 24, () => true).retries;
+
+    it("counts each outcome once, with the exact line", () => {
+      const rs = [
+        retry("a", "1", {}, 2), retry("b", "2", { steps: [{ id: "create_split" }] }), retry("c", "3", { status: "failed" }),
+        retry("d", "4", { status: "running", pid: 1 }), retry("e", "5", { status: "cancelled" }),
+      ];
+      const t = only(rs);
+      expect(t).toEqual({ stories: 5, retries: 6, finished: 1, split: 1, failed: 2, open: 1 });
+      const home = tmp();
+      const text = runDigest({ runs: rs, home, now: NOW, alive: () => true }).text;
+      expect(text).toContain("## Automatic retries after a time limit\n\n- 5 stories, 6 retries: 1 finished, 1 split, 2 failed, 1 still open");
+    });
+
+    it("says story and retry in the singular, and has no section without retries", () => {
+      const home = tmp();
+      expect(runDigest({ runs: [retry("a", "1")], home, now: NOW, alive: () => true }).text).toContain("- 1 story, 1 retry: 1 finished, 0 split, 0 failed, 0 still open");
+      expect(runDigest({ runs, home, now: NOW, alive }).text).not.toContain("Automatic retries");
+    });
+
+    it("leaves out a retry that was queued and cancelled, and shows a waiting one as open", () => {
+      const cancelled = run("a", { issue: "1", status: "cancelled", reason: "cancelled", timeLimits: [ev(false)] });
+      expect(only([cancelled])).toBeUndefined();
+      expect(digestFacts([cancelled], NOW, 24, () => true)).not.toHaveProperty("retries");
+      const waiting = run("w", { issue: "2", status: "stopped", reason: "ran out of time in `s`; trying again (1 of 2)", timeLimits: [ev(false)], at: at(80) });
+      expect(only([waiting])).toEqual({ stories: 1, retries: 0, finished: 0, split: 0, failed: 0, open: 1 });
+    });
+
+    it("follows one story across windows: open, then its outcome, then gone", () => {
+      const open = retry("a", "1", { status: "running", pid: 1 });
+      const done = { ...open, status: "succeeded", finishedAt: new Date(at(-5)).toISOString() } as RunSummary;
+      expect(only([open])?.open).toBe(1);
+      expect(only([done], new Date(at(-6)))).toMatchObject({ finished: 1, open: 0 });
+      expect(only([done], new Date(at(-40)))).toBeUndefined();
+    });
+
+    it("counts by the end of the run, not its start", () => {
+      expect(only([retry("a", "1", { at: at(30), finishedAt: new Date(at(1)).toISOString() })])?.finished).toBe(1);
+      expect(only([retry("a", "1", { at: at(40), finishedAt: new Date(at(30)).toISOString() })])).toBeUndefined();
+    });
+
+    it("counts an older run's retries under the newest run's outcome when the older run ended in the window", () => {
+      const older = retry("a", "1", { status: "failed", at: at(3), finishedAt: new Date(at(2)).toISOString() });
+      const newest = (o: Partial<RunSummary>) => run("b", { issue: "1", at: at(1), ...o });
+      expect(only([older, newest({ status: "running", pid: 1 })])).toMatchObject({ stories: 1, retries: 1, open: 1 });
+      expect(only([older, newest({})])).toMatchObject({ stories: 1, retries: 1, finished: 1 });
+      expect(only([older, newest({ status: "failed" })])).toMatchObject({ stories: 1, retries: 1, failed: 1 });
+      expect(only([older, newest({ steps: [{ id: "create_split" }] })])).toMatchObject({ stories: 1, retries: 1, split: 1 });
+    });
+
+    it("does not count an older run's retries once that run ended before the window (a new run without retries that succeeds)", () => {
+      const old = retry("a", "1", { status: "failed", at: at(31), finishedAt: new Date(at(30)).toISOString() }, 2);
+      const today = run("b", { issue: "1", at: at(1) });
+      expect(only([old, today])).toBeUndefined();
+      expect(digestFacts([old, today], NOW, 24, () => true)).not.toHaveProperty("retries");
+      // while the old run is in the window, its retries are reported under the newest run's outcome
+      expect(only([old, today], new Date(at(7)))).toMatchObject({ stories: 1, retries: 2, finished: 1 });
+    });
+
+    it("drops an older run's retries when that run leaves the window, even while the newer run is still open", () => {
+      const older = retry("a", "1", { status: "failed", at: at(3), finishedAt: new Date(at(2)).toISOString() });
+      const open = run("b", { issue: "1", at: at(1), status: "running", pid: 1 });
+      expect(only([older, open], new Date(at(-30)))).toBeUndefined();
+    });
+  });
+
   it("runDigest writes the day's file with what the other helpers found", () => {
     const home = tmp();
     mkdirSync(join(home, "governor"));
