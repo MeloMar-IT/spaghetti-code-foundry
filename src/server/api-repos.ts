@@ -14,6 +14,7 @@ import { allAppRepos, appRepoAllowed, getAppRepos, onAppList } from "../auth/app
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
 import { KeygenError } from "../credentials/ssh-keygen.js";
+import { connectLevel } from "../governance/autonomy-store.js";
 import { type DescribeVars, RepoWatcherError, addRepoWatcher, listRepoWatchers, removeRepoWatcher,updateRepoWatcher, watcherRepoProblem } from "../repos/watchers.js";
 import { readFileSync } from "node:fs";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
@@ -348,7 +349,7 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
       guardedRepos(ctx, () => checkNewRepo(user.id, input));
       installationId = await lookupInstallation(ctx, app, github);
     }
-    const repo = guardedRepos(ctx, () => addRepo(user.id, input, { installationId, authorize }));
+    const repo = guardedRepos(ctx, () => addRepo(user.id, input, { installationId, authorize, beforeSave: connectLevel }));
     auditAction(ctx.diagLog, user.id, "repo-add", repo.id, repo.url);
     const out = shown(repo);
     return send(res, 201, out, publicKeys([out])), true;

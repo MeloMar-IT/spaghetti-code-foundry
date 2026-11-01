@@ -1185,6 +1185,9 @@ can be found.
   Version 9 adds the event `governance.decided`, written by a run that is checked for governance (see
   "Governance of a component"). Versions 1 to 8 are read as before. A delivery validator that only knows
   version 8 refuses version 9 lines, so the validator is 1.2.0 from this change on: update the pin first.
+  Version 10 adds the event `run.autonomy` (see "Autonomy levels"). Versions 1 to 9 are read as before. A
+  delivery validator that only knows version 9 refuses version 10 lines, so the validator is 1.3.0 from this
+  change on: update the pin first.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
@@ -1825,7 +1828,7 @@ check-runs API of the commit.
 delivery-contract:
   runs-on: ubuntu-latest
   env:
-    VALIDATOR_VERSION: "1.2.0"          # the version you pin
+    VALIDATOR_VERSION: "1.3.0"          # the version you pin
     RELEASE_BASE: "<download folder of that release>"   # the release's assets, from the release page
     GH_TOKEN: ${{ github.token }}
   steps:
@@ -1865,7 +1868,7 @@ folder, which the job gets from the workflow's artifacts or from the pull reques
 **Generic CI in plain shell.** Any CI with Node.js 22 or later and `sha256sum` can run the same steps:
 
 ```sh
-V=1.2.0
+V=1.3.0
 BASE="<download folder of that release>"   # the release's assets, from the release page
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs"
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs.sha256"
@@ -2078,6 +2081,30 @@ not affected by a broken file.
 The log gets one `! governance: …` line per refused component, or `· governance: allowed (N components)` when nothing
 is refused. The run's evidence gets a `governance.decided` event with the outcome, the kind, id, version and status of
 each component, and a fixed reason code. It never holds file content. Evals are not checked for governance.
+
+### Autonomy levels
+
+Each repository and each flow has an autonomy level: a stored maximum for how far a run may go. The levels,
+lowest first, are `observe`, `plan-only`, `guarded-write` and `delivery-handoff`. What each level allows is not
+defined yet; later parts of the governance work will use them.
+
+A repository with no entry, and a flow with no entry, is `delivery-handoff`. A repository connected through the
+API starts at `guarded-write`. A repository of an existing install gets no entry, so it stays at `delivery-handoff`.
+
+Each run gets the **lower** of its repository's level and its flow's level. The repository is the connected
+repository with the run's GitHub name (`owner/repo`); a run without one gets only the flow's level. The level is
+kept in three places:
+
+- `run.json`, as `autonomy` (`level`, `repository` when there is one, and `flow`);
+- the live log, as a line such as `autonomy: plan-only (repository guarded-write, flow plan-only)`;
+- the evidence, as the event `run.autonomy`, written right after `run.created`. A resumed run does not write it again.
+
+Levels are stored in `autonomy.json` in the Foundry home. There is no screen or command to change a level yet. If `autonomy.json` or `repos.json` cannot be read when a run starts, the run counts as
+`observe`, and the log has a `!` line that says which file it was. Connecting a repository fails when
+`autonomy.json` is broken.
+
+**Not enforced yet.** The level is recorded, but nothing is allowed or refused by it. A run at `observe` runs as
+before.
 
 ### Promote a component
 

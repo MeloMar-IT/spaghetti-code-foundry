@@ -36,7 +36,7 @@ const start = (yaml: string, o: Partial<Parameters<typeof runFlow>[1]> = {}) => 
 const text = (s: Pick<RunSummary, "runDir">) => readFileSync(join(s.runDir, "evidence.jsonl"), "utf8");
 const events = (s: Pick<RunSummary, "runDir">): EvidenceEvent[] => text(s).split("\n").filter(Boolean).map((l) => parseEvidenceEventLine(l));
 /** The events without the decisions of the policy, which every run has: for lookups by place. */
-const steps = (s: Pick<RunSummary, "runDir">) => events(s).filter((e) => e.type !== "policy.decided");
+const steps = (s: Pick<RunSummary, "runDir">) => events(s).filter((e) => e.type !== "policy.decided" && e.type !== "run.autonomy");
 const types = (s: Pick<RunSummary, "runDir">) => steps(s).map((e) => e.type + ("step" in e && e.step ? `:${e.step.id}` : ""));
 /** Every stream: places 0, 1, 2, … and no id twice. */
 const inOrder = (s: Pick<RunSummary, "runDir">) => {

@@ -18,6 +18,7 @@ import { CONTEXT_OMISSION_REASONS } from "../src/context/schema.js";
 import { CONTEXT_OUTCOMES } from "../src/evidence/schema.js";
 import { COMPONENT_KINDS, GOVERNANCE_FAILURES, GOVERNANCE_OUTCOMES, GOVERNANCE_STATUSES, MAX_GOVERNED_COMPONENTS } from "../src/promotion/components.js";
 import { RUN_CONTEXT_CODES } from "../src/engine/run-context.js";
+import { AUTONOMY_LEVELS } from "../src/governance/autonomy.js";
 import { REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS } from "../src/engine/repo-request.js";
 import { AGENTS } from "../src/flow/schema.js";
 import { BOUNDARIES, CREDENTIALS, DENY_ONLY_REASONS, MODES, NO_PACK_REASONS, NO_RULE_REASONS, OUTCOMES } from "../src/policy/schema.js";
@@ -174,6 +175,7 @@ const BASE: Record<string, Rec> = {
   "policy.decided": { type: "policy.decided", decision: DECISION, step: shell },
   "repo.operation": { ...REPO_OP, repository: "own/repo", branch: "feat/x", policy: "allow" },
   "context.bundled": CTX_WRITTEN,
+  "run.autonomy": { type: "run.autonomy", level: "plan-only", repository: "guarded-write", flow: "plan-only" },
   "governance.decided": { type: "governance.decided", outcome: "refused", components: [{ kind: "flow", id: "deploy", version: "3", status: "retired", refused: true }] },
 };
 
@@ -234,7 +236,9 @@ const GEN: Rec[] = [
   ...GOVERNANCE_STATUSES.map((status) => ({ type: "governance.decided", outcome: "allowed", components: [{ kind: "flow", id: "a.b_c-(d)", status, refused: false }] })),
   ...COMPONENT_KINDS.map((kind) => ({ type: "governance.decided", outcome: "allowed", components: [{ kind, id: "x", version: "1.0.0", status: "ok", refused: false }] })),
   { type: "governance.decided", outcome: "allowed", components: [] },
-  ...[1, 2, 3, 4, 5, 6, 7, 8].map((version) => ({ type: "run.queued", version })),
+  ...AUTONOMY_LEVELS.map((level) => ({ type: "run.autonomy", level, flow: "plan-only" })),
+  ...AUTONOMY_LEVELS.map((level) => ({ type: "run.autonomy", level, repository: level, flow: level })),
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((version) => ({ type: "run.queued", version })),
   ...RUN_CONTEXT_CODES.map((failure) => ({ type: "context.bundled", outcome: "failed", failure })),
   ...CONTEXT_OMISSION_REASONS.map((reason) => ({ ...CTX_WRITTEN, omitted: { ...(CTX_WRITTEN.omitted as object), [reason]: 7 } })),
 ];
@@ -438,7 +442,8 @@ describe("parity: events that are hashed and anchored but break the schema", () 
       one("a 33-character effort", (e) => (e.fallbackFrom.effort = "e".repeat(33)), "step.routed"),
       one("a model name with a leading space", (e) => (e.model.model = " gpt"), "step.routed"),
       one("a flow name with a control character", (e) => (e.flow.name = "a\nb"), "run.created"),
-      one("a flow version 0", (e) => (e.flow.version = 0), "run.created"),
+      one("an unknown autonomy level", (e) => (e.level = "full"), "run.autonomy"),
+      one("a flow version 0",(e) => (e.flow.version = 0), "run.created"),
       one("a parent of a//b", (e) => (e.step.parent = "a//b")),
       one("a step id with a digit first", (e) => (e.step.id = "1a")),
       one("a null where a step is optional", (e) => (e.step = null), "run.failed"),

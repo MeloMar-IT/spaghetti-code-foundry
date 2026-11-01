@@ -13,6 +13,7 @@ import { CONTEXT_OMISSION_REASONS, ContextBudgetSchema } from "../context/schema
 import { CONTEXT_BUNDLE_FILE } from "../context/version.js";
 import { RUN_CONTEXT_CODES } from "../engine/run-context.js";
 import { COMPONENT_KINDS, GOVERNANCE_FAILURES, GOVERNANCE_OUTCOMES, GOVERNANCE_STATUSES, MAX_GOVERNED_COMPONENTS } from "../promotion/components.js";
+import { AutonomyLevelSchema } from "../governance/autonomy.js";
 import { EVIDENCE_EVENT_VERSION, EVIDENCE_EVENTS_FILE, RUN_EVIDENCE_VERSION } from "./version.js";
 
 /**
@@ -95,6 +96,8 @@ export type Denial = z.infer<typeof DenialSchema>;
 const EventUnion = z.discriminatedUnion("type", [
   /** The run got its id and folder. `by` is who asked for it. */
   event("run.created", { flow: FlowIdentitySchema, by: ActorSchema, localTest: z.literal(true).optional() }),
+  /** The most autonomy the run may use: the lower of its repository's and its flow's stored level. Level words only. Written once, at the start (#643). */
+  event("run.autonomy", { level: AutonomyLevelSchema, repository: AutonomyLevelSchema.optional(), flow: AutonomyLevelSchema }),
   /** The run was put in the queue. */
   event("run.queued", {}),
   /** The first step is about to run. `base` is the commit the workspace started from, when there is one. */
@@ -250,7 +253,7 @@ export const EvidenceEventSchema = EventUnion.superRefine((e, ctx) => {
 export type EvidenceEvent = z.infer<typeof EvidenceEventSchema>;
 export type EvidenceEventType = EvidenceEvent["type"];
 
-export const RUN_EVENT_TYPES = ["run.created", "run.queued", "run.started", "run.stopped", "run.resumed", "run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
+export const RUN_EVENT_TYPES = ["run.created", "run.autonomy", "run.queued", "run.started", "run.stopped", "run.resumed", "run.cancelled", "run.failed", "run.completed"] as const satisfies readonly EvidenceEventType[];
 export const STEP_EVENT_TYPES = ["step.started", "step.routed", "step.profiled", "step.retried", "step.denied", "step.approved", "step.failed", "step.completed"] as const satisfies readonly EvidenceEventType[];
 export const POLICY_EVENT_TYPES = ["policy.decided"] as const satisfies readonly EvidenceEventType[];
 export const REPO_EVENT_TYPES = ["repo.operation"] as const satisfies readonly EvidenceEventType[];

@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { REPO_LIMIT, RepoError, RepoHalfSaved, addRepo, getRepo, listRepos, ownsRepo, readRepoSecret, removeGithubRepo, removeRepo, removeReposLocked, removeUserCredential, reposPath, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../src/auth/repos.js";
+import { REPO_LIMIT, RepoError, RepoHalfSaved, addRepo, getRepo, listRepos, ownsRepo, readRepoSecret, removeGithubRepo, removeRepo, removeReposLocked, removeUserCredential, repoIdsOf, reposPath, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../src/auth/repos.js";
 import { StoreError, withAuthLock } from "../src/auth/store.js";
 import { jsonFiles } from "../src/home-migrate.js";
 import { createUser, deleteUser, hashPassword } from "../src/auth/users.js";
@@ -76,6 +76,27 @@ describe("the repository list", () => {
     add(ANN, "https://gitlab.com/acme/web");
     expect(ownsRepo(ANN, "acme/app")).toBe(true);
     expect(ownsRepo(ANN, "acme/web")).toBe(false);
+  });
+
+  it("finds the ids of a GitHub repository across accounts, in any spelling", () => {
+    const a = add(ANN, "git@github.com:Acme/App.git");
+    add(ANN, "https://gitlab.com/acme/web");
+    expect(repoIdsOf("acme/app")).toEqual([a.id]);
+    expect(repoIdsOf("ACME/APP")).toEqual([a.id]);
+    expect(repoIdsOf("acme/web")).toEqual([]);
+    expect(repoIdsOf("nope")).toEqual([]);
+    const b = add(BOB, "acme/other");
+    expect(repoIdsOf("acme/other")).toEqual([b.id]);
+  });
+
+  it("calls beforeSave with the new id before anything is written, and a throw saves nothing", () => {
+    let seen: string | undefined;
+    const a = addRepo(ANN, "acme/app", { ...OK, beforeSave: (id) => void (seen = id) });
+    expect(seen).toBe(a.id);
+    expect(() => addRepo(ANN, { url: "acme/web", method: "github-token", token: TOKEN }, { ...OK, beforeSave: () => { throw new Error("no"); } })).toThrow("no");
+    expect(urls(ANN)).toEqual(["https://github.com/acme/app"]);
+    expect(orphans(ANN)).toEqual([]);
+    expect(listCredentials(ANN)).toEqual([]);
   });
 
   it("gives each error its code", () => {

@@ -9,8 +9,9 @@
  * 7 adds `packSha256` on a policy denial, and a policy `step.denied` without `step` (a denial about the whole run).
  * 8 adds `localTest` on `run.created`.
  * 9 adds the `governance.decided` event (#665).
+ * 10 adds the `run.autonomy` event (#643).
  */
-export const EVIDENCE_EVENT_VERSION = 9;
+export const EVIDENCE_EVENT_VERSION = 10;
 /** The version of `evidence.json` (the manifest of a finished run) this Foundry writes. */
 export const RUN_EVIDENCE_VERSION = 1;
 
