@@ -1,5 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { Config } from "../config.js";
 import { deliveryAfterStep, deliveryKeyEnv } from "../delivery/write.js";
 import { FACTORY_HOME } from "../home.js";
@@ -14,7 +14,9 @@ import { KEY_UNREADABLE } from "../auth/repos.js";
 import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
-import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { ownDir, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { SLOT_WAITS_DIR, slotWaitLimitMs, waitedLine, type SlotWaitWatch } from "../steps/slot-waits.js";
+import { isTimedOut } from "../errors.js";
 import { stepContextUncited } from "./context-index.js";
 import { claimAfterResolve } from "./release-claim.js";
 import { readDecidedQuestions } from "./questions.js";
@@ -109,7 +111,7 @@ export interface ApprovalDecision {
   note?: string;
 }
 
-export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held"> & {
+export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held" | "slotWaitMs"> & {
   /** A shell step printed more than it kept. Not stored in the record: it shows as the `oversize` signal of its label. */
   oversize?: boolean;
 };
@@ -152,7 +154,7 @@ export function historySummary(summary: RunSummary): string {
 export function outputLabel(step: Step, scope: Scope, res: StepResult): StepRecord["label"] {
   const path = `steps.${step.id}.output`;
   const oversize = step.type === "shell" && res.oversize === true;
-  return labelOutput(res.output, { path, kind: trustOf(path, stepTypesOf(scope.flow)).kind ?? "log", step: step.id, stepType: step.type }, { timedOut: res.error === "timed out", oversize });
+  return labelOutput(res.output, { path, kind: trustOf(path, stepTypesOf(scope.flow)).kind ?? "log", step: step.id, stepType: step.type }, { timedOut: isTimedOut(res.error), oversize });
 }
 
 /** Store a finished step in history and in the scope's template context. */
@@ -212,7 +214,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       repository: repositoryFact(scope.ctx.vars),
       step: step.id,
       outputBytes: step.type === "shell" && meter?.printedBytes !== undefined ? meter.printedBytes : Buffer.byteLength(res.output ?? "", "utf8"),
-      elapsedMs: Math.max(0, Math.round(measured ? (meter?.ms ?? 0) : rec.durationMs)),
+      // the wait for a test slot does not count against a step's limit (see slot-waits.ts)
+      elapsedMs: Math.max(0, Math.round(measured ? (meter?.ms ?? 0) - (meter?.slotWaitMs ?? 0) : rec.durationMs)),
       stepCostUsd: res.costUsd ?? 0,
       runCostUsd: engine.summary.totalCostUsd,
       dailyCostUsd: daily,
@@ -244,6 +247,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       ...(GitIdentitySchema.shape.branch.safeParse(p.branch).success ? { branch: p.branch } : {}),
     });
   }
+  if (res.slotWaitMs) engine.log(`    · ${waitedLine(res.slotWaitMs)}`);
   const secs =(rec.durationMs / 1000).toFixed(1);
   const tok = res.tokens ? `, ${Math.round((res.tokens.input + res.tokens.output) / 1000)}k tok` : "";
   engine.log(`${rec.ok ? "✔" : "✘"} ${rec.id} (${secs}s${res.costUsd ? `, $${res.costUsd.toFixed(4)}` : ""}${tok})${rec.error ? ` — ${rec.error}` : ""}`);
@@ -265,6 +269,25 @@ export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">,
     return undefined; // pushes are then not observed; the step runs as before
   }
   return file;
+}
+
+/**
+ * The folder where test-slot records the waits of this try of a step (FACTORY_TEST_SLOT_WAIT_DIR), made fresh,
+ * with the most time that may be left out of the step's limit. Undefined when the folder can't be made: the step then
+ * runs as before, its limit counting every second.
+ */
+export function slotWaitsFor(engine: Pick<Engine, "summary">, logFile: string): SlotWaitWatch | undefined {
+  const root = join(engine.summary.runDir, SLOT_WAITS_DIR);
+  const dir = join(root, basename(logFile).replace(/\.log$/, ""));
+  try {
+    mkdirSync(root, { recursive: true });
+    ownDir(root);
+    rmSync(dir, { recursive: true, force: true });
+    ownDir(dir);
+  } catch {
+    return undefined;
+  }
+  return { dir, maxExtraMs: slotWaitLimitMs() };
 }
 
 /** A visit of a step begins: the evidence event, then the policy question for `step.before`. Every step visit passes here. */
@@ -397,7 +420,11 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
             stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: engine.config.sandbox.user_read }),
           );
         }
+        // the waits of test-slot are recorded for the time limit (a container does not see the folder)
+        const slotWaits = step.sandbox && image ? undefined : slotWaitsFor(engine, logFile);
+        if (slotWaits) stepEnvVars.FACTORY_TEST_SLOT_WAIT_DIR = slotWaits.dir;
         r = await runShell({
+          slotWaits,
           command: renderTrusted(step.run, ctx, stepTypesOf(scope.flow), SHELL_TEMPLATE_ROOTS),
           cwd: engine.summary.workdir!,
           env: stepEnvVars,
@@ -440,9 +467,9 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         const expired = appExpires !== undefined && Date.now() >= appExpires;
         const reason = keyAccess ? KEY_REFUSED_RUN : access?.kind === "app" ? (expired ? APP_TOKEN_EXPIRED : APP_REFUSED_RUN) : refinement ? TOKEN_REFUSED_REASON : TOKEN_REFUSED_RUN;
         engine.accessFailed = true;
-        return { ok: false, output: r.output, error: reason, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}) };
+        return { ok: false, output: r.output, error: reason, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
       }
-      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}) };
+      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
     }
 
     case "parallel": {

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
 import { runProcess, type ProcessMeter } from "./process.js";
+import { timedOutError, type SlotWaitWatch } from "./slot-waits.js";
 
 /** Codex CLIs that ship inside apps (the ChatGPT desktop app bundles one). */
 const BUNDLED_CODEX = ["/Applications/ChatGPT.app/Contents/Resources/codex", "/Applications/Codex.app/Contents/Resources/codex"];
@@ -49,6 +50,8 @@ export interface CodexRunOptions {
   sandboxProfile?: string;
   /** Filled with the process time and the bytes it printed (see ProcessMeter). */
   meter?: ProcessMeter;
+  /** Where test-slot records its waits: the time limit does not count them. */
+  slotWaits?: SlotWaitWatch;
   onProgress?: (msg: string) => void;
   /** Read-only reviewer: switch off MCP servers and hooks. It also passes `--ignore-user-config`, unless `ignoreUserConfig` says otherwise (the login is kept). */
   reviewer?: boolean;
@@ -102,6 +105,8 @@ export interface CodexRunResult {
   inputTokens: number;
   outputTokens: number;
   error?: string;
+  /** Time the session waited for a test slot (ms). Absent when it did not wait. */
+  slotWaitMs?: number;
 }
 
 interface CodexItem {
@@ -176,6 +181,7 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
       cleanEnv: o.cleanEnv,
       sandboxProfile: o.sandboxProfile,
       meter: o.meter,
+      slotWaits: o.slotWaits,
       stdin: prompt,
       timeoutMs: o.timeoutMs,
       signal: o.signal,
@@ -205,9 +211,9 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
     return { ok: false, output: "", inputTokens, outputTokens, error: msg };
   }
 
-  const base = { output: last, sessionId, inputTokens, outputTokens };
+  const base = { output: last, sessionId, inputTokens, outputTokens, ...(res.slotWait ? { slotWaitMs: res.slotWait.waitedMs } : {}) };
   if (res.aborted) return { ...base, ok: false, error: "cancelled" };
-  if (res.timedOut) return { ...base, ok: false, error: "timed out" };
+  if (res.timedOut) return { ...base, ok: false, error: timedOutError(res.slotWait) };
   if (failure || res.exitCode !== 0) {
     const err = failure ?? `codex exited with code ${res.exitCode}. ${res.stderr.trim().slice(-500)}`;
     return { ...base, ok: false, error: /not logged in|\b401\b|unauthorized/i.test(err) ? `${err} — run \`codex login\`` : err };

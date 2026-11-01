@@ -67,6 +67,11 @@ describe("advise", () => {
     expect(a.to).toContain("40 minutes");
   });
 
+  it("counts a time-out that waited for a test slot as a time-out", () => {
+    const runs = many(30, (i) => run([{ id: "implement", ...(i < 3 ? { ok: false, error: "timed out (waited 18 min for a test slot, which did not count)" } : {}) }]));
+    expect(find(runs, "implement").verdict).toBe("time");
+  });
+
   it("advises a higher level when the work fails or is repaired often", () => {
     const failing = many(30, (i) => run([{ id: "implement", ok: i >= 8 }]));
     expect(find(failing, "implement")).toMatchObject({ verdict: "raise", to: "claude-opus-5-5" });

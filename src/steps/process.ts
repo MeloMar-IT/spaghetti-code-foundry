@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { anyPidAlive, ProcessTracker, processTableAsync, signalRows, type ProcRow } from "./proc-tree.js";
+import { readSlotWaits, slotClock, waitedLine, type SlotWaitWatch } from "./slot-waits.js";
 import { combineRedactors, liveRedactor, makeRedactor, redactStream, requireRedaction, type Redactor } from "../credentials/redact.js";
 
 export interface ProcessResult {
@@ -10,12 +11,16 @@ export interface ProcessResult {
   stderr: string;
   timedOut: boolean;
   aborted: boolean;
+  /** The time the process waited for a test slot (see slot-waits.ts). Set only when it waited. */
+  slotWait?: { waitedMs: number; countedMs: number; capped: boolean };
 }
 
 /** Filled by runProcess whenever it settles, also when it rejects: how long the process ran and how many bytes it printed. */
 export interface ProcessMeter {
   ms?: number;
   printedBytes?: number;
+  /** The time that did not count against the time limit (waits for a test slot, at most the bound). */
+  slotWaitMs?: number;
 }
 
 export interface ProcessOptions {
@@ -43,6 +48,8 @@ export interface ProcessOptions {
   cleanEnv?: boolean;
   /** Start the command inside `/usr/bin/sandbox-exec` with this profile (a shell step of a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
+  /** Where test-slot records its waits: the time limit does not count them (at most `maxExtraMs`). */
+  slotWaits?: SlotWaitWatch;
 }
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
@@ -106,6 +113,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     if (opts.meter) {
       opts.meter.ms = undefined;
       opts.meter.printedBytes = undefined;
+      opts.meter.slotWaitMs = undefined;
     }
     // fail before anything starts when the stored credentials cannot be read
     let current: () => Redactor;
@@ -230,12 +238,24 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     if (opts.signal?.aborted) onAbort();
     else opts.signal?.addEventListener("abort", onAbort, { once: true });
 
-    const timer = opts.timeoutMs
-      ? setTimeout(() => {
-          timedOut = true;
-          kill();
-        }, opts.timeoutMs)
-      : undefined;
+    // The limit is looked at when it is reached: time spent waiting for a test slot moves it back (never past the bound).
+    const clockNow = (limitMs: number) => {
+      const watch = opts.slotWaits!;
+      const now = Date.now();
+      return slotClock(readSlotWaits(watch.dir, now), { began, limitMs, maxExtraMs: watch.maxExtraMs, now });
+    };
+    let timer: NodeJS.Timeout | undefined;
+    const atDeadline = () => {
+      if (killedAt) return;
+      const next = opts.slotWaits ? clockNow(opts.timeoutMs!).nextCheckMs : 0;
+      if (next > 0) {
+        timer = setTimeout(atDeadline, next);
+        return;
+      }
+      timedOut = true;
+      kill();
+    };
+    if (opts.timeoutMs) timer = setTimeout(atDeadline, opts.timeoutMs);
 
     // One filter for the combined log: halves of a secret that arrive on stdout and stderr must not join unseen.
     const logFilter = redactStream((s) => void log.write(s), current);
@@ -296,13 +316,22 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       logFilter.end();
       if (opts.onLine && pending.trim()) opts.onLine(pending);
       measure();
+      let slotWait: ProcessResult["slotWait"];
+      if (opts.slotWaits) {
+        const c = clockNow(Infinity);
+        if (c.waitedMs > 0) {
+          slotWait = { waitedMs: c.waitedMs, countedMs: c.countedMs, capped: c.waitedMs > opts.slotWaits.maxExtraMs };
+          if (opts.meter) opts.meter.slotWaitMs = c.countedMs;
+          if (!logError) log.write(`${waitedLine(c.waitedMs)}\n`);
+        }
+      }
       if (logError) {
         log.end();
         return reject(new Error(`could not write the log file (${logError.code ?? "error"})`));
       }
       log.end((err?: Error | null) => {
         if (err || logError) return reject(new Error(`could not write the log file (${(err as NodeJS.ErrnoException | null | undefined)?.code ?? logError?.code ?? "error"})`));
-        resolve({ exitCode: code, stdout, stderr, timedOut, aborted });
+        resolve({ exitCode: code, stdout, stderr, timedOut, aborted, ...(slotWait ? { slotWait } : {}) });
       });
     };
 

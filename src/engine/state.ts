@@ -35,6 +35,8 @@ export interface StepRecord {
   tools?: { calls: number; totalMs: number; maxMs: number };
   /** The largest input of one model turn (input + cache read + cache creation tokens), the largest over all tries. Claude steps only; absent on Codex, shell and older runs. */
   contextTokens?: number;
+  /** Time (ms) the step waited for a test slot, over all its tries; the time limit does not count it. Absent on older runs and on steps that did not wait. */
+  slotWaitMs?: number;
   /** The agent hit a usage/rate limit and no fallback model could take over. */
   limited?: boolean;
   /** The AI service could not be reached at all (the limit flag is set so the run pauses). */

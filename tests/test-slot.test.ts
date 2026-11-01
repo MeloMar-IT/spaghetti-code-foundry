@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { getPriority, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -91,6 +91,67 @@ describe("tools/test-slot", () => {
     const free = spawnSync(tool, [d, "sh", "-c", "echo ran"], { env: env({ FACTORY_VAR_TEST_SLOTS: "2", FACTORY_TEST_SLOT_WAIT_SEC: "0" }), encoding: "utf8" });
     expect(free.stdout).toBe("ran\n");
     expect(readdirSync(d).sort()).toEqual(["cap", "slot-1"]); // it took slot 2 and gave it back
+  });
+
+  describe("wait records (FACTORY_TEST_SLOT_WAIT_DIR)", () => {
+    /** Waits (events, no fixed time) until `ready()` holds. */
+    const until = async (ready: () => boolean) => {
+      for (let i = 0; i < 600 && !ready(); i++) await new Promise((r) => setTimeout(r, 25));
+      expect(ready()).toBe(true);
+    };
+    const start = (slots: string, waits: string) => {
+      const child = spawn(tool, [slots, "sh", "-c", "echo ran"], { env: env({ FACTORY_VAR_TEST_SLOTS: "1", FACTORY_TEST_SLOT_WAIT_DIR: waits }) });
+      let out = "";
+      child.stdout.on("data", (b: Buffer) => { out += b.toString(); });
+      const exited = new Promise<number | null>((r) => child.on("exit", (c) => r(c)));
+      return { child, exited, out: () => out };
+    };
+
+    it("a wait leaves one .done file whose last touch is not before the start", async () => {
+      const slots = held();
+      const waits = dir();
+      const began = Date.now();
+      const run = start(slots, waits);
+      await until(() => readdirSync(waits).some((f) => f.endsWith(".wait")));
+      expect(readdirSync(waits)[0]).toMatch(/^\d+-\d+\.wait$/);
+      rmSync(join(slots, "slot-1"), { recursive: true });
+      expect(await run.exited).toBe(0);
+      const files = readdirSync(waits);
+      expect(files).toHaveLength(1);
+      expect(files[0]).toMatch(/^\d+-\d+\.done$/);
+      expect(statSync(join(waits, files[0]!)).mtimeMs).toBeGreaterThanOrEqual(began);
+      expect(run.out()).toContain("ran");
+    });
+
+    it("no wait leaves no file", () => {
+      const waits = dir();
+      const r = spawnSync(tool, [dir(), "sh", "-c", "echo ran"], { env: env({ FACTORY_VAR_TEST_SLOTS: "1", FACTORY_TEST_SLOT_WAIT_DIR: waits }), encoding: "utf8" });
+      expect(r.stdout).toBe("ran\n");
+      expect(readdirSync(waits)).toEqual([]);
+    });
+
+    it("a wait folder that cannot be written still runs the command, with the same output lines", async () => {
+      const slots = held();
+      const run = start(slots, join(dir(), "missing", "deeper"));
+      await until(() => run.out().includes("waiting for a free slot"));
+      rmSync(join(slots, "slot-1"), { recursive: true });
+      expect(await run.exited).toBe(0);
+      expect(run.out()).toMatch(/got a slot after \d+ s\nran\n/);
+    });
+
+    it("a killed wait leaves a .wait file that was touched while it waited", async () => {
+      const slots = held();
+      const waits = dir();
+      const run = start(slots, waits);
+      await until(() => readdirSync(waits).some((f) => f.endsWith(".wait")));
+      const file = join(waits, readdirSync(waits)[0]!);
+      const first = statSync(file).mtimeMs;
+      await until(() => statSync(file).mtimeMs > first);
+      run.child.kill("SIGKILL");
+      await run.exited;
+      expect(readdirSync(waits)).toEqual([file.slice(waits.length + 1)]);
+      expect(statSync(file).mtimeMs).toBeGreaterThan(first);
+    });
   });
 });
 

@@ -250,7 +250,7 @@ export async function renderMyRuns(main, { a = api, ask = confirmDialog, readOnl
 // ── The run page ──
 
 /** A step as the user page draws it: no output, never a model name. */
-const plain = (s) => ({ id: s.id, visit: s.visit, ok: s.ok, durationMs: s.durationMs, error: s.error, startedAt: s.startedAt, parent: s.parent, type: s.type === "claude" ? "agent" : s.type });
+const plain = (s) => ({ id: s.id, visit: s.visit, ok: s.ok, durationMs: s.durationMs, slotWaitMs: s.slotWaitMs, error: s.error, startedAt: s.startedAt, parent: s.parent, type: s.type === "claude" ? "agent" : s.type });
 
 /** The run page. Returns a cleanup that stops the stream and the timer. */
 export function renderMyRun(main, runId, { a = api, ask = confirmDialog, decide = decisionDialog, go = (hash) => { location.hash = hash; }, readOnly = false } = {}) {

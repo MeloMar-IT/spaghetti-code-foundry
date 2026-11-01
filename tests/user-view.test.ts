@@ -228,6 +228,12 @@ describe("userLogLine", () => {
 });
 
 describe("userError, userRecord, hidePaths, movedText", () => {
+  it("a user sees whether a time-out's wait was left out or capped", () => {
+    expect(userError("timed out (waited 18 min for a test slot, which did not count)")).toBe("It ran longer than its time limit; it waited 18 min for a test slot, which did not count");
+    expect(userError("timed out (waited 95 min for a test slot, more than the 90 min that can be left out)")).toBe("It ran longer than its time limit; it waited 95 min for a test slot, capped at 90 min");
+    expect(userError("timed out")).toBe("It ran longer than its time limit");
+  });
+
   it.each([
     ["cancelled", "It was cancelled"],
     ["output matched fail_if", "Its output did not pass the check of the step"],
