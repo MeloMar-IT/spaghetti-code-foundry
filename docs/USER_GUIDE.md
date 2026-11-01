@@ -1182,6 +1182,9 @@ can be found.
   Version 8 adds `localTest` to `run.created`, set only for a run started with `--local-test`. Versions
   1 to 7 are read as before, and a run from version 7 is never marked. A delivery validator that only knows
   version 7 refuses version 8 lines, so update it before you use the Foundry for delivery.
+  Version 9 adds the event `governance.decided`, written by a run that is checked for governance (see
+  "Governance of a component"). Versions 1 to 8 are read as before. A delivery validator that only knows
+  version 8 refuses version 9 lines, so the validator is 1.2.0 from this change on: update the pin first.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
@@ -1822,7 +1825,7 @@ check-runs API of the commit.
 delivery-contract:
   runs-on: ubuntu-latest
   env:
-    VALIDATOR_VERSION: "1.1.0"          # the version you pin
+    VALIDATOR_VERSION: "1.2.0"          # the version you pin
     RELEASE_BASE: "<download folder of that release>"   # the release's assets, from the release page
     GH_TOKEN: ${{ github.token }}
   steps:
@@ -1862,7 +1865,7 @@ folder, which the job gets from the workflow's artifacts or from the pull reques
 **Generic CI in plain shell.** Any CI with Node.js 22 or later and `sha256sum` can run the same steps:
 
 ```sh
-V=1.1.0
+V=1.2.0
 BASE="<download folder of that release>"   # the release's assets, from the release page
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs"
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs.sha256"
@@ -2050,6 +2053,31 @@ The status is shown as text: **Retired**, **Not approved**, **Review due** or **
 - **Problems.** The read problems of the components and of the governance file are listed above the table as fixed
   text, with no paths. A governance file that cannot be used is shown as a red line, and the rows then have no owner.
 - **Read only.** The card only reads. Change owners and review dates in `promotions/governance.yaml`.
+#### Refused production runs
+
+A **production run** is any run with a connected repository (`github_repo` set to a real `owner/repo`), because it
+can push to that repository or open a pull request on it. This is the same for runs from the web, from a watcher and
+from the command line, and for a workspace of any kind. A run without a connected repository is development: it is
+never checked and keeps the default profile.
+
+Before its workspace is made, a production run checks each component it uses: its flow and published version, the
+policy packs (from `config.yaml` and the baseline), its tool profile, its model routes and its context selector (the
+`default` context selector, from `config.context`). A resumed run is checked the same way. The run ends as `failed`
+before its first step when a component is:
+
+- **retired:** `flow my-flow is retired; stop using it, or change its lifecycle in promotions/governance.yaml`
+- **high risk and not approved:** `flow my-flow v3 is high risk and not approved; review it and set approved_version
+  in promotions/governance.yaml`. With no recorded version, the reason says to run `scf components record <kind>`
+  first.
+
+Other cases never refuse a run: a component with no record (it has risk `low`), a `medium` or `low` component that is
+not approved, and a component that is `review-due`. A broken `promotions/governance.yaml` (a link, larger than 1 MiB, or
+not valid) refuses every production run with a fixed reason, and so does a check that cannot run. Development runs are
+not affected by a broken file.
+
+The log gets one `! governance: …` line per refused component, or `· governance: allowed (N components)` when nothing
+is refused. The run's evidence gets a `governance.decided` event with the outcome, the kind, id, version and status of
+each component, and a fixed reason code. It never holds file content. Evals are not checked for governance.
 
 ### Promote a component
 
@@ -2112,7 +2140,8 @@ the policy packs of the repository, the model routes and the tool profile of the
   `local test: this run never counts as a promoted delivery`. Evals and skill evals are local tests too,
   so they are never checked. A local-test run gets no delivery contract, and the handoff refuses it
   (`evidence-unverified`), with or without a signing key. Its evidence carries the marker (see
-  "Evidence of a run").
+  "Evidence of a run"). Governance is not skipped: a local test with a connected repository can push, so it is a
+  production run and is checked (see "Refused production runs"). Evals are the only runs that skip it.
 - **Packs are read once.** A new run reads its policy packs once, at its start, and the promotion check
   uses that same list, so the check and the run judge the same pack files, even if a file changes while
   the run starts. A resumed run reads the packs again.

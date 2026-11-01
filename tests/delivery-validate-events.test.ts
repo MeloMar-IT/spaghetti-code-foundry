@@ -16,6 +16,7 @@ import { DenialSchema, EVIDENCE_EVENT_TYPES, EvidenceEventSchema } from "../src/
 import { EVIDENCE_EVENT_VERSION } from "../src/evidence/version.js";
 import { CONTEXT_OMISSION_REASONS } from "../src/context/schema.js";
 import { CONTEXT_OUTCOMES } from "../src/evidence/schema.js";
+import { COMPONENT_KINDS, GOVERNANCE_FAILURES, GOVERNANCE_OUTCOMES, GOVERNANCE_STATUSES, MAX_GOVERNED_COMPONENTS } from "../src/promotion/components.js";
 import { RUN_CONTEXT_CODES } from "../src/engine/run-context.js";
 import { REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS } from "../src/engine/repo-request.js";
 import { AGENTS } from "../src/flow/schema.js";
@@ -173,6 +174,7 @@ const BASE: Record<string, Rec> = {
   "policy.decided": { type: "policy.decided", decision: DECISION, step: shell },
   "repo.operation": { ...REPO_OP, repository: "own/repo", branch: "feat/x", policy: "allow" },
   "context.bundled": CTX_WRITTEN,
+  "governance.decided": { type: "governance.decided", outcome: "refused", components: [{ kind: "flow", id: "deploy", version: "3", status: "retired", refused: true }] },
 };
 
 // ---- bodies built from the library's lists (the drift guard) ----
@@ -228,7 +230,11 @@ const GEN: Rec[] = [
   // edge values the library accepts
   ...["2024-02-29T00:00:00Z", "2000-02-29T00:00:00Z", "2026-01-31T12:00:59.123456789Z"].map((time) => ({ type: "run.queued", time })),
   ...["00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff", USER.toUpperCase(), "0b8f6a0e-5a52-8a4e-ba57-0f2f3f1f7c11"].map((id) => ({ type: "run.cancelled", by: { kind: "user", id } })),
-  ...[1, 2, 3, 4, 5, 6, 7].map((version) => ({ type: "run.queued", version })),
+  ...GOVERNANCE_FAILURES.map((failure) => ({ type: "governance.decided", outcome: "refused", failure, components: [] })),
+  ...GOVERNANCE_STATUSES.map((status) => ({ type: "governance.decided", outcome: "allowed", components: [{ kind: "flow", id: "a.b_c-(d)", status, refused: false }] })),
+  ...COMPONENT_KINDS.map((kind) => ({ type: "governance.decided", outcome: "allowed", components: [{ kind, id: "x", version: "1.0.0", status: "ok", refused: false }] })),
+  { type: "governance.decided", outcome: "allowed", components: [] },
+  ...[1, 2, 3, 4, 5, 6, 7, 8].map((version) => ({ type: "run.queued", version })),
   ...RUN_CONTEXT_CODES.map((failure) => ({ type: "context.bundled", outcome: "failed", failure })),
   ...CONTEXT_OMISSION_REASONS.map((reason) => ({ ...CTX_WRITTEN, omitted: { ...(CTX_WRITTEN.omitted as object), [reason]: 7 } })),
 ];
@@ -292,6 +298,7 @@ describe("drift guard: the copied lists and the event schema", () => {
       ARTIFACT_KINDS, STEP_TYPES, AGENTS, OUTCOMES, MODES, BOUNDARIES, CREDENTIALS, REASON_CODES, NO_RULE_REASONS, NO_PACK_REASONS, DENY_ONLY_REASONS,
       TOOL_KINDS, OPERATIONS, PROFILE_SOURCES, FIT_OUTCOMES, FIT_RESTRICTIONS, HELD_BY, UNREADABLE, EXCESS_FIELDS, REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS,
       CONTEXT_OUTCOMES, CONTEXT_OMISSION_REASONS, RUN_CONTEXT_CODES,
+      COMPONENT_KINDS, GOVERNANCE_STATUSES, GOVERNANCE_OUTCOMES, GOVERNANCE_FAILURES, MAX_GOVERNED_COMPONENTS,
       RETRY_CAUSES: inline().retry, TEST_OUTCOMES: inline().test,
     };
     for (const [name, list] of Object.entries(lists)) expect(fromScript(name), name).toEqual(list);
@@ -450,6 +457,10 @@ describe("parity: events that are hashed and anchored but break the schema", () 
       one("a step on run.start", (e) => ((e.step = shell), (e.decision.boundary = "run.start")), "policy.decided"),
       one("no step on step.before", (e) => delete e.step, "policy.decided"),
       one("a step on context.select", (e) => ((e.step = shell), (e.decision.boundary = "context.select")), "policy.decided"),
+      one("a refused decision with nothing refused", (e) => (e.components[0].refused = false), "governance.decided"),
+      one("an allowed decision with a refused component", (e) => (e.outcome = "allowed"), "governance.decided"),
+      one("an allowed decision with a failure", (e) => ((e.outcome = "allowed"), (e.components[0].refused = false), (e.failure = "check-failed")), "governance.decided"),
+      one("a component id with a space", (e) => (e.components[0].id = "a b"), "governance.decided"),
       one("a written bundle without its file", (e) => delete e.bundle, "context.bundled"),
       one("a written bundle with a failure", (e) => (e.failure = "internal"), "context.bundled"),
       one("a bundle at another path", (e) => (e.bundle.path = "other.json"), "context.bundled"),

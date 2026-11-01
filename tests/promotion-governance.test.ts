@@ -5,14 +5,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import { componentsCommand } from "../src/promotion/cli.js";
 import { componentsView, listGoverned } from "../src/promotion/governed.js";
+import { MAX_GOVERNED_COMPONENTS } from "../src/promotion/components.js";
 import {
+  decideGovernance,
   GovernanceBookSchema,
+  governanceCheckFailed,
   governanceOrphans,
   governanceProfile,
+  governanceRefuses,
   governanceStatus,
+  isProductionRun,
   MAX_GOVERNANCE_BYTES,
   readGovernanceBook,
   type GovernanceRecord,
+  type GovernedComponent,
 } from "../src/promotion/governance.js";
 
 const FLOW = "name: demo\nsteps:\n  - id: one\n    type: shell\n    run: echo one\n";
@@ -354,5 +360,98 @@ describe("listGoverned and componentsView", () => {
     expect(v.problems.length).toBeGreaterThan(0);
     for (const p of v.problems) expect(Object.keys(p).sort()).toEqual(["id", "kind", "reason"]);
     expect(v.governanceProblem).toContain("promotions/governance.yaml");
+  });
+});
+
+describe("production runs and the refusal rules (#665)", () => {
+  const read = (components: object) => ({ ok: true as const, book: GovernanceBookSchema.parse(book(components)) });
+  const comp = (kind: GovernedComponent["kind"], id: string, version?: string, show = id): GovernedComponent => ({ kind, id, show, ...(version !== undefined ? { version } : {}) });
+  const fresh = day(10);
+
+  it("calls a run production exactly when it has a connected repository", () => {
+    expect(isProductionRun({ github_repo: "acme/app" })).toBe(true);
+    expect(isProductionRun({ github_repo: "Acme/App" })).toBe(true);
+    expect(isProductionRun(undefined)).toBe(false);
+    expect(isProductionRun({})).toBe(false);
+    expect(isProductionRun({ github_repo: "" })).toBe(false);
+    expect(isProductionRun({ github_repo: "owner/repo" })).toBe(false);
+    expect(isProductionRun({ github_repo: "OWNER/Repo" })).toBe(false);
+  });
+
+  it("refuses retired, and unapproved only at high risk", () => {
+    for (const risk of ["low", "medium", "high"] as const) expect(governanceRefuses("retired", risk)).toBe(true);
+    expect(governanceRefuses("unapproved", "high")).toBe(true);
+    expect(governanceRefuses("unapproved", "low")).toBe(false);
+    expect(governanceRefuses("unapproved", "medium")).toBe(false);
+    expect(governanceRefuses("review-due", "high")).toBe(false);
+    expect(governanceRefuses("ok", "high")).toBe(false);
+  });
+
+  it("allows an empty book, a missing record, an approved high-risk version and a review-due one", () => {
+    const parts = [comp("flow", "deploy", "3"), comp("model-routes", "default")];
+    expect(decideGovernance(parts, read({}), NOW)).toMatchObject({ outcome: "allowed", lines: ["· governance: allowed (2 components)"] });
+    const approved = { risk: "high", approved_version: "3", last_review: fresh };
+    expect(decideGovernance([comp("flow", "deploy", "3")], read({ "flow/deploy": approved }), NOW).outcome).toBe("allowed");
+    const due = decideGovernance([comp("flow", "deploy", "3")], read({ "flow/deploy": { ...approved, last_review: day(400) } }), NOW);
+    expect(due.outcome).toBe("allowed");
+    expect(due.components).toEqual([{ kind: "flow", id: "deploy", version: "3", status: "review-due", refused: false }]);
+    const missing = decideGovernance([comp("flow", "deploy", "3")], read({}), NOW);
+    expect(missing.components[0]).toMatchObject({ status: "unapproved", refused: false });
+    expect(decideGovernance([comp("flow", "x", "3")], read({ "flow/x": { risk: "medium" } }), NOW).outcome).toBe("allowed");
+  });
+
+  it("uses a fixed reason that names the kind, the id and the next step", () => {
+    const retired = decideGovernance([comp("flow", "deploy", "3")], read({ "flow/deploy": { lifecycle: "retired" } }), NOW);
+    expect(retired.reason).toBe("refused: flow deploy is retired; stop using it, or change its lifecycle in promotions/governance.yaml");
+    const high = decideGovernance([comp("flow", "deploy", "3")], read({ "flow/deploy": { risk: "high", approved_version: "2" } }), NOW);
+    expect(high.reason).toBe("refused: flow deploy v3 is high risk and not approved; review it and set approved_version in promotions/governance.yaml");
+    const none = decideGovernance([comp("model-routes", "default")], read({ "model-routes/default": { risk: "high" } }), NOW);
+    expect(none.reason).toBe(
+      "refused: model-routes default is high risk and has no recorded version; run scf components record model-routes, then set approved_version in promotions/governance.yaml",
+    );
+    expect(none.outcome).toBe("refused");
+  });
+
+  it("names the first refused component, counts the others and logs each", () => {
+    const parts = [comp("flow", "ok-one", "1"), comp("flow", "a", "1"), comp("policy-pack", "b", "1.0.0"), comp("flow", "c", "1")];
+    const d = decideGovernance(parts, read({ "flow/a": { lifecycle: "retired" }, "policy-pack/b": { lifecycle: "retired" }, "flow/c": { lifecycle: "retired" } }), NOW);
+    expect(d.reason).toBe("refused: flow a is retired; stop using it, or change its lifecycle in promotions/governance.yaml (and 2 more, see the log)");
+    expect(d.lines).toHaveLength(3);
+    expect(d.lines.every((l) => l.startsWith("! governance: "))).toBe(true);
+    expect(d.components.map((c) => c.refused)).toEqual([true, true, true, false]);
+  });
+
+  it("refuses on a bad book without a path or file content, and lists no component", () => {
+    const d = decideGovernance([comp("flow", "a", "1")], { ok: false, reason: "promotions/governance.yaml is not valid; no record was used, fix it" }, NOW);
+    expect(d).toMatchObject({ outcome: "refused", failure: "book-unreadable", components: [] });
+    expect(d.reason).toBe("refused: the governance file cannot be used (promotions/governance.yaml is not valid; no record was used, fix it); fix it, then start the run again");
+    gov("components: [SECRET\n");
+    const real = readGovernanceBook();
+    expect(real.ok).toBe(false);
+    const text = JSON.stringify(decideGovernance([], real, NOW));
+    expect(text).not.toContain("SECRET");
+    expect(text).not.toContain(home);
+  });
+
+  it("keeps refused components first and under the cap", () => {
+    const parts = Array.from({ length: 250 }, (_, i) => comp("flow", `f${i}`, "1"));
+    const records = Object.fromEntries([["flow/f249", { lifecycle: "retired" }]]);
+    const d = decideGovernance(parts, read(records), NOW);
+    expect(d.components).toHaveLength(MAX_GOVERNED_COMPONENTS);
+    expect(d.components[0]).toMatchObject({ id: "f249", refused: true });
+  });
+
+  it("looks a record up by the raw id and shows the sanitized one", () => {
+    const raw = "p".repeat(80);
+    const d = decideGovernance([comp("policy-pack", raw, undefined, "p".repeat(60))], read({ [`policy-pack/${raw}`]: { lifecycle: "retired" } }), NOW);
+    expect(d.outcome).toBe("refused");
+    expect(d.components[0]!.id).toBe("p".repeat(60));
+    expect(d.reason).toContain(`policy-pack ${"p".repeat(60)} is retired`);
+    expect(d.reason).not.toContain(raw);
+  });
+
+  it("has a fixed decision for a check that could not run", () => {
+    expect(governanceCheckFailed()).toMatchObject({ outcome: "refused", failure: "check-failed", components: [] });
+    expect(governanceCheckFailed().reason).toBe("refused: the governance check could not run; check promotions/governance.yaml with scf components, then start the run again");
   });
 });

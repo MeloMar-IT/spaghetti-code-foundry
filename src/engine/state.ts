@@ -138,8 +138,10 @@ export interface RunSummary {
   owner?: string;
   /** The declared tool profile saved at start: the parsed profile, or `null` when the supplied one could not be read (`null` always refuses). Trusted like `owner`. Absent: steps get the profile their settings give. */
   toolProfile?: unknown;
-  /** True for a local test (`scf run --local-test`, evals): it is always allowed and never counts as a promoted delivery (#740). */
+  /** True for a local test (`scf run --local-test`, evals): it is not checked against `promotion.enforce` and never counts as a promoted delivery (#740). Only evals skip governance (#665). */
   localTest?: true;
+  /** The id of the custom flow as `scf promote` knows it (its file name), saved so a resume checks the same id (#665). Absent: the flow's name. */
+  flowId?: string;
   /** The run start check of `promotion.enforce` (warn or on); absent when it is off, for a local test and for older runs. */
   promotion?: PromotionRecord;
   /** Answers a person gave on the run page to the questions the run stopped with, oldest first. */

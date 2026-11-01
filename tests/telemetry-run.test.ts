@@ -65,7 +65,7 @@ describe("telemetry of a run", () => {
     const s = await start(cfg());
     expect(s.status).toBe("succeeded");
     const all = lines(s);
-    expect(all.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed", "run.measured"]);
+    expect(all.filter((e) => e.name !== "policy.decided" && e.name !== "governance.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed", "run.measured"]);
     expect(all.every((e) => e.repository === "owner/name")).toBe(true);
     const t = all.filter((e) => e.evidence);
     const ev = evidence(s);
@@ -88,7 +88,7 @@ describe("telemetry of a run", () => {
     const s = await start(cfg(), runId);
     expect(s.status).toBe("succeeded");
     const t = lines(s);
-    expect(t.filter((e) => e.name !== "policy.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed", "run.measured"]);
+    expect(t.filter((e) => e.name !== "policy.decided" && e.name !== "governance.decided").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed", "run.measured"]);
     expect(t.every((e) => e.id.startsWith("tm:") && e.evidence === undefined)).toBe(true);
   });
 
