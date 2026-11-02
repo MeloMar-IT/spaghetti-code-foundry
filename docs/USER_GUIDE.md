@@ -4057,12 +4057,14 @@ The wait above applies to every step up. These values are built into the governo
 
 Every change is a line in `governor/changes.log`. `scf governor status` says how many times the
 governor changed the limits today, and Home's health line shows the same count when it is above 0.
-The daily digest mentions the changes only when there were more than 20 in the last 24 hours. The governor's limits end by themselves
+The daily digest mentions the changes only when there were more than 20 in the last 24 hours. Its "Machine load" part also says how long the runs at once were below `concurrency` in the last 24 hours, with the lowest value and the two main reasons, for example "the runs at once were below 4 for 2 h 10 min in the last day (lowest 2): memory pressure 1 h 5 min, high load 50 min". A day without a cap has no such line. The governor's limits end by themselves
 four minutes after the last check — the cap on runs, the cap on test runs, the workers per test run, and what the governor
 remembers — so a governor that stops can never hold the Foundry down, and the first check after the
 machine slept starts fresh. The step downs of the last hour are part of what it remembers, so after a
 pause of more than four minutes they are forgotten and the wait before a step up is 10 minutes again. `scf governor reset` takes them away at once. The daily release check
 asks for a test slot like every test run, but waits five minutes at most.
+
+**The Load governor card (admins).** The Overview page shows the governor's last result on one card. It has the runs at once now, out of `concurrency`, and each cap that holds with its reason. Below that are the free cores, with the runs that fit next to your other programs once a run's use is learned; the load of other programs, with the top five programs by name; the Foundry's own load (runs, test runs and the server with its helpers); and a step chart of the runs at once over the last 24 hours. "Show as list" gives the same steps as a table with the reason of each. The time below `concurrency` and its reasons are shown above the chart. A result older than four minutes shows the caps that still hold, but no measurements. With no result the card says so and names `scf governor install`. The card reads files only: the last result (`governor/latest.json`), the caps that have not ended, and the change log.
 
 **Paused test runs.** Under sustained overload the governor pauses test runs beyond the first. It does so at
 once when memory pressure is critical, and when the 1-minute load is above `testsHigh` (4 per core) for three
@@ -4898,6 +4900,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/restart` | yes | no | cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line |
 | `GET /api/watchers` | yes | no | list the watchers |
 | `POST /api/watchers/:id/tick` | yes | no | run a watcher now |
+| `GET /api/governor` | yes | no | the load governor for the Overview page: the runs at once now and the caps that hold with their reasons, the free cores, the load of other programs with the top 5 programs by name, the Foundry's own load, and the changes of the cap in the last 24 hours; admins only, as it names programs |
 | `GET /api/busy` | yes | no | busy mode ("I'm using this machine"): whether it holds, the switch set by hand (since, until) and the program of `governor.busy_apps` that is running |
 | `POST /api/busy` | yes | no | switch busy mode on: at most `governor.busy_runs` runs at once and new run processes start at background priority; `hours` (above 0, at most 24) sets an end, without it busy mode stays on until it is switched off |
 | `DELETE /api/busy` | yes | no | switch busy mode off; busy mode that comes from a running program of `governor.busy_apps` stays until the program ends |
@@ -6977,7 +6980,7 @@ themselves still pause runs; they continue by themselves when the limit resets.
 
 ### Operations overview
 
-**Overview** is the first page of Administration. It shows what needs attention, on one page: four tiles (Problems, Queue, Watchers, Spent today) and seven cards. Each card has a link to its own page.
+**Overview** is the first page of Administration. It shows what needs attention, on one page: four tiles (Problems, Queue, Watchers, Spent today) and eight cards. Each card has a link to its own page.
 
 - **Health** shows the same line as the health chip. **Cancel run** is the only action on the page; it asks first.
 - **Problems** counts the open findings of the monitor (Open Problems).
@@ -6985,6 +6988,7 @@ themselves still pause runs; they continue by themselves when the limit resets.
 - **Queue** shows how many runs are running and waiting, and the first five waiting runs (Open Runs).
 - **Watchers** shows how many are enabled, the ones with a problem, and the oldest successful check (Open Watchers).
 - **Limits** shows today's spending and the accounts at a limit (Open Settings, Open Users).
+- **Load governor** shows the runs at once now and why, the free capacity, the load of other programs with the top five programs by name, the Foundry's own load, and the changes of the last 24 hours as a small chart (Open Settings). It is described under "The load governor".
 - **Recent audit** shows the newest entries (Open Audit).
 
 A part that cannot be loaded says "Not available" in its own card; the rest of the page still shows. The page does not refresh by itself: open it again to refresh.

@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { availableParallelism, cpus, loadavg } from "node:os";
 import { join } from "node:path";
 import { setCap } from "./caps.js";
 import { localDay } from "./digest.js";
+import { readBack } from "./read-back.js";
 
 /** What the governor measures each minute. */
 export interface Sample {
@@ -41,6 +42,8 @@ export interface Measured {
 export interface GovernorState {
   /** Runs allowed at once now; undefined: no cap (the configured number applies). */
   runs?: number;
+  /** Why the cap on runs went down, as of its last step down; it stays through steps up while the cap holds. Absent: not known. */
+  runsWhy?: string;
   tests?: number;
   /** Workers per test run now; undefined: no limit. */
   workers?: number;
@@ -153,7 +156,7 @@ export function throttleReason(t: Therm | undefined): string | undefined {
   return t.warning > 0 ? `throttled: thermal warning level ${t.warning}` : undefined;
 }
 
-const freeCores = (m: Measured, reserve: number) => Math.max(0, m.cores - m.other - reserve);
+export const freeCores = (m: Measured, reserve: number) => Math.max(0, m.cores - m.other - reserve);
 
 /** Runs that fit next to the other programs: free cores (cores − other programs − reserve) divided by what one run uses, rounded down. */
 export function runsFit(m: Measured, reserve: number): number {
@@ -241,11 +244,13 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   const why = strainDown && strainWhy && baseWhy !== strainWhy ? (baseWhy ? `${baseWhy}, ${strainWhy}` : strainWhy) : baseWhy;
   const notes: string[] = [];
   let runs = have;
+  let runsWhy = prev.runsWhy;
   let calm = 0;
   let moved = false;
   const wantDown = (m ? over >= set.hotChecks : sustained) || strainDown;
   if (have > floor && (emergency || (wantDown && age >= set.downPauseMinutes * 60_000))) {
     runs = have - 1;
+    runsWhy = why;
     moved = true;
     downs = [...downs, now.toISOString()];
     notes.push(`runs at once ${have} → ${runs} (${why})`);
@@ -281,7 +286,7 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
     ...(strain ? { strain } : {}),
     ...(s.cpu ? { cpu: s.cpu } : {}),
     ...(s.swapMb !== undefined ? { swapMb: s.swapMb } : {}),
-    ...(runs < configured ? { runs } : {}),
+    ...(runs < configured ? { runs, ...(runsWhy ? { runsWhy } : {}) } : {}),
     ...(tests ? { tests } : {}),
     ...(workers ? { workers } : {}),
     ...(stamp !== undefined ? { changedAt: new Date(stamp).toISOString() } : {}),
@@ -347,7 +352,7 @@ export function loadState(dir: string, now = new Date()): GovernorState {
       ...(Number(s.severe) > 0 ? { severe: Number(s.severe) } : {}),
       ...(typeof s.paused === "string" && Number.isFinite(Date.parse(s.paused)) ? { paused: s.paused } : {}),
       ...(Number(s.strain) > 0 ? { strain: Number(s.strain) } : {}),
-      ...(Number.isInteger(s.runs) ? { runs: s.runs } : {}),
+      ...(Number.isInteger(s.runs) ? { runs: s.runs, ...(typeof s.runsWhy === "string" && s.runsWhy ? { runsWhy: s.runsWhy } : {}) } : {}),
       ...(s.tests ? { tests: 1 } : {}),
       ...(Number.isInteger(s.workers) && s.workers! >= 1 ? { workers: s.workers } : {}),
       ...(cpuOk ? { cpu: { idle: cpu!.idle!, total: cpu!.total! } } : {}),
@@ -359,9 +364,25 @@ export function loadState(dir: string, now = new Date()): GovernorState {
   }
 }
 
+/**
+ * Ends and moves of the cap that `decide` makes without a line: a state older than the hold time (the machine slept), and a
+ * stored cap that the settings now clamp (the floor was raised, or the configured number lowered). The history reads the log.
+ */
+function logSilentEnds(o: { dir: string; configured: number; now: Date; settings?: Settings }) {
+  const cap = stateCap(o.dir);
+  if (!cap) return;
+  const t = o.now.getTime();
+  if (t - cap.at > HOLD_MS) return logStale(o.dir, cap);
+  const floor = Math.min(o.configured, (o.settings ?? DEFAULTS).floor ?? Math.max(2, Math.ceil(o.configured / 2)));
+  const have = Math.max(floor, Math.min(cap.runs, o.configured));
+  if (have === cap.runs) return;
+  logLine(o.dir, t, have >= o.configured ? `${CAP_ENDED} from ${cap.runs} (the settings changed)` : `runs at once ${cap.runs} → ${have} (the settings changed)`);
+}
+
 /** One check: measure, decide, write the caps, log a change. `dir` is <data folder>/governor. */
 export function runGovernor(o: { dir: string; slotsDir: string; capsFile: string; configured: number; now: Date; sample: Sample; settings?: Settings; cause?: string }): Decision {
   mkdirSync(o.dir, { recursive: true });
+  logSilentEnds(o);
   const d = decide(loadState(o.dir, o.now), o.sample, o.configured, o.now, o.settings);
   writeFileSync(join(o.dir, "state.json"), JSON.stringify({ ...d.state, at: o.now.toISOString() }));
   try {
@@ -393,46 +414,65 @@ export function runGovernor(o: { dir: string; slotsDir: string; capsFile: string
 /** More changes than this in a day is worth a line in the digest. */
 export const MANY_CHANGES = 20;
 
-const CHUNK = 64_000;
-
 /**
  * How many changes the governor logged today (local time of `now`). Reads changes.log from the end, one chunk at a
  * time, and stops at the first line of an earlier day: the log grows forever. 0 when it cannot be read.
  */
 export function changesToday(dir: string, now: Date): number {
-  let fd: number | undefined;
   try {
-    fd = openSync(join(dir, "changes.log"), "r");
     const today = localDay(now);
-    let pos = fstatSync(fd).size;
-    let carry = Buffer.alloc(0);
     let n = 0;
-    while (pos > 0) {
-      const size = Math.min(CHUNK, pos);
-      pos -= size;
-      const chunk = Buffer.alloc(size);
-      readSync(fd, chunk, 0, size, pos);
-      const lines = Buffer.concat([chunk, carry]).toString("utf8").split("\n");
-      // the first line may be cut at the start of the chunk: it is read again with the next one
-      carry = pos > 0 ? Buffer.from(lines.shift()!, "utf8") : Buffer.alloc(0);
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const at = Date.parse(lines[i]!.slice(0, 24));
-        if (!Number.isFinite(at)) continue;
-        const day = localDay(new Date(at));
-        if (day === today) n++;
-        else if (day < today) return n;
-      }
-    }
+    readBack(join(dir, "changes.log"), (line) => {
+      const at = Date.parse(line.slice(0, 24));
+      if (!Number.isFinite(at)) return true;
+      const day = localDay(new Date(at));
+      if (day === today) n++;
+      return day >= today;
+    });
     return n;
   } catch {
     return 0;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
   }
 }
 
+/** The start of a change-log line that says a cap ended. It names the cap that ended ("… from 4 (why)"), so the log alone gives the history. */
+export const CAP_ENDED = "runs at once: back to the configured number";
+
+/** The cap in state.json as it is stored, fresh or not; undefined when there is none or it cannot be read. */
+export function stateCap(dir: string): { runs: number; at: number; why?: string } | undefined {
+  try {
+    const s = JSON.parse(readFileSync(join(dir, "state.json"), "utf8")) as { runs?: unknown; at?: unknown; runsWhy?: unknown };
+    const at = typeof s.at === "string" ? Date.parse(s.at) : NaN;
+    const runs = s.runs;
+    return typeof runs === "number" && Number.isInteger(runs) && runs >= 0 && Number.isFinite(at)
+      ? { runs, at, ...(typeof s.runsWhy === "string" && s.runsWhy ? { why: s.runsWhy } : {}) }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function logLine(dir: string, at: number, text: string) {
+  try {
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "changes.log"), `${new Date(at).toISOString()} ${text}\n`);
+  } catch {
+    // best effort: the log is for the history only
+  }
+}
+
+/** The end of a cap that nobody logged: the state went stale (no check for the hold time). */
+function logStale(dir: string, c: { runs: number; at: number }) {
+  logLine(dir, c.at + HOLD_MS, `${CAP_ENDED} from ${c.runs} (no check for ${Math.round(HOLD_MS / 60_000)} minutes, so the cap ended)`);
+}
+
 /** Take away everything the governor set. */
-export function clearGovernor(dir: string, slotsDir: string, capsFile: string) {
+export function clearGovernor(dir: string, slotsDir: string, capsFile: string, now = new Date()) {
+  const cap = stateCap(dir);
+  if (cap) {
+    if (now.getTime() - cap.at > HOLD_MS) logStale(dir, cap);
+    else logLine(dir, now.getTime(), `${CAP_ENDED} from ${cap.runs} (limits taken away by hand)`);
+  }
   rmSync(join(slotsDir, "cap"), { force: true });
   rmSync(join(slotsDir, "workers"), { force: true });
   rmSync(join(slotsDir, PAUSE_FILE), { force: true });

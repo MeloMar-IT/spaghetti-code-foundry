@@ -951,6 +951,7 @@ describe("Overview", () => {
     routes["GET /api/watchers"] = [];
     routes["GET /api/providers"] = { agents: [{ agent: "claude", installed: true, detail: "1" }], providers: [] };
     routes["GET /api/audit"] = { entries: [{ time: "2026-10-01T08:00:00.000Z", actor: { type: "system" }, action: "x", target: null }] };
+    routes["GET /api/governor"] = { status: "ok", at: "2026-10-01T08:00:00.000Z", configured: 4, limit: 3, caps: [{ who: "load", runs: 3, why: "machine load", until: "2026-10-01T08:04:00.000Z" }], capacity: { cores: 8, free: 3, reserve: 2 }, other: { cores: 2, top: [{ program: "Safari", cores: 1.2 }] }, foundry: { cores: 1, tests: 0.5, server: 0.1 }, history: { since: "2026-09-30T08:00:00.000Z", now: "2026-10-01T08:00:00.000Z", start: 4, steps: [{ at: "2026-10-01T06:00:00.000Z", runs: 3, why: "2 runs fit" }], belowMs: 7_200_000, lowest: 3, reasons: [{ why: "the runs that fit next to other programs", ms: 7_200_000 }] } };
     fail("GET", "/api/queue", 500, "queue broke");
     await operations.renderOperations(main());
     noViolations(main());

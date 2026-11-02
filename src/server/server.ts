@@ -28,6 +28,7 @@ import { flowRoutes } from "./api-flows.js";
 import { runRoutes } from "./api-runs.js";
 import { HttpError, isGalleryPath, send, serveStatic } from "./http.js";
 import { areaWait, forgetHistory, nextRoutes, type RestartState } from "./next.js";
+import { governorRoutes } from "./api-governor.js";
 import { healthRoutes } from "./health.js";
 import type { UpdateView } from "../self-update.js";
 import { boardRoutes } from "./board.js";
@@ -138,7 +139,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)

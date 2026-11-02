@@ -12,7 +12,8 @@ import { governorBusyApps } from "./busy.js";
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
 import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
-import { changesToday, clearGovernor, DEFAULTS, fitsText, HOLD_MS, loadState, MANY_CHANGES, runGovernor, runsFit, sample, type Sample } from "./governor.js";
+import { changesToday, clearGovernor, DEFAULTS, fitsText, freeCores, HOLD_MS, loadState, MANY_CHANGES, runGovernor, runsFit, sample, type Sample } from "./governor.js";
+import { belowLine, capHistory, heldCap, logSince } from "./governor-history.js";
 import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, type Family, type LimitsState } from "./limits.js";
 import { measureUsage, measurement, readCpuTable, runRepos, usageLine, type Usage } from "./usage.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
@@ -75,9 +76,12 @@ function governor(out: Out, now = new Date()) {
   const cause = usage ? `${usageLine(usage)}${fit !== undefined ? `; ${fitsText(fit)}` : ""}` : undefined;
   const sampled: Sample = { ...sample(), ...(measured ? { measured } : {}) };
   const d = runGovernor({ dir, slotsDir, capsFile: capsPath(dataDir()), configured: c.concurrency, now, sample: sampled, settings: { ...DEFAULTS, floor: c.governor.floor, reserveCores: c.governor.reserve_cores }, ...(cause ? { cause } : {}) });
+  // the free cores need only the cores and what other programs use; the runs that fit also need what a run uses
+  const cores = availableParallelism();
+  const capacity = usage && Number.isFinite(usage.other.cores) ? { cores, free: freeCores({ cores, other: usage.other.cores, perRun: 1 }, c.governor.reserve_cores) } : {};
   // the caps are written by now: a result that cannot be saved must not fail the check
   try {
-    save(dir, "latest.json", JSON.stringify({ at: now.toISOString(), load1: sampled.load1, load5: sampled.load5, pressure: sampled.pressure, ...(d.state.runs !== undefined ? { runs: d.state.runs } : {}), ...(d.state.tests ? { tests: d.state.tests } : {}), ...(d.state.workers ? { workers: d.state.workers } : {}), ...(usage ? { usage } : {}), ...(fit !== undefined ? { fit } : {}) }, null, 2));
+    save(dir, "latest.json", JSON.stringify({ at: now.toISOString(), load1: sampled.load1, load5: sampled.load5, pressure: sampled.pressure, ...(d.state.runs !== undefined ? { runs: d.state.runs } : {}), ...(d.state.tests ? { tests: d.state.tests } : {}), ...(d.state.workers ? { workers: d.state.workers } : {}), ...(usage ? { usage } : {}), ...(fit !== undefined ? { fit } : {}), ...capacity }, null, 2));
   } catch {
     // best effort
   }
@@ -226,10 +230,9 @@ export function logTail(path = join(dataDir(), "service.log"), bytes = 512_000):
 /** A result of another helper counts for a day and a bit; older than that it says nothing about now. */
 const RESULT_MAX_AGE_MS = 26 * 3_600_000;
 
-export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; alive?: (pid: unknown) => boolean }): { text: string; line: string } {
+export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; alive?: (pid: unknown) => boolean; /** The configured runs at once: with it the digest says how long the governor held them below. */ configured?: number }): { text: string; line: string } {
   const facts = digestFacts(o.runs, o.now, 24, o.alive);
   const since = new Date(o.now.getTime() - 86_400_000).toISOString();
-  const lines = (path: string) => (existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : []);
   /** The last result of a helper, or nothing when it is old (the helper is not installed any more, or stopped). */
   const latest = <T extends object>(name: string): Partial<T> => {
     const r = readJson<Partial<T> & { at?: string }>(join(o.home, name, "latest.json"), {});
@@ -256,8 +259,14 @@ export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; aliv
       return (tuning.trials ?? []).filter((t) => (t.endedAt ?? t.startedAt) >= since).map((t) => `${t.flow} / ${t.step} on ${[t.to.model, t.to.effort && `effort ${t.to.effort}`].filter(Boolean).join(", ")}: ${t.status === "running" ? "on trial" : `${t.status === "kept" ? "kept" : "put back"} — ${t.why ?? ""}`}`);
     }),
     part("Machine load", () => {
-      const load = lines(join(o.home, "governor", "changes.log")).filter((l) => l.slice(0, 24) >= since);
-      return load.length > MANY_CHANGES ? [`the governor changed the limits ${load.length} times in the last day (more than ${MANY_CHANGES}); last: ${load.at(-1)!.slice(25)}`] : [];
+      const dir = join(o.home, "governor");
+      const from = o.now.getTime() - 86_400_000;
+      const load = logSince(dir, from);
+      const below = o.configured !== undefined ? belowLine(capHistory(load, { since: from, now: o.now.getTime(), configured: o.configured, held: heldCap(dir, o.now) }), o.configured) : undefined;
+      return [
+        ...(below ? [below] : []),
+        ...(load.length > MANY_CHANGES ? [`the governor changed the limits ${load.length} times in the last day (more than ${MANY_CHANGES}); last: ${load.at(-1)!.slice(25)}`] : []),
+      ];
     }),
     part("Unreliable tests", () => (latest<{ suspects: { test: string; failedIn: string[]; retriedIn?: string[] }[] }>("flaky").suspects ?? []).slice(0, 3).map((s) => `${s.test} — failed in ${s.failedIn.length} stories${s.retriedIn?.length ? `, passed only on a retry in ${s.retriedIn.length}` : ""}`)),
   ];
@@ -316,7 +325,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       } else if (name === "limits") runLimits({ runs: loadRuns(), dir, capsFile: capsPath(dataDir()), configured: configured(), now }), out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
       else if (name === "blockage") runBlockage({ runs: loadRuns(), dir, serviceLog: logTail(), repos: knownWatcherRepos(), limit: runLimit(configured(), now, capsPath(dataDir())), now }), out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
       else {
-        const r = runDigest({ runs: loadRuns(), home: dataDir(), now });
+        const r = runDigest({ runs: loadRuns(), home: dataDir(), now, configured: configured() });
         await sendDesktop({ title: "Foundry digest", message: r.line });
         out(`${now.toISOString()} ${r.line} — ${join(dir, "report.md")}`);
       }

@@ -139,7 +139,7 @@ describe("the load governor", () => {
     for (let i = 0; i < 3; i++) runGovernor({ ...o, now: new Date(NOW.getTime() + i * 60_000), sample: hot });
     const last = new Date(NOW.getTime() + 2 * 60_000);
     // the first hot check was 6 → 5 and the others are held back by the pause; a load of 3 is no emergency
-    expect(loadState(o.dir, last)).toEqual({ calm: 0, downs: [NOW.toISOString()], hot: 3, runs: 5, changedAt: NOW.toISOString() });
+    expect(loadState(o.dir, last)).toEqual({ calm: 0, downs: [NOW.toISOString()], hot: 3, runs: 5, runsWhy: "load 3.0 per core over 5 minutes", changedAt: NOW.toISOString() });
     const morning = new Date(NOW.getTime() + 9 * HOUR);
     expect(loadState(o.dir, morning)).toEqual({ calm: 0 });
     // neither hot nor calm in the morning: with yesterday's state the cap of 3 would be written again
@@ -832,6 +832,19 @@ describe("the digest", () => {
     const many = Array.from({ length: 21 }, (_, i) => `${new Date(NOW.getTime() - HOUR + i * 1000).toISOString()} runs at once 6 → 5 (load 3.0 per core)\n`).join("");
     writeFileSync(join(home, "governor", "changes.log"), many);
     expect(runDigest({ runs, home, now: NOW, alive }).text).toContain("the governor changed the limits 21 times in the last day (more than 20); last: runs at once 6 → 5 (load 3.0 per core)");
+    // the time below the configured number: only with `configured`, and only when there was some
+    const stamp = (t: number) => new Date(t).toISOString();
+    const log = [
+      `${stamp(NOW.getTime() - 40 * HOUR)} runs at once 6 → 2 (old line, before the window)`,
+      `${stamp(NOW.getTime() - 3 * HOUR)} runs at once 6 → 4 (2 runs fit)`,
+      `${stamp(NOW.getTime() - HOUR)} runs at once: back to the configured number from 4 (limits taken away by hand)`,
+    ].join("\n");
+    writeFileSync(join(home, "governor", "changes.log"), `${log}\n`);
+    const text2 = runDigest({ runs, home, now: NOW, alive, configured: 6 }).text;
+    expect(text2).toContain("the runs at once were below 6 for 2 h in the last day (lowest 4): the runs that fit next to other programs 2 h");
+    expect(runDigest({ runs, home, now: NOW, alive }).text).not.toContain("the runs at once were below");
+    writeFileSync(join(home, "governor", "changes.log"), `${stamp(NOW.getTime() - HOUR + 1000)} runs at once: back to the configured number from 6 (x)\n`);
+    expect(runDigest({ runs, home, now: NOW, alive, configured: 6 }).text).not.toContain("the runs at once were below");
     expect(text).not.toContain("## Unreliable tests");
     expect(localDay(new Date(2026, 9, 12, 0, 30))).toBe("2026-10-12");
     expect(localDay(new Date(2026, 0, 5, 23, 30))).toBe("2026-01-05");

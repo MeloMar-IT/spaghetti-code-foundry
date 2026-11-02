@@ -35,6 +35,7 @@ export const RULES: Rule[] = [
   r("DELETE", "restart", "no", "cancel a restart asked for after a settings change: runs and watchers start again; writes an audit line"),
   r("GET", "watchers", "no", "list the watchers"),
   r("POST", "watchers/:id/tick", "no", "run a watcher now"),
+  r("GET", "governor", "no", "the load governor for the Overview page: the runs at once now and the caps that hold with their reasons, the free cores, the load of other programs with the top 5 programs by name, the Foundry's own load, and the changes of the cap in the last 24 hours; admins only, as it names programs"),
   r("GET", "busy", "no", "busy mode (\"I'm using this machine\"): whether it holds, the switch set by hand (since, until) and the program of `governor.busy_apps` that is running"),
   r("POST", "busy", "no", "switch busy mode on: at most `governor.busy_runs` runs at once and new run processes start at background priority; `hours` (above 0, at most 24) sets an end, without it busy mode stays on until it is switched off"),
   r("DELETE", "busy", "no", "switch busy mode off; busy mode that comes from a running program of `governor.busy_apps` stays until the program ends"),

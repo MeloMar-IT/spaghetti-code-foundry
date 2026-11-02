@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadCaps, runLimit } from "../src/ops/caps.js";
-import { changesToday, clearGovernor, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, testWorkers, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
+import { CAP_ENDED, changesToday, clearGovernor, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, testWorkers, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
 import { minutes, withAverages } from "./fixtures/governor-days.js";
 
 const T0 = new Date(2026, 9, 20, 9, 0);
@@ -255,7 +255,7 @@ describe("loadState", () => {
     const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 4 };
     runGovernor({ ...o, now: at(0), sample: s(3, 3) });
     runGovernor({ ...o, now: at(1), sample: s(3, 3) });
-    expect(loadState(o.dir, at(1))).toEqual({ calm: 0, downs: [at(0).toISOString()], hot: 2, runs: 3, changedAt: at(0).toISOString() });
+    expect(loadState(o.dir, at(1))).toEqual({ calm: 0, downs: [at(0).toISOString()], hot: 2, runs: 3, runsWhy: "load 3.0 per core over 5 minutes", changedAt: at(0).toISOString() });
   });
 
   it("keeps the step-down times between checks, so the wait is 20 minutes", () => {
@@ -394,6 +394,91 @@ describe("changesToday", () => {
     const only = tmp();
     writeFileSync(join(only, "changes.log"), line(new Date(2026, 9, 20, 2, 0)).repeat(3000));
     expect(changesToday(only, now)).toBe(3000);
+  });
+});
+
+describe("the end of a cap is logged", () => {
+  const dirs: string[] = [];
+  const setup = () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-gov-"));
+    dirs.push(d);
+    return { dir: join(d, "governor"), slotsDir: join(d, "test-slots"), capsFile: join(d, "governor", "caps.json"), configured: 6 };
+  };
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const log = (dir: string) => (existsSync(join(dir, "changes.log")) ? readFileSync(join(dir, "changes.log"), "utf8").trim().split("\n") : []);
+  const capped = (dir: string, runs: number, when: Date) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs, at: when.toISOString() }));
+  };
+
+  it("runGovernor writes the end of a stale cap, timed at the end of its hold, before any new line", () => {
+    const o = setup();
+    capped(o.dir, 4, at(0));
+    runGovernor({ ...o, now: at(600), sample: s(3, 3) });
+    const lines = log(o.dir);
+    expect(lines[0]).toBe(`${new Date(at(0).getTime() + HOLD_MS).toISOString()} ${CAP_ENDED} from 4 (no check for 4 minutes, so the cap ended)`);
+  });
+
+  it("writes no such line for a fresh state", () => {
+    const o = setup();
+    capped(o.dir, 4, at(0));
+    runGovernor({ ...o, now: at(1), sample: calm });
+    expect(log(o.dir).some((l) => l.includes(CAP_ENDED))).toBe(false);
+  });
+
+  it("logs a cap that the settings now clamp: a raised floor lifts it, a floor at the configured number ends it", () => {
+    const o = setup();
+    capped(o.dir, 3, at(0));
+    runGovernor({ ...o, now: at(1), sample: calm, settings: { ...DEFAULTS, floor: 5 } });
+    expect(log(o.dir)[0]).toBe(`${at(1).toISOString()} runs at once 3 → 5 (the settings changed)`);
+    const p = setup();
+    capped(p.dir, 3, at(0));
+    runGovernor({ ...p, now: at(1), sample: calm, settings: { ...DEFAULTS, floor: 6 } });
+    expect(log(p.dir)[0]).toBe(`${at(1).toISOString()} ${CAP_ENDED} from 3 (the settings changed)`);
+  });
+
+  it("clearGovernor logs a cap that is taken away by hand, and a stale one at its end", () => {
+    const o = setup();
+    capped(o.dir, 3, at(0));
+    clearGovernor(o.dir, o.slotsDir, o.capsFile, at(2));
+    expect(log(o.dir)).toEqual([`${at(2).toISOString()} ${CAP_ENDED} from 3 (limits taken away by hand)`]);
+    expect(existsSync(join(o.dir, "state.json"))).toBe(false);
+    const p = setup();
+    capped(p.dir, 3, at(0));
+    clearGovernor(p.dir, p.slotsDir, p.capsFile, at(300));
+    expect(log(p.dir)[0]).toContain(`${new Date(at(0).getTime() + HOLD_MS).toISOString()} ${CAP_ENDED} from 3 (no check`);
+  });
+
+  it("clearGovernor writes nothing without a cap or without a state", () => {
+    const o = setup();
+    clearGovernor(o.dir, o.slotsDir, o.capsFile, at(0));
+    mkdirSync(o.dir, { recursive: true });
+    writeFileSync(join(o.dir, "state.json"), JSON.stringify({ calm: 0, at: at(0).toISOString() }));
+    clearGovernor(o.dir, o.slotsDir, o.capsFile, at(1));
+    expect(log(o.dir)).toEqual([]);
+  });
+});
+
+describe("the reason of a cap that holds", () => {
+  it("keeps the reason of the last step down through a partial recovery", () => {
+    const crit = s(0.5, 0.5, 4);
+    const down = feed({ calm: 0 }, [crit, crit], 6);
+    expect(down.d.state.runs).toBe(4);
+    expect(down.d.state.runsWhy).toBe("memory pressure critical");
+    // the wait after two steps down is 30 minutes: one step up at minute 31, the cap stays below 6
+    const up = feed(down.d.state, Array.from({ length: 35 }, () => calm), 6, 2);
+    expect(up.changes).toEqual([31]);
+    expect(up.d.state.runs).toBe(5);
+    expect(up.d.state.runsWhy).toBe("memory pressure critical");
+  });
+
+  it("drops the reason once the cap is back at the configured number", () => {
+    // five calm checks in a row, and the wait after the last step (no step down in the last hour) is over: back to 6
+    const d = feed({ calm: 0, runs: 5, runsWhy: "memory pressure critical", changedAt: at(0).toISOString() }, Array.from({ length: 10 }, () => calm), 6, 40);
+    expect(d.d.state.runs).toBeUndefined();
+    expect(d.d.state.runsWhy).toBeUndefined();
   });
 });
 
