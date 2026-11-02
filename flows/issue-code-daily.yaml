@@ -135,7 +135,12 @@ steps:
     type: shell
     timeout_sec: 7200
     run: |-
-      rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt"
+      rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt" "{{run.dir}}/baseline-stop.json"
+      base="$FACTORY_VAR_DEVELOP_BRANCH"; base_sha=""; base_clean=""
+      [ -n "$base" ] && base_sha=$(git rev-parse -q --verify "origin/$base" 2>/dev/null)
+      [ -n "$base_sha" ] && [ -z "$(git status --porcelain 2>/dev/null)" ] && [ "$(git rev-parse "HEAD^{tree}" 2>/dev/null)" = "$(git rev-parse "$base_sha^{tree}" 2>/dev/null)" ] && base_clean=yes
+      export FACTORY_BASE_BRANCH="$base" FACTORY_BASE_SHA="$base_sha" FACTORY_BASE_CLEAN="$base_clean"
+      node "$FACTORY_TOOLS/baseline-tests" known-red "{{run.dir}}" || { rm -f "{{run.dir}}/tests.log"; exit 1; }
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
@@ -484,7 +489,7 @@ steps:
     jump_only: true
     description: "Stop: the tests fail before any change, and not only the tests the issue names to fix"
     resume_from: pull_ticket
-    run: echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log"; echo; cat "{{run.dir}}/baseline-verdict.txt" 2>/dev/null; exit 1
+    run: echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log" 2>/dev/null; echo; cat "{{run.dir}}/baseline-verdict.txt" 2>/dev/null; exit 1
   - id: wait_for_merge
     type: shell
     jump_only: true

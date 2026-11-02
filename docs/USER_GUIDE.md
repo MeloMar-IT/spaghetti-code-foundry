@@ -1114,6 +1114,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | waiting — the owner's limit of runs at the same time | As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page. |
 | waiting for another run in the same code | Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished. |
 | waiting — a bug story goes first | A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that. |
+| waiting — the base branch has failing tests | The tests on the base branch fail, so this story waits. Nothing to do — it starts by itself when a new commit lands. |
 | paused — usage limit | The usage limit of the AI account is reached. Nothing to do — the Foundry tries again after the limit resets. |
 | paused — signed out | The Foundry is signed out of its AI account. Sign in again — the run then goes on by itself. |
 | paused — AI service not reachable | The AI service could not be reached. Nothing to do — the Foundry tries again later. |
@@ -3449,6 +3450,31 @@ If it does not pass, the run stops at the test step, and the log lists what is n
 baseline on `main` for a release is not changed. You cannot switch the baseline check off for a
 repository with this.
 
+#### A red base branch
+
+When the tests on the base branch fail, every new story would stop at the same place. The Foundry
+therefore holds the other stories of the repository and makes one fix story.
+
+- **What makes it red.** Two runs that stop before any change, on the same commit, with the same
+  failing tests make the branch red. One clean stop also does. A stop on an older commit is ignored.
+- **What waits.** Each other story of the repository shows **waiting — the base branch has failing
+  tests**. Nothing to do; it starts by itself when a new commit lands on the branch. A story that
+  names every failing test under `## Failing tests to fix` is not held, and neither is a hotfix story
+  when `hotfix_to_main` is on.
+- **How it ends.** A clean green run of the head commit clears the state, from any run of the
+  repository. A new commit on the branch also lets the stories start again.
+- **The fix story.** The Foundry opens one story that lists the failing tests and starts it first.
+  If it fails and cannot be fixed, every other story keeps waiting until a person acts. Its card says
+  what to do: fix the tests by hand, or write a story that lists them.
+- **No fix story.** None is made when the trigger label is a hotfix label, when the flow's autonomy
+  level does not allow a push, or when a failing test name looks like a secret. The card says why.
+  A secret-like name is never written to GitHub or to the log.
+- **Left out.** `issue-code-daily`, hotfix runs and repositories without JUnit XML reports have no
+  red base branch: their stories are never held by it.
+
+A held run is stopped at `baseline_failed` before the test command runs, so it does not change
+anything. A false red holds the whole repository until the tests pass again on a new commit.
+
 #### Labels the Foundry sets
 
 | Label | Means | What you do |
@@ -3478,6 +3504,9 @@ Issues with an excluded label (e.g. `geni`) are never picked up, whatever other 
 
 A line can say "waiting — a bug story goes first": a story with a `bug` label is repaired before
 anything new is built. There is nothing to do; the story goes on by itself after that.
+
+A line can say "waiting — the base branch has failing tests": the tests on the base branch fail, and
+the story starts by itself when a new commit lands. See [A red base branch](#a-red-base-branch).
 
 Look at the **Dashboard**: the **Waiting** card lists every labelled issue that isn't being
 worked on right now (the same list is on each watcher's card on the **Watchers** page). Every

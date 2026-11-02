@@ -136,6 +136,7 @@ export class WatcherManager {
         log: this.o.log,
         statusComments: this.board(cfg, board),
         watchers: () => this.o.config().watchers,
+        hotfixToMain: () => this.o.config().hotfix_to_main,
         peers: () => this.tracked(),
         afterCheck: () => this.noteRateLimit(),
         gh: this.identityOf(cfg),

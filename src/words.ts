@@ -6,6 +6,8 @@ export interface WordFacts {
   releaseAt?: string;
   /** Issue numbers a dependency waits for. */
   blockers?: number[];
+  /** `red_base`: the record is the repository card (a person must act), not a held story. */
+  redProblem?: boolean;
   /** The Foundry itself failed, not the code. */
   factory?: boolean;
   /** The words are for a user: no money, no setup. */
@@ -53,6 +55,12 @@ const GLOSSARY: Record<NextKind, Words> = {
   dependency: {
     status: (f) => `waiting for ${list(f)}`,
     help: (f) => `It needs ${list(f)} to be done first. Nothing to do — it starts by itself after that.`,
+  },
+  red_base: {
+    status: "waiting — the base branch has failing tests",
+    help: (f) => (f.redProblem
+      ? "The tests on the base branch fail and no fix story could be made. Fix the failing tests, or write a story that lists them."
+      : "The tests on the base branch fail, so this story waits. Nothing to do — it starts by itself when a new commit lands."),
   },
   one_at_a_time: { status: "waiting for another run", help: "Only one run at a time works here, and another run is active. Nothing to do — it starts when that run is finished." },
   area_lock: { status: "waiting for another run in the same code", help: "Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished." },

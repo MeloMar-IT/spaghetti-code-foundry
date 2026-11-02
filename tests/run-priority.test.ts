@@ -151,7 +151,8 @@ describe("run processes at a priority", () => {
     mkdirSync(join(d, "bin"));
     writeFileSync(join(d, "bin", "git"), `#!/bin/sh\n${SELF}\n`);
     chmodSync(join(d, "bin", "git"), 0o755);
-    const out = await defaultExec(join(d, "log2"), "background")("git", [], { cwd: d, env: { PATH: `${join(d, "bin")}:/usr/bin:/bin` }, timeoutMs: 10_000, pinnedSecrets: [] } as never);
-    expect(nums((out as { stdout: string }).stdout)).toEqual([Math.max(15, getPriority())]);
+    const out = (await defaultExec(join(d, "log2"), "background")("git", [], { cwd: d, env: { PATH: `${join(d, "bin")}:/usr/bin:/bin` }, timeoutMs: 45_000, pinnedSecrets: [] } as never)) as { stdout: string; stderr: string; timedOut?: boolean };
+    expect({ timedOut: out.timedOut ?? false, stderr: out.stderr }).toEqual({ timedOut: false, stderr: "" });
+    expect(nums(out.stdout)).toEqual([Math.max(15, getPriority())]);
   });
 });
