@@ -2100,7 +2100,8 @@ kept in three places:
 - the live log, as a line such as `autonomy: plan-only (repository guarded-write, flow plan-only)`;
 - the evidence, as the event `run.autonomy`, written right after `run.created`. A resumed run does not write it again.
 
-Levels are stored in `autonomy.json` in the Foundry home. There is no screen or command to change a level yet. If `autonomy.json` or `repos.json` cannot be read when a run starts, the run counts as
+Levels are stored in `autonomy.json` in the Foundry home. A level changes only through the promote, approve and demote
+routes or `scf autonomy` ([Change a level](#change-a-level)). If `autonomy.json` or `repos.json` cannot be read when a run starts, the run counts as
 `observe`, and the log has a `!` line that says which file it was. Connecting a repository fails when
 `autonomy.json` is broken.
 
@@ -2112,8 +2113,8 @@ before.
 The promotion gate shows whether a repository or a flow has earned the next autonomy level, and each piece of
 evidence behind that answer. It only reads. Nothing is promoted by it.
 
-The gate has five checks. The first four count; `approval` is shown as **pending** until a person approves a
-request (a later part of the governance work).
+The gate has five checks. The first four count; `approval` is shown as **pending** until the accountable owner
+approves a request ([Change a level](#change-a-level)). The gate of a promotion is checked again at approval.
 
 - **Evidence completeness.** The share of the component's runs in the window that have complete evidence. Needs
   `min_runs` runs with an evidence file.
@@ -2124,7 +2125,7 @@ request (a later part of the governance work).
   fails the check.
 - **Operational SLOs.** No open SLO finding that names the repository or flow. The check fails when the monitor
   has not finished a check in the last 24 hours, because then open problems are not known.
-- **Approval.** Pending.
+- **Approval.** Pending, until the request is approved (see [Change a level](#change-a-level)).
 
 A missing piece of data fails its check with a plain reason, such as "no eval report covers it" or "Only 4 runs
 ended in the last 30 days; at least 10 are needed". A check never passes on missing data. A repository with no
@@ -2143,6 +2144,36 @@ table). `scf autonomy status` prints the same, one line per check; `--json` prin
 calls that route, so it needs a running Foundry and a signed-in admin.
 
 The checks and thresholds are the same for every level. The target level is not used yet.
+
+### Change a level
+
+A level moves in two ways, and both are written to the audit log (`autonomy-promote-request`, `autonomy-promote`,
+`autonomy-demote`, with `target` `repos:<id>` or `flows:<id>` and a detail such as `plan-only→guarded-write`).
+
+**Promote** is one level at a time and needs an approval:
+
+1. An admin asks: `scf autonomy promote <repos|flows> <id> <to> --reason "…"`, or `POST /api/autonomy/promote`
+   with `kind`, `id`, `to` and `reason`. The request is refused (409) unless `to` is exactly one level above the
+   current level, the gate passes, and no request for the component is waiting. The answer carries a `token`.
+2. The accountable owner approves: `scf autonomy approve <repos|flows> <id> <to> <token>`, or
+   `POST /api/autonomy/approve` with `kind`, `id`, `to` and `token`.
+
+The owner is `governance.owner` in `config.yaml` (the id of an admin account). When it is not set, or the account is
+no longer an active admin, the first active admin is the owner; `GET /api/autonomy` and the audit line say so.
+
+- A move to `guarded-write` or `delivery-handoff` needs an approver who did not make the request. If the owner made
+  the request and there are two or more active admins, another admin approves instead.
+- With one active admin, that admin may approve their own request. The audit line and the answer say
+  `self-approved`.
+- When the approval comes, the level and the gate are checked again. A request whose level has changed, or whose
+  gate no longer passes, expires and is answered with 409. Ask again to start over.
+
+**Demote** lowers a level at once, by any admin, with no gate: `scf autonomy demote <kind> <id> <to> --reason "…"`
+(it asks for confirmation unless `--yes` is given), or `POST /api/autonomy/demote`. A component that was demoted goes
+up again only through a new request and an approval, so every step can be undone.
+
+The reason follows the break-glass rules: required, at most 200 characters, no control characters and no
+credential-like text. Requests waiting for approval are kept in `autonomy.json` next to the levels.
 
 ### Promote a component
 
@@ -4009,7 +4040,7 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
 
-**Promotion gate (governance.promotion)** — `governance.promotion` holds the four numbers of the promotion gate: `min_runs` (default `10`), `evidence_completeness` (`0.95`), `eval_pass_rate` (`0.9`) and `within_days` (`30`, from 1 to 90). They only decide what the gate shows; nothing is enforced by them yet ([Promotion gate](#promotion-gate)).
+**Promotion gate (governance.promotion)** — `governance.promotion` holds the four numbers of the promotion gate: `min_runs` (default `10`), `evidence_completeness` (`0.95`), `eval_pass_rate` (`0.9`) and `within_days` (`30`, from 1 to 90). They only decide what the gate shows; nothing is enforced by them yet ([Promotion gate](#promotion-gate)). `governance.owner` is the admin account that approves promotions; unset, the first active admin does ([Change a level](#change-a-level)).
 
 **Retries after a time limit (auto_retry)** — `auto_retry.timeouts` is how often a story of a watcher is tried again by itself when a step ran out of time: default `2`, `0` turns it off. The count is per story, over all runs of its issue. With `0`, a time-out goes to Needs you at once, as before. Otherwise, when `implement` times out after its last retry, the story goes to the planner to be split (see "When something goes wrong"). A run that a person started is never retried. The settings page shows this as the card "Retries".
 
@@ -4729,7 +4760,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
 | `GET /api/outcomes` | yes | yes | the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values |
-| `GET /api/autonomy` | yes | no | the autonomy level of every repository and flow and its promotion gate: whether it has earned the next level, with the checks evidence completeness, eval pass rate, policy conformance, operational SLOs and approval (pending); read-only, changes nothing |
+| `GET /api/autonomy` | yes | no | the autonomy level of every repository and flow and its promotion gate: whether it has earned the next level, with the checks evidence completeness, eval pass rate, policy conformance, operational SLOs and approval (pending), any waiting promotion request with its token, and the accountable owner; read-only, changes nothing |
+| `POST /api/autonomy/promote` | yes | no | ask for one autonomy level more for a repository or flow (`kind` `repos` or `flows`, `id`, `to`, `reason` of 1 to 200 characters); `to` must be one level above the current one and the promotion gate must pass (else 409 with `gate`); the answer carries the request `token`; writes an audit line |
+| `POST /api/autonomy/approve` | yes | no | carry out a waiting promotion request (`kind`, `id`, `to`, `token`); only the accountable owner may approve, and a move to `guarded-write` or `delivery-handoff` needs an approver who did not ask (unless there is one active admin); the level and the gate are checked again, and a request that no longer fits expires (409); writes an audit line |
+| `POST /api/autonomy/demote` | yes | no | lower an autonomy level at once (`kind`, `id`, `to`, `reason`); any admin, no gate; the component can go up again only through promote and approve; writes an audit line |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
@@ -7202,6 +7236,9 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf components [kind]` / `scf components record [kind]` | Print the version, SHA-256 and governance status (owner, risk, lifecycle, review) of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
 | `scf autonomy status [--json]` | Print the autonomy level of each repository and flow and its promotion gate, check by check; read-only; needs a running, signed-in server (admin) ([Promotion gate](#promotion-gate)) |
+| `scf autonomy promote <repos\|flows> <id> <to> --reason "…"` | Ask for one level more when the gate passes; prints the token the owner needs ([Change a level](#change-a-level)) |
+| `scf autonomy approve <repos\|flows> <id> <to> <token>` | Approve a waiting promotion request (the accountable owner) ([Change a level](#change-a-level)) |
+| `scf autonomy demote <repos\|flows> <id> <to> --reason "…" [--yes]` | Lower a level at once, any admin, no gate ([Change a level](#change-a-level)) |
 | `scf promote <kind> <id> [--live]` | Check that the newest safety reports allow promoting a component; read-only; prints `PASSED` and `PROMOTABLE`, or `BLOCKED` per problem; exits 1 when blocked ([Promote a component](#promote-a-component)) |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
 | `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |

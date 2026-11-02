@@ -9,7 +9,7 @@ import { dataHome, openAppendLocked, replaceFileLocked, StoreError, withAuthLock
  * The audit log: one JSON line per account change or event (a sign-in), in `audit.jsonl` (not `.json`, so the
  * data-folder move leaves it alone). The file is only appended; a reader skips lines that do not parse. A line never
  * holds a password, hash, token, key, name or e-mail. Lines also record actions made in the web interface; they never
- * hold a note or task text. A settings line holds the old and new value, except for the masked keys (audit-changes.ts).
+ * hold a note or task text; the exception is a governance reason (autonomy-*), which is short free text with no credential. A settings line holds the old and new value, except for the masked keys (audit-changes.ts).
  */
 export const auditPath = () => join(dataHome(), "audit.jsonl");
 
@@ -36,6 +36,9 @@ export const EVENT_ACTIONS = [
   "credential-add",
   "credential-remove",
   "flow-publish",
+  "autonomy-promote-request",
+  "autonomy-promote",
+  "autonomy-demote",
   "component-promote",
   "settings-change",
   "restart-request",

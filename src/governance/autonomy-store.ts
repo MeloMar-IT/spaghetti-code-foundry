@@ -32,10 +32,28 @@ const flowNameSchema = z.string().refine(validFlowName, "not a flow name");
 export const AutonomyEntrySchema = z
   .object({ level: AutonomyLevelSchema, since: z.iso.datetime(), by: AutonomyBySchema, reason: z.string().min(1).max(AUTONOMY_REASON_MAX).optional() })
   .strict();
+/** A promotion that waits for its approval (#646). `token` binds an approval to this one request. */
+export const AutonomyRequestSchema = z
+  .object({
+    token: z.uuid(),
+    from: AutonomyLevelSchema,
+    to: AutonomyLevelSchema,
+    reason: z.string().min(1).max(AUTONOMY_REASON_MAX),
+    by: z.uuid(),
+    at: z.iso.datetime(),
+    state: z.enum(["pending", "expired"]),
+  })
+  .strict();
 export const AutonomyStoreSchema = z
-  .object({ version: z.literal(1), repos: z.record(z.uuid(), AutonomyEntrySchema), flows: z.record(flowNameSchema, AutonomyEntrySchema) })
+  .object({
+    version: z.literal(1),
+    repos: z.record(z.uuid(), AutonomyEntrySchema),
+    flows: z.record(flowNameSchema, AutonomyEntrySchema),
+    requests: z.object({ repos: z.record(z.uuid(), AutonomyRequestSchema), flows: z.record(flowNameSchema, AutonomyRequestSchema) }).strict().optional(),
+  })
   .strict();
 export type AutonomyEntry = z.infer<typeof AutonomyEntrySchema>;
+export type AutonomyRequest = z.infer<typeof AutonomyRequestSchema>;
 export type AutonomyStore = z.infer<typeof AutonomyStoreSchema>;
 
 export const autonomyFile = (home = dataHome()): string => join(home, AUTONOMY_FILE);
@@ -61,15 +79,37 @@ export function readAutonomy(home = dataHome()): AutonomyStore {
     throw new StoreError("wrong-format", file, `is not valid at ${path.slice(0, 60)}`);
   }
   // zod's record may drop a key such as `__proto__`: the maps are rebuilt from the raw keys, as own properties
-  const raw = json as { repos: Record<string, unknown>; flows: Record<string, unknown> };
-  return { version: 1, repos: entriesOf(raw.repos), flows: entriesOf(raw.flows) };
+  const raw = json as { repos: Record<string, unknown>; flows: Record<string, unknown>; requests?: { repos: Record<string, unknown>; flows: Record<string, unknown> } };
+  const store: AutonomyStore = { version: 1, repos: entriesOf(raw.repos, AutonomyEntrySchema), flows: entriesOf(raw.flows, AutonomyEntrySchema) };
+  if (raw.requests) {
+    const requests = { repos: entriesOf(raw.requests.repos, AutonomyRequestSchema), flows: entriesOf(raw.requests.flows, AutonomyRequestSchema) };
+    if (Object.keys(requests.repos).length || Object.keys(requests.flows).length) store.requests = requests;
+  }
+  return store;
 }
 
 /** Own properties from a raw map of entries that already passed the schema. Object.fromEntries never sets a prototype. */
-const entriesOf = (m: Record<string, unknown>): Record<string, AutonomyEntry> =>
-  Object.fromEntries(Object.entries(m).map(([k, v]) => [k, AutonomyEntrySchema.parse(v)]));
+const entriesOf = <T>(m: Record<string, unknown>, schema: z.ZodType<T>): Record<string, T> => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, schema.parse(v)]));
 
-const own = (m: Record<string, AutonomyEntry>, key: string): AutonomyEntry | undefined => (Object.hasOwn(m, key) ? m[key] : undefined);
+const own = <T>(m: Record<string, T>, key: string): T | undefined => (Object.hasOwn(m, key) ? m[key] : undefined);
+
+/** The stored level of one repository or flow; `delivery-handoff` without an entry. */
+export const levelIn = (store: AutonomyStore, kind: AutonomyKind, id: string): AutonomyLevel => own(store[kind], id)?.level ?? DEFAULT_LEVEL;
+
+/** The request of one component, if the store holds one (it may be stale: see `liveRequest`). */
+export const requestOf = (store: AutonomyStore, kind: AutonomyKind, id: string): AutonomyRequest | undefined => own(store.requests?.[kind] ?? {}, id);
+
+/** The store with the request of one component set, or removed with `undefined`. The `requests` key is left out when it is empty. */
+export function withRequest(store: AutonomyStore, kind: AutonomyKind, id: string, req: AutonomyRequest | undefined): AutonomyStore {
+  const maps: { repos: Record<string, AutonomyRequest>; flows: Record<string, AutonomyRequest> } = {
+    repos: Object.fromEntries(Object.entries(store.requests?.repos ?? {})),
+    flows: Object.fromEntries(Object.entries(store.requests?.flows ?? {})),
+  };
+  if (req) Object.defineProperty(maps[kind], id, { value: req, enumerable: true, writable: true, configurable: true });
+  else delete maps[kind][id];
+  const { requests: _old, ...rest } = store;
+  return Object.keys(maps.repos).length || Object.keys(maps.flows).length ? { ...rest, requests: maps } : rest;
+}
 
 export const levelOfRepo = (id: string, home = dataHome()): AutonomyLevel => own(readAutonomy(home).repos, id)?.level ?? DEFAULT_LEVEL;
 export const levelOfFlow = (name: string, home = dataHome()): AutonomyLevel => own(readAutonomy(home).flows, name)?.level ?? DEFAULT_LEVEL;
@@ -96,9 +136,8 @@ export function serializeAutonomy(store: AutonomyStore, maxBytes = MAX_AUTONOMY_
   return text;
 }
 
-/** Sets one level. The caller holds the data-folder lock. Throws AutonomyError for bad input and StoreError for the file. */
-export function setLevelLocked(kind: AutonomyKind, id: string, level: AutonomyLevel, by: string, reason?: string): AutonomyEntry {
-  if (!authLockHeld()) throw new Error("setLevelLocked must run inside withAuthLock");
+/** The entry for a new level, after the checks of every input. Throws AutonomyError; nothing is written. */
+export function newEntry(kind: AutonomyKind, id: string, level: AutonomyLevel, by: string, reason?: string): AutonomyEntry {
   if (kind !== "repos" && kind !== "flows") throw new AutonomyError("the kind must be repos or flows");
   if (kind === "repos" ? !z.uuid().safeParse(id).success : typeof id !== "string" || !validFlowName(id)) throw new AutonomyError(`the ${kind === "repos" ? "repository id" : "flow name"} is not valid`);
   if (!AutonomyLevelSchema.safeParse(level).success) throw new AutonomyError("the level is not valid");
@@ -111,7 +150,13 @@ export function setLevelLocked(kind: AutonomyKind, id: string, level: AutonomyLe
     if (credentialProblem(note)) throw new AutonomyError("the reason looks like a credential");
     if (note.length === 0) note = undefined;
   }
-  const entry: AutonomyEntry = { level, since: new Date().toISOString(), by, ...(note ? { reason: note } : {}) };
+  return { level, since: new Date().toISOString(), by, ...(note ? { reason: note } : {}) };
+}
+
+/** Sets one level. The caller holds the data-folder lock. Throws AutonomyError for bad input and StoreError for the file. */
+export function setLevelLocked(kind: AutonomyKind, id: string, level: AutonomyLevel, by: string, reason?: string): AutonomyEntry {
+  if (!authLockHeld()) throw new Error("setLevelLocked must run inside withAuthLock");
+  const entry = newEntry(kind, id, level, by, reason);
   const store = readAutonomy(); // a throw leaves the file as it was
   const text = serializeAutonomy({ ...store, [kind]: { ...store[kind], [id]: entry } });
   writeAtomic(autonomyFile(), text);

@@ -5,11 +5,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, repoIdsOf } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
-import { AUTONOMY_LEVELS, autonomyLine, autonomyOfRun, AutonomyLevelSchema, lowerLevel } from "../src/governance/autonomy.js";
+import { AUTONOMY_LEVELS, autonomyLine, autonomyOfRun, AutonomyLevelSchema, isSensitiveLevel, lowerLevel, nextLevel } from "../src/governance/autonomy.js";
 import {
   AutonomyError,
   autonomyFile,
   effectiveLevel,
+  emptyAutonomyStore,
+  levelIn,
+  requestOf,
+  withRequest,
   levelOfFlow,
   levelOfRepo,
   levelsOf,
@@ -233,5 +237,50 @@ describe("autonomy levels", () => {
     mkdirSync(join(home, "runs"));
     setLevel("flows", "f", "observe", ADMIN);
     expect(readdirSync(home).sort()).toEqual(["autonomy.json", "runs"]);
+  });
+
+  describe("promotion requests (#646)", () => {
+    const request = (over: Record<string, unknown> = {}) => ({ token: randomUUID(), from: "observe", to: "plan-only", reason: "ready", by: ADMIN, at: "2026-01-01T00:00:00.000Z", state: "pending", ...over });
+    const write = (requests: unknown) => writeFileSync(autonomyFile(), JSON.stringify({ version: 1, repos: {}, flows: {}, ...(requests === undefined ? {} : { requests }) }));
+
+    it("steps up one level and knows the sensitive ones", () => {
+      expect(AUTONOMY_LEVELS.map(nextLevel)).toEqual(["plan-only", "guarded-write", "delivery-handoff", null]);
+      expect(AUTONOMY_LEVELS.map(isSensitiveLevel)).toEqual([false, false, true, true]);
+    });
+
+    it("reads and writes requests back, also for a flow named __proto__", () => {
+      const r = request();
+      write({ repos: {}, flows: JSON.parse(`{"__proto__": ${JSON.stringify(r)}}`) });
+      const store = readAutonomy();
+      expect(Object.hasOwn(store.requests!.flows, "__proto__")).toBe(true);
+      expect(requestOf(store, "flows", "__proto__")).toEqual(r);
+      expect(requestOf(store, "flows", "other")).toBeUndefined();
+      expect(readAutonomy().requests).toEqual(store.requests);
+    });
+
+    it("reads a file without requests as before, and drops empty maps", () => {
+      write(undefined);
+      expect(readAutonomy()).toEqual({ version: 1, repos: {}, flows: {} });
+      write({ repos: {}, flows: {} });
+      expect("requests" in readAutonomy()).toBe(false);
+      const r = request() as never;
+      const set = withRequest(emptyAutonomyStore(), "flows", "f", r);
+      expect(requestOf(set, "flows", "f")).toBe(r);
+      expect(withRequest(set, "flows", "f", undefined)).toEqual({ version: 1, repos: {}, flows: {} });
+      expect(levelIn(set, "flows", "f")).toBe("delivery-handoff");
+    });
+
+    it("keeps requests when a level is set", () => {
+      write({ repos: {}, flows: { f: request() } });
+      setLevel("flows", "f", "observe", ADMIN);
+      expect(readAutonomy().requests!.flows.f).toBeDefined();
+    });
+
+    it("refuses an unknown field and a bad state", () => {
+      for (const bad of [{ ...request(), extra: 1 }, request({ state: "approved" }), request({ by: "someone" }), request({ reason: "" })]) {
+        write({ repos: {}, flows: { f: bad } });
+        expect((fails(() => readAutonomy()) as StoreError).kind).toBe("wrong-format");
+      }
+    });
   });
 });
