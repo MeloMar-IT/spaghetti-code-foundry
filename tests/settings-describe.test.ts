@@ -147,6 +147,14 @@ describe("what is described", () => {
     }
   });
 
+  it("takes the promotion owner as an account id only, not set by default, with no generated control", () => {
+    expect(isCovered("governance.owner")).toBe(false);
+    expect(described.find((d) => d.key === "governance.owner")).toBeUndefined();
+    expect(ConfigSchema.parse({}).governance.owner).toBeUndefined();
+    expect(issuesAt("governance.owner", "11111111-1111-4111-8111-111111111111")).toHaveLength(0);
+    for (const v of ["", "someone", 5]) expect(issuesAt("governance.owner", v), String(v)).not.toHaveLength(0);
+  });
+
   it("keeps a floor of 0, leaves it out when absent, and counts one above concurrency as valid", () => {
     expect(ConfigSchema.parse({ governor: { floor: 0 } }).governor.floor).toBe(0);
     expect(ConfigSchema.parse({}).governor.floor).toBeUndefined();

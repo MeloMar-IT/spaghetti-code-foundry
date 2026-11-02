@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { withAuthLock } from "../src/auth/store.js";
-import { AUTONOMY_FILE, setLevelLocked } from "../src/governance/autonomy-store.js";
+import { randomUUID } from "node:crypto";
+import { AUTONOMY_FILE, readAutonomy, setLevelLocked } from "../src/governance/autonomy-store.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
@@ -150,5 +151,54 @@ describe("GET /api/autonomy", () => {
     expect(r.text).not.toMatch(/\/Users\/|\/home\/|\/tmp\//);
     expect([...snapshot(home), ...snapshot(runsDir)]).toEqual(before);
     expect(readFileSync(join(home, AUTONOMY_FILE), "utf8")).toContain("guarded-write");
+  });
+});
+
+// The success paths of promote and approve are unit tests (autonomy-change.test.ts, with a fake gate): the real gate cannot pass here.
+describe("POST /api/autonomy/promote|approve|demote", () => {
+  const post = async (who: TestSession, act: string, body: unknown) => {
+    const r = await fetch(`${base}/api/autonomy/${act}`, { method: "POST", headers: { "content-type": "application/json", ...who.headers("POST") }, body: JSON.stringify(body) });
+    const text = await r.text();
+    return { status: r.status, text, json: () => JSON.parse(text) as any };
+  };
+  const flow = { kind: "flows", id: "delivery", reason: "ready" };
+
+  it("refuses a user on all three routes", async () => {
+    for (const act of ["promote", "approve", "demote"]) expect((await post(ann, act, { ...flow, to: "observe", token: randomUUID() })).status).toBe(403);
+  });
+
+  it("refuses a promotion whose real gate fails, and stores nothing", async () => {
+    const r = await post(admin, "promote", { ...flow, to: "guarded-write" });
+    expect(r.status).toBe(409);
+    expect(r.json().gate.passed).toBe(false);
+    expect(readAutonomy().requests).toBeUndefined();
+    expect((await post(admin, "promote", { ...flow, id: "nope", to: "guarded-write" })).status).toBe(404);
+    expect((await post(admin, "approve", { ...flow, to: "guarded-write", token: randomUUID() })).status).toBe(409);
+  });
+
+  it("shows the owner and the request in the status, and holds no path", async () => {
+    const stored = readAutonomy();
+    const token = randomUUID();
+    withAuthLock(() => writeFileSync(join(home, AUTONOMY_FILE), JSON.stringify({ ...stored, requests: { repos: {}, flows: { delivery: { token, from: "plan-only", to: "guarded-write", reason: "ready", by: admin.user.id, at: new Date().toISOString(), state: "pending" } } } })));
+    try {
+      const r = await get(admin);
+      const j = r.json();
+      expect(j.owner).toEqual({ id: admin.user.id, source: "first-admin" });
+      expect(component(j, "flows", "delivery").request).toMatchObject({ token, state: "pending" });
+      expect(component(j, "flows", "delivery").gate.checks.find((c: any) => c.id === "approval")).toMatchObject({ value: "pending", detail: expect.stringContaining("waits") });
+      expect(r.text).not.toContain(home);
+    } finally {
+      withAuthLock(() => writeFileSync(join(home, AUTONOMY_FILE), JSON.stringify(stored)));
+    }
+  });
+
+  it("demotes at once for an admin, and the status shows the new level", async () => {
+    const r = await post(admin, "demote", { ...flow, to: "observe" });
+    expect(r.status).toBe(200);
+    expect(r.json()).toMatchObject({ from: "plan-only", to: "observe", level: "observe" });
+    expect(r.text).not.toContain(home);
+    expect(component((await get(admin)).json(), "flows", "delivery")).toMatchObject({ level: "observe", next: "plan-only" });
+    expect((await post(admin, "demote", { ...flow, to: "observe" })).status).toBe(409);
+    expect((await post(admin, "demote", { ...flow, to: "observe", reason: "" })).status).toBe(400);
   });
 });

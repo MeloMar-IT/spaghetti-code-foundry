@@ -25,6 +25,15 @@ export function lowerLevel(a: AutonomyLevel, b: AutonomyLevel): AutonomyLevel {
   return AUTONOMY_LEVELS.indexOf(a) <= AUTONOMY_LEVELS.indexOf(b) ? a : b;
 }
 
+/** The level one step up, or null at the top. */
+export function nextLevel(level: AutonomyLevel): AutonomyLevel | null {
+  return AUTONOMY_LEVELS[AUTONOMY_LEVELS.indexOf(level) + 1] ?? null;
+}
+
+/** The levels where a run may write or deliver: a move to one of them needs a second person (#646). */
+export const SENSITIVE_LEVELS: readonly AutonomyLevel[] = ["guarded-write", "delivery-handoff"];
+export const isSensitiveLevel = (level: AutonomyLevel): boolean => SENSITIVE_LEVELS.includes(level);
+
 /** The level of a run, its two sources, and the flow's. `repository` is absent when the run has no connected repository. */
 export interface RunAutonomy {
   level: AutonomyLevel;

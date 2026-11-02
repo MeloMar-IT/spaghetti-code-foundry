@@ -406,9 +406,11 @@ export const ConfigSchema = z
     /**
      * Governance (#645): what a component must show before it earns the next autonomy level. `min_runs`: the fewest runs in the
      * window; `evidence_completeness` and `eval_pass_rate`: the lowest shares; `within_days`: the window. Nothing is enforced by these.
+     * `owner` (#646): the id of the admin account that approves promotions; not set (or no longer an active admin): the first active admin.
      */
     governance: z
       .object({
+        owner: z.uuid().optional(),
         promotion: z
           .object({
             min_runs: z.number().int().min(1).max(10_000).default(10),

@@ -1,34 +1,63 @@
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
+import { writeAudit } from "../auth/audit.js";
+import { StoreError } from "../auth/store.js";
+import { listUsers, type User } from "../auth/users.js";
 import { githubNameOf } from "../auth/repo-url.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { listAllRepos } from "../auth/repos.js";
 import type { RunBrief, RunSummary } from "../engine/state.js";
 import { listFlows, parseFlow } from "../flow/load.js";
 import { isRefinementFlow } from "../flow/usage.js";
-import { AUTONOMY_LEVELS, type AutonomyLevel } from "../governance/autonomy.js";
-import { emptyAutonomyStore, levelsOf, readAutonomy, type AutonomyKind, type AutonomyStore } from "../governance/autonomy-store.js";
+import { AUTONOMY_LEVELS, AutonomyLevelSchema, nextLevel, type AutonomyLevel } from "../governance/autonomy.js";
+import {
+  AutonomyRefused,
+  accountableOwner,
+  approvePromotion,
+  checkPromotable,
+  checkReason,
+  demoteLevel,
+  liveRequest,
+  mayApprove,
+  requestPromotion,
+  type AutonomyOwner,
+  type ComponentRef,
+} from "../governance/autonomy-change.js";
+import { AutonomyError, emptyAutonomyStore, levelsOf, readAutonomy, requestOf, type AutonomyKind, type AutonomyRequest, type AutonomyStore } from "../governance/autonomy-store.js";
 import { evalCoverage, promotionGate, readGateFindings, type EvalCoverage, type GateDeps, type GateFindings, type GateRuns, type PromotionGate } from "../governance/gate.js";
 import type { OutcomeWindow } from "../outcomes.js";
 import { factsCacheOf, loadWithFacts, narrowBriefs } from "./api-outcomes.js";
 import { checkedRunAsync } from "./api-runs.js";
 import { guardedRepos } from "./api-repos.js";
-import { HttpError, send } from "./http.js";
+import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 
 // GET /api/autonomy: the autonomy level of every repository and flow, and whether it has earned the next one (the promotion
-// gate). Read-only, admin only. Nothing here promotes or enforces anything.
+// gate), its waiting promotion request and the accountable owner. Admin only. POST autonomy/promote|approve|demote (#646)
+// change a level; nothing enforces a level yet.
 
 const DAY_MS = 86_400_000;
 const PROBLEM = "The autonomy file could not be read, so every level shows as observe (as a run start treats it).";
 const OBSERVE: AutonomyLevel = "observe";
 const turn = () => new Promise<void>((r) => setImmediate(r));
 
-export interface AutonomyComponent { kind: AutonomyKind; id: string; name: string; level: AutonomyLevel; next: AutonomyLevel | null; gate: PromotionGate }
+export interface AutonomyComponent {
+  kind: AutonomyKind;
+  id: string;
+  name: string;
+  level: AutonomyLevel;
+  next: AutonomyLevel | null;
+  gate: PromotionGate;
+  /** The promotion request of this component, with its token; a request that no longer fits shows as `expired`. */
+  request?: AutonomyRequest;
+}
 export interface AutonomyStatus {
   levels: readonly AutonomyLevel[];
   window: { from: string; to: string; days: number };
   settings: GateDeps["settings"];
   problem?: string;
+  /** Who approves promotions; absent when no admin can sign in. */
+  owner?: AutonomyOwner;
   components: AutonomyComponent[];
 }
 
@@ -119,6 +148,24 @@ function flowNames(ctx: ApiContext, store: AutonomyStore): string[] {
   return [...names].filter((n) => !isRefinementFlow(n)).sort();
 }
 
+/** The accountable owner now. Logs one fixed line when the configured owner is not used. Undefined when the users cannot be read. */
+function ownerNow(ctx: ApiContext): AutonomyOwner | undefined {
+  try {
+    const owner = accountableOwner(ctx.config().governance.owner, listUsers());
+    if (owner?.problem) ctx.diagLog?.("autonomy: the configured owner is not an active admin; the first admin is the owner");
+    return owner;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The approval check says what is waiting; its value stays `pending` and it never counts in `passed`. */
+function withApprovalDetail(gate: PromotionGate, request: AutonomyRequest | undefined): PromotionGate {
+  if (!request) return gate;
+  const detail = request.state === "pending" ? "A promotion request waits for the owner to approve it." : "The last promotion request has expired; ask again.";
+  return { ...gate, checks: gate.checks.map((c) => (c.id === "approval" ? { ...c, detail } : c)) };
+}
+
 /** The levels and gates of every repository and flow. Never reads a path into the answer. */
 export async function autonomyStatus(ctx: ApiContext, now: Date): Promise<AutonomyStatus> {
   let store: AutonomyStore;
@@ -139,22 +186,121 @@ export async function autonomyStatus(ctx: ApiContext, now: Date): Promise<Autono
   const components: AutonomyComponent[] = [];
   for (const [i, t] of targets.entries()) {
     if (i > 0) await turn();
-    const next = AUTONOMY_LEVELS[AUTONOMY_LEVELS.indexOf(t.level) + 1] ?? null;
-    components.push({ ...t, next, gate: await promotionGate(t.kind, t.id, next ?? t.level, now, deps) });
+    const next = nextLevel(t.level);
+    const stored = unreadable ? undefined : requestOf(store, t.kind, t.id);
+    const request = stored && (liveRequest(store, t) ? stored : { ...stored, state: "expired" as const });
+    const gate = withApprovalDetail(await promotionGate(t.kind, t.id, next ?? t.level, now, deps), request);
+    components.push({ ...t, next, gate, ...(request ? { request } : {}) });
   }
+  const owner = ownerNow(ctx);
   return {
     levels: AUTONOMY_LEVELS,
     window: { from: from.toISOString(), to: now.toISOString(), days: deps.settings.within_days },
     settings: deps.settings,
     ...(problem ? { problem } : {}),
+    ...(owner ? { owner } : {}),
     components,
   };
 }
 
-/** GET /api/autonomy. */
-export const autonomyRoutes: Route = async (ctx, _req, res, seg, method, user) => {
-  if (seg[0] !== "autonomy" || seg.length !== 1 || method !== "GET") return false;
-  if (user.role !== "admin") throw new HttpError(403, "only an admin can see the autonomy levels");
-  send(res, 200, await autonomyStatus(ctx, new Date()));
+// ---- promote, approve, demote ----------------------------------------------------------------------
+
+export type GateOf = (kind: AutonomyKind, id: string, to: AutonomyLevel, now: Date) => Promise<PromotionGate>;
+const liveGate =
+  (ctx: ApiContext): GateOf =>
+  (kind, id, to, now) =>
+    promotionGate(kind, id, to, now, gateDepsFor(ctx, now));
+
+/** Maps the errors of a change to answers. No answer holds a path or quotes the input. */
+async function guarded<T>(ctx: ApiContext, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    if (e instanceof AutonomyError) throw new HttpError(400, e.message);
+    if (e instanceof AutonomyRefused) throw new HttpError(e.status, e.message, undefined, e.extra);
+    if (e instanceof StoreError) {
+      if (e.kind === "locked") throw new HttpError(503, "the data folder is busy; try again");
+      ctx.diagLog?.(`autonomy: ${basename(e.file)} ${e.kind}`);
+    } else {
+      ctx.diagLog?.("autonomy: the change failed");
+    }
+    throw new HttpError(500, "the level could not be changed; nothing was changed");
+  }
+}
+
+/** The component and level a body names. 400 for a bad field, 404 for a repository or flow that is not known. */
+function targetOf(ctx: ApiContext, body: Record<string, unknown>): { ref: ComponentRef; to: AutonomyLevel } {
+  const kind = body.kind;
+  if (kind !== "repos" && kind !== "flows") throw new HttpError(400, "the kind must be repos or flows");
+  if (typeof body.id !== "string" || !body.id) throw new HttpError(400, "the id must be a text");
+  const to = AutonomyLevelSchema.safeParse(body.to);
+  if (!to.success) throw new HttpError(400, "the level is not valid");
+  const id = body.id;
+  const known = kind === "repos" ? listAllRepos().some((r) => r.id === id) : flowNames(ctx, readAutonomy()).includes(id);
+  if (!known) throw new HttpError(404, kind === "repos" ? "no such repository" : "no such flow");
+  return { ref: { kind, id }, to: to.data };
+}
+
+/** The ids of the failed evidence checks, for the audit line. */
+const failedIds = (g: PromotionGate): string => g.checks.filter((c) => !c.passed && c.id !== "approval").map((c) => c.id).join(",") || "gate";
+
+/** POST /api/autonomy/promote: stores a request when `to` is one level up and the gate passes. */
+export const promoteAutonomy = (ctx: ApiContext, user: User, body: Record<string, unknown>, gate: GateOf = liveGate(ctx)) =>
+  guarded(ctx, async () => {
+    const { ref, to } = targetOf(ctx, body);
+    const reason = checkReason(body.reason);
+    const from = checkPromotable(readAutonomy(), ref, to);
+    const g = await gate(ref.kind, ref.id, to, new Date());
+    if (!g.passed) {
+      try {
+        writeAudit(user.id, { action: "autonomy-promote-request", result: "failed", target: `${ref.kind}:${ref.id}`, detail: `${from}→${to} refused: ${failedIds(g)}` }, 0);
+      } catch {
+        ctx.diagLog?.("audit: audit.jsonl not-written (autonomy-promote-request)");
+      }
+      throw new AutonomyRefused(409, "the gate does not pass", { gate: g });
+    }
+    const request = requestPromotion({ ref, to, reason, by: user.id });
+    return { request, owner: ownerNow(ctx), gate: g };
+  });
+
+/** POST /api/autonomy/approve: carries out the waiting request with this token. */
+export const approveAutonomy = (ctx: ApiContext, user: User, body: Record<string, unknown>, gate: GateOf = liveGate(ctx)) =>
+  guarded(ctx, async () => {
+    const { ref, to } = targetOf(ctx, body);
+    if (typeof body.token !== "string" || !body.token) throw new HttpError(400, "the token must be a text");
+    const token = body.token;
+    const configuredOwner = () => ctx.config().governance.owner;
+    // the gate runs only for a request that is ready and a person who may approve it; the lock checks it all again
+    const store = readAutonomy();
+    const req = liveRequest(store, ref);
+    const g = req && req.token === token && req.to === to && mayApprove(store, ref, to, user.id, configuredOwner()) ? await gate(ref.kind, ref.id, to, new Date()) : undefined;
+    const r = approvePromotion({ ref, to, token, by: user.id, configuredOwner, ...(g ? { gate: g } : {}) });
+    if (r.owner.problem) ctx.diagLog?.("autonomy: the configured owner is not an active admin; the first admin is the owner");
+    return { kind: ref.kind, id: ref.id, from: r.from, to: r.to, level: r.to, requester: r.requester, approver: r.approver, selfApproved: r.selfApproved, entry: r.entry };
+  });
+
+/** POST /api/autonomy/demote: lowers a level at once. No gate. */
+export const demoteAutonomy = (ctx: ApiContext, user: User, body: Record<string, unknown>) =>
+  guarded(ctx, async () => {
+    const { ref, to } = targetOf(ctx, body);
+    const r = demoteLevel({ ref, to, reason: checkReason(body.reason), by: user.id });
+    return { kind: ref.kind, id: ref.id, from: r.from, to: r.to, level: r.to, entry: r.entry };
+  });
+
+/** GET /api/autonomy and POST /api/autonomy/promote|approve|demote. */
+export const autonomyRoutes: Route = async (ctx, req, res, seg, method, user) => {
+  if (seg[0] !== "autonomy") return false;
+  if (seg.length === 1 && method === "GET") {
+    if (user.role !== "admin") throw new HttpError(403, "only an admin can see the autonomy levels");
+    send(res, 200, await autonomyStatus(ctx, new Date()));
+    return true;
+  }
+  const act = seg.length === 2 && method === "POST" ? seg[1] : undefined;
+  if (act !== "promote" && act !== "approve" && act !== "demote") return false;
+  if (user.role !== "admin") throw new HttpError(403, "only an admin can change an autonomy level");
+  const body = await readJson(req);
+  if (act === "promote") send(res, 201, await promoteAutonomy(ctx, user, body));
+  else send(res, 200, await (act === "approve" ? approveAutonomy : demoteAutonomy)(ctx, user, body));
   return true;
 };
