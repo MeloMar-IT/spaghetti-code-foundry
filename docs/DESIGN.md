@@ -2675,6 +2675,18 @@ A step up needs `calm` checks and a number above the cap. Without `measured` (no
 the part 3 rules run unchanged. `decide()` stays a pure function of state, sample and settings, so the target is
 tested with recorded days (`tests/governor-target.test.ts`).
 
+The load governor's other signals (`src/ops/governor.ts`, tested in `tests/governor-signals.test.ts`). `cpuTimes()` sums
+the idle and total CPU time of `os.cpus()` (counters since boot); `cpuBusy()` takes the busy share between the counters
+of two checks, the previous ones kept in `GovernorState.cpu` (`loadState()` keeps them only when they are sane). No
+previous reading, or counters that did not move forward, gives no share, and then the load rules run as before. `decide()`
+uses the share as `cpuAgrees` (a load above `high` or `testsHigh` needs `cpuHigh`, 0.8), `cpuIdle` (`cpuLow`, 0.5, lets the
+band count as calm) and `cpuSaturated` (stops calm). `parseSwap()` reads `sysctl -n vm.swapusage`; `parseTherm()` and
+`throttleReason()` read `pmset -g therm`. `sample()` runs both with an absolute path, a 10-second timeout and a `catch` that
+leaves the field out (`Sample.swapMb`, `Sample.throttled`, both optional, so recorded samples still work). `decide()` keeps
+`strain`, the checks in a row with a throttle reason or with swap grown by more than `swapGrowMb` (64 MB) since
+`GovernorState.swapMb`; at `hotChecks` it counts as a step-down reason, after the usual pause. The reason is named in the
+change line, and throttling or swap growth stops the calm count. `Settings` holds the new thresholds with defaults only.
+
 ## 18. Where it is going
 
 - **Refinement:** (story drafts and the session's Epic are stored in the session; `src/refinement/draft.ts`

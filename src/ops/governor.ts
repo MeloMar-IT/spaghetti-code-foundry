@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
-import { availableParallelism, loadavg } from "node:os";
+import { availableParallelism, cpus, loadavg } from "node:os";
 import { join } from "node:path";
 import { setCap } from "./caps.js";
 import { localDay } from "./digest.js";
@@ -15,7 +15,16 @@ export interface Sample {
   pressure: number;
   /** What the usage check measured (part 4). Absent: no figures, and the rules of part 3 apply. */
   measured?: Measured;
+  /** CPU time counters at this check. Absent: could not be read. */
+  cpu?: CpuTimes;
+  /** Swap in use (MB). Absent: could not be read (not macOS). */
+  swapMb?: number;
+  /** Why the machine is throttled. Absent: it is not, or this could not be read. */
+  throttled?: string;
 }
+
+/** CPU time of all cores since boot (ms, summed over cores): idle, and all states together. */
+export interface CpuTimes { idle: number; total: number }
 
 /** The figures the target is worked out from. */
 export interface Measured {
@@ -43,6 +52,12 @@ export interface GovernorState {
   downs?: string[];
   /** When this was decided. A state older than the hold time says nothing about the machine now. */
   at?: string;
+  /** The CPU counters of the previous check. */
+  cpu?: CpuTimes;
+  /** The swap in use at the previous check (MB). */
+  swapMb?: number;
+  /** Checks in a row in which the machine was throttled or its swap grew. Absent: 0. */
+  strain?: number;
 }
 
 export interface Settings {
@@ -64,12 +79,65 @@ export interface Settings {
   downPauseMinutes: number;
   /** Cores kept free for other programs when the runs that fit are worked out. */
   reserveCores: number;
+  /** Share of all cores busy at or above which a high load counts (and a calm count stops). */
+  cpuHigh: number;
+  /** Share of all cores busy at or below which a load in the band counts as calm. */
+  cpuLow: number;
+  /** Growth of swap since the last check (MB) above which the machine counts as swapping. */
+  swapGrowMb: number;
 }
 
-export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3, reserveCores: 2 };
+export const DEFAULTS: Settings = { cpuHigh: 0.8, cpuLow: 0.5, swapGrowMb: 64, high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3, reserveCores: 2 };
 
 /** With a measurement the cap goes down only when its runs use more than the free cores by this much (a figure that wobbles moves nothing). */
 export const SLACK_CORES = 0.5;
+
+/** CPU counters summed over cores; undefined for an empty list or figures that are not numbers. */
+export function cpuTimes(list: { times: { user: number; nice: number; sys: number; idle: number; irq: number } }[]): CpuTimes | undefined {
+  let idle = 0;
+  let total = 0;
+  for (const c of list) {
+    idle += c.times.idle;
+    total += c.times.user + c.times.nice + c.times.sys + c.times.idle + c.times.irq;
+  }
+  return list.length && Number.isFinite(idle) && Number.isFinite(total) ? { idle, total } : undefined;
+}
+
+/** Share of CPU time that was not idle between two readings; undefined without a previous reading or when the counters did not move forward. */
+export function cpuBusy(prev: CpuTimes | undefined, now: CpuTimes | undefined): number | undefined {
+  if (!prev || !now) return undefined;
+  const dt = now.total - prev.total;
+  const di = now.idle - prev.idle;
+  return dt > 0 && di >= 0 && di <= dt ? 1 - di / dt : undefined;
+}
+
+/** Swap in use (MB) from `sysctl -n vm.swapusage`; undefined when the text is not understood. */
+export function parseSwap(text: string): number | undefined {
+  const m = /used\s*=\s*([\d.]+)\s*([KMG])/i.exec(text);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return undefined;
+  const unit = m[2]!.toUpperCase();
+  return unit === "K" ? n / 1024 : unit === "G" ? n * 1024 : n;
+}
+
+export interface Therm { speedLimit: number; warning: number }
+
+/** The thermal state from `pmset -g therm`; undefined when the text is not understood. */
+export function parseTherm(text: string): Therm | undefined {
+  const limits = [...text.matchAll(/CPU_(?:Speed|Scheduler)_Limit\s*=\s*(\d+)/g)].map((m) => Number(m[1]));
+  const warnings = [...text.matchAll(/(?:thermal|performance) warning level[^\d\n]*(\d+)/gi)].map((m) => Number(m[1]));
+  const none = /No (?:thermal|performance) warning level has been recorded/i.test(text);
+  if (!limits.length && !warnings.length && !none) return undefined;
+  return { speedLimit: Math.min(100, ...limits), warning: Math.max(0, ...warnings) };
+}
+
+/** Why the machine counts as throttled; undefined when it does not. */
+export function throttleReason(t: Therm | undefined): string | undefined {
+  if (!t) return undefined;
+  if (t.speedLimit < 100) return `throttled: CPU speed limit ${t.speedLimit}%`;
+  return t.warning > 0 ? `throttled: thermal warning level ${t.warning}` : undefined;
+}
 
 const freeCores = (m: Measured, reserve: number) => Math.max(0, m.cores - m.other - reserve);
 
@@ -116,15 +184,27 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   // Below the floor is none either: the floor was raised meanwhile (silent, like the clamp above).
   const have = Math.max(floor, Math.min(prev.runs ?? configured, configured));
   const critical = s.pressure >= 4;
-  const emergency = critical || s.load1 > set.testsHigh;
+  const busy = cpuBusy(prev.cpu, s.cpu);
+  const cpuAgrees = busy === undefined || busy >= set.cpuHigh;
+  const cpuIdle = busy !== undefined && busy <= set.cpuLow;
+  const cpuSaturated = busy !== undefined && busy >= set.cpuHigh;
+  const high1 = s.load1 > set.high && cpuAgrees;
+  const high5 = s.load5 > set.high && cpuAgrees;
+  const loadEmergency = s.load1 > set.testsHigh && cpuAgrees;
+  const emergency = critical || loadEmergency;
+  const grew = s.swapMb !== undefined && prev.swapMb !== undefined ? s.swapMb - prev.swapMb : undefined;
+  const strainWhy = s.throttled ?? (grew !== undefined && grew > set.swapGrowMb ? `swapping: swap grew by ${Math.round(grew)} MB` : undefined);
+  const strain = strainWhy ? (prev.strain ?? 0) + 1 : 0;
+  const strainDown = strain >= set.hotChecks;
+  const cpuText = busy !== undefined ? `, CPU ${Math.round(busy * 100)}% busy` : "";
   const m = s.measured;
   const fit = m ? runsFit(m, set.reserveCores) : undefined;
   // with no free cores at all the slack does not apply: a run of any size is then over the target
   const overFree = m ? freeCores(m, set.reserveCores) : 0;
   const over = m && have > fit! && (overFree === 0 || have * m.perRun > overFree + SLACK_CORES) ? (prev.over ?? 0) + 1 : 0;
-  const hot = s.load1 > set.high ? (prev.hot ?? 0) + 1 : 0;
-  const sustained = s.load5 > set.high || hot >= set.hotChecks;
-  const loaded = emergency || s.load1 > set.high || s.load5 > set.high;
+  const hot = high1 ? (prev.hot ?? 0) + 1 : 0;
+  const sustained = high5 || hot >= set.hotChecks;
+  const loaded = emergency || high1 || high5 || strain > 0;
   const changed = Date.parse(prev.changedAt ?? "");
   const t = now.getTime();
   let downs = recentDowns(prev.downs, t);
@@ -132,31 +212,34 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   // no time, an unreadable time or one in the future (the clock moved back): no pause
   const age = Number.isFinite(changed) && changed <= t ? t - changed : Infinity;
   const tests = emergency ? 1 : undefined;
-  const why = critical ? "memory pressure critical" : s.load1 > set.testsHigh ? `load ${s.load1.toFixed(1)} per core` : fit !== undefined ? fitsText(fit) : s.load5 > set.high ? `load ${s.load5.toFixed(1)} per core over 5 minutes` : `load ${s.load1.toFixed(1)} per core for ${hot} checks`;
+  const baseWhy = critical ? "memory pressure critical" : loadEmergency ? `load ${s.load1.toFixed(1)} per core${cpuText}` : fit !== undefined ? fitsText(fit) : high5 ? `load ${s.load5.toFixed(1)} per core over 5 minutes${cpuText}` : hot ? `load ${s.load1.toFixed(1)} per core for ${hot} checks${cpuText}` : strainWhy ?? "";
+  // throttling and swap are named next to any other reason that applies
+  const why = strainDown && strainWhy && baseWhy !== strainWhy ? (baseWhy ? `${baseWhy}, ${strainWhy}` : strainWhy) : baseWhy;
   const notes: string[] = [];
   let runs = have;
   let calm = 0;
   let moved = false;
-  const wantDown = m ? over >= set.hotChecks : sustained;
+  const wantDown = (m ? over >= set.hotChecks : sustained) || strainDown;
   if (have > floor && (emergency || (wantDown && age >= set.downPauseMinutes * 60_000))) {
     runs = have - 1;
     moved = true;
     downs = [...downs, now.toISOString()];
     notes.push(`runs at once ${have} → ${runs} (${why})`);
   } else if (!loaded) {
-    calm = s.load1 <= set.low && s.load5 <= set.low && (fit === undefined || fit > have) ? prev.calm + 1 : 0;
+    const quiet = (s.load1 <= set.low && s.load5 <= set.low) || (cpuIdle && s.load1 <= set.high && s.load5 <= set.high);
+    calm = quiet && !cpuSaturated && (fit === undefined || fit > have) ? prev.calm + 1 : 0;
     if (calm >= set.calmChecks) {
       if (have >= configured) calm = 0;
-      else if (age >= upWait && (have + 1 < configured || s.load15 < set.low)) {
+      else if (age >= upWait && (have + 1 < configured || s.load15 < set.low || (cpuIdle && s.load15 <= set.high))) {
         runs = have + 1;
         moved = true;
-        notes.push(`runs at once ${have} → ${runs} (calm: load ${s.load5.toFixed(1)} per core)`);
+        notes.push(`runs at once ${have} → ${runs} (calm: load ${s.load5.toFixed(1)} per core${cpuText})`);
         calm = 0;
       }
       // held by the wait or the 15-minute load: the count goes on, and the step comes when they are over
     }
   }
-  if (tests !== prev.tests) notes.push(tests ? `test runs at once → 1 (${critical ? "memory pressure critical" : `load ${s.load1.toFixed(1)} per core`})` : "test runs at once: back to normal");
+  if (tests !== prev.tests) notes.push(tests ? `test runs at once → 1 (${critical ? "memory pressure critical" : `load ${s.load1.toFixed(1)} per core${cpuText}`})` : "test runs at once: back to normal");
   const keep = Number.isFinite(changed) && age < Math.max(upWait, set.downPauseMinutes * 60_000) ? changed : undefined;
   const stamp = moved ? t : keep;
   const state: GovernorState = {
@@ -164,6 +247,9 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
     ...(downs.length ? { downs } : {}),
     ...(hot ? { hot } : {}),
     ...(over ? { over } : {}),
+    ...(strain ? { strain } : {}),
+    ...(s.cpu ? { cpu: s.cpu } : {}),
+    ...(s.swapMb !== undefined ? { swapMb: s.swapMb } : {}),
     ...(runs < configured ? { runs } : {}),
     ...(tests ? { tests } : {}),
     ...(stamp !== undefined ? { changedAt: new Date(stamp).toISOString() } : {}),
@@ -180,7 +266,29 @@ export function sample(): Sample {
   } catch {
     // not macOS
   }
-  return { load1: l1! / cores, load5: l5! / cores, load15: l15! / cores, pressure };
+  const cpu = cpuTimes(cpus());
+  const run = (cmd: string, args: string[]) => execFileSync(cmd, args, { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] });
+  let swapMb: number | undefined;
+  try {
+    swapMb = parseSwap(run("/usr/sbin/sysctl", ["-n", "vm.swapusage"]));
+  } catch {
+    // not macOS
+  }
+  let throttled: string | undefined;
+  try {
+    throttled = throttleReason(parseTherm(run("/usr/bin/pmset", ["-g", "therm"])));
+  } catch {
+    // not macOS
+  }
+  return {
+    load1: l1! / cores,
+    load5: l5! / cores,
+    load15: l15! / cores,
+    pressure,
+    ...(cpu ? { cpu } : {}),
+    ...(swapMb !== undefined ? { swapMb } : {}),
+    ...(throttled ? { throttled } : {}),
+  };
 }
 
 /** How long a cap holds without a new check: three missed checks and the Foundry is free again. */
@@ -196,7 +304,20 @@ export function loadState(dir: string, now = new Date()): GovernorState {
     const age = now.getTime() - Date.parse(s.at ?? "");
     if (!(age <= HOLD_MS)) return { calm: 0 };
     const downs = recentDowns(s.downs, now.getTime());
-    return { calm: Number(s.calm) || 0, ...(downs.length ? { downs } : {}),...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number(s.over) > 0 ? { over: Number(s.over) } : {}),...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
+    const cpu = s.cpu as Partial<CpuTimes> | undefined;
+    const cpuOk = !!cpu && typeof cpu === "object" && Number.isFinite(cpu.idle) && Number.isFinite(cpu.total) && cpu.idle! >= 0 && cpu.idle! <= cpu.total!;
+    return {
+      calm: Number(s.calm) || 0,
+      ...(downs.length ? { downs } : {}),
+      ...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}),
+      ...(Number(s.over) > 0 ? { over: Number(s.over) } : {}),
+      ...(Number(s.strain) > 0 ? { strain: Number(s.strain) } : {}),
+      ...(Number.isInteger(s.runs) ? { runs: s.runs } : {}),
+      ...(s.tests ? { tests: 1 } : {}),
+      ...(cpuOk ? { cpu: { idle: cpu!.idle!, total: cpu!.total! } } : {}),
+      ...(typeof s.swapMb === "number" && Number.isFinite(s.swapMb) && s.swapMb >= 0 ? { swapMb: s.swapMb } : {}),
+      ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}),
+    };
   } catch {
     return { calm: 0 };
   }
