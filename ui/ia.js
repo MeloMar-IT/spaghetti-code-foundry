@@ -23,6 +23,7 @@ const AU = ["admin", "user"];
 const adminPage = (id, title, section) => ({ id, path: `#/${id}`, title, area: "administration", dest: "administration", parent: null, nav: "secondary", label: { admin: title }, roles: A, section });
 export const PAGES = [
   { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home", user: "Home" }, roles: AU },
+  { id: "setup", path: "#/setup", title: "Setup check", area: "home", dest: "home", parent: null, nav: "secondary", label: { admin: "Setup check", user: "Setup check" }, roles: AU },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },
   { id: "epics", path: "#/epics", title: "Epics", area: "work", dest: "epics", parent: null, nav: "primary", label: { admin: "Epics", user: "Epics" }, roles: AU, scope: true },

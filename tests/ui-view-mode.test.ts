@@ -43,6 +43,11 @@ beforeEach(() => {
 });
 
 describe("the rules", () => {
+  it("has the Setup check page in the Simple view", () => {
+    expect(vm.inView("simple", "#/setup")).toBe(true);
+    expect(vm.inView("simple", "#/setup?need=node")).toBe(true);
+  });
+
   it("picks the view in effect and the views of an account", () => {
     expect(vm.viewOf({ role: "user" })).toBe("advanced");
     expect(vm.viewOf({ role: "admin" })).toBe("admin");

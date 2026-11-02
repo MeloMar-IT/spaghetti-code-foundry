@@ -177,7 +177,7 @@ export function homeView(model, { role = "user", prompts = [], onAsk } = {}) {
 }
 
 /** The user Home; asks every 30 seconds while the tab is visible; never rejects; returns a cleanup. */
-export async function renderHome(main, { a = api } = {}) {
+export async function renderHome(main, { a = api, setup = false } = {}) {
   const box = h("div", { class: "home" });
   mount(main, box);
   let poll;
@@ -196,7 +196,8 @@ export async function renderHome(main, { a = api } = {}) {
     },
     draw: ({ runs, pending }) => {
       const [head, ...rest] = homeView(homeModel(runs, pending), { role: "user" });
-      keepScroll(box, () => mount(box, head, states.alert, ...rest, states.note));
+      const more = setup ? h("p", { class: "muted" }, h("a", { href: "#/setup" }, "Setup check"), " — what this computer still needs") : null;
+      keepScroll(box, () => mount(box, head, states.alert, ...rest, more, states.note));
     },
     every: REFRESH_MS,
     onState: states.onState,

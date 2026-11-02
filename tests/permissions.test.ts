@@ -21,6 +21,7 @@ let close: () => void;
 let ctx: Awaited<ReturnType<typeof startTestServer>>["ctx"];
 let kc: FakeKeychain;
 let saved: string | undefined;
+let savedCodex: string | undefined;
 let admin: TestSession;
 let ann: TestSession;
 let bob: TestSession;
@@ -44,6 +45,8 @@ const PRIVATE = (name: string) => `name: ${name}\nworkspace: empty\nsteps:\n  - 
 
 beforeAll(async () => {
   saved = process.env.FACTORY_HOME;
+  savedCodex = process.env.FACTORY_CODEX_BIN;
+  process.env.FACTORY_CODEX_BIN = resolve("tests/fixtures/fake-codex.mjs");
   tmp = mkdtempSync(join(tmpdir(), "perm-"));
   process.env.FACTORY_HOME = join(tmp, "home");
   kc = fakeKeychain();
@@ -71,6 +74,8 @@ beforeAll(async () => {
 afterAll(() => {
   close();
   kc.remove();
+  if (savedCodex === undefined) delete process.env.FACTORY_CODEX_BIN;
+  else process.env.FACTORY_CODEX_BIN = savedCodex;
   if (saved === undefined) delete process.env.FACTORY_HOME;
   else process.env.FACTORY_HOME = saved;
   rmSync(tmp, { recursive: true, force: true });
@@ -142,6 +147,7 @@ const EXAMPLES: Record<string, Example> = {
   "POST monitor/story": no("monitor/story", 400, {}),
   "POST clean": no("clean", 200, {}),
   "GET providers": no("providers", 200),
+  "GET setup-check": no("setup-check", 200),
   "POST providers/test": no("providers/test", 400, {}),
   "GET evals": no("evals", 200),
   "GET stats": no("stats", 200),

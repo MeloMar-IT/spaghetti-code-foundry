@@ -2,7 +2,8 @@ import { initAsk } from "/ask.js";
 import { initContext } from "/context.js";
 import { enterDisplay, isAdmin, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
-import { resolve } from "/ia.js";
+import { resolve, splitHash } from "/ia.js";
+import { needsOf, renderSetupCheck } from "/setup-check.js";
 import { parseFilter } from "/runs-filter.js";
 import { renderEpic } from "/epic-page.js";
 import { renderEpics } from "/epics.js";
@@ -78,7 +79,8 @@ async function route() {
   mount(main, box);
   let done = null;
   try {
-    if (page.section === "home") done = await renderHome(box, { readOnly });
+    if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });
+    else if (page.section === "setup") done = await renderSetupCheck(box, { admin: ownAdmin, readOnly, needs: needsOf(splitHash(page.hash).query) });
     else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });
     else if (page.section === "epics" && page.id) done = await renderEpic(box, { id: page.id, admin: false, me, query: to.query, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "epics") done = await renderEpics(box, { admin: false, me, readOnly, query: to.query, go });
