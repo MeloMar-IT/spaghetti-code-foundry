@@ -21,6 +21,7 @@ import { watcherRows } from "./api-repos.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import { describeSettings, startupSettings } from "../settings/describe.js";
 import { resolveClaudeBinAsync } from "../steps/claude.js";
+import { parseNeeds, sharedSetupCheck } from "../setup-check.js";
 import { resolveCodexBin } from "../steps/codex.js";
 import { componentsView, listGoverned } from "../promotion/governed.js";
 import type { Route } from "./server.js";
@@ -188,6 +189,16 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] === "providers" && method === "GET") {
     const [agents, providers] = await Promise.all([agentStatuses(), providerStatuses(ctx.config())]);
     return send(res, 200, { agents, providers }), true;
+  }
+
+  if (seg[0] === "setup-check" && seg.length === 1 && method === "GET") {
+    let needs;
+    try {
+      needs = parseNeeds(new URL(req.url ?? "/", "http://x").searchParams.getAll("need"));
+    } catch (e) {
+      throw new HttpError(400, (e as Error).message);
+    }
+    return send(res, 200, await sharedSetupCheck({ claudeBin: opts.claudeBin, needs })), true;
   }
 
   if (seg[0] === "providers" && seg[1] === "test" && method === "POST") {

@@ -143,6 +143,31 @@ Everything else continues by itself.
 
 Everything the UI does is also available from the command line (see [section 9](#9-command-line)).
 
+### Setup check
+
+**Setup check** (`#/setup`) tells you what is missing on this computer and how to fix it. It is the first step of
+onboarding, and you can open it later from the admin Home page ("Setup check" link). It checks:
+
+- **Git**, which keeps every change to your project;
+- **Claude Code** (the AI helper) and whether it is **signed in**;
+- **Codex** (only for OpenAI models; optional) and whether it is **signed in**;
+- **Node.js**, when the starter you chose needs it (for example a website starter). It is checked only when the
+  page is opened with `#/setup?need=node`.
+
+Each item shows a green tick, or a plain explanation with one command to copy and, where there is one, a link to the
+official download page. **Check again** runs the check once more; use it after you install or sign in. macOS
+instructions come first; Linux and Windows have their own where the Foundry supports them.
+
+The page never asks for a password or a key. Signing in happens in the tool's own sign-in flow (type `claude`, then
+`/login`, or `codex login` in a terminal). The check only runs fixed commands (`--version`, `--help` and the
+sign-in status), with a 10-second limit each, and reads no secrets. Only admins can open the check or its API
+(`GET /api/setup-check`), because it describes the server's computer. Other accounts see a short card and nothing is
+checked for them.
+
+The same check runs in a terminal: `scf doctor --simple` prints the items with their fixes, `scf doctor` adds the
+versions, and `--json` prints the report. `--need node` adds Node.js. The command exits with 0 only when everything
+needed is ready, so it can be used in a script. It does not need the data folder to be set up.
+
 ### Old and new interface
 
 **How to switch.** There is nothing to switch. After the update every account sees the new interface. A setting to go back is not built.
@@ -4914,6 +4939,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/monitor/retry` | yes | no | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
+| `GET /api/setup-check` | yes | no | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
 | `POST /api/providers/test` | yes | no | test a provider |
 | `GET /api/evals` | yes | no | eval reports |
 | `GET /api/stats` | yes | no | statistics |
@@ -7405,6 +7431,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf ui [--port 4777] [--no-open] [--dev]` | Web UI, queue and watchers. Restarts itself when a new build is installed and no run is active (set `SCF_NO_SUPERVISE=1` to turn that off) |
 | `scf serve [--port 4777] [--dev]` | The same without opening a browser. `--dev` (also on `scf ui`) serves the component gallery at `/gallery/` for developers; leave it off in normal use |
 | `scf service install \| uninstall \| status` | Run `scf serve` in the background (macOS) |
+| `scf doctor [--simple] [--need node] [--json]` | Check what this computer needs (git, Claude Code and Codex with their sign-ins, and with `--need node` Node.js) and print how to fix each problem; `--simple` prints plain words only. Exits 0 only when everything needed is ready ([Setup check](#setup-check)) |
 | `scf run <flow> --task "…" [--var k=v] [--repo dir\|owner/name] [--ref ref]` | Run a flow. `--repo owner/name` is for flows that clone the repository themselves (`release-build`); `--ref` sets the variable `ref` |
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |

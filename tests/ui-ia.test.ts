@@ -320,9 +320,20 @@ describe("commandsFor", () => {
 
   it("gives a user four pages and two actions, without board, flows or users", () => {
     const { goTo, actions } = ia.commandsFor("user");
-    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Epics", "Refinement", "My runs", "My repositories"]);
+    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Setup check", "Epics", "Refinement", "My runs", "My repositories"]);
     expect(actions.map((a: any) => a.label)).toEqual(["Start work", "New refinement session"]);
     expect(actions[1]).toMatchObject({ href: "#/refinement", intent: "refinement", key: null });
+  });
+
+  it("has the Setup check page for both roles, with Home as its parent and no sub-navigation", () => {
+    for (const role of ["admin", "user"]) {
+      const r = ia.resolve(role, "#/setup");
+      expect(r.redirected).toBe(false);
+      expect(r.crumbs.map((c: any) => c.label)).toEqual(["Home", "Setup check"]);
+      expect(ia.subnavFor(role, "home")).toEqual([]);
+    }
+    expect(auth.isUserHash("#/setup")).toBe(true);
+    expect(auth.isUserHash("#/setup?need=node")).toBe(true);
   });
 
   it("has no New refinement session in a preview", () => {

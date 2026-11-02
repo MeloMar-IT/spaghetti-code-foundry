@@ -49,6 +49,7 @@ export const RULES: Rule[] = [
   r("POST", "monitor/retry", "no", "let the monitor try again for a finding that waits for a person (two bug stories did not fix it)"),
   r("POST", "clean", "no", "clean up old runs"),
   r("GET", "providers", "no", "agent providers"),
+  r("GET", "setup-check", "no", "the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine"),
   r("POST", "providers/test", "no", "test a provider"),
   r("GET", "evals", "no", "eval reports"),
   r("GET", "stats", "no", "statistics"),
