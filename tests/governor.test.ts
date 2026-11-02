@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadCaps, runLimit } from "../src/ops/caps.js";
 import { changesToday, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
+import { minutes, withAverages } from "./fixtures/governor-days.js";
 
 const T0 = new Date(2026, 9, 20, 9, 0);
 const at = (min: number) => new Date(T0.getTime() + min * 60_000);
@@ -476,15 +477,6 @@ describe("scenarios (SYNTHETIC one-minute samples, no recorded load)", () => {
     });
     return { changes, lowest, end: d.state.runs ?? configured };
   }
-  /** Samples from 1-minute loads, with 5- and 15-minute averages that start at the given values. */
-  function withAverages(load1: number[], l5 = load1[0]!, l15 = l5): Sample[] {
-    return load1.map((l1) => {
-      l5 += (l1 - l5) * (1 - Math.exp(-1 / 5));
-      l15 += (l1 - l15) * (1 - Math.exp(-1 / 15));
-      return { load1: l1, load5: l5, load15: l15, pressure: 1 };
-    });
-  }
-  const minutes = (n: number, f: (i: number) => number) => Array.from({ length: n }, (_, i) => f(i));
 
   it("steady load of 2 per core from other programs: the cap stays where it is", () => {
     const steady = minutes(480, (i) => 2 + 0.3 * Math.sin(i / 7)).map((l1, i) => s(l1, 2 + 0.1 * Math.sin(i / 7), 1, 2));

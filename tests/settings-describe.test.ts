@@ -128,7 +128,8 @@ describe("what is described", () => {
     expect(isCovered("governor.priority")).toBe(true);
     expect(isCovered("governor.floor")).toBe(true);
     expect(described.find((d) => d.key === "governor.floor")).toMatchObject({ kind: "number", integer: true, min: 0, optional: true, effect: "now", control: "generated" });
-    expect(described).toHaveLength(140);
+    expect(described.find((d) => d.key === "governor.reserve_cores")).toMatchObject({ kind: "number", min: 0, default: 2, optional: false, effect: "now", control: "generated" });
+    expect(described).toHaveLength(141);
   });
 
   it("describes governance.auto_demote as a generated boolean that defaults to true", () => {
@@ -166,6 +167,9 @@ describe("what is described", () => {
     expect(ConfigSchema.parse({ governor: { floor: 0 } }).governor.floor).toBe(0);
     expect(ConfigSchema.parse({}).governor.floor).toBeUndefined();
     expect(ConfigSchema.safeParse({ concurrency: 1, governor: { floor: 99 } }).success).toBe(true);
+    expect(issuesAt("governor.reserve_cores", 0)).toHaveLength(0);
+    expect(issuesAt("governor.reserve_cores", 1.5)).toHaveLength(0);
+    expect(issuesAt("governor.reserve_cores", -1)).not.toHaveLength(0);
     expect(issuesAt("governor.floor", -1)).not.toHaveLength(0);
     expect(issuesAt("governor.floor", 1.5)).not.toHaveLength(0);
   });

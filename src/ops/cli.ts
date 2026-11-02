@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../config.js";
 import { listRunIds, loadRun, pidAlive, type RunSummary } from "../engine/state.js";
@@ -10,9 +11,9 @@ import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } fr
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
 import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
-import { changesToday, clearGovernor, DEFAULTS, HOLD_MS, loadState, MANY_CHANGES, runGovernor, sample } from "./governor.js";
+import { changesToday, clearGovernor, DEFAULTS, fitsText, HOLD_MS, loadState, MANY_CHANGES, runGovernor, runsFit, sample, type Sample } from "./governor.js";
 import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, type Family, type LimitsState } from "./limits.js";
-import { measureUsage, usageLine, type Usage } from "./usage.js";
+import { measureUsage, measurement, runRepos, usageLine, type Usage } from "./usage.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
 
 export const JOBS: Record<string, Job> = {
@@ -67,12 +68,14 @@ function governor(out: Out, now = new Date()) {
   const slotsDir = join(dataDir(), "test-slots");
   // before the check, so the change line can name the cause; never throws, and without figures the check is as it always was
   const usage = measureUsage({ dir, runsDir: join(dataDir(), "runs"), slotsDir, now });
-  const cause = usage ? usageLine(usage) : undefined;
-  const sampled = sample();
-  const d = runGovernor({ dir, slotsDir, capsFile: capsPath(dataDir()), configured: c.concurrency, now, sample: sampled, settings: { ...DEFAULTS, floor: c.governor.floor }, ...(cause ? { cause } : {}) });
+  const measured = usage ? measurement(usage, runRepos(join(dataDir(), "queue.json"), join(dataDir(), "runs")), availableParallelism()) : undefined;
+  const fit = measured ? runsFit(measured, c.governor.reserve_cores) : undefined;
+  const cause = usage ? `${usageLine(usage)}${fit !== undefined ? `; ${fitsText(fit)}` : ""}` : undefined;
+  const sampled: Sample = { ...sample(), ...(measured ? { measured } : {}) };
+  const d = runGovernor({ dir, slotsDir, capsFile: capsPath(dataDir()), configured: c.concurrency, now, sample: sampled, settings: { ...DEFAULTS, floor: c.governor.floor, reserveCores: c.governor.reserve_cores }, ...(cause ? { cause } : {}) });
   // the caps are written by now: a result that cannot be saved must not fail the check
   try {
-    save(dir, "latest.json", JSON.stringify({ at: now.toISOString(), load1: sampled.load1, load5: sampled.load5, pressure: sampled.pressure, ...(d.state.runs !== undefined ? { runs: d.state.runs } : {}), ...(d.state.tests ? { tests: d.state.tests } : {}), ...(usage ? { usage } : {}) }, null, 2));
+    save(dir, "latest.json", JSON.stringify({ at: now.toISOString(), load1: sampled.load1, load5: sampled.load5, pressure: sampled.pressure, ...(d.state.runs !== undefined ? { runs: d.state.runs } : {}), ...(d.state.tests ? { tests: d.state.tests } : {}), ...(usage ? { usage } : {}), ...(fit !== undefined ? { fit } : {}) }, null, 2));
   } catch {
     // best effort
   }
@@ -82,12 +85,13 @@ function governor(out: Out, now = new Date()) {
 /** The usage lines of `scf governor report`, from the last check. Nothing when that is older than the hold time or does not look right. */
 export function usageReport(dir: string, now: Date): string[] {
   try {
-    const l = readJson<{ at?: string; usage?: Usage }>(join(dir, "latest.json"), {});
+    const l = readJson<{ at?: string; usage?: Usage; fit?: unknown }>(join(dir, "latest.json"), {});
     const age = now.getTime() - Date.parse(l.at ?? "");
     const u = l.usage;
     if (!(age <= HOLD_MS) || !u || !Number.isFinite(u.foundry?.cores) || !Number.isFinite(u.other?.cores) || !Array.isArray(u.other.top)) return [];
     const top = u.other.top.filter((p) => typeof p?.program === "string" && Number.isFinite(p.cores));
-    const lines = [`now: ${usageLine({ foundry: u.foundry, other: { cores: u.other.cores, top } })}`];
+    const fit = typeof l.fit === "number" && Number.isInteger(l.fit) && l.fit >= 0 ? `; ${fitsText(l.fit)}` : "";
+    const lines = [`now: ${usageLine({ foundry: u.foundry, other: { cores: u.other.cores, top } })}${fit}`];
     const per = Object.entries(u.perRun ?? {}).filter(([, v]) => Number.isFinite(v));
     if (per.length) lines.push(`a run uses about: ${per.map(([repo, v]) => `${repo} ${v.toFixed(1)} cores`).join(", ")}`);
     return lines;

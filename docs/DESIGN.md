@@ -2653,7 +2653,13 @@ average differently. A check needs a previous baseline less than the hold time o
 long. Only the base name of a program is read (`ucomm`), and the top three are kept. `learn()` moves the
 per-repository figure of one run by a bounded step per check, kept in `governor/usage.json` (not in
 `state.json`, so it survives `reset`). The result goes to `governor/latest.json`, and `runGovernor()` appends the
-usage line as `cause` to the change line. `decide()` does not read the measurement, so no cap changes because of it.
+usage line and the runs that fit as `cause` to the change line. With figures, `usage.ts` (`measurement()`) puts
+`Sample.measured` (cores, other programs' cores, cores per run) into the sample; `decide()` computes
+`runsFit()` from it and steps the cap towards that number. `GovernorState.over` counts the checks in a row in
+which the cap is above it (with a 0.5-core slack, `SLACK_CORES`), and a step down needs `hotChecks` of them.
+A step up needs `calm` checks and a number above the cap. Without `measured` (no figures, or no learned value),
+the part 3 rules run unchanged. `decide()` stays a pure function of state, sample and settings, so the target is
+tested with recorded days (`tests/governor-target.test.ts`).
 
 ## 18. Where it is going
 

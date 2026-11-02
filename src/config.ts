@@ -400,9 +400,10 @@ export const ConfigSchema = z
     /**
      * Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy.
      * `floor`: the lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded.
+     * `reserve_cores`: the cores the governor keeps free for other programs when it works out how many runs fit (default 2).
      * Not set: half of `concurrency`, at least 2. Above `concurrency` it counts as `concurrency` (clamped when used, so lowering `concurrency` never makes the config invalid).
      */
-    governor: z.object({ priority: z.enum(["normal", "low", "background"]).default("low"), floor: z.number().int().min(0).optional() }).strict().prefault({}),
+    governor: z.object({ priority: z.enum(["normal", "low", "background"]).default("low"), floor: z.number().int().min(0).optional(), reserve_cores: z.number().min(0).default(2) }).strict().prefault({}),
     /**
      * Governance (#645): what a component must show before it earns the next autonomy level. `min_runs`: the fewest runs in the
      * window; `evidence_completeness` and `eval_pass_rate`: the lowest shares; `within_days`: the window. Nothing is enforced by these.

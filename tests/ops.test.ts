@@ -257,6 +257,7 @@ describe("the load governor", () => {
           expect(loadState(dir).runs).toBe(4);
           const latest = JSON.parse(readFileSync(join(dir, "latest.json"), "utf8"));
           expect(latest.usage).toBeUndefined();
+          expect(latest.fit).toBeUndefined();
           expect(typeof latest.at).toBe("string");
           expect(readFileSync(join(dir, "usage.json"), "utf8")).toBe(seeded);
         } finally {
@@ -274,9 +275,45 @@ describe("the load governor", () => {
         expect(latest.usage.other.top).toEqual([{ program: "make", cores: expect.closeTo(0.5, 1) }]);
         expect(latest.usage.perRun).toEqual({ "acme/app": 1.4 });
         const lines = await report();
-        expect(lines).toContain("now: the Foundry uses 0.0 cores, other programs use 0.5 cores (top: make 0.5)");
+        // the number of runs that fit depends on the cores of the machine running the test
+        expect(lines.find((l) => l.startsWith("now: "))).toMatch(/^now: the Foundry uses 0\.0 cores, other programs use 0\.5 cores \(top: make 0\.5\); \d+ runs? fits?$/);
         expect(lines).toContain("a run uses about: acme/app 1.4 cores");
         expect(lines.join("\n")).not.toContain("-j8");
+      });
+    });
+
+    it("moves the cap one step towards the target, and logs and saves how many runs fit", async () => {
+      const ps = fakePs(`case "$*" in *ucomm*) echo "  1 make";; *) echo "  1 0 0:30.00 ${START} make -j8";; esac`);
+      await withPs(ps, async (dir) => {
+        const home = process.env.FACTORY_HOME!;
+        const config = join(home, "config.yaml");
+        // more cores kept free than any machine has: nothing fits
+        writeFileSync(config, "concurrency: 6\ngovernor:\n  floor: 0\n  reserve_cores: 1000\n");
+        writeFileSync(join(dir, "usage.json"), JSON.stringify({ at: new Date(Date.now() - 60_000).toISOString(), procs: { "1": [START, 0] }, learned: { "acme/app": { cores: 1.4, readings: 3 } } }));
+        writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, over: 2, at: new Date().toISOString() }));
+        try {
+          await opsCommand("governor", ["run"], "/x/cli.js", () => {});
+          expect(loadState(dir).runs).toBe(5);
+          expect(readFileSync(join(dir, "changes.log"), "utf8")).toMatch(/runs at once 6 → 5 \(0 runs fit\) — .*other programs use 0\.5 cores \(top: make 0\.5\); 0 runs fit\n$/);
+          expect(JSON.parse(readFileSync(join(dir, "latest.json"), "utf8")).fit).toBe(0);
+          expect((await report()).find((l) => l.startsWith("now: "))).toMatch(/; 0 runs fit$/);
+        } finally {
+          rmSync(config, { force: true });
+          rmSync(join(dir, "changes.log"), { force: true });
+        }
+      });
+    });
+
+    it("report adds how many runs fit only for a whole number of 0 or more", async () => {
+      await withPs("/usr/bin/false", async (dir) => {
+        const usage = { foundry: { cores: 1, tests: 0, server: 0, runs: [], repos: {} }, other: { cores: 2, top: [] }, perRun: {} };
+        const line = async (fit: unknown) => {
+          writeFileSync(join(dir, "latest.json"), JSON.stringify({ at: new Date().toISOString(), usage, fit }));
+          return (await report()).find((l) => l.startsWith("now: "));
+        };
+        expect(await line(4)).toMatch(/other programs use 2\.0 cores; 4 runs fit$/);
+        expect(await line(1)).toMatch(/; 1 run fits$/);
+        for (const bad of [-1, 1.5, "4", null]) expect(await line(bad)).toMatch(/other programs use 2\.0 cores$/);
       });
     });
 

@@ -46,8 +46,8 @@ describe("spawnTarget with a priority", () => {
 
 describe("governor.priority in the config", () => {
   it("defaults to low, also for a config without the block", () => {
-    expect(ConfigSchema.parse({}).governor).toEqual({ priority: "low" });
-    expect(ConfigSchema.parse({ concurrency: 3 }).governor).toEqual({ priority: "low" });
+    expect(ConfigSchema.parse({}).governor).toEqual({ priority: "low", reserve_cores: 2 });
+    expect(ConfigSchema.parse({ concurrency: 3 }).governor).toEqual({ priority: "low", reserve_cores: 2 });
     expect(ConfigSchema.parse({ governor: { priority: "background" } }).governor.priority).toBe("background");
   });
   it("refuses an unknown value and an unknown key", () => {

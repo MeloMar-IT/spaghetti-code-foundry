@@ -2,9 +2,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadRun } from "../engine/state.js";
+import { listRunIds, loadRun, pidAlive } from "../engine/state.js";
 import { descendants, psEnv, psPath, STEP_PIDS_DIR, type ProcRow } from "../steps/proc-tree.js";
-import { HOLD_MS } from "./governor.js";
+import { HOLD_MS, type Measured } from "./governor.js";
 
 /** A process with its CPU time and command line. The command line is used to find out who owns the process and then dropped. */
 export interface CpuRow extends ProcRow { cpuSec: number; command: string }
@@ -129,6 +129,90 @@ export function activeRuns(runsDir: string): ActiveRun[] {
     }
   }
   return out;
+}
+
+/** The repository a run counts for. */
+const repoOf = (run: { vars?: Record<string, string>; repo?: string }): string | undefined => {
+  const repo = run.vars?.github_repo || run.repo;
+  return typeof repo === "string" && repo ? repo : undefined;
+};
+
+/** Runs that are running now (a live pid), with or without a step process: between two steps a run has none. Every run folder is read, old ones too (a resumed run keeps its id). Never throws. */
+export function runningRuns(runsDir: string): { runId: string; repo: string }[] {
+  const out: { runId: string; repo: string }[] = [];
+  try {
+    for (const runId of listRunIds(runsDir)) {
+      try {
+        const run = loadRun(runsDir, runId);
+        const repo = run && repoOf(run);
+        if (run?.status === "running" && pidAlive(run.pid) && repo) out.push({ runId, repo });
+      } catch {
+        // a run.json that cannot be read
+      }
+    }
+  } catch {
+    // no runs folder
+  }
+  return out;
+}
+
+/** Runs waiting in the scheduler's queue file (`<data folder>/queue.json`). Never throws; a job of the wrong shape is skipped. */
+export function queuedRuns(queueFile: string, runsDir: string): { runId: string; repo: string }[] {
+  const out: { runId: string; repo: string }[] = [];
+  let list: unknown;
+  try {
+    list = JSON.parse(readFileSync(queueFile, "utf8"));
+  } catch {
+    return out;
+  }
+  if (!Array.isArray(list)) return out;
+  for (const q of list as { runId?: unknown; job?: { kind?: unknown; vars?: Record<string, string>; repo?: unknown } | null }[]) {
+    try {
+      const job = q?.job;
+      if (!job || typeof q.runId !== "string") continue;
+      let repo: string | undefined;
+      if (job.kind === "run") repo = repoOf(job as { vars?: Record<string, string>; repo?: string });
+      else if (job.kind === "resume") {
+        const run = loadRun(runsDir, q.runId);
+        repo = run && repoOf(run);
+      }
+      if (repo) out.push({ runId: q.runId, repo });
+    } catch {
+      // skipped
+    }
+  }
+  return out;
+}
+
+/** The repositories of the running and the queued runs, each run once. */
+export function runRepos(queueFile: string, runsDir: string): string[] {
+  const byRun = new Map<string, string>();
+  for (const r of [...runningRuns(runsDir), ...queuedRuns(queueFile, runsDir)]) if (!byRun.has(r.runId)) byRun.set(r.runId, r.repo);
+  return [...byRun.values()];
+}
+
+/** The least a run is taken to use (cores): a learned 0 must not make the number of runs that fit endless. */
+export const MIN_RUN_CORES = 0.25;
+
+/**
+ * Cores one run uses: the mean over `repos` (one entry per active or queued run, so a repository with more runs
+ * weighs more). A repository with no learned value counts as the mean of the learned values; with no runs the mean of
+ * them is used. Undefined when nothing was learned.
+ */
+export function coresPerRun(repos: string[], learned: Record<string, number>): number | undefined {
+  const known = Object.values(learned).filter((v) => Number.isFinite(v) && v >= 0);
+  if (!known.length) return undefined;
+  const mean = known.reduce((a, v) => a + v, 0) / known.length;
+  const own = (r: string) => (Object.hasOwn(learned, r) && Number.isFinite(learned[r]) && learned[r]! >= 0 ? learned[r]! : mean);
+  const per = repos.length ? repos.reduce((a, r) => a + own(r), 0) / repos.length : mean;
+  return Math.max(MIN_RUN_CORES, per);
+}
+
+/** The figures the governor works out the target from; undefined when there are none (then the rules of part 3 apply). */
+export function measurement(u: Pick<Usage, "other" | "perRun">, repos: string[], cores: number): Measured | undefined {
+  const perRun = coresPerRun(repos, u.perRun);
+  if (perRun === undefined || !(cores > 0) || !Number.isFinite(u.other.cores)) return undefined;
+  return { cores, other: u.other.cores, perRun };
 }
 
 /** The pids that hold a test slot (`<slots folder>/slot-N/pid`). */
