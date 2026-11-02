@@ -79,6 +79,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/new` | admin | Flows, new flow | yes | Not prototyped |
 | `#/library` | admin | Flows (library as part of Flows) | yes | Not prototyped |
 | `#/start` | both | Start work panel, any page | yes | A panel, not a page |
+| `#/setup` | both | Setup check page | yes | |
 | `#/runs` | both | Runs (`runs.html`) | yes | |
 | `#/runs/:id` | both | Run (`run.html`) | yes | |
 | `#/repos` | both | Repositories, scope Mine (`repositories.html`) | yes | |
@@ -100,6 +101,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/audit` | admin | Administration, Audit (title only) | yes | |
 | `#/autonomy` | admin | Administration, Autonomy | yes | |
 | `/user/#/start` | user | Start work panel, any page | yes | |
+| `/user/#/setup` | user | Setup check page | yes | |
 | `/user/#/runs` | user | Runs | yes | |
 | `/user/#/runs/:id` | user | Run | yes | |
 | `/user/#/repos` | user | Repositories | yes | |

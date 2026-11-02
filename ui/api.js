@@ -219,6 +219,7 @@ export const api = {
   unmuteMonitor: (id) => req("DELETE", `/api/monitor/mutes/${enc(id)}`),
   tickWatcher:(id) => req("POST", `/api/watchers/${enc(id)}/tick`, {}),
   providers: () => req("GET", "/api/providers"),
+  setupCheck: (needs = []) => req("GET", "/api/setup-check" + (needs.length ? "?need=" + encodeURIComponent(needs.join(",")) : "")),
   testModel: (spec) => req("POST", "/api/providers/test", { spec }),
   next: () => req("GET", "/api/next"),
   health: () => req("GET", "/api/health"),

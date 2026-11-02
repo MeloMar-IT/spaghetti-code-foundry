@@ -109,7 +109,8 @@ Usage:
   scf delivery validate --contract f --signature f --public-key k …   Check a delivery contract against the checked-out commit (for CI)
   scf delivery verify <run-id> [--json] [--public-key f]   Check the delivery contracts of a run against the trusted key (offline)
   scf delivery public-key                        Print the configured signing key as an allowed_signers line
-  scf service install|uninstall|status         Keep \`scf serve\` running as a macOS login agent
+  scf doctor [--simple] [--need node] [--json]   Check what this computer needs; plain words with --simple
+  scf service install|uninstall|status        Keep \`scf serve\` running as a macOS login agent
   scf login | logout | whoami                    Sign the command line in to a running Foundry
   scf <area> <action> … [--json]                 Everything the web interface can do, as commands. Areas: runs, turn,
                                                  board, find, repos, settings, providers, monitor, flows, blocks, users,
@@ -285,6 +286,8 @@ async function main(argv: string[]): Promise<number> {
       all: { type: "boolean" },
       email: { type: "string" },
       json: { type: "boolean" },
+      simple: { type: "boolean" },
+      need: { type: "string", multiple: true },
       help: { type: "boolean", short: "h" },
     },
   });
@@ -301,7 +304,7 @@ async function main(argv: string[]): Promise<number> {
   // `scf components` only reads; `components record` writes only promotions/versions.json, through withAuthLock (claimHomeWrite).
   // `scf promote` only reads; with `--report` it writes only promotions/records.json, the same way.
   // `scf delivery verify` and `public-key` only read: no migration, no config load before the command, no path in a message.
-  if (cmd !== "components" && cmd !== "promote" && cmd !== "delivery" &&!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
+  if (cmd !== "components" && cmd !== "promote" && cmd !== "delivery" && cmd !== "doctor" && !(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
     if (moved.reason === "moved-missing" || moved.reason === "incomplete") throw new Error(moved.message);
   }
@@ -685,6 +688,11 @@ async function main(argv: string[]): Promise<number> {
     case "components": {
       const { componentsCommand } = await import("./promotion/cli.js");
       return componentsCommand(positionals.slice(1), (line) => void process.stdout.write(line + "\n"));
+    }
+
+    case "doctor": {
+      const { doctorCommand } = await import("./setup-check.js");
+      return doctorCommand({ simple: values.simple, json: values.json, need: values.need }, { out: (s) => void process.stdout.write(s + "\n"), err: (s) => void process.stderr.write(s + "\n") });
     }
 
     case "policy": {

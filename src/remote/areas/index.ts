@@ -11,6 +11,7 @@ export const ALL: Cmd[] = [...SYSTEM, ...WORK, ...SETUP, ...PEOPLE, ...REFINE, .
 
 /** Calls of the server that have no command, each with the reason. A test fails when a call is in neither list. */
 export const API_ONLY: Record<string, string> = {
+  "GET setup-check": "the Setup check page; on the machine itself `scf doctor --simple` prints the same",
   "GET me/view": "the view of the web interface (#595): it changes only what the interface shows; the command line has no views",
   "PUT me/view": "chooses that view; done with the switch in the top bar",
   "POST help/conversations/:id/actions": "a button of a reply in the Ask SCF drawer: it opens a page, runs a read-only check, or previews an action Ask SCF proposed (#568); the command line has none of these",

@@ -7,7 +7,7 @@ import { resolve, splitHash } from "./ia.js";
 
 export const VIEW_LABELS = { simple: "Simple", advanced: "Advanced", admin: "Admin" };
 /** The pages of the Simple view (the first part of the hash path). Later parts of the Easy epic may change this. */
-export const SIMPLE_SECTIONS = ["home", "start", "runs", "repos"];
+export const SIMPLE_SECTIONS = ["home", "setup", "start", "runs", "repos"];
 
 export const UNSAVED_TEXT = "You have unsaved changes. Save them first, then switch view.";
 export const UNSENT_TEXT = "You have text that is not sent. It is kept only on this page and is lost when you switch view.";

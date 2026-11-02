@@ -239,9 +239,9 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 /** True for an account with the role admin. */
 export const isAdmin = (user) => user?.role === "admin";
 
-const USER_HASH = /^#\/(home|start|epics(\/[\w-]+)?|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos(\/[\w-]+)?)$/;
-// Only these pages take a query (filters) in their address.
-const USER_QUERY = /^#\/(runs|refinement|repos|epics(\/[\w-]+)?)$/;
+const USER_HASH = /^#\/(home|setup|start|epics(\/[\w-]+)?|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos(\/[\w-]+)?)$/;
+// Only these pages take a query (filters, or the tools Setup check is asked about) in their address.
+const USER_QUERY = /^#\/(runs|refinement|repos|setup|epics(\/[\w-]+)?)$/;
 
 /** True when the address names no page at all: no hash, "#" or "#/". */
 export const isNoHash = (hash) => !hash || hash === "#" || hash === "#/";
