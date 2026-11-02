@@ -402,8 +402,19 @@ export const ConfigSchema = z
      * `floor`: the lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded.
      * `reserve_cores`: the cores the governor keeps free for other programs when it works out how many runs fit (default 2).
      * Not set: half of `concurrency`, at least 2. Above `concurrency` it counts as `concurrency` (clamped when used, so lowering `concurrency` never makes the config invalid).
+     * `busy_runs`: the most runs at once while busy mode is on ("I'm using this machine" in the top bar; default 2); new run processes then start at background priority.
+     * `busy_apps`: program names that turn busy mode on while they run (needs the load governor); default none.
      */
-    governor: z.object({ priority: z.enum(["normal", "low", "background"]).default("low"), floor: z.number().int().min(0).optional(), reserve_cores: z.number().min(0).default(2) }).strict().prefault({}),
+    governor: z
+      .object({
+        priority: z.enum(["normal", "low", "background"]).default("low"),
+        floor: z.number().int().min(0).optional(),
+        reserve_cores: z.number().min(0).default(2),
+        busy_runs: z.number().int().min(0).default(2),
+        busy_apps: z.array(z.string().trim().min(1).max(100)).max(50).default([]),
+      })
+      .strict()
+      .prefault({}),
     /**
      * Governance (#645): what a component must show before it earns the next autonomy level. `min_runs`: the fewest runs in the
      * window; `evidence_completeness` and `eval_pass_rate`: the lowest shares; `within_days`: the window. Nothing is enforced by these.

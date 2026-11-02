@@ -540,7 +540,84 @@ describe("showViewNav", () => {
   });
 });
 
+describe("mountBusySwitch", () => {
+  const view = (over: Record<string, any> = {}) => ({ on: false, hand: null, apps: null, ...over });
+  const setup = async (user: any, state: any = view()) => {
+    const box = byId("busy-test");
+    box.hidden = true;
+    box.classList.names = new Set();
+    box.replaceChildren();
+    const a = {
+      busyState: vi.fn(async () => state),
+      setBusy: vi.fn(async (h?: number) => view({ on: true, hand: { since: "2026-03-01T10:00:00.000Z", ...(h ? { until: "2026-03-01T11:00:00.000Z" } : {}) } })),
+      endBusy: vi.fn(async () => view()),
+    };
+    const select = vm.mountBusySwitch(user, { id: "busy-test", a, everyMs: 3_600_000 });
+    await flush();
+    return { a, select, box };
+  };
+  const choose = async (select: FakeElement, value: string) => { select.value = value; select.fire("change"); await flush(); };
+
+  it("mounts nothing for a user and makes no call", async () => {
+    const { a, select, box } = await setup({ role: "user" });
+    expect(select).toBeNull();
+    expect(a.busyState).not.toHaveBeenCalled();
+    expect(box.hidden).toBe(true);
+  });
+
+  it("shows No when off, and the box when on", async () => {
+    const { select, box } = await setup({ role: "admin" });
+    expect(select.value).toBe("off");
+    expect(box.hidden).toBe(false);
+    expect(box.classList.contains("on")).toBe(false);
+  });
+
+  it("switches on for an hour, and off again", async () => {
+    const { a, select, box } = await setup({ role: "admin" });
+    await choose(select, "1");
+    expect(a.setBusy).toHaveBeenCalledWith(1);
+    expect(box.classList.contains("on")).toBe(true);
+    expect(walk(select).map((o) => o.textContent)).toContain(`Until ${new Date("2026-03-01T11:00:00.000Z").toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+    expect(select.value).toBe("until");
+    await choose(select, "off");
+    expect(a.endBusy).toHaveBeenCalled();
+    expect(select.value).toBe("off");
+    expect(box.classList.contains("on")).toBe(false);
+    await choose(select, "on");
+    expect(a.setBusy).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("names the program that turned it on", async () => {
+    const { select, box } = await setup({ role: "admin" }, view({ on: true, apps: { why: "Zoom running", until: "2026-03-01T10:04:00.000Z" } }));
+    expect(select.value).toBe("off");
+    expect(box.classList.contains("on")).toBe(true);
+    expect(box.textContent).toContain("On: Zoom running");
+  });
+
+  it("a failed call shows a message and puts the old state back", async () => {
+    const { a, select, box } = await setup({ role: "admin" });
+    a.setBusy.mockRejectedValueOnce(new Error("no"));
+    await choose(select, "2");
+    expect(select.value).toBe("off");
+    expect(box.classList.contains("on")).toBe(false);
+  });
+});
+
 describe("the pages", () => {
+  it("both displays have the busy switch box in the top bar, before the view switch", () => {
+    for (const file of ["ui/index.html", "ui/user/index.html"]) {
+      const html = readFileSync(file, "utf8");
+      expect(html, file).toMatch(/<span id="busy-switch" class="busy-switch" hidden><\/span>\s*<span id="view-switch"/);
+    }
+  });
+
+  it("the CSS keeps the busy switch on narrow screens and shrinks it", () => {
+    const css = readFileSync("ui/css/pages/shell.css", "utf8");
+    const narrow = css.slice(css.indexOf("@media (max-width: 767px)", css.indexOf(".view-switch-menu { display: none; }")));
+    expect(narrow).not.toContain(".busy-switch { display: none; }");
+    expect(narrow).toContain(".busy-switch select { max-width: 11ch; }");
+  });
+
   it("both displays have the two switch boxes, and the menu box ends the sidebar", () => {
     for (const file of ["ui/index.html", "ui/user/index.html"]) {
       const html = readFileSync(file, "utf8");

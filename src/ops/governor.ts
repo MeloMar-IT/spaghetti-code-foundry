@@ -313,4 +313,5 @@ export function clearGovernor(dir: string, slotsDir: string, capsFile: string) {
   rmSync(join(slotsDir, PAUSE_FILE), { force: true });
   rmSync(join(dir, "state.json"), { force: true });
   setCap("load", undefined, capsFile);
+  setCap("busy-apps", undefined, capsFile); // never "busy": that is the person's own switch
 }

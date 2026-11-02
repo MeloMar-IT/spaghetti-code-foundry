@@ -1527,6 +1527,8 @@ each tool once per process (cached) and uses only the ones that work; a command 
 started unwrapped, and a wrapper that fails to start before the command ran falls back to the plain
 start (`WrapperStartError`). The server process is never wrapped.
 
+While busy mode holds (`busyHolds()` in `src/ops/busy.ts`), `runProcess()` starts a process that has a priority at `background`, through `busyPriority()`. The check runs at each start, so a switch on or off applies to the next process. A running process is never renice'd: without root rights a lowered process cannot be raised again. The hand switch is `governor/busy.json`, and its cap (`busy`) in `governor/caps.json` is written by `syncBusyCap()`: the server calls it at start, then every 60 seconds (`BUSY_RENEW_MS`), and it is cleared when the switch ends. The cap always has an end (4 minutes, or the switch's own end if sooner), so a stopped server cannot hold runs down. The governor's program check (`governorBusyApps()`, in `src/ops/cli.ts`) owns the `busy-apps` cap, and a reading whose names could not be read leaves that cap alone.
+
 ## 6. The queue
 
 One scheduler for all runs:

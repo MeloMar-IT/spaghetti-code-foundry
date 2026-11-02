@@ -129,7 +129,9 @@ describe("what is described", () => {
     expect(isCovered("governor.floor")).toBe(true);
     expect(described.find((d) => d.key === "governor.floor")).toMatchObject({ kind: "number", integer: true, min: 0, optional: true, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "governor.reserve_cores")).toMatchObject({ kind: "number", min: 0, default: 2, optional: false, effect: "now", control: "generated" });
-    expect(described).toHaveLength(141);
+    expect(described.find((d) => d.key === "governor.busy_runs")).toMatchObject({ kind: "number", integer: true, min: 0, default: 2, effect: "now", control: "generated" });
+    expect(described.find((d) => d.key === "governor.busy_apps")).toMatchObject({ kind: "list", default: [], maxItems: 50, effect: "now", control: "generated" });
+    expect(described).toHaveLength(143);
   });
 
   it("describes governance.auto_demote as a generated boolean that defaults to true", () => {
@@ -258,7 +260,7 @@ describe("the advertised ranges are the schema's", () => {
   const TABLE = new Set([
     "step_env.pass", "step_env.agent_pass", "sandbox.user_read", "skills.roots", "skills.releases.approved", "skills.releases.keys",
     "skills.catalogue.include", "skills.selection.include", "skills.catalogue.exclude", "skills.selection.exclude", "skills.selection.exclusive", "skills.unresolved.high_risk",
-    "delivery.required_checks", "delivery.artifacts",
+    "delivery.required_checks", "delivery.artifacts", "governor.busy_apps",
   ]);
 
   it("list limits: exactly maxItems are accepted, one more is not", () => {

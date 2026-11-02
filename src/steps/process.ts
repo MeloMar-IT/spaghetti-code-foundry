@@ -3,6 +3,7 @@ import { accessSync, constants, createWriteStream, statSync } from "node:fs";
 import { getPriority } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { busyHolds } from "../ops/busy.js";
 import { anyPidAlive, markStep, ProcessTracker, processTable, processTableAsync, signalRows, type ProcRow } from "./proc-tree.js";
 import { pausedLine, readSlotWaits, slotClock, waitedLine, type SlotWaitWatch } from "./slot-waits.js";
 import { combineRedactors, liveRedactor, makeRedactor, redactStream, requireRedaction, type Redactor } from "../credentials/redact.js";
@@ -206,8 +207,16 @@ const groupAlive = (pid: number): boolean => {
 /** The priority wrapper could not be started at all (the real command never ran), so the command may be started without it. */
 class WrapperStartError extends Error {}
 
-/** Spawn a process, tee stdout/stderr into a log file, and collect output. */
-export async function runProcess(cmd: string, args: string[], opts: ProcessOptions): Promise<ProcessResult> {
+/** The priority a process starts at: busy mode ("I'm using this machine") makes every run process background. A process without a priority (the server's own) stays as it is. */
+export function busyPriority(p: RunPriority | undefined, busy: boolean): RunPriority | undefined {
+  if (p === undefined) return undefined;
+  return busy ? "background" : p;
+}
+
+/** Spawn a process, tee stdout/stderr into a log file, and collect output. While busy mode holds, a process with a priority starts at background. */
+export async function runProcess(cmd: string, args: string[], given: ProcessOptions): Promise<ProcessResult> {
+  const priority = busyPriority(given.priority, busyHolds());
+  const opts: ProcessOptions = priority === given.priority ? given : { ...given, priority };
   let machine: PriorityMachine | undefined;
   // A program that cannot be found starts unwrapped, so it fails as it always did (the wrapper would exit 127 instead).
   if (opts.priority && opts.priority !== "normal" && canStart(cmd, mergeEnv(opts.env, opts.cleanEnv).PATH, opts.cwd)) machine = await priorityMachine();
