@@ -226,6 +226,33 @@ describe("Settings → Load governor", () => {
   });
 });
 
+describe("Settings → Promotion gate", () => {
+  const card = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "Promotion gate")!;
+  const numbers = (main: FakeElement) => card(main).all("input").filter((i) => i.attrs.type === "number");
+
+  it("has a card with the four settings", async () => {
+    const { main } = await render({});
+    expect(card(main)).toBeDefined();
+    expect(numbers(main)).toHaveLength(4);
+  });
+
+  it("keeps the stored thresholds when the page is saved", async () => {
+    const governance = { promotion: { min_runs: 25, evidence_completeness: 0.8, eval_pass_rate: 0.7, within_days: 60 } };
+    const { main, puts } = await render({}, "127.0.0.1", 200, { governance });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].governance).toEqual(governance);
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  it("saves the defaults when nothing was stored", async () => {
+    const { main, puts } = await render({});
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].governance).toEqual({ promotion: { min_runs: 10, evidence_completeness: 0.95, eval_pass_rate: 0.9, within_days: 30 } });
+  });
+});
+
 describe("Settings → Redesign", () => {
   const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Show the redesigned pages (still being built)"))!.all("input")[0] as any;
 

@@ -158,6 +158,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET run-owners": { path: "run-owners", user: 403, admin: 200 },
   "GET run-filters": { path: "run-filters", user: 200, admin: 200 },
   "GET outcomes": { path: "outcomes", user: 200, admin: 200 },
+  "GET autonomy": { path: "autonomy", user: 403, admin: 200 },
   "POST runs": { path: "runs", body: {}, user: 400, admin: 400 },
   "GET runs/:id": { path: "runs/nope", user: 404, admin: 404 },
   "POST runs/:id/cancel": { path: "runs/nope/cancel", body: {}, user: 404, admin: 200 },

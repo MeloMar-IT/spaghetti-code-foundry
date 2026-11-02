@@ -39,14 +39,14 @@ export type AutonomyEntry = z.infer<typeof AutonomyEntrySchema>;
 export type AutonomyStore = z.infer<typeof AutonomyStoreSchema>;
 
 export const autonomyFile = (home = dataHome()): string => join(home, AUTONOMY_FILE);
-const emptyStore = (): AutonomyStore => ({ version: 1, repos: {}, flows: {} });
+export const emptyAutonomyStore = (): AutonomyStore => ({ version: 1, repos: {}, flows: {} });
 
 /** Reads the store. A missing file is an empty store. Throws StoreError for anything else that is wrong. */
 export function readAutonomy(home = dataHome()): AutonomyStore {
   const file = autonomyFile(home);
   const read = readPolicyFile(file, MAX_AUTONOMY_BYTES);
   if ("problem" in read) {
-    if (read.problem === "missing") return emptyStore();
+    if (read.problem === "missing") return emptyAutonomyStore();
     throw new StoreError("unreadable", file, read.problem === "too-large" ? "is larger than 1 MiB" : read.problem === "not-file" ? "is a link or not a plain file" : "could not be read");
   }
   let json: unknown;

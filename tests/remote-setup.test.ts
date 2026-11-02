@@ -299,6 +299,21 @@ describe("flows and blocks", () => {
     expect([builtin.code, builtin.err]).toEqual([4, "error: built-in flows cannot be deleted"]);
   });
 
+  it("shows the autonomy levels and every check of the promotion gate, as text and as the API answer", async () => {
+    const text = await scf(["autonomy", "status"]);
+    expect(text.code).toBe(0);
+    expect(text.out).toContain("Autonomy levels: observe < plan-only < guarded-write < delivery-handoff");
+    expect(text.out).toMatch(/^flow \S+: delivery-handoff \(top level\)$/m);
+    for (const label of ["Evidence completeness", "Eval pass rate", "Policy conformance", "Operational SLOs", "Approval"]) expect(text.out).toContain(label);
+    expect(text.out).toMatch(/^ {2}no {2}Evidence completeness: /m);
+    expect(text.out).toMatch(/^ {2}\.\. {2}Approval: /m);
+    const json = (await scf(["autonomy", "status", "--json"])).json<{ levels: string[]; components: { gate: { checks: { id: string }[] } }[] }>();
+    expect(json.levels).toHaveLength(4);
+    expect(json.components[0]!.gate.checks.map((c) => c.id)).toEqual(["evidence_completeness", "eval_pass_rate", "policy_conformance", "operational_slos", "approval"]);
+    // a user is refused
+    expect((await scf(["autonomy", "status"], { as: ann })).code).not.toBe(0);
+  });
+
   it("lists, prints, saves and removes a block", async () => {
     const list = await scf(["blocks", "list"]);
     expect(list.out.split("\n")[0]).toMatch(/^ID\s+SCOPE\s+NAME$/);

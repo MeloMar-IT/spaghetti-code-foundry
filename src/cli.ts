@@ -113,7 +113,7 @@ Usage:
   scf login | logout | whoami                    Sign the command line in to a running Foundry
   scf <area> <action> … [--json]                 Everything the web interface can do, as commands. Areas: runs, turn,
                                                  board, find, repos, settings, providers, monitor, flows, blocks, users,
-                                                 account, secrets, audit, admin, refine, watchers, server.
+                                                 account, secrets, audit, admin, refine, watchers, server, autonomy.
                                                  \`scf <area>\` lists an area's commands; \`scf api routes\` lists every call
   scf analyst run|report|install|uninstall|status|auto on|off|reset
                                                  Every 6 hours: how each model does per step, and where another level fits;

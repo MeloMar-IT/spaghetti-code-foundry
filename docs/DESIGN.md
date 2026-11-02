@@ -325,6 +325,13 @@ The level is read once per run, when `runFlow` starts, and recorded once: a resu
 store cannot be read at that point, the run counts as `observe` (the fail-closed choice), and the log says so.
 Nothing reads the level to allow or refuse a step yet.
 
+The promotion gate (#645) is in `src/governance/gate.ts`. `promotionGate` gets its data through `GateDeps`
+(the runs, the eval coverage, the findings and the monitor's last check), so the file imports nothing from
+`src/server/`. The route `api-autonomy.ts` builds the deps once per request: runs are narrowed by repository or
+flow first, read through the shared outcome facts cache, and the loop yields to the event loop between runs.
+Each check returns a value and a threshold, or a plain reason when its data is missing; `passed` is the AND of the
+four evidence checks, and `approval` is always "pending" until part 4 fills it in.
+
 ### Policy contracts
 
 `src/policy/` defines what a policy is, what it is asked and what it answers (#141). Nothing in the

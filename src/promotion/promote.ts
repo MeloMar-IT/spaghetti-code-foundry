@@ -27,6 +27,8 @@ export type PromoteCode = "report-unknown" | "not-found" | "problem" | "unrecord
 const STAMP_TEXT = String.raw`\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z`;
 const STAMP = new RegExp(`^${STAMP_TEXT}$`);
 /** A file that ends in a timestamp belongs to the suite named before it, so `timeout-extra-<stamp>.json` is not a `timeout` report. */
+/** A report file name: `<suite>-<stamp>.json`. Group 1 is the suite, group 2 the stamp. */
+export const REPORT_FILE = new RegExp(`^(.+)-(${STAMP_TEXT})\\.json$`);
 const ENDS_IN_STAMP = new RegExp(`-${STAMP_TEXT}\\.json$`);
 
 export interface NewestReport {

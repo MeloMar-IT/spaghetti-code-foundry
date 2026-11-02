@@ -56,6 +56,45 @@ describe("outcomeFactsOf", () => {
     expect(f.observeDenies).toBe(1);
   });
 
+  it("keeps every denial time, even past fifty, so a recent denial is never lost behind old ones", () => {
+    const old = Array.from({ length: 60 }, (_, i) => decide("push", "deny", "enforce", `p${i}`) as unknown as { decision: Record<string, unknown> });
+    const events = old.map((e, i) => ({ ...e, decision: { ...e.decision, evaluatedAt: at(i) } }) as unknown as EvidenceEvent);
+    events.push({ ...events[0]!, decision: { ...events[0]!.decision, evaluatedAt: at(10_000) } } as unknown as EvidenceEvent);
+    expect(outcomeFactsOf(run(), events, EV).policyBadAt).toHaveLength(61);
+    expect(outcomeFactsOf(run(), events, EV).policyBadAt.at(-1)).toBe(at(10_000));
+  });
+
+  it("keeps the time of every deny and of every policy.unavailable or policy.invalid decision, and counts skipped lines", () => {
+    const failed = (reasonCode: string, sec: number) => {
+      const e = decide("step.before", "allow", "enforce") as unknown as { decision: Record<string, unknown> };
+      return { ...e, decision: { ...e.decision, reasonCode, evaluatedAt: at(sec) } } as unknown as EvidenceEvent;
+    };
+    const deny = (mode: string, sec: number) => {
+      const e = decide("push", "deny", mode) as unknown as { decision: Record<string, unknown> };
+      return { ...e, decision: { ...e.decision, evaluatedAt: at(sec) } } as unknown as EvidenceEvent;
+    };
+    const f = outcomeFactsOf(run(), [decide("push", "allow"), deny("observe", 5), deny("enforce", 6), failed("policy.unavailable", 7), failed("policy.invalid", 8)], EV, 2);
+    expect(f.policyBadAt).toEqual([at(5), at(6), at(7), at(8)]);
+    expect(f.linesSkipped).toBe(2);
+    const clean = outcomeFactsOf(run(), [decide("push", "allow")], EV);
+    expect([clean.policyBadAt, clean.linesSkipped]).toEqual([[], 0]);
+  });
+
+  it("counts the lines of evidence.jsonl that cannot be read, and the ones that are too long", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "facts-skip-"));
+    try {
+      const good = JSON.stringify(decide("push", "allow"));
+      writeFileSync(join(dir, EVIDENCE_EVENTS_FILE), [good, "{not json", "", `{"x":"${"a".repeat(2_000_000)}"}`, good].join("\n") + "\n");
+      const stats = { skipped: 0 };
+      const taken: unknown[] = [];
+      expect(await readEvidenceEvents(dir, "r1", (e) => void taken.push(e), undefined, stats)).toBe("read");
+      expect(stats.skipped).toBe(2);
+      expect(taken.length).toBeLessThanOrEqual(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("counts a policy denial about the whole run, which has no step, and keeps the other facts", () => {
     const wide = ev("step.denied", 3, { denial: { kind: "policy", policy: { id: "p", version: "1" }, packSha256: "a".repeat(64), reasonCode: "x.y" } });
     const approved = ev("step.approved", 40, { step: step("approve", "approval"), by: {} });
@@ -193,6 +232,12 @@ describe("files", () => {
       expect(c.reads).toBe(1);
       expect((await cache.get(r, "u2", NOW))?.delivered).toBe(false);
       expect(c.reads).toBe(2);
+    });
+
+    it("reports the lines it could not read, so a missing decision is not taken for a clean run", async () => {
+      const d = folder("skip", delivered() + "{broken\n");
+      const facts = await new OutcomeFactsCache().get(ended(d), "u1", NOW);
+      expect(facts).toMatchObject({ linesSkipped: 1, delivered: true, evidence: { read: true } });
     });
 
     it("shares one read between concurrent calls", async () => {

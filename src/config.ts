@@ -403,6 +403,24 @@ export const ConfigSchema = z
      * Not set: half of `concurrency`, at least 2. Above `concurrency` it counts as `concurrency` (clamped when used, so lowering `concurrency` never makes the config invalid).
      */
     governor: z.object({ priority: z.enum(["normal", "low", "background"]).default("low"), floor: z.number().int().min(0).optional() }).strict().prefault({}),
+    /**
+     * Governance (#645): what a component must show before it earns the next autonomy level. `min_runs`: the fewest runs in the
+     * window; `evidence_completeness` and `eval_pass_rate`: the lowest shares; `within_days`: the window. Nothing is enforced by these.
+     */
+    governance: z
+      .object({
+        promotion: z
+          .object({
+            min_runs: z.number().int().min(1).max(10_000).default(10),
+            evidence_completeness: z.number().min(0).max(1).default(0.95),
+            eval_pass_rate: z.number().min(0).max(1).default(0.9),
+            within_days: z.number().int().min(1).max(90).default(30),
+          })
+          .strict()
+          .prefault({}),
+      })
+      .strict()
+      .prefault({}),
     notify: z
       .object({
         macos: z.boolean().default(true),
