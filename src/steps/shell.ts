@@ -1,4 +1,4 @@
-import { dockerCommand } from "../engine/guards.js";
+import { dockerCommand, hookMounts } from "../engine/guards.js";
 import { runProcess, type ProcessMeter, type RunPriority } from "./process.js";
 import { timedOutError, type SlotWaitWatch } from "./slot-waits.js";
 
@@ -62,8 +62,10 @@ export async function runShell(o: {
     env.FACTORY_WORKDIR = "/work";
     env.SCF_WORKDIR = "/work";
     const extra = new Set(o.dockerEnv ?? []);
-    const names = Object.keys(env).filter((k) => (/^(FACTORY_|SCF_|NO_COLOR$|CI$)/.test(k) || extra.has(k)) && env[k] !== undefined);
-    ({ cmd, args } = dockerCommand(o.dockerImage, o.cwd, o.command, names));
+    // A run that may not push (FACTORY_NO_PUSH) takes the pre-push hook into the container: GIT_CONFIG_* names it, and its folder and the push-log folder are mounted (see hookMounts)
+    const hook = env.FACTORY_NO_PUSH ? /^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/ : /^$^/;
+    const names = Object.keys(env).filter((k) => (/^(FACTORY_|SCF_|NO_COLOR$|CI$)/.test(k) || hook.test(k) || extra.has(k)) && env[k] !== undefined);
+    ({ cmd, args } = dockerCommand(o.dockerImage, o.cwd, o.command, names, hookMounts(env)));
   }
   const res = await runProcess(cmd, args, {
     cwd: o.cwd,

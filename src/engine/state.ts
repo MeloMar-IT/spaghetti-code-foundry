@@ -143,7 +143,7 @@ export interface RunSummary {
   toolProfile?: unknown;
   /** True for a local test (`scf run --local-test`, evals): it is not checked against `promotion.enforce` and never counts as a promoted delivery (#740). Only evals skip governance (#665). */
   localTest?: true;
-  /** The most autonomy the run may use, worked out once at the start (#643). Absent on older runs, which read as `delivery-handoff` through `autonomyOfRun`. Nothing enforces it yet. */
+  /** The most autonomy the run may use, worked out once at the start (#643). Absent on older runs, which read as `delivery-handoff` through `autonomyOfRun`. The engine enforces it (#644); a resume keeps it. */
   autonomy?: RunAutonomy;
   /** The id of the custom flow as `scf promote` knows it (its file name), saved so a resume checks the same id (#665). Absent: the flow's name. */
   flowId?: string;

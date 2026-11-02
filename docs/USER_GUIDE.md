@@ -2086,8 +2086,22 @@ each component, and a fixed reason code. It never holds file content. Evals are 
 ### Autonomy levels
 
 Each repository and each flow has an autonomy level: a stored maximum for how far a run may go. The levels,
-lowest first, are `observe`, `plan-only`, `guarded-write` and `delivery-handoff`. What each level allows is not
-defined yet; later parts of the governance work will use them.
+lowest first, are `observe`, `plan-only`, `guarded-write` and `delivery-handoff`. The level is a real limit:
+
+| Level | What the run may do |
+|---|---|
+| `observe` | Read-only agent steps only. A writing agent step, a shell step with `repo_access: true`, and any push or pull request are refused. |
+| `plan-only` | As `observe`, and a shell step with `repo_access: true` may run (for example, to post the plan comment). Writing agent steps, pushes and pull requests are still refused. |
+| `guarded-write` | Writing agent steps run in the workspace. Every push and every pull request is refused. |
+| `delivery-handoff` | No extra limit. This is how Foundry worked before autonomy levels. |
+
+A refused step fails with a message such as `autonomy observe does not allow a writing agent step; next step: promote
+the repository or flow`. The run's own failure handling (`on_failure`) then runs, and the refusal is recorded in the
+evidence as a `step.denied` event with the reason `autonomy.denied`. A refused writing agent step starts no agent. A
+refused push is stopped by the pre-push hook, which is installed for runs below `delivery-handoff`, so a step that
+swallows the exit code of `git push` still fails. Pull requests are opened and merged by the story tools
+(`story pr-open`, `story pr-merge`) and by the daily branch tool (`open-pr`); those refuse below `delivery-handoff`
+too.
 
 A repository with no entry, and a flow with no entry, is `delivery-handoff`. A repository connected through the
 API starts at `guarded-write`. A repository of an existing install gets no entry, so it stays at `delivery-handoff`.
@@ -2104,8 +2118,7 @@ Levels are stored in `autonomy.json` in the Foundry home. There is no screen or 
 `observe`, and the log has a `!` line that says which file it was. Connecting a repository fails when
 `autonomy.json` is broken.
 
-**Not enforced yet.** The level is recorded, but nothing is allowed or refused by it. A run at `observe` runs as
-before.
+The level is enforced by the engine, not only in the agent's prompt. A run at `delivery-handoff` behaves as before.
 
 ### Promotion gate
 

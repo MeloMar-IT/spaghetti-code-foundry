@@ -13,7 +13,8 @@ import { isRefinementRun } from "../auth/run-owner.js";
 import { KEY_UNREADABLE } from "../auth/repos.js";
 import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
-import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
+import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess, wantsRepoAccess } from "./repo-access.js";
+import { AUTONOMY_DENIED, AUTONOMY_POLICY, autonomyOfRun, autonomyRefusal, autonomyRefuses, type AutonomyAction } from "../governance/autonomy.js";
 import { ownDir, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
 import { SLOT_WAITS_DIR, slotWaitLimitMs, waitedLine, type SlotWaitWatch } from "../steps/slot-waits.js";
 import { isTimedOut } from "../errors.js";
@@ -130,7 +131,8 @@ export function ranOrder(history: Pick<StepRecord, "id" | "parent">[], prefix: s
 export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o: { bound?: (env: Record<string, string>) => Record<string, string> } = {}): Record<string, string> {
   const hotfix = engine.hotfix ?? "off";
   // Never inherited from the server's own environment: only pushAllowEnv() can set it, for one step.
-  const env: Record<string, string> = { ...engine.baseEnv, FACTORY_HOTFIX: hotfix, FACTORY_PUSH_ALLOW: "" };
+  // FACTORY_NO_PUSH likewise: only the run's own level (in baseEnv) sets it.
+  const env: Record<string, string> = { FACTORY_NO_PUSH: "", ...engine.baseEnv, FACTORY_HOTFIX: hotfix, FACTORY_PUSH_ALLOW: "" };
   if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix));
   for (const [k, v] of Object.entries(scope.ctx.vars)) env[varEnvName(k)] = v;
   for (const [id, s] of Object.entries(scope.ctx.steps)) env[outputEnvName(id)] = capEnvValue(String(s.output ?? ""), `steps.${id}.output`);
@@ -237,9 +239,22 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     scope.ctx.steps[step.id]!.error = rec.error;
     engine.save();
   }
+  // A push or pull request the autonomy level refused (noted by the hook or a tool) fails the step, also when the step swallowed the exit code.
+  const logged = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
+  const refusedLine = logged.find((p) => p.refused);
+  const autonomy = refusedLine ? autonomyStop(engine, identity, refusedLine.refused === "push" ? "push" : "pull-request") : undefined;
+  if (autonomy) {
+    rec.error = autonomy.error;
+    rec.ok = false;
+    delete rec.held;
+    delete rec.limited;
+    scope.ctx.steps[step.id]!.ok = false;
+    scope.ctx.steps[step.id]!.error = rec.error;
+    engine.save();
+  }
   engine.evidence?.stepEnded(rec);
   if (!scope.prefix) deliveryAfterStep(engine);
-  const pushed = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
+  const pushed = logged.filter((p) => !p.refused); // nothing was pushed for a refused line
   engine.policy?.pushes(identity, pushed);
   for (const p of pushed) {
     emitLiveTelemetry("delivery", "delivery.push_attempted", {
@@ -263,7 +278,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
  */
 export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">, visit: number): string | undefined {
   const hook = engine.config.protected_branches.length > 0 || engine.config.secret_scan;
-  if (!engine.policy && !(telemetryEnabled() && hook)) return undefined;
+  const noPush = engine.summary ? autonomyRefuses(autonomyOfRun(engine.summary), "push") : false;
+  if (!engine.policy && !noPush && !(telemetryEnabled() && hook)) return undefined;
   const file = pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit);
   try {
     mkdirSync(dirname(file), { recursive: true });
@@ -306,6 +322,20 @@ export function refuseByPolicy(engine: Engine, step: StepIdentity, denied: Polic
   return { ok: false, output: denied.reason, error: denied.reason };
 }
 
+/**
+ * The autonomy level of the run (fixed at its start, so a resume keeps it) does not allow this action: the step fails with a
+ * fixed sentence and the denial goes into the evidence. Undefined when the action is allowed. Unlike `refuseByPolicy` it does not
+ * stop the run: the flow's own `on_failure` path runs.
+ */
+export function autonomyStop(engine: Pick<Engine, "summary" | "log" | "evidence">, step: StepIdentity, action: AutonomyAction): StepResult | undefined {
+  const level = autonomyOfRun(engine.summary);
+  if (!autonomyRefuses(level, action)) return undefined;
+  const reason = autonomyRefusal(level, action);
+  engine.evidence?.stepDenied(step, { kind: "policy", policy: AUTONOMY_POLICY, reasonCode: AUTONOMY_DENIED });
+  engine.log(`    ! ${reason}`);
+  return { ok: false, output: reason, error: reason };
+}
+
 /** An enforced policy refused the run itself (run.start, run.complete): logged and recorded as a step.denied without a step. Returns the reason. */
 export function refuseRunByPolicy(to: Pick<Engine, "log" | "evidence">, denied: PolicyDenied): string {
   if (denied.denial) to.evidence?.runDenied(denied.denial);
@@ -335,6 +365,11 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       return runAgentStep(step, scope, engine, logFile, timeoutMs, meter);
 
     case "shell": {
+      // A step that works in the repository with a sign-in is refused below plan-only, before any credential is looked up.
+      if (wantsRepoAccess(step, scope.depth, scope.flow.name, engine.summary.source)) {
+        const stopped = autonomyStop(engine, stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1), "repo-access");
+        if (stopped) return stopped;
+      }
       const image = shellImage(scope, engine);
       if (step.sandbox && !image) engine.log(`    ⚠ ${step.id}: not sandboxed (no sandbox.docker_image configured)`);
       const env = stepEnv(scope, engine, step);

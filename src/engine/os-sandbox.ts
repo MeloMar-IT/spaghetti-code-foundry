@@ -86,6 +86,8 @@ export interface SandboxPaths {
   workspaceReadOnly?: boolean;
   /** The request folder of a step with repo_ops: also writable when the workspace is read-only. */
   requestsDir?: string;
+  /** The folder of the push log: also writable when the workspace is read-only, so a refused push can always be recorded. */
+  pushLogDir?: string;
   /** Folders no step may read, from the evaluation limit. */
   denyRead?: string[];
   /** When set, the only outbound TCP: `*:<port>` or `localhost:<port>`. */
@@ -198,7 +200,7 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
   }
   // writes
   out.push("(deny file-write*)");
-  const writable = paths.workspaceReadOnly ? [join(runDir, "home"), runTmp, ...(paths.requestsDir ? [paths.requestsDir] : [])] : [runDir, runTmp, lockDir, ...(ghDir ? [ghDir] : [])];
+  const writable = paths.workspaceReadOnly ? [join(runDir, "home"), runTmp, ...(paths.requestsDir ? [paths.requestsDir] : []), ...(paths.pushLogDir ? [namedReal(paths.pushLogDir, real)] : [])] : [runDir, runTmp, lockDir, ...(ghDir ? [ghDir] : [])];
   for (const p of writable) out.push(`(allow file-write* (subpath ${quote(p)}))`);
   // only the learnings file: its folder is made by the server before the step and cannot be moved or removed by the step
   if (!paths.workspaceReadOnly) out.push(`(allow file-write* (literal ${quote(learnings)}))`);
@@ -238,7 +240,7 @@ function onPath(name: string, path = process.env.PATH ?? ""): string | undefined
 }
 
 /** The profile paths of one step of a run (see the notes in `sandboxProfile`). */
-export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?: string; claudeBin?: string; codexBin?: string; userRead?: string[]; agentBin?: string; workspaceReadOnly?: boolean; requestsDir?: string }): SandboxPaths {
+export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?: string; claudeBin?: string; codexBin?: string; userRead?: string[]; agentBin?: string; workspaceReadOnly?: boolean; requestsDir?: string; pushLogDir?: string }): SandboxPaths {
   const data = process.env.FACTORY_HOME ?? FACTORY_HOME;
   const programs = [process.execPath, onPath("git"), o.claudeBin ? (isAbsolute(o.claudeBin) ? o.claudeBin : onPath(o.claudeBin)) : onPath("claude"), o.codexBin ? (isAbsolute(o.codexBin) ? o.codexBin : onPath(o.codexBin)) : onPath("codex")];
   const limit = evaluationLimits();
@@ -259,6 +261,7 @@ export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?:
     ...(o.agentBin ? { agentProgram: isAbsolute(o.agentBin) ? o.agentBin : onPath(o.agentBin) } : {}),
     ...(o.workspaceReadOnly ? { workspaceReadOnly: true } : {}),
     ...(o.requestsDir ? { requestsDir: o.requestsDir } : {}),
+    ...(o.pushLogDir ? { pushLogDir: o.pushLogDir } : {}),
     ...(limit ? { denyRead: [...limit.denyRead], outbound: [...limit.outbound] } : {}),
   };
 }

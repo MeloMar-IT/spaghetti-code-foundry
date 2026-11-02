@@ -2,8 +2,11 @@ import { z } from "zod";
 
 /**
  * Autonomy levels: how far a run may go, lowest first. A repository and a flow each have a stored maximum (see
- * `autonomy-store.ts`); a run gets the lower of the two. Nothing reads the level to allow or refuse anything yet (#643).
+ * `autonomy-store.ts`); a run gets the lower of the two. The engine enforces the level of a run (#644): what each level
+ * allows is in `autonomy-rules.ts` (no imports of packages, so the tools can load it in a container); it is re-exported here.
  */
+export { AUTONOMY_DENIED, AUTONOMY_NEXT_STEP, AUTONOMY_POLICY, autonomyRefusal, autonomyRefuses, pullRequestRefusal, type AutonomyAction } from "./autonomy-rules.js";
+
 export const AUTONOMY_LEVELS = ["observe", "plan-only", "guarded-write", "delivery-handoff"] as const;
 export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
 export const AutonomyLevelSchema = z.enum(AUTONOMY_LEVELS);

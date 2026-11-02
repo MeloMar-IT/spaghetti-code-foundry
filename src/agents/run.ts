@@ -7,7 +7,7 @@ import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import type { ProcessMeter } from "../steps/process.js";
 import type { SlotWaitWatch } from "../steps/slot-waits.js";
-import { DEFAULT_PERMISSION_MODE, pushLogFor, refuseByPolicy, slotWaitsFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
+import { DEFAULT_PERMISSION_MODE, autonomyStop, pushLogFor, refuseByPolicy, slotWaitsFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
@@ -144,6 +144,7 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
           userRead: engine.config.sandbox.user_read,
           workspaceReadOnly: readOnly,
           requestsDir: env.FACTORY_REPO_REQUESTS ? dirname(env.FACTORY_REPO_REQUESTS) : undefined,
+          pushLogDir: env.FACTORY_PUSH_LOG ? dirname(env.FACTORY_PUSH_LOG) : undefined,
         }),
       );
     }
@@ -199,9 +200,9 @@ interface WithOptions extends Gate {
   toolCheck?: { tools: SessionTools; check: ToolCheck };
 }
 
-/** The folders outside the workspace a session may write: the request folder of a repo_ops step and the folder of slot waits. Undefined when there are none. */
-function writable(env: Record<string, string | undefined>, slotWaits?: SlotWaitWatch): string[] | undefined {
-  const dirs = [...(env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : []), ...(slotWaits ? [slotWaits.dir] : [])];
+/** The folders outside the workspace a session may write: the request folder of a repo_ops step, the folder of slot waits and the push-log folder (a refused push must always be recorded). Undefined when there are none. */
+export function writable(env: Record<string, string | undefined>, slotWaits?: SlotWaitWatch): string[] | undefined {
+  const dirs = [...(env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : []), ...(slotWaits ? [slotWaits.dir] : []), ...(env.FACTORY_PUSH_LOG ? [dirname(env.FACTORY_PUSH_LOG)] : [])];
   return dirs.length ? dirs : undefined;
 }
 
@@ -386,6 +387,13 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
       // the lent login comes back after every session, also when it failed
       const back = clean ? codexLoginReturnLine(clean.done()) : undefined;
       if (back) engine.log(`    ${back}`);
+    }
+    // A read-only Codex session (unboxed) has no folder it can write, so the push log cannot hold its refusals: the refusals in
+    // its own command results fail the step here instead, and are recorded the same way.
+    if (t.agent === "codex" && !boxed && o.mapping.codexSandbox === "read-only") {
+      const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
+      const stopped = (r.refusals ?? []).map((a) => autonomyStop(engine, identity, a === "push" ? "push" : "pull-request")).find(Boolean);
+      if (stopped) r = { ...r, ok: false, error: stopped.error };
     }
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
@@ -582,6 +590,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     }
     // Before every session that can write, retries and fallbacks included, with the sandbox the target really gets.
     if (!readOnlyStep(step, scope.flow.defaults)) {
+      // The run's autonomy level comes first: below guarded-write no writing agent starts, and no policy "allow" is recorded for it.
+      const stopped = autonomyStop(engine, identity, "agent-write");
+      if (stopped) return { ...stopped, ...tries() };
       const sandboxed = boxed || (target.agent === "codex" ? resolved.mapping.codexSandbox !== "danger-full-access" : resolved.mapping.claudeSandbox);
       const write = engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
       if (write?.denied) return { ...refuseByPolicy(engine, identity, write.denied), ...tries() };
