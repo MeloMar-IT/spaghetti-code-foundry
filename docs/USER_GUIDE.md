@@ -607,6 +607,82 @@ Dates on the page use your browser's time zone, except the chart's day labels (U
 
 It cannot know when a usage limit stops work or when a person will answer. It also cannot know stories that nobody has written yet, and it assumes the pace of the last 14 days goes on. When a forecast looks wrong, first check **Held up by** on the Epics page and the **Waiting** stories on this page.
 
+### Stories as files
+
+A story can be a file, so people and other tools can read and write it without the Foundry. Files go in `.scf/stories/` in the repository, one file per story or epic, named `<number>-<slug>.md`. The number is the story number and the slug is the title in lowercase ASCII, at most 50 characters (`story` when nothing is left, for example for a title in other letters only).
+
+The format status: this part defines the format only. The Foundry does not read or write these files yet; later parts add the store.
+
+A file has three parts:
+
+1. **Front matter**, between two lines `---`, in YAML:
+   - `number` (required): the story number, a whole number. It must match the number in the file name.
+   - `title` (required): the title.
+   - `state` (required): `open` or `closed`.
+   - `kind`: `story` (the default) or `epic`.
+   - `labels`: a list of words.
+   - `epic`: the number of the epic this story belongs to.
+   - `depends_on`: a list of the story numbers this story waits for.
+   - `created`, `updated`, `closed`: times.
+2. **The body**: the Markdown text of the story, after the front matter.
+3. **Comments** (optional): a final `## Comments` heading, then one block per comment. A block starts with a heading `### Comment by <author> on <time>` and holds the comment text.
+
+The Foundry's status comment is one comment block that keeps the marker `<!-- claude-factory status -->` as its last line, so the Foundry can update it in place.
+
+If a line of the body or a comment is exactly `## Comments`, or starts a comment heading, it is written with a `\` in front. Reading the file removes that `\` again, so the text comes back unchanged.
+
+Example: an epic, and a child story that names it in `epic:`.
+
+`.scf/stories/100-checkout.md`:
+
+```markdown
+---
+number: 100
+title: Checkout
+kind: epic
+state: open
+labels: [epic]
+depends_on: []
+created: "2026-10-01T09:00:00Z"
+updated: "2026-10-03T14:20:00Z"
+---
+
+Customers can pay and get a receipt.
+
+## Comments
+
+### Comment by marcel on 2026-10-02T10:00:00Z
+
+Split into two stories: payment and receipts.
+```
+
+`.scf/stories/101-take-card-payments.md`:
+
+```markdown
+---
+number: 101
+title: Take card payments
+kind: story
+state: open
+labels: [payments]
+epic: 100
+depends_on: [99]
+created: "2026-10-02T10:05:00Z"
+updated: "2026-10-02T10:05:00Z"
+---
+
+Accept Visa and Mastercard at checkout.
+```
+
+A file that cannot be read is reported with the reason. Common reasons:
+
+- the front matter is missing or broken (it must start with `---` and end with `---`);
+- `number` is missing or is not a whole number;
+- the number in the file name is not the `number` in the front matter;
+- `state` is not `open` or `closed`.
+
+Dates must be written as text in quotes, so YAML does not change them.
+
 ### Work page (redesign, off by default)
 
 The redesigned pages are still being built. An admin turns them on in **Settings → Redesign** with the box "Show the redesigned pages (still being built)". Reload the page after you change it. With the box off, **Board** is exactly as described above.
