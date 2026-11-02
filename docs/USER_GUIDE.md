@@ -2107,6 +2107,43 @@ Levels are stored in `autonomy.json` in the Foundry home. There is no screen or 
 **Not enforced yet.** The level is recorded, but nothing is allowed or refused by it. A run at `observe` runs as
 before.
 
+### Promotion gate
+
+The promotion gate shows whether a repository or a flow has earned the next autonomy level, and each piece of
+evidence behind that answer. It only reads. Nothing is promoted by it.
+
+The gate has five checks. The first four count; `approval` is shown as **pending** until a person approves a
+request (a later part of the governance work).
+
+- **Evidence completeness.** The share of the component's runs in the window that have complete evidence. Needs
+  `min_runs` runs with an evidence file.
+- **Eval pass rate.** From the newest eval report that covers each flow (a flow's own report, or one of its
+  `<flow>@<model>` variants). A repository checks each flow it ran in the window; each must reach the threshold.
+- **Policy conformance.** No `deny`, `policy.unavailable` or `policy.invalid` decision in the window, also those
+  in observe mode. A run that has not ended yet, or whose evidence cannot be read in full, counts as unknown and
+  fails the check.
+- **Operational SLOs.** No open SLO finding that names the repository or flow. The check fails when the monitor
+  has not finished a check in the last 24 hours, because then open problems are not known.
+- **Approval.** Pending.
+
+A missing piece of data fails its check with a plain reason, such as "no eval report covers it" or "Only 4 runs
+ended in the last 30 days; at least 10 are needed". A check never passes on missing data. A repository with no
+GitHub name shows no runs, so every check fails with a reason.
+
+The numbers are in `config.yaml` under `governance.promotion`, and the Settings page has the card "Promotion
+gate" for them:
+
+- `min_runs` (default `10`): the fewest runs in the window;
+- `evidence_completeness` (default `0.95`): the lowest share of runs with complete evidence;
+- `eval_pass_rate` (default `0.9`): the lowest pass rate of an eval report;
+- `within_days` (default `30`, from 1 to 90): the window in days.
+
+The levels and the gate of every repository and flow are on `GET /api/autonomy` (admin only, see the permission
+table). `scf autonomy status` prints the same, one line per check; `--json` prints the answer as it is. It
+calls that route, so it needs a running Foundry and a signed-in admin.
+
+The checks and thresholds are the same for every level. The target level is not used yet.
+
 ### Promote a component
 
 `scf promote <kind> <id> [--live]` says whether a component may be promoted, from the safety reports
@@ -3972,6 +4009,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
 
+**Promotion gate (governance.promotion)** — `governance.promotion` holds the four numbers of the promotion gate: `min_runs` (default `10`), `evidence_completeness` (`0.95`), `eval_pass_rate` (`0.9`) and `within_days` (`30`, from 1 to 90). They only decide what the gate shows; nothing is enforced by them yet ([Promotion gate](#promotion-gate)).
+
 **Retries after a time limit (auto_retry)** — `auto_retry.timeouts` is how often a story of a watcher is tried again by itself when a step ran out of time: default `2`, `0` turns it off. The count is per story, over all runs of its issue. With `0`, a time-out goes to Needs you at once, as before. Otherwise, when `implement` times out after its last retry, the story goes to the planner to be split (see "When something goes wrong"). A run that a person started is never retried. The settings page shows this as the card "Retries".
 
 **Safety**
@@ -4690,6 +4729,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
 | `GET /api/outcomes` | yes | yes | the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values |
+| `GET /api/autonomy` | yes | no | the autonomy level of every repository and flow and its promotion gate: whether it has earned the next level, with the checks evidence completeness, eval pass rate, policy conformance, operational SLOs and approval (pending); read-only, changes nothing |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
@@ -7161,6 +7201,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
 | `scf components [kind]` / `scf components record [kind]` | Print the version, SHA-256 and governance status (owner, risk, lifecycle, review) of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
+| `scf autonomy status [--json]` | Print the autonomy level of each repository and flow and its promotion gate, check by check; read-only; needs a running, signed-in server (admin) ([Promotion gate](#promotion-gate)) |
 | `scf promote <kind> <id> [--live]` | Check that the newest safety reports allow promoting a component; read-only; prints `PASSED` and `PROMOTABLE`, or `BLOCKED` per problem; exits 1 when blocked ([Promote a component](#promote-a-component)) |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
 | `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |

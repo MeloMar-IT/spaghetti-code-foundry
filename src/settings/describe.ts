@@ -144,7 +144,7 @@ export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
   if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns") return false;
   if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce", "promotion.enforce"].includes(key)) return true;
-  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "auto_retry."].some((p) => key.startsWith(p));
+  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry."].some((p) => key.startsWith(p));
 }
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
@@ -164,6 +164,10 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
   "governor.priority": N("Priority of runs", "How much processor time the agents, builds and tests of a run leave to your other programs; background can slow runs a lot on macOS."),
   "governor.floor": G("Lowest runs at the same time", "The lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded, not set means half of Runs at the same time (at least 2), and a higher number than that setting counts as that setting."),
+  "governance.promotion.min_runs": G("Fewest runs", "How many runs a repository or flow needs in the window before it can earn the next autonomy level; fewer runs fail the evidence and policy checks."),
+  "governance.promotion.evidence_completeness": G("Evidence completeness", "The lowest share of runs (0 to 1) in the window that must have complete evidence for the next autonomy level."),
+  "governance.promotion.eval_pass_rate": G("Eval pass rate", "The lowest share of eval results (0 to 1) of the newest eval report of a flow that must have passed for the next autonomy level."),
+  "governance.promotion.within_days": G("Window in days", "How many days back (1 to 90) the runs and policy decisions count for the next autonomy level."),
   "delivery.signing_key_path": G("Signing key", "An absolute path to an unencrypted Ed25519 key, which must be in delivery-keys in the data folder (sandboxed steps cannot read it); without it, contracts are unsigned; applies from the next step."),
   "delivery.required_checks": G("Required checks", "The CI checks a delivery contract requires; applies from the next step."),
   "delivery.artifacts": G("Required artifacts", "The artifacts a delivery contract requires; applies from the next step."),

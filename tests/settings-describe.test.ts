@@ -128,7 +128,23 @@ describe("what is described", () => {
     expect(isCovered("governor.priority")).toBe(true);
     expect(isCovered("governor.floor")).toBe(true);
     expect(described.find((d) => d.key === "governor.floor")).toMatchObject({ kind: "number", integer: true, min: 0, optional: true, effect: "now", control: "generated" });
-    expect(described).toHaveLength(135);
+    expect(described).toHaveLength(139);
+  });
+
+  it("describes the promotion gate settings with their defaults and ranges, as generated controls", () => {
+    const keys = ["min_runs", "evidence_completeness", "eval_pass_rate", "within_days"].map((k) => `governance.promotion.${k}`);
+    for (const k of keys) {
+      expect(isCovered(k), k).toBe(true);
+      expect(described.find((d) => d.key === k), k).toMatchObject({ kind: "number", effect: "now", control: "generated" });
+    }
+    expect(described.find((d) => d.key === keys[0])).toMatchObject({ default: 10, integer: true, min: 1, max: 10000 });
+    expect(described.find((d) => d.key === keys[1])).toMatchObject({ default: 0.95, min: 0, max: 1 });
+    expect(described.find((d) => d.key === keys[2])).toMatchObject({ default: 0.9, min: 0, max: 1 });
+    expect(described.find((d) => d.key === keys[3])).toMatchObject({ default: 30, integer: true, min: 1, max: 90 });
+    expect(ConfigSchema.parse({}).governance.promotion).toEqual({ min_runs: 10, evidence_completeness: 0.95, eval_pass_rate: 0.9, within_days: 30 });
+    for (const [k, v] of [["min_runs", 0], ["evidence_completeness", 1.1], ["eval_pass_rate", -0.1], ["within_days", 91]] as const) {
+      expect(issuesAt(`governance.promotion.${k}`, v), `${k}=${v}`).not.toHaveLength(0);
+    }
   });
 
   it("keeps a floor of 0, leaves it out when absent, and counts one above concurrency as valid", () => {

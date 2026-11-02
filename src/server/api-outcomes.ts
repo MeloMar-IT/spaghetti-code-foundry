@@ -123,20 +123,42 @@ export interface OutcomeResult {
 const turn = () => new Promise<void>((r) => setImmediate(r));
 const sorted = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
 
-/** Loads the narrowed runs one by one (yielding), reads their evidence, filters by model and policy, and computes the measures. */
-export async function outcomesFor(input: { briefs: readonly RunBrief[]; filter: OutcomeFilter; admin: boolean; window: OutcomeWindow }, deps: OutcomeDeps): Promise<OutcomeResult> {
-  const { filter, admin, window } = input;
+export interface LoadedRuns {
+  runs: RunSummary[];
+  facts: Map<string, OutcomeFacts>;
+  /** The briefs whose run.json could not be loaded (unreadable or not the run the brief names). */
+  failed: RunBrief[];
+}
+
+/** Loads the runs of the briefs one by one (yielding) and collects the facts of the settled ones. Never throws for one bad run. */
+export async function loadWithFacts(briefs: readonly RunBrief[], window: OutcomeWindow, deps: OutcomeDeps): Promise<LoadedRuns> {
   const every = Math.max(1, deps.yieldEvery ?? LOAD_YIELD);
   const runs: RunSummary[] = [];
+  const failed: RunBrief[] = [];
   const updatedAt = new Map<string, string>();
-  for (const [i, b] of input.briefs.entries()) {
+  for (const [i, b] of briefs.entries()) {
     if (i > 0 && i % every === 0) await turn();
-    const run = await deps.load(b);
-    if (!run) continue;
+    let run: RunSummary | undefined;
+    try {
+      run = await deps.load(b);
+    } catch {
+      run = undefined;
+    }
+    if (!run) {
+      failed.push(b);
+      continue;
+    }
     runs.push(run);
     if (typeof run.runDir === "string") updatedAt.set(run.runDir, b.updatedAt);
   }
   const facts = await deps.cache.collect(runs.filter((r) => !isRefinementRun(r.source)), updatedAt, window.to);
+  return { runs, facts, failed };
+}
+
+/** Loads the narrowed runs one by one (yielding), reads their evidence, filters by model and policy, and computes the measures. */
+export async function outcomesFor(input: { briefs: readonly RunBrief[]; filter: OutcomeFilter; admin: boolean; window: OutcomeWindow }, deps: OutcomeDeps): Promise<OutcomeResult> {
+  const { filter, admin, window } = input;
+  const { runs, facts } = await loadWithFacts(input.briefs, window, deps);
   const from = window.from.getTime();
   const to = window.to.getTime();
   const values: OutcomeResult["values"] = {};
@@ -164,7 +186,7 @@ export async function outcomesFor(input: { briefs: readonly RunBrief[]; filter: 
 
 const caches = new WeakMap<ApiContext, OutcomeFactsCache>();
 /** The facts cache of this server. */
-function factsCacheOf(ctx: ApiContext): OutcomeFactsCache {
+export function factsCacheOf(ctx: ApiContext): OutcomeFactsCache {
   let c = caches.get(ctx);
   if (!c) {
     c = new OutcomeFactsCache();

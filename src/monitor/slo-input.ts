@@ -104,8 +104,9 @@ export type EvidenceReadStatus = "read" | "missing" | "refused";
  * Reads evidence.jsonl in pieces and hands each event of `runId` to `take` (an error in `take` skips that line).
  * Never throws, never follows a link, never reads past the size checked on the open file.
  * "missing": no file. "refused": a link, a file that is not plain, a file over the limit, or an I/O error.
+ * `stats.skipped` counts the lines left out because they could not be read or were too long.
  */
-export async function readEvidenceEvents(runDir: string, runId: string, take: (e: EvidenceEvent) => void, maxBytes = MAX_EVIDENCE_BYTES): Promise<EvidenceReadStatus> {
+export async function readEvidenceEvents(runDir: string, runId: string, take: (e: EvidenceEvent) => void, maxBytes = MAX_EVIDENCE_BYTES, stats?: { skipped: number }): Promise<EvidenceReadStatus> {
   let fh;
   try {
     fh = await open(join(runDir, EVIDENCE_EVENTS_FILE), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
@@ -122,7 +123,7 @@ export async function readEvidenceEvents(runDir: string, runId: string, take: (e
         const e = parseEvidenceEventLine(text);
         if (e.runId === runId) take(e);
       } catch {
-        // a line that cannot be read is skipped
+        if (stats) stats.skipped++; // a line that cannot be read is skipped
       }
     };
     while (pos < st.size) {
@@ -135,11 +136,13 @@ export async function readEvidenceEvents(runDir: string, runId: string, take: (e
       for (const p of parts) {
         if (skipping) skipping = false;
         else if (p.length <= MAX_LINE_BYTES) line(p);
+        else if (stats) stats.skipped++;
         if (++lines % YIELD_LINES === 0) await nap();
       }
       if (rest.length > MAX_LINE_BYTES) {
         rest = "";
         skipping = true;
+        if (stats) stats.skipped++;
       }
       await nap();
     }

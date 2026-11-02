@@ -21,6 +21,10 @@ export interface OutcomeFacts {
   policyBlocks: number;
   /** policy.decided events with outcome deny in observe mode. */
   observeDenies: number;
+  /** Times (evaluatedAt, ISO) of every policy decision that denied or had reason policy.unavailable or policy.invalid. Never capped: a recent one must not be lost behind old ones. */
+  policyBadAt: string[];
+  /** Lines of evidence.jsonl left out because they could not be read: the decisions in them are unknown. */
+  linesSkipped: number;
   /** "agent:provider:model", unique and sorted. */
   models: string[];
   /** "id@version", unique and sorted. */
@@ -39,12 +43,13 @@ function isBaseline(suite: string): boolean {
 }
 
 function zeroFacts(runId: string, evidence: OutcomeFacts["evidence"]): OutcomeFacts {
-  return { runId, evidence, pushed: false, delivered: false, policyBlocks: 0, observeDenies: 0, models: [], policies: [], approvals: { decided: 0, totalMs: 0, maxMs: 0 }, resumes: 0 };
+  return { runId, evidence, pushed: false, delivered: false, policyBlocks: 0, observeDenies: 0, policyBadAt: [], linesSkipped: 0, models: [], policies: [], approvals: { decided: 0, totalMs: 0, maxMs: 0 }, resumes: 0 };
 }
 
 /** The facts of one run from its run.json and its events. Pure; never throws (on an error it gives the zero facts). */
-export function outcomeFactsOf(run: RunSummary, events: readonly EvidenceEvent[], evidence: OutcomeFacts["evidence"]): OutcomeFacts {
+export function outcomeFactsOf(run: RunSummary, events: readonly EvidenceEvent[], evidence: OutcomeFacts["evidence"], linesSkipped = 0): OutcomeFacts {
   const out = zeroFacts(String(run?.runId ?? ""), { ...evidence });
+  out.linesSkipped = Number.isFinite(linesSkipped) && linesSkipped > 0 ? Math.floor(linesSkipped) : 0;
   try {
     const evs: readonly EvidenceEvent[] = Array.isArray(events) ? events.filter((e) => e && typeof e === "object") : [];
     const models = new Set<string>();
@@ -71,6 +76,9 @@ export function outcomeFactsOf(run: RunSummary, events: readonly EvidenceEvent[]
           if (d.outcome !== "deny") allowedPush = true;
         }
         if (d.outcome === "deny" && d.mode === "observe") out.observeDenies++;
+        if ((d.outcome === "deny" || d.reasonCode === "policy.unavailable" || d.reasonCode === "policy.invalid")) {
+          out.policyBadAt.push(Number.isFinite(stamp(d.evaluatedAt)) ? d.evaluatedAt : e.time);
+        }
       }
     }
     out.delivered = run.status === "succeeded" && allowedPush;
@@ -81,7 +89,7 @@ export function outcomeFactsOf(run: RunSummary, events: readonly EvidenceEvent[]
     out.resumes = m.resumes ?? 0;
     return out;
   } catch {
-    return zeroFacts(out.runId, { ...evidence });
+    return { ...zeroFacts(out.runId, { ...evidence }), linesSkipped: out.linesSkipped };
   }
 }
 
@@ -146,11 +154,12 @@ export class OutcomeFactsCache {
 
   private read(run: RunSummary, updatedAt: string, key: string): Promise<OutcomeFacts> {
     const events: EvidenceEvent[] = [];
+    const stats = { skipped: 0 };
     return (async () => {
       try {
-        const status = await this.reader(run.runDir, run.runId, (e) => void events.push(e), this.maxBytes);
+        const status = await this.reader(run.runDir, run.runId, (e) => void events.push(e), this.maxBytes, stats);
         // events of a failed read are dropped: they would stand for the whole run
-        const facts = outcomeFactsOf(run, status === "read" ? events : [], { stream: status !== "missing", read: status === "read", manifest: false, incomplete: false });
+        const facts = outcomeFactsOf(run, status === "read" ? events : [], { stream: status !== "missing", read: status === "read", manifest: false, incomplete: false }, status === "read" ? stats.skipped : 0);
         this.done.delete(run.runDir);
         this.done.set(run.runDir, { updatedAt, runId: run.runId, facts });
         while (this.done.size > this.maxEntries) this.done.delete(this.done.keys().next().value as string);
