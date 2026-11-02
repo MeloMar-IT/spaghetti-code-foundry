@@ -178,6 +178,7 @@ export class WatcherManager {
       restart: this.o.restart,
       needsYou: this.o.needsYou,
       thresholds: () => this.o.config().monitor,
+      autoDemote: () => this.o.config().governance.auto_demote,
       serverLog: this.o.serverLog,
       rateLimit: () => this.rate,
       beforeCheck: () => this.noteRateLimit(),

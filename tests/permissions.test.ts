@@ -146,6 +146,8 @@ const EXAMPLES: Record<string, Example> = {
   "GET flows/:name": no("flows/walk", 200),
   "PUT flows/:name": no("flows/walk", 400, {}),
   "DELETE flows/:name": no("flows/nope", 404),
+  "GET promotions": no("promotions", 200),
+  "POST promotions": no("promotions", 400, {}),
   "GET blocks": no("blocks", 200),
   "PUT blocks/:id": no("blocks/x", 400, {}),
   "DELETE blocks/:id": no("blocks/nope", 404),
@@ -156,6 +158,11 @@ const EXAMPLES: Record<string, Example> = {
   "GET run-owners": { path: "run-owners", user: 403, admin: 200 },
   "GET run-filters": { path: "run-filters", user: 200, admin: 200 },
   "GET outcomes": { path: "outcomes", user: 200, admin: 200 },
+  "GET autonomy": { path: "autonomy", user: 403, admin: 200 },
+  "GET autonomy/history": { path: "autonomy/history", user: 403, admin: 200 },
+  "POST autonomy/promote": no("autonomy/promote", 400, {}),
+  "POST autonomy/approve": no("autonomy/approve", 400, {}),
+  "POST autonomy/demote": no("autonomy/demote", 400, {}),
   "POST runs": { path: "runs", body: {}, user: 400, admin: 400 },
   "GET runs/:id": { path: "runs/nope", user: 404, admin: 404 },
   "POST runs/:id/cancel": { path: "runs/nope/cancel", body: {}, user: 404, admin: 200 },
@@ -276,6 +283,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET admin/repos": no("admin/repos", 200),
   "PUT admin/repos/:id/settings": no(`admin/repos/${UNKNOWN}/settings`, 404, { releaseRecipe: "" }),
   "GET admin/credentials": no("admin/credentials", 200),
+  "GET admin/components": no("admin/components", 200),
   "PUT admin/repos/:id/ready": no(`admin/repos/${UNKNOWN}/ready`, 404, {}),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
   "GET admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404),
@@ -300,6 +308,8 @@ describe("the table", () => {
     expect(findRule("DELETE", ["admin", "repos", UNKNOWN, "watchers", "w"])?.path).toBe("admin/repos/:id/watchers/:wid");
     expect(findRule("GET", ["admin", "credentials"])?.path).toBe("admin/credentials");
     expect(findRule("POST", ["admin", "credentials"])).toBeUndefined();
+    expect(findRule("GET", ["admin", "components"])?.path).toBe("admin/components");
+    expect(findRule("POST", ["admin", "components"])).toBeUndefined();
     expect(findRule("POST", ["monitor", "mutes"])?.path).toBe("monitor/mutes");
     expect(findRule("DELETE", ["monitor", "mutes", "0000000000000000"])?.path).toBe("monitor/mutes/:id");
     expect(findRule("POST", ["monitor", "retry"])?.path).toBe("monitor/retry");

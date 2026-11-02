@@ -123,6 +123,7 @@ describe("pure functions", () => {
   it("actorText and targetText", () => {
     expect(ui.actorText({ type: "cli" })).toBe("command line");
     expect(ui.actorText({ type: "anonymous" })).toBe("not signed in");
+    expect(ui.actorText({ type: "monitor" })).toBe("monitor");
     expect(ui.actorText(account("u1", "Ann"))).toBe("Ann");
     expect(ui.actorText(account("u9", "deleted user"))).toBe("deleted user");
     expect(ui.targetText(null)).toBe("");
@@ -237,7 +238,7 @@ describe("filters", () => {
   it("has the user and action choices", async () => {
     await show();
     expect(field("user").all("option").map((o) => o.textContent)).toEqual(["All users", "Ann (ann@example.com)", "Bob (bob@example.com)"]);
-    expect(field("action").all("option")).toHaveLength(43);
+    expect(field("action").all("option")).toHaveLength(47);
     expect(field("action").all("option")[0]!.textContent).toBe("All actions");
   });
   it("reloads on every change without redrawing the bar", async () => {

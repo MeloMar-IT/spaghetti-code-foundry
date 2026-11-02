@@ -94,9 +94,9 @@ admin for a new one.
 | **Runs** | — | Everything that ran or is running; the ones that need you on top |
 | **Repositories** | — | The repositories you work in, and how the Foundry signs in to them |
 | **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
-| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
+| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Autonomy, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
 
-**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Epics**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Epics**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit, Autonomy) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
 **Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
@@ -108,7 +108,7 @@ An account with the role `user` works on its own display at `/user/`, with **Hom
 
 **My runs.** Your runs as cards, newest first, with the ones that need you on top. A card shows the status (with its "?"), the flow, the first line of the task, the repository and issue, one sentence about what happens next, and when it started. The flow name is a link: reach it with Tab and open it with Enter. A queued run says "n runs ahead of you" and has a **Remove** button; it asks first, and the run does not start. The list refreshes by itself every 30 seconds and only redraws when something changed. While it loads you see placeholder cards. If a refresh fails, the cards stay and a note says "Could not refresh. Showing data from …" with **Retry**. If the list cannot be loaded at all, you see the reason with **Retry**. With no runs it says "No runs yet." and offers **Start work**. Above the cards a bar lets you search and filter your runs, as on the admin Runs list but without the Owner select: a search box, Repository, Flow, Status and Time, "Only what needs me", **Show** buttons (with **Archived**) and **Clear filters**. Failed, Completed and Archived runs can be selected and archived in one go (see [The runs list](#the-runs-list)). The filter is kept in the address (`#/runs?q=…`); `owner` there is ignored. Search, repository, flow, status and time are asked from the server, so older runs are found; when 200 runs match, the list says "Only the newest 200 matches are shown." With no match it says "No runs match your search and filters." The preview opened with **View as user** can filter too.
 
-**The run page.** A header at the top stays in place when the run updates. It shows the task as the title, the status with its "?", the repository and issue or PR, the branch, when the run started and how long it ran (or has been running), and "resumed N×". Under it come the failure card or **Now**. The page also shows **Now** (what happens next, and the step the run is at, with what that step does). Below it are five tabs: **Overview**, **Steps**, **Changes**, **Evidence** and **Logs**. Overview is the default; a failed run opens on **Steps** once, unless you already chose a tab. The tabs work with the mouse and with Left and Right arrow keys. A live update never changes the tab you are on, closes what you opened or moves your scroll position, and text you are typing in the answer form stays. **Overview** shows the whole task, the questions of a run that stopped, the details (run id, flow and flow version; an administrator also sees the workspace) and a short count such as "3 of 5 steps done, 1 failed". On the user display the answer form and **Answers given** are here. **Steps** is a timeline in time order: run started, each finished step (passed or failed, visit number, how long), "Waiting for approval" with its message, "Running <step>", each answer given and the end of the run. Sub-steps are indented under their step, and each row has a plain label, not just a step id. An administrator can open a step for its error under **Details** and its output or transcript, which load when first opened (tool calls stay closed until clicked); a user sees plain rows with a one-sentence error. Open steps stay open and loaded when the run goes on, and the scroll position does not move. A failed run opens its failing step once. It says "No steps finished yet." while the run is going and "No steps recorded." for a finished run with none. **Changes** shows what the run changed, or a line that there is nothing; it loads when you first open it, when you press **Refresh**, and when the run finishes, and open files stay open. **Evidence** shows only what the run already has: the questions asked and the answers given, with their time; the result of each finished shell or approval step (passed or failed, how long, and the error in one sentence); the link of the next step (the issue or pull request); and, for a failed run, **Already tried**. With none of these it says "No evidence recorded yet." **Logs** is the live log: the full log for an administrator, the filtered log for a user. Buttons show when they apply. **Approve** and **Reject** open a dialog with an optional note, for a run that waits for your decision. **Retry from the failing step** is for a run that failed, stopped or was cancelled and has a step to continue at; it is the one filled button, except while the answer form is shown (then **Send answer** is the main action). **Cancel** is for a run that is running, waiting or queued, and asks first; a run that is queued can only be cancelled. If the server refuses an action, its sentence is shown and the page stays usable. A run from an architect session is continued from that session, so it has no Approve, Reject or Retry here. A failed run shows what happened, why and what you can do. A run that stopped because the planner has questions shows them as text under **Questions**: the planner's own text, the same as in the comment on the issue. The page shows the first 4,000 characters; a longer text is cut, and the whole text is in the comment. "Retry from step…", the owner, costs and raw details belong to the admin display. The admin display's **Overview** also has a card **Decided by the Foundry** for the questions the Foundry decided itself, by round: each round shows its issue, time and outcome (decided everything and went on, decided some and asked the rest, or gave up and asked the owner), then each question with its decision; the full question text is under **Full question**. The card is hidden when a run has no such rounds, and no flow writes them yet. While the run loads you see a placeholder page. If the run does not exist (or was removed) you see "This run was not found. It may have been removed." with a link back; if you may not see it, you see that, with a link back; any other failure shows the reason with **Retry**. If the live connection to the run is lost for good, a red banner says "Lost connection to the run stream" with **Reconnect**. The page keeps showing the last head, steps and log; **Reconnect** opens the stream again, and the banner goes when the next update arrives. If the changes cannot be loaded, the reason shows in that place with **Retry**.
+**The run page.** A header at the top stays in place when the run updates. It shows the task as the title, the status with its "?", the repository and issue or PR, the branch, when the run started and how long it ran (or has been running), and "resumed N×". A run that had automatic retries after a time limit (see "When something goes wrong") adds a fact such as "2 automatic retries after a time limit — it finished": how many started, and how the run ended (it finished, it was split, it failed, it was cancelled or it is still open). A retry that waits in the queue reads "the next one is waiting", and a retry that was cancelled while it waited is not counted. Users see the same fact. Without retries the header is as before. Under it come the failure card or **Now**. The page also shows **Now** (what happens next, and the step the run is at, with what that step does). Below it are five tabs: **Overview**, **Steps**, **Changes**, **Evidence** and **Logs**. Overview is the default; a failed run opens on **Steps** once, unless you already chose a tab. The tabs work with the mouse and with Left and Right arrow keys. A live update never changes the tab you are on, closes what you opened or moves your scroll position, and text you are typing in the answer form stays. **Overview** shows the whole task, the questions of a run that stopped, the details (run id, flow and flow version; an administrator also sees the workspace) and a short count such as "3 of 5 steps done, 1 failed". On the user display the answer form and **Answers given** are here. **Steps** is a timeline in time order: run started, each finished step (passed or failed, visit number, how long), "Waiting for approval" with its message, "Running <step>", each answer given and the end of the run. Sub-steps are indented under their step, and each row has a plain label, not just a step id. An administrator can open a step for its error under **Details** and its output or transcript, which load when first opened (tool calls stay closed until clicked); a user sees plain rows with a one-sentence error. Open steps stay open and loaded when the run goes on, and the scroll position does not move. A failed run opens its failing step once. It says "No steps finished yet." while the run is going and "No steps recorded." for a finished run with none. **Changes** shows what the run changed, or a line that there is nothing; it loads when you first open it, when you press **Refresh**, and when the run finishes, and open files stay open. **Evidence** shows only what the run already has: the questions asked and the answers given, with their time; the result of each finished shell or approval step (passed or failed, how long, and the error in one sentence); the link of the next step (the issue or pull request); and, for a failed run, **Already tried**. With none of these it says "No evidence recorded yet." **Logs** is the live log: the full log for an administrator, the filtered log for a user. Buttons show when they apply. **Approve** and **Reject** open a dialog with an optional note, for a run that waits for your decision. **Retry from the failing step** is for a run that failed, stopped or was cancelled and has a step to continue at; it is the one filled button, except while the answer form is shown (then **Send answer** is the main action). **Cancel** is for a run that is running, waiting or queued, and asks first; a run that is queued can only be cancelled. If the server refuses an action, its sentence is shown and the page stays usable. A run from an architect session is continued from that session, so it has no Approve, Reject or Retry here. A failed run shows what happened, why and what you can do. A run that stopped because the planner has questions shows them as text under **Questions**: the planner's own text, the same as in the comment on the issue. The page shows the first 4,000 characters; a longer text is cut, and the whole text is in the comment. "Retry from step…", the owner, costs and raw details belong to the admin display. The admin display's **Overview** also has a card **Decided by the Foundry** for the questions the Foundry decided itself, by round: each round shows its issue, time and outcome (decided everything and went on, decided some and asked the rest, or gave up and asked the owner), then each question with its decision; the full question text is under **Full question**. The card is hidden when a run has no such rounds, and no flow writes them yet. While the run loads you see a placeholder page. If the run does not exist (or was removed) you see "This run was not found. It may have been removed." with a link back; if you may not see it, you see that, with a link back; any other failure shows the reason with **Retry**. If the live connection to the run is lost for good, a red banner says "Lost connection to the run stream" with **Reconnect**. The page keeps showing the last head, steps and log; **Reconnect** opens the stream again, and the banner goes when the next update arrives. If the changes cannot be loaded, the reason shows in that place with **Retry**.
 
 **Keyboard.** Every link and button can be reached with Tab and shows a focus mark. A dialog takes the focus when it opens, keeps Tab inside, closes with Escape, and gives the focus back to the button that opened it. On a narrow screen the top bar wraps and a wide table scrolls inside its own box. In the flow editor, the library and the Start work forms, every field has a name for screen readers. In the graph, Tab moves between steps and Enter or Space selects one. If a required field is empty on Start work, the message is announced, the field is marked invalid and the focus moves to it.
 
@@ -912,6 +912,14 @@ content, or ask for approval. It never gives access that a rule denied.
   the filled main button of the run header, like **Approve** for a run that waits. A Codex step
   with `resume:` continues the earlier session only when it runs with the same Codex folder;
   otherwise it starts a new session and the log says why.
+  A Claude or Codex step that ran out of time continues its own session when you retry, so the
+  work it already did is kept, even if the flow names another step in `resume:`. The step gets a
+  short note before its prompt that says its last attempt ran out of time. Without a session to
+  continue (none was recorded, or Claude no longer has it), the step starts a new session with the
+  same note, in the same try. A reviewer step that ran out of time starts a new session, with the
+  note. A step that stopped for any other reason works as before.
+- **A story that ran out of time is tried again by itself.** In a story run of a watcher, a Claude or shell step that ends on its time limit does not fail the run. The run stops, with no `Factory_ERROR`, no failure comment and no model call; the watcher resumes it, and the issue gets one comment per retry, such as ``ran out of time in `implement`; trying again (1 of 2)``. The label stays working while the retry waits for a free slot (and while a helper's cap holds it back). A retry that is cancelled while it waits ends the run and is not counted. The limit is `auto_retry.timeouts` (default 2), counted per story over all its runs. After the last retry the run fails and goes to Needs you as before. A time-out is not retried when the step has its own `on_failure` path, when it is inside a sub-flow or a parallel step, when a person stopped the run, a budget stopped it, the baseline failed, or the run is from the UI or the command line. A retry claims its code areas again before it codes; if another run holds them, it waits and keeps its workspace and session.
+- **A story that keeps timing out goes to the planner to be split.** When `implement` has used its automatic retries and times out again, the run does not fail. The story goes to the planner with the reason "too big for one coding turn: timed out N times" (in `issue-gitflow` and `issue-code-daily`). The planner reads the unfinished work in the run's folder (`git status`, `git diff --stat`) and changes nothing. The unfinished work stays in the run's folder and is not pushed. A proposed split goes through the usual split gate. A split the planner advises against, or a question it asks, goes to Needs you. If the planner gives neither a split nor a question, or fails, the run fails and does not build. A time-out in another step, and runs of older or custom flows, fail as before.
 - **Codex and your personal setup.** Every Codex step of a run that the server or a watcher starts gets a clean Codex folder of its own, whatever `isolate_agents` says. A local CLI run follows `isolate_agents`. The mode depends on how the step signs in; the log says which one in a line that starts with "Codex:".
 
   | Mode | When | Personal `config.toml`, MCP servers, plugins, hooks, skills, `AGENTS.md`, command rules | Sign-in |
@@ -1159,6 +1167,8 @@ can be found.
   profile worked out for a try (`step.profiled`, from version 3: the profile's id, version and hash,
   and what the agent cannot hold, never its rules), tried again (after an outage or a usage limit),
   a tool that was refused, approved or rejected, failed, completed.
+- **A local test is marked.** The `run.created` event of a run started with `--local-test` has
+  `localTest: true`. Such a run never gets a delivery contract: see "Use only promoted versions".
 - **What is in it:** ids, names, times, who asked (an account id, the command line, a watcher or
   the Foundry), the model, the exit code, and for every finished step the path, SHA-256 and size
   of its log or transcript. **What is not:** the task, prompts, outputs, error texts, notes,
@@ -1170,6 +1180,15 @@ can be found.
   cannot verify that run. Version 7 adds `packSha256` to a policy denial (the pack that denied, when
   known) and allows a policy `step.denied` without a step, for a denial about the whole run. Versions
   1 to 6 are read as before; a delivery validator that only knows version 6 refuses version 7 lines.
+  Version 8 adds `localTest` to `run.created`, set only for a run started with `--local-test`. Versions
+  1 to 7 are read as before, and a run from version 7 is never marked. A delivery validator that only knows
+  version 7 refuses version 8 lines, so update it before you use the Foundry for delivery.
+  Version 9 adds the event `governance.decided`, written by a run that is checked for governance (see
+  "Governance of a component"). Versions 1 to 8 are read as before. A delivery validator that only knows
+  version 8 refuses version 9 lines, so the validator is 1.2.0 from this change on: update the pin first.
+  Version 10 adds the event `run.autonomy` (see "Autonomy levels"). Versions 1 to 9 are read as before. A
+  delivery validator that only knows version 9 refuses version 10 lines, so the validator is 1.3.0 from this
+  change on: update the pin first.
 - **It never stops a run.** If the file cannot be written, the live log says so once
   (`! evidence: …`) and the run goes on without more evidence. The run folder then gets the empty
   file `evidence.incomplete`: the record of this run is not whole, it is not continued, and the run
@@ -1379,7 +1398,8 @@ read or evaluated stops the steps that sign in or write (see [When the mandatory
     step of `issue-deliver` and `issue-gitflow` has 60,000. The output is counted in bytes, so a warning can come
     before the output is cut;
   - a step that runs longer than its timeout is denied (`timeout.exceeded`). The limit is the step's
-    `timeout_sec`, or the flow's default. It covers shell and agent steps;
+    `timeout_sec`, or the flow's default. It covers shell and agent steps. Time spent waiting for a test
+    slot does not count, up to `FACTORY_TEST_SLOT_WAIT_SEC` (see "A few test runs at a time" above);
   - a step whose cost is over its step budget is denied (`budget.step-exceeded`). The limit is the step's
     `max_budget_usd`, or the flow's default. These budget rules need `cost_limits` (not `false`);
   - a run whose cost is over the flow's `max_cost_usd` is denied (`budget.run-exceeded`);
@@ -1734,7 +1754,7 @@ scf delivery validate --contract contract.json --signature contract.json.sig \
 | `locks` | `lock-changed` | A lock file at that commit is changed, missing, or not a file |
 | `workflows` | `workflow-changed` | A file under `.github/workflows/` is added, removed or changed (other files are ignored) |
 | `checks` | `required-check-failed` | A required check is missing or did not pass (see below) |
-| `evidence` | `evidence-unverified` | With `--events`: the events file has fewer events than the contract says, a line is not a valid event of the chain, or the event at `count - 1` does not carry the contract's `terminalHash` |
+| `evidence` | `evidence-unverified` | With `--events`: the events file has fewer events than the contract says, a line is not a valid event of the chain, or the event at `count - 1` does not carry the contract's `terminalHash`. Also when the chain is a local test (`localTest` on `run.created`); the reason is `the run is a local test, so it is not eligible for delivery` |
 | `comment` | `superseded` or `evidence-unverified` | The comment names another contract, or another evidence hash |
 
 - If `contract` or `signature` stops, every later check is `skipped (the contract is not trusted)`, and
@@ -1809,7 +1829,7 @@ check-runs API of the commit.
 delivery-contract:
   runs-on: ubuntu-latest
   env:
-    VALIDATOR_VERSION: "1.0.0"          # the version you pin
+    VALIDATOR_VERSION: "1.3.0"          # the version you pin
     RELEASE_BASE: "<download folder of that release>"   # the release's assets, from the release page
     GH_TOKEN: ${{ github.token }}
   steps:
@@ -1849,7 +1869,7 @@ folder, which the job gets from the workflow's artifacts or from the pull reques
 **Generic CI in plain shell.** Any CI with Node.js 22 or later and `sha256sum` can run the same steps:
 
 ```sh
-V=1.0.0
+V=1.3.0
 BASE="<download folder of that release>"   # the release's assets, from the release page
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs"
 curl -fsSLO "$BASE/scf-delivery-validate-$V.mjs.sha256"
@@ -1932,6 +1952,9 @@ contract's `count` events must form the chain its evidence hash names. Events af
 may be added, and the result is still verified; a broken event after that count is a failure. A file that is
 not plain UTF-8 or ends in a line that is not complete is a failure.
 
+A contract over a local-test run (its events have `localTest` on `run.created`) fails with the fault `local-test`,
+whether it is signed or not. No contract is written for such a run, so this only applies to a folder made before.
+
 **Exit codes.**
 
 | Exit | Result | Meaning |
@@ -1992,10 +2015,246 @@ component is a problem.
 - **Problems.** A file that cannot be read or checked gives one `! <kind> <id>: <reason>` line. The reason
   never shows the file's content or its place on the disk. The other components still print.
 
+### Governance of a component
+
+Each promotable component can have a governance record: its owner, risk, lifecycle, approved version, last
+review and evaluation suite. The records are kept by hand in `promotions/governance.yaml` in the Foundry home,
+and are keyed by `<kind>/<id>`, for example `flow/my-flow` or `policy-pack/foundry.baseline`:
+
+```yaml
+version: 1
+components:
+  flow/my-flow:
+    owner: team-ops
+    risk: medium
+    lifecycle: active
+    approved_version: "2"
+    last_review: 2026-10-01
+    eval_suite: my-flow-smoke
+```
+
+Every field is optional. A record accepts only these fields; an unknown field makes the file a problem.
+
+- **Defaults.** A component with no record, or a missing file, has no owner, risk `low`, lifecycle `active`,
+  no approved version and was never reviewed. Nothing that worked before stops working.
+- **Status.** `scf components` ends each line with `owner=… risk=… lifecycle=… status=…`. The status is:
+  `retired` when the lifecycle is `retired`; `unapproved` when there is no approved version or it is not the
+  component's current version; `review-due` when `last_review` is missing or more than 365 days old; otherwise `ok`.
+- **Records that name nothing.** A record for a component that does not exist gives a
+  `! <kind> <id>: governance record names no component` line, and the command exits 1.
+- **A bad file.** A file that is a link, larger than 1 MiB, or not valid gives one `! ` line with a fixed reason.
+  The components are still listed, and no record is used until the file is fixed.
+- **Changes nothing.** Governance records are only read. They do not change a component's hash or its version,
+  and `promotions/versions.json` is not touched.
+
+### Components table (admins)
+
+Settings has a **Components** card, and `GET /api/admin/components` (admin only) gives the same data. Each row is one
+component with its kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status.
+The status is shown as text: **Retired**, **Not approved**, **Review due** or **OK**, the same rules as `scf components`.
+
+- **No record.** A component with no governance record shows **No owner** and **Never reviewed**.
+- **Problems.** The read problems of the components and of the governance file are listed above the table as fixed
+  text, with no paths. A governance file that cannot be used is shown as a red line, and the rows then have no owner.
+- **Read only.** The card only reads. Change owners and review dates in `promotions/governance.yaml`.
+#### Refused production runs
+
+A **production run** is any run with a connected repository (`github_repo` set to a real `owner/repo`), because it
+can push to that repository or open a pull request on it. This is the same for runs from the web, from a watcher and
+from the command line, and for a workspace of any kind. A run without a connected repository is development: it is
+never checked and keeps the default profile.
+
+Before its workspace is made, a production run checks each component it uses: its flow and published version, the
+policy packs (from `config.yaml` and the baseline), its tool profile, its model routes and its context selector (the
+`default` context selector, from `config.context`). A resumed run is checked the same way. The run ends as `failed`
+before its first step when a component is:
+
+- **retired:** `flow my-flow is retired; stop using it, or change its lifecycle in promotions/governance.yaml`
+- **high risk and not approved:** `flow my-flow v3 is high risk and not approved; review it and set approved_version
+  in promotions/governance.yaml`. With no recorded version, the reason says to run `scf components record <kind>`
+  first.
+
+Other cases never refuse a run: a component with no record (it has risk `low`), a `medium` or `low` component that is
+not approved, and a component that is `review-due`. A broken `promotions/governance.yaml` (a link, larger than 1 MiB, or
+not valid) refuses every production run with a fixed reason, and so does a check that cannot run. Development runs are
+not affected by a broken file.
+
+The log gets one `! governance: …` line per refused component, or `· governance: allowed (N components)` when nothing
+is refused. The run's evidence gets a `governance.decided` event with the outcome, the kind, id, version and status of
+each component, and a fixed reason code. It never holds file content. Evals are not checked for governance.
+
+### Autonomy levels
+
+Each repository and each flow has an autonomy level: a stored maximum for how far a run may go. The levels,
+lowest first, are `observe`, `plan-only`, `guarded-write` and `delivery-handoff`. The level is a real limit:
+
+| Level | What the run may do |
+|---|---|
+| `observe` | Read-only agent steps only. A writing agent step, a shell step with `repo_access: true`, and any push or pull request are refused. |
+| `plan-only` | As `observe`, and a shell step with `repo_access: true` may run (for example, to post the plan comment). Writing agent steps, pushes and pull requests are still refused. |
+| `guarded-write` | Writing agent steps run in the workspace. Every push and every pull request is refused. |
+| `delivery-handoff` | No extra limit. This is how Foundry worked before autonomy levels. |
+
+A refused step fails with a message such as `autonomy observe does not allow a writing agent step; next step: promote
+the repository or flow`. The run's own failure handling (`on_failure`) then runs, and the refusal is recorded in the
+evidence as a `step.denied` event with the reason `autonomy.denied`. A refused writing agent step starts no agent. A
+refused push is stopped by the pre-push hook, which is installed for runs below `delivery-handoff`, so a step that
+swallows the exit code of `git push` still fails. Pull requests are opened and merged by the story tools
+(`story pr-open`, `story pr-merge`) and by the daily branch tool (`open-pr`); those refuse below `delivery-handoff`
+too.
+
+A repository with no entry, and a flow with no entry, is `delivery-handoff`. A repository connected through the
+API starts at `guarded-write`. A repository of an existing install gets no entry, so it stays at `delivery-handoff`.
+
+Each run gets the **lower** of its repository's level and its flow's level. The repository is the connected
+repository with the run's GitHub name (`owner/repo`); a run without one gets only the flow's level. The level is
+kept in three places:
+
+- `run.json`, as `autonomy` (`level`, `repository` when there is one, and `flow`);
+- the live log, as a line such as `autonomy: plan-only (repository guarded-write, flow plan-only)`;
+- the evidence, as the event `run.autonomy`, written right after `run.created`. A resumed run does not write it again.
+
+Levels are stored in `autonomy.json` in the Foundry home. A level changes only through the promote, approve and demote
+routes or `scf autonomy` ([Change a level](#change-a-level)), or through the monitor's automatic demotion
+([Automatic demotion](#automatic-demotion)). If `autonomy.json` or `repos.json` cannot be read when a run starts, the run counts as
+`observe`, and the log has a `!` line that says which file it was. Connecting a repository fails when
+`autonomy.json` is broken.
+
+The level is enforced by the engine, not only in the agent's prompt. A run at `delivery-handoff` behaves as before.
+
+### Promotion gate
+
+The promotion gate shows whether a repository or a flow has earned the next autonomy level, and each piece of
+evidence behind that answer. It only reads. Nothing is promoted by it.
+
+The gate has five checks. The first four count; `approval` is shown as **pending** until the accountable owner
+approves a request ([Change a level](#change-a-level)). The gate of a promotion is checked again at approval.
+
+- **Evidence completeness.** The share of the component's runs in the window that have complete evidence. Needs
+  `min_runs` runs with an evidence file.
+- **Eval pass rate.** From the newest eval report that covers each flow (a flow's own report, or one of its
+  `<flow>@<model>` variants). A repository checks each flow it ran in the window; each must reach the threshold.
+- **Policy conformance.** No `deny`, `policy.unavailable` or `policy.invalid` decision in the window, also those
+  in observe mode. A run that has not ended yet, or whose evidence cannot be read in full, counts as unknown and
+  fails the check.
+- **Operational SLOs.** No open SLO finding that names the repository or flow. The check fails when the monitor
+  has not finished a check in the last 24 hours, because then open problems are not known.
+- **Approval.** Pending, until the request is approved (see [Change a level](#change-a-level)).
+
+A missing piece of data fails its check with a plain reason, such as "no eval report covers it" or "Only 4 runs
+ended in the last 30 days; at least 10 are needed". A check never passes on missing data. A repository with no
+GitHub name shows no runs, so every check fails with a reason.
+
+The numbers are in `config.yaml` under `governance.promotion`, and the Settings page has the card "Promotion
+gate" for them:
+
+- `min_runs` (default `10`): the fewest runs in the window;
+- `evidence_completeness` (default `0.95`): the lowest share of runs with complete evidence;
+- `eval_pass_rate` (default `0.9`): the lowest pass rate of an eval report;
+- `within_days` (default `30`, from 1 to 90): the window in days.
+
+The levels and the gate of every repository and flow are on `GET /api/autonomy` (admin only, see the permission
+table). `scf autonomy status` prints the same, one line per check; `--json` prints the answer as it is. It
+calls that route, so it needs a running Foundry and a signed-in admin.
+
+The checks and thresholds are the same for every level. The target level is not used yet.
+
+### Change a level
+
+A level moves in two ways, and both are written to the audit log (`autonomy-promote-request`, `autonomy-promote`,
+`autonomy-demote`, with `target` `repos:<id>` or `flows:<id>` and a detail such as `plan-only→guarded-write`).
+
+**Promote** is one level at a time and needs an approval:
+
+1. An admin asks: `scf autonomy promote <repos|flows> <id> <to> --reason "…"`, or `POST /api/autonomy/promote`
+   with `kind`, `id`, `to` and `reason`. The request is refused (409) unless `to` is exactly one level above the
+   current level, the gate passes, and no request for the component is waiting. The answer carries a `token`.
+2. The accountable owner approves: `scf autonomy approve <repos|flows> <id> <to> <token>`, or
+   `POST /api/autonomy/approve` with `kind`, `id`, `to` and `token`.
+
+The owner is `governance.owner` in `config.yaml` (the id of an admin account). When it is not set, or the account is
+no longer an active admin, the first active admin is the owner; `GET /api/autonomy` and the audit line say so.
+
+- A move to `guarded-write` or `delivery-handoff` needs an approver who did not make the request. If the owner made
+  the request and there are two or more active admins, another admin approves instead.
+- With one active admin, that admin may approve their own request. The audit line and the answer say
+  `self-approved`.
+- When the approval comes, the level and the gate are checked again. A request whose level has changed, or whose
+  gate no longer passes, expires and is answered with 409. Ask again to start over.
+
+**Demote** lowers a level at once, by any admin, with no gate: `scf autonomy demote <kind> <id> <to> --reason "…"`
+(it asks for confirmation unless `--yes` is given), or `POST /api/autonomy/demote`. A component that was demoted goes
+up again only through a new request and an approval, so every step can be undone.
+
+The reason follows the break-glass rules: required, at most 200 characters, no control characters and no
+credential-like text. Requests waiting for approval are kept in `autonomy.json` next to the levels.
+
+### The Autonomy page
+
+Admins find the levels on the **Autonomy** page, under **Administration**, in the section **People and access**
+(`#/autonomy`). It lists each repository and each flow, with:
+
+- its level, and the level of its newest run (a link to that run);
+- the gate: the five checks with their value, threshold and detail (the same as `GET /api/autonomy`, see
+  [Promotion gate](#promotion-gate));
+- the waiting requests: who asked, who may approve, and `self-approved` where it applies.
+
+The buttons follow the rules above. **Promote** shows only when the gate passes and no request waits. **Approve**
+shows only to the person who may approve. **Demote** asks for a level and a reason. Each action reloads only this
+section; the rest of the page does not change.
+
+The history is the audit log: every `autonomy-*` line (promotion requests, promotions and demotions, also the
+automatic ones), newest first, with who made the change and the detail. The page shows the newest 500 lines. For one
+component, **Show the changes of this component** reads all of its lines.
+
+If the section cannot load, it says so and offers **Retry**. The rest of the page keeps working.
+
+On a repository's page, the owner sees the repository's **Autonomy level** in the overview. An admin sees a link to
+the Autonomy page there. Only an admin changes a level.
+
+### Automatic demotion
+
+After each monitor check, the monitor lowers a repository or flow by one level when a new serious finding names it.
+A finding is serious when it is `critical`, or `major` from `policy-service-failure` or `evidence-finalization`. The
+finding must name a repository or a flow; a finding about Foundry as a whole demotes nothing.
+
+- A component at `observe` is left alone. It is never lowered below `observe`.
+- Each finding lowers a component at most once. It can lower it again only after the finding has gone and a new one
+  comes.
+- Findings that were already open when the upgrade ran do not lower anything. Only findings that appear afterwards do.
+- Each demotion is written to the audit log as `autonomy-demote`, with `by` `monitor` (shown as `monitor` on the
+  Audit page) and the detail `auto: <detector> <fingerprint>`. The server log gets a line for each one, and each
+  active run of that repository or flow gets a live-log line that says it keeps its level.
+- A failed demotion does not fail the check. It is tried again at the next check, and the problem is logged without a
+  path or a value.
+- A component that was demoted goes up again only through a request and an approval ([Change a level](#change-a-level)).
+
+The switch is `governance.auto_demote` in `config.yaml` (default `true`). The Settings page shows it as "Automatic
+demotion" in the "Promotion gate" card. Turned off, the monitor lowers nothing; findings that appear while it is off do not lower anything
+when it is turned on again.
+
 ### Promote a component
 
 `scf promote <kind> <id> [--live]` says whether a component may be promoted, from the safety reports
-already on disk. It is read-only: it promotes nothing and writes nothing, not even `versions.json`.
+already on disk. Without `--report` it is read-only: it promotes nothing and writes nothing, not even `versions.json`.
+
+`scf promote <kind> <id> --report <report-id> [--live]` makes the same check and, when nothing blocks, records the
+promotion in `promotions/records.json`. It then prints `PROMOTED <kind> <id> v<version> sha256:<hash> report:<report-id>`
+and exits 0. A blocked promotion prints the same `BLOCKED` lines, records nothing and exits 1. The report id is the
+report's file name without `.json`, such as `timeout-2026-10-30T07-21-04-123Z`.
+
+### Promote in the Foundry (admins)
+
+An admin can do the same in the web interface:
+
+- **Settings, "Promoted versions".** Lists the published flows and the other components with their state:
+  promoted (with the report id), ready to promote, or blocked (with each blocking suite and what to do).
+  **Promote** appears for a component that is ready to promote. A refused promotion shows the blocking list and writes nothing.
+- **Flow editor.** A published flow shows **Not promoted: <suite> (<reason>). <remediation>** until it is promoted,
+  or the report id once it is. Saving still works, so an unpromoted flow can be saved.
+
+The web interface and `scf promote --report` write the same record and log the same `BLOCKED` line for a refused
+promotion. A promotion in the web interface is audited as `component-promote`.
 
 ```
 PASSED timeout <report file>
@@ -2018,6 +2277,31 @@ or one `BLOCKED` line per problem.
   a report blocks with `report-invalid: live` unless `--live` is passed. No suite in the catalogue is live.
 
 The command exits 0 when the component is promotable and 1 when it is blocked.
+
+### Use only promoted versions
+
+The setting **Use only promoted versions** (`promotion.enforce`) decides what a new run does with the
+components it uses. The check is the rule of `scf promote` above, applied to the flow, its sub-flows,
+the policy packs of the repository, the model routes and the tool profile of the run.
+
+- **`off`.** No check.
+- **`warn`** (the default). Each component that is not promoted prints one line, such as
+  `! flow my-flow v0 is not promoted: <suite> (<code>) — <fix>`, and the run saves the findings with its
+  details. The run goes on.
+- **`on`.** The run ends as `failed` before its first step, with the reason
+  `refused: this run uses components that are not promoted`. A check that cannot run also counts as not promoted.
+- **Local tests.** `scf run --local-test <flow>` is always allowed, even under `on`. Its run says
+  `local test: this run never counts as a promoted delivery`. Evals and skill evals are local tests too,
+  so they are never checked. A local-test run gets no delivery contract, and the handoff refuses it
+  (`evidence-unverified`), with or without a signing key. Its evidence carries the marker (see
+  "Evidence of a run"). Governance is not skipped: a local test with a connected repository can push, so it is a
+  production run and is checked (see "Refused production runs"). Evals are the only runs that skip it.
+- **Packs are read once.** A new run reads its policy packs once, at its start, and the promotion check
+  uses that same list, so the check and the run judge the same pack files, even if a file changes while
+  the run starts. A resumed run reads the packs again.
+
+Runs started before this setting existed have no findings saved. The check reads the reports on disk and
+changes no component; it only saves its findings in the run.
 
 ### Lifecycle telemetry
 
@@ -3359,6 +3643,13 @@ flowchart LR
   that left the command's process group, so a later call with a limit can stop them, and
   `FACTORY_TEST_SLOT_TRACK_MS` (default `2000`) sets how often they are noted while a limit or a track
   file is set.
+- **A wait for a slot does not use up a step's time limit.** While a step waits for a test slot, its
+  time limit stops: the wait is moved back, at most `FACTORY_TEST_SLOT_WAIT_SEC` seconds (default
+  `5400`, 90 minutes). A step never runs longer than its limit plus that bound, so a step that waits
+  forever still ends. The step log and the run page say how long it waited, for example `waited 18 min
+  for a test slot`. If the step still ends on its limit, the message says that it waited, and whether
+  the wait counted: `timed out (waited 18 min for a test slot, which did not count)`. A read-only Codex
+  session cannot write the record of its wait, so its limit counts every second.
 - **Tests an agent starts itself count too.** In an agent step, `npm`/`pnpm`/`yarn`/`bun` test
   scripts, `npx vitest` (and jest, mocha, playwright …), `pytest`, `python -m pytest`, `gradle`/`mvn`
   test, check, build or verify, and `go test`/`cargo test` go through the same test slots and run at
@@ -3655,15 +3946,18 @@ the file is there and nothing runs: run `install` again.
 | `housekeeping` | every 3 hours | Records the memory of the system's file-change tracker and of the Foundry server, and once a night removes the workspaces of old runs. |
 
 **Caps on the runs at once.** The governor and the limits helper can each lower the number of runs
-at once for a while. The lowest cap that still holds counts, never below 1 and never above the
-configured number. A cap holds back new runs only: work that runs is never stopped, and a run that
+at once for a while. The lowest cap that still holds counts, never above the configured number. A cap
+of 0 lets no new run start, not even an architect run or a schedule chore; it is set only by the
+governor, when `governor.floor` is 0. A cap holds back new runs only: work that runs is never stopped, and a run that
 already started and is resumed (after a restart, an answer or a pause) is not held back, because it
 may hold the turn to merge that others wait for. A new run that waits only for a cap is marked so in
 the queue (`capped`, and the queue names the `cap`), and the monitor does not report it as a queue
-that stands still.
+that stands still. While a cap holds jobs back, the queue looks again every 30 seconds, so a cap that
+ends starts the waiting runs even when no run ends.
 
 **The load governor.** Every minute it reads the load average per core and the memory pressure. It
-allows one run fewer per check, down to half the configured number (at least 2), only on sustained
+allows one run fewer per check, down to `governor.floor` (by default half the configured number, at
+least 2; 0 means no run may start), only on sustained
 load: the 5-minute load is above 2.5 per core, or the 1-minute load has been above 2.5 for three
 checks in a row. A spike of a minute or two (a test suite, a build) does not lower the cap. Memory
 pressure "warning" alone does not lower it either: macOS reports it for hours on a full but idle
@@ -3673,20 +3967,24 @@ Two cases act at once, even during a pause: memory pressure critical, and a 1-mi
 per core. Above 4 per core, or under critical memory pressure, only one test run works at a time.
 
 After the cap moved, the governor pauses: no further step down for 3 minutes, and no step up for
-10 minutes. Only an emergency breaks the pause. It still moves one step at a time.
+10 minutes. Only an emergency breaks the pause. It still moves one step at a time. Each step down in
+the last hour makes that wait 10 minutes longer: after two step downs, 30 minutes. Once the step
+downs are more than an hour old, the wait is 10 minutes again.
 
 After five calm checks in a row (1.2 per core or less, on the 1-minute and the 5-minute load) it
-allows one more run, until the configured number is back. In between (a load between 1.2 and 2.5)
-nothing moves at first, but after 15 checks in a row without overload it allows one more as well,
-so a cap does not stay for hours on a machine that is only a little busy. Both rules wait for the
-10-minute pause. These values are built into the governor; they are not set in the configuration.
+allows one more run, until the configured number is back. A load in between (above 1.2 and up to
+2.5 per core) is not calm: it never allows a run more, so a machine that stays busy keeps its cap.
+The last step back to the configured number also needs the 15-minute load below 1.2 per core, so
+the cap stays below the configured number until the machine has been quieter for a quarter of an hour.
+The wait above applies to every step up. These values are built into the governor; they are not set in the configuration.
 
 Every change is a line in `governor/changes.log`. `scf governor status` says how many times the
 governor changed the limits today, and Home's health line shows the same count when it is above 0.
 The daily digest mentions the changes only when there were more than 20 in the last 24 hours. The governor's limits end by themselves
 four minutes after the last check — the cap on runs, the cap on test runs, and what the governor
 remembers — so a governor that stops can never hold the Foundry down, and the first check after the
-machine slept starts fresh. `scf governor reset` takes them away at once. The daily release check
+machine slept starts fresh. The step downs of the last hour are part of what it remembers, so after a
+pause of more than four minutes they are forgotten and the wait before a step up is 10 minutes again. `scf governor reset` takes them away at once. The daily release check
 asks for a test slot like every test run, but waits five minutes at most.
 
 **Unreliable tests.** A test is listed when it failed, or passed only on a retry, in at least three
@@ -3744,8 +4042,12 @@ runs are not touched.
 stories, failed (with the reason) and in progress; what waits for you is listed however old it is,
 and so are runs that were interrupted (they say "running", but their process is gone). Below that
 come a few lines from the other helpers and the analyst; a result of a helper that is older than
-26 hours is left out. It is `digest/report.md`, and one file per day, named by the local date; a
-desktop notification gives the counts.
+26 hours is left out. When a story had automatic retries after a time limit, the digest adds a section
+**Automatic retries after a time limit**: how many stories, how many retries started, and how many of
+those finished, were split, failed or are still open. A retry that was cancelled while it waited is
+not counted, and a retry that ends in a later digest counts in the digest of the day it ended. Without
+retries there is no such section. It is `digest/report.md`, and one file per day, named by the local
+date; a desktop notification gives the counts.
 
 #### Self-update
 
@@ -3791,6 +4093,14 @@ When the Health line says "Self-update is stopped", the checkout needs a person:
 
 **Budget & capacity** — the daily budget stops new work when today's (estimated) spend reaches
 it; paused runs continue the next day. An admin can also set a daily budget per user (Users page). Flows can also cap one run (`limits.max_cost_usd`).
+
+**Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
+
+**Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
+
+**Promotion gate (governance.promotion)** — `governance.promotion` holds the four numbers of the promotion gate: `min_runs` (default `10`), `evidence_completeness` (`0.95`), `eval_pass_rate` (`0.9`) and `within_days` (`30`, from 1 to 90). They only decide what the gate shows; nothing is enforced by them yet ([Promotion gate](#promotion-gate)). `governance.owner` is the admin account that approves promotions; unset, the first active admin does ([Change a level](#change-a-level)).
+
+**Retries after a time limit (auto_retry)** — `auto_retry.timeouts` is how often a story of a watcher is tried again by itself when a step ran out of time: default `2`, `0` turns it off. The count is per story, over all runs of its issue. With `0`, a time-out goes to Needs you at once, as before. Otherwise, when `implement` times out after its last retry, the story goes to the planner to be split (see "When something goes wrong"). A run that a person started is never retried. The settings page shows this as the card "Retries".
 
 **Safety**
 
@@ -4038,6 +4348,7 @@ What people do in the web interface is also logged, with `result` `ok`, `by` set
 | `repo-transfer` (admin) | An admin moves a repository | repository id | id of the new owner |
 | `credential-add`, `credential-remove` | A credential is added or removed | credential id | its type |
 | `flow-publish` | A published flow is saved with a new version | flow name | version |
+| `component-promote` (admin) | An admin promotes a component with a passing report (`ok`), or the promotion is refused because suites block it (`failed`) | `<kind>/<id>` | `v<version> sha256:<hash> report:<id>`; on `failed` the blocking codes |
 | `settings-change` | Settings are saved | `config.yaml` | one line per changed setting: `<key path>: <old> -> <new>` (see below) |
 | `restart-request`, `restart-cancel` (admin) | A restart is asked for after a settings change, or cancelled (see **Restart when no story is running** in section 7) | `server` | on a request: the settings that need the restart, as `<key>: <running> -> <saved>` |
 | `help-action` | An approved action of Ask SCF ran (`ok`) or was refused (`failed`). A token, request text and model text are never logged | `conversation <id>` | `<action>; run <id>; <result>`, or `refused: <code>` |
@@ -4495,6 +4806,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/flows/:name` | yes | no | read a flow |
 | `PUT /api/flows/:name` | yes | no | save a flow |
 | `DELETE /api/flows/:name` | yes | no | delete a flow |
+| `GET /api/promotions` | yes | no | whether each component (`?kind=` and `?id=` narrow the list; `id` needs `kind`) is promoted, can be promoted or is blocked: its kind, id, version and hash, the promotion record (report ids and hashes) or the blocking suites with what to do; no report content |
+| `POST /api/promotions` | yes | no | promote one component (`kind`, `id`, `reportId` of a passing safety report) and write its record; a component that is blocked answers 409 with the `blocking` list and writes nothing; writes an audit line |
 | `GET /api/blocks` | yes | no | list blocks |
 | `PUT /api/blocks/:id` | yes | no | save a block |
 | `DELETE /api/blocks/:id` | yes | no | delete a block |
@@ -4505,6 +4818,11 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
 | `GET /api/outcomes` | yes | yes | the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values |
+| `GET /api/autonomy` | yes | no | the autonomy level of every repository and flow and its promotion gate: whether it has earned the next level, with the checks evidence completeness, eval pass rate, policy conformance, operational SLOs and approval (pending), any waiting promotion request with its token, who asked and who may approve it, the level of the newest run, and the accountable owner; read-only, changes nothing |
+| `GET /api/autonomy/history` | yes | no | the changes of the autonomy levels, newest first: every audit line whose action starts with `autonomy-` (at most 500, with `more` when older ones exist); `?target=repos:<id>` or `?target=flows:<name>` reads one component; read-only |
+| `POST /api/autonomy/promote` | yes | no | ask for one autonomy level more for a repository or flow (`kind` `repos` or `flows`, `id`, `to`, `reason` of 1 to 200 characters); `to` must be one level above the current one and the promotion gate must pass (else 409 with `gate`); the answer carries the request `token`; writes an audit line |
+| `POST /api/autonomy/approve` | yes | no | carry out a waiting promotion request (`kind`, `id`, `to`, `token`); only the accountable owner may approve, and a move to `guarded-write` or `delivery-handoff` needs an approver who did not ask (unless there is one active admin); the level and the gate are checked again, and a request that no longer fits expires (409); writes an audit line |
+| `POST /api/autonomy/demote` | yes | no | lower an autonomy level at once (`kind`, `id`, `to`, `reason`); any admin, no gate; the component can go up again only through promote and approve; writes an audit line |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
@@ -4555,7 +4873,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); 409 for a revoked version or a run that does not lock it; resume the run afterwards |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
-| `GET /api/repos` | yes | yes | your repositories |
+| `GET /api/repos` | yes | yes | your repositories, each with its autonomy level |
 | `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose, and the link to install the GitHub App |
 | `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
@@ -4565,7 +4883,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/repos/:id/epics/:issue` | yes | yes | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
-| `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
+| `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings and autonomy level |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line |
 | `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
@@ -4576,6 +4894,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/admin/view-as` | yes | no | start a read-only view of one user's display for 30 minutes (GET calls with ?as=<id> are then answered as for that user); writes an audit line |
 | `DELETE /api/admin/view-as` | yes | no | end the view of a user's display |
 | `GET /api/admin/credentials` | yes | no | the stored credentials of all accounts, without any secret |
+| `GET /api/admin/components` | yes | no | the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories, from an idea or from an open issue of it (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it) |
 | `GET /api/refinement/backlog` | yes | yes | the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, "Depends on" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403) |
@@ -6974,7 +7293,11 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf resume <run-id> [--from <step>] [--force]` | Continue a run. Refused when its issue is closed on GitHub; `--force` continues anyway |
 | `scf approve <run-id> [--note "…"] [--force]` / `scf reject …` | Decide on a waiting run. Refused for a closed issue, like resume |
 | `scf flows` / `scf blocks` | List flows / library blocks |
-| `scf components [kind]` / `scf components record [kind]` | Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
+| `scf components [kind]` / `scf components record [kind]` | Print the version, SHA-256 and governance status (owner, risk, lifecycle, review) of each flow, policy pack, tool profile, model route set and context selector; `record` gives new hashes their version in `promotions/versions.json`. Exits 1 when a component is a problem ([Versions of the components](#versions-of-the-components)) |
+| `scf autonomy status [--json]` | Print the autonomy level of each repository and flow and its promotion gate, check by check; read-only; needs a running, signed-in server (admin) ([Promotion gate](#promotion-gate)) |
+| `scf autonomy promote <repos\|flows> <id> <to> --reason "…"` | Ask for one level more when the gate passes; prints the token the owner needs ([Change a level](#change-a-level)) |
+| `scf autonomy approve <repos\|flows> <id> <to> <token>` | Approve a waiting promotion request (the accountable owner) ([Change a level](#change-a-level)) |
+| `scf autonomy demote <repos\|flows> <id> <to> --reason "…" [--yes]` | Lower a level at once, any admin, no gate ([Change a level](#change-a-level)) |
 | `scf promote <kind> <id> [--live]` | Check that the newest safety reports allow promoting a component; read-only; prints `PASSED` and `PROMOTABLE`, or `BLOCKED` per problem; exits 1 when blocked ([Promote a component](#promote-a-component)) |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
 | `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
@@ -7083,6 +7406,9 @@ you can do first. Find yours in the table:
 |---|---|
 | The step … failed: its command ended with an error | Look at the output of the step and fix the cause |
 | The step … failed: it ran longer than its time limit | Look at the output of the step to see what took so long |
+| `ran out of time in …; trying again (1 of 2)` (the run is working again) | Nothing to do: the Foundry tries again by itself. After the last try the step fails and the story goes to Needs you |
+| The step … failed: it ran longer than its time limit; it waited 18 min for a test slot, which did not count | Look at the output of the step to see what took so long |
+| The step … failed: it ran longer than its time limit; it waited 95 min for a test slot, capped at 90 min | Look at the output of the step to see what took so long |
 | The step … failed: the agent stopped without a result | Look at the log of the step on the run page |
 | The step … failed: the agent stopped with an error | Look at the log of the step on the run page |
 | The step … failed: the agent used all its turns | Look at the log of the step on the run page |

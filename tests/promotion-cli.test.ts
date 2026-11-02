@@ -47,9 +47,9 @@ describe("scf components as a separate process", () => {
     const r = scf(["components"], { ...process.env, FACTORY_HOME: home });
     expect(r.status).toBe(0);
     expect(r.stderr).toBe("");
-    expect(r.stdout).toMatch(/^COMPONENT flow demo v0 sha256:[0-9a-f]{64}$/m);
-    expect(r.stdout).toMatch(/^COMPONENT tool-profile p v- sha256:[0-9a-f]{64} unrecorded$/m);
-    expect(r.stdout).toMatch(/^COMPONENT context-selector s v- sha256:[0-9a-f]{64} unrecorded$/m);
+    expect(r.stdout).toMatch(/^COMPONENT flow demo v0 sha256:[0-9a-f]{64} owner=- /m);
+    expect(r.stdout).toMatch(/^COMPONENT tool-profile p v- sha256:[0-9a-f]{64} unrecorded owner=- /m);
+    expect(r.stdout).toMatch(/^COMPONENT context-selector s v- sha256:[0-9a-f]{64} unrecorded owner=- /m);
     expect(snapshot(home)).toEqual(before);
   });
 
@@ -63,7 +63,7 @@ describe("scf components as a separate process", () => {
     for (const k of ["FACTORY_HOME", "SCF_HOME"]) delete env[k];
     const r = scf(["components", "tool-profile"], env);
     expect(r.stderr).toBe("");
-    expect(r.stdout).toMatch(/^COMPONENT tool-profile p v- sha256:[0-9a-f]{64} unrecorded$/m);
+    expect(r.stdout).toMatch(/^COMPONENT tool-profile p v- sha256:[0-9a-f]{64} unrecorded owner=- /m);
     expect(r.status).toBe(0);
     expect(existsSync(join(user, ".spaghetti-code-foundry"))).toBe(false);
     expect(snapshot(user)).toEqual(before);

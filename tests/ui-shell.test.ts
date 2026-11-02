@@ -66,7 +66,7 @@ describe("showPage", () => {
     expect(sub.hidden).toBe(true);
     shell.showPage("admin", ia.resolve("admin", "#/users"));
     expect(sub.hidden).toBe(false);
-    expect(sub.all("a").length).toBe(11);
+    expect(sub.all("a").length).toBe(12);
     expect(sub.all("a").filter((a) => a.attrs.class === "active").map((a) => a.textContent)).toEqual(["Users"]);
     const heads = sub.all("span").filter((s) => s.attrs.class === "subnav-head");
     expect(heads.map((s) => s.textContent)).toEqual(["Operations", "People and access", "System"]);

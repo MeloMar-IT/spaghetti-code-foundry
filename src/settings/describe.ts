@@ -142,9 +142,9 @@ export function unsupportedSettings(): string[] {
 /** Whether the key is one of the described settings. The prefixes end in a dot: `monitoring` is not covered. */
 export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
-  if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns") return false;
-  if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce"].includes(key)) return true;
-  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help."].some((p) => key.startsWith(p));
+  if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns" || key === "governance.owner") return false;
+  if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce", "promotion.enforce"].includes(key)) return true;
+  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry."].some((p) => key.startsWith(p));
 }
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
@@ -162,11 +162,20 @@ export const SETTING_TEXTS: Record<string, Text> = {
   default_model: A("Default model", "The model of agent steps that name none in the step, the flow or a routing rule.", "new-runs", "models.js"),
   "router.fallback": A("Fallback models", "Models tried in order when an agent step hits a rate or usage limit, or a budget for free targets.", "new-runs", "models.js"),
   "router.fallback_on": A("Fall back on", "Whether a rate limit, a used-up budget or both make an agent step try the fallback models.", "new-runs", "models.js"),
+  "governor.priority": N("Priority of runs", "How much processor time the agents, builds and tests of a run leave to your other programs; background can slow runs a lot on macOS."),
+  "governor.floor": G("Lowest runs at the same time", "The lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded, not set means half of Runs at the same time (at least 2), and a higher number than that setting counts as that setting."),
+  "governance.auto_demote": G("Automatic demotion", "Whether the monitor lowers a repository or flow by one autonomy level when a new critical finding (or a new major one of policy-service-failure or evidence-finalization) names it; off, only people lower a level."),
+  "governance.promotion.min_runs": G("Fewest runs", "How many runs a repository or flow needs in the window before it can earn the next autonomy level; fewer runs fail the evidence and policy checks."),
+  "governance.promotion.evidence_completeness": G("Evidence completeness", "The lowest share of runs (0 to 1) in the window that must have complete evidence for the next autonomy level."),
+  "governance.promotion.eval_pass_rate": G("Eval pass rate", "The lowest share of eval results (0 to 1) of the newest eval report of a flow that must have passed for the next autonomy level."),
+  "governance.promotion.within_days": G("Window in days", "How many days back (1 to 90) the runs and policy decisions count for the next autonomy level."),
   "delivery.signing_key_path": G("Signing key", "An absolute path to an unencrypted Ed25519 key, which must be in delivery-keys in the data folder (sandboxed steps cannot read it); without it, contracts are unsigned; applies from the next step."),
   "delivery.required_checks": G("Required checks", "The CI checks a delivery contract requires; applies from the next step."),
   "delivery.artifacts": G("Required artifacts", "The artifacts a delivery contract requires; applies from the next step."),
   "delivery.provenance": G("Provenance required", "Whether a delivery contract requires provenance; applies from the next step."),
   "policy.enforce": N("Enforced built-in rules", "Rule ids of the built-in policy (foundry.baseline), such as path-forbidden, that decide in block mode and are asked first; a deny stops the step or the run (at a push it is only recorded), and if the built-in policy cannot be used, the steps of those rules are denied."),
+  "auto_retry.timeouts": N("Retries after a time limit", "How often a story of a watcher is tried again by itself when a step ran out of time, counted per story over all its runs, where 0 turns it off and a time limit then goes to Needs you as before, and a run you start yourself is never retried."),
+  "promotion.enforce": N("Use only promoted versions", "Whether a new run checks that its flow, sub-flows, policy packs, model routes and tool profile are promoted (scf promote): off does not check, warn logs what is not promoted, on refuses the run, and scf run --local-test is always allowed."),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
   "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
   "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),

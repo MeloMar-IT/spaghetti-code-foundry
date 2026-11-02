@@ -2,7 +2,8 @@ import { execFile } from "node:child_process";
 import { accessSync, constants, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { runProcess, type ProcessMeter } from "./process.js";
+import { runProcess, type ProcessMeter, type RunPriority } from "./process.js";
+import { timedOutError, type SlotWaitWatch } from "./slot-waits.js";
 
 /** Where the Claude desktop app keeps its bundled Claude Code, one folder per version. */
 const desktopClaudeCodeDir = () => process.env.FACTORY_DESKTOP_CLAUDE_DIR ?? join(homedir(), "Library/Application Support/Claude/claude-code");
@@ -118,8 +119,12 @@ export interface ClaudeRunOptions {
   cleanEnv?: boolean;
   /** Start Claude inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
+  /** Start Claude at this priority (see ProcessOptions). */
+  priority?: RunPriority;
   /** Filled with the process time and the bytes it printed (see ProcessMeter). */
   meter?: ProcessMeter;
+  /** Where test-slot records its waits: the time limit does not count them. */
+  slotWaits?: SlotWaitWatch;
   /** Sandbox Claude's bash tool (writes limited to the workspace). */
   sandbox?: boolean;
   /** Folders outside the workspace the agent may write (the request folder of a step with repo_ops): added to its folders and to its bash sandbox. */
@@ -156,6 +161,10 @@ export interface ClaudeRunResult {
   tools?: ToolTimes;
   /** The largest input of one model turn (input + cache read + cache creation tokens). Absent without `usage` lines. */
   contextTokens?: number;
+  /** Time the session waited for a test slot (ms). Absent when it did not wait. */
+  slotWaitMs?: number;
+  /** `--resume` was asked and Claude no longer has that session ("No conversation found"). Set only on a failed try. */
+  sessionLost?: boolean;
 }
 
 /** Calls of a session and the time between each call and its result. A call without a result counts in `calls` only. */
@@ -177,6 +186,7 @@ interface StreamEvent {
   subtype?: string;
   is_error?: boolean;
   result?: string;
+  errors?: unknown;
   session_id?: string;
   total_cost_usd?: number;
   num_turns?: number;
@@ -285,10 +295,21 @@ function isPush(tool: string, input: Record<string, unknown> = {}): boolean {
   return tool === "Bash" && typeof input.command === "string" && GIT_PUSH.test(input.command);
 }
 
+const NO_CONVERSATION = /\bno conversation found\b/i;
+
+/** Did Claude answer that the session of `--resume` is not there? In stderr, or in the result event. */
+export function noConversation(stderr: string, final?: { result?: string; errors?: unknown }): boolean {
+  if (NO_CONVERSATION.test(stderr ?? "")) return true;
+  if (typeof final?.result === "string" && NO_CONVERSATION.test(final.result)) return true;
+  return Array.isArray(final?.errors) && final.errors.some((e) => typeof e === "string" && NO_CONVERSATION.test(e));
+}
+
 /** Run the local Claude Code CLI headlessly. The prompt goes via stdin. */
 export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
   const bin = o.claudeBin ?? (await resolveClaudeBinAsync());
   let final: StreamEvent | undefined;
+  // The last session id any event carried: a session that ran out of time has no result event, but can be continued.
+  let sessionId: string | undefined;
   const meter = streamMeter({ onTool: o.onTool });
 
   const spawned = await runProcess(bin, buildClaudeArgs(o), {
@@ -296,7 +317,9 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
     env: o.env,
     cleanEnv: o.cleanEnv,
     sandboxProfile: o.sandboxProfile,
+    priority: o.priority,
     meter: o.meter,
+    slotWaits: o.slotWaits,
     stdin: o.prompt,
     timeoutMs: o.timeoutMs,
     signal: o.signal,
@@ -309,6 +332,7 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
         return;
       }
       meter.line(ev);
+      if (ev && typeof ev.session_id === "string" && ev.session_id) sessionId = ev.session_id;
       if (ev.type === "result") final = ev;
       else if (ev.type === "assistant" && o.onProgress) {
         for (const c of ev.message?.content ?? []) {
@@ -324,16 +348,17 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
     return { ok: false, output: "", error: msg };
   }
   const res = spawned.res;
-  const measured = meter.end();
+  const measured = { ...meter.end(), ...(res.slotWait ? { slotWaitMs: res.slotWait.waitedMs } : {}) };
 
   if (res.aborted) return { ok: false, output: final?.result ?? "", error: "cancelled", ...measured };
-  if (res.timedOut) return { ok: false, output: final?.result ?? "", error: "timed out", ...measured };
+  if (res.timedOut) return { ok: false, output: final?.result ?? "", error: timedOutError(res.slotWait), ...(sessionId ? { sessionId } : {}), ...measured };
   if (!final) {
     return {
       ...measured,
       ok: false,
       output: "",
       error: `claude exited with code ${res.exitCode} and no result. ${res.stderr.trim().slice(-500)}`,
+      ...(o.resumeSessionId && noConversation(res.stderr) ? { sessionLost: true } : {}),
     };
   }
   const ok = !final.is_error && final.subtype === "success" && res.exitCode === 0;
@@ -354,5 +379,6 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
     outputTokens: final.usage?.output_tokens,
     // An API error comes back as is_error with subtype "success": show its message, not "success".
     error: ok ? undefined : final.subtype && final.subtype !== "success" ? `claude result: ${final.subtype}` : (final.result || "claude reported an error").slice(0, 300),
+    ...(!ok && o.resumeSessionId && noConversation(res.stderr, final) ? { sessionLost: true } : {}),
   };
 }

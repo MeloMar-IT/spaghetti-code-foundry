@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { repoFromUrl } from "../skills/source-update.js";
+import { storeFor, type SyncStories } from "../stories/store.js";
 
 // The local git and gh calls of `scf skills update`, all against the catalogue repository (the clone in the current folder and
 // its `origin`). Argument arrays only, never a shell. They are synchronous: the caller yields and checks for an interrupt after
@@ -213,9 +214,18 @@ function gh(ctx: CatalogueContext, args: string[], input?: string): string {
   return r.stdout;
 }
 
+/** The store, on this module's gh. An input the store refuses counts as a failed gh call: no text leaves this module. */
+function stories<T>(ctx: CatalogueContext, repo: string, call: (s: SyncStories) => T): T {
+  try {
+    return call(storeFor(repo).sync((args, input) => gh(ctx, args, input)));
+  } catch (e) {
+    throw e instanceof CatalogueError ? e : new CatalogueError("gh-failed");
+  }
+}
+
 /** The address of the open pull request whose head is `branch`, if there is one. */
 export function openPullRequest(ctx: CatalogueContext, repo: string, branch: string): string | undefined {
-  const out = gh(ctx, ["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url,headRefName,state", "--limit", "20"]);
+  const out = stories(ctx, repo, (s) => s.listChanges({ state: "open", limit: 20, head: branch, fields: "url,headRefName,state" }));
   let list: unknown;
   try {
     list = JSON.parse(out);
@@ -238,7 +248,7 @@ const OPEN_PULL_REQUESTS_LIMIT = 1000;
  */
 export function openSourcePullRequests(ctx: CatalogueContext, repo: string, prefix: string): { url: string; branch: string; createdAt?: string }[] {
   if (!BRANCH_RE.test(prefix)) throw new CatalogueError("gh-failed");
-  const out = gh(ctx, ["pr", "list", "--repo", repo, "--state", "open", "--json", "url,headRefName,state,createdAt", "--limit", String(OPEN_PULL_REQUESTS_LIMIT)]);
+  const out = stories(ctx, repo, (s) => s.listChanges({ state: "open", limit: OPEN_PULL_REQUESTS_LIMIT, fields: "url,headRefName,state,createdAt" }));
   let list: unknown;
   try {
     list = JSON.parse(out);
@@ -260,7 +270,7 @@ export function openSourcePullRequests(ctx: CatalogueContext, repo: string, pref
 /** The title and the text of a pull request, as GitHub holds them. */
 export function pullRequestText(ctx: CatalogueContext, repo: string, url: string): { title: string; body: string } {
   if (!URL_RE.test(url)) throw new CatalogueError("gh-failed");
-  const out = gh(ctx, ["pr", "view", url, "--repo", repo, "--json", "title,body"]);
+  const out = stories(ctx, repo, (s) => s.viewChange(url, "title,body"));
   let v: unknown;
   try {
     v = JSON.parse(out);
@@ -275,12 +285,12 @@ export function pullRequestText(ctx: CatalogueContext, repo: string, url: string
 /** Changes the title and the text of an open pull request; the body goes in on standard input. */
 export function editPullRequest(ctx: CatalogueContext, o: { repo: string; url: string; title: string; body: string }): void {
   if (!URL_RE.test(o.url)) throw new CatalogueError("gh-failed");
-  gh(ctx, ["pr", "edit", o.url, "--repo", o.repo, "--title", o.title, "--body-file", "-"], o.body);
+  stories(ctx, o.repo, (s) => s.updateChange(o.url, { title: o.title, body: o.body }));
 }
 
 /** Opens the pull request; the body goes in on standard input. Returns its address. */
 export function createPullRequest(ctx: CatalogueContext, o: { repo: string; base: string; head: string; title: string; body: string }): string {
-  const out = gh(ctx, ["pr", "create", "--repo", o.repo, "--base", o.base, "--head", o.head, "--title", o.title, "--body-file", "-"], o.body);
+  const out = stories(ctx, o.repo, (s) => s.openChange({ base: o.base, head: o.head, title: o.title, body: o.body }));
   const url = out.trim().split("\n").at(-1)?.trim() ?? "";
   if (!URL_RE.test(url)) throw new CatalogueError("gh-failed");
   return url;
@@ -292,13 +302,13 @@ const REVIEWER_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}(?:\/[A-Za-z0-9][A-Za-z0-9._-
 export function requestReviewer(ctx: CatalogueContext, o: { repo: string; url: string; reviewer: string }): void {
   const handle = o.reviewer.replace(/^@/, "");
   if (!URL_RE.test(o.url) || !REVIEWER_RE.test(handle)) throw new CatalogueError("gh-failed");
-  gh(ctx, ["pr", "edit", o.url, "--repo", o.repo, "--add-reviewer", handle]);
+  stories(ctx, o.repo, (s) => s.requestReview(o.url, handle));
 }
 
 /** Who was asked to review a pull request (`requested`) and who did (`reviewed`): user logins and team names. */
 export function pullRequestReviewers(ctx: CatalogueContext, repo: string, url: string): { requested: string[]; reviewed: string[] } {
   if (!URL_RE.test(url)) throw new CatalogueError("gh-failed");
-  const out = gh(ctx, ["pr", "view", url, "--repo", repo, "--json", "reviewRequests,reviews"]);
+  const out = stories(ctx, repo, (s) => s.viewChange(url, "reviewRequests,reviews"));
   let v: unknown;
   try {
     v = JSON.parse(out);

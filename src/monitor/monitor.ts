@@ -9,7 +9,9 @@ import { FACTORY_HOME } from "../flow/load.js";
 import type { RateReading } from "../github.js";
 import { parseInterval, type TrackedIssue, type WatcherStatus } from "../queue/watcher.js";
 import type { Scheduler } from "../queue/scheduler.js";
-import { runDetectors, type ActiveRun, type AreaLock, type Detector, type DetectorInput, type LogLine, type WaitingUnlisted } from "./detectors.js";
+import { markAutoDemotions, runAutoDemotions } from "../governance/auto-demote.js";
+import { appendLiveLog } from "../engine/state.js";
+import { ownerRepo, runDetectors, type ActiveRun, type AreaLock, type Detector, type DetectorInput, type LogLine, type WaitingUnlisted } from "./detectors.js";
 import { loadUpdateState, type UpdateState } from "../self-update-state.js";
 import { type Seen, decideBreaker, failedFixes, forgetSkip, isStoryRun, keepEarlier, storyKeys, withoutStoryRuns, type FixFailure } from "./breaker.js";
 import { checkFixes, fixCommitOf, fixRunsOf, type FixEvent } from "./fix.js";
@@ -22,6 +24,7 @@ import { SloInputCache, sloLookbackHours } from "./slo-input.js";
 import { markerHash } from "./story.js";
 import { ALL_DETECTORS } from "./work-detectors.js";
 import { chainLists } from "./chains.js";
+import { newestSlotWait } from "../steps/slot-waits.js";
 import { unlistedCandidates, UnlistedTracker, type RunState } from "./unlisted.js";
 
 export interface MonitorDeps {
@@ -31,6 +34,8 @@ export interface MonitorDeps {
   /** Set while the server waits to restart. */
   restart?: () => DetectorInput["restart"];
   thresholds: () => MonitorConfig;
+  /** Whether new serious findings lower the autonomy level of the component they name (`governance.auto_demote`, #647). Not set: no. */
+  autoDemote?: () => boolean;
   serverLog?: () => LogLine[];
   rateLimit?: () => RateReading | undefined;
   /** Runs before the detectors of every check (the manager reads the request limit here). */
@@ -64,7 +69,7 @@ const HOUR = 3_600_000;
 export const USUAL_RUNS = 500;
 const MAX_LOCKS = 500;
 
-/** The newest time anything was written to the logs of a run (live.log and the step logs). Undefined when there is none. */
+/** The newest time anything was written to the logs of a run (live.log, the step logs and the wait files of test-slot). Undefined when there is none. */
 export function lastLogWrite(runDir: string): string | undefined {
   let newest = 0;
   const look = (file: string) => {
@@ -80,6 +85,8 @@ export function lastLogWrite(runDir: string): string | undefined {
   } catch {
     // no logs folder yet
   }
+  // a step that waits for a test slot is alive: test-slot touches its wait file at least every 5 s
+  newest = Math.max(newest, newestSlotWait(runDir));
   return newest ? new Date(Math.round(newest)).toISOString() : undefined;
 }
 
@@ -174,6 +181,8 @@ export class Monitor {
   private usualCache?: { at: number; hours: number; history: DurationHistory };
   /** The notes of the last check: one is logged when it first appears. */
   private noted = new Set<string>();
+  /** The problems of the last automatic demotions: one is logged when it first appears. */
+  private demoteNoted = new Set<string>();
   /** An admin's wish for one story: the next check makes it (and does no other reporting). Kept in memory only. */
   private wish?: { hash: string; by: string; result?: MonitorStoryResult };
   /** "Make a story now" calls run one after the other. */
@@ -298,6 +307,9 @@ export class Monitor {
     });
     const merged = mergeFindings(stored.findings, found, start, new Set([...freedNow.keys()].map((r) => `orphan-lock|area|${r}`)));
     let findings = merged.findings;
+    // Only findings that appear now can lower a level; a broken file makes every finding look new, so nothing is marked then.
+    const autoDemote = this.autoDemoteOn();
+    if (!stored.broken && autoDemote) markAutoDemotions(merged.fresh, start);
     const guard = this.d.guard;
     let failed: FixFailure[] = [];
     let fixEvents: FixEvent[] = [];
@@ -319,6 +331,7 @@ export class Monitor {
     saveFindings(findings, file);
     // Acknowledged only once saved (a failed check keeps them). A notice that came in during the check has a newer number and stays.
     for (const [r, n] of freedNow) if (this.freed.get(r) === n) this.freed.delete(r);
+    this.applyAutoDemotions(findings, allActive, file, autoDemote);
     for (const x of failed) {
       writeLog({ event: "fix-failed", detector: x.finding.detector, fingerprint: x.finding.fingerprint, repo: x.repo, issue: x.issue, count: x.count }, { now: start, onError: guard?.onLogError });
       this.act(describeEntry({ event: "fix-failed", detector: x.finding.detector, issue: x.issue, count: x.count }));
@@ -364,6 +377,51 @@ export class Monitor {
       this.status.notes = r.notes.length ? r.notes : undefined;
     }
     return start.getTime();
+  }
+
+  private autoDemoteOn(): boolean {
+    try {
+      return this.d.autoDemote?.() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Lowers the components that new serious findings name (see auto-demote.ts). Never throws and never waits for a lock. Off:
+   * the pending demotions are dropped, so switching it on again does not lower for findings seen while it was off.
+   */
+  private applyAutoDemotions(findings: Finding[], active: ActiveRun[], file: string, on: boolean): void {
+    try {
+      if (!on) {
+        let changed = false;
+        for (const f of findings) if (f.autoDemote?.left.length) {
+          f.autoDemote.left = [];
+          changed = true;
+        }
+        this.demoteNoted = new Set();
+        if (changed) saveFindings(findings, file);
+        return;
+      }
+      if (!findings.some((f) => !f.gone && f.autoDemote?.left.length)) {
+        this.demoteNoted = new Set();
+        return;
+      }
+      const r = runAutoDemotions(findings, (all) => saveFindings(all, file));
+      for (const d of r.demoted) {
+        this.act(`auto-demote: ${d.name} ${d.from}→${d.to} (${d.detector})`);
+        const name = d.name.toLowerCase();
+        for (const { run } of active) {
+          if (d.ref.kind === "flows" ? run.flow !== d.name : ownerRepo(run)?.toLowerCase() !== name) continue;
+          appendLiveLog(run.runDir, `autonomy: ${d.name} was lowered to ${d.to} by the monitor (${d.detector}); this run keeps its level`);
+        }
+      }
+      for (const p of r.problems) if (!this.demoteNoted.has(p)) this.act(p);
+      this.demoteNoted = new Set(r.problems);
+      if (r.changed) saveFindings(findings, file);
+    } catch {
+      // a failed demotion never fails the check; it is tried again at the next check
+    }
   }
 
   /** Makes the story an admin asked for. The finding is saved onto the newest file, so another writer's changes are kept. */

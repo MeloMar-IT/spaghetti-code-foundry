@@ -98,10 +98,12 @@ export interface Finding extends FindingInput {
   tries?: number;
   /** Since when the finding needs a person: two stories did not fix it, so no third is made. */
   needsYou?: string;
+  /** The automatic demotion of this finding (#647), set when it is new. `left`: components still to lower, as `repos:<owner/name>` or `flows:<name>`. */
+  autoDemote?: { at: string; left: string[] };
 }
 
 const MAX_EVIDENCE_LINES = 11;
-const cleanText = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 200);
+export const cleanText = (s: string): string => s.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, 200);
 
 /** The evidence as at most 11 plain lines for the admin: flows, watchers, counts (one line), times, steps, lines. Never throws. */
 export function evidenceLines(e: Evidence | undefined): string[] {
@@ -158,7 +160,7 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
     const carry = have ? { ...(have.report ? { report: have.report } : {}), ...(have.due ? { due: have.due } : {}), ...(have.missedAt ? { missedAt: have.missedAt } : {}), ...(have.skipped ? { skipped: have.skipped } : {}), ...(have.fixFailed ? { fixFailed: have.fixFailed } : {}), ...(have.earlier ? { earlier: have.earlier } : {}), ...(have.tries !== undefined ? { tries: have.tries } : {}), ...(have.needsYou ? { needsYou: have.needsYou } : {}) } : {};
     const days = [...new Set([...(have?.days ?? []), dayOf(now)])].slice(-3);
     if (have && !have.gone) {
-      out.push({ ...input, firstSeen: have.firstSeen, lastSeen: at, count: have.count + 1, gone: false, streak: (have.streak ?? have.count) + 1, days, ...(have.quietStart ? { quietStart: true } : {}), ...carry });
+      out.push({ ...input, firstSeen: have.firstSeen, lastSeen: at, count: have.count + 1, gone: false, streak: (have.streak ?? have.count) + 1, days, ...(have.quietStart ? { quietStart: true } : {}), ...(have.autoDemote ? { autoDemote: have.autoDemote } : {}), ...carry });
     } else {
       const f: Finding = { ...input, firstSeen: at, lastSeen: at, count: 1, gone: false, streak: 1, days, ...carry };
       fresh.push(f);
@@ -185,7 +187,8 @@ export function mergeFindings(stored: Finding[], found: FindingInput[], now: Dat
   }
   let dropped = 0;
   // Findings that owe a story or have one are counted apart, so they never crowd out new findings (and are not evicted by them).
-  const held = (f: Finding) => !!(f.report || f.due || f.needsYou);
+  // An open finding that carries an automatic demotion (#647) is held too: evicting it would let it demote a second time.
+  const held = (f: Finding) => !!(f.report || f.due || f.needsYou || (!f.gone && f.autoDemote));
   const plain = out.filter((f) => !held(f));
   const keptStories = out.filter(held);
   const drop = new Set<Finding>();
@@ -230,7 +233,7 @@ const validReport = (r: unknown): r is StoryRef => {
 };
 /** The optional fields of a stored finding: a malformed one is dropped, the finding stays. */
 function tidy(f: Finding): Finding {
-  const { days, due, report, missedAt, streak, skipped, fixFailed, quietStart, earlier, tries, needsYou, ...rest } = f;
+  const { days, due, report, missedAt, streak, skipped, fixFailed, quietStart, earlier, tries, needsYou, autoDemote, ...rest } = f;
   return {
     ...rest,
     ...(Number.isInteger(streak) && streak! >= 0 ? { streak } : {}),
@@ -243,6 +246,7 @@ function tidy(f: Finding): Finding {
     ...(Array.isArray(earlier) && earlier.length <= MAX_EARLIER && earlier.every((e) => !!e && typeof e === "object" && typeof e.repo === "string" && Number.isInteger(e.issue)) ? { earlier: earlier.map((e) => ({ repo: e.repo, issue: e.issue, ...(typeof e.url === "string" ? { url: e.url } : {}), ...(isTime(e.closedAt) ? { closedAt: e.closedAt } : {}) })) } : {}),
     ...(Number.isInteger(tries) && tries! >= 0 ? { tries } : {}),
     ...(isTime(needsYou) ? { needsYou } : {}),
+    ...(autoDemote && typeof autoDemote === "object" && isTime(autoDemote.at) && Array.isArray(autoDemote.left) && autoDemote.left.length <= 100 && autoDemote.left.every((k) => typeof k === "string" && k.length <= 300) ? { autoDemote: { at: autoDemote.at, left: [...autoDemote.left] } } : {}),
     ...(Array.isArray(skipped) && skipped.length <= 10 && skipped.every((x) => typeof x === "string" && x.length <= 40) ? { skipped } : {}),
   };
 }

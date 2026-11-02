@@ -38,7 +38,8 @@ import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
 import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
-import { answerRoom, appendLiveLog, isStoppedCancel, loadRun, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
+import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
+import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
@@ -46,8 +47,12 @@ import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from
 import { prepareWorkspace } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
+import { recordRunAutonomy, runAutonomyAtStart } from "../governance/run-autonomy.js";
+import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
-import { runPolicy, type RunPolicy } from "./policy-hooks.js";
+import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
+import { flowFileId } from "../promotion/flow-id.js";
+import { loadRunPacks, runPolicy, type LoadedPack, type RunPolicy } from "./policy-hooks.js";
 import type { ProcessMeter } from "../steps/process.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR, type RunRecorder } from "../evidence/record.js";
 import { snapshotToolProfile } from "../tool-profile/session.js";
@@ -84,6 +89,8 @@ interface CommonOptions {
   outputClassifier?: OutputClassifier;
   /** The delivery settings, read again for each step (the scheduler gives its live settings). Default: the run's config. */
   deliverySettings?: () => Config["delivery"];
+  /** Evals only (#665): the run is not checked for governance (a new version can be evaluated before it is approved). Set by the Scheduler option for evals; never read from a job or from run.json, and passed on resume too. */
+  evalRun?: boolean;
 }
 
 export interface RunOptions extends CommonOptions {
@@ -100,6 +107,10 @@ export interface RunOptions extends CommonOptions {
   owner?: string;
   /** A declared tool profile for every agent step: checked and copied when the run starts, then saved in run.json (see snapshotToolProfile). */
   toolProfile?: unknown;
+  /** The id of the custom flow as `scf promote` knows it (its file name); without it the flow's name. */
+  flowId?: string;
+  /** A local test (#740): never checked against `promotion.enforce`, and it never counts as a promoted delivery. Governance (#665) still applies to a connected repository, unless `evalRun` is set. Set by `scf run --local-test` and by the Scheduler option for evals; never read from a job. */
+  localTest?: boolean;
 }
 
 export interface ResumeOptions extends CommonOptions {
@@ -160,8 +171,10 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const refused = workspaceRefused(flow.workspace, owner);
   // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
   const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
+  const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
   const summary: RunSummary = {
     runId,
+    autonomy: autonomy.autonomy,
     pathsTracked: true,
     flow: flow.name,
     flowDef: flow,
@@ -179,6 +192,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     ...(owner ? { owner } : {}),
     // never the raw value: JSON would drop a function and the run would quietly get the generated profile
     ...(opts.toolProfile !== undefined ? { toolProfile: snapshotToolProfile(opts.toolProfile) } : {}),
+    ...(opts.localTest ? { localTest: true as const } : {}),
+    ...(opts.flowId ? { flowId: opts.flowId } : {}),
   };
   claimRunStart(opts.runsDir, () => {
     mkdirSync(join(runDir, "logs"), { recursive: true });
@@ -190,10 +205,17 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   evidence.created(summary, opts.actor ?? actorOf(opts.source, opts.source === "ui" ? opts.owner : undefined));
   // policy (observe mode): the run starts here, before any refusal and before the workspace is made
   const log = liveLog(summary, opts);
-  const policy = runPolicy(summary, config, log, evidence);
+  recordRunAutonomy(autonomy, log, evidence);
+  if (opts.localTest) log(LOCAL_TEST_LINE);
+  // the packs are read once: the run and the promotion check below use the same list
+  const packs = loadRunPacks(summary, config);
+  const policy = runPolicy(summary, config, log, evidence, undefined, packs);
   const start = policy?.at("run.start");
   if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: null, lastOutput: "" });
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
+  const ungoverned = await governanceStop(summary, opts, config, log, evidence, packs);
+  if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: null, lastOutput: "" });
+  if (await promotionRefused(summary, opts, config, log, packs)) return finish(summary, opts, config, { outcome: "failed", reason: PROMOTION_REFUSED, next: null, lastOutput: "" });
 
   try {
     requireRedaction(); // before the workspace is made: output cannot be hidden when the stored secrets are unreadable
@@ -216,6 +238,58 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     return finish(summary, opts, config, { outcome: "failed", reason: (e as Error).message, next: null, lastOutput: "" });
   }
   return drive(summary, opts, config, null, { policy });
+}
+
+/**
+ * The governance check of a production run (#665), at start and on resume: a retired component, or a high-risk one whose
+ * version is not approved, ends the run. Returns the reason that ends it, or undefined. Development runs and eval runs are
+ * not checked and write nothing. The decision goes to the log and the evidence as kinds, ids, versions and fixed words only.
+ * The gate is loaded here, like the promotion gate; one that cannot be loaded or run refuses (fails closed).
+ */
+async function governanceStop(summary: RunSummary, opts: CommonOptions, config: Config, log: (raw: string) => void, evidence: RunRecorder, packs: readonly LoadedPack[]): Promise<string | undefined> {
+  if (opts.evalRun || !isProductionRun(summary.vars)) return undefined;
+  // a run saved without its id (older runs, CLI runs) gets the file id found by content, saved so a resume checks the same id
+  if (!summary.flowId && summary.flowDef) {
+    const found = flowFileId(summary.flowDef, summary.repo);
+    if (found) {
+      summary.flowId = found;
+      saveRun(summary);
+    }
+  }
+  let decision: GovernanceDecision;
+  try {
+    const gate = await import("../promotion/gate.js");
+    decision = gate.governanceGate({ flow: summary.flowDef, flowId: summary.flowId ?? summary.flow, repo: summary.repo, vars: summary.vars, config, toolProfile: summary.toolProfile, policyPacks: packs });
+  } catch {
+    decision = governanceCheckFailed();
+  }
+  for (const line of decision.lines) log(line);
+  evidence.governanceDecided({ outcome: decision.outcome, ...(decision.failure ? { failure: decision.failure } : {}), components: decision.components });
+  return decision.reason;
+}
+
+/**
+ * The run start check of `promotion.enforce` (#740). True when the run must end: `on`, not a local test, something not promoted.
+ * Under `warn` it logs each finding and saves them in `summary.promotion`. The gate is loaded here, not at the top: it reaches
+ * the evals and the scheduler, which import this file. A gate that cannot be loaded counts as not promoted.
+ */
+async function promotionRefused(summary: RunSummary, opts: RunOptions, config: Config, log: (raw: string) => void, packs: readonly LoadedPack[]): Promise<boolean> {
+  const enforce = config.promotion?.enforce ?? "warn";
+  if (opts.localTest || enforce === "off") return false;
+  let record: Awaited<ReturnType<typeof import("../promotion/gate.js").promotionGate>>;
+  let line: (f: Parameters<typeof import("../promotion/gate.js").findingLine>[0]) => string;
+  try {
+    const gate = await import("../promotion/gate.js");
+    record = gate.promotionGate({ flow: summary.flowDef, flowId: opts.flowId ?? summary.flow, repo: opts.repo, vars: summary.vars, config, toolProfile: opts.toolProfile, policyPacks: packs });
+    line = gate.findingLine;
+  } catch {
+    log("! the promotion check could not run");
+    return enforce === "on";
+  }
+  for (const f of record.findings) log(line(f));
+  summary.promotion = { enforce, ...record };
+  saveRun(summary);
+  return enforce === "on" && !record.promoted;
 }
 
 /** Continue a stopped, failed, cancelled, interrupted or waiting run. */
@@ -241,6 +315,11 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
     summary.heldContent = undefined;
   }
   const decision = opts.decision && summary.waiting ? { ...opts.decision, stepId: summary.waiting.stepId } : undefined;
+  // A retry after a time limit begins here. The allowance is counted again now, over all runs of the story: two stopped runs of
+  // one issue cannot both use the last retry.
+  const retry = pendingRetry(summary, from, summary.state.next);
+  const retryOver = retry && timeLimitsUsed(summary, listRunBriefs(opts.runsDir)) >= retry.of ? retry : undefined;
+  if (!retryOver) markRetryStart(summary, from, new Date().toISOString());
   Object.assign(summary, { status: "running" as RunStatus, reason: undefined, failureNote: undefined, finishedAt: undefined, archivedAt: undefined, archivedBy: undefined, parkedAt: undefined, resumes: (summary.resumes ?? 0) + 1, resumeLog: [...(summary.resumeLog ?? []), { at: new Date().toISOString(), from }].slice(-50) });
   summary.pid = process.pid;
   summary.stepStartedAt = undefined; // an old step time must not show on the resumed run
@@ -250,6 +329,11 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   evidence.queued(opts.queuedAt);
   evidence.resumed(from, opts.actor ?? SYSTEM_ACTOR);
   summary.state.visits = {}; // fresh loop budget
+  if (retryOver) {
+    // the last retry went to another run of the story: this one fails as it would without retries
+    summary.retryStep = undefined;
+    return finish(summary, opts, config, { outcome: "failed", reason: `step "${retryOver.step}" failed: timed out`, next: summary.state.next, lastOutput: "" });
+  }
   return drive(summary, opts, config, { startAt: from, decision });
 }
 
@@ -273,10 +357,14 @@ async function drive(
   const log = liveLog(summary, opts);
   const evidence = runRecorder(summary);
   // before anything else of this start, also before the early failure paths below
-  const policy = early ? early.policy : runPolicy(summary, config, log, evidence);
-  if (!early) {
+  // a resume reads the packs once: the policy and the governance check use the same list
+  const packs = early ? undefined : loadRunPacks(summary, config);
+  const policy = early ? early.policy : runPolicy(summary, config, log, evidence, undefined, packs);
+  if (packs) {
     const start = policy?.at("run.start");
     if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: summary.state.next, lastOutput: "" });
+    const ungoverned = await governanceStop(summary, opts, config, log, evidence, packs);
+    if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: summary.state.next, lastOutput: "" });
   }
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
   const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);
@@ -317,7 +405,8 @@ async function drive(
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...nextStepEnv(),
-      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes),
+      // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
+      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes, autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
       ...selfEnv(),
       ...(opts.pathPrefix?.length ? { PATH: [...opts.pathPrefix, process.env.PATH ?? ""].join(delimiter) } : {}),
     };
@@ -663,10 +752,18 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason(`cancelled during step "${step.id}"`), ...here() };
 
     const routed = res.ok ? step.routes?.find((r) => new RegExp(r.if, "m").test(res.output))?.goto : undefined;
+    // A story handed over for being too big: only a real split or a real question goes on.
+    const tooBig = top && step.id === "force_split" ? ctx.steps.implement?.too_big : undefined;
+    if (tooBig && !splitAnswered(routed, res.output)) {
+      return { outcome: "failed", reason: `step "force_split" failed: ${res.ok ? "the planner gave no split and no question" : (res.error ?? "the planner failed")} (${tooBig})`, ...here(), failedStep: identity };
+    }
     if (top && !res.ok) markPlanCheckFailed(summary, step.id);
     const carryStop = top && res.ok ? carryRunSkills(summary, config, step.id, engine.log) : undefined;
     const skillStop = carryStop ?? (top && res.ok ? planRunSkills(summary, config, step.id, engine.log) : undefined);
-    const target = res.ok ? (routed ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
+    // after a retry: once the areas are claimed again, go on at the step that ran out of time (a WAIT_AREA route keeps it)
+    const retryStep = top && res.ok && !routed && step.id === "claim_areas" && summary.retryStep && indexOf.has(summary.retryStep) ? summary.retryStep : undefined;
+    if (retryStep) summary.retryStep = undefined;
+    const target = res.ok ? (routed ?? retryStep ?? step.on_success ?? "next") : engine.accessFailed ? "fail" : (step.on_failure ?? "fail");
     if (skillStop && target === "end") {
       // the gate ends the flow: stop at the gate itself, so a resume runs it again and checks the skills again
       setNext(step.id);
@@ -674,6 +771,38 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     }
     if (target === "end") return { outcome: "succeeded", next: null, lastOutput };
     if (target === "fail") {
+      // A story of a watcher that ran out of time is tried again: the run stops (no failure path, no model call) and the watcher resumes it.
+      const asked = {
+        top,
+        stepType: step.type,
+        ownFailurePath: step.on_failure !== undefined,
+        error: res.error,
+        accessFailed: engine.accessFailed,
+        storyRun: isStoryRun(summary),
+        limit: config.auto_retry?.timeouts ?? 2,
+        used: () => timeLimitsUsed(summary, listRunBriefs(runsDir)),
+      };
+      const again = timeLimitAction(asked);
+      if (again) {
+        const reason = timeLimitReason(step.id, again.attempt, again.of);
+        summary.timeLimits = [...(summary.timeLimits ?? []), { at: new Date().toISOString(), step: step.id, attempt: again.attempt, of: again.of }];
+        const entry = retryEntry(flow, summary.history, step.id);
+        setNext(entry.next);
+        summary.retryStep = entry.retryStep ?? (step.id === "claim_areas" ? summary.retryStep : undefined);
+        engine.log(`■ ${reason}`);
+        return { outcome: "stopped", reason, ...here() };
+      }
+      // The retries are used up: a further time-out of `implement` goes to the planner to be split (if the flow can take it).
+      const handover = timeLimitHandover({ ...asked, stepId: step.id, flow, coded: () => timeLimitsUsed(summary, listRunBriefs(runsDir), step.id) + (summary.timeoutHandovers ?? 0) });
+      if (handover) {
+        summary.timeoutHandovers = (summary.timeoutHandovers ?? 0) + 1;
+        ctx.steps.implement = { ...ctx.steps.implement, too_big: handover };
+        engine.log(`■ ${handover}: to the planner`);
+        idx = indexOf.get("force_split")!;
+        setNext("force_split");
+        engine.save();
+        continue;
+      }
       return { outcome: "failed", reason: `step "${scope.prefix}${step.id}" failed${res.error ? `: ${res.error}` : ""}`, ...here(), failedStep: identity };
     }
     if (target === "stop") {

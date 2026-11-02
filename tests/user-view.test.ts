@@ -7,7 +7,7 @@ import { USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { nextStep, runNextStep } from "../src/next-step.js";
 import type { ServerOptions, startServer } from "../src/server/server.js";
 import { explanationLine } from "../src/policy/explain.js";
-import { USER_ERROR, answerBlock, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
+import { USER_ERROR, adminRun, answerBlock, hidePaths, movedText, refinementSessionOf, userError, userLogLine, userRecord, userRun, userTask } from "../src/server/user-view.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
@@ -93,6 +93,21 @@ describe("userRun", () => {
     expect(u.next?.failure).toBeDefined();
     const withPath = userRun({ ...f, next: { ...next, failure: { ...next.failure!, what: "failed in /work/dir" } } });
     expect(withPath.next?.failure?.what).toBe("failed in (folder)");
+  });
+
+  it("gives the retries as numbers and a fixed word, never the events or the reason; the admin gets the same field", () => {
+    const withRetry = { ...full, status: "succeeded", reason: "ran out of time in `secret-step`", timeLimits: [{ at: "x", step: "secret-step", attempt: 1, of: 2, startedAt: "y" }] } as any;
+    const u = userRun(withRetry) as any;
+    expect(u.retries).toEqual({ started: 1, waiting: false, outcome: "finished" });
+    expect(u).not.toHaveProperty("timeLimits");
+    expect(JSON.stringify(u)).not.toContain("secret-step");
+    expect(adminRun(withRetry).retries).toEqual(u.retries);
+    expect(adminRun(withRetry).timeLimits).toEqual(withRetry.timeLimits);
+    expect(userRun(full)).not.toHaveProperty("retries");
+    expect(adminRun(full)).not.toHaveProperty("retries");
+    expect(adminRun(full)).not.toHaveProperty("refinement");
+    const id = "123e4567-e89b-12d3-a456-426614174000";
+    expect(adminRun({ ...full, source: `refinement ${id}` } as any).refinement).toBe(id);
   });
 
   it("has exactly the fields a user may see, at every level", () => {
@@ -228,6 +243,12 @@ describe("userLogLine", () => {
 });
 
 describe("userError, userRecord, hidePaths, movedText", () => {
+  it("a user sees whether a time-out's wait was left out or capped", () => {
+    expect(userError("timed out (waited 18 min for a test slot, which did not count)")).toBe("It ran longer than its time limit; it waited 18 min for a test slot, which did not count");
+    expect(userError("timed out (waited 95 min for a test slot, more than the 90 min that can be left out)")).toBe("It ran longer than its time limit; it waited 95 min for a test slot, capped at 90 min");
+    expect(userError("timed out")).toBe("It ran longer than its time limit");
+  });
+
   it.each([
     ["cancelled", "It was cancelled"],
     ["output matched fail_if", "Its output did not pass the check of the step"],

@@ -9,11 +9,13 @@ import { dataHome, openAppendLocked, replaceFileLocked, StoreError, withAuthLock
  * The audit log: one JSON line per account change or event (a sign-in), in `audit.jsonl` (not `.json`, so the
  * data-folder move leaves it alone). The file is only appended; a reader skips lines that do not parse. A line never
  * holds a password, hash, token, key, name or e-mail. Lines also record actions made in the web interface; they never
- * hold a note or task text. A settings line holds the old and new value, except for the masked keys (audit-changes.ts).
+ * hold a note or task text; the exception is a governance reason (autonomy-*), which is short free text with no credential. A settings line holds the old and new value, except for the masked keys (audit-changes.ts).
  */
 export const auditPath = () => join(dataHome(), "audit.jsonl");
 
 const Role = z.enum(["admin", "user"]);
+/** The actor of an automatic change made by the monitor (#647): not an account, so the audit shows it as `monitor`. */
+export const MONITOR_ACTOR = "monitor";
 const Base = { time: z.iso.datetime(), by: z.union([z.literal("cli"), z.uuid()]), userId: z.uuid() };
 
 /** Actions of an event line. Later parts add names here. */
@@ -36,6 +38,10 @@ export const EVENT_ACTIONS = [
   "credential-add",
   "credential-remove",
   "flow-publish",
+  "autonomy-promote-request",
+  "autonomy-promote",
+  "autonomy-demote",
+  "component-promote",
   "settings-change",
   "restart-request",
   "restart-cancel",
@@ -61,7 +67,7 @@ const short = (max: number) => z.string().refine((s) => s.length >= 1 && s.lengt
 const EventSchema = z
   .object({
     time: z.iso.datetime(),
-    by: z.union([z.literal("cli"), z.literal("anonymous"), z.uuid()]),
+    by: z.union([z.literal("cli"), z.literal("anonymous"), z.literal(MONITOR_ACTOR), z.uuid()]),
     action: z.enum(EVENT_ACTIONS),
     result: z.enum(["ok", "failed"]),
     userId: z.uuid().optional(),
@@ -237,6 +243,10 @@ export interface AuditRecord {
 export interface AuditFilter {
   user?: string;
   action?: string;
+  /** Keeps the lines whose action starts with this text (for example `autonomy-`). */
+  actionPrefix?: string;
+  /** Keeps the lines with exactly this target text. */
+  target?: string;
   from?: number;
   to?: number;
 }
@@ -323,6 +333,8 @@ export async function* scanAudit(filter: AuditFilter = {}): AsyncGenerator<Audit
     const r = auditRecord(parsed.data);
     if (filter.user !== undefined && r.by !== filter.user && r.userId !== filter.user) continue;
     if (filter.action !== undefined && r.action !== filter.action) continue;
+    if (filter.actionPrefix !== undefined && !r.action.startsWith(filter.actionPrefix)) continue;
+    if (filter.target !== undefined && r.target !== filter.target) continue;
     if (filter.from !== undefined || filter.to !== undefined) {
       const t = Date.parse(r.time);
       if (filter.from !== undefined && t < filter.from) continue;

@@ -5,7 +5,7 @@ import { readUiCss } from "./helpers/ui-css.js";
 
 const read = (p: string) => readFileSync(`ui/${p}`, "utf8");
 
-const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "users", "audit", "board", "turn", "monitor", "health", "since", "admin-repos", "repo-admin-sections", "watchers", "watcher-form", "watcher-options", "admin-credentials", "operations", "maintenance"];
+const ADMIN_MODULES = ["editor", "library", "admin", "models", "dashboard", "users", "audit", "autonomy", "board", "turn", "monitor", "health", "since", "admin-repos", "repo-admin-sections", "watchers", "watcher-form", "watcher-options", "admin-credentials", "operations", "maintenance", "promotions"];
 
 describe("ui/user/index.html", () => {
   const html = read("user/index.html");

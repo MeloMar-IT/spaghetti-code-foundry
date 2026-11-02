@@ -15,7 +15,7 @@ export type Caps = Record<string, Cap>;
  */
 export const capsPath = (home = process.env.FACTORY_HOME ?? FACTORY_HOME) => join(home, "governor", "caps.json");
 const capsDir = (path: string) => join(dirname(path), "caps");
-const usable = (c: Cap | undefined): c is Cap => !!c && Number.isInteger(c.runs) && c.runs >= 1 && typeof c.until === "string";
+const usable = (c: Cap | undefined): c is Cap => !!c && Number.isInteger(c.runs) && c.runs >= 0 && typeof c.until === "string";
 const read = <T>(file: string): T | undefined => {
   try {
     return JSON.parse(readFileSync(file, "utf8")) as T;
@@ -71,10 +71,11 @@ export function setCap(who: string, cap: Cap | undefined, path = capsPath()) {
 
 /**
  * How many runs may work at once: the configured number, lowered by the caps that still hold. A cap
- * past its `until` is ignored, so a helper that stopped can never hold the Foundry down. Never below 1.
+ * past its `until` is ignored, so a helper that stopped can never hold the Foundry down. A cap of 0 is possible
+ * (the governor with `governor.floor: 0`): no new run starts, running work goes on.
  */
 export function runLimit(configured: number, now = new Date(), path = capsPath()): number {
   const live = Object.values(loadCaps(path)).filter((c) => Date.parse(c.until) > now.getTime()).map((c) => c.runs);
   // a cap only lowers: the configured number is never raised, also not from 0 (nothing starts) to 1
-  return live.length ? Math.min(configured, Math.max(1, Math.min(...live))) : configured;
+  return Math.min(configured, ...live);
 }

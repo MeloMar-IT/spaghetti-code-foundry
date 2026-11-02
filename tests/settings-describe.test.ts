@@ -125,7 +125,49 @@ describe("what is described", () => {
     expect(isCovered("delivery.repositories")).toBe(false);
     expect(isCovered("policy.enforce")).toBe(true);
     expect(described.find((d) => d.key === "policy.enforce")).toMatchObject({ kind: "list", default: [], effect: "new-runs" });
-    expect(described).toHaveLength(131);
+    expect(isCovered("governor.priority")).toBe(true);
+    expect(isCovered("governor.floor")).toBe(true);
+    expect(described.find((d) => d.key === "governor.floor")).toMatchObject({ kind: "number", integer: true, min: 0, optional: true, effect: "now", control: "generated" });
+    expect(described).toHaveLength(140);
+  });
+
+  it("describes governance.auto_demote as a generated boolean that defaults to true", () => {
+    expect(described.find((d) => d.key === "governance.auto_demote")).toMatchObject({ kind: "yes-no", default: true, control: "generated" });
+    expect(ConfigSchema.parse({}).governance.auto_demote).toBe(true);
+    expect(issuesAt("governance.auto_demote", "yes")).not.toHaveLength(0);
+    expect(issuesAt("governance.auto_demote", false)).toHaveLength(0);
+  });
+
+  it("describes the promotion gate settings with their defaults and ranges, as generated controls", () => {
+    const keys = ["min_runs", "evidence_completeness", "eval_pass_rate", "within_days"].map((k) => `governance.promotion.${k}`);
+    for (const k of keys) {
+      expect(isCovered(k), k).toBe(true);
+      expect(described.find((d) => d.key === k), k).toMatchObject({ kind: "number", effect: "now", control: "generated" });
+    }
+    expect(described.find((d) => d.key === keys[0])).toMatchObject({ default: 10, integer: true, min: 1, max: 10000 });
+    expect(described.find((d) => d.key === keys[1])).toMatchObject({ default: 0.95, min: 0, max: 1 });
+    expect(described.find((d) => d.key === keys[2])).toMatchObject({ default: 0.9, min: 0, max: 1 });
+    expect(described.find((d) => d.key === keys[3])).toMatchObject({ default: 30, integer: true, min: 1, max: 90 });
+    expect(ConfigSchema.parse({}).governance.promotion).toEqual({ min_runs: 10, evidence_completeness: 0.95, eval_pass_rate: 0.9, within_days: 30 });
+    for (const [k, v] of [["min_runs", 0], ["evidence_completeness", 1.1], ["eval_pass_rate", -0.1], ["within_days", 91]] as const) {
+      expect(issuesAt(`governance.promotion.${k}`, v), `${k}=${v}`).not.toHaveLength(0);
+    }
+  });
+
+  it("takes the promotion owner as an account id only, not set by default, with no generated control", () => {
+    expect(isCovered("governance.owner")).toBe(false);
+    expect(described.find((d) => d.key === "governance.owner")).toBeUndefined();
+    expect(ConfigSchema.parse({}).governance.owner).toBeUndefined();
+    expect(issuesAt("governance.owner", "11111111-1111-4111-8111-111111111111")).toHaveLength(0);
+    for (const v of ["", "someone", 5]) expect(issuesAt("governance.owner", v), String(v)).not.toHaveLength(0);
+  });
+
+  it("keeps a floor of 0, leaves it out when absent, and counts one above concurrency as valid", () => {
+    expect(ConfigSchema.parse({ governor: { floor: 0 } }).governor.floor).toBe(0);
+    expect(ConfigSchema.parse({}).governor.floor).toBeUndefined();
+    expect(ConfigSchema.safeParse({ concurrency: 1, governor: { floor: 99 } }).success).toBe(true);
+    expect(issuesAt("governor.floor", -1)).not.toHaveLength(0);
+    expect(issuesAt("governor.floor", 1.5)).not.toHaveLength(0);
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {

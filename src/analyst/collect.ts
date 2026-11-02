@@ -1,3 +1,4 @@
+import { isTimedOut } from "../errors.js";
 import type { RunSummary, StepRecord } from "../engine/state.js";
 
 /** What the analyst knows about one agent step on one model, over the window. */
@@ -85,7 +86,7 @@ export function collect(runs: RunSummary[], now: Date, o: { days?: number; recen
       // a visit that ended on a router fallback says what the step fell back to, not what it is set to
       if (!h.retried?.models && h.startedAt > s.lastAt) s.lastAt = h.startedAt;
       if (h.ok) s.ok++;
-      if (h.error === "timed out") s.timeouts++;
+      if (isTimedOut(h.error)) s.timeouts++;
       if (h.limited || h.unreachable) s.limited++;
       s.minutes += h.durationMs / 60_000;
       s.inputTokens += h.tokens?.input ?? 0;

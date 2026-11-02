@@ -137,8 +137,17 @@ export const api = {
   saveDefaultLimits: (body) => req("PUT", "/api/users/limits", body),
   saveUserLimits: (id, body) => req("PUT", `/api/users/${enc(id)}/limits`, body),
   deleteUser: (id) => req("DELETE", `/api/users/${enc(id)}`),
+  /** Which components are promoted, promotable or blocked; `kind` and `id` narrow the list (`id` needs `kind`). */
+  promotions: (kind, id) => req("GET", `/api/promotions${kind ? `?kind=${enc(kind)}${id ? `&id=${enc(id)}` : ""}` : ""}`),
+  promote: (kind, id, reportId) => req("POST", "/api/promotions", { kind, id, reportId }),
   audit: (filters) => req("GET", `/api/audit${auditQuery(filters)}`),
-  auditExportUrl: (filters) => `/api/audit/export${auditQuery(filters)}`,
+  autonomy: () => req("GET", "/api/autonomy"),
+  /** The changes of the autonomy levels; `target` ("repos:<id>" or "flows:<name>") reads one component in full. */
+  autonomyHistory: (target) => req("GET", `/api/autonomy/history${target ? `?target=${enc(target)}` : ""}`),
+  promoteAutonomy: (body) => req("POST", "/api/autonomy/promote", body),
+  approveAutonomy: (body) => req("POST", "/api/autonomy/approve", body),
+  demoteAutonomy: (body) => req("POST", "/api/autonomy/demote", body),
+  auditExportUrl:(filters) => `/api/audit/export${auditQuery(filters)}`,
   allRepos: () => req("GET", "/api/admin/repos"),
   setRepoSettings: (id, body) => req("PUT", `/api/admin/repos/${enc(id)}/settings`, body),
   setRepoReady: (id, body) => req("PUT", `/api/admin/repos/${enc(id)}/ready`, body),
@@ -147,6 +156,7 @@ export const api = {
   saveRepoWatcher: (repoId, id, body) => req("PUT", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`, body),
   removeRepoWatcher: (repoId, id) => req("DELETE", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`),
   allCredentials: () => req("GET", "/api/admin/credentials"),
+  adminComponents: () => req("GET", "/api/admin/components"),
   // `stay`: a 401 must not reload the page while a typed idea is kept in memory
   refinement: (stay = false) => req("GET", "/api/refinement", undefined, stay),
   // `stay`: a 401 must not reload the page, so the typed idea is still there

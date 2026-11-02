@@ -52,6 +52,7 @@ export const PAGES = [
   { ...adminPage("all-repos", "All repositories", "access"), scope: true },
   adminPage("credentials", "Credentials", "access"),
   adminPage("audit", "Audit", "access"),
+  adminPage("autonomy", "Autonomy", "access"),
   adminPage("settings", "Settings", "system"),
   adminPage("maintenance", "Maintenance", "system"),
 ];

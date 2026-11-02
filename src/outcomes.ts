@@ -131,6 +131,9 @@ function empty(window: OutcomeWindow): Outcomes {
   };
 }
 
+/** When a run ended (ms); NaN for a run that has not ended. */
+export const endOfRun = (r: RunSummary): number => ((TERMINAL_RUN_STATUSES as readonly string[]).includes(r.status) ? Date.parse(r.finishedAt ?? "") : NaN);
+
 type Facts = ReadonlyMap<string, OutcomeFacts>;
 
 /**
@@ -153,7 +156,7 @@ function compute(runsIn: readonly RunSummary[], facts: Facts, window: OutcomeWin
   const all = (Array.isArray(runsIn) ? runsIn : []).filter((r): r is RunSummary => !!r && typeof r === "object");
   const refinement = all.filter((r) => isRefinementRun(r.source));
   const runs = all.filter((r) => !isRefinementRun(r.source));
-  const end = (r: RunSummary): number => ((TERMINAL_RUN_STATUSES as readonly string[]).includes(r.status) ? Date.parse(r.finishedAt ?? "") : NaN);
+  const end = endOfRun;
   const ended = (r: RunSummary) => Number.isFinite(end(r));
   const inWin = runs.filter((r) => end(r) >= f && end(r) < t);
   const refined = refinement.filter((r) => end(r) >= f && end(r) < t).length;

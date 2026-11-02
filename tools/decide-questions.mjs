@@ -2,7 +2,7 @@
 // Splits a question comment into the questions the Foundry can decide itself (a technical question that has a
 // recommendation) and the ones it must ask. The library functions read no environment. The question functions are pure; the
 // record functions (decideRound, commitPending, abandonPending) read and write `decided.json` in a run folder.
-// `post-plan <run-dir>` (postPlan, main, at the end) is the only part that reads the environment or calls gh.
+// `post-plan <run-dir>` (postPlan, main, at the end) is the only part that reads the environment or calls gh (through the story store).
 // Pass only the question text, not the whole comment: a recommendation runs to the next question or the end.
 // When the input is odd in any way, nothing is decided and every question is asked.
 // DECIDED_HEADING mirrors the one in src/next-step.ts and ui/run-tabs.js (tests keep them equal).
@@ -12,6 +12,16 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
+
+// The story store (dist/stories/store.js) is used by postPlan only. The question functions stay usable when it is not built:
+// postPlan then returns code 1 with this message.
+let storeFor;
+let storeProblem = "";
+try {
+  ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+} catch (e) {
+  storeProblem = String(e?.message || e).split("\n")[0];
+}
 
 export const DECIDED_HEADING = "**Decided by the Foundry**";
 // LIMITS is mirrored in src/engine/questions.ts (a test keeps them equal).
@@ -384,9 +394,11 @@ export function postPlan(runDir, text, env = process.env, gh = defaultGh(env)) {
   if (problem) return { code: 2, out: `post-plan: ${problem}\n` };
 
   try {
+    if (!storeFor) throw new Error(`the story store could not be loaded: ${storeProblem}`);
+    const stories = storeFor(repo).sync(gh);
     const n = Number(issue);
     const body = text.replace(/\n+$/, "");
-    const post = (comment) => gh(["issue", "comment", issue, "--repo", repo, "--body-file", "-"], comment);
+    const post = (comment) => stories.comment(n, comment);
     const d = decideQuestions(text);
     if (env.FACTORY_DECIDE_TECHNICAL !== "1" || !d.decided.length) {
       abandonPending(runDir);
@@ -397,7 +409,7 @@ export function postPlan(runDir, text, env = process.env, gh = defaultGh(env)) {
     const pend = readPending(runDir);
     let view;
     try {
-      view = JSON.parse(gh(["issue", "view", issue, "--repo", repo, "--json", "comments,labels"]));
+      view = JSON.parse(stories.view(n, "comments,labels"));
     } catch (e) {
       if (!(e instanceof SyntaxError)) throw e;
     }

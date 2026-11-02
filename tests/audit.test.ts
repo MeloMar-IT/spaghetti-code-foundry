@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuditEntrySchema, DETAIL_MAX, EVENT_ACTIONS, TARGET_MAX, auditAction, changedKeys, appendAuditLocked, auditPath, prepareAuditLocked, writeAudit, type AuditEvent } from "../src/auth/audit.js";
+import { AuditEntrySchema, DETAIL_MAX, EVENT_ACTIONS, TARGET_MAX, auditAction, changedKeys, appendAuditLocked, auditPath, prepareAuditLocked, scanAudit, writeAudit, type AuditEvent } from "../src/auth/audit.js";
 import { findSession } from "../src/auth/sessions.js";
 import { createUser, setStatus, startSession } from "../src/auth/users.js";
 import { openAppendLocked, StoreError, withAuthLock } from "../src/auth/store.js";
@@ -205,6 +205,26 @@ describe("block lines and stopWork", () => {
     expect(AuditEntrySchema.safeParse({ ...base, action: "block" }).success).toBe(true);
     expect(AuditEntrySchema.safeParse({ ...base, action: "block", stopWork: false }).success).toBe(true);
     expect(AuditEntrySchema.safeParse({ ...base, action: "unblock", stopWork: true }).success).toBe(false);
+  });
+});
+
+describe("scanAudit with actionPrefix and target", () => {
+  const collect = async (filter: Parameters<typeof scanAudit>[0]) => {
+    const out: string[] = [];
+    for await (const r of scanAudit(filter)) out.push(`${r.action}|${r.target ?? ""}`);
+    return out;
+  };
+
+  it("keeps the lines whose action starts with the prefix, and combines with the other filters", async () => {
+    const u = id();
+    add(u, { action: "autonomy-promote-request", result: "ok", target: "flows:a" });
+    add(u, { action: "settings-change", result: "ok", target: "settings" });
+    add(u, { action: "autonomy-demote", result: "ok", target: "repos:r" });
+    expect(await collect({ actionPrefix: "autonomy-" })).toEqual(["autonomy-promote-request|flows:a", "autonomy-demote|repos:r"]);
+    expect(await collect({ actionPrefix: "autonomy-", target: "repos:r" })).toEqual(["autonomy-demote|repos:r"]);
+    expect(await collect({ actionPrefix: "autonomy-", action: "autonomy-demote" })).toEqual(["autonomy-demote|repos:r"]);
+    expect(await collect({ actionPrefix: "autonomy-", from: Date.now() + 60_000 })).toEqual([]);
+    expect(await collect({ actionPrefix: "nothing-" })).toEqual([]);
   });
 });
 

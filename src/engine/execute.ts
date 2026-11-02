@@ -1,5 +1,5 @@
-import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { mkdirSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { Config } from "../config.js";
 import { deliveryAfterStep, deliveryKeyEnv } from "../delivery/write.js";
 import { FACTORY_HOME } from "../home.js";
@@ -13,8 +13,11 @@ import { isRefinementRun } from "../auth/run-owner.js";
 import { KEY_UNREADABLE } from "../auth/repos.js";
 import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, SIGN_IN_NOT_REMOVED, TOKEN_REFUSED_REASON, TOKEN_REFUSED_RUN, grantPush, keyRefused, pushAllowEnv, stepMaxOutput, tokenRefused } from "./guards.js";
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
-import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess } from "./repo-access.js";
-import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess, wantsRepoAccess } from "./repo-access.js";
+import { AUTONOMY_DENIED, AUTONOMY_POLICY, autonomyOfRun, autonomyRefusal, autonomyRefuses, type AutonomyAction } from "../governance/autonomy.js";
+import { ownDir, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
+import { SLOT_WAITS_DIR, slotWaitLimitMs, waitedLine, type SlotWaitWatch } from "../steps/slot-waits.js";
+import { isTimedOut } from "../errors.js";
 import { stepContextUncited } from "./context-index.js";
 import { claimAfterResolve } from "./release-claim.js";
 import { readDecidedQuestions } from "./questions.js";
@@ -32,7 +35,7 @@ import { boundEnv, capEnvValue, labelOutput, renderTrusted, stepTypesOf, trustOf
 /** Shell commands may only template trusted values; task and outputs go via env. */
 export const SHELL_TEMPLATE_ROOTS = ["vars", "workdir", "run"] as const;
 export const DEFAULT_PERMISSION_MODE = "acceptEdits";
-const MAX_FLOW_DEPTH = 5;
+export const MAX_FLOW_DEPTH = 5;
 
 export type StepContext = TemplateContext & {
   vars: Record<string, string>;
@@ -109,7 +112,7 @@ export interface ApprovalDecision {
   note?: string;
 }
 
-export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held"> & {
+export type StepResult = Pick<StepRecord, "ok" | "output" | "error" | "exitCode" | "sessionId" | "codexHome" | "costUsd" | "agent" | "tokens" | "limited" | "denied" | "unreachable" | "retried" | "tools" | "contextTokens" | "skills" | "skillCatalogue" | "held" | "slotWaitMs"> & {
   /** A shell step printed more than it kept. Not stored in the record: it shows as the `oversize` signal of its label. */
   oversize?: boolean;
 };
@@ -128,7 +131,8 @@ export function ranOrder(history: Pick<StepRecord, "id" | "parent">[], prefix: s
 export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o: { bound?: (env: Record<string, string>) => Record<string, string> } = {}): Record<string, string> {
   const hotfix = engine.hotfix ?? "off";
   // Never inherited from the server's own environment: only pushAllowEnv() can set it, for one step.
-  const env: Record<string, string> = { ...engine.baseEnv, FACTORY_HOTFIX: hotfix, FACTORY_PUSH_ALLOW: "" };
+  // FACTORY_NO_PUSH likewise: only the run's own level (in baseEnv) sets it.
+  const env: Record<string, string> = { FACTORY_NO_PUSH: "", ...engine.baseEnv, FACTORY_HOTFIX: hotfix, FACTORY_PUSH_ALLOW: "" };
   if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix));
   for (const [k, v] of Object.entries(scope.ctx.vars)) env[varEnvName(k)] = v;
   for (const [id, s] of Object.entries(scope.ctx.steps)) env[outputEnvName(id)] = capEnvValue(String(s.output ?? ""), `steps.${id}.output`);
@@ -136,6 +140,8 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   for (const id of Object.keys(scope.ctx.steps)) if (ran[id]) env[ranEnvName(id)] = String(ran[id]);
   // Every consumer gets untrusted values scrubbed (secrets and configured patterns) before the step's own credentials are
   // added by the callers. An agent step may also quarantine them (`bound`). The SCF_ aliases get the same values.
+  // A story handed to the planner for timing out must reach a person with its questions: the Foundry does not decide them itself.
+  if (scope.ctx.steps.implement?.too_big) env.FACTORY_DECIDE_TECHNICAL = "0";
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
   // The trusted public key comes only from the engine, never from the server's own environment: a missing value is blank.
   const keyEnv = { FACTORY_DELIVERY_PUBLIC_KEY: "", ...deliveryKeyEnv((engine.deliverySettings ?? (() => engine.config?.delivery))(), process.env.FACTORY_HOME ?? FACTORY_HOME) };
@@ -152,7 +158,7 @@ export function historySummary(summary: RunSummary): string {
 export function outputLabel(step: Step, scope: Scope, res: StepResult): StepRecord["label"] {
   const path = `steps.${step.id}.output`;
   const oversize = step.type === "shell" && res.oversize === true;
-  return labelOutput(res.output, { path, kind: trustOf(path, stepTypesOf(scope.flow)).kind ?? "log", step: step.id, stepType: step.type }, { timedOut: res.error === "timed out", oversize });
+  return labelOutput(res.output, { path, kind: trustOf(path, stepTypesOf(scope.flow)).kind ?? "log", step: step.id, stepType: step.type }, { timedOut: isTimedOut(res.error), oversize });
 }
 
 /** Store a finished step in history and in the scope's template context. */
@@ -212,7 +218,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       repository: repositoryFact(scope.ctx.vars),
       step: step.id,
       outputBytes: step.type === "shell" && meter?.printedBytes !== undefined ? meter.printedBytes : Buffer.byteLength(res.output ?? "", "utf8"),
-      elapsedMs: Math.max(0, Math.round(measured ? (meter?.ms ?? 0) : rec.durationMs)),
+      // the wait for a test slot does not count against a step's limit (see slot-waits.ts)
+      elapsedMs: Math.max(0, Math.round(measured ? (meter?.ms ?? 0) - (meter?.slotWaitMs ?? 0) : rec.durationMs)),
       stepCostUsd: res.costUsd ?? 0,
       runCostUsd: engine.summary.totalCostUsd,
       dailyCostUsd: daily,
@@ -232,9 +239,22 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     scope.ctx.steps[step.id]!.error = rec.error;
     engine.save();
   }
+  // A push or pull request the autonomy level refused (noted by the hook or a tool) fails the step, also when the step swallowed the exit code.
+  const logged = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
+  const refusedLine = logged.find((p) => p.refused);
+  const autonomy = refusedLine ? autonomyStop(engine, identity, refusedLine.refused === "push" ? "push" : "pull-request") : undefined;
+  if (autonomy) {
+    rec.error = autonomy.error;
+    rec.ok = false;
+    delete rec.held;
+    delete rec.limited;
+    scope.ctx.steps[step.id]!.ok = false;
+    scope.ctx.steps[step.id]!.error = rec.error;
+    engine.save();
+  }
   engine.evidence?.stepEnded(rec);
   if (!scope.prefix) deliveryAfterStep(engine);
-  const pushed = drainPushLog(pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit));
+  const pushed = logged.filter((p) => !p.refused); // nothing was pushed for a refused line
   engine.policy?.pushes(identity, pushed);
   for (const p of pushed) {
     emitLiveTelemetry("delivery", "delivery.push_attempted", {
@@ -244,6 +264,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
       ...(GitIdentitySchema.shape.branch.safeParse(p.branch).success ? { branch: p.branch } : {}),
     });
   }
+  if (res.slotWaitMs) engine.log(`    · ${waitedLine(res.slotWaitMs)}`);
   const secs =(rec.durationMs / 1000).toFixed(1);
   const tok = res.tokens ? `, ${Math.round((res.tokens.input + res.tokens.output) / 1000)}k tok` : "";
   engine.log(`${rec.ok ? "✔" : "✘"} ${rec.id} (${secs}s${res.costUsd ? `, $${res.costUsd.toFixed(4)}` : ""}${tok})${rec.error ? ` — ${rec.error}` : ""}`);
@@ -257,7 +278,8 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
  */
 export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">, visit: number): string | undefined {
   const hook = engine.config.protected_branches.length > 0 || engine.config.secret_scan;
-  if (!engine.policy && !(telemetryEnabled() && hook)) return undefined;
+  const noPush = engine.summary ? autonomyRefuses(autonomyOfRun(engine.summary), "push") : false;
+  if (!engine.policy && !noPush && !(telemetryEnabled() && hook)) return undefined;
   const file = pushLogFile(engine.summary.runDir, scope.prefix + step.id, visit);
   try {
     mkdirSync(dirname(file), { recursive: true });
@@ -265,6 +287,25 @@ export function pushLogFor(engine: Engine, scope: Scope, step: Pick<Step, "id">,
     return undefined; // pushes are then not observed; the step runs as before
   }
   return file;
+}
+
+/**
+ * The folder where test-slot records the waits of this try of a step (FACTORY_TEST_SLOT_WAIT_DIR), made fresh,
+ * with the most time that may be left out of the step's limit. Undefined when the folder can't be made: the step then
+ * runs as before, its limit counting every second.
+ */
+export function slotWaitsFor(engine: Pick<Engine, "summary">, logFile: string): SlotWaitWatch | undefined {
+  const root = join(engine.summary.runDir, SLOT_WAITS_DIR);
+  const dir = join(root, basename(logFile).replace(/\.log$/, ""));
+  try {
+    mkdirSync(root, { recursive: true });
+    ownDir(root);
+    rmSync(dir, { recursive: true, force: true });
+    ownDir(dir);
+  } catch {
+    return undefined;
+  }
+  return { dir, maxExtraMs: slotWaitLimitMs() };
 }
 
 /** A visit of a step begins: the evidence event, then the policy question for `step.before`. Every step visit passes here. */
@@ -279,6 +320,20 @@ export function refuseByPolicy(engine: Engine, step: StepIdentity, denied: Polic
   if (denied.denial) engine.evidence?.stepDenied(step, denied.denial);
   engine.log(`    ! ${denied.reason}`);
   return { ok: false, output: denied.reason, error: denied.reason };
+}
+
+/**
+ * The autonomy level of the run (fixed at its start, so a resume keeps it) does not allow this action: the step fails with a
+ * fixed sentence and the denial goes into the evidence. Undefined when the action is allowed. Unlike `refuseByPolicy` it does not
+ * stop the run: the flow's own `on_failure` path runs.
+ */
+export function autonomyStop(engine: Pick<Engine, "summary" | "log" | "evidence">, step: StepIdentity, action: AutonomyAction): StepResult | undefined {
+  const level = autonomyOfRun(engine.summary);
+  if (!autonomyRefuses(level, action)) return undefined;
+  const reason = autonomyRefusal(level, action);
+  engine.evidence?.stepDenied(step, { kind: "policy", policy: AUTONOMY_POLICY, reasonCode: AUTONOMY_DENIED });
+  engine.log(`    ! ${reason}`);
+  return { ok: false, output: reason, error: reason };
 }
 
 /** An enforced policy refused the run itself (run.start, run.complete): logged and recorded as a step.denied without a step. Returns the reason. */
@@ -310,6 +365,11 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       return runAgentStep(step, scope, engine, logFile, timeoutMs, meter);
 
     case "shell": {
+      // A step that works in the repository with a sign-in is refused below plan-only, before any credential is looked up.
+      if (wantsRepoAccess(step, scope.depth, scope.flow.name, engine.summary.source)) {
+        const stopped = autonomyStop(engine, stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1), "repo-access");
+        if (stopped) return stopped;
+      }
       const image = shellImage(scope, engine);
       if (step.sandbox && !image) engine.log(`    ⚠ ${step.id}: not sandboxed (no sandbox.docker_image configured)`);
       const env = stepEnv(scope, engine, step);
@@ -397,11 +457,16 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
             stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: engine.config.sandbox.user_read }),
           );
         }
+        // the waits of test-slot are recorded for the time limit (a container does not see the folder)
+        const slotWaits = step.sandbox && image ? undefined : slotWaitsFor(engine, logFile);
+        if (slotWaits) stepEnvVars.FACTORY_TEST_SLOT_WAIT_DIR = slotWaits.dir;
         r = await runShell({
+          slotWaits,
           command: renderTrusted(step.run, ctx, stepTypesOf(scope.flow), SHELL_TEMPLATE_ROOTS),
           cwd: engine.summary.workdir!,
           env: stepEnvVars,
           sandboxProfile: sandboxProfileText,
+          priority: engine.config.governor.priority,
           cleanEnv: short,
           logFile,
           timeoutMs,
@@ -440,9 +505,9 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
         const expired = appExpires !== undefined && Date.now() >= appExpires;
         const reason = keyAccess ? KEY_REFUSED_RUN : access?.kind === "app" ? (expired ? APP_TOKEN_EXPIRED : APP_REFUSED_RUN) : refinement ? TOKEN_REFUSED_REASON : TOKEN_REFUSED_RUN;
         engine.accessFailed = true;
-        return { ok: false, output: r.output, error: reason, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}) };
+        return { ok: false, output: r.output, error: reason, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
       }
-      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}) };
+      return { ok: r.ok, output: r.output, error: r.error, exitCode: r.exitCode, ...(r.truncated ? { oversize: true } : {}), ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}) };
     }
 
     case "parallel": {

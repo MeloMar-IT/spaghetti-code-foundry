@@ -397,6 +397,35 @@ export const ConfigSchema = z
     secret_scan: z.boolean().default(true),
     /** The redesigned pages (still being built); off by default. */
     ui: z.object({ redesign: z.boolean().default(false) }).strict().prefault({}),
+    /**
+     * Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy.
+     * `floor`: the lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded.
+     * Not set: half of `concurrency`, at least 2. Above `concurrency` it counts as `concurrency` (clamped when used, so lowering `concurrency` never makes the config invalid).
+     */
+    governor: z.object({ priority: z.enum(["normal", "low", "background"]).default("low"), floor: z.number().int().min(0).optional() }).strict().prefault({}),
+    /**
+     * Governance (#645): what a component must show before it earns the next autonomy level. `min_runs`: the fewest runs in the
+     * window; `evidence_completeness` and `eval_pass_rate`: the lowest shares; `within_days`: the window. Nothing is enforced by these.
+     * `owner` (#646): the id of the admin account that approves promotions; not set (or no longer an active admin): the first active admin.
+     * `auto_demote` (#647): the monitor lowers a repository or flow by one level for a new critical finding (or a new major one of
+     * policy-service-failure or evidence-finalization) that names it; false turns that off.
+     */
+    governance: z
+      .object({
+        owner: z.uuid().optional(),
+        auto_demote: z.boolean().default(true),
+        promotion: z
+          .object({
+            min_runs: z.number().int().min(1).max(10_000).default(10),
+            evidence_completeness: z.number().min(0).max(1).default(0.95),
+            eval_pass_rate: z.number().min(0).max(1).default(0.9),
+            within_days: z.number().int().min(1).max(90).default(30),
+          })
+          .strict()
+          .prefault({}),
+      })
+      .strict()
+      .prefault({}),
     notify: z
       .object({
         macos: z.boolean().default(true),
@@ -698,6 +727,17 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /**
+     * Run start check (#740): does a run use only promoted versions of its flow, sub-flows, policy packs, model routes and tool
+     * profile (the rule of `scf promote`)? `off`: no check. `warn`: log what is not promoted. `on`: refuse the run;
+     * `scf run --local-test` is always allowed.
+     */
+    promotion: z.object({ enforce: z.enum(["off", "warn", "on"]).default("warn") }).strict().prefault({}),
+    /**
+     * Retries by themselves: how often a story of a watcher is run again when a step ran out of time (per story, over all
+     * runs of its issue). 0 turns it off. The retry waits for a free slot, and a step with its own failure path is not retried.
+     */
+    auto_retry: z.object({ timeouts: z.number().int().min(0).default(2) }).strict().prefault({}),
     /** Delivery contracts written at pull-request creation: the signing key and what a contract requires (installation-wide, then per repository). Read from issue 3 on. */
     delivery: z
       .object({

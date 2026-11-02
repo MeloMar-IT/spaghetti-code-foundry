@@ -1,7 +1,10 @@
-import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { accessSync, constants, createWriteStream, statSync } from "node:fs";
+import { getPriority } from "node:os";
+import { resolve as resolvePath } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { anyPidAlive, ProcessTracker, processTableAsync, signalRows, type ProcRow } from "./proc-tree.js";
+import { readSlotWaits, slotClock, waitedLine, type SlotWaitWatch } from "./slot-waits.js";
 import { combineRedactors, liveRedactor, makeRedactor, redactStream, requireRedaction, type Redactor } from "../credentials/redact.js";
 
 export interface ProcessResult {
@@ -10,12 +13,16 @@ export interface ProcessResult {
   stderr: string;
   timedOut: boolean;
   aborted: boolean;
+  /** The time the process waited for a test slot (see slot-waits.ts). Set only when it waited. */
+  slotWait?: { waitedMs: number; countedMs: number; capped: boolean };
 }
 
 /** Filled by runProcess whenever it settles, also when it rejects: how long the process ran and how many bytes it printed. */
 export interface ProcessMeter {
   ms?: number;
   printedBytes?: number;
+  /** The time that did not count against the time limit (waits for a test slot, at most the bound). */
+  slotWaitMs?: number;
 }
 
 export interface ProcessOptions {
@@ -43,13 +50,98 @@ export interface ProcessOptions {
   cleanEnv?: boolean;
   /** Start the command inside `/usr/bin/sandbox-exec` with this profile (a shell step of a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
+  /** Where test-slot records its waits: the time limit does not count them (at most `maxExtraMs`). */
+  slotWaits?: SlotWaitWatch;
+  /** Start the command (and so its children) at this priority, behind `nice` and `taskpolicy` outside any sandbox. Unset or "normal": as it is. */
+  priority?: RunPriority;
 }
 
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+export const NICE = "/usr/bin/nice";
+export const TASKPOLICY = "/usr/sbin/taskpolicy";
 
-/** What is really started: the command itself, or the command inside the given sandbox profile. */
-export function spawnTarget(cmd: string, args: string[], profile?: string): { cmd: string; args: string[] } {
-  return profile === undefined ? { cmd, args } : { cmd: SANDBOX_EXEC, args: ["-p", profile, cmd, ...args] };
+/** How much of the machine a run process may take (setting `governor.priority`). */
+export type RunPriority = "normal" | "low" | "background";
+
+/** What the priority wrapper needs to know of this machine; tests pass their own. */
+export interface PriorityMachine {
+  nice: boolean;
+  taskpolicy: boolean;
+  /** Nice value of this process. */
+  current: number;
+}
+
+const PRIORITIES = {
+  low: { nice: 5, qos: "utility" },
+  background: { nice: 15, qos: "background" },
+} as const;
+
+const toolTrials = new Map<string, Promise<boolean>>();
+
+/** Whether a tool works here: a trial run, once per process. A tool that is missing, or refuses its flag, counts as not working. */
+function toolWorks(tool: string, args: string[]): Promise<boolean> {
+  let trial = toolTrials.get(tool);
+  if (!trial) {
+    trial = new Promise<boolean>((done) => {
+      try {
+        execFile(tool, args, { timeout: 10_000 }, (err) => done(!err)).on("error", () => done(false));
+      } catch {
+        done(false);
+      }
+    });
+    toolTrials.set(tool, trial);
+  }
+  return trial;
+}
+
+function niceValue(): number {
+  try {
+    return getPriority(0);
+  } catch {
+    return 0;
+  }
+}
+
+/** Which wrapper tools work here (trial runs without blocking the event loop, cached) and the nice value of this process. */
+export async function priorityMachine(): Promise<PriorityMachine> {
+  const [nice, taskpolicy] = await Promise.all([toolWorks(NICE, ["-n", "1", "/usr/bin/true"]), toolWorks(TASKPOLICY, ["-c", "utility", "/usr/bin/true"])]);
+  return { nice, taskpolicy, current: niceValue() };
+}
+
+/** The command words in front of the real command for this priority; none for normal or when no tool works. */
+export function priorityPrefix(priority: RunPriority | undefined, machine: PriorityMachine): string[] {
+  if (!priority || priority === "normal") return [];
+  const want = PRIORITIES[priority];
+  const prefix: string[] = [];
+  // nice adds to the current value; the target is absolute and a priority is never raised
+  const delta = want.nice - machine.current;
+  if (machine.nice && delta > 0) prefix.push(NICE, "-n", String(delta));
+  if (machine.taskpolicy) prefix.push(TASKPOLICY, "-c", want.qos);
+  return prefix;
+}
+
+/**
+ * What is really started: the command itself, or the command inside the given sandbox profile,
+ * and with a priority behind the priority wrappers (outside the sandbox: `nice … taskpolicy … sandbox-exec … cmd`).
+ */
+export function spawnTarget(cmd: string, args: string[], profile?: string, priority?: RunPriority, machine?: PriorityMachine): { cmd: string; args: string[] } {
+  const inner = profile === undefined ? [cmd, ...args] : [SANDBOX_EXEC, "-p", profile, cmd, ...args];
+  const words = [...(machine ? priorityPrefix(priority, machine) : []), ...inner];
+  return { cmd: words[0]!, args: words.slice(1) };
+}
+
+/** Whether `cmd` can be found and executed the way spawn looks it up (a path with `/` from the cwd, else the PATH folders; no PATH means /usr/bin:/bin). */
+function canStart(cmd: string, pathVar: string | undefined, cwd: string): boolean {
+  const ok = (f: string) => {
+    try {
+      accessSync(f, constants.X_OK);
+      return statSync(f).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (cmd.includes("/")) return ok(resolvePath(cwd, cmd));
+  return (pathVar ?? "/usr/bin:/bin").split(":").some((dir) => ok(resolvePath(cwd, dir || ".", cmd)));
 }
 
 /**
@@ -100,12 +192,28 @@ const groupAlive = (pid: number): boolean => {
   }
 };
 
+/** The priority wrapper could not be started at all (the real command never ran), so the command may be started without it. */
+class WrapperStartError extends Error {}
+
 /** Spawn a process, tee stdout/stderr into a log file, and collect output. */
-export function runProcess(cmd: string, args: string[], opts: ProcessOptions): Promise<ProcessResult> {
+export async function runProcess(cmd: string, args: string[], opts: ProcessOptions): Promise<ProcessResult> {
+  let machine: PriorityMachine | undefined;
+  // A program that cannot be found starts unwrapped, so it fails as it always did (the wrapper would exit 127 instead).
+  if (opts.priority && opts.priority !== "normal" && canStart(cmd, mergeEnv(opts.env, opts.cleanEnv).PATH, opts.cwd)) machine = await priorityMachine();
+  try {
+    return await startProcess(cmd, args, opts, machine);
+  } catch (e) {
+    if (e instanceof WrapperStartError) return startProcess(cmd, args, opts, undefined); // the sandbox stays; nothing of the command ran yet
+    throw e;
+  }
+}
+
+function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine: PriorityMachine | undefined): Promise<ProcessResult> {
   return new Promise((resolve, reject) => {
     if (opts.meter) {
       opts.meter.ms = undefined;
       opts.meter.printedBytes = undefined;
+      opts.meter.slotWaitMs = undefined;
     }
     // fail before anything starts when the stored credentials cannot be read
     let current: () => Redactor;
@@ -124,7 +232,8 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     const log = createWriteStream(opts.logFile, { flags: "a" });
     let logError: NodeJS.ErrnoException | undefined;
     const grouped = Boolean(opts.ownGroup || opts.groupKill);
-    const target = spawnTarget(cmd, args, opts.sandboxProfile);
+    const wrapped = Boolean(machine && priorityPrefix(opts.priority, machine).length);
+    const target = spawnTarget(cmd, args, opts.sandboxProfile, opts.priority, machine);
     const child = spawn(target.cmd, target.args, {
       cwd: opts.cwd,
       env: mergeEnv(opts.env, opts.cleanEnv),
@@ -230,12 +339,24 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
     if (opts.signal?.aborted) onAbort();
     else opts.signal?.addEventListener("abort", onAbort, { once: true });
 
-    const timer = opts.timeoutMs
-      ? setTimeout(() => {
-          timedOut = true;
-          kill();
-        }, opts.timeoutMs)
-      : undefined;
+    // The limit is looked at when it is reached: time spent waiting for a test slot moves it back (never past the bound).
+    const clockNow = (limitMs: number) => {
+      const watch = opts.slotWaits!;
+      const now = Date.now();
+      return slotClock(readSlotWaits(watch.dir, now), { began, limitMs, maxExtraMs: watch.maxExtraMs, now });
+    };
+    let timer: NodeJS.Timeout | undefined;
+    const atDeadline = () => {
+      if (killedAt) return;
+      const next = opts.slotWaits ? clockNow(opts.timeoutMs!).nextCheckMs : 0;
+      if (next > 0) {
+        timer = setTimeout(atDeadline, next);
+        return;
+      }
+      timedOut = true;
+      kill();
+    };
+    if (opts.timeoutMs) timer = setTimeout(atDeadline, opts.timeoutMs);
 
     // One filter for the combined log: halves of a secret that arrive on stdout and stderr must not join unseen.
     const logFilter = redactStream((s) => void log.write(s), current);
@@ -279,6 +400,7 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       cleanup();
       measure();
       log.end();
+      if (wrapped && !child.pid) return reject(new WrapperStartError(err.message));
       reject(new Error(`failed to start "${cmd}": ${err.message}`));
     });
     child.on("close", (code) => {
@@ -296,13 +418,22 @@ export function runProcess(cmd: string, args: string[], opts: ProcessOptions): P
       logFilter.end();
       if (opts.onLine && pending.trim()) opts.onLine(pending);
       measure();
+      let slotWait: ProcessResult["slotWait"];
+      if (opts.slotWaits) {
+        const c = clockNow(Infinity);
+        if (c.waitedMs > 0) {
+          slotWait = { waitedMs: c.waitedMs, countedMs: c.countedMs, capped: c.waitedMs > opts.slotWaits.maxExtraMs };
+          if (opts.meter) opts.meter.slotWaitMs = c.countedMs;
+          if (!logError) log.write(`${waitedLine(c.waitedMs)}\n`);
+        }
+      }
       if (logError) {
         log.end();
         return reject(new Error(`could not write the log file (${logError.code ?? "error"})`));
       }
       log.end((err?: Error | null) => {
         if (err || logError) return reject(new Error(`could not write the log file (${(err as NodeJS.ErrnoException | null | undefined)?.code ?? logError?.code ?? "error"})`));
-        resolve({ exitCode: code, stdout, stderr, timedOut, aborted });
+        resolve({ exitCode: code, stdout, stderr, timedOut, aborted, ...(slotWait ? { slotWait } : {}) });
       });
     };
 

@@ -136,11 +136,13 @@ in `src/github.ts`; the store reuses them.
   throws. The body of `setBody` goes on stdin.
 - **The status marker is unchanged.** `upsertStatusComment` still finds the Foundry's comment by
   `<!-- claude-factory status -->`; `BOT_MARKER`, `BOT_MARKERS` and `STATUS_MARKER` are not changed.
-- **The guard.** `tests/story-store-guard.test.ts` scans `src/`, `blocks/`, `tools/` and
-  `scripts/build-flows.mjs` for story calls (`gh issue`, `gh pr`, `gh api` on issues, pulls, labels,
-  check runs, or the issue-state GraphQL). A file outside `src/stories/github-store.ts` and `src/github.ts`
-  must be on the allowlist in that test. The allowlist can only shrink: a listed file with no story call
-  left fails the test. Move a file to the store, then take it off the list.
+- **Every story call goes through the store.** The guard, `tests/story-store-guard.test.ts`, scans `src/`,
+  `blocks/`, `tools/` and `scripts/build-flows.mjs` for story calls (`gh issue`, `gh pr`, `gh api` on issues,
+  pulls, labels, check runs, or the issue-state GraphQL). Outside `src/stories/github-store.ts` and
+  `src/github.ts` there is no story call: the allowlist in that test is empty (#739). The helper scripts in
+  `tools/` (`create-split`, `split-family`, `post-questions`, `decide-questions.mjs`, `daily-branch`,
+  `issue-digest`) load `dist/stories/store.js` and use `storeFor(repo).sync(gh)`, with the same `gh` runner
+  and `FACTORY_GH_BIN` as before. A new story call goes into the store, never into a file.
 - **A caller that owns its process.** `openChangeWith` takes a runner: the store builds the `gh` arguments
   and the broker starts the process, with its exact environment, pinned secrets and limits.
 - **Flow steps use `tools/story`.** The built-in blocks that read or write a run's story call
@@ -275,7 +277,11 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   (a decision of a policy pack at a boundary, see "Policy hooks in observe mode"), and `repo.operation` from
   version 4 (one repository operation of the broker, see "Repository broker"), and `context.bundled` from
   version 5 (the context bundle of the run was written, or making it failed, see "Writing a run's bundle"),
-  and from version 6 the reason code `context.uncited` (see "Policy hooks in observe mode").
+  and from version 6 the reason code `context.uncited` (see "Policy hooks in observe mode"), and from
+  version 8 the optional `localTest: true` on `run.created` (a run started with `--local-test`; the
+  schema accepts only `true`, and the migration 7 → 8 only sets the version), and from version 10 the
+  event `run.autonomy` (the level of the run, the repository's level when there is one, and the flow's;
+  see "Autonomy levels"). `run.autonomy` comes right after `run.created`.
   `prevHash` and `hash` come together and are for the hash chain.
 - **`RunEvidence`**: `runs/<run-id>/evidence.json`, the manifest of a run that ended (`succeeded`,
   `failed` or `cancelled`): the flow and its hash, the event file with its count and last hash, base
@@ -293,6 +299,59 @@ see "The evidence stream" below). Both are extra files in the run folder, so `ru
   steps in `EVENT_MIGRATIONS` or `MANIFEST_MIGRATIONS` and is then checked. A new field means a new
   version and a step. `readRunEvidence` gives `absent` for a run without a manifest (every run made
   before this), and never throws.
+
+### Autonomy levels
+
+`src/governance/` keeps how far each repository and each flow may go (#643). The module split is:
+
+- `autonomy.ts` is pure: the four levels in order (`observe`, `plan-only`, `guarded-write`,
+  `delivery-handoff`), `lowerLevel`, the run's `RunAutonomy` schema, `autonomyOfRun` (a run without the field
+  reads as `delivery-handoff`, an invalid one as `observe`) and the log line. It imports only zod.
+- `autonomy-store.ts` reads and writes `autonomy.json`: one map of repository ids and one of flow names, each
+  entry with a level, `since`, `by` and an optional reason. Lookups use `Object.hasOwn`, so keys such as
+  `__proto__` are safe. A missing file is an empty store. A file that is a link, larger than 1 MiB, not JSON or
+  not valid is a `StoreError`. A write runs under the data-folder lock (`withAuthLock`), validates the whole
+  store and its size first, then replaces the file with one `writeAtomic` (a temporary file and one rename).
+  A refused write leaves the file as it was.
+- `run-autonomy.ts` works out a run's level when it starts and records it. It never throws. The evidence
+  event is written before the log lines, so a failing logger cannot drop it.
+
+The defaults are in `autonomy.ts`: no entry is `delivery-handoff`, and a repository connected through the API
+gets `guarded-write`. `addRepo` writes that entry through its `beforeSave` hook, under its own lock, before it
+saves `repos.json`; the API passes it in `api-repos.ts`, so `auth/` does not import the store. A repository of an
+existing install (moved from `config.yaml`) gets no entry.
+
+The level is read once per run, when `runFlow` starts, and recorded once: a resume does not read it again. If a
+store cannot be read at that point, the run counts as `observe` (the fail-closed choice), and the log says so.
+The level is enforced where each action starts, not in the prompt:
+
+- `autonomy-rules.ts` holds the rule table (which action needs which level) and `pullRequestRefusal`. It imports only
+  `node:` modules, because `tools/story` and `tools/daily-branch` load it from `dist/` inside a container.
+- `agents/run.ts` refuses a writing agent step before `agent.write` is asked, so no agent starts.
+  `engine/execute.ts` refuses a `repo_access` shell step before any credential is looked up. `autonomyStop` writes
+  the `step.denied` event with `autonomy.denied` and returns the step failure; it does not stop the run.
+- `repo-broker.ts` checks each operation against the same table (`status` is always allowed).
+- A run below `delivery-handoff` gets `FACTORY_NO_PUSH` set to its level. `guards.ts` installs the pre-push hook for
+  it, and the hook refuses every push, deletes included, and writes a refusal line to the push log.
+  `recordStep` reads that log after the step and fails the step, so `git push || true` cannot hide a refusal.
+- For Docker steps, the hook folder is mounted read-only and the push-log folder writable, only when the flag is
+  set. Agent sandboxes keep the push-log folder writable, also in read-only sessions.
+
+The promotion gate (#645) is in `src/governance/gate.ts`. `promotionGate` gets its data through `GateDeps`
+(the runs, the eval coverage, the findings and the monitor's last check), so the file imports nothing from
+`src/server/`. The route `api-autonomy.ts` builds the deps once per request: runs are narrowed by repository or
+flow first, read through the shared outcome facts cache, and the loop yields to the event loop between runs.
+Each check returns a value and a threshold, or a plain reason when its data is missing; `passed` is the AND of the
+four evidence checks, and `approval` is always "pending" until part 4 fills it in.
+
+Automatic demotion (#647) is in `src/governance/auto-demote.ts`. The monitor calls it after `mergeFindings` has
+saved the findings: `markAutoDemotions` marks only the findings that are new in this check (`fresh`), and only
+those that demote (`AUTO_DEMOTE_DETECTORS` names the `major` detectors; any `critical` one counts). Each marked
+finding carries `autoDemote.left`, the keys still to lower (`repos:<id>` or `flows:<name>`). `runAutoDemotions`
+takes one key out of `left` and saves the findings before it calls `demoteLevel` with `by: "monitor"`. So a crash
+loses one demotion and never repeats one, and a failure on one record leaves the others alone. The findings
+that carry an open `autoDemote` are kept when the 500-finding cap evicts. `Monitor.applyAutoDemotions` runs after
+the save, never throws, and does not wait for the autonomy lock. Turned off, it empties `left` and saves.
 
 ### Policy contracts
 
@@ -371,6 +430,13 @@ is the only place the engine calls `src/policy/`; `src/engine/policy-store.ts` h
   every visit of a step through `beginStep` and `recordStep`, and `repository.access` for a step in the
   repository's checkout; `agents/run.ts` asks `agent.write` before a write-capable agent step.
   Built-in and custom flows take the same path.
+- **Packs are a snapshot (new run).** `loadRunPacks(summary, config)` reads the packs once, before
+  `runPolicy` in `runFlow`. `runPolicy` takes that list (`preloaded`) and looks each id up in it; an id that
+  is not in the list becomes `policy.unavailable`, so a mandatory pack fails closed and is never read a second
+  time. The promotion gate takes the same list (`GateInput.policyPacks`) and iterates it without the baseline,
+  so it checks exactly the packs that run. Both sides build the ids with `runPackIds`, so they cannot drift.
+  A resumed run (`resumeRun`) has no promotion check and reads the packs again, so a tightened mandatory pack
+  stays in force.
 - **Pushes.** `push` is asked once for each push a step makes. The pre-push hook (`guards.ts`) appends
   `<branch>\t<remote url>\t<secrets found>\t<identity>` to the file in `FACTORY_PUSH_LOG`. The count is
   empty when the scan did not finish, and the identity is `1` or `0` (whether git can find a committer
@@ -1143,6 +1209,9 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     or changed gives `workflow-changed`. A required check that is missing or not `success` gives
     `required-check-failed`. With `--events`, a chain that fails the library's checks, or whose event at
     `count - 1` lacks `evidence.terminalHash`, gives `evidence-unverified` with `evidence-head-mismatch`.
+    A valid chain of this run that holds `localTest` gives `evidence-unverified` with the fault `local-test`
+    (`deliveryEvidenceProblem` in `src/delivery/contract.ts`, the same rule as the Foundry's own check).
+    A broken chain that holds the marker still gives `evidence-head-mismatch`.
     With `--comment`, a digest that differs gives `superseded`, and an evidence hash that differs from
     `evidence.terminalHash` gives `evidence-unverified`.
   - **Evidence chain (`--events`, #672).** The script reads only the first `count` lines of the events
@@ -1150,7 +1219,9 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     JSON object; the version is upgraded as in `upgradeEvidence` (a version above the script's pinned
     `EVIDENCE_EVENT_VERSION` is refused); the full `EvidenceEventSchema` holds, with every refinement;
     `seq`, `runId` and a unique `id` are right; the hash and `prevHash` link and the content hash match.
-    Lines after `count` do not matter. The schema copy is one marked section of the script, and
+    Lines after `count` do not matter. The script reads the marker from the same chain: `readChain` sets
+    `localTest` only after a line has fully verified, and `checkEvidence` stops with `local-test` after the
+    terminal-hash comparison. The version is 1.1.0, because a verdict changed. The schema copy is one marked section of the script, and
     `tests/delivery-validate-events.test.ts` is the drift guard: it reads the script's constants, compares
     them with the library's enums, and builds one valid event per type and enum value. A new event type,
     enum value or version fails that test until the script is updated.
@@ -1201,6 +1272,11 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
     digest is not the digest of the text, or the signature is not in SSH-signature form.
 - **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
 - **Writing (#657, part 3 of 4 of #650).** `src/delivery/write.ts` and `src/delivery/git-facts.ts`.
+  - **Local tests.** `write()` refuses a local-test run in two places: at step 0, when the input says
+    `localTest` (from the run summary, so no folder is made), and after the chain check, when the events
+    have the marker (a run whose `run.json` lost the key). Both log the fixed line from `DELIVERY_WRITE_FAULTS.localTest`
+    and write nothing. The refusal is logged once per top-level step after the pull request exists, so
+    `deliveryAfterStep` stays stateless.
   - **Trigger.** `deliveryAfterStep` runs from `recordStep` (`execute.ts`) after the step outputs are read,
     for top-level steps only. It needs `outputs.pull_request` to be a pull request of the run's repository
     (`parsePullRequestUrl`, case-insensitive) and a workdir that exists. It never throws.
@@ -1231,7 +1307,7 @@ library only: only types, schemas and pure functions. Nothing in a run writes a 
   decodes it as strict UTF-8, so a changed byte cannot decode to the signed text. It checks the folder (plain,
   only contract files), the numbering, the signatures against the trusted key, `supersedes`, the latest copy, the
   `evidence.incomplete` marker and the evidence chain up to each contract's `count` (through
-  `evidenceHeadProblem`). The first failure ends the check with one `fault` and a relative path. The result is
+  `deliveryEvidenceProblem`, which also gives `local-test` for a marked chain, signed or not). The first failure ends the check with one `fault` and a relative path. The result is
   `verified`, `failed`, `unsigned` or `none`, and `deliveryVerifyExitCode` maps it to 0, 1 or 2 (none gives 2).
   Events after the last contract are allowed. `deliveryCommand` handles `verify` and `public-key`; the key comes
   from `--public-key` (`readPublicKeyFile`) or from the configured signing key (`readConfiguredSigningKey`).
@@ -1271,7 +1347,10 @@ then marks the pull request ready or draft. `handoffCommand(args, io, deps?, env
   repository, pull request or run id), `commit` (`remoteHead` via `git ls-remote origin refs/heads/<branch>`,
   then `readCommitFacts`), `locks` and `workflows` (compared with the contract's hashes and blob ids, sorted with
   `compareCodeUnits`), `checks` (`waitForChecks`, then the validator's rule), and `evidence` (the bounded read of
-  `evidence.jsonl` and `evidenceHeadProblem`). The first stop wins; with none the verdict is `ok`.
+  `evidence.jsonl` and `deliveryEvidenceProblem`). The first stop wins; with none the verdict is `ok`.
+  Without a signing key there is no signature check, so the `key === ""` branch reads the run's events
+  itself: a valid chain of this run with the marker stops `evidence-unverified` (`local-test`) instead of
+  returning `unsigned`. An unreadable file or an unmarked chain still returns `unsigned`.
 - **Head re-read.** If the check runs were polled more than once and the commit check passed, `remoteHead` is read
   again. A changed, missing or unreadable head is a `commit-changed` stop. The window that remains is the seconds
   between that read and `gh pr ready`; the CI validator is the hard check for it.
@@ -1434,6 +1513,19 @@ where it runs.
   an agent starts; secrets are never placed in an agent's environment.
 
 ---
+
+### Run priority (#747)
+
+Every process of a run goes through `spawnTarget()` in `src/steps/process.ts`, its one spawn point. The
+`ProcessOptions.priority` field (from `governor.priority`, passed by the shell, Claude, Codex and broker
+callers) puts the command behind `/usr/bin/nice -n <delta>` and `/usr/sbin/taskpolicy -c <qos>`, in that
+order and outside any `sandbox-exec` profile, so the wrappers cannot be refused by a profile. Both
+exec the command: the pid and the process group stay the same, so cancel, timeout and group kill reach
+the real process. `low` is nice 5 and `utility`; `background` is nice 15 and `background`. The nice
+delta is computed from `os.getPriority(0)`, so a priority is never raised. `priorityMachine()` trial-runs
+each tool once per process (cached) and uses only the ones that work; a command that cannot be found is
+started unwrapped, and a wrapper that fails to start before the command ran falls back to the plain
+start (`WrapperStartError`). The server process is never wrapped.
 
 ## 6. The queue
 
@@ -1780,7 +1872,7 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 | **Runs** | — | Every run, live log, steps and transcripts, changes |
 | **Repositories** | — | Repositories and how the Foundry signs in |
 | **Flows** | Flows, Library | Edit and create flows; reusable blocks |
-| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, settings, workspace clean-up |
+| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Autonomy, Settings, Maintenance | Findings of the monitor, automation from GitHub, routing, cost, accounts, all repositories and credentials, audit log, autonomy levels with their gate and history, settings, workspace clean-up |
 
 **User display:** **Home**, **Epics**, **My runs**, **My repositories**, **Refinement**; **Start work** is a button. The source is `ui/ia.js`.
 
@@ -2540,7 +2632,13 @@ nothing with the server but files. Two of them steer the Foundry, and both do it
 lowest that still holds (`caps.ts`). Every cap carries an end time and is ignored after it. That is
 the safety rule of this design: a helper that crashes or is removed can only fail towards the
 configured behaviour, never hold the Foundry down. The load governor also writes `test-slots/cap`,
-which `tools/test-slot` reads. The flaky-test detector and the limit forecaster act only when
+which `tools/test-slot` reads. Its lowest value is `governor.floor` (`Settings.floor`, optional: unset means half the
+configured number, at least 2). The governor's state (`governor/state.json`) keeps the times of its step downs for an
+hour (`downs`, read by `loadState()`); the wait before a step up is `settleMinutes` times one plus the number of them, and
+a step up below the configured number also needs the 15-minute load below `low`. A cap of 0 is valid: `runLimit()` returns it, `pump()` starts no new run (architect runs and
+schedule chores included) and resumes still go on. A cap ends without an event, so while a cap holds jobs back the scheduler
+arms a 30-second recheck timer (`CAP_RECHECK_MS`, unref'd), and `Scheduler.close()` stops it and any further start at shutdown.
+The limits forecaster keeps its own minimum of 1. The flaky-test detector and the limit forecaster act only when
 switched on (`auto`), because a wrong bug story or a wrong slow-down costs more than a late one.
 
 ## 18. Where it is going

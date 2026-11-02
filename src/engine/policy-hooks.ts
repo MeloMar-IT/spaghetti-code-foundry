@@ -193,7 +193,7 @@ export function baseFacts(summary: Pick<RunSummary, "vars" | "flow" | "flowDef" 
 
 const stepKey = (s: StepIdentity) => `${s.parent ?? ""}/${s.id}#${s.visit}`;
 
-// ── The pushes of a step: the pre-push hook (guards.ts) appends "<branch>\t<remote url>\t<secrets found>\t<identity>" to FACTORY_PUSH_LOG ──
+// ── The pushes of a step: the pre-push hook (guards.ts) appends "<branch>\t<remote url>\t<secrets found>\t<identity>[\t<push|pull-request, when the autonomy level refused it>]" to FACTORY_PUSH_LOG ──
 
 export const MAX_PUSH_LOG_BYTES = 64 * 1024;
 export const MAX_PUSHES_PER_STEP = 100;
@@ -205,6 +205,8 @@ export interface ObservedPush {
   secretsFound?: number;
   /** Whether git could find a committer identity; absent when not known. */
   commitIdentity?: boolean;
+  /** The autonomy level refused this: the hook refused a push, or a tool refused a pull request. Nothing was pushed. */
+  refused?: "push" | "pull-request";
 }
 
 /** The place where the hook of one visit of a step writes its pushes. */
@@ -242,11 +244,12 @@ export function drainPushLog(file: string): ObservedPush[] {
   const out: ObservedPush[] = [];
   for (const line of text.split("\n")) {
     if (!line || out.length >= MAX_PUSHES_PER_STEP) continue;
-    const [branch, url = "", found = "", ident = ""] = line.split("\t");
+    const [branch, url = "", found = "", ident = "", refused = ""] = line.split("\t");
     if (!branch) continue;
     const repository = repositoryOfUrl(url);
     out.push({
       branch,
+      ...(refused === "push" || refused === "pull-request" ? { refused } : {}),
       ...(repository ? { repository } : {}),
       ...(/^\d{1,9}$/.test(found) ? { secretsFound: Number(found) } : {}),
       ...(ident === "1" || ident === "0" ? { commitIdentity: ident === "1" } : {}),
@@ -566,12 +569,30 @@ export function baselineEntry(version: string, controls: BaselineControls): Laye
  * Its limit rules come from the flow and the config (`baselineLimits`); a sub-flow gets its own (see `RunPolicy.subFlow`).
  * Logs one "!" line per pack that could not be loaded, and one for patterns the baseline cannot hold.
  */
+const runPackIds = (config: Pick<Config, "policy">, repository: string | undefined) =>
+  layeredPackIds({ mandatory: config.policy?.mandatory, repositories: config.policy?.repositories, packs: config.policy?.packs }, repository);
+
+/**
+ * Reads the packs a new run uses, once. The same list goes to `runPolicy` and to the promotion check, so both see the
+ * same files. A resumed run reads them again.
+ */
+export function loadRunPacks(summary: Pick<RunSummary, "vars" | "flow" | "flowDef" | "owner">, config: Pick<Config, "policy">, home?: string): LoadedPack[] {
+  const ids = runPackIds(config, baseFacts(summary).repository);
+  return ids.length
+    ? loadPolicyPacks(
+        ids.map((i) => i.id),
+        home,
+      )
+    : [];
+}
+
 export function runPolicy(
   summary: RunSummary,
   config: Pick<Config, "policy"> & Partial<Pick<Config, "protected_branches" | "secret_scan" | "cost_limits" | "daily_budget_usd">>,
   log: (line: string) => void,
   evidence?: RunRecorder,
   home?: string,
+  preloaded?: readonly LoadedPack[],
 ): RunPolicy {
   const shipped = isShippedFlow(summary.flowDef);
   const base = policyFacts({ ...baseFacts(summary), shippedFlow: shipped });
@@ -593,13 +614,16 @@ export function runPolicy(
   }
   const entry: LayeredPack = limitsFailed ? { layer: "mandatory", ...invalid(BASELINE_POLICY_ID, "its limits could not be read") } : baselineEntry(BASELINE_VERSION, controls);
   if ("problem" in entry) log(`! policy ${entry.id}: ${entry.detail} — recorded as ${entry.problem}; ${outageScope(controls.enforce ?? [])}`);
-  const ids = layeredPackIds({ mandatory: config.policy?.mandatory, repositories: config.policy?.repositories, packs: config.policy?.packs }, base.repository);
-  const loaded = ids.length
-    ? loadPolicyPacks(
-        ids.map((i) => i.id),
-        home,
-      )
-    : [];
+  const ids = runPackIds(config, base.repository);
+  // looked up by id, so a list and the ids can never drift; an id that was not read at the start fails closed
+  const loaded: LoadedPack[] = preloaded
+    ? ids.map((i) => preloaded.find((p) => p.id === i.id) ?? unavailable(i.id, "it was not read at the start of the run"))
+    : ids.length
+      ? loadPolicyPacks(
+          ids.map((i) => i.id),
+          home,
+        )
+      : [];
   loaded.forEach((p, i) => {
     if ("problem" in p) {
       const tail = ids[i]!.layer === "mandatory" ? "this mandatory policy denies steps with a sign-in and writing agents" : "the run goes on";

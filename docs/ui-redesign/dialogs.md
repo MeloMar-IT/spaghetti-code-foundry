@@ -73,6 +73,8 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/turn-act.js` | Show split | Button on an item that waits for split approval | notes | Approve or Reject | `openDetail` |
 | `ui/turn-act.js` | Show request | Button on an approval item | notes | Approve or Reject | `openDetail` |
 | `ui/turn-act.js` | Retry with a hint | Button on a failed item | hint | Retry | `openDetail` |
+| `ui/autonomy.js` | Promote <component> | Promote on `#/autonomy` | reason | Ask for approval | `changeDialog` (`ui/autonomy.js`) |
+| `ui/autonomy.js` | Demote <component> | Demote on `#/autonomy` | new level, reason | Demote | `changeDialog` (`ui/autonomy.js`) |
 | `ui/run-dialogs.js` | Cancel this run? | Cancel on `#/runs/:id` | none | Cancel the run | `confirmDialog` (`ui/dom.js`) |
 | `ui/run-dialogs.js` | Re-run from this step? | "Retry from step…" on `#/runs/:id` | none | Re-run | `confirmDialog` (`ui/dom.js`) |
 | `ui/run-dialogs.js` | Approve | Approve on `#/runs/:id` | note (optional) | Approve | `decisionDialog` |

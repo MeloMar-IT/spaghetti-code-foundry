@@ -175,6 +175,84 @@ describe("Settings → Policy", () => {
   });
 });
 
+describe("Settings → Load governor", () => {
+  const card = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "Load governor")!;
+
+  it("follows Budget & capacity and shows low", async () => {
+    const { main } = await render({});
+    const titles = main.all("div").filter((d) => (d.attrs.class ?? "").split(" ").includes("card")).map((c) => c.all("h3")[0]?.textContent);
+    expect(titles.indexOf("Load governor")).toBe(titles.indexOf("Budget & capacity") + 1);
+    expect(card(main).all("select")).toHaveLength(1);
+    expect(card(main).textContent).toContain("Default: low.");
+  });
+
+  it("saves the choice", async () => {
+    const { main, puts } = await render({});
+    const sel = card(main).all("select")[0] as any;
+    sel.value = "background";
+    sel.fire("change", { target: sel });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].governor).toEqual({ priority: "background" });
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  const floorInput = (main: FakeElement) => card(main).all("input").filter((i) => i.attrs.type === "number")[0] as any;
+
+  it("has one number input for the lowest runs, empty when not set", async () => {
+    const { main } = await render({});
+    expect(card(main).all("input").filter((i) => i.attrs.type === "number")).toHaveLength(1);
+    expect(floorInput(main).value ?? "").toBe("");
+  });
+
+  it("saves a floor of 0 as 0, shows a stored 0, and drops the key when it is emptied", async () => {
+    const first = await render({});
+    const input = floorInput(first.main);
+    input.value = "0";
+    input.fire("change", { target: input });
+    first.main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(first.puts[0].governor.floor).toBe(0);
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(first.puts[0]))).data?.governor.floor).toBe(0);
+
+    const stored = await render({}, "127.0.0.1", 200, { governor: { priority: "low", floor: 0 } });
+    expect(String(floorInput(stored.main).value)).toBe("0");
+    const again = floorInput(stored.main);
+    again.value = "";
+    again.fire("change", { target: again });
+    stored.main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect("floor" in stored.puts[0].governor).toBe(false);
+  });
+});
+
+describe("Settings → Promotion gate", () => {
+  const card = (main: FakeElement) => main.all("div").find((d) => (d.attrs.class ?? "").split(" ").includes("card") && d.all("h3")[0]?.textContent === "Promotion gate")!;
+  const numbers = (main: FakeElement) => card(main).all("input").filter((i) => i.attrs.type === "number");
+
+  it("has a card with the four settings", async () => {
+    const { main } = await render({});
+    expect(card(main)).toBeDefined();
+    expect(numbers(main)).toHaveLength(4);
+  });
+
+  it("keeps the stored thresholds when the page is saved", async () => {
+    const governance = { promotion: { min_runs: 25, evidence_completeness: 0.8, eval_pass_rate: 0.7, within_days: 60 } };
+    const { main, puts } = await render({}, "127.0.0.1", 200, { governance });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].governance).toEqual(governance);
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  it("saves the defaults when nothing was stored", async () => {
+    const { main, puts } = await render({});
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].governance).toEqual({ auto_demote: true, promotion: { min_runs: 10, evidence_completeness: 0.95, eval_pass_rate: 0.9, within_days: 30 } });
+  });
+});
+
 describe("Settings → Redesign", () => {
   const box = (main: FakeElement) => main.all("label").find((l) => l.textContent.includes("Show the redesigned pages (still being built)"))!.all("input")[0] as any;
 

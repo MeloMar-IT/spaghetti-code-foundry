@@ -32,7 +32,7 @@ const execFileAsync = promisify(execFile);
 const NAMESPACE = "scf-delivery-contract";
 // Raise this when a verdict, an option or the output changes. The release files are named after it
 // (scf-delivery-validate-<version>.mjs). It is not the `version` of the --json output.
-const VALIDATOR_VERSION = "1.0.0";
+const VALIDATOR_VERSION = "1.3.0";
 const STOP_CONDITIONS = ["commit-changed", "lock-changed", "workflow-changed", "required-check-failed", "evidence-unverified", "signature-unverified", "superseded"];
 const WORKFLOWS_DIR = ".github/workflows/";
 const EVIDENCE_EVENTS_FILE = "evidence.jsonl";
@@ -368,7 +368,7 @@ function checkContract(text, sigText, key) {
 // same commit. tests/delivery-validate-events.test.ts builds a valid event for every type and enum value and fails if not.
 
 /** The newest event version this script reads. A higher version is refused, so a validator that falls behind stops delivery. */
-const EVIDENCE_EVENT_VERSION = 7;
+const EVIDENCE_EVENT_VERSION = 10;
 const EVENTS_MAX = 256 * 1024 * 1024;
 const ARTIFACT_KINDS = ["log", "transcript", "diff", "flow", "skill-lock", "test-report", "other"];
 const STEP_TYPES = ["claude", "shell", "approval", "parallel", "flow"];
@@ -408,6 +408,11 @@ const EXCESS_FIELDS = ["operation", "targets", "dataClassification", "credential
 const REPO_EVIDENCE_OPERATIONS = ["clone", "fetch", "branch", "commit", "push", "pull-request", "status", "unknown"];
 const REPO_OUTCOMES = ["done", "failed", "refused"];
 const CONTEXT_OUTCOMES = ["written", "failed"];
+const COMPONENT_KINDS = ["flow", "policy-pack", "tool-profile", "model-routes", "context-selector"];
+const GOVERNANCE_STATUSES = ["ok", "unapproved", "retired", "review-due"];
+const GOVERNANCE_OUTCOMES = ["allowed", "refused"];
+const GOVERNANCE_FAILURES = ["book-unreadable", "check-failed"];
+const MAX_GOVERNED_COMPONENTS = 200;
 const CONTEXT_BUNDLE_FILE = "context.json";
 const CONTEXT_OMISSION_REASONS = ["missing", "stale", "ambiguous", "over-budget", "classification", "generated", "unsupported"];
 const RUN_CONTEXT_CODES = [
@@ -425,6 +430,7 @@ const DATETIME = new RegExp(`^${DATE_SOURCE}T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5
 // Predicate builders. Each schema is a function (value) => boolean. Lookups of input names use Object.hasOwn, never a bare index.
 const any = () => true;
 const re = (rx) => (v) => typeof v === "string" && rx.test(v);
+const AUTONOMY_LEVELS = ["observe", "plan-only", "guarded-write", "delivery-handoff"];
 const oneOf = (list) => (v) => typeof v === "string" && list.includes(v);
 const int = (min = -Infinity) => (v) => Number.isSafeInteger(v) && v >= min;
 const bool = (v) => typeof v === "boolean";
@@ -488,7 +494,8 @@ const event = (shape) =>
   });
 const stepEnd = { step, model: opt(model), exitCode: opt(int()), durationMs: int(0), artifacts: arr(artifactRef), test: opt(testResult) };
 const EVENT_TYPES = {
-  "run.created": event({ flow: flowIdentity, by: actor }),
+  "run.created": event({ flow: flowIdentity, by: actor, localTest: opt((v) => v === true) }),
+  "run.autonomy": event({ level: oneOf(AUTONOMY_LEVELS), repository: opt(oneOf(AUTONOMY_LEVELS)), flow: oneOf(AUTONOMY_LEVELS) }),
   "run.queued": event({}),
   "run.started": event({ base: opt(gitIdentity) }),
   "run.stopped": event({ at: opt(stepId) }),
@@ -537,6 +544,11 @@ const EVENT_TYPES = {
     omitted: opt(obj(Object.fromEntries(CONTEXT_OMISSION_REASONS.map((r) => [r, int(0)])))),
     failure: opt(oneOf(RUN_CONTEXT_CODES)),
   }),
+  "governance.decided": event({
+    outcome: oneOf(GOVERNANCE_OUTCOMES),
+    failure: opt(oneOf(GOVERNANCE_FAILURES)),
+    components: arr(obj({ kind: oneOf(COMPONENT_KINDS), id: re(/^[A-Za-z0-9._()-]{1,60}$/), version: opt(re(/^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$/)), status: oneOf(GOVERNANCE_STATUSES), refused: bool }), MAX_GOVERNED_COMPONENTS),
+  }),
 };
 /** The superRefine of EvidenceEventSchema, for an event of the right shape. */
 function eventRules(e) {
@@ -568,6 +580,7 @@ function eventRules(e) {
       if (e.bundle.kind !== "other" || e.bundle.path !== CONTEXT_BUNDLE_FILE || !e.bundle.required) return false;
     } else if (e.failure === undefined || data.some((x) => x !== undefined)) return false;
   }
+  if (e.type === "governance.decided" && (e.outcome === "refused") !== (e.failure !== undefined || e.components.some((c) => c.refused))) return false;
   if (e.type === "step.approved" && e.step.type !== "approval") return false;
   if (e.type === "step.denied" && !e.step && e.denial.kind !== "policy") return false;
   if (e.type === "step.denied" && e.step && e.denial.kind === "approval" && e.step.type !== "approval") return false;
@@ -575,7 +588,7 @@ function eventRules(e) {
 }
 const isEvent = both(union("type", EVENT_TYPES), eventRules);
 
-/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→…→7 only set the version), then the schema holds. */
+/** parseEvidenceEvent: the version is read and upgraded (EVENT_MIGRATIONS 1→2→…→10 only set the version), then the schema holds. */
 function readEvent(raw) {
   const v = raw.version;
   if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > EVIDENCE_EVENT_VERSION) return false;
@@ -586,6 +599,7 @@ function readEvent(raw) {
 function readChain(lines, runId) {
   const ids = new Set();
   let prev = null;
+  let localTest = false;
   for (const [i, line] of lines.entries()) {
     let raw;
     try {
@@ -607,8 +621,9 @@ function readChain(lines, runId) {
     const { hash, ...rest } = raw;
     if (canonicalHash(rest) !== hash) return { line: i + 1 };
     prev = hash;
+    if (raw.type === "run.created" && raw.localTest === true) localTest = true;
   }
-  return { terminalHash: prev };
+  return { terminalHash: prev, localTest };
 }
 
 /** The first `count` whole lines, or null when the text has fewer line ends. The rest of the text is never split or read. */
@@ -624,6 +639,8 @@ function firstLines(text, count) {
   return lines;
 }
 
+// copied: LOCAL_TEST_INELIGIBLE in src/delivery/contract.ts
+const LOCAL_TEST_INELIGIBLE = "the run is a local test, so it is not eligible for delivery";
 const evidenceStop = (reason) => ({ check: "evidence", status: "stop", condition: "evidence-unverified", fault: "evidence-head-mismatch", reason });
 
 /** Mirrors verifyDeliveryContract with events. Never throws. */
@@ -635,6 +652,7 @@ function checkEvidence(contract, text) {
     const chain = readChain(lines, contract.runId);
     if (chain.line !== undefined) return evidenceStop(`line ${chain.line} of the events is not a chain`);
     if (chain.terminalHash !== terminalHash) return evidenceStop("the event at count - 1 does not have the contract's hash");
+    if (chain.localTest) return { check: "evidence", status: "stop", condition: "evidence-unverified", fault: "local-test", reason: LOCAL_TEST_INELIGIBLE };
     return okResult("evidence");
   } catch {
     return evidenceStop("the events could not be read");

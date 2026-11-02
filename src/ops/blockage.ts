@@ -4,7 +4,7 @@ import { pidAlive, type RunSummary } from "../engine/state.js";
 export interface Wait { story: string; on: string; why: "files" | "depends on" }
 
 /** A story is named with its repository ("acme/app#12"): the same number in two repositories is two stories. */
-const storyOf = (r: RunSummary) => (r.vars?.issue ? `${r.vars.github_repo ?? ""}#${r.vars.issue}` : r.runId);
+export const storyOf = (r: RunSummary) => (r.vars?.issue ? `${r.vars.github_repo ?? ""}#${r.vars.issue}` : r.runId);
 
 /** The newest run of every story. */
 export function newestRuns(runs: RunSummary[]): RunSummary[] {
@@ -120,7 +120,7 @@ export function blockers(waits: Wait[], runs: RunSummary[], now: Date, alive: (p
 
 export function blockageReport(list: Blocker[], waits: Wait[], working: number, limit: number, now: Date): string {
   const waiting = new Set(waits.map((w) => w.story)).size;
-  const out = ["# What holds work up", "", `${now.toISOString().slice(0, 16).replace("T", " ")} UTC — ${working} of ${limit} runs are working; ${waiting} stor${waiting === 1 ? "y waits" : "ies wait"} for another.`, ""];
+  const out = ["# What holds work up", "", `${now.toISOString().slice(0, 16).replace("T", " ")} UTC — ${limit < 1 ? `${working} run${working === 1 ? " is" : "s are"} working and no new run may start` : `${working} of ${limit} runs are working`}; ${waiting} stor${waiting === 1 ? "y waits" : "ies wait"} for another.`, ""];
   if (working < limit && waiting) out.push(`**${limit - working} run slot${limit - working === 1 ? " is" : "s are"} empty while stories wait.** The first lines below say what would free them.`, "");
   if (!list.length) return [...out, "Nothing holds other work up.", ""].join("\n");
   out.push("| Story | Holds up | State |", "|---|---|---|");

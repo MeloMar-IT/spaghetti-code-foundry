@@ -30,7 +30,16 @@ function fail(msg) {
 }
 const run = (cmd, args, input) => execFileSync(cmd, args, { encoding: "utf8", input, stdio: [input ? "pipe" : "ignore", "pipe", "pipe"] }).trim();
 const git = (...a) => run("git", a);
-const gh = (...a) => run(process.env.FACTORY_GH_BIN || "gh", a);
+// Every story call goes through the story store (dist/stories/store.js), on this runner.
+let storeFor;
+let pullRequestRefusal;
+try {
+  ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+  ({ pullRequestRefusal } = await import(new URL("../dist/governance/autonomy-rules.js", import.meta.url).href));
+} catch (e) {
+  fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+}
+const stories = storeFor(repo).sync((args, input) => run(process.env.FACTORY_GH_BIN || "gh", args, input));
 
 function today() {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map((x) => [x.type, x.value]));
@@ -48,7 +57,7 @@ function base() {
 function state() {
   git("fetch", "-q", "--prune", "origin");
   const branches = git("for-each-ref", "--sort=-refname", "--format=%(refname:lstrip=3)", `refs/remotes/origin/${prefix}*`).split("\n").filter(Boolean);
-  const prs = JSON.parse(gh("pr", "list", "--repo", repo, "--state", "all", "--limit", "300", "--json", "number,headRefName,headRefOid,state,url") || "[]")
+  const prs = JSON.parse(stories.listChanges({ state: "all", limit: 300, fields: "number,headRefName,headRefOid,state,url" }) || "[]")
     .filter((p) => p.headRefName.startsWith(prefix));
   const ahead = (b, from = base()) => Number(git("rev-list", "--count", `${from}..origin/${b}`));
   const openPrOf = (b) => prs.find((p) => p.headRefName === b && p.state === "OPEN");
@@ -101,10 +110,11 @@ function prText(branch, note = "") {
 }
 
 function openPr(branch, { draft = false, note = "" } = {}) {
+  // below the autonomy level delivery-handoff no pull request is opened
+  const refusal = pullRequestRefusal();
+  if (refusal) fail(refusal);
   const t = prText(branch, note);
-  const args = ["pr", "create", "--repo", repo, "--base", t.base, "--head", branch, "--title", t.title, "--body-file", "-"];
-  if (draft) args.push("--draft");
-  return run(process.env.FACTORY_GH_BIN || "gh", args, t.body).split("\n").pop();
+  return stories.openChange({ head: branch, base: t.base, title: t.title, body: t.body, draft }).split("\n").pop();
 }
 
 /** Open the PR for the branch, or bring the open one's title and issue list up to date. */
@@ -113,7 +123,7 @@ function ensurePr(branch, { draft = false } = {}) {
   const pr = openPrOf(branch);
   if (!pr) return openPr(branch, { draft });
   const t = prText(branch);
-  run(process.env.FACTORY_GH_BIN || "gh", ["pr", "edit", String(pr.number), "--repo", repo, "--title", t.title, "--body-file", "-"], t.body);
+  stories.updateChange(pr.number, { title: t.title, body: t.body });
   return pr.url;
 }
 

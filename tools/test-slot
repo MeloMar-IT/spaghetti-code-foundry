@@ -16,11 +16,14 @@
 //        is freed, "test-slot: stopped after <n> s — the time limit is <m> s" is printed and the exit code is 124; default: none),
 //      FACTORY_TEST_SLOT_STARTED_FILE (the epoch seconds are written here just before the command starts),
 //      FACTORY_TEST_SLOT_TRACK_FILE (processes that left the command's group are remembered here from one call to the next),
+//      FACTORY_TEST_SLOT_WAIT_DIR (a folder of the step: each wait for a slot is recorded there as <startMs>-<pid>.wait, touched
+//        at least every 5 s while it lasts and renamed to .done when it ends, so the step's time limit can leave the wait out;
+//        a folder that cannot be written changes nothing),
 //      FACTORY_TEST_SLOT_TRACK_MS (how often the processes are noted while a limit or a track file is set; default 2000).
 // The process tracker is loaded from ../dist/steps/proc-tree.js (FACTORY_TEST_SLOT_PS there sets the ps path, for tests).
 // With a limit the command runs in its own process group and SIGINT, SIGTERM and SIGHUP go to the whole group.
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { getPriority } from "node:os";
 import { join } from "node:path";
 
@@ -52,6 +55,33 @@ const limitSec = num(process.env.FACTORY_TEST_SLOT_LIMIT_SEC, 0);
 const trackMs = num(process.env.FACTORY_TEST_SLOT_TRACK_MS, 2000) || 2000;
 const startedFile = process.env.FACTORY_TEST_SLOT_STARTED_FILE || "";
 const trackFile = process.env.FACTORY_TEST_SLOT_TRACK_FILE || "";
+const waitDir = process.env.FACTORY_TEST_SLOT_WAIT_DIR || "";
+
+// The record of one wait (see the header). Every function swallows its errors: recording must never stop a story.
+let waitFile = "";
+function beginWait(start) {
+  if (!waitDir) return;
+  try {
+    const file = join(waitDir, `${start}-${process.pid}.wait`);
+    writeFileSync(file, "");
+    waitFile = file;
+  } catch { /* not recorded */ }
+}
+function beatWait() {
+  if (!waitFile) return;
+  try {
+    const now = new Date();
+    utimesSync(waitFile, now, now);
+  } catch { /* not recorded */ }
+}
+function endWait() {
+  if (!waitFile) return;
+  beatWait();
+  try {
+    renameSync(waitFile, waitFile.replace(/\.wait$/, ".done"));
+  } catch { /* the stale file counts up to its last touch */ }
+  waitFile = "";
+}
 
 const alive = (pid) => {
   try {
@@ -108,6 +138,7 @@ if (slots > 0 && usable) {
   while (!(slot = take())) {
     if (Date.now() - start >= waitMs) {
       if (strict) {
+        endWait();
         console.error(`test-slot: no free slot after ${Math.round(waitMs / 1000)} s and FACTORY_TEST_SLOT_STRICT is set — not running`);
         process.exit(75);
       }
@@ -115,10 +146,13 @@ if (slots > 0 && usable) {
       break;
     }
     if (!said) console.log(`test-slot: ${slots} test run(s) are already working on this machine — waiting for a free slot`);
+    if (!said) beginWait(start);
     said = true;
-    await new Promise((r) => setTimeout(r, pollMs));
+    await new Promise((r) => setTimeout(r, waitDir ? Math.min(pollMs, 5000) : pollMs));
+    beatWait();
     slots = slotsNow(); // the cap may have come, gone or grown old while this run waited
   }
+  endWait();
   if (said && slot) console.log(`test-slot: got a slot after ${Math.round((Date.now() - start) / 1000)} s`);
 }
 const release = () => {

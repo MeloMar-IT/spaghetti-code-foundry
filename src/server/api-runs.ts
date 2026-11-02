@@ -21,7 +21,7 @@ import { guardedRepos } from "./api-repos.js";
 import { checkReleaseRef, isReleaseBuildFlow, publishedFlows } from "./permissions.js";
 import { HttpError, NAME_RE, readJson, send, str } from "./http.js";
 import { hideForeign, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
-import { answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
+import { adminRun, answerBlock, hidePaths, refinementSessionOf, userLogLine, userRecord, userRun } from "./user-view.js";
 import type { NextStep } from "../next-step.js";
 import { cachedSkillRegistryAt } from "../skills/registry.js";
 import { runSkillView, type RunSkillView } from "./skill-view.js";
@@ -120,7 +120,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const mine = (rid: string) => scheduler.ownerOf(rid) === user.id;
   const view = admin ? (n: NextStep) => n : (n: NextStep) => userRecord(ownRecord(n, mine));
   // What a user sees of a run: no costs and no setup (see user-view.ts).
-  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean; skillView?: RunSkillView }) => unknown = admin ? (r) => (refinementSessionOf(r.source) ? { ...r, refinement: refinementSessionOf(r.source) } : r) : userRun;
+  const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean; skillView?: RunSkillView }) => unknown = admin ? adminRun : userRun;
   const hide = <T,>(v: T): T => (admin ? v : hideForeign(v, mine));
   // The skills of a run for its page (see skill-view.ts); the list of runs does not carry it. The registry is the one-minute cache health uses.
   const withSkills = <T extends RunSummary>(r: T): T & { skillView?: RunSkillView } => {

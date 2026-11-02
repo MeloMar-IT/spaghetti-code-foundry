@@ -68,6 +68,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     validate: vi.fn(async () => ({ ok: true, flow: { name: "my-flow", workspace: "worktree", vars: {} } })),
     saveFlow: vi.fn(async (_n: string, yaml: string) => ({ yaml })),
     deleteFlow: vi.fn(async () => ({})),
+    promotions: vi.fn(async () => ({ components: [] })),
     startRun: vi.fn(async () => ({ runId: "run1" })),
     generate: vi.fn(),
     ...over,
@@ -94,6 +95,10 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./turn.js": { startBadge: async () => 0, startHash: () => null },
     "./flow-problems.js": await import("../../ui/flow-problems.js" as string),
     "./run-form.js": await loadUiSource("run-form.js", { "./api.js": { api }, "./dom.js": real.dom, "./states.js": real.states }, ["runForm"]),
+    "./promotions.js": await loadUiSource("promotions.js", {
+      "./api.js": { api }, "./dom.js": real.dom, "./states.js": real.states,
+      "./kit/actions.js": await import("../../ui/kit/actions.js" as string), "./kit/display.js": await import("../../ui/kit/display.js" as string),
+    }, ["promotionNotice"]),
     "./library.js": never,
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn() },
     "./home-admin.js": never,
@@ -101,7 +106,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
     "./work.js": never,
   };
   for (const n of ["./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js", "./admin-credentials.js", "./operations.js",
-    "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"]) deps[n] = never;
+    "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./autonomy.js", "./board.js"]) deps[n] = never;
   // The flow page is its own module: load it with the same stubs and hand the app the page it makes.
   deps["./viewport.js"] = await import("../../ui/viewport.js" as string);
   deps["./flow-state.js"] = await import("../../ui/flow-state.js" as string);

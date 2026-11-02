@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { loadConfig } from "../config.js";
 import { listRunIds, loadRun, pidAlive, type RunSummary } from "../engine/state.js";
 import { sendDesktop } from "../notify.js";
+import { storeFor } from "../stories/store.js";
 import type { ServiceHost } from "../service.js";
 import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } from "./blockage.js";
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
 import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
-import { changesToday, clearGovernor, loadState, MANY_CHANGES, runGovernor, sample } from "./governor.js";
+import { changesToday, clearGovernor, DEFAULTS, loadState, MANY_CHANGES, runGovernor, sample } from "./governor.js";
 import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, type Family, type LimitsState } from "./limits.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
 
@@ -57,10 +58,12 @@ function loadRuns(): RunSummary[] {
 
 const configured = () => loadConfig().concurrency;
 type Out = (line: string) => void;
+const atOnce = (n: number) => (n === 0 ? "0 runs at once, so nothing new starts" : `${n} runs at once`);
 
 function governor(out: Out) {
   const dir = jobDir("governor");
-  const d = runGovernor({ dir, slotsDir: join(dataDir(), "test-slots"), capsFile: capsPath(dataDir()), configured: configured(), now: new Date(), sample: sample() });
+  const c = loadConfig();
+  const d = runGovernor({ dir, slotsDir: join(dataDir(), "test-slots"), capsFile: capsPath(dataDir()), configured: c.concurrency, now: new Date(), sample: sample(), settings: { ...DEFAULTS, floor: c.governor.floor } });
   if (d.change) out(`${new Date().toISOString()} ${d.change}`);
 }
 
@@ -69,7 +72,10 @@ interface FlakyState { auto: boolean; label: string; filed: Record<string, strin
 /** Files a bug story with the GitHub sign-in of this machine; returns its address. */
 export type FileStory = (repo: string, story: Story, label: string) => string;
 const ghFile: FileStory = (repo, story, label) =>
-  execFileSync("gh", ["issue", "create", "--repo", repo, "--title", story.title, "--body", story.body, "--label", "bug", "--label", label], { encoding: "utf8", timeout: 60_000 }).trim();
+  storeFor(repo)
+    .sync((args, input) => execFileSync("gh", args, { encoding: "utf8", input, timeout: 60_000 }))
+    .create({ title: story.title, body: story.body, labels: ["bug", label] })
+    .trim();
 
 /** Stories filed per check, and how often filing may be tried for that: a GitHub that does not answer must not hold the check for long. */
 const MAX_FILED = 2;
@@ -278,7 +284,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       if (name === "governor") {
         // a state the governor did not renew has ended (loadState leaves it out): never show a limit that is over
         const s = loadState(dir, new Date());
-        out(s.runs || s.tests ? `limits now: ${s.runs ? `${s.runs} runs at once (configured: ${configured()})` : "runs as configured"}${s.tests ? ", 1 test run at once" : ""}` : "no limits set: the machine is calm enough");
+        out(s.runs !== undefined || s.tests ? `limits now: ${s.runs !== undefined ? `${atOnce(s.runs)} (configured: ${configured()})` : "runs as configured"}${s.tests ? ", 1 test run at once" : ""}` : "no limits set: the machine is calm enough");
         const log = join(dir, "changes.log");
         if (existsSync(log)) out(readFileSync(log, "utf8").trim().split("\n").slice(-20).join("\n"));
         return 0;
@@ -307,7 +313,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       out(state === "loaded" ? `${name} is installed` : state === "not loaded" ? `${name} is installed but not loaded: nothing runs (scf ${name} install)` : `${name} is not installed (scf ${name} install)`);
       if (name === "governor" || name === "limits") {
         const caps = Object.entries(loadCaps(capsPath(dataDir()))).filter(([, c]) => Date.parse(c.until) > Date.now());
-        out(caps.length ? caps.map(([who, c]) => `cap by ${who}: ${c.runs} runs at once (${c.why})`).join("\n") : "no cap on runs at once");
+        out(caps.length ? caps.map(([who, c]) => `cap by ${who}: ${atOnce(c.runs)} (${c.why})`).join("\n") : "no cap on runs at once");
       }
       if (name === "governor") {
         const n = changesToday(dir, new Date());
