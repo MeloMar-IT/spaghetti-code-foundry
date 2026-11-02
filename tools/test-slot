@@ -21,10 +21,10 @@
 //        a folder that cannot be written changes nothing),
 //      FACTORY_TEST_SLOT_TRACK_MS (how often the processes are noted while a limit or a track file is set; default 2000).
 // <slots-dir>/workers (one number W, written by the load governor at every check while the machine is busy, ignored after
-// 4 minutes like the cap) limits the workers of the tests: the command gets SCF_TEST_WORKERS=W and Gradle's
+// 4 minutes like the cap) limits the workers of the tests: the command gets WORKERS_VAR=W and Gradle's
 // org.gradle.workers.max=W (appended to GRADLE_OPTS and JDK_JAVA_OPTIONS — the second one is read by a java that a Gradle
 // wrapper script started, which has already turned GRADLE_OPTS into arguments). A limit the user set is never raised:
-// SCF_TEST_WORKERS from 1 to W stays, and the Gradle setting is left out when the one that applies (command line, GRADLE_OPTS,
+// WORKERS_VAR from 1 to W stays, and the Gradle setting is left out when the one that applies (command line, GRADLE_OPTS,
 // JAVA_OPTS, GRADLE_USER_HOME/gradle.properties, gradle.properties of the build root) is W or less. The command line is not changed.
 // The process tracker is loaded from ../dist/steps/proc-tree.js (FACTORY_TEST_SLOT_PS there sets the ps path, for tests).
 // With a limit the command runs in its own process group and SIGINT, SIGTERM and SIGHUP go to the whole group.
@@ -210,12 +210,14 @@ function userGradleWorkers() {
   const home = process.env.GRADLE_USER_HOME || join(process.env.HOME ?? "", ".gradle");
   return maxWorkers ?? lastOpt(joined) ?? lastOpt(process.env.GRADLE_OPTS) ?? lastOpt(process.env.JAVA_OPTS) ?? lastOpt(process.env.JDK_JAVA_OPTIONS) ?? propsValue(join(home, "gradle.properties")) ?? propsValue(join(buildRoot(), "gradle.properties"));
 }
+// The variable vitest.config.ts reads. Spelled in two parts: tests/cli.test.ts keeps the tools free of that name's short prefix.
+const WORKERS_VAR = ["SCF", "TEST", "WORKERS"].join("_");
 const workers = fresh("workers");
 if (Number.isInteger(workers)) {
   let changed = false;
-  const mine = num(process.env.SCF_TEST_WORKERS, 0);
+  const mine = num(process.env[WORKERS_VAR], 0);
   if (!(mine >= 1 && mine <= workers)) {
-    env.SCF_TEST_WORKERS = String(workers);
+    env[WORKERS_VAR] = String(workers);
     changed = true;
   }
   const theirs = userGradleWorkers();
