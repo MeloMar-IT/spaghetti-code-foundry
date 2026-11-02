@@ -558,4 +558,91 @@ describe("Draft with Claude", () => {
   });
 });
 
+describe("promotion state", () => {
+  const PUBLISHED = { publish: { enabled: true, version: 1 } };
+  const publishedFlow = vi.fn(async (name: string) => ({ name, scope: "repo", yaml: flowJson(name, PUBLISHED) }));
+  const row = (state: string, extra: Record<string, unknown> = {}) => ({ ref: { kind: "flow", id: "a", version: "1", sha256: "a".repeat(64) }, state, ...extra });
+  const blockedRow = (suite = "timeout") => row("blocked", { blocking: [{ code: "report-stale", suite, remediation: "scf eval safety" }] });
+  const answer = (r: unknown) => ({ components: r ? [r] : [] });
+  const shown = () => main().textContent;
+  const editPublished = (description = "changed") => edit(flowJson("a", { ...PUBLISHED, description }));
+
+  it("shows the state of a published flow when it opens", async () => {
+    const promotions = vi.fn(async () => answer(row("promoted", { record: { reportId: "timeout-2026-01-01T00-00-00-000Z" } })));
+    await open({ flow: publishedFlow, promotions });
+    await vi.waitFor(() => expect(shown()).toContain("Promoted: report timeout-2026-01-01T00-00-00-000Z"));
+    expect(promotions).toHaveBeenCalledWith("flow", "a");
+  });
+
+  it("saves a published flow that is not promoted and then shows why, with the fix", async () => {
+    const promotions = vi.fn(async () => answer(row("promoted", { record: { reportId: "r1" } })));
+    const { api } = await open({ flow: publishedFlow, promotions });
+    await vi.waitFor(() => expect(shown()).toContain("Promoted: report r1"));
+    promotions.mockResolvedValue(answer(blockedRow()));
+    editPublished();
+    saveButton().click();
+    await vi.waitFor(() => expect(shown()).toContain("Not promoted: timeout (report-stale). scf eval safety"));
+    expect(api.saveFlow).toHaveBeenCalledTimes(1);
+    expect(toastEl().textContent).toContain("Saved a");
+    expect(shown()).not.toContain("Promoted: report r1");
+  });
+
+  it("keeps the save when the check fails, and says the state could not be read", async () => {
+    const promotions = vi.fn().mockResolvedValueOnce(answer(null)).mockRejectedValue(httpError(500));
+    const { api } = await open({ flow: publishedFlow, promotions });
+    editPublished();
+    saveButton().click();
+    await vi.waitFor(() => expect(shown()).toContain("The promotion state could not be read."));
+    expect(api.saveFlow).toHaveBeenCalledTimes(1);
+    expect(toastEl().textContent).toContain("Saved a");
+    expect(stateText()).not.toBe("Unsaved changes");
+  });
+
+  it("makes no call for a flow that is not published", async () => {
+    const promotions = vi.fn(async () => answer(blockedRow()));
+    const { api } = await open({ promotions });
+    changed();
+    saveButton().click();
+    await vi.waitFor(() => expect(api.saveFlow).toHaveBeenCalledTimes(1));
+    await tick();
+    expect(promotions).not.toHaveBeenCalled();
+    expect(shown()).not.toContain("Not promoted");
+  });
+
+  it("drops the answer for a flow that is no longer open", async () => {
+    const gate = held<any>();
+    const promotions = vi.fn().mockReturnValueOnce(gate.promise).mockResolvedValue(answer(null));
+    const { go } = await open({ flow: publishedFlow, promotions });
+    await go("#/flows/other");
+    await vi.waitFor(() => expect(h1()).toBe("other"));
+    gate.resolve(answer(blockedRow()));
+    await tick();
+    expect(shown()).not.toContain("Not promoted");
+  });
+
+  it("does not let a slow answer from opening overwrite the newer one after a save", async () => {
+    const slow = held<any>();
+    const promotions = vi.fn().mockReturnValueOnce(slow.promise).mockResolvedValue(answer(blockedRow("output-caps")));
+    await open({ flow: publishedFlow, promotions });
+    editPublished();
+    saveButton().click();
+    await vi.waitFor(() => expect(shown()).toContain("Not promoted: output-caps (report-stale)"));
+    slow.resolve(answer(row("promoted", { record: { reportId: "old" } })));
+    await tick();
+    expect(shown()).toContain("Not promoted: output-caps (report-stale)");
+    expect(shown()).not.toContain("Promoted: report old");
+  });
+
+  it("asks again when the open flow is opened again, as on the way back from Settings", async () => {
+    const promotions = vi.fn().mockResolvedValueOnce(answer(blockedRow())).mockResolvedValue(answer(row("promotable", { reports: [] })));
+    const { go } = await open({ flow: publishedFlow, promotions });
+    await vi.waitFor(() => expect(shown()).toContain("Not promoted: timeout"));
+    await go("#/settings");
+    await go("#/flows/a");
+    await vi.waitFor(() => expect(shown()).toContain("Ready to promote: every required suite passes."));
+    expect(promotions).toHaveBeenCalledTimes(2);
+    expect(shown()).not.toContain("Not promoted: timeout");
+  });
+});
+
 export type { FakeElement };

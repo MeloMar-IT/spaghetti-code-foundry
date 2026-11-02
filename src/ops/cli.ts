@@ -1,16 +1,21 @@
 import { execFileSync } from "node:child_process";
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../config.js";
 import { listRunIds, loadRun, pidAlive, type RunSummary } from "../engine/state.js";
 import { sendDesktop } from "../notify.js";
+import { storeFor } from "../stories/store.js";
 import type { ServiceHost } from "../service.js";
 import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } from "./blockage.js";
+import { governorBusyApps } from "./busy.js";
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
 import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
-import { changesToday, clearGovernor, loadState, MANY_CHANGES, runGovernor, sample } from "./governor.js";
+import { changesToday, clearGovernor, DEFAULTS, fitsText, freeCores, HOLD_MS, loadState, MANY_CHANGES, runGovernor, runsFit, sample, type Sample } from "./governor.js";
+import { belowLine, capHistory, heldCap, logSince } from "./governor-history.js";
 import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, type Family, type LimitsState } from "./limits.js";
+import { measureUsage, measurement, readCpuTable, runRepos, usageLine, type Usage } from "./usage.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
 
 export const JOBS: Record<string, Job> = {
@@ -57,11 +62,55 @@ function loadRuns(): RunSummary[] {
 
 const configured = () => loadConfig().concurrency;
 type Out = (line: string) => void;
+const atOnce = (n: number) => (n === 0 ? "0 runs at once, so nothing new starts" : `${n} runs at once`);
 
-function governor(out: Out) {
+function governor(out: Out, now = new Date()) {
   const dir = jobDir("governor");
-  const d = runGovernor({ dir, slotsDir: join(dataDir(), "test-slots"), capsFile: capsPath(dataDir()), configured: configured(), now: new Date(), sample: sample() });
-  if (d.change) out(`${new Date().toISOString()} ${d.change}`);
+  const c = loadConfig();
+  const slotsDir = join(dataDir(), "test-slots");
+  // before the check, so the change line can name the cause; never throws, and without figures the check is as it always was
+  const table = readCpuTable();
+  const usage = measureUsage({ dir, runsDir: join(dataDir(), "runs"), slotsDir, now, read: () => table });
+  const measured = usage ? measurement(usage, runRepos(join(dataDir(), "queue.json"), join(dataDir(), "runs")), availableParallelism()) : undefined;
+  const fit = measured ? runsFit(measured, c.governor.reserve_cores) : undefined;
+  const cause = usage ? `${usageLine(usage)}${fit !== undefined ? `; ${fitsText(fit)}` : ""}` : undefined;
+  const sampled: Sample = { ...sample(), ...(measured ? { measured } : {}) };
+  const d = runGovernor({ dir, slotsDir, capsFile: capsPath(dataDir()), configured: c.concurrency, now, sample: sampled, settings: { ...DEFAULTS, floor: c.governor.floor, reserveCores: c.governor.reserve_cores }, ...(cause ? { cause } : {}) });
+  // the free cores need only the cores and what other programs use; the runs that fit also need what a run uses
+  const cores = availableParallelism();
+  const capacity = usage && Number.isFinite(usage.other.cores) ? { cores, free: freeCores({ cores, other: usage.other.cores, perRun: 1 }, c.governor.reserve_cores) } : {};
+  // the caps are written by now: a result that cannot be saved must not fail the check
+  try {
+    save(dir, "latest.json", JSON.stringify({ at: now.toISOString(), load1: sampled.load1, load5: sampled.load5, pressure: sampled.pressure, ...(d.state.runs !== undefined ? { runs: d.state.runs } : {}), ...(d.state.tests ? { tests: d.state.tests } : {}), ...(d.state.workers ? { workers: d.state.workers } : {}), ...(usage ? { usage } : {}), ...(fit !== undefined ? { fit } : {}), ...capacity }, null, 2));
+  } catch {
+    // best effort
+  }
+  if (d.change) out(`${now.toISOString()} ${d.change}${cause ? ` — ${cause}` : ""}`);
+  // programs that mean the person uses the machine; their own cap, never the switch set by hand. A failure must not fail the check.
+  try {
+    const busy = governorBusyApps(table, c.governor.busy_apps, c.governor.busy_runs, now, capsPath(dataDir()));
+    if (busy) out(`${now.toISOString()} ${busy}`);
+  } catch {
+    // best effort
+  }
+}
+
+/** The usage lines of `scf governor report`, from the last check. Nothing when that is older than the hold time or does not look right. */
+export function usageReport(dir: string, now: Date): string[] {
+  try {
+    const l = readJson<{ at?: string; usage?: Usage; fit?: unknown }>(join(dir, "latest.json"), {});
+    const age = now.getTime() - Date.parse(l.at ?? "");
+    const u = l.usage;
+    if (!(age <= HOLD_MS) || !u || !Number.isFinite(u.foundry?.cores) || !Number.isFinite(u.other?.cores) || !Array.isArray(u.other.top)) return [];
+    const top = u.other.top.filter((p) => typeof p?.program === "string" && Number.isFinite(p.cores));
+    const fit = typeof l.fit === "number" && Number.isInteger(l.fit) && l.fit >= 0 ? `; ${fitsText(l.fit)}` : "";
+    const lines = [`now: ${usageLine({ foundry: u.foundry, other: { cores: u.other.cores, top } })}${fit}`];
+    const per = Object.entries(u.perRun ?? {}).filter(([, v]) => Number.isFinite(v));
+    if (per.length) lines.push(`a run uses about: ${per.map(([repo, v]) => `${repo} ${v.toFixed(1)} cores`).join(", ")}`);
+    return lines;
+  } catch {
+    return [];
+  }
 }
 
 interface FlakyState { auto: boolean; label: string; filed: Record<string, string>; tried?: Record<string, string> }
@@ -69,7 +118,10 @@ interface FlakyState { auto: boolean; label: string; filed: Record<string, strin
 /** Files a bug story with the GitHub sign-in of this machine; returns its address. */
 export type FileStory = (repo: string, story: Story, label: string) => string;
 const ghFile: FileStory = (repo, story, label) =>
-  execFileSync("gh", ["issue", "create", "--repo", repo, "--title", story.title, "--body", story.body, "--label", "bug", "--label", label], { encoding: "utf8", timeout: 60_000 }).trim();
+  storeFor(repo)
+    .sync((args, input) => execFileSync("gh", args, { encoding: "utf8", input, timeout: 60_000 }))
+    .create({ title: story.title, body: story.body, labels: ["bug", label] })
+    .trim();
 
 /** Stories filed per check, and how often filing may be tried for that: a GitHub that does not answer must not hold the check for long. */
 const MAX_FILED = 2;
@@ -178,10 +230,9 @@ export function logTail(path = join(dataDir(), "service.log"), bytes = 512_000):
 /** A result of another helper counts for a day and a bit; older than that it says nothing about now. */
 const RESULT_MAX_AGE_MS = 26 * 3_600_000;
 
-export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; alive?: (pid: unknown) => boolean }): { text: string; line: string } {
+export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; alive?: (pid: unknown) => boolean; /** The configured runs at once: with it the digest says how long the governor held them below. */ configured?: number }): { text: string; line: string } {
   const facts = digestFacts(o.runs, o.now, 24, o.alive);
   const since = new Date(o.now.getTime() - 86_400_000).toISOString();
-  const lines = (path: string) => (existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(Boolean) : []);
   /** The last result of a helper, or nothing when it is old (the helper is not installed any more, or stopped). */
   const latest = <T extends object>(name: string): Partial<T> => {
     const r = readJson<Partial<T> & { at?: string }>(join(o.home, name, "latest.json"), {});
@@ -208,8 +259,14 @@ export function runDigest(o: { runs: RunSummary[]; home: string; now: Date; aliv
       return (tuning.trials ?? []).filter((t) => (t.endedAt ?? t.startedAt) >= since).map((t) => `${t.flow} / ${t.step} on ${[t.to.model, t.to.effort && `effort ${t.to.effort}`].filter(Boolean).join(", ")}: ${t.status === "running" ? "on trial" : `${t.status === "kept" ? "kept" : "put back"} — ${t.why ?? ""}`}`);
     }),
     part("Machine load", () => {
-      const load = lines(join(o.home, "governor", "changes.log")).filter((l) => l.slice(0, 24) >= since);
-      return load.length > MANY_CHANGES ? [`the governor changed the limits ${load.length} times in the last day (more than ${MANY_CHANGES}); last: ${load.at(-1)!.slice(25)}`] : [];
+      const dir = join(o.home, "governor");
+      const from = o.now.getTime() - 86_400_000;
+      const load = logSince(dir, from);
+      const below = o.configured !== undefined ? belowLine(capHistory(load, { since: from, now: o.now.getTime(), configured: o.configured, held: heldCap(dir, o.now) }), o.configured) : undefined;
+      return [
+        ...(below ? [below] : []),
+        ...(load.length > MANY_CHANGES ? [`the governor changed the limits ${load.length} times in the last day (more than ${MANY_CHANGES}); last: ${load.at(-1)!.slice(25)}`] : []),
+      ];
     }),
     part("Unreliable tests", () => (latest<{ suspects: { test: string; failedIn: string[]; retriedIn?: string[] }[] }>("flaky").suspects ?? []).slice(0, 3).map((s) => `${s.test} — failed in ${s.failedIn.length} stories${s.retriedIn?.length ? `, passed only on a retry in ${s.retriedIn.length}` : ""}`)),
   ];
@@ -255,7 +312,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
   switch (sub) {
     case "run": {
       const now = new Date();
-      if (name === "governor") governor(out);
+      if (name === "governor") governor(out, now);
       else if (name === "housekeeping") {
         const { runHousekeeping, readPs } = await import("./housekeeping.js");
         const r = runHousekeeping({ dir, runsDir: join(dataDir(), "runs"), now, ps: readPs() });
@@ -268,7 +325,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       } else if (name === "limits") runLimits({ runs: loadRuns(), dir, capsFile: capsPath(dataDir()), configured: configured(), now }), out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
       else if (name === "blockage") runBlockage({ runs: loadRuns(), dir, serviceLog: logTail(), repos: knownWatcherRepos(), limit: runLimit(configured(), now, capsPath(dataDir())), now }), out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
       else {
-        const r = runDigest({ runs: loadRuns(), home: dataDir(), now });
+        const r = runDigest({ runs: loadRuns(), home: dataDir(), now, configured: configured() });
         await sendDesktop({ title: "Foundry digest", message: r.line });
         out(`${now.toISOString()} ${r.line} — ${join(dir, "report.md")}`);
       }
@@ -278,7 +335,8 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       if (name === "governor") {
         // a state the governor did not renew has ended (loadState leaves it out): never show a limit that is over
         const s = loadState(dir, new Date());
-        out(s.runs || s.tests ? `limits now: ${s.runs ? `${s.runs} runs at once (configured: ${configured()})` : "runs as configured"}${s.tests ? ", 1 test run at once" : ""}` : "no limits set: the machine is calm enough");
+        out(s.runs !== undefined || s.tests || s.workers ?`limits now: ${s.runs !== undefined ? `${atOnce(s.runs)} (configured: ${configured()})` : "runs as configured"}${s.tests ? ", 1 test run at once" : ""}${s.workers ? `, at most ${s.workers} workers per test run` : ""}` : "no limits set: the machine is calm enough");
+        for (const l of usageReport(dir, new Date())) out(l);
         const log = join(dir, "changes.log");
         if (existsSync(log)) out(readFileSync(log, "utf8").trim().split("\n").slice(-20).join("\n"));
         return 0;
@@ -307,7 +365,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       out(state === "loaded" ? `${name} is installed` : state === "not loaded" ? `${name} is installed but not loaded: nothing runs (scf ${name} install)` : `${name} is not installed (scf ${name} install)`);
       if (name === "governor" || name === "limits") {
         const caps = Object.entries(loadCaps(capsPath(dataDir()))).filter(([, c]) => Date.parse(c.until) > Date.now());
-        out(caps.length ? caps.map(([who, c]) => `cap by ${who}: ${c.runs} runs at once (${c.why})`).join("\n") : "no cap on runs at once");
+        out(caps.length ? caps.map(([who, c]) => `cap by ${who}: ${atOnce(c.runs)} (${c.why})`).join("\n") : "no cap on runs at once");
       }
       if (name === "governor") {
         const n = changesToday(dir, new Date());

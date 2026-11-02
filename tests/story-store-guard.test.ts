@@ -36,27 +36,10 @@ export function storyCallIn(text: string, file: string): boolean {
   return patterns.some((p) => p.test(code));
 }
 
-/** The files that still make story calls themselves. Remove a path as soon as its calls move to the store. */
-export const ALLOWLIST: readonly string[] = [
-  "src/ops/cli.ts",
-  "src/release/git.ts",
-  "src/repos/connect.ts",
-  "src/skill-import/catalogue-git.ts",
-  "tools/create-split",
-  "tools/daily-branch",
-  "tools/decide-questions.mjs",
-  "tools/post-questions",
-  "tools/split-family",
-];
+/** The files that make story calls themselves. It is empty and stays empty: every story call goes through the store. */
+export const ALLOWLIST: readonly string[] = [];
 
 const EXEMPT = ["src/github.ts", "src/stories/github-store.ts"];
-
-/** Lines a file may keep: push-result still finds its pull request with `gh pr view`. Any other call in it fails the test. */
-const KEPT_LINES: Record<string, RegExp> = { "blocks/push-result.yaml": /\bgh\s+pr\s+view\b/ };
-export function withoutKept(text: string, file: string): string {
-  const keep = KEPT_LINES[file];
-  return keep ? text.split("\n").filter((l) => !keep.test(l)).join("\n") : text;
-}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -111,16 +94,12 @@ describe("storyCallIn", () => {
   });
 });
 
-describe("withoutKept", () => {
-  const block = "blocks/push-result.yaml";
-  it("lets push-result keep gh pr view", () => {
-    expect(storyCallIn(withoutKept("gh pr view 3 --json url", block), block)).toBe(false);
+describe("the tools use the store", () => {
+  it.each(["create-split", "split-family", "post-questions", "decide-questions.mjs", "daily-branch"])("tools/%s loads dist/stories/store.js", (name) => {
+    expect(readFileSync(join("tools", name), "utf8")).toContain("dist/stories/store.js");
   });
-  it("still finds an issue call added to push-result", () => {
-    expect(storyCallIn(withoutKept("gh pr view 3\ngh issue comment 3 --body x", block), block)).toBe(true);
-  });
-  it("keeps nothing in other files", () => {
-    expect(storyCallIn(withoutKept("gh pr view 3", "blocks/ci.yaml"), "blocks/ci.yaml")).toBe(true);
+  it("issue-digest makes no gh call", () => {
+    expect(readFileSync("tools/issue-digest", "utf8")).not.toMatch(/\bexecFileSync\(\s*["']gh["']|\bgh\(/);
   });
 });
 
@@ -173,7 +152,11 @@ describe("the queue uses the store", () => {
 
 describe("story calls outside the story store", () => {
   const files = [...walk("src"), ...walk("blocks"), ...walk("tools"), "scripts/build-flows.mjs"].map((f) => relative(".", f).split("\\").join("/"));
-  const found = files.filter((f) => !EXEMPT.includes(f) && storyCallIn(withoutKept(readFileSync(f, "utf8"), f), f)).sort();
+  const found = files.filter((f) => !EXEMPT.includes(f) && storyCallIn(readFileSync(f, "utf8"), f)).sort();
+
+  it("has an empty allowlist", () => {
+    expect(ALLOWLIST).toEqual([]);
+  });
 
   it("lists no file that is gone", () => {
     expect(ALLOWLIST.filter((f) => !existsSync(f))).toEqual([]);

@@ -89,8 +89,8 @@ describe("the navigation lists", () => {
 
   it("lists the secondary pages of a destination", () => {
     const adm = ia.subnavFor("admin", "administration");
-    expect(adm.map((l: any) => l.label)).toEqual(["Overview", "Problems", "Watchers", "Models", "Dashboard", "Users", "All repositories", "Credentials", "Audit", "Settings", "Maintenance"]);
-    expect(adm.map((l: any) => l.section)).toEqual([...Array(5).fill("operations"), ...Array(4).fill("access"), "system", "system"]);
+    expect(adm.map((l: any) => l.label)).toEqual(["Overview", "Problems", "Watchers", "Models", "Dashboard", "Users", "All repositories", "Credentials", "Audit", "Autonomy", "Settings", "Maintenance"]);
+    expect(adm.map((l: any) => l.section)).toEqual([...Array(5).fill("operations"), ...Array(5).fill("access"), "system", "system"]);
     expect(ia.subnavFor("admin", "flows").map((l: any) => l.href)).toEqual(["#/flows", "#/library"]);
     expect(ia.subnavFor("admin", "flows").every((l: any) => l.section === undefined)).toBe(true);
     expect(ia.subnavFor("admin", "repos")).toEqual([]);

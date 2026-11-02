@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
-import { runProcess, type ProcessMeter } from "./process.js";
+import { runProcess, type ProcessMeter, type RunPriority } from "./process.js";
+import { timedOutError, type SlotWaitWatch } from "./slot-waits.js";
 
 /** Codex CLIs that ship inside apps (the ChatGPT desktop app bundles one). */
 const BUNDLED_CODEX = ["/Applications/ChatGPT.app/Contents/Resources/codex", "/Applications/Codex.app/Contents/Resources/codex"];
@@ -47,8 +48,12 @@ export interface CodexRunOptions {
   cleanEnv?: boolean;
   /** Start Codex inside this `sandbox-exec` profile (a user's run, see os-sandbox.ts). */
   sandboxProfile?: string;
+  /** Start Codex at this priority (see ProcessOptions). */
+  priority?: RunPriority;
   /** Filled with the process time and the bytes it printed (see ProcessMeter). */
   meter?: ProcessMeter;
+  /** Where test-slot records its waits: the time limit does not count them. */
+  slotWaits?: SlotWaitWatch;
   onProgress?: (msg: string) => void;
   /** Read-only reviewer: switch off MCP servers and hooks. It also passes `--ignore-user-config`, unless `ignoreUserConfig` says otherwise (the login is kept). */
   reviewer?: boolean;
@@ -102,6 +107,10 @@ export interface CodexRunResult {
   inputTokens: number;
   outputTokens: number;
   error?: string;
+  /** Time the session waited for a test slot (ms). Absent when it did not wait. */
+  slotWaitMs?: number;
+  /** Pushes or pull requests the run's autonomy level refused in the session's own commands. Absent when none. */
+  refusals?: ("push" | "pull-request")[];
 }
 
 interface CodexItem {
@@ -109,6 +118,8 @@ interface CodexItem {
   text?: string;
   message?: string;
   command?: string;
+  aggregated_output?: string;
+  exit_code?: number | null;
   changes?: { path?: string; kind?: string }[];
   server?: string;
   tool?: string;
@@ -155,6 +166,13 @@ function describe(item: CodexItem): string | undefined {
 }
 
 /** Run the OpenAI Codex CLI headlessly (`codex exec --json`). The prompt goes via stdin. */
+/**
+ * A command of the session that the autonomy level refused (the pre-push hook or a tool printed the fixed sentence and
+ * exited non-zero). Codex writes these results itself, so the engine reads them even where the session cannot write the
+ * push log (a read-only session). Only the action is kept: the sentence is rebuilt by the engine.
+ */
+const AUTONOMY_REFUSED_COMMAND = /autonomy \S+ does not allow (a push|a pull request); next step: promote the repository or flow/;
+
 export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
   const bin = o.codexBin ?? resolveCodexBin();
   const instructions = [o.agentNote ? CODEX_AGENT_NOTE : "", o.systemPrompt ?? ""].filter(Boolean).join("\n\n");
@@ -164,6 +182,7 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
   let failure: string | undefined;
   let inputTokens = 0;
   let outputTokens = 0;
+  const refusals: ("push" | "pull-request")[] = [];
 
   const env: NodeJS.ProcessEnv = { ...o.env, NO_COLOR: "1" };
   if (o.localProvider && o.localBaseUrl) env.CODEX_OSS_BASE_URL = `${o.localBaseUrl.replace(/\/$/, "")}/v1`;
@@ -175,7 +194,9 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
       env,
       cleanEnv: o.cleanEnv,
       sandboxProfile: o.sandboxProfile,
+      priority: o.priority,
       meter: o.meter,
+      slotWaits: o.slotWaits,
       stdin: prompt,
       timeoutMs: o.timeoutMs,
       signal: o.signal,
@@ -195,6 +216,10 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
         else if (ev.type === "error") failure = ev.message ?? "error";
         else if (ev.type === "item.completed" && ev.item) {
           if (ev.item.type === "agent_message") last = ev.item.text ?? "";
+          if (ev.item.type === "command_execution" && ev.item.exit_code !== 0) {
+            const m = AUTONOMY_REFUSED_COMMAND.exec(ev.item.aggregated_output ?? "");
+            if (m) refusals.push(m[1] === "a push" ? "push" : "pull-request");
+          }
           const d = describe(ev.item);
           if (d) o.onProgress?.(d);
         }
@@ -205,9 +230,9 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
     return { ok: false, output: "", inputTokens, outputTokens, error: msg };
   }
 
-  const base = { output: last, sessionId, inputTokens, outputTokens };
+  const base = { output: last, sessionId, inputTokens, outputTokens, ...(res.slotWait ? { slotWaitMs: res.slotWait.waitedMs } : {}), ...(refusals.length ? { refusals } : {}) };
   if (res.aborted) return { ...base, ok: false, error: "cancelled" };
-  if (res.timedOut) return { ...base, ok: false, error: "timed out" };
+  if (res.timedOut) return { ...base, ok: false, error: timedOutError(res.slotWait) };
   if (failure || res.exitCode !== 0) {
     const err = failure ?? `codex exited with code ${res.exitCode}. ${res.stderr.trim().slice(-500)}`;
     return { ...base, ok: false, error: /not logged in|\b401\b|unauthorized/i.test(err) ? `${err} — run \`codex login\`` : err };

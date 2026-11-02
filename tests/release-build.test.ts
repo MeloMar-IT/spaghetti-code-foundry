@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -87,6 +87,11 @@ describe("buildEnv", () => {
       PATH: "/bin", HOME: "/h", LANG: "C", JAVA_HOME: "/jdk", GOPATH: "/go", HTTP_PROXY: "http://proxy:3128", FACTORY_VAR_TEST_SLOTS: "2",
       FACTORY_RELEASE_VERSION: "1", FACTORY_RELEASE_TAG: "v1", FACTORY_RELEASE_IN: "/in", FACTORY_RELEASE_OUT: "/out", FACTORY_RELEASE_SHA: "abc",
     });
+  });
+
+  it("passes a numeric SCF_TEST_WORKERS and drops a bad one", () => {
+    expect(buildEnv({ ...source, SCF_TEST_WORKERS: "4" }, r, deniedNames()).SCF_TEST_WORKERS).toBe("4");
+    expect(buildEnv({ ...source, SCF_TEST_WORKERS: "x" }, r, deniedNames()).SCF_TEST_WORKERS).toBeUndefined();
   });
 
   it("drops a configured token or key name even when it is an allowed name", () => {
@@ -207,6 +212,63 @@ describe.skipIf(process.platform === "win32")("runCommand", () => {
     const d = tmp();
     const r = await run(d, "sleep 30", { timeoutMs: 300 });
     expect(r.timedOut).toBe(true);
+  });
+
+  it("time paused by test-slot does not count against the limit", async () => {
+    const d = tmp();
+    // a stand-in test-slot: records a pause for about a second (as the real one does), then ends
+    const fake = join(d, "fake-slot.mjs");
+    writeFileSync(fake, [
+      'import { writeFileSync, utimesSync, renameSync } from "node:fs";',
+      'const f = `${process.env.FACTORY_TEST_SLOT_WAIT_DIR}/${Date.now()}-${process.pid}-pause.wait`;',
+      'writeFileSync(f, "");',
+      "const t = setInterval(() => { const n = new Date(); utimesSync(f, n, n); }, 50);",
+      "setTimeout(() => { clearInterval(t); renameSync(f, f.replace(/\\.wait$/, \".done\")); process.exit(0); }, 1000);",
+    ].join("\n"));
+    const r = await runCommand({ cmd: "true", cwd: d, testSlot: fake, slotsDir: join(d, "slots"), timeoutMs: 300, logFile: join(d, "log.txt"), env: { PATH: process.env.PATH ?? "" } });
+    expect(r).toEqual({ code: 0, timedOut: false, aborted: false });
+  });
+
+  it("writes the pause records into the folder of the enclosing step (waitDir), and keeps them there", async () => {
+    const d = tmp();
+    const waits = join(d, "step-waits");
+    mkdirSync(waits);
+    // a stand-in test-slot: a pause of about a second, recorded in the folder it is given (FACTORY_TEST_SLOT_WAIT_DIR)
+    const fake = join(d, "fake-slot.mjs");
+    writeFileSync(fake, [
+      'import { writeFileSync, utimesSync, renameSync } from "node:fs";',
+      'const f = `${process.env.FACTORY_TEST_SLOT_WAIT_DIR}/${Date.now()}-${process.pid}-pause.wait`;',
+      'writeFileSync(f, "");',
+      "const t = setInterval(() => { const n = new Date(); utimesSync(f, n, n); }, 50);",
+      "setTimeout(() => { clearInterval(t); renameSync(f, f.replace(/\\.wait$/, \".done\")); process.exit(0); }, 1000);",
+    ].join("\n"));
+    const r = await runCommand({ cmd: "true", cwd: d, testSlot: fake, slotsDir: join(d, "slots"), timeoutMs: 300, logFile: join(d, "log.txt"), env: { PATH: process.env.PATH ?? "" }, waitDir: waits });
+    expect(r).toEqual({ code: 0, timedOut: false, aborted: false });
+    expect(readdirSync(waits).filter((f) => /-pause\.done$/.test(f))).toHaveLength(1);
+  });
+
+  it("kills a paused command that ignores TERM when aborted (its group is not the wrapper's)", async () => {
+    const d = tmp();
+    const slots = join(d, "slots");
+    mkdirSync(join(slots, "slot-1"), { recursive: true });
+    writeFileSync(join(slots, "slot-1", "pid"), String(process.pid)); // a live first run: ours is the second and is paused
+    const stop = new AbortController();
+    const running = runCommand({
+      cmd: `echo $$ > "${d}/pid"; trap '' TERM; sleep 60 & wait`, cwd: d, testSlot, slotsDir: slots, timeoutMs: 60_000, logFile: join(d, "log.txt"), signal: stop.signal,
+      env: { PATH: process.env.PATH ?? "", FACTORY_VAR_TEST_SLOTS: "2", FACTORY_TEST_SLOT_POLL_MS: "50", FACTORY_TEST_NICE: "0" },
+    });
+    while (!existsSync(join(d, "pid"))) await new Promise((r) => setTimeout(r, 20));
+    const pid = Number(readFileSync(join(d, "pid"), "utf8"));
+    writeFileSync(join(slots, "pause"), `${new Date().toISOString()}\n`); // the governor asks for a pause
+    for (let i = 0; i < 200 && !/paused/.test(readFileSync(join(d, "log.txt"), "utf8")); i++) await new Promise((r) => setTimeout(r, 25));
+    expect(readFileSync(join(d, "log.txt"), "utf8")).toContain("test-slot: paused");
+    const started = Date.now();
+    stop.abort();
+    const r = await running;
+    expect(r.aborted).toBe(true);
+    expect(Date.now() - started).toBeLessThan(6000);
+    for (let i = 0; i < 100 && !gone(pid); i++) await new Promise((r2) => setTimeout(r2, 25));
+    expect(gone(pid)).toBe(true);
   });
 
   it("kills a command that ignores TERM when aborted, and its children", async () => {

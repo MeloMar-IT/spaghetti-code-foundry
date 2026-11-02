@@ -5,6 +5,7 @@
 export const SETTING_EXCEPTIONS: Record<string, string> = {
   "help.disabled_accounts": "A list of account ids cannot be typed sensibly; a switch per account on the account page is a follow-up.",
   "help.pilot_accounts": "A list of account ids cannot be typed sensibly; a switch per account on the account page is a follow-up.",
+  "governance.owner": "An account id cannot be typed sensibly; the owner who approves a promotion is set in config.yaml, and a control on the account page is a follow-up.",
   "help.sensitive_patterns": "The one-per-line list control trims lines and cannot hold a newline, which would change privacy patterns; a lossless pattern editor is a follow-up.",
   "delivery.repositories.*.required_checks": "Per-repository requirements are set in config.yaml; a control is a follow-up with the CI check of #163.",
   "delivery.repositories.*.artifacts": "Per-repository requirements are set in config.yaml; a control is a follow-up with the CI check of #163.",

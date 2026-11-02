@@ -16,7 +16,9 @@ import { DenialSchema, EVIDENCE_EVENT_TYPES, EvidenceEventSchema } from "../src/
 import { EVIDENCE_EVENT_VERSION } from "../src/evidence/version.js";
 import { CONTEXT_OMISSION_REASONS } from "../src/context/schema.js";
 import { CONTEXT_OUTCOMES } from "../src/evidence/schema.js";
+import { COMPONENT_KINDS, GOVERNANCE_FAILURES, GOVERNANCE_OUTCOMES, GOVERNANCE_STATUSES, MAX_GOVERNED_COMPONENTS } from "../src/promotion/components.js";
 import { RUN_CONTEXT_CODES } from "../src/engine/run-context.js";
+import { AUTONOMY_LEVELS } from "../src/governance/autonomy.js";
 import { REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS } from "../src/engine/repo-request.js";
 import { AGENTS } from "../src/flow/schema.js";
 import { BOUNDARIES, CREDENTIALS, DENY_ONLY_REASONS, MODES, NO_PACK_REASONS, NO_RULE_REASONS, OUTCOMES } from "../src/policy/schema.js";
@@ -173,6 +175,8 @@ const BASE: Record<string, Rec> = {
   "policy.decided": { type: "policy.decided", decision: DECISION, step: shell },
   "repo.operation": { ...REPO_OP, repository: "own/repo", branch: "feat/x", policy: "allow" },
   "context.bundled": CTX_WRITTEN,
+  "run.autonomy": { type: "run.autonomy", level: "plan-only", repository: "guarded-write", flow: "plan-only" },
+  "governance.decided": { type: "governance.decided", outcome: "refused", components: [{ kind: "flow", id: "deploy", version: "3", status: "retired", refused: true }] },
 };
 
 // ---- bodies built from the library's lists (the drift guard) ----
@@ -228,7 +232,13 @@ const GEN: Rec[] = [
   // edge values the library accepts
   ...["2024-02-29T00:00:00Z", "2000-02-29T00:00:00Z", "2026-01-31T12:00:59.123456789Z"].map((time) => ({ type: "run.queued", time })),
   ...["00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff", USER.toUpperCase(), "0b8f6a0e-5a52-8a4e-ba57-0f2f3f1f7c11"].map((id) => ({ type: "run.cancelled", by: { kind: "user", id } })),
-  ...[1, 2, 3, 4, 5, 6].map((version) => ({ type: "run.queued", version })),
+  ...GOVERNANCE_FAILURES.map((failure) => ({ type: "governance.decided", outcome: "refused", failure, components: [] })),
+  ...GOVERNANCE_STATUSES.map((status) => ({ type: "governance.decided", outcome: "allowed", components: [{ kind: "flow", id: "a.b_c-(d)", status, refused: false }] })),
+  ...COMPONENT_KINDS.map((kind) => ({ type: "governance.decided", outcome: "allowed", components: [{ kind, id: "x", version: "1.0.0", status: "ok", refused: false }] })),
+  { type: "governance.decided", outcome: "allowed", components: [] },
+  ...AUTONOMY_LEVELS.map((level) => ({ type: "run.autonomy", level, flow: "plan-only" })),
+  ...AUTONOMY_LEVELS.map((level) => ({ type: "run.autonomy", level, repository: level, flow: level })),
+  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((version) => ({ type: "run.queued", version })),
   ...RUN_CONTEXT_CODES.map((failure) => ({ type: "context.bundled", outcome: "failed", failure })),
   ...CONTEXT_OMISSION_REASONS.map((reason) => ({ ...CTX_WRITTEN, omitted: { ...(CTX_WRITTEN.omitted as object), [reason]: 7 } })),
 ];
@@ -244,6 +254,8 @@ interface Case {
   eventsText?: string;
   /** What the library must say. A case that is not what it says it is would test nothing. */
   ok: boolean;
+  /** The fault both sides must report when `ok` is false (default: evidence-head-mismatch). */
+  fault?: string;
 }
 const eventsOf = (c: Case): string => c.eventsText ?? c.lines.map((l) => `${l}\n`).join("") + (c.tail ?? "");
 
@@ -263,8 +275,8 @@ async function compare(c: Case): Promise<void> {
     expect(got, c.name).toEqual({ check: "evidence", status: "ok" });
     expect(r.code, c.name).toBe(0);
   } else {
-    expect(lib.fault).toBe("evidence-head-mismatch");
-    expect(got, c.name).toEqual({ check: "evidence", status: "stop", condition: "evidence-unverified", fault: "evidence-head-mismatch", reason: lib.message });
+    expect(lib.fault, c.name).toBe(c.fault ?? "evidence-head-mismatch");
+    expect(got, c.name).toEqual({ check: "evidence", status: "stop", condition: "evidence-unverified", fault: lib.fault, reason: lib.message });
     expect(r.code, c.name).toBe(1);
   }
 }
@@ -290,6 +302,7 @@ describe("drift guard: the copied lists and the event schema", () => {
       ARTIFACT_KINDS, STEP_TYPES, AGENTS, OUTCOMES, MODES, BOUNDARIES, CREDENTIALS, REASON_CODES, NO_RULE_REASONS, NO_PACK_REASONS, DENY_ONLY_REASONS,
       TOOL_KINDS, OPERATIONS, PROFILE_SOURCES, FIT_OUTCOMES, FIT_RESTRICTIONS, HELD_BY, UNREADABLE, EXCESS_FIELDS, REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS,
       CONTEXT_OUTCOMES, CONTEXT_OMISSION_REASONS, RUN_CONTEXT_CODES,
+      COMPONENT_KINDS, GOVERNANCE_STATUSES, GOVERNANCE_OUTCOMES, GOVERNANCE_FAILURES, MAX_GOVERNED_COMPONENTS,
       RETRY_CAUSES: inline().retry, TEST_OUTCOMES: inline().test,
     };
     for (const [name, list] of Object.entries(lists)) expect(fromScript(name), name).toEqual(list);
@@ -345,6 +358,38 @@ describe("parity: the chain", () => {
   });
 });
 
+describe("parity: the local-test marker", () => {
+  const marked = { ...BASE["run.created"]!, localTest: true };
+  const lt = (name: string, bodies: Rec[], extra: Partial<Case> = {}): Case => ({ name, lines: chain(bodies), ok: false, fault: "local-test", ...extra });
+  it("refuses a valid chain with the marker, as the library does", async () => {
+    await all([
+      lt("the marker alone", [marked]),
+      lt("the marker and later events", [marked, BASE["run.queued"]!, BASE["run.stopped"]!, BASE["run.resumed"]!, BASE["step.started"]!]),
+      lt("a version 7 line with the marker", [{ ...marked, version: 7 }, BASE["run.queued"]!]),
+      // a marker beyond count is not read
+      { name: "a marker beyond count", lines: chain([BASE["run.created"]!, BASE["run.queued"]!, { ...BASE["run.created"]!, localTest: true }]), count: 2, ok: true },
+    ]);
+  });
+  it("reports a broken chain that holds the marker as a head mismatch", async () => {
+    const g = chain([marked, BASE["run.queued"]!, BASE["run.started"]!]);
+    await all([{ name: "a marked chain with a changed body", lines: [g[0]!, g[1]!.replace("ev-1", "ev-9"), g[2]!], ok: false }]);
+  });
+  it("refuses a marker that is not true on both sides", async () => {
+    await all([false, "true", 1, null].map((v) => ({ name: `localTest ${JSON.stringify(v)}`, lines: chain([{ ...BASE["run.created"]!, localTest: v }]), ok: false }) as Case));
+  });
+  it("shows the reason in the text output", async () => {
+    const lines = chain([marked]);
+    const { text, sig } = contractFor(1, hashOf(lines[0]));
+    const d = folder();
+    writeFileSync(join(d, "contract.json"), text);
+    writeFileSync(join(d, "contract.sig"), sig);
+    writeFileSync(join(d, "events.jsonl"), lines.map((l) => `${l}\n`).join(""));
+    const r = await run(["--contract", join(d, "contract.json"), "--signature", join(d, "contract.sig"), "--public-key", KEY1, "--repo", repo, "--events", join(d, "events.jsonl")]);
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain("evidence: stop evidence-unverified: the run is a local test, so it is not eligible for delivery");
+  });
+});
+
 describe("parity: events that are hashed and anchored but break the schema", () => {
   const one = (name: string, fn: (e: Rec) => void, type = "step.started"): Case => ({ name, lines: chain([BASE[type]!], { mutate: (e) => void fn(e) }), ok: false });
   const withBody = (name: string, body: Rec): Case => ({ name, lines: chain([body]), ok: false });
@@ -397,7 +442,8 @@ describe("parity: events that are hashed and anchored but break the schema", () 
       one("a 33-character effort", (e) => (e.fallbackFrom.effort = "e".repeat(33)), "step.routed"),
       one("a model name with a leading space", (e) => (e.model.model = " gpt"), "step.routed"),
       one("a flow name with a control character", (e) => (e.flow.name = "a\nb"), "run.created"),
-      one("a flow version 0", (e) => (e.flow.version = 0), "run.created"),
+      one("an unknown autonomy level", (e) => (e.level = "full"), "run.autonomy"),
+      one("a flow version 0",(e) => (e.flow.version = 0), "run.created"),
       one("a parent of a//b", (e) => (e.step.parent = "a//b")),
       one("a step id with a digit first", (e) => (e.step.id = "1a")),
       one("a null where a step is optional", (e) => (e.step = null), "run.failed"),
@@ -416,6 +462,10 @@ describe("parity: events that are hashed and anchored but break the schema", () 
       one("a step on run.start", (e) => ((e.step = shell), (e.decision.boundary = "run.start")), "policy.decided"),
       one("no step on step.before", (e) => delete e.step, "policy.decided"),
       one("a step on context.select", (e) => ((e.step = shell), (e.decision.boundary = "context.select")), "policy.decided"),
+      one("a refused decision with nothing refused", (e) => (e.components[0].refused = false), "governance.decided"),
+      one("an allowed decision with a refused component", (e) => (e.outcome = "allowed"), "governance.decided"),
+      one("an allowed decision with a failure", (e) => ((e.outcome = "allowed"), (e.components[0].refused = false), (e.failure = "check-failed")), "governance.decided"),
+      one("a component id with a space", (e) => (e.components[0].id = "a b"), "governance.decided"),
       one("a written bundle without its file", (e) => delete e.bundle, "context.bundled"),
       one("a written bundle with a failure", (e) => (e.failure = "internal"), "context.bundled"),
       one("a bundle at another path", (e) => (e.bundle.path = "other.json"), "context.bundled"),

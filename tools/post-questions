@@ -42,6 +42,15 @@ function fail(msg) {
   process.exit(1);
 }
 
+// Every story call goes through the story store (dist/stories/store.js), on the runner above.
+let storeFor;
+try {
+  ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+} catch (e) {
+  fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+}
+const stories = storeFor(repo).sync(gh);
+
 if (process.argv.length > 3) fail("usage: post-questions [<run-dir>]");
 const runDir = process.argv[2];
 const decide = !!runDir && process.env.FACTORY_DECIDE_TECHNICAL === "1";
@@ -75,7 +84,7 @@ let login;
 function ownLogin() {
   if (login === undefined) {
     try {
-      login = gh(["api", "user", "--jq", ".login"]).trim();
+      login = stories.viewer().trim();
     } catch {
       login = "";
     }
@@ -88,7 +97,7 @@ function ownLogin() {
 function reconcile(n, key) {
   let view;
   try {
-    view = JSON.parse(gh(["issue", "view", n, "--repo", repo, "--json", "comments,labels"]));
+    view = JSON.parse(stories.view(Number(n), "comments,labels"));
   } catch (e) {
     if (!(e instanceof SyntaxError)) throw e;
   }
@@ -198,8 +207,8 @@ for (const [n, lines] of sections) {
   try {
     if (!decide) {
       const comment = compose(first, ASKED_INTRO, body, next, [`<!-- claude-factory run=${runId} questions -->`]);
-      gh(["issue", "comment", n, "--repo", repo, "--body-file", "-"], comment);
-      gh(["issue", "edit", n, "--repo", repo, "--add-label", label]);
+      stories.comment(Number(n), comment);
+      stories.setLabels(Number(n), label, []);
       console.log(`#${n}: asked (${count(body)} questions)`);
       asked++;
       continue;
@@ -225,8 +234,8 @@ for (const [n, lines] of sections) {
     else if (outcome === "asked") comment = compose(first, ASKED_INTRO, `${d.body}\n\n${EPIC_NOTE}`, next, markers);
     else comment = compose(first, ASKED_INTRO, body, next, markers);
     const { posted, labelled } = reconcile(n, markers[0]);
-    if (!posted) gh(["issue", "comment", n, "--repo", repo, "--body-file", "-"], comment);
-    if (outcome !== "went_on" && !labelled) gh(["issue", "edit", n, "--repo", repo, "--add-label", label]);
+    if (!posted) stories.comment(Number(n), comment);
+    if (outcome !== "went_on" && !labelled) stories.setLabels(Number(n), label, []);
     if (id) commitPending(runDir, id);
     const again = posted ? " — already posted" : "";
     if (outcome === "went_on") console.log(`#${n}: decided (${d.decided.length} questions)${again}`);

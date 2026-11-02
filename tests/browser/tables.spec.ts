@@ -266,6 +266,7 @@ const BOXED: [string, string, boolean][] = [
   ["All repositories", "#/all-repos", false],
   ["Credentials", "#/credentials", false],
   ["Audit", "#/audit", false],
+  ["Autonomy", "#/autonomy", false],
 ];
 
 async function boxes(page: Page) {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { StuckRun } from "../self-update.js";
 import type { Scheduler } from "../queue/scheduler.js";
 import { areaWait } from "./next.js";
+import { newestSlotWait } from "../steps/slot-waits.js";
 
 /** A run with no change in its folder for this long is stuck. */
 export const STUCK_QUIET_MS = 30 * 60_000;
@@ -29,7 +30,8 @@ const mtimes = (dir: string, skip?: string): number[] => {
 
 /** Newest mtime (ms) of the plain files directly in runDir (not area-wait.json) and of runDir/logs/*; 0 when none. */
 export function lastActivity(runDir: string): number {
-  return Math.max(0, ...mtimes(runDir, WAIT_FILE), ...mtimes(join(runDir, "logs")));
+  // a paused test run touches its pause record at least every 5 s: a long pause is no sign of a stuck run
+  return Math.max(0, ...mtimes(runDir, WAIT_FILE), ...mtimes(join(runDir, "logs")), newestSlotWait(runDir));
 }
 
 /** area-wait.json exists and was written within AREA_WAIT_FRESH_MS. */

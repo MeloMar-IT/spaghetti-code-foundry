@@ -51,7 +51,8 @@ describe("the table", () => {
     expect(SETUP.filter((c) => c.area === "monitor" && ["on", "off", "status"].includes(c.action))).toEqual([]);
     expect([...new Set(SETUP.map((c) => c.area))].filter((a) => LOCAL_WORDS.includes(a)).sort()).toEqual(["blocks", "flows", "monitor"]);
     for (const c of SETUP) {
-      const words = [...(c.args ?? []), ...Object.keys(c.flags ?? {})];
+      // the token of a promotion request only binds an approval to one request; it is shown by the status and is no credential
+      const words = [...(c.args ?? []), ...Object.keys(c.flags ?? {})].filter((x) => !(c.area === "autonomy" && c.action === "approve" && x === "token"));
       expect(words.filter((x) => /token|key|secret|password/i.test(x)), `${c.area} ${c.action}`).toEqual([]);
     }
     for (const c of SETUP.filter((x) => x.prompts)) expect(c.prompts).toEqual([{ field: "token", label: "Access token", hidden: true }]);
@@ -63,6 +64,7 @@ describe("the table", () => {
     expect(asks).toEqual([
       "repos use-token", "repos use-https-token", "repos use-key", "repos new-key", "repos use-app", "repos use-server-login", "repos remove", "repos remove-github",
       "settings set", "monitor mute-for-good", "monitor mute-detector-for-good", "flows save", "flows remove", "blocks save", "blocks remove",
+      "autonomy demote",
     ]);
   });
 
@@ -297,6 +299,44 @@ describe("flows and blocks", () => {
     expect((await scf(["flows", "show", "hello-cli"])).code).toBe(1);
     const builtin = await scf(["flows", "remove", "issue-plan", "--yes"]);
     expect([builtin.code, builtin.err]).toEqual([4, "error: built-in flows cannot be deleted"]);
+  });
+
+  it("shows the autonomy levels and every check of the promotion gate, as text and as the API answer", async () => {
+    const text = await scf(["autonomy", "status"]);
+    expect(text.code).toBe(0);
+    expect(text.out).toContain("Autonomy levels: observe < plan-only < guarded-write < delivery-handoff");
+    expect(text.out).toMatch(/^flow \S+: delivery-handoff \(top level\)$/m);
+    for (const label of ["Evidence completeness", "Eval pass rate", "Policy conformance", "Operational SLOs", "Approval"]) expect(text.out).toContain(label);
+    expect(text.out).toMatch(/^ {2}no {2}Evidence completeness: /m);
+    expect(text.out).toMatch(/^ {2}\.\. {2}Approval: /m);
+    const json = (await scf(["autonomy", "status", "--json"])).json<{ levels: string[]; components: { gate: { checks: { id: string }[] } }[] }>();
+    expect(json.levels).toHaveLength(4);
+    expect(json.components[0]!.gate.checks.map((c) => c.id)).toEqual(["evidence_completeness", "eval_pass_rate", "policy_conformance", "operational_slos", "approval"]);
+    // a user is refused
+    expect((await scf(["autonomy", "status"], { as: ann })).code).not.toBe(0);
+  });
+
+  it("sends the same fields as the API for promote, approve and demote, and needs a reason or a token", () => {
+    const id = "issue-plan";
+    expect(callOf("autonomy", "promote", ["flows", id, "plan-only", "--reason", "ready"])).toEqual({ method: "POST", path: "autonomy/promote", body: { kind: "flows", id, to: "plan-only", reason: "ready" } });
+    expect(callOf("autonomy", "demote", ["flows", id, "observe", "--reason", "paused", "--yes"])).toEqual({ method: "POST", path: "autonomy/demote", body: { kind: "flows", id, to: "observe", reason: "paused" } });
+    expect(callOf("autonomy", "approve", ["flows", id, "plan-only", "t-1"])).toEqual({ method: "POST", path: "autonomy/approve", body: { kind: "flows", id, to: "plan-only", token: "t-1" } });
+    expect(() => callOf("autonomy", "promote", ["flows", id, "plan-only"])).toThrow("--reason");
+    expect(() => callOf("autonomy", "demote", ["flows", id, "observe", "--yes"])).toThrow("--reason");
+    expect(() => callOf("autonomy", "approve", ["flows", id, "plan-only"])).toThrow();
+  });
+
+  it("demotes with --yes, refuses a promotion whose gate fails, and refuses approval without a request or from a user", async () => {
+    const ask = ["autonomy", "demote", "flows", "issue-plan", "observe", "--reason", "paused"];
+    await expect(scf(ask)).rejects.toThrow("The level drops at once.");
+    const done = await scf([...ask, "--yes"]);
+    expect([done.code, done.out]).toEqual([0, "demoted flows issue-plan: delivery-handoff -> observe"]);
+    expect((await scf(["autonomy", "status"])).out).toMatch(/^Owner \(approves promotions\): \S+$/m);
+    const up = await scf(["autonomy", "promote", "flows", "issue-plan", "plan-only", "--reason", "ready"]);
+    expect(up.code).not.toBe(0);
+    const none = await scf(["autonomy", "approve", "flows", "issue-plan", "plan-only", "no-token"]);
+    expect(none.code).not.toBe(0);
+    expect((await scf([...ask, "--yes"], { as: ann })).code).not.toBe(0);
   });
 
   it("lists, prints, saves and removes a block", async () => {

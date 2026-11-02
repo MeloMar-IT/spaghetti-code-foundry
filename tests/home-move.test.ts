@@ -77,7 +77,7 @@ const leftovers = () => readdirSync(tmp).filter((n) => n.includes(".migrating-")
 describe("account files in the move", () => {
   it("copies users.json and sessions.json byte for byte and keeps their mode", () => {
     const body = JSON.stringify({ version: 1, users: [{ name: `${from}/x` }] });
-    for (const f of ["users.json", "sessions.json", "credentials.json"]) writeFileSync(join(from, f), body, { mode: 0o600 });
+    for (const f of ["users.json", "sessions.json", "credentials.json", "autonomy.json"]) writeFileSync(join(from, f), body, { mode: 0o600 });
     writeFileSync(join(from, "queue.json"), body);
     writeFileSync(join(from, "audit.jsonl"), `{"note":"${from}/x"}\n`, { mode: 0o600 });
     writeFileSync(join(from, "audit.jsonl.tmp"), `{"note":"${from}/tmp"}\n`, { mode: 0o600 });
@@ -85,7 +85,7 @@ describe("account files in the move", () => {
     writeFileSync(join(from, "runs", "r9", "users.json"), body);
     writeFileSync(join(from, "runs", "r9", "run.json"), JSON.stringify({ runId: "r9", status: "succeeded" }));
     expect(migrate().status).toBe("migrated");
-    for (const f of ["users.json", "sessions.json", "credentials.json"]) {
+    for (const f of ["users.json", "sessions.json", "credentials.json", "autonomy.json"]) {
       expect(readFileSync(join(to, f))).toEqual(Buffer.from(body));
       expect(statSync(join(to, f)).mode & 0o777).toBe(0o600);
     }

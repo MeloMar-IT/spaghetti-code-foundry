@@ -36,7 +36,7 @@ const FLOWS: Record<string, Groups> = {
   ],
   "issue-code-daily": [
     ...g("planning", "pull_ticket daily_branch plan_check baseline_tests"), ...g("coding", "implement guard fix_guard run_tests fix_tests"),
-    ...g("reviewing", REVIEW), ...g("merging", "commit push report"), ...g("planning", "baseline_failed wait_for_merge"),
+    ...g("reviewing", REVIEW), ...g("merging", "commit push report"), ...g("planning", "baseline_failed wait_for_merge force_split send_back split_gate approve_split create_split"),
   ],
   "issue-plan": g("planning", "pull_ticket clone plan plan_review revise_plan wait_for_story send_back post_plan"),
   "github-issue": [

@@ -6,6 +6,7 @@
 #   → Opus plans (with size + code areas) → Codex checks (+ risk) → Opus revises
 #       too big (limit or planner) → split: low split risk creates the issues itself, else /approve
 #       WAITS_FOR #N → recorded in Depends on → stop (continues when #N is done; an invalid wait is asked)
+#       implement times out again after the retries → the planner splits it (split gate) or asks
 #   → risk > 75 or Factory_review_plan → wait for /approve
 #   → a split parent built as one change: close its open parts, their dependants wait for it
 #   → lock the plan's code areas (runs on other areas code at the same time)
@@ -271,7 +272,12 @@ steps:
     type: shell
     timeout_sec: 7200
     run: |-
-      rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt"
+      rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt" "{{run.dir}}/baseline-stop.json"
+      base="$FACTORY_VAR_DEVELOP_BRANCH"; base_sha=""; base_clean=""
+      [ -n "$base" ] && base_sha=$(git rev-parse -q --verify "origin/$base" 2>/dev/null)
+      [ -n "$base_sha" ] && [ -z "$(git status --porcelain 2>/dev/null)" ] && [ "$(git rev-parse "HEAD^{tree}" 2>/dev/null)" = "$(git rev-parse "$base_sha^{tree}" 2>/dev/null)" ] && base_clean=yes
+      export FACTORY_BASE_BRANCH="$base" FACTORY_BASE_SHA="$base_sha" FACTORY_BASE_CLEAN="$base_clean"
+      node "$FACTORY_TOOLS/baseline-tests" known-red "{{run.dir}}" || { rm -f "{{run.dir}}/tests.log"; exit 1; }
       cmd="$FACTORY_VAR_TEST_CMD"
       if [ -z "$cmd" ] || [ "$cmd" = auto ]; then cmd=$("$FACTORY_TOOLS/detect-commands" test); fi
       if [ -z "$cmd" ]; then echo "no test command found (set var test_cmd)"; exit 1; fi
@@ -308,7 +314,7 @@ steps:
     timeout_sec: 7200
     run: |-
       git checkout -q -B "$FACTORY_VAR_MAIN_BRANCH" "origin/$FACTORY_VAR_MAIN_BRANCH" || { echo "cannot switch to $FACTORY_VAR_MAIN_BRANCH"; exit 1; }
-      rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt"
+      rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt" "{{run.dir}}/baseline-stop.json"
       rm -f "{{run.dir}}/baseline-sha"; git rev-parse HEAD > "{{run.dir}}/baseline-sha.new"
       git add -A -N >/dev/null 2>&1 || true   # new files show up in git diff for reviewers
       cmd="$FACTORY_VAR_TEST_CMD"
@@ -817,8 +823,16 @@ steps:
       - Bash(git log*)
       - Bash(git show*)
       - Bash(git grep*)
+      - Bash(git status*)
+      - Bash(git diff*)
       - Bash(ls*)
     prompt: |-
+      This issue has to be split.
+      {{steps.implement.too_big}}
+      If the line above says it is too big for one coding turn, coding ran out of time again and again. The unfinished work is still
+      in this folder: it is not committed and not pushed. See what is done and what is left with `git status` and `git diff --stat`.
+      Change nothing.
+
       Your plan is over the size limit for one issue:
       {{steps.size_gate.output}}
       If your plan had a MECHANICAL line, the size gate did not accept it (reason above); do not keep the plan for that reason.
@@ -842,7 +856,7 @@ steps:
       parts of the same original are still open, do not propose new parts. Re-plan it against those parts, or ask
       (NEEDS_INFO) for the changes to them you need.
 
-      Only when the rule above stops you from proposing new parts, answer NEEDS_INFO instead: ask the owner how to change the existing parts, with the questions in this form:
+      Answer NEEDS_INFO instead only when the rule above stops you from proposing new parts (ask the owner how to change the existing parts), or when coding ran out of time and you advise against a split (say why, and ask the owner what to do). Write the questions in this form:
       Write each question in this form:
         **Q<n>. <question>**
         **Kind:** technical | product | policy | owner_action
@@ -1820,4 +1834,4 @@ steps:
     jump_only: true
     description: "Stop: the tests fail before any change, and not only the tests the issue names to fix"
     resume_from: pull_ticket
-    run: echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log"; echo; cat "{{run.dir}}/baseline-verdict.txt" 2>/dev/null; exit 1
+    run: echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log" 2>/dev/null; echo; cat "{{run.dir}}/baseline-verdict.txt" 2>/dev/null; exit 1

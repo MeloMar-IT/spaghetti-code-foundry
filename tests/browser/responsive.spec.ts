@@ -9,6 +9,7 @@ const PAGES: [string, string, string | RegExp][] = [
   ["Runs", "#/runs", "Seeded failed run"],
   ["Start work", "#/start", "gate"],
   ["Repositories", "#/repos", /No repositories yet/],
+  ["Autonomy", "#/autonomy", /Repositories/],
 ];
 
 const TARGETS = 'button, a.btn, a[data-nav], .brand, select, textarea, summary, input:not([type=checkbox]):not([type=radio]):not([type=hidden])';

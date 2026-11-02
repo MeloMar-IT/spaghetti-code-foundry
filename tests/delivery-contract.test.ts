@@ -6,6 +6,10 @@ import {
   DELIVERY_SIGNATURE_NAMESPACE,
   DeliveryContractError,
   deliveryContractText,
+  deliveryEvidenceProblem,
+  evidenceHeadProblem,
+  LOCAL_TEST_INELIGIBLE,
+  localTestEvents,
   signDeliveryContract,
   verifyDeliveryContract,
   type DeliveryFacts,
@@ -13,6 +17,7 @@ import {
 import { DeliveryContractSchema, STOP_CONDITIONS } from "../src/delivery/schema.js";
 import { publicKeyLine, signSsh } from "../src/delivery/sshsig.js";
 import { canonicalHash, canonicalJson, eventHash } from "../src/evidence/canonical.js";
+import { readEvidenceChain } from "../src/evidence/chain.js";
 import { sha256Hex } from "../src/evidence/identity.js";
 
 const PKCS8 = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -201,5 +206,51 @@ describe("verifying a contract", () => {
     for (const bad of [undefined, 5, null, {}]) {
       expect(verifyDeliveryContract(bad as never, bad as never, bad as never, bad as never).ok).toBe(false);
     }
+  });
+});
+
+describe("a local-test run", () => {
+  const marked = (runId: string, localTest: boolean | "none" = true): string[] => {
+    let prev: string | null = null;
+    const bodies: Record<string, unknown>[] = [
+      { type: "run.created", flow: { name: "f" }, by: { kind: "cli" }, ...(localTest === "none" ? {} : { localTest }) },
+      { type: "run.queued" },
+      { type: "run.started" },
+    ];
+    return bodies.map((b, seq) => {
+      const e: Record<string, unknown> = { version: 8, id: `ev-${String(seq).padStart(6, "0")}`, seq, runId, time: "2026-01-31T12:00:00.000Z", ...b, prevHash: prev };
+      prev = eventHash(e);
+      return canonicalJson({ ...e, hash: prev });
+    });
+  };
+  const lines = marked("run-1");
+  const events = lines.join("\n") + "\n";
+  const head = (JSON.parse(lines[2] as string) as { hash: string }).hash;
+  const t = deliveryContractText(buildDeliveryContract({ ...FACTS, evidence: { count: 3, terminalHash: head } }));
+  const sig = signDeliveryContract(t, K1);
+  const line = publicKeyLine(K1);
+
+  it("is refused by the contract check, after the signature, the chain and the head", () => {
+    const r = verifyDeliveryContract(t, sig, line, events);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect([r.fault, r.message]).toEqual(["local-test", LOCAL_TEST_INELIGIBLE]);
+    expect(verifyDeliveryContract(t, signDeliveryContract("other", K1), line, events)).toMatchObject({ ok: false, fault: "signature-bad" });
+    const broken = [lines[0]!, lines[1]!.replace("run.queued", "run.started"), lines[2]!].join("\n") + "\n";
+    expect(verifyDeliveryContract(t, sig, line, broken)).toMatchObject({ ok: false, fault: "evidence-head-mismatch" });
+  });
+
+  it("leaves the head check as it was", () => {
+    expect(evidenceHeadProblem(events, { runId: "run-1", evidence: { count: 3, terminalHash: head } })).toBeUndefined();
+    expect(deliveryEvidenceProblem(events, { runId: "run-1", evidence: { count: 3, terminalHash: head } })?.fault).toBe("local-test");
+    expect(readEvidenceChain(lines, "run-1").ok).toBe(true);
+  });
+
+  it("is told apart by localTestEvents only for a whole chain of this run with the marker", () => {
+    expect(localTestEvents(events, "run-1")).toBe(true);
+    expect(localTestEvents(events, "run-2")).toBe(false);
+    expect(localTestEvents(marked("run-1", "none").join("\n") + "\n", "run-1")).toBe(false);
+    expect(localTestEvents([lines[0]!, lines[2]!].join("\n") + "\n", "run-1")).toBe(false);
+    expect(localTestEvents(events + "{partial", "run-1")).toBe(false);
+    expect(localTestEvents("", "run-1")).toBe(false);
   });
 });

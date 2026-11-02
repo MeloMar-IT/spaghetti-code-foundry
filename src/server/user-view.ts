@@ -1,6 +1,7 @@
 import { isRefinementRun, REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { explainError } from "../errors.js";
+import { retriesOf, type RunRetries } from "../engine/auto-retry.js";
 import type { RunStatus, RunSummary } from "../engine/state.js";
 import { isExplanationLine, LOG_NOTES } from "../policy/explain.js";
 import { REASON_CODES } from "../policy/reasons.js";
@@ -16,7 +17,7 @@ import type { RunSkillView } from "./skill-view.js";
  * to the run later stays hidden until it is added here: no costs, no tokens, no agent or model, no step output, no
  * transcripts, no settings, no folders. The log is rebuilt line by line from known shapes.
  */
-export interface UserStep { id: string; type: string; visit: number; ok: boolean; error?: string; startedAt: string; durationMs: number; parent?: string }
+export interface UserStep { id: string; type: string; visit: number; ok: boolean; error?: string; startedAt: string; durationMs: number; slotWaitMs?: number; parent?: string }
 
 export interface UserRun {
   runId: string; flow: string; task: string; status: RunStatus; startedAt: string; finishedAt?: string;
@@ -25,6 +26,8 @@ export interface UserRun {
   archivedAt?: string;
   /** The id of the refinement session the run reads for (an architect run). */
   refinement?: string;
+  /** Automatic retries after a time limit, worked out on the server (numbers, a flag and a fixed word: no reason, no output). */
+  retries?: RunRetries;
   vars: Record<string, string>;
   flowDef: { name: string; steps: { id: string; type: string; description?: string }[]; publish?: { enabled: boolean; version: number } };
   history: UserStep[]; state: { next: string | null };
@@ -37,6 +40,8 @@ export interface UserRun {
   answers?: { at: string; text: string }[];
   /** Present (true) only when an answer sent now would be accepted. */
   canAnswer?: true;
+  /** Present only while the run is running and its test runs are paused by the load governor: since when (ISO time). */
+  paused?: { since: string };
   /** What was decided about the skills of the plan, when some could not be used: the sentences the run itself wrote, no paths. */
   /** The skills of the run for its page: built by `runSkillView` with `admin: false`. */
   skillView?: RunSkillView;
@@ -116,6 +121,13 @@ export function userRecord(n: NextStep): NextStep {
   return /^[\w.-]+\/[\w.-]+$/.test(out.repo) ? out : { ...out, repo: "" };
 }
 
+/** The run as an administrator gets it: everything, plus what the page needs worked out. */
+export function adminRun<T extends RunSummary>(r: T) {
+  const refinement = refinementSessionOf(r.source);
+  const retries = retriesOf(r);
+  return { ...r, ...(refinement ? { refinement } : {}), ...(retries ? { retries } : {}) };
+}
+
 /** The session id in "refinement <uuid>", else undefined. */
 export function refinementSessionOf(source?: string): string | undefined {
   if (typeof source !== "string" || !source.startsWith(REFINEMENT_SOURCE)) return undefined;
@@ -131,7 +143,7 @@ export const userTask = (flow: string | undefined, source: string | undefined, t
   flow === REFINE_ROUND_FLOW && refinementSessionOf(source) ? (task.split("\n", 1)[0] ?? "") : task;
 
 /** The user's view of a run (see the note at the top). Tolerates runs of older versions. */
-export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean; canAnswer?: boolean; skillView?: RunSkillView }): UserRun {
+export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string } }): UserRun {
   const shown = new Set(["github_repo", "issue"]);
   for (const [k, spec] of Object.entries(s.flowDef?.publish?.vars ?? {})) if (spec.mode === "fixed" || spec.mode === "input") shown.add(k);
   const vars = Object.fromEntries(Object.entries(s.vars ?? {}).filter(([k]) => shown.has(k)));
@@ -141,6 +153,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(s.finishedAt !== undefined ? { finishedAt: s.finishedAt } : {}),
     ...(s.branch !== undefined ? { branch: s.branch } : {}),
     ...(s.resumes !== undefined ? { resumes: s.resumes } : {}),
+    ...(retriesOf(s) ? { retries: retriesOf(s) } : {}),
     ...(s.owner !== undefined ? { owner: s.owner } : {}),
     ...(s.superseded ? { superseded: true } : {}),
     ...(typeof s.archivedAt === "string" ? { archivedAt: s.archivedAt } : {}),
@@ -155,6 +168,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
       id: h.id, type: userType(h.type), visit: h.visit, ok: h.ok,
       ...(h.error ? { error: userError(h.error) } : {}),
       startedAt: h.startedAt, durationMs: h.durationMs,
+      ...(h.slotWaitMs ? { slotWaitMs: h.slotWaitMs } : {}),
       ...(h.parent !== undefined ? { parent: h.parent } : {}),
     })),
     state: { next: s.state?.next ?? null },
@@ -164,6 +178,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(Array.isArray(s.answers) && s.answers.length ? { answers: s.answers.map((a) => ({ at: a.at, text: a.text })) } : {}),
     ...(s.outputs && Object.keys(s.outputs).length ? { outputs: s.outputs } : {}),
     ...(s.canAnswer ? { canAnswer: true as const } : {}),
+    ...(typeof s.paused?.since === "string" ? { paused: { since: s.paused.since } } : {}),
     ...(userSkills(s) ? { skills: userSkills(s) } : {}),
     ...(s.skillView ? { skillView: s.skillView } : {}),
   };

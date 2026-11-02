@@ -2,6 +2,7 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { storeFor, type SyncStories } from "../stories/store.js";
 
 // The few git and gh calls of `scf release-build init --write`, against the clone in `cwd` and its `origin`. Argument arrays only,
 // never a shell; every call has a time limit and is killed with SIGKILL when it runs over. A failure is a fixed code: the text of
@@ -161,9 +162,18 @@ function gh(ctx: GitContext, args: string[], input?: string): string {
   return r.stdout;
 }
 
+/** The store, on this module's gh. An input the store refuses counts as a failed gh call: no text leaves this module. */
+function stories<T>(ctx: GitContext, repo: string, call: (s: SyncStories) => T): T {
+  try {
+    return call(storeFor(repo).sync((args, input) => gh(ctx, args, input)));
+  } catch (e) {
+    throw e instanceof GitError ? e : new GitError("gh-failed");
+  }
+}
+
 /** The address of the open pull request whose head is `branch`, if there is one. */
 export function openPullRequest(ctx: GitContext, repo: string, branch: string): string | undefined {
-  const out = gh(ctx, ["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", "url,headRefName,state", "--limit", "20"]);
+  const out = stories(ctx, repo, (s) => s.listChanges({ state: "open", limit: 20, head: branch, fields: "url,headRefName,state" }));
   let list: unknown;
   try {
     list = JSON.parse(out);
@@ -179,7 +189,7 @@ export function openPullRequest(ctx: GitContext, repo: string, branch: string): 
 
 /** Opens the pull request; the body goes in on standard input. Returns its address. */
 export function createPullRequest(ctx: GitContext, o: { repo: string; base: string; head: string; title: string; body: string }): string {
-  const out = gh(ctx, ["pr", "create", "--repo", o.repo, "--base", o.base, "--head", o.head, "--title", o.title, "--body-file", "-"], o.body);
+  const out = stories(ctx, o.repo, (s) => s.openChange({ base: o.base, head: o.head, title: o.title, body: o.body }));
   const url = out.trim().split("\n").at(-1)?.trim() ?? "";
   if (!URL_RE.test(url)) throw new GitError("gh-failed");
   return url;

@@ -7,6 +7,7 @@
 // <foundry-skill-catalogue> block of the prompt (the empty request without one); FAKE_SKILL_REQUEST wins when set. The lines come from the issue body.
 // A help turn of Ask SCF ("You are Ask SCF, the help assistant") has a canned JSON answer: FAKE_HELP replaces it, FAKE_HELP=ECHO reports args, folder and token state.
 // The context brief of refine-brief has a canned answer: FAKE_BRIEF replaces it, FAKE_BRIEF=ECHO adds args, folder and prompt.
+// The coding turn can hang: FAKE_HANG_IMPLEMENT leaves half-done.txt in the folder and waits to be killed. The forced split (prompt "This issue has to be split.") has a canned answer, FAKE_FORCED_SPLIT; FAKE_FORCED_SPLIT_CAPTURE (a file path) gets its CLI arguments and prompt.
 // The question round of refine-round likewise: FAKE_ROUND replaces its JSON answer, FAKE_ROUND=ECHO adds an `echo` field.
 // For "What is asked of you now: suggest" it reads the field from the line "The field, when it is `suggest`: <field>" and
 // answers { field, suggestions }: criteria (R1, E1), dependsOn (issue 12, draft D1) or one text for any other field.
@@ -106,6 +107,33 @@ if (prompt.includes("CLAUDE_LIMIT")) {
   emit({ type: "result", subtype: "success", is_error: true, result: "You've hit your limit · resets 3:50pm (Europe/Amsterdam)", session_id: "s", total_cost_usd: 0, num_turns: 1 });
   process.exit(1);
 }
+// CLAUDE_HANG: the first call in a folder prints an init line with session "sess-hang", then waits until it is killed (a time-out); later calls answer as usual.
+// CLAUDE_HANG_SILENT hangs the same way without the init line.
+if ((prompt.includes("CLAUDE_HANG") || prompt.includes("CLAUDE_HANG_SILENT")) && !existsSync(".fake-claude-hang")) {
+  writeFileSync(".fake-claude-hang", "1");
+  if (!prompt.includes("CLAUDE_HANG_SILENT")) emit({ type: "system", subtype: "init", session_id: "sess-hang" });
+  setInterval(() => {}, 1000); // a pending promise alone lets node exit
+  await new Promise(() => {});
+}
+// FAKE_HANG_IMPLEMENT: the coding turn ("Implement GitHub issue below") leaves half-done.txt in the folder and hangs until it is killed (a time-out).
+if (process.env.FAKE_HANG_IMPLEMENT && prompt.includes("Implement GitHub issue below")) {
+  writeFileSync("half-done.txt", "unfinished\n");
+  emit({ type: "system", subtype: "init", session_id: "sess-hang-implement" });
+  setInterval(() => {}, 1000);
+  await new Promise(() => {});
+}
+// CLAUDE_NO_SESSION: with --resume the session is gone: "No conversation found" on stderr and exit 1, no events. CLAUDE_NO_SESSION_RESULT says it in an error result instead.
+if ((prompt.includes("CLAUDE_NO_SESSION") || prompt.includes("CLAUDE_NO_SESSION_RESULT")) && args.includes("--resume")) {
+  const msg = `No conversation found with session ID: ${args[args.indexOf("--resume") + 1]}`;
+  if (prompt.includes("CLAUDE_NO_SESSION_RESULT")) emit({ type: "result", subtype: "error_during_execution", is_error: true, errors: [msg], session_id: "s", total_cost_usd: 0, num_turns: 0 });
+  else process.stderr.write(`${msg}\n`);
+  process.exit(1);
+}
+// CLAUDE_GONE: only a --resume of a session id that starts with "gone-" is refused as gone (the other resumes of the flow still work).
+if (prompt.includes("CLAUDE_GONE") && args.includes("--resume") && String(args[args.indexOf("--resume") + 1]).startsWith("gone-")) {
+  process.stderr.write(`No conversation found with session ID: ${args[args.indexOf("--resume") + 1]}\n`);
+  process.exit(1);
+}
 // Canned answers for the built-in blocks, so whole flows can run offline.
 let canned;
 let cost = 0.01;
@@ -192,7 +220,9 @@ if (prompt.includes("You are Ask SCF, the help assistant")) {
   const r = process.env.FAKE_ROUND;
   canned = r === "ECHO" ? JSON.stringify({ ...round, echo: `args=${args.join(" ")}\ncwd=${process.cwd()}\ngh_token=${ghSeen}\nPROMPT<<${prompt}>>` }) : r ?? JSON.stringify(round);
 } else if (prompt.includes("You triage tickets")) canned = process.env.FAKE_TRIAGE ?? "Small change.\nROUTE: SMALL";
-else if (prompt.includes("Your plan is over the size limit")) { // before the generic planner branch: the forced-split prompt may name NEEDS_INFO
+else if (prompt.includes("This issue has to be split.")) { // before the generic planner branch: the forced-split prompt may name NEEDS_INFO
+  // FAKE_FORCED_SPLIT_CAPTURE (a file path) gets one JSON line per call with the CLI arguments and the prompt; the answer stays canned.
+  if (process.env.FAKE_FORCED_SPLIT_CAPTURE) appendFileSync(process.env.FAKE_FORCED_SPLIT_CAPTURE, `${JSON.stringify({ args, prompt })}\n`);
   canned = process.env.FAKE_FORCED_SPLIT ?? "## Split\n### ISSUE 1: Small part one\nDEPENDS_ON: none\nDo one.\n### ISSUE 2: Small part two\nDEPENDS_ON: 1\nDo two.\nSPLIT_RISK: 20\nPLAN_STATUS: TOO_BIG";
 } else if (prompt.includes("PLAN_STATUS: NEEDS_INFO")) canned = process.env.FAKE_PLAN ?? "1. change feature.txt\nPLAN_STATUS: READY";
 else if (prompt.includes("VERDICT: APPROVE")) canned = "Looks good.\nVERDICT: APPROVE";

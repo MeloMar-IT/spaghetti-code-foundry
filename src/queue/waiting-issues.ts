@@ -1,5 +1,6 @@
 import { isStatusComment, isOverruleReply, isBot, type Comment } from "../github.js";
-import { isUserBudgetStop, type RunSummary } from "../engine/state.js";
+import { isTimeLimitStop, isUserBudgetStop, type RunSummary } from "../engine/state.js";
+import { isTimeLimitNote } from "../engine/auto-retry.js";
 import { asksQuestions, countQuestions } from "../next-step.js";
 import { flowRetired } from "../run-gate.js";
 
@@ -61,7 +62,7 @@ export interface WaitingLabels { needsInfo: string; waiting: string }
 
 /** Stopped for a reason that clears by itself: daily budget, a usage limit, signed out, or a `wait_*` step. */
 export function isPaused(s: RunSummary): boolean {
-  return isUserBudgetStop(s.reason) || /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "");
+  return isUserBudgetStop(s.reason) || isTimeLimitStop(s.reason) || /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "");
 }
 
 /** Stepped aside for a busy code area (stopped at wait_for_area): the run that holds the area. */
@@ -90,7 +91,7 @@ export function waitsAs(run: RunSummary, label: string, L: WaitingLabels): boole
 export function openQuestion(comments: readonly Comment[]): { questions: number; since?: string } | undefined {
   for (let i = comments.length - 1; i >= 0; i--) {
     const c = comments[i]!;
-    if (isStatusComment(c) || isOverruleReply(c)) continue;
+    if (isStatusComment(c) || isOverruleReply(c) || isTimeLimitNote(c)) continue;
     if (!isBot(c)) return undefined;
     return { questions: countQuestions(c.body), ...(c.createdAt ? { since: c.createdAt } : {}) };
   }

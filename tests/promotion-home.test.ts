@@ -45,9 +45,10 @@ describe("scf components", () => {
     const { code, lines } = run();
     expect(code).toBe(0);
     expect(lines).toHaveLength(3);
-    expect(lines[0]).toMatch(/^COMPONENT flow base v0 sha256:[0-9a-f]{64} builtin$/);
-    expect(lines[1]).toMatch(/^COMPONENT policy-pack foundry\.baseline v\S+ sha256:[0-9a-f]{64} builtin$/);
-    expect(lines[2]).toMatch(/^COMPONENT model-routes default v- sha256:[0-9a-f]{64} unrecorded$/);
+    const gov = " owner=- risk=low lifecycle=active status=unapproved$";
+    expect(lines[0]).toMatch(new RegExp(`^COMPONENT flow base v0 sha256:[0-9a-f]{64} builtin${gov}`));
+    expect(lines[1]).toMatch(new RegExp(`^COMPONENT policy-pack foundry\\.baseline v\\S+ sha256:[0-9a-f]{64} builtin${gov}`));
+    expect(lines[2]).toMatch(new RegExp(`^COMPONENT model-routes default v- sha256:[0-9a-f]{64} unrecorded${gov}`));
     expect(tree()).toEqual([]);
   });
 
@@ -56,7 +57,7 @@ describe("scf components", () => {
     const flows = run(["flow"]).lines;
     expect(flows).toHaveLength(2);
     expect(flows[0]).not.toContain("builtin");
-    expect(flows[1]).toMatch(/builtin$/);
+    expect(flows[1]).toMatch(/ builtin /);
   });
 
   it("reports a pack whose file name differs from its id, and ignores the last-known-good folder and temp files", () => {
@@ -114,11 +115,11 @@ describe("scf components", () => {
   it("counts versions only when told to record, and keeps the number of a hash seen before", () => {
     put("tool-profiles/p.yaml", stringify(profile("p")));
     const line = (args: string[]) => run(args).lines.find((l) => l.startsWith("COMPONENT tool-profile"))!;
-    expect(line(["tool-profile"])).toMatch(/ v- sha256:[0-9a-f]{64} unrecorded$/);
+    expect(line(["tool-profile"])).toMatch(/ v- sha256:[0-9a-f]{64} unrecorded /);
     expect(tree()).toEqual(["tool-profiles/", "tool-profiles/p.yaml"]);
     expect(line(["record", "tool-profile"])).toMatch(/ v1 sha256:/);
     put("tool-profiles/p.yaml", stringify(profile("p", ["src/*", "docs/*"])));
-    expect(line(["tool-profile"])).toMatch(/ v- .* unrecorded$/);
+    expect(line(["tool-profile"])).toMatch(/ v- .* unrecorded /);
     expect(line(["record", "tool-profile"])).toMatch(/ v2 sha256:/);
     put("tool-profiles/p.yaml", stringify(profile("p")));
     expect(line(["record", "tool-profile"])).toMatch(/ v1 sha256:/);
@@ -180,7 +181,7 @@ describe("scf components", () => {
     for (const args of [["tool-profile"], ["record", "tool-profile"]]) {
       const { code, lines } = run(args);
       expect(code).toBe(1);
-      expect(lines).toEqual(["! tool-profile p: promotions is a link or not a folder"]);
+      expect(lines).toEqual(["! tool-profile p: promotions is a link or not a folder", "! promotions is a link or not a folder"]);
     }
     expect(readdirSync(real)).toEqual(["versions.json"]);
     expect(readFileSync(join(real, "versions.json"), "utf8")).toBe(before);

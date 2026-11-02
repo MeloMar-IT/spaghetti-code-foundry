@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { GitError, openPullRequest } from "../src/release/git.js";
 import { detectBuilds, suggestRecipe } from "../src/release/init.js";
 import { parseRecipe } from "../src/release/recipe.js";
 
@@ -128,5 +129,21 @@ describe("suggestRecipe", () => {
     expect(lines[0]).toMatch(/^# Nothing was detected/);
     expect(lines.every((l) => l.startsWith("#"))).toBe(true);
     expect(text).toContain('# version: "{commit_date}-{sha}"');
+  });
+});
+
+describe("openPullRequest", () => {
+  const code = (branch: string) => {
+    try {
+      openPullRequest({ cwd: tmpdir(), env: { FACTORY_GH_BIN: join(tmpdir(), "no-such-gh-for-test") } }, "a/b", branch);
+    } catch (e) {
+      return e instanceof GitError ? e.code : "other";
+    }
+    return "none";
+  };
+  it("counts a branch the store refuses as a failed gh call, and does not run gh", () => {
+    // A missing gh would be "no-gh": the code shows that gh never ran.
+    expect(code("-x")).toBe("gh-failed");
+    expect(code("x")).toBe("no-gh");
   });
 });

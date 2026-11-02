@@ -114,6 +114,12 @@ for (const line of prompt.split("\n")) {
 }
 if (codexHomeLine) answer = `${codexHomeLine}\n${answer}`;
 emit({ type: "item.completed", item: { id: `item_${n++}`, type: "command_execution", command: "git status", aggregated_output: "clean\n", exit_code: 0, status: "completed" } });
+// "REFUSED a push" / "REFUSED a pull request": a command the autonomy level refused (guarded-write), as the tools print it, with exit code 1.
+const refusedLine = prompt.split("\n").find((l) => /^REFUSED (a push|a pull request)$/.test(l));
+if (refusedLine) {
+  const what = refusedLine.slice("REFUSED ".length);
+  emit({ type: "item.completed", item: { id: `item_${n++}`, type: "command_execution", command: "story pr-open", aggregated_output: `story: autonomy guarded-write does not allow ${what}; next step: promote the repository or flow\n`, exit_code: 1, status: "completed" } });
+}
 if (prompt.includes("VERDICT: APPROVE")) answer = process.env.FAKE_CODEX_VERDICT ?? "Fine.\nVERDICT: APPROVE";
 // Separate answers for checking a plan and for reviewing code, when a test needs them to differ.
 if (prompt.includes("Review this implementation plan") && process.env.FAKE_CODEX_PLAN_VERDICT) answer = process.env.FAKE_CODEX_PLAN_VERDICT;

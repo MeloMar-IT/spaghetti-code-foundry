@@ -58,6 +58,9 @@ beforeEach(() => {
     const failed = failures[key]?.shift();
     if (failed) return { ok: false, status: failed.status, statusText: "x", json: async () => ({ error: failed.error }) };
     const found = key in routes ? key : key.split("?")[0]!;
+    // the "Promoted versions" card of Settings loads by itself; these tests are about other things
+    if (found === "GET /api/promotions" && !(found in routes)) return { ok: true, status: 200, statusText: "OK", headers: { get: () => null }, json: async () => ({ components: [], problems: [] }) };
+    if (found === "GET /api/admin/components" && !(found in routes)) return { ok: true, status: 200, statusText: "OK", headers: { get: () => null }, json: async () => ({ components: [], problems: [] }) };
     if (!(found in routes)) throw new Error(`unexpected call: ${key}`);
     const version = versions[found]?.shift();
     return { ok: true, status: 200, statusText: "OK", headers: { get: (n: string) => (n === "x-config-version" ? (version ?? null) : null) }, json: async () => routes[found] };
@@ -138,6 +141,20 @@ describe("pages", () => {
       for (let p = b.parent; p; p = p.parent) if (p.tag === "label") inLabel = true;
       expect(inLabel).toBe(true);
     }
+  });
+  it("Settings: the Components table", async () => {
+    const row = { kind: "flow", id: "walk", builtin: true, version: "0", owner: null, risk: "low", lifecycle: "active", approvedVersion: null, lastReview: null, evalSuite: null, status: "unapproved" };
+    routes = {
+      "GET /api/config": config,
+      "GET /api/info": { configPath: "/x/config.yaml", spentToday: 0, listening: "127.0.0.1" },
+      "GET /api/settings": settingsAnswer,
+      "GET /api/admin/components": { components: [row], problems: [] },
+    };
+    await m.admin.renderSettings(main());
+    await vi.waitFor(() => expect(main().all("table").length).toBeGreaterThan(0));
+    expect(main().textContent).toContain("No owner");
+    tablesOk(main());
+    noViolations(main());
   });
   it("Settings: names for the approved release rows", async () => {
     const withRelease = structuredClone(config) as any;
@@ -934,6 +951,7 @@ describe("Overview", () => {
     routes["GET /api/watchers"] = [];
     routes["GET /api/providers"] = { agents: [{ agent: "claude", installed: true, detail: "1" }], providers: [] };
     routes["GET /api/audit"] = { entries: [{ time: "2026-10-01T08:00:00.000Z", actor: { type: "system" }, action: "x", target: null }] };
+    routes["GET /api/governor"] = { status: "ok", at: "2026-10-01T08:00:00.000Z", configured: 4, limit: 3, caps: [{ who: "load", runs: 3, why: "machine load", until: "2026-10-01T08:04:00.000Z" }], capacity: { cores: 8, free: 3, reserve: 2 }, other: { cores: 2, top: [{ program: "Safari", cores: 1.2 }] }, foundry: { cores: 1, tests: 0.5, server: 0.1 }, history: { since: "2026-09-30T08:00:00.000Z", now: "2026-10-01T08:00:00.000Z", start: 4, steps: [{ at: "2026-10-01T06:00:00.000Z", runs: 3, why: "2 runs fit" }], belowMs: 7_200_000, lowest: 3, reasons: [{ why: "the runs that fit next to other programs", ms: 7_200_000 }] } };
     fail("GET", "/api/queue", 500, "queue broke");
     await operations.renderOperations(main());
     noViolations(main());

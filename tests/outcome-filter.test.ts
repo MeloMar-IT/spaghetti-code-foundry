@@ -139,7 +139,7 @@ describe("outcomeDefinitionsFor", () => {
 });
 
 const factsOf = (runId: string, over: Partial<OutcomeFacts> = {}): OutcomeFacts => ({
-  runId, evidence: { stream: true, read: true, manifest: true, incomplete: false }, pushed: false, delivered: false, policyBlocks: 0, observeDenies: 0,
+  runId, evidence: { stream: true, read: true, manifest: true, incomplete: false }, pushed: false, delivered: false, policyBlocks: 0, observeDenies: 0, policyBadAt: [], linesSkipped: 0,
   models: [], policies: [], approvals: { decided: 0, totalMs: 0, maxMs: 0 }, resumes: 0, ...over,
 });
 

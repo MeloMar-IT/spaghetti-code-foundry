@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { parseArgs } from "node:util";
 import { mirrorEnvPrefixes } from "./engine/template.js";
@@ -98,9 +98,10 @@ Usage:
   scf user delete <e-mail>                       Delete an account and wipe its stored credentials
   scf credential rotate-key | check              Re-encrypt stored credentials; check the macOS Keychain
   scf monitor off|on|status                      Stop or allow the monitor's bug stories; print the state
-  scf components [kind]                          Print the version and SHA-256 of each flow, policy pack, tool profile, model route set and context selector
+  scf components [kind]                          Print the version, SHA-256 and governance of each flow, policy pack, tool profile, model route set and context selector
   scf components record [kind]                   Give new hashes of tool profiles, model routes and context selectors a version
   scf promote <kind> <id> [--live]               Check that the newest safety reports allow promoting a component (read-only; exit 1 when blocked)
+  scf promote <kind> <id> --report <report-id>   The same check; when nothing blocks, record the promotion in promotions/records.json
   scf policy restore <id> [--force]             Put back the last-known-good copy of a mandatory policy overlay
   scf policy break-glass --reason "<text>" --for <n>m|<n>h   Start a time-limited, audited break-glass (no effect on runs yet)
   scf policy break-glass --end                 End the break-glass
@@ -112,7 +113,7 @@ Usage:
   scf login | logout | whoami                    Sign the command line in to a running Foundry
   scf <area> <action> … [--json]                 Everything the web interface can do, as commands. Areas: runs, turn,
                                                  board, find, repos, settings, providers, monitor, flows, blocks, users,
-                                                 account, secrets, audit, admin, refine, watchers, server.
+                                                 account, secrets, audit, admin, refine, watchers, server, autonomy.
                                                  \`scf <area>\` lists an area's commands; \`scf api routes\` lists every call
   scf analyst run|report|install|uninstall|status|auto on|off|reset
                                                  Every 6 hours: how each model does per step, and where another level fits;
@@ -134,6 +135,7 @@ Run options:
       --ref <branch|sha>   Sets the variable ref (release-build: what to build; default main)
   -v, --var key=value      Override a flow variable (repeatable)
       --runs-dir <dir>     Where run logs/worktrees go (default: ${join(FACTORY_HOME, "runs")})
+      --local-test         A local test: skips promotion.enforce; governance still applies to a connected repository; never counts as a promoted delivery
 
 Models: a step's model can be a spec like sonnet, codex, codex:gpt-5, ollama:qwen3-coder or
 codex:ollama:gpt-oss:20b (Claude Code or Codex CLI, on Anthropic, OpenAI or a local model).
@@ -253,7 +255,9 @@ async function main(argv: string[]): Promise<number> {
       purge: { type: "boolean" },
       "include-paused": { type: "boolean" },
       "dry-run": { type: "boolean" },
+      "local-test": { type: "boolean" },
       live: { type: "boolean" },
+      report: { type: "string" },
       "no-web": { type: "boolean" },
       models: { type: "string" },
       label: { type: "string" },
@@ -295,6 +299,7 @@ async function main(argv: string[]): Promise<number> {
   // `scf skills sources …`, `profiles …`, `selections …` (check, evaluate),`scan …`, `assess …`, `compare …`, `overlap …`, `evaluate …`, `promote check …`, `review …`, `gate …` and `connectors` only read, `score …` and `effect …`
   // write only into skill-evaluations/ and skill-effects/, and `release publish …` only into skill-releases/, all through claimHomeWrite: they run without choosing or moving the data folder.
   // `scf components` only reads; `components record` writes only promotions/versions.json, through withAuthLock (claimHomeWrite).
+  // `scf promote` only reads; with `--report` it writes only promotions/records.json, the same way.
   // `scf delivery verify` and `public-key` only read: no migration, no config load before the command, no path in a message.
   if (cmd !== "components" && cmd !== "promote" && cmd !== "delivery" &&!(cmd === "skills" && (arg === "review" || arg === "sources" || arg === "profiles" || arg === "selections" || arg === "scan" || arg === "assess" || arg === "compare" || arg === "overlap" || arg === "evaluate" || arg === "promote" || arg === "score" || arg === "effect" || arg === "gate" || arg === "release" || arg === "releases" || arg === "connectors"))) {
     const moved = prepareDataHome({ checkConfig: (p) => void loadConfig(p) });
@@ -309,7 +314,7 @@ async function main(argv: string[]): Promise<number> {
       // --repo is a folder, or (flows that clone the repository themselves) "owner/name": see run-target.ts
       const isFolder = !values.repo || existsSync(repo);
       if (!isFolder && !looksLikeGithubRepo(values.repo!)) throw new Error(`repo not found: ${repo}`);
-      const { flow } = loadFlow(arg, isFolder ? repo : process.cwd());
+      const { flow, path: flowPath } = loadFlow(arg, isFolder ? repo : process.cwd());
       const target = runTarget({ repoArg: values.repo, ref: values.ref, vars: parseVars(values.var), cwd: process.cwd(), workspace: flow.workspace });
       // Ctrl+C cancels the run, which stops the step's process group (a detached group gets no Ctrl+C of its own)
       return withSignal(async (signal) => {
@@ -320,6 +325,8 @@ async function main(argv: string[]): Promise<number> {
           vars: target.vars,
           source: "cli",
           signal,
+          flowId: basename(flowPath, extname(flowPath)),
+          ...(values["local-test"] ? { localTest: true } : {}),
           log: (m) => process.stdout.write(m + "\n"),
         });
         return report(summary);
@@ -672,7 +679,7 @@ async function main(argv: string[]): Promise<number> {
 
     case "promote": {
       const { promoteCommand } = await import("./promotion/cli.js");
-      return promoteCommand(positionals.slice(1), { live: values.live === true }, (line) => void process.stdout.write(line + "\n"));
+      return promoteCommand(positionals.slice(1), { live: values.live === true, ...(values.report !== undefined ? { report: values.report } : {}) },(line) => void process.stdout.write(line + "\n"));
     }
 
     case "components": {

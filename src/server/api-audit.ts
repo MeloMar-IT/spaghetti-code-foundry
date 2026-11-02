@@ -1,6 +1,7 @@
 import { basename } from "node:path";
-import { AUDIT_ACTIONS, auditTime, isAccountId, latestAudit, scanAudit, type AuditFilter, type AuditRecord } from "../auth/audit.js";
+import { AUDIT_ACTIONS, MONITOR_ACTOR, auditTime, isAccountId, latestAudit, scanAudit, type AuditFilter, type AuditRecord } from "../auth/audit.js";
 import { ownerNames } from "../auth/run-owner.js";
+import { validTarget } from "../governance/autonomy-store.js";
 import { StoreError } from "../auth/store.js";
 import { HttpError, send, sendCsv } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -50,7 +51,7 @@ function filterOf(req: { url?: string }): AuditFilter {
 
 function view(r: AuditRecord, names: Map<string, string>) {
   const account = (id: string) => ({ type: "account", id, name: names.get(id) ?? GONE });
-  const actor = r.by === "cli" || r.by === "anonymous" ? { type: r.by } : account(r.by);
+  const actor = r.by === "cli" || r.by === "anonymous" || r.by === MONITOR_ACTOR ? { type: r.by } : account(r.by);
   const target = r.userId !== undefined ? account(r.userId) : r.target !== undefined ? { type: "text", text: r.target } : null;
   return { time: r.time, actor, action: r.action, target, result: r.result, ...(r.detail !== undefined ? { detail: r.detail } : {}) };
 }
@@ -60,7 +61,7 @@ function row(r: AuditRecord, names: Map<string, string>): string[] {
   return [
     r.time,
     r.by,
-    r.by === "cli" || r.by === "anonymous" ? "" : named(r.by),
+    r.by === "cli" || r.by === "anonymous" || r.by === MONITOR_ACTOR ? "" : named(r.by),
     r.action,
     r.userId ?? r.target ?? "",
     r.userId !== undefined ? named(r.userId) : "",
@@ -71,6 +72,24 @@ function row(r: AuditRecord, names: Map<string, string>): string[] {
 
 async function* rows(filter: AuditFilter, names: Map<string, string>): AsyncGenerator<string[]> {
   for await (const r of scanAudit(filter)) yield row(r, names);
+}
+
+/**
+ * GET /api/autonomy/history: the newest `autonomy-*` lines (every action with that prefix, also one added later), and `more`
+ * when older ones exist. `?target=repos:<id>` or `?target=flows:<name>` narrows it to one component, so a quiet component can
+ * be read in full.
+ */
+export async function autonomyHistory(ctx: ApiContext, req: { url?: string }): Promise<{ entries: ReturnType<typeof view>[]; more: boolean }> {
+  const q = new URL(req.url ?? "/", "http://x").searchParams;
+  const target = q.get("target");
+  if (target !== null && !validTarget(target)) throw new HttpError(400, '"target" must be repos:<id> or flows:<name>');
+  try {
+    const { records, more } = await latestAudit({ actionPrefix: "autonomy-", ...(target !== null ? { target } : {}) }, AUDIT_PAGE);
+    const names = ownerNames();
+    return { entries: records.map((r) => view(r, names)), more };
+  } catch (e) {
+    return fail(ctx, e);
+  }
 }
 
 /** The audit log API, for admins (the permission table decides who gets here). */

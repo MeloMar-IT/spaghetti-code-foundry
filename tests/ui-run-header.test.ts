@@ -56,6 +56,23 @@ describe("pure helpers", () => {
     expect(rh.runActions({ status: "stopped", next: { kind: "issue_closed" } })).toEqual(["cancel"]);
   });
 
+  it("retryText and the retries fact", () => {
+    const r = (o: Record<string, unknown>) => rh.retryText({ started: 2, waiting: false, outcome: "finished", ...o });
+    expect(r({})).toBe("2 automatic retries after a time limit — it finished");
+    expect(r({ started: 1 })).toBe("1 automatic retry after a time limit — it finished");
+    expect(r({ outcome: "split" })).toContain("it was split");
+    expect(r({ outcome: "failed" })).toContain("it failed");
+    expect(r({ outcome: "cancelled" })).toContain("it was cancelled");
+    expect(r({ outcome: "open" })).toContain("it is still open");
+    expect(r({ started: 1, waiting: true, outcome: "open" })).toBe("1 automatic retry after a time limit — the next one is waiting");
+    expect(r({ started: 0, waiting: true, outcome: "open" })).toBe("An automatic retry after a time limit is waiting");
+    const s = base({ resumes: 2, retries: { started: 2, waiting: false, outcome: "finished" } });
+    const keys = ["work", "branch", "started", "duration", "resumes", "retries", "flow"];
+    expect(rh.headerFacts(s, { now: NOW }).map((f: any) => f.key)).toEqual(keys);
+    expect(rh.headerFacts(s, { admin: true, now: NOW }).map((f: any) => f.key).slice(0, 7)).toEqual(keys);
+    expect(rh.headerFacts(base({}), { now: NOW }).some((f: any) => f.key === "retries")).toBe(false);
+  });
+
   it("headerFacts: the keys per role", () => {
     const s = base({ resumes: 2, owner: "u1", totalCostUsd: 1.5, workdir: "/w" });
     expect(rh.headerFacts(s, { now: NOW }).map((f: any) => f.key)).toEqual(["work", "branch", "started", "duration", "resumes", "flow"]);

@@ -1,11 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
 import { blockers, cycles, dependencyWaits, fileWaits, watcherRepos } from "../src/ops/blockage.js";
-import { loadCaps, runLimit, setCap } from "../src/ops/caps.js";
+import { capsPath, loadCaps, runLimit, setCap } from "../src/ops/caps.js";
 import { limitsSet, logTail, opsCommand, runBlockage, runDigest, runFlaky, runLimits } from "../src/ops/cli.js";
 import { digestFacts, localDay } from "../src/ops/digest.js";
 import { collectHits, parsePassed, parseTestLog, stories, suspects } from "../src/ops/flaky.js";
@@ -17,8 +17,8 @@ import type { ServiceHost } from "../src/service.js";
 const NOW = new Date("2026-10-12T12:00:00Z");
 const HOUR = 3_600_000;
 const tmp = () => mkdtempSync(join(tmpdir(), "scf-ops-"));
-const calm: Sample = { load1: 0.5, load5: 0.5, pressure: 1 };
-const hot: Sample = { load1: 3, load5: 3, pressure: 1 };
+const calm: Sample = { load1: 0.5, load5: 0.5, load15: 0.5, pressure: 1 };
+const hot: Sample = { load1: 3, load5: 3, load15: 3, pressure: 1 };
 
 type Shape = Partial<StepRecord> & { id: string };
 function run(id: string, o: Partial<RunSummary> & { issue?: string; steps?: Shape[]; at?: number } = {}): RunSummary {
@@ -29,7 +29,7 @@ function run(id: string, o: Partial<RunSummary> & { issue?: string; steps?: Shap
 }
 
 describe("the cap on runs at once", () => {
-  it("lowers the configured number while it holds, never below 1, and ends by itself", () => {
+  it("lowers the configured number while it holds, down to 0, and ends by itself", () => {
     const file = join(tmp(), "governor", "caps.json");
     expect(runLimit(6, NOW, file)).toBe(6);
     setCap("load", { runs: 4, until: new Date(NOW.getTime() + 60_000).toISOString(), why: "x" }, file);
@@ -42,6 +42,21 @@ describe("the cap on runs at once", () => {
     expect(Object.keys(loadCaps(file))).toEqual(["limits"]);
     writeFileSync(join(file, "..", "caps", "limits.json"), "{broken");
     expect(runLimit(6, NOW, file)).toBe(6);
+  });
+
+  it("holds a cap of 0 until it ends, and ignores a cap that is not a whole number of at least 0", () => {
+    const file = join(tmp(), "governor", "caps.json");
+    const until = new Date(NOW.getTime() + 60_000).toISOString();
+    setCap("load", { runs: 0, until, why: "x" }, file);
+    expect(loadCaps(file).load?.runs).toBe(0);
+    expect(runLimit(6, NOW, file)).toBe(0);
+    expect(runLimit(0, NOW, file)).toBe(0);
+    expect(runLimit(6, new Date(NOW.getTime() + 120_000), file)).toBe(6);
+    for (const runs of [-1, 1.5]) {
+      setCap("load", { runs, until, why: "x" }, file);
+      expect(loadCaps(file)).toEqual({});
+      expect(runLimit(6, NOW, file)).toBe(6);
+    }
   });
 
   it("keeps one file per helper, so two helpers never write the same file, and leaves no temp file", () => {
@@ -86,12 +101,12 @@ describe("the cap on runs at once", () => {
 });
 
 describe("the load governor", () => {
-  const band: Sample = { load1: 2, load5: 2, pressure: 1 };
+  const band: Sample = { load1: 2, load5: 2, load15: 2, pressure: 1 };
 
   it("writes the caps and a log line, and takes everything away on reset", () => {
     const dir = tmp();
     const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 6, now: NOW };
-    runGovernor({ ...o, sample: { load1: 5, load5: 5, pressure: 1 } });
+    runGovernor({ ...o, sample: { load1: 5, load5: 5, load15: 5, pressure: 1 } });
     expect(runLimit(6, NOW, o.capsFile)).toBe(5);
     expect(readFileSync(join(o.slotsDir, "cap"), "utf8")).toBe("1");
     expect(readFileSync(join(o.dir, "changes.log"), "utf8")).toContain("2026-10-12T12:00:00.000Z runs at once 6 → 5");
@@ -103,7 +118,7 @@ describe("the load governor", () => {
 
   it("writes the test cap again at every check while it holds, and also when the cap on runs cannot be written", () => {
     const dir = tmp();
-    const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 6, sample: { load1: 5, load5: 5, pressure: 1 } };
+    const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 6, sample: { load1: 5, load5: 5, load15: 5, pressure: 1 } };
     runGovernor({ ...o, now: NOW });
     const cap = join(o.slotsDir, "cap");
     utimesSync(cap, new Date(0), new Date(0));
@@ -124,7 +139,7 @@ describe("the load governor", () => {
     for (let i = 0; i < 3; i++) runGovernor({ ...o, now: new Date(NOW.getTime() + i * 60_000), sample: hot });
     const last = new Date(NOW.getTime() + 2 * 60_000);
     // the first hot check was 6 → 5 and the others are held back by the pause; a load of 3 is no emergency
-    expect(loadState(o.dir, last)).toEqual({ calm: 0, hot: 3, runs: 5, changedAt: NOW.toISOString() });
+    expect(loadState(o.dir, last)).toEqual({ calm: 0, downs: [NOW.toISOString()], hot: 3, runs: 5, runsWhy: "load 3.0 per core over 5 minutes", changedAt: NOW.toISOString() });
     const morning = new Date(NOW.getTime() + 9 * HOUR);
     expect(loadState(o.dir, morning)).toEqual({ calm: 0 });
     // neither hot nor calm in the morning: with yesterday's state the cap of 3 would be written again
@@ -153,8 +168,170 @@ describe("the load governor", () => {
     };
     writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 3, tests: 1, at: new Date().toISOString() }));
     expect(await say()).toContain("limits now: 3 runs at once");
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, workers: 4, at: new Date().toISOString() }));
+    expect(await say()).toContain("limits now: runs as configured, at most 4 workers per test run");
     writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 3, tests: 1, at: new Date(Date.now() - 10 * 60_000).toISOString() }));
     expect(await say()).toBe("no limits set: the machine is calm enough");
+  });
+
+  it("scf governor report and status show a cap of 0 as nothing new starts", async () => {
+    const home = process.env.FACTORY_HOME!;
+    const dir = join(home, "governor");
+    mkdirSync(dir, { recursive: true });
+    const lines: string[] = [];
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 0, at: new Date().toISOString() }));
+    await opsCommand("governor", ["report"], "/x/cli.js", (l) => lines.push(l));
+    expect(lines[0]).toContain("limits now: 0 runs at once, so nothing new starts (configured:");
+    expect(lines[0]).not.toContain("no limits set");
+    lines.length = 0;
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 0, at: new Date(Date.now() - 10 * 60_000).toISOString() }));
+    await opsCommand("governor", ["report"], "/x/cli.js", (l) => lines.push(l));
+    expect(lines[0]).toBe("no limits set: the machine is calm enough");
+    rmSync(join(dir, "state.json"));
+
+    lines.length = 0;
+    setCap("load", { runs: 0, until: new Date(Date.now() + 60_000).toISOString(), why: "machine load" }, capsPath(home));
+    try {
+      await opsCommand("governor", ["status"], "/x/cli.js", (l) => lines.push(l), { platform: "darwin", agentsDir: tmp(), domain: "gui/501", launchctl: () => "", writeFile: () => {}, removeFile: () => {} });
+    } finally {
+      setCap("load", undefined, capsPath(home));
+    }
+    expect(lines).toContain("cap by load: 0 runs at once, so nothing new starts (machine load)");
+  });
+
+  it("scf governor run takes the floor from the config", async () => {
+    const home = process.env.FACTORY_HOME!;
+    const dir = join(home, "governor");
+    const config = join(home, "config.yaml");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(config, "concurrency: 6\ngovernor:\n  floor: 4\n");
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 0, at: new Date().toISOString() }));
+    try {
+      await opsCommand("governor", ["run"], "/x/cli.js", () => {});
+      // the cap that was stored below the floor is lifted to it, whatever the load is (the default floor would give 3)
+      expect(loadState(dir).runs).toBe(4);
+    } finally {
+      rmSync(config, { force: true });
+      clearGovernor(dir, join(home, "test-slots"), capsPath(home));
+    }
+  });
+
+  describe("usage in the governor", () => {
+    const START = "Sun Oct 4 08:00:00 2026";
+    const fakePs = (body: string) => {
+      const f = join(tmp(), "ps");
+      writeFileSync(f, `#!/bin/sh\n${body}\n`);
+      chmodSync(f, 0o755);
+      return f;
+    };
+    const withPs = async (ps: string, fn: (dir: string) => Promise<void>) => {
+      const home = process.env.FACTORY_HOME!;
+      const dir = join(home, "governor");
+      const prev = process.env.FACTORY_TEST_SLOT_PS;
+      process.env.FACTORY_TEST_SLOT_PS = ps;
+      mkdirSync(dir, { recursive: true });
+      try {
+        await fn(dir);
+      } finally {
+        if (prev === undefined) delete process.env.FACTORY_TEST_SLOT_PS;
+        else process.env.FACTORY_TEST_SLOT_PS = prev;
+        rmSync(join(dir, "usage.json"), { force: true });
+        rmSync(join(dir, "latest.json"), { force: true });
+        clearGovernor(dir, join(home, "test-slots"), capsPath(home));
+      }
+    };
+    const report = async () => {
+      const lines: string[] = [];
+      await opsCommand("governor", ["report"], "/x/cli.js", (l) => lines.push(l));
+      return lines;
+    };
+
+    it("a failing ps does not fail the check: caps as they would be, no usage, the baseline kept", async () => {
+      await withPs("/usr/bin/false", async (dir) => {
+        const home = process.env.FACTORY_HOME!;
+        const config = join(home, "config.yaml");
+        writeFileSync(config, "concurrency: 6\ngovernor:\n  floor: 4\n");
+        const seeded = JSON.stringify({ at: new Date().toISOString(), procs: { "1": [START, 5] }, learned: { "acme/app": { cores: 1, readings: 2 } } });
+        writeFileSync(join(dir, "usage.json"), seeded);
+        writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 0, at: new Date().toISOString() }));
+        try {
+          await opsCommand("governor", ["run"], "/x/cli.js", () => {});
+          expect(loadState(dir).runs).toBe(4);
+          const latest = JSON.parse(readFileSync(join(dir, "latest.json"), "utf8"));
+          expect(latest.usage).toBeUndefined();
+          expect(latest.fit).toBeUndefined();
+          expect(typeof latest.at).toBe("string");
+          expect(readFileSync(join(dir, "usage.json"), "utf8")).toBe(seeded);
+        } finally {
+          rmSync(config, { force: true });
+        }
+      });
+    });
+
+    it("writes latest.json with the figures, and report says who uses the cores", async () => {
+      const ps = fakePs(`case "$*" in *ucomm*) echo "  1 make";; *) echo "  1 0 0:30.00 ${START} make -j8";; esac`);
+      await withPs(ps, async (dir) => {
+        writeFileSync(join(dir, "usage.json"), JSON.stringify({ at: new Date(Date.now() - 60_000).toISOString(), procs: { "1": [START, 0] }, learned: { "acme/app": { cores: 1.4, readings: 3 } } }));
+        await opsCommand("governor", ["run"], "/x/cli.js", () => {});
+        const latest = JSON.parse(readFileSync(join(dir, "latest.json"), "utf8"));
+        expect(latest.usage.other.top).toEqual([{ program: "make", cores: expect.closeTo(0.5, 1) }]);
+        expect(latest.usage.perRun).toEqual({ "acme/app": 1.4 });
+        const lines = await report();
+        // the number of runs that fit depends on the cores of the machine running the test
+        expect(lines.find((l) => l.startsWith("now: "))).toMatch(/^now: the Foundry uses 0\.0 cores, other programs use 0\.5 cores \(top: make 0\.5\); \d+ runs? fits?$/);
+        expect(lines).toContain("a run uses about: acme/app 1.4 cores");
+        expect(lines.join("\n")).not.toContain("-j8");
+      });
+    });
+
+    it("moves the cap one step towards the target, and logs and saves how many runs fit", async () => {
+      const ps = fakePs(`case "$*" in *ucomm*) echo "  1 make";; *) echo "  1 0 0:30.00 ${START} make -j8";; esac`);
+      await withPs(ps, async (dir) => {
+        const home = process.env.FACTORY_HOME!;
+        const config = join(home, "config.yaml");
+        // more cores kept free than any machine has: nothing fits
+        writeFileSync(config, "concurrency: 6\ngovernor:\n  floor: 0\n  reserve_cores: 1000\n");
+        writeFileSync(join(dir, "usage.json"), JSON.stringify({ at: new Date(Date.now() - 60_000).toISOString(), procs: { "1": [START, 0] }, learned: { "acme/app": { cores: 1.4, readings: 3 } } }));
+        writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, over: 2, at: new Date().toISOString() }));
+        try {
+          await opsCommand("governor", ["run"], "/x/cli.js", () => {});
+          expect(loadState(dir).runs).toBe(5);
+          expect(readFileSync(join(dir, "changes.log"), "utf8")).toMatch(/runs at once 6 → 5 \(0 runs fit\) — .*other programs use 0\.5 cores \(top: make 0\.5\); 0 runs fit\n$/);
+          expect(JSON.parse(readFileSync(join(dir, "latest.json"), "utf8")).fit).toBe(0);
+          expect((await report()).find((l) => l.startsWith("now: "))).toMatch(/; 0 runs fit$/);
+        } finally {
+          rmSync(config, { force: true });
+          rmSync(join(dir, "changes.log"), { force: true });
+        }
+      });
+    });
+
+    it("report adds how many runs fit only for a whole number of 0 or more", async () => {
+      await withPs("/usr/bin/false", async (dir) => {
+        const usage = { foundry: { cores: 1, tests: 0, server: 0, runs: [], repos: {} }, other: { cores: 2, top: [] }, perRun: {} };
+        const line = async (fit: unknown) => {
+          writeFileSync(join(dir, "latest.json"), JSON.stringify({ at: new Date().toISOString(), usage, fit }));
+          return (await report()).find((l) => l.startsWith("now: "));
+        };
+        expect(await line(4)).toMatch(/other programs use 2\.0 cores; 4 runs fit$/);
+        expect(await line(1)).toMatch(/; 1 run fits$/);
+        for (const bad of [-1, 1.5, "4", null]) expect(await line(bad)).toMatch(/other programs use 2\.0 cores$/);
+      });
+    });
+
+    it("report shows no usage from an old or a malformed latest.json", async () => {
+      await withPs("/usr/bin/false", async (dir) => {
+        const usage = { foundry: { cores: 1, tests: 0, server: 0, runs: [], repos: {} }, other: { cores: 2, top: [] }, perRun: {} };
+        writeFileSync(join(dir, "latest.json"), JSON.stringify({ at: new Date(Date.now() - 10 * 60_000).toISOString(), usage }));
+        expect((await report()).join("\n")).not.toContain("other programs use");
+        writeFileSync(join(dir, "latest.json"), JSON.stringify({ at: new Date().toISOString(), usage }));
+        expect((await report()).join("\n")).toContain("other programs use 2.0 cores");
+        for (const bad of ["{nope", JSON.stringify({ at: new Date().toISOString(), usage: { foundry: 1, other: "x" } }), JSON.stringify({ at: new Date().toISOString(), usage: { foundry: { cores: 1 }, other: { cores: 1 } } })]) {
+          writeFileSync(join(dir, "latest.json"), bad);
+          expect((await report()).join("\n")).not.toContain("other programs use");
+        }
+      });
+    });
   });
 });
 
@@ -375,6 +552,16 @@ describe("usage limits", () => {
     expect(runLimit(6, NOW, capsFile)).toBe(6);
   });
 
+  it("runLimits writes a cap of at least 1 while the governor's cap is 0", () => {
+    const dir = tmp();
+    const capsFile = join(dir, "caps.json");
+    const cal = { percent: 50, at: new Date(NOW.getTime() - 30 * HOUR).toISOString(), resetAt: reset };
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ auto: true, calibrations: { claude: cal } }));
+    setCap("load", { runs: 0, until: new Date(NOW.getTime() + HOUR).toISOString(), why: "machine load" }, capsFile);
+    runLimits({ runs: [step(60, 100), step(10, 48)], dir, capsFile, configured: 6, now: NOW });
+    expect(loadCaps(capsFile).limits!.runs).toBeGreaterThanOrEqual(1);
+  });
+
   it("works from the runs at once that made the pace, and lifts its own cap by one per check at most", () => {
     const cal = { percent: 50, at: new Date(NOW.getTime() - 30 * HOUR).toISOString(), resetAt: reset };
     // 52 left at 2 per hour lasts 26 of the 48 hours. That pace came from 3 runs at once (a cap), not from the configured 6:
@@ -517,6 +704,13 @@ describe("what holds work up", () => {
     expect(runBlockage({ runs: [], dir: tmp(), serviceLog: "", limit: 6, now: NOW })).toContain("Nothing holds other work up.");
   });
 
+  it("runBlockage says no new run may start at a limit of 0, and does not count empty slots", () => {
+    const text = runBlockage({ runs, dir: tmp(), serviceLog: log, limit: 0, now: NOW, alive, repos });
+    expect(text).toContain("1 run is working and no new run may start; 5 stories wait for another.");
+    expect(text).not.toContain("run slot");
+    expect(text).not.toContain("of 0 runs");
+  });
+
   it("reads only the end of the service log", () => {
     const file = join(tmp(), "service.log");
     expect(logTail(file)).toBe("");
@@ -547,6 +741,77 @@ describe("the digest", () => {
     expect(digestFacts(runs, NOW, 24, alive)).toEqual({ done: ["#1: Add a page"], split: ["#2"], failed: ["#3 — the tests still fail"], waiting: ["#4 — Approve the plan?"], working: 1, interrupted: ["#7 — its process is gone; resume it"] });
   });
 
+  describe("automatic retries", () => {
+    const ev = (started = true) => ({ at: "x", step: "s", attempt: 1, of: 2, ...(started ? { startedAt: "y" } : {}) });
+    const retry = (id: string, issue: string, o: Partial<RunSummary> & { steps?: Shape[]; at?: number } = {}, n = 1) =>
+      run(id, { issue, timeLimits: Array.from({ length: n }, () => ev()), ...o });
+    const at = (h: number) => NOW.getTime() - h * HOUR;
+    const only = (rs: RunSummary[], now = NOW) => digestFacts(rs, now, 24, () => true).retries;
+
+    it("counts each outcome once, with the exact line", () => {
+      const rs = [
+        retry("a", "1", {}, 2), retry("b", "2", { steps: [{ id: "create_split" }] }), retry("c", "3", { status: "failed" }),
+        retry("d", "4", { status: "running", pid: 1 }), retry("e", "5", { status: "cancelled" }),
+      ];
+      const t = only(rs);
+      expect(t).toEqual({ stories: 5, retries: 6, finished: 1, split: 1, failed: 2, open: 1 });
+      const home = tmp();
+      const text = runDigest({ runs: rs, home, now: NOW, alive: () => true }).text;
+      expect(text).toContain("## Automatic retries after a time limit\n\n- 5 stories, 6 retries: 1 finished, 1 split, 2 failed, 1 still open");
+    });
+
+    it("says story and retry in the singular, and has no section without retries", () => {
+      const home = tmp();
+      expect(runDigest({ runs: [retry("a", "1")], home, now: NOW, alive: () => true }).text).toContain("- 1 story, 1 retry: 1 finished, 0 split, 0 failed, 0 still open");
+      expect(runDigest({ runs, home, now: NOW, alive }).text).not.toContain("Automatic retries");
+    });
+
+    it("leaves out a retry that was queued and cancelled, and shows a waiting one as open", () => {
+      const cancelled = run("a", { issue: "1", status: "cancelled", reason: "cancelled", timeLimits: [ev(false)] });
+      expect(only([cancelled])).toBeUndefined();
+      expect(digestFacts([cancelled], NOW, 24, () => true)).not.toHaveProperty("retries");
+      const waiting = run("w", { issue: "2", status: "stopped", reason: "ran out of time in `s`; trying again (1 of 2)", timeLimits: [ev(false)], at: at(80) });
+      expect(only([waiting])).toEqual({ stories: 1, retries: 0, finished: 0, split: 0, failed: 0, open: 1 });
+    });
+
+    it("follows one story across windows: open, then its outcome, then gone", () => {
+      const open = retry("a", "1", { status: "running", pid: 1 });
+      const done = { ...open, status: "succeeded", finishedAt: new Date(at(-5)).toISOString() } as RunSummary;
+      expect(only([open])?.open).toBe(1);
+      expect(only([done], new Date(at(-6)))).toMatchObject({ finished: 1, open: 0 });
+      expect(only([done], new Date(at(-40)))).toBeUndefined();
+    });
+
+    it("counts by the end of the run, not its start", () => {
+      expect(only([retry("a", "1", { at: at(30), finishedAt: new Date(at(1)).toISOString() })])?.finished).toBe(1);
+      expect(only([retry("a", "1", { at: at(40), finishedAt: new Date(at(30)).toISOString() })])).toBeUndefined();
+    });
+
+    it("counts an older run's retries under the newest run's outcome when the older run ended in the window", () => {
+      const older = retry("a", "1", { status: "failed", at: at(3), finishedAt: new Date(at(2)).toISOString() });
+      const newest = (o: Partial<RunSummary>) => run("b", { issue: "1", at: at(1), ...o });
+      expect(only([older, newest({ status: "running", pid: 1 })])).toMatchObject({ stories: 1, retries: 1, open: 1 });
+      expect(only([older, newest({})])).toMatchObject({ stories: 1, retries: 1, finished: 1 });
+      expect(only([older, newest({ status: "failed" })])).toMatchObject({ stories: 1, retries: 1, failed: 1 });
+      expect(only([older, newest({ steps: [{ id: "create_split" }] })])).toMatchObject({ stories: 1, retries: 1, split: 1 });
+    });
+
+    it("does not count an older run's retries once that run ended before the window (a new run without retries that succeeds)", () => {
+      const old = retry("a", "1", { status: "failed", at: at(31), finishedAt: new Date(at(30)).toISOString() }, 2);
+      const today = run("b", { issue: "1", at: at(1) });
+      expect(only([old, today])).toBeUndefined();
+      expect(digestFacts([old, today], NOW, 24, () => true)).not.toHaveProperty("retries");
+      // while the old run is in the window, its retries are reported under the newest run's outcome
+      expect(only([old, today], new Date(at(7)))).toMatchObject({ stories: 1, retries: 2, finished: 1 });
+    });
+
+    it("drops an older run's retries when that run leaves the window, even while the newer run is still open", () => {
+      const older = retry("a", "1", { status: "failed", at: at(3), finishedAt: new Date(at(2)).toISOString() });
+      const open = run("b", { issue: "1", at: at(1), status: "running", pid: 1 });
+      expect(only([older, open], new Date(at(-30)))).toBeUndefined();
+    });
+  });
+
   it("runDigest writes the day's file with what the other helpers found", () => {
     const home = tmp();
     mkdirSync(join(home, "governor"));
@@ -567,6 +832,19 @@ describe("the digest", () => {
     const many = Array.from({ length: 21 }, (_, i) => `${new Date(NOW.getTime() - HOUR + i * 1000).toISOString()} runs at once 6 → 5 (load 3.0 per core)\n`).join("");
     writeFileSync(join(home, "governor", "changes.log"), many);
     expect(runDigest({ runs, home, now: NOW, alive }).text).toContain("the governor changed the limits 21 times in the last day (more than 20); last: runs at once 6 → 5 (load 3.0 per core)");
+    // the time below the configured number: only with `configured`, and only when there was some
+    const stamp = (t: number) => new Date(t).toISOString();
+    const log = [
+      `${stamp(NOW.getTime() - 40 * HOUR)} runs at once 6 → 2 (old line, before the window)`,
+      `${stamp(NOW.getTime() - 3 * HOUR)} runs at once 6 → 4 (2 runs fit)`,
+      `${stamp(NOW.getTime() - HOUR)} runs at once: back to the configured number from 4 (limits taken away by hand)`,
+    ].join("\n");
+    writeFileSync(join(home, "governor", "changes.log"), `${log}\n`);
+    const text2 = runDigest({ runs, home, now: NOW, alive, configured: 6 }).text;
+    expect(text2).toContain("the runs at once were below 6 for 2 h in the last day (lowest 4): the runs that fit next to other programs 2 h");
+    expect(runDigest({ runs, home, now: NOW, alive }).text).not.toContain("the runs at once were below");
+    writeFileSync(join(home, "governor", "changes.log"), `${stamp(NOW.getTime() - HOUR + 1000)} runs at once: back to the configured number from 6 (x)\n`);
+    expect(runDigest({ runs, home, now: NOW, alive, configured: 6 }).text).not.toContain("the runs at once were below");
     expect(text).not.toContain("## Unreliable tests");
     expect(localDay(new Date(2026, 9, 12, 0, 30))).toBe("2026-10-12");
     expect(localDay(new Date(2026, 0, 5, 23, 30))).toBe("2026-01-05");

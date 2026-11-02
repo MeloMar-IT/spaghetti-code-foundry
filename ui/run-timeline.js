@@ -63,6 +63,13 @@ function ordered(s) {
   return items;
 }
 
+/** "paused: machine overloaded since 10:42" for a run whose test runs are paused (`s.paused.since`); "" otherwise. */
+export function pausedText(p) {
+  const t = p?.since ? new Date(p.since) : null;
+  if (!t || Number.isNaN(t.getTime())) return "";
+  return `paused: machine overloaded since ${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 /** The milestones of a run in time order. Pure. `key` is `step:<index>` for a history entry, so a second visit is its own entry. */
 export function milestones(s) {
   if (!s) return [];
@@ -79,7 +86,7 @@ export function milestones(s) {
     }
   }
   if (s.status === "waiting" && s.waiting) out.push({ key: "waiting", kind: "waiting", at: s.waiting.since, label: "Waiting for approval", text: String(s.waiting.message ?? ""), depth: 0 });
-  if (s.status === "running" && s.state?.next) out.push({ key: "current", kind: "current", at: s.stepStartedAt, label: `Running ${stepLabel(s, s.state.next)}`, depth: 0 });
+  if (s.status === "running" && s.state?.next) out.push({ key: "current", kind: "current", at: s.stepStartedAt, label: `Running ${stepLabel(s, s.state.next)}`, ...(pausedText(s.paused) ? { text: pausedText(s.paused) } : {}), depth: 0 });
   if (s.status !== "running" && s.status !== "waiting") {
     out.push({ key: "end", kind: "end", at: s.finishedAt, label: END[s.status] ?? `Run ended (${s.status})`, ok: s.status === "succeeded", depth: 0 });
   }
@@ -89,7 +96,14 @@ export function milestones(s) {
 /** The mark of a finished step: the glyph for the eye, a word for screen readers. */
 const stepMark = (ok) => h("span", { class: `pill ${ok ? "ok" : "fail"}` }, glyph(ok ? "✔" : "✘"), h("span", { class: "sr-only" }, ok ? "Succeeded" : "Failed"));
 
+/** "waited 18 min for a test slot" for a step that waited (ms); "" when it did not. */
+export function waitedText(ms) {
+  if (!(ms > 0)) return "";
+  return `waited ${ms < 60000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms / 60000)} min`} for a test slot`;
+}
+
 function entry(runId, s, i, { label, depth = 0, admin = true, a = api } = {}) {
+  const waited = waitedText(s.slotWaitMs) ? h("span", { class: "muted" }, waitedText(s.slotWaitMs)) : null;
   const name = label ?? stepLabel(null, s.id, s.type);
   const cls = `tl${depth > 0 ? ` depth-${Math.min(depth, 3)}` : ""}`;
   const title = [h("b", { class: "tl-label" }, name), name.startsWith(s.id) ? null : h("span", { class: "mono muted" }, s.id)];
@@ -97,7 +111,7 @@ function entry(runId, s, i, { label, depth = 0, admin = true, a = api } = {}) {
   // A user's view has no output: a plain row that cannot be opened and never asks for a transcript.
   if (!admin || !("output" in s)) {
     return { el: h("div", { class: cls },
-      h("div", { class: "row" }, stepMark(s.ok), title, visit, h("span", { class: "spacer" }), h("span", { class: "muted mono" }, secs(s.durationMs))),
+      h("div", { class: "row" }, stepMark(s.ok), title, visit, h("span", { class: "spacer" }), waited, h("span", { class: "muted mono" }, secs(s.durationMs))),
       s.error ? h("p", { class: "muted mt-4 mb-4 mx-12" }, s.error) : null) };
   }
   const body = h("div");
@@ -116,6 +130,7 @@ function entry(runId, s, i, { label, depth = 0, admin = true, a = api } = {}) {
       stepMark(s.ok), title, visit,
       h("span", { class: "muted" }, s.agent ? s.agent : s.type),
       h("span", { class: "spacer" }),
+      waited,
       h("span", { class: "muted mono" }, secs(s.durationMs)),
       s.costUsd ? h("span", { class: "muted mono" }, cost(s.costUsd)) : s.tokens ? h("span", { class: "muted mono", title: "no per-token cost (local model or subscription)" }, `${Math.round((s.tokens.input + s.tokens.output) / 1000)}k tok`) : null),
     body);
@@ -136,7 +151,7 @@ function markRow(m) {
     m.text ? h("p", { class: "muted mt-4 mb-4 mx-12 pre-wrap" }, m.text) : null);
 }
 
-const sigOf = (m, rec) => JSON.stringify([m.kind, m.label, m.text, m.at, m.ok, m.depth, rec?.id, rec?.visit, rec?.durationMs]);
+const sigOf = (m, rec) => JSON.stringify([m.kind, m.label, m.text, m.at, m.ok, m.depth, rec?.id, rec?.visit, rec?.durationMs, rec?.slotWaitMs]);
 
 /**
  * The Steps tab: a keyed timeline of the milestones of a run. `update(s)` keeps every node whose key and signature are

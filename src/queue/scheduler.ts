@@ -1,6 +1,7 @@
 import { runLimit } from "../ops/caps.js";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { flowFileId } from "../promotion/flow-id.js";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { cancelStoppedRun, cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
@@ -27,6 +28,8 @@ import type { Actor } from "../evidence/identity.js";
 import { actorOf } from "../evidence/record.js";
 
 const MAX_LOG_LINES = 5000;
+/** How often the queue looks again while a helper's cap holds new runs back: a cap ends without any event. */
+const CAP_RECHECK_MS = 30_000;
 
 export type Job =
   | { kind: "run"; flow: Flow; task: string; repo: string; vars: Record<string, string>; /** `vars` is final: the folder's settings were applied when it was queued. */ frozenVars?: boolean }
@@ -50,9 +53,13 @@ export interface QueuedJob {
   priority?: boolean;
   /** When the story's issue was created: among priority jobs, the oldest goes first. */
   storyAt?: string;
+  /** The flow's id under `scf promote`, saved when the job was queued (see flowFileId). Absent: the flow's name, or for older jobs the file found when the run starts. */
+  flowId?: string;
+  /** A resume that is a retry after a time limit (auto_retry.timeouts): it waits for a helper's cap like a new run, it is not a run of the day, and a cancel ends the run. */
+  asNewRun?: boolean;
 }
 
-export interface JobMeta { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string }
+export interface JobMeta { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string; asNewRun?: boolean }
 
 /** The time a priority job is ordered by: the issue's creation time, else when it was queued. */
 const storyTime = (q: QueuedJob): number => {
@@ -88,10 +95,14 @@ export interface SchedulerOptions {
   claudeBin?: string;
   /** Test hook: the Codex binary agent steps call. */
   codexBin?: string;
+  /** Evals only (src/evals.ts, src/skill-eval/run.ts): every run is a local test (#740), never checked against `promotion.enforce`, and not checked for governance (#665). A job cannot ask for it. */
+  localTest?: boolean;
   /** Evals only: folders put first on the PATH of every step of the runs. */
   pathPrefix?: string[];
   /** Where pending jobs are saved so they survive restarts. */
   queueFile?: string;
+  /** Test hook: milliseconds between two looks at the queue while a helper's cap holds new runs back. */
+  capRecheckMs?: number;
   /** False when the account is blocked or gone: the jobs it queued wait. Without it, no job is held. */
   accountActive?: (accountId: string) => boolean;
   /** The limits of an account. Without it, nobody is limited (CLI, evals). Runs already working are never stopped by a lower limit. */
@@ -122,6 +133,8 @@ export interface AccountCancelled extends AccountCancelCounts {
   accountId: string;
   why: "blocked" | "deleted";
 }
+
+export { flowFileId };
 
 /** The account that queued a job. Old entries have no `queuedBy`: a UI run was queued by its owner. */
 export function queuerOf(q: QueuedJob): string | undefined {
@@ -227,7 +240,17 @@ export class Scheduler {
     if (job.kind === "resume" && (this.isActive(runId) || this.isQueued(runId))) throw new Error(`run ${runId} is already queued or running`);
     const repoLock = this.repoLockFor(job);
     const { priority, storyAt, ...rest } = meta;
-    const q: QueuedJob = { runId, job, ...rest, ...(repoLock ? { repoLock } : {}), enqueuedAt: new Date().toISOString(), ...(priority ? { priority: true, ...(storyAt ? { storyAt } : {}) } : {}) };
+    // the id is looked up here, once, and never taken from the caller: a file edited while the job waits keeps its id
+    const flowId = job.kind === "run" && !this.o.localTest ? flowFileId(job.flow, job.repo) : undefined;
+    const q: QueuedJob = {
+      runId,
+      job,
+      ...rest,
+      ...(repoLock ? { repoLock } : {}),
+      ...(flowId ? { flowId } : {}),
+      enqueuedAt: new Date().toISOString(),
+      ...(priority ? { priority: true, ...(storyAt ? { storyAt } : {}) } : {}),
+    };
     this.enqueue(q);
     this.persist();
     return runId;
@@ -302,7 +325,8 @@ export class Scheduler {
     if (i >= 0) {
       const [job] = this.pending.splice(i, 1);
       this.persist();
-      if (job?.job.kind === "resume") this.cancelWaiting(runId, by); // a queued approval: the run no longer waits. A queued answer of a stopped run is only dropped: its answer stays and the run still waits for one
+      if (job?.asNewRun) this.cancelStopped(runId, by); // a queued retry after a time limit: the cancel ends the run for good
+      else if (job?.job.kind === "resume") this.cancelWaiting(runId, by); // a queued approval: the run no longer waits. A queued answer of a stopped run is only dropped: its answer stays and the run still waits for one
       return true;
     }
     const a = this.active.get(runId);
@@ -460,12 +484,14 @@ export class Scheduler {
 
   queue() {
     const concurrency = this.o.config().concurrency;
-    // A helper's cap (machine load, usage limits) holds back new runs only; see pump().
+    // A helper's cap (machine load, usage limits) holds back new runs only; see pump(). A cap of 0 holds the
+    // architect runs and schedule chores too.
     const cap = runLimit(concurrency);
     const busy = this.slotsInUse();
     const capFull = busy >= cap && busy < concurrency;
+    const zero = cap < 1 && concurrency >= 1;
     return {
-      pending: this.pending.map(({ runId, lockKey, repoLock, source, enqueuedAt, job, priority }, i) => {
+      pending: this.pending.map(({ runId, lockKey, repoLock, source, enqueuedAt, job, priority, asNewRun }, i) => {
         const limit = this.limited.get(runId);
         const same = (q: QueuedJob) => (repoLock && q.repoLock === repoLock) || (lockKey && q.lockKey === lockKey);
         // The lock owner: an active job, else an earlier job in the queue that holds the same lock.
@@ -476,7 +502,7 @@ export class Scheduler {
           ...(priority ? { priority: true as const } : {}),
           ...(limit ? { limit } : {}),
           // nothing but a helper's cap keeps this new run waiting: on purpose, not a queue that stands still
-          ...(capFull && job.kind === "run" && !ownLane(source) && !blocker && !limit ? { capped: true as const } : {}),
+          ...(capFull && (job.kind === "run" || asNewRun) && (zero || !ownLane(source)) && !blocker && !limit ? { capped: true as const } : {}),
           ...(!priority && !limit && this.priorityAhead(i) ? { behindPriority: true as const } : {}),
           ...(typeof vars?.chore_day === "string" ? { choreDay: vars.chore_day } : {}),
           githubRepo: vars?.github_repo, issue: vars?.issue,
@@ -497,8 +523,8 @@ export class Scheduler {
   /**
    * The slots the running jobs use. An architect run of a refinement session uses none: a person waits for it, it only
    * reads, and the account's own lock lets one of its architect runs work at a time. It starts past the configured number
-   * and past a helper's cap, so a busy factory does not keep a person waiting. A schedule chore uses none either (see
-   * isChoreRun).
+   * and past a helper's cap, so a busy factory does not keep a person waiting; only a cap of 0 (no new run at all) holds
+   * a new one. A schedule chore uses none either (see isChoreRun).
    */
   private slotsInUse(): number {
     let n = 0;
@@ -618,6 +644,22 @@ export class Scheduler {
   /** From now on nothing starts. Active jobs go on; queued and newly submitted jobs wait in the queue file. */
   drain(): void {
     this.paused = true;
+    this.stopCapTimer();
+  }
+
+  /** Set by close(): the scheduler starts nothing and holds no timer any more. */
+  private closed = false;
+  private capTimer?: NodeJS.Timeout;
+
+  /** The server shuts down: nothing starts from now on, and no timer is left. Active jobs and the queue file are not touched. */
+  close(): void {
+    this.closed = true;
+    this.stopCapTimer();
+  }
+
+  private stopCapTimer(): void {
+    if (this.capTimer) clearTimeout(this.capTimer);
+    this.capTimer = undefined;
   }
 
   /** Ends a drain: queued jobs start again (a cancelled restart). */
@@ -632,10 +674,11 @@ export class Scheduler {
   }
 
   private pump() {
-    if (this.paused) return;
+    if (this.paused || this.closed) return;
     // Helper processes (load governor, limit forecaster) may lower the number for a while. Their cap holds back new
     // runs only: a run that already started may hold the turn to merge or a file area that the others wait for, so
-    // keeping it out of a slot would stop everything. Resumes are bound by the configured number alone.
+    // keeping it out of a slot would stop everything. Resumes are bound by the configured number alone. A cap of 0
+    // holds every new run, also architect runs and schedule chores; resumes go on.
     const limit = this.o.config().concurrency;
     const capped = runLimit(limit);
     const states = new Map<string, boolean>();
@@ -737,9 +780,10 @@ export class Scheduler {
       return [groupActive(g), this.lastStartOf.get(g) ?? 0];
     };
 
-    // Architect runs first: they take no slot (see slotsInUse), only their lock, the account's state and its limits hold them.
+    // Architect runs first: they take no slot (see slotsInUse), only their lock, the account's state and its limits hold them
+    // (and a cap of 0, for a new one).
     for (const q of this.pending.filter((p) => isRefinementRun(p.source))) {
-      if (locked(q) || held(q) || limitOf(q)) continue;
+      if (locked(q) || held(q) || limitOf(q) || (capped < 1 && q.job.kind === "run")) continue;
       const account = accountOf(q);
       const group = account ?? "";
       this.pending.splice(this.pending.indexOf(q), 1);
@@ -749,9 +793,9 @@ export class Scheduler {
 
     // Then one schedule chore at a time on the whole machine, in queue order (the order of their scheduled times). A chore
     // takes no story slot and does not wait for stories or a helper's cap; only its lock, the account's state and the
-    // account's daily budget hold it. A concurrency of 0 (nothing starts) holds it too.
+    // account's daily budget hold it. A concurrency of 0 (nothing starts) holds it too, and so does a cap of 0 for a new one.
     if (limit >= 1 && ![...this.active.values()].some((a) => isChoreRun(a.queued.source))) {
-      const q = this.pending.find((p) => isChoreRun(p.source) && !locked(p) && !held(p) && limitOf(p) !== "budget");
+      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && limitOf(p) !== "budget");
       if (q) {
         const account = accountOf(q);
         this.pending.splice(this.pending.indexOf(q), 1);
@@ -762,7 +806,7 @@ export class Scheduler {
 
     while (this.slotsInUse() < limit) {
       const full = this.slotsInUse() >= capped;
-      const ready = this.pending.filter((q) => !ownLane(q.source) && !locked(q) && !held(q) && !limitOf(q) && !(full && q.job.kind === "run"));
+      const ready = this.pending.filter((q) => !ownLane(q.source) && !locked(q) && !held(q) && !limitOf(q) && !(full && (q.job.kind === "run" || q.asNewRun)));
       if (!ready.length) break;
       // priority block first, then the group with the fewest active runs, then the oldest last start, then queue order
       const pool = ready.some((q) => q.priority) ? ready.filter((q) => q.priority) : ready;
@@ -806,6 +850,21 @@ export class Scheduler {
         if (l) this.limited.set(q.runId, l);
       }
     }
+    // A cap ends without an event: at 0 nothing runs, so no run that ends calls pump(). Look again from time to time
+    // while a cap holds jobs back. Armed before persist(), so a failed write cannot lose it.
+    if (capped < limit && this.pending.length) {
+      if (!this.capTimer) {
+        this.capTimer = setTimeout(() => {
+          this.capTimer = undefined;
+          try {
+            this.pump();
+          } catch {
+            // the next queue change writes the file again
+          }
+        }, this.o.capRecheckMs ?? CAP_RECHECK_MS);
+        this.capTimer.unref();
+      }
+    } else this.stopCapTimer();
     this.persist();
   }
 
@@ -860,6 +919,8 @@ export class Scheduler {
       signal: a.controller.signal,
       config: this.o.config(),
       deliverySettings: () => this.o.config().delivery,
+      // evals only, from the Scheduler option: never from a job or its meta, and also on resume (#665)
+      ...(this.o.localTest ? { evalRun: true } : {}),
       log: (raw: string) => {
         const line = redactText(raw);
         a.lines.push(line);
@@ -890,7 +951,17 @@ export class Scheduler {
     const j = q.job;
     const promise =
       j.kind === "run"
-        ? runFlow(j.flow, { ...common, runId: q.runId, task: j.task, repo: j.repo, vars: j.vars, frozenVars: j.frozenVars, source: q.source, owner: q.owner })
+        ? runFlow(j.flow, {
+            ...common,
+            runId: q.runId,
+            task: j.task,
+            repo: j.repo,
+            vars: j.vars,
+            frozenVars: j.frozenVars,
+            source: q.source,
+            owner: q.owner,
+            ...(this.o.localTest ? { localTest: true } : { flowId: q.flowId ?? flowFileId(j.flow, j.repo) }),
+          })
         : resumeRun({ ...common, runId: j.runId, from: j.from, decision: j.decision });
     a.done = promise
       .then((summary) => {

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
+import { TIMED_OUT_NOTE } from "../src/agents/run.js";
 import { SKILL_LOCK_CHANGED } from "../src/engine/skill-lock.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { liveLogFile } from "../src/engine/state.js";
@@ -279,6 +280,42 @@ ${fixLine}    prompt: |
       expect(out(p, "fix").args).toContain("--resume");
       expect(count(out(p, "fix").prompt)).toBe(0);
       expect(rec(p, "fix")).toMatchObject({ state: "reused" });
+    });
+
+    it("a timed-out repair continues its session: the skill block comes first, then the note, then the prompt", async () => {
+      demo("1.0.0");
+      const s = await runFlow(repairFlow(), runOpts());
+      const saved = JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8"));
+      Object.assign(saved.state.steps.fix, { error: "timed out", session_id: "sess-fix" });
+      writeFileSync(join(s.runDir, "run.json"), JSON.stringify(saved));
+      const r = await resumeFrom(s.runId, "fix");
+      expect(r.status, r.reason).toBe("succeeded");
+      const fix = out(r, "fix");
+      expect(fix.args).toContain("--resume sess-fix");
+      expect(fix.prompt.indexOf("still applies")).toBeGreaterThanOrEqual(0);
+      expect(fix.prompt.indexOf("still applies")).toBeLessThan(fix.prompt.indexOf(TIMED_OUT_NOTE));
+      expect(fix.prompt).toContain(`${TIMED_OUT_NOTE}\n\nSHOWPROMPT`);
+      expect(rec(r, "fix")).toMatchObject({ state: "reused" });
+    });
+
+    it("a timed-out repair whose session is gone starts a new session with the full block, then the note", async () => {
+      demo("1.0.0");
+      const f = repairFlow();
+      (f.steps.find((st) => st.id === "fix") as unknown as { prompt: string }).prompt += "\nCLAUDE_GONE";
+      const s = await runFlow(f, runOpts());
+      expect(s.status, s.reason).toBe("succeeded");
+      const saved = JSON.parse(readFileSync(join(s.runDir, "run.json"), "utf8"));
+      Object.assign(saved.state.steps.fix, { error: "timed out", session_id: "gone-1" });
+      writeFileSync(join(s.runDir, "run.json"), JSON.stringify(saved));
+      const r = await resumeFrom(s.runId, "fix");
+      expect(r.status, r.reason).toBe("succeeded");
+      const fix = out(r, "fix");
+      expect(fix.args).not.toContain("--resume");
+      expect(count(fix.prompt)).toBe(1);
+      expect(fix.prompt.indexOf("<foundry-skills count=")).toBeLessThan(fix.prompt.indexOf(TIMED_OUT_NOTE));
+      expect(fix.prompt).toContain(`${TIMED_OUT_NOTE}\n\n`);
+      expect(rec(r, "fix")).toMatchObject({ state: "reloaded", loaded: ["demo@1.0.0"] });
+      expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("the session of fix is gone");
     });
 
     it("a package that changed after the first session stops the repair before the agent starts", async () => {

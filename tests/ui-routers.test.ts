@@ -359,7 +359,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./autonomy.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -581,7 +581,7 @@ describe("support levels", () => {
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
     ...Object.fromEntries(["./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js",
-      "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./board.js"].map((n) => [n, never])),
+      "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./audit.js", "./autonomy.js", "./board.js"].map((n) => [n, never])),
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn(), renderModelDetail: vi.fn() },
     "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => dialogs > 0 }) },
     ...over,
@@ -684,14 +684,24 @@ describe("support levels", () => {
     expect(renderRepo).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the notice only on Dashboard, Credentials and Audit", async () => {
+  it("shows the notice only on Dashboard, Credentials, Audit and Autonomy", async () => {
     for (const [hash, over] of [
+      ["#/autonomy", { "./autonomy.js": { renderAutonomy: () => () => {} } }],
       ["#/dashboard", { "./dashboard.js": { renderDashboard: page() } }],
       ["#/credentials", { "./admin-credentials.js": { renderCredentials: async () => () => {} } }],
       ["#/audit", { "./audit.js": { renderAudit: () => () => {} } }],
     ] as const) {
       await load(hash, 360, over);
       await vi.waitFor(() => expect(note().hidden, hash).toBe(false));
+    }
+  });
+
+  it("draws Autonomy read-only at 360 px and with its controls at 1024 px", async () => {
+    for (const [width, readOnly] of [[360, true], [1024, false]] as const) {
+      const renderAutonomy = page();
+      await load("#/autonomy", width, { "./autonomy.js": { renderAutonomy } });
+      await vi.waitFor(() => expect(renderAutonomy).toHaveBeenCalledTimes(1));
+      expect(renderAutonomy.mock.calls[0]![1]).toEqual({ readOnly });
     }
   });
 

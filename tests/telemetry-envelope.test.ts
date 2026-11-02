@@ -39,6 +39,8 @@ const SAMPLES: Record<EvidenceEventType, unknown> = {
   "policy.decided": { type: "policy.decided", decision, step },
   "repo.operation": { type: "repo.operation", step, operation: "push", repository: "own/repo", branch: "feat", credential: "repository", policy: "allow", outcome: "done" },
   "context.bundled": { type: "context.bundled", outcome: "failed", failure: "internal" },
+  "run.autonomy": { type: "run.autonomy", level: "observe", repository: "observe", flow: "delivery-handoff" },
+  "governance.decided": { type: "governance.decided", outcome: "refused", components: [{ kind: "flow", id: "deploy", version: "3", status: "retired", refused: true }] },
 };
 const NAME_OF: Partial<Record<EvidenceEventType, string>> = { "step.routed": "model.routed", "repo.operation": "tool.called" };
 const made = (type: EvidenceEventType, written?: Pick<EvidenceEvent, "id" | "seq">, repo?: string) =>

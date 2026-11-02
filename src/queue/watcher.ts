@@ -2,7 +2,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
-import { OVERRULED_REASON, appendLiveLog, isOverruledStop, isStoppedCancel, isUserBudgetStop, loadRun, readLiveLog, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { isTimeLimitNote, retryComment, retryNoteMarker } from "../engine/auto-retry.js";
+import { OVERRULED_REASON, appendLiveLog, isOverruledStop, isStoppedCancel, isTimeLimitStop, isUserBudgetStop, loadRun, readLiveLog, spentToday, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
@@ -19,7 +20,11 @@ import { LABEL_WORDS } from "../words.js";
 import { RELEASE_BUILD_FLOW, RELEASE_BUILD_SUBMISSION_VAR, RELEASE_BUILD_VAR } from "../release/auto-build.js";
 import { effectiveVars } from "../engine/runner.js";
 import { DEPS_MARK, dependencies, foundryDependsOn, openDependencies, type DoneRule } from "./deps.js";
-import { checkReleaseBuild, mainBranchOf, releaseCheckEvery } from "./release-trigger.js";
+import { checkReleaseBuild, inOrder, mainBranchOf, readMain, releaseCheckEvery } from "./release-trigger.js";
+import { NO_STORY_AUTONOMY, NO_STORY_HOTFIX, checkRed, greenOf, labelNames as issueLabelNames, readBaseStop, readCommits, redBaseFacts, redComment, redFile, redLine, readRed, runBody, writeRed, stoppedOnRed, storyHeld, judgeStops, type BaseGreen, type BaseStop, type RedResult } from "../red-base.js";
+import { hotfixState } from "../engine/guards.js";
+import { runAutonomyAtStart } from "../governance/run-autonomy.js";
+import { autonomyRefuses } from "../governance/autonomy-rules.js";
 import { freshIssueList, isTrackingEpic } from "./issue-list.js";
 import type { RepoGhIdentity } from "./gh-identity.js";
 import type { Scheduler } from "./scheduler.js";
@@ -102,6 +107,8 @@ export function parseInterval(text: string): number {
 }
 
 export interface WatcherDeps {
+  /** Is the hotfix path switched on (hotfix_to_main)? Stories with a hotfix label are then not held by a red base branch. */
+  hotfixToMain?: () => boolean;
   scheduler: Scheduler;
   runsDir: string;
   /** Local dir used to look up flows by name. */
@@ -495,6 +502,62 @@ export class Watcher {
     return comments.filter((c) => c.body.includes(AUTO_DEFAULTS_MARK)).length < AUTO_DEFAULTS_MAX;
   }
 
+  /**
+   * The base branch this watcher's flow tests before a story starts (gitflow: `develop_branch`), and the labels that make a story a
+   * real hotfix. Undefined when the flow has no baseline step or no valid base branch (then a red base branch is not watched).
+   */
+  private redFlow(): { branch: string; hotfix: string[] } | undefined {
+    try {
+      const flow = loadFlow(this.flowName(), this.d.repo).flow;
+      if (!flow.steps.some((s) => s.id === "baseline_tests")) return undefined;
+      const vars = effectiveVars(flow, this.d.repo, this.cfg.vars);
+      const branch = (vars.develop_branch ?? "").trim();
+      if (!branch || !validBranchName(branch)) return undefined;
+      const on = hotfixState(flow, { hotfix_to_main: this.d.hotfixToMain?.() ?? false }) === "on";
+      const hotfix = on ? (vars.hotfix_labels ?? "").split(",").map((l) => l.trim()).filter(Boolean) : [];
+      return { branch, hotfix };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Every run of this repository, whatever the flow, newest first. */
+  private repoRuns(): RunSummary[] {
+    return this.d.scheduler.list(1000).filter((s) => s.vars?.github_repo === this.repo);
+  }
+
+  /** Baseline stops of the repository on one branch: the newest run of each issue, if it failed there. One per issue. */
+  private baseStops(branch: string): BaseStop[] {
+    const seen = new Set<string>();
+    const out: BaseStop[] = [];
+    for (const s of this.repoRuns()) {
+      const n = s.vars.issue;
+      if (!n || seen.has(n)) continue;
+      seen.add(n);
+      if (s.status !== "failed" || this.d.scheduler.isActive(s.runId)) continue;
+      const stop = readBaseStop(s);
+      if (stop && stop.branch === branch) out.push(stop);
+    }
+    return out;
+  }
+
+  /** The red state a failed run belongs to (no GitHub call): a stop on the recorded commit, or two stops that make the commit red. */
+  private redStop(s: RunSummary): ReturnType<typeof readRed> {
+    const rf = this.redFlow();
+    const stop = readBaseStop(s);
+    if (!rf || !stop || stop.branch !== rf.branch) return undefined;
+    const live = readRed(redFile(this.d.runsDir), this.repo, rf.branch);
+    let state = live && !live.cleared && live.commit === stop.commit ? live : undefined;
+    if (state) {
+      if (!stoppedOnRed(state, stop)) return undefined;
+    } else {
+      const j = judgeStops([stop, ...this.baseStops(rf.branch)], stop.commit);
+      if (!j) return undefined;
+      state = { ...j, since: stop.at, held: true };
+    }
+    return storyHeld(state, { number: Number(s.vars.issue), body: runBody(s) }, false) ? state : undefined;
+  }
+
   /** Files an owner_action question waits for are looked for here: the develop branch with gitflow, else the default branch. */
   private fileRef(): { ref?: string; where: string } | undefined {
     let branch = "";
@@ -712,7 +775,7 @@ export class Watcher {
   }
 
   /** Every run a watcher starts goes through here: a new run belongs to the watcher's owner; a resume keeps the run's own. */
-  private queue(job: Parameters<Scheduler["submit"]>[0], meta: { lockKey?: string; source?: string; priority?: boolean; storyAt?: string }): string {
+  private queue(job: Parameters<Scheduler["submit"]>[0], meta: { lockKey?: string; source?: string; priority?: boolean; storyAt?: string; asNewRun?: boolean }): string {
     if (this.retired) throw new Error("this watcher was stopped");
     // A watcher of a repository passes the repository owner's id; it never falls back to the first admin.
     if (this.cfg.repoId !== undefined && !this.cfg.ownerId) throw new Error("this watcher has no owner (the repository's owner is not an account)");
@@ -732,8 +795,8 @@ export class Watcher {
     return { ...(watcher ? { watcher } : {}), ...(repo.success ? { repository: repo.data } : {}) };
   }
 
-  private submit(n: number, kind: "issue" | "pr", job: Parameters<Scheduler["submit"]>[0], first?: { storyAt?: string }): string {
-    const runId = this.queue(job, { lockKey: kind === "issue" ? this.lockFor(n) : `${this.repo}#${n}`, source: `watcher ${this.cfg.id} ${kind} #${n}`, ...firstMeta(first) });
+  private submit(n: number, kind: "issue" | "pr", job: Parameters<Scheduler["submit"]>[0], first?: { storyAt?: string }, asNewRun = false): string {
+    const runId = this.queue(job, { lockKey: kind === "issue" ? this.lockFor(n) : `${this.repo}#${n}`, source: `watcher ${this.cfg.id} ${kind} #${n}`, ...firstMeta(first), ...(asNewRun ? { asNewRun: true } : {}) });
     if (kind === "pr") {
       const { watcher, repository } = this.teleLabels();
       emitLiveTelemetry("pull_request", "pull_request.feedback", { ...(repository ? { pullRequest: { repository, number: n } } : {}), runId, ...(watcher ? { watcher } : {}) });
@@ -748,6 +811,29 @@ export class Watcher {
       return !!run && (steppedAsideFor(run) === holder || (run.status === "running" && run.state?.next === "claim_areas"));
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * The note of a time-limit retry: posted once the retry is queued or has started, and tried again on every check
+   * while the run works, until the issue shows it (the marker of its retry number). A failed post is only logged.
+   * The comments are read only while a note is due.
+   */
+  private async retryNote(n: number, run: RunSummary, read: () => Promise<Comment[] | undefined>, alive: () => void): Promise<void> {
+    const ev = Array.isArray(run.timeLimits) ? run.timeLimits.at(-1) : undefined;
+    if (!ev) return;
+    const queued = run.status === "stopped" && isTimeLimitStop(run.reason) && this.d.scheduler.isQueued(run.runId);
+    if (!queued && ev.startedAt === undefined) return;
+    // the issue shows the note already (posted before, or before a restart): nothing to post
+    const comments = await read();
+    if (!comments || comments.some((c) => c.body.includes(retryNoteMarker(run.runId, ev.attempt)))) return;
+    const note = retryComment(run);
+    if (!note) return;
+    alive();
+    try {
+      await this.store.comment(n, note);
+    } catch (e) {
+      this.d.log(`[${this.cfg.id}] ! #${n} note for the retry: ${errorLine((e as Error).message)}`);
     }
   }
 
@@ -767,12 +853,30 @@ export class Watcher {
         }
         // A split original was closed in favour of its parts: clear its labels, don't mark it done.
         const split = s.status === "succeeded" && s.history.at(-1)?.id === "create_split";
+        // A story that stopped because the base branch is red waits for a new commit: no failed label, the watcher starts it again.
+        const red = s.status === "failed" ? this.redStop(s) : undefined;
+        if (red) {
+          // Keep the finding, so the hold stands even when the next check cannot read the head (else the story would start over at once).
+          const branch = red.branch;
+          const file = redFile(this.d.runsDir);
+          await inOrder(`red-base:${this.repo}#${branch}`, async () => {
+            const cur = readRed(file, this.repo, branch);
+            if (cur && !cur.cleared) return;
+            const prior = cur && cur.commit !== red.commit ? [{ commit: cur.commit, failing: cur.failing }, ...(cur.prior ?? [])].slice(0, 5) : cur?.prior;
+            writeRed(file, this.repo, branch, { ...red, ...(prior?.length ? { prior } : {}), ...(cur?.fix ? { fix: cur.fix } : {}) });
+          }).catch(() => {});
+          await this.store.setLabels(issue, undefined, this.allStatus).catch(() => {});
+          if (this.cfg.comment_on_failure) await this.store.comment(issue, redComment(s.runId, red)).catch(() => {});
+          this.act(`#${issue} waits: ${redLine(red)}`);
+          this.kick();
+          return;
+        }
         const label = split ? undefined : labelFor(s, this.L);
         const remove = s.status === "succeeded" ? [...this.allStatus, ...this.cfg.remove_on_done] : this.allStatus;
         await this.store.setLabels(issue, label, remove).catch(() => {});
         if (label === this.L.failed && this.cfg.comment_on_failure) await this.commentFailure(issue, s).catch(() => {});
         const asks = s.status === "stopped" && asksQuestions(s);
-        const why = !asks && s.reason ? explainError(s.reason) : undefined;
+        const why = !asks && s.reason && !isTimeLimitStop(s.reason) ? explainError(s.reason) : undefined;
         this.act(`#${issue} → ${s.status}${asks ? " (asks questions)" : why ? ` (${why.what}: ${why.why})` : ""} · $${s.totalCostUsd.toFixed(3)} · label → ${label ?? "none"}`);
       });
     }).catch(() => {}); // prepare() can reject (no sign-in); the next check reconciles the labels
@@ -817,8 +921,8 @@ export class Watcher {
     return runId;
   }
 
-  private resume(issue: number, runId: string, why: string, decision?: { approved: boolean; by: string; note?: string }, labelled = false, first?: { storyAt?: string }, from?: string) {
-    this.submit(issue, "issue", { kind: "resume", runId, ...(from ? { from } : {}), decision }, first);
+  private resume(issue: number, runId: string, why: string, decision?: { approved: boolean; by: string; note?: string }, labelled = false, first?: { storyAt?: string }, from?: string, asNewRun = false) {
+    this.submit(issue, "issue", { kind: "resume", runId, ...(from ? { from } : {}), decision }, first, asNewRun);
     this.act(`#${issue} ${why} → resuming run ${runId}${labelled ? ` · label → ${this.L.working}` : ""}`);
   }
 
@@ -1136,7 +1240,9 @@ export class Watcher {
       const have = new Set(issues.map((i) => i.number));
       for (const i of extra) if (!have.has(i.number)) issues.push(i);
     }
-    const prio = (i: Issue) => goesFirst(i, this.cfg.priority_labels);
+    // A red base branch (see src/red-base.ts); the fix story it made goes ahead of the waiting stories.
+    let red: RedResult | undefined;
+    const prio = (i: Issue) => goesFirst(i, this.cfg.priority_labels) || (red?.state.fix?.label === this.cfg.label && red.state.fix.issue === i.number);
     let rule: DoneRule | undefined;
     const allIssues = async () => (everyIssue ??= await this.store.listWithBodies(500));
     const openDepsOf = async (issue: Issue) => {
@@ -1169,6 +1275,43 @@ export class Watcher {
       return { issue: b, next };
     };
     const runs = this.latestRuns("issue");
+    const redFlow = this.redFlow();
+    if (redFlow) {
+      const own = [...(this.cfg.exclude_labels ?? [])];
+      const eligible = (labels: string[]) => labels.includes(this.cfg.label) && !labels.some((l) => own.includes(l));
+      try {
+        red = await inOrder(`red-base:${this.repo}#${redFlow.branch}`, () => checkRed({
+          repo: this.repo, branch: redFlow.branch, label: this.cfg.label, file: redFile(this.d.runsDir),
+          stops: this.baseStops(redFlow.branch),
+          listed: new Map(issues.map((i) => [i.number, i.labels.map((l) => l.name)])),
+          greens: () => this.repoRuns().map((r) => greenOf(r, redFlow.branch)).filter((g): g is BaseGreen => !!g),
+          head: () => readMain(this.repo, redFlow.branch, 30_000),
+          commits: (from, to) => readCommits(this.repo, from, to, 20_000),
+          store: this.store, alive, eligible,
+          noStory: () =>
+            goesFirst({ labels: [{ name: this.cfg.label }] }, redFlow.hotfix) ? NO_STORY_HOTFIX
+              : autonomyRefuses(runAutonomyAtStart({ githubRepo: this.repo, flow: this.flowName() }).autonomy.level, "push") ? NO_STORY_AUTONOMY
+                : undefined,
+          log: (m) => this.act(m.replace(/^! /, "")),
+        }));
+        alive();
+        if (red?.made) {
+          const m = red.made;
+          issues.push({ number: m.number, title: m.title, labels: [{ name: this.cfg.label }], body: m.body ?? "", createdAt: m.created_at } as Issue);
+        } else if (red?.held && red.state.fix?.label === this.cfg.label && !issues.some((i) => i.number === red!.state.fix!.issue)) {
+          const fixNo = red.state.fix.issue;
+          const got = await this.store.get(fixNo, 20_000).catch(() => undefined);
+          alive();
+          if (got && got.state === "open" && eligible(issueLabelNames(got))) {
+            issues.push({ number: got.number, title: got.title, labels: issueLabelNames(got).map((name) => ({ name })), body: got.body ?? "", createdAt: got.created_at } as Issue);
+          }
+        }
+      } catch (e) {
+        alive();
+        this.d.log(`[${this.cfg.id}] ! red base: ${errorLine((e as Error).message)}`);
+        red = undefined;
+      }
+    }
     let olderIdx: Map<string, string> | undefined;
     const budgetLeft = this.budgetLeft();
     const ownerLeft = this.ownerBudgetLeft();
@@ -1190,7 +1333,7 @@ export class Watcher {
     const checked = this.prechecked();
     const toCheck: Issue[] = [];
     // The status comment is ours too, and so is an overrule reply, but neither is a question or an approval request: they never end the wait.
-    const asked = (c: Comment) => isBot(c) && !isStatusComment(c) && !isOverruleReply(c);
+    const asked = (c: Comment) => isBot(c) && !isStatusComment(c) && !isOverruleReply(c) && !isTimeLimitNote(c);
     // An /overrule changes a decision of the Foundry: it is never the answer to a question.
     const answersOf = (c: Comment[]) => commentsAfter(c, asked).filter((x) => parseOverrule(x.body) === undefined);
     const nowMs = Date.now();
@@ -1221,6 +1364,14 @@ export class Watcher {
       const info = await Promise.all(blockers.map((b) => describeBlocker(b, new Set([issue.number]))));
       alive();
       holds.push(this.held("dependency", issue, { blockers: info, ...(runId ? { runId } : {}) }));
+      return true;
+    };
+    /** A story that does not name every failing test waits while the base branch is red (a real hotfix does not). True when it is held. */
+    const holdForRed = (issue: Issue, runId?: string): boolean => {
+      if (!red?.held || !redFlow || !storyHeld(red.state, issue, goesFirst(issue, redFlow.hotfix))) return false;
+      const msg = `#${issue.number} waits: ${redLine(red.state)}`;
+      if (!this.status.lastActions.some((a) => a.endsWith(msg))) this.act(msg);
+      holds.push(this.held("red_base", issue, { ...(runId ? { runId } : {}), redBase: redBaseFacts(red.state) }));
       return true;
     };
     const depHeldBefore = new Set((this.status.holds ?? []).filter((h) => h.next.kind === "dependency" && h.issue !== undefined).map((h) => h.issue!));
@@ -1442,6 +1593,7 @@ export class Watcher {
           this.labelWhenDone(n, workingRun ? run!.runId : queuedId!);
         }
         if (workingRun) {
+          await this.retryNote(n, run!, () => reads.read(n), alive);
           const areaWait = run!.status === "running" ? this.d.areaWait?.(run!) : undefined;
           if (areaWait) holds.push(this.heldRun(issue, run!, { areaWait }));
           const claim = isFirst ? steppedAsideFor(run!) ?? areaWait?.runId : undefined;
@@ -1509,6 +1661,18 @@ export class Watcher {
         holds.push(this.labelHold(issue, comments && openQuestion(comments)));
         continue;
       }
+      // A story that stopped on the red commit still carries a failed or working label: take it off. It stays held while the
+      // base branch is red, and starts again by itself once a new commit is there (also after a restart).
+      if (red && run?.status === "failed" && (status === this.L.failed || status === this.L.working) && red.state.fix?.issue !== n) {
+        const stop = readBaseStop(run);
+        if (stoppedOnRed(red.state, stop) && storyHeld(red.state, { number: n, body: issue.body ?? runBody(run) }, false)) {
+          await this.store.setLabels(n, undefined, this.allStatus);
+          alive();
+          offNow.delete(n); delete track.labelOff;
+          if (!holdForRed(issue, run.runId)) holds.push(this.held("starting", issue));
+          continue;
+        }
+      }
       if (this.d.scheduler.isLocked(this.lockFor(n))) {
         const blockingRun =this.cfg.one_at_a_time ? this.d.scheduler.queue().active.find((a) => a.lockKey === this.lockFor(n))?.runId : undefined;
         const askedRun = this.cfg.one_at_a_time && !!run && waitsAs(run, this.L.needsInfo, this.L) && (status === this.L.needsInfo || status === this.L.working);
@@ -1552,6 +1716,7 @@ export class Watcher {
       }
 
       if (!status || (status === this.L.working && !run) || answeredEarly) {
+        if (holdForRed(issue, run?.runId)) continue;
         if (this.cfg.precheck_flow && !status && !run && !checked.has(n)) {
           toCheck.push(issue);
           continue;
@@ -1581,7 +1746,9 @@ export class Watcher {
           (run.status === "stopped" && /daily budget/.test(run.reason ?? "") && budgetLeft) ||
           (run.status === "stopped" && isUserBudgetStop(run.reason) && budgetLeft && this.budgetLeftFor(run.owner)) ||
           (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
-          (run.status === "stopped" && isPaused(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run));
+          (run.status === "stopped" && isPaused(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run) &&
+            // a retry after a time limit waits for the budget like any run that starts again (it would stop at its first step)
+            (!isTimeLimitStop(run.reason) || (budgetLeft && this.budgetLeftFor(run.owner))));
         const asks = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo;
         const decides = !resumable && run.status === "waiting";
         const late = asks || decides ? await reads.read(n) : [];
@@ -1600,7 +1767,7 @@ export class Watcher {
           // A bug story waits for the same code area: it gets the area first.
           holds.push(this.held("bug_first", issue, { runId: run.runId }));
         } else if (resumable && !overLimit(isFirst)) {
-          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : "can continue now"), undefined, false, first);
+          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : isTimeLimitStop(run.reason) ? "trying again after it ran out of time" : "can continue now"), undefined, false, first, undefined, isTimeLimitStop(run.reason));
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;
@@ -1634,6 +1801,10 @@ export class Watcher {
           // Paused on a limit, a code area or an interruption: say why nothing happens.
           const next = runNextStep(run, { watched: true, failedLabel: this.L.failed, title: issue.title, pr: paused, areaWait: this.d.areaWait?.(run), retired: flowRetired(run) });
           if (["usage_limit", "daily_budget", "user_limit", "interrupted", "release", "area_lock"].includes(next.kind)) holds.push(toHold(next));
+          else if (isTimeLimitStop(run.reason) && !paused) {
+            // a retry after a time limit that waits for the budget
+            holds.push(!budgetLeft ? this.held("daily_budget", issue, { runId: run.runId }) : this.held("user_limit", issue, { userLimit: "budget", runId: run.runId }));
+          }
         } else {
           // Resumable, but max_per_tick is used up: only the per-check limit is in the way.
           holds.push(limited(issue, run.runId));
@@ -1737,6 +1908,10 @@ export class Watcher {
     // After parking: a run parked in this check does not list its issue as an extra.
     alive();
     await this.addExtras({ listed: new Set(issues.map((i) => i.number)), whole: wholeList, excluded, reads, holds, tracked, alive });
+    // A person must act (no fix story could be made, or it cannot start): one card for the repository, never one per held story.
+    if (red?.held && red.state.problem) {
+      holds.unshift(toHold(nextStep("red_base", { repo: this.repo, title: `Failing tests on ${red.state.branch}` }, { watched: true, redBase: redBaseFacts(red.state) })));
+    }
     if (paused && !holds.some((x) => x.next.kind === "release")) holds.unshift(this.held("release", undefined, { pr: paused }));
     alive();
     const before = new Map((this.status.holds ?? []).map((h) => [holdKey(h), h.seen]));
@@ -1790,7 +1965,7 @@ export class Watcher {
 
   /** Removes needs-info from issues without a run whose hold of this check says nothing is needed from the person. */
   private async dropAnsweredLabels(issues: Issue[], runs: Map<string, RunSummary>, holds: Hold[], alive: () => void, keep: ReadonlySet<number> = new Set()) {
-    const notYours: NextKind[] = ["dependency", "release", "daily_budget", "user_limit", "starting", "bug_first", "one_at_a_time"];
+    const notYours: NextKind[] = ["dependency", "red_base", "release", "daily_budget", "user_limit", "starting", "bug_first", "one_at_a_time"];
     const pending = this.d.scheduler.queue().pending;
     for (const issue of issues) {
       const n = issue.number;

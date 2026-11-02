@@ -130,7 +130,7 @@ export function sameTests(step: UpdateStep | undefined, cmd: string | undefined)
 /** The same step, run through tools/test-slot; it prints a start mark right before the command starts. */
 export function slotStep(
   step: UpdateStep,
-  o: { tool: string; slotsDir: string; slots?: number; waitSec?: number; pollMs?: number },
+  o: { tool: string; slotsDir: string; waitDir?: string; slots?: number; waitSec?: number; pollMs?: number },
 ): UpdateStep {
   const mark = `scf-tests-start-${randomBytes(8).toString("hex")}`; // letters, digits and "-" only: safe inside the shell text
   const waitSec = o.waitSec ?? 900;
@@ -147,5 +147,6 @@ export function slotStep(
     waitMs: waitSec * 1000,
     startMark: mark,
     slotsDir: o.slotsDir,
+    ...(o.waitDir ? { waitDir: o.waitDir } : {}),
   };
 }

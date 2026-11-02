@@ -1,11 +1,14 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, copyFileSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, createReadStream, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { addValidator } from "./validator.js";
 import { buildEnv, deniedNames, findCommand, groupAlive, killTree, matchBuild, type Host } from "./host.js";
 import type { Build, CommitInfo, Recipe } from "./recipe.js";
+import { anyPidAlive, descendants, processTable, signalRows, type ProcRow } from "../steps/proc-tree.js";
+import { readSlotWaits, slotClock, slotWaitLimitMs } from "../steps/slot-waits.js";
 
 export interface BuildPlan {
   run: Build[];
@@ -123,6 +126,8 @@ export interface CommandOpts {
   timeoutMs: number;
   logFile: string;
   signal?: AbortSignal;
+  /** The folder of the enclosing step for test-slot's pause records (its limit then leaves the pauses out). Unset: a folder of this command. */
+  waitDir?: string;
 }
 
 export interface CommandResult {
@@ -138,14 +143,32 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /**
  * Run `cmd` with sh through tools/test-slot, in its own process group, output to a log file. A timeout or an abort stops the
  * whole tree (TERM, then KILL) and resolves only when the group is gone (or one second after the KILL).
+ * The command runs in a group of its own below test-slot, which pauses it while the machine is overloaded: that time does not
+ * count against `timeoutMs` (test-slot records it in a folder made here; at most FACTORY_TEST_SLOT_WAIT_SEC), and the KILL also
+ * reaches the command's group, which the wrapper's group does not hold.
  */
 export function runCommand(o: CommandOpts): Promise<CommandResult> {
   mkdirSync(dirname(o.logFile), { recursive: true });
   const fd = openSync(o.logFile, "a");
+  // The pause records go to the enclosing step's folder when it has one (its limit and the monitor see them there);
+  // otherwise to a folder of this command, removed when it ends.
+  let pauseDir = o.waitDir ?? "";
+  let ownPauseDir = false;
+  if (!pauseDir) {
+    try {
+      pauseDir = mkdtempSync(join(tmpdir(), "scf-pause-"));
+      ownPauseDir = true;
+    } catch {
+      // no accounting: the limit counts a pause then
+    }
+  }
+  const dropPauseDir = () => {
+    if (pauseDir && ownPauseDir) rmSync(pauseDir, { recursive: true, force: true });
+  };
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [o.testSlot, o.slotsDir, "sh", "-c", o.cmd], {
       cwd: o.cwd,
-      env: o.env,
+      env: pauseDir ? { ...o.env, FACTORY_TEST_SLOT_WAIT_DIR: pauseDir } : o.env,
       detached: process.platform !== "win32",
       windowsHide: true,
       stdio: ["ignore", fd, fd],
@@ -155,16 +178,46 @@ export function runCommand(o: CommandOpts): Promise<CommandResult> {
     let aborted = false;
     let killAt = 0;
     let killTimer: NodeJS.Timeout | undefined;
+    // What runs below the wrapper, noted when the stop starts: the command's own group (a child of the wrapper) and the rest.
+    let below: ProcRow[] = [];
+    const hardKill = () => {
+      killTree(child.pid!, "SIGKILL");
+      if (process.platform === "win32" || !below.length) return;
+      const t = processTable(2000);
+      if (!t) return;
+      const starts = new Map(t.map((r) => [r.pid, r.start]));
+      for (const r of below) {
+        if (r.ppid !== child.pid || starts.get(r.pid) !== r.start) continue;
+        try {
+          process.kill(-r.pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+      signalRows(below, "SIGKILL", t);
+    };
     const stop = (graceMs: number) => {
       if (killTimer) return;
       killAt = Date.now() + graceMs;
+      if (process.platform !== "win32") below = descendants(processTable(2000) ?? [], child.pid!);
       killTree(child.pid!, "SIGTERM");
-      killTimer = setTimeout(() => killTree(child.pid!, "SIGKILL"), graceMs);
+      killTimer = setTimeout(hardKill, graceMs);
     };
-    const timer = setTimeout(() => {
+    // The limit counts working time: the time test-slot paused the command is left out (a fresh `*-pause.wait` file).
+    const began = Date.now();
+    let timer: NodeJS.Timeout | undefined;
+    const atDeadline = () => {
+      const now = Date.now();
+      const pauses = pauseDir ? readSlotWaits(pauseDir, now).filter((w) => w.kind === "pause") : [];
+      const next = slotClock(pauses, { began, limitMs: o.timeoutMs, maxExtraMs: slotWaitLimitMs(o.env), now }).nextCheckMs;
+      if (next > 0) {
+        timer = setTimeout(atDeadline, next);
+        return;
+      }
       timedOut = true;
       stop(KILL_AFTER_TIMEOUT_MS);
-    }, o.timeoutMs);
+    };
+    timer = setTimeout(atDeadline, o.timeoutMs);
     const onAbort = () => {
       aborted = true;
       stop(KILL_AFTER_ABORT_MS);
@@ -174,14 +227,16 @@ export function runCommand(o: CommandOpts): Promise<CommandResult> {
       clearTimeout(timer);
       o.signal?.removeEventListener("abort", onAbort);
       if (killTimer && process.platform !== "win32") {
-        while (groupAlive(child.pid!) && Date.now() < killAt + 1000) await sleep(50);
+        while ((groupAlive(child.pid!) || anyPidAlive(below)) && Date.now() < killAt + 1000) await sleep(50);
       }
       if (killTimer) clearTimeout(killTimer);
+      dropPauseDir();
       resolve({ code, timedOut, aborted });
     };
     child.on("error", (e) => {
       clearTimeout(timer);
       o.signal?.removeEventListener("abort", onAbort);
+      dropPauseDir();
       reject(e);
     });
     child.on("close", (code) => void finish(code));
@@ -208,6 +263,8 @@ export interface ReleaseRun {
   env: NodeJS.ProcessEnv;
   denied?: Set<string>;
   signal?: AbortSignal;
+  /** The folder of the enclosing step for test-slot's pause records (see CommandOpts.waitDir). */
+  waitDir?: string;
   /** The delivery validator added to each release (default: this install's script). */
   validator?: string;
   log: (line: string) => void;
@@ -250,7 +307,7 @@ export async function runRelease(o: ReleaseRun): Promise<boolean> {
     const logFile = join(dirs.logs, `${name}.log`);
     execFileSync("git", ["worktree", "add", "--detach", "-q", dir, plan.sha], { cwd: o.repoDir, stdio: "pipe" });
     try {
-      const r = await runCommand({ cmd, cwd: dir, env, testSlot: o.testSlot, slotsDir: o.slotsDir, timeoutMs, logFile, signal: o.signal });
+      const r = await runCommand({ cmd, cwd: dir, env, testSlot: o.testSlot, slotsDir: o.slotsDir, timeoutMs, logFile, signal: o.signal, waitDir: o.waitDir });
       if (r.aborted) return { ok: false, why: "cancelled", logFile };
       if (r.timedOut) return { ok: false, why: `timed out after ${plan.recipe.timeout_minutes} minutes`, logFile };
       if (r.code !== 0) return { ok: false, why: `exit code ${r.code}`, logFile };
@@ -286,7 +343,7 @@ export async function runRelease(o: ReleaseRun): Promise<boolean> {
     let files: string[];
     try {
       log(`${b.name}: building`);
-      const r = await runCommand({ cmd: b.run, cwd: dir, env, testSlot: o.testSlot, slotsDir: o.slotsDir, timeoutMs, logFile, signal: o.signal });
+      const r = await runCommand({ cmd: b.run, cwd: dir, env, testSlot: o.testSlot, slotsDir: o.slotsDir, timeoutMs, logFile, signal: o.signal, waitDir: o.waitDir });
       if (r.aborted) return fail(b.name, "cancelled", logFile);
       if (r.timedOut) return fail(b.name, `timed out after ${plan.recipe.timeout_minutes} minutes`, logFile);
       if (r.code !== 0) return fail(b.name, `exit code ${r.code}`, logFile);

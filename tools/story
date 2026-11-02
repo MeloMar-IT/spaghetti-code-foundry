@@ -16,6 +16,7 @@
 //   story pr-ready <pr> [--undo]                               mark a pull request ready, or back to a draft
 //   story pr-text <pr> | pr-review-comments <pr> | pr-reviews <pr>   print what a pull request holds, as text
 //   story pr-merge <branch> | pr-checks <branch> | pr-checkout <pr>   squash-merge, wait for the checks, check out (live gh)
+// pr-open and pr-merge are delivery: below the autonomy level delivery-handoff (FACTORY_NO_PUSH is set) they exit 1 and call no gh.
 // Live gh: gh writes straight to this process's stdout and stderr and the exit status is gh's own (128 + n after signal n).
 // Exit 1 (message on stderr as `story: …`): bad input or environment. When the store fails, its own text is on stderr, exit 1.
 // The store is dist/stories/store.js (build first). Env: FACTORY_VAR_GITHUB_REPO, FACTORY_VAR_ISSUE (only for the issue commands), FACTORY_GH_BIN.
@@ -38,7 +39,7 @@ const branchOk = (v) => !v.startsWith("-") && !/\s/.test(v);
 // A Map: a name such as "constructor" must not find an entry.
 const read = (method) => ({ issue: true, run: (c) => c.store[method](c.issue) });
 const prText = (method) => ({ arg: "pr", run: (c) => c.store[method](Number(c.arg)) });
-const live = (method, arg) => ({ arg, run: (c) => c.store[method](arg === "pr" ? Number(c.arg) : c.arg) });
+const live = (method, arg, gated) => ({ arg, gated, run: (c) => c.store[method](arg === "pr" ? Number(c.arg) : c.arg) });
 const COMMANDS = new Map([
   ["view", read("stepIssue")],
   ["body", read("stepBody")],
@@ -74,7 +75,7 @@ const COMMANDS = new Map([
     run: (c) => c.store.stepListChanges({ head: c.values.get("--head"), base: c.values.get("--base") }),
   }],
   ["pr-open", {
-    stdin: true, values: ["--head", "--base", "--title"], switches: ["--draft"], required: ["--head", "--title"], branches: ["--head", "--base"],
+    gated: true, stdin: true, values: ["--head", "--base", "--title"], switches: ["--draft"], required: ["--head", "--title"], branches: ["--head", "--base"],
     run: (c) => c.store.stepOpenChange({ head: c.values.get("--head"), base: c.values.get("--base") || undefined, title: c.values.get("--title"), body: c.text, draft: c.switches.has("--draft") }),
   }],
   ["pr-edit", {
@@ -86,7 +87,7 @@ const COMMANDS = new Map([
   ["pr-text", prText("stepChangeText")],
   ["pr-review-comments", prText("stepReviewComments")],
   ["pr-reviews", prText("stepReviews")],
-  ["pr-merge", live("stepMerge", "branch")],
+  ["pr-merge", live("stepMerge", "branch", true)],
   ["pr-checks", live("stepChecks", "branch")],
   ["pr-checkout", live("stepCheckout", "pr")],
 ]);
@@ -139,11 +140,18 @@ const issue = Number(issueText);
 
 const text = spec.stdin ? readFileSync(0, "utf8") : "";
 let store;
+let refusal;
 try {
   const lib = await import(new URL("../dist/stories/store.js", import.meta.url).href);
   store = lib.storeFor(repo);
+  // dependency-free on purpose: this tool also runs in a container that has no node_modules
+  ({ pullRequestRefusal: refusal } = await import(new URL("../dist/governance/autonomy-rules.js", import.meta.url).href));
 } catch (e) {
   fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
+}
+if (spec.gated) {
+  const reason = refusal();
+  if (reason) fail(reason);
 }
 
 try {

@@ -1,9 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { generateKeyPairSync } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { cancelWaitingRun, resumeRun, runFlow, type RunSummary } from "../src/engine/runner.js";
+import { readEvidenceChain } from "../src/evidence/chain.js";
 import { sha256Hex } from "../src/evidence/identity.js";
 import { parseEvidenceEventLine } from "../src/evidence/parse.js";
 import type { EvidenceEvent } from "../src/evidence/schema.js";
@@ -33,7 +36,7 @@ const start = (yaml: string, o: Partial<Parameters<typeof runFlow>[1]> = {}) => 
 const text = (s: Pick<RunSummary, "runDir">) => readFileSync(join(s.runDir, "evidence.jsonl"), "utf8");
 const events = (s: Pick<RunSummary, "runDir">): EvidenceEvent[] => text(s).split("\n").filter(Boolean).map((l) => parseEvidenceEventLine(l));
 /** The events without the decisions of the policy, which every run has: for lookups by place. */
-const steps = (s: Pick<RunSummary, "runDir">) => events(s).filter((e) => e.type !== "policy.decided");
+const steps = (s: Pick<RunSummary, "runDir">) => events(s).filter((e) => e.type !== "policy.decided" && e.type !== "run.autonomy");
 const types = (s: Pick<RunSummary, "runDir">) => steps(s).map((e) => e.type + ("step" in e && e.step ? `:${e.step.id}` : ""));
 /** Every stream: places 0, 1, 2, … and no id twice. */
 const inOrder = (s: Pick<RunSummary, "runDir">) => {
@@ -252,5 +255,79 @@ steps:
     expect(s.cancel(w)).toBe(true);
     expect(steps({ runDir: join(runsDir, w) }).at(-1)).toMatchObject({ type: "run.cancelled", by: { kind: "system" } });
     expect(existsSync(join(runsDir, w, "evidence.json"))).toBe(true); // a cancelled run has ended
+  });
+});
+
+describe("the local-test marker", () => {
+  const APPROVAL = `
+name: lt
+workspace: inplace
+steps:
+  - {id: a, type: shell, run: echo one}
+  - {id: ok, type: approval, message: "go on?"}
+  - {id: b, type: shell, run: echo two}
+`;
+  const created = (s: Pick<RunSummary, "runDir">) => steps(s).filter((e) => e.type === "run.created");
+
+  it("marks run.created of a local test and no other run, and the chain stays valid", async () => {
+    const marked = await start(TWO, { localTest: true });
+    expect(created(marked)).toHaveLength(1);
+    expect(created(marked)[0]).toMatchObject({ type: "run.created", localTest: true });
+    expect(readEvidenceChain(text(marked).split("\n").filter(Boolean), marked.runId).ok).toBe(true);
+    expect(Object.hasOwn(created(await start(TWO))[0]!, "localTest")).toBe(false);
+    expect(Object.keys(JSON.parse(readFileSync(join(marked.runDir, "evidence.json"), "utf8")))).not.toContain("localTest");
+  });
+
+  it("keeps the marker through a resume", async () => {
+    const s = await start(APPROVAL, { localTest: true });
+    expect(s.status).toBe("waiting");
+    const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, config: cfg(), decision: { approved: true, by: "someone" } });
+    expect(r.status).toBe("succeeded");
+    expect(JSON.parse(readFileSync(join(r.runDir, "run.json"), "utf8")).localTest).toBe(true);
+    expect(created(r)).toHaveLength(1);
+    expect(readEvidenceChain(text(r).split("\n").filter(Boolean), r.runId).ok).toBe(true);
+    expect(Object.keys(JSON.parse(readFileSync(join(r.runDir, "evidence.json"), "utf8")))).not.toContain("localTest");
+  });
+
+  describe("a resumed run that produces a pull request", () => {
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
+    const contractFiles = (runDir: string): string[] => {
+      const dir = join(runDir, "delivery");
+      return existsSync(dir) ? readdirSync(dir).filter((n) => n.startsWith("contract")) : [];
+    };
+    /** Runs to the approval, makes the pull request output as a step would, and resumes. */
+    const resumed = async (o: { localTest: boolean; key: boolean }): Promise<RunSummary> => {
+      git("init", "-q", "-b", "feature/x");
+      writeFileSync(join(repo, "f.txt"), "x\n");
+      git("add", "-A");
+      git("commit", "-q", "-m", "one");
+      let config = cfg();
+      if (o.key) {
+        const keys = join(process.env.FACTORY_HOME!, "delivery-keys");
+        mkdirSync(keys, { recursive: true });
+        const keyPath = join(keys, `k-${Math.random().toString(36).slice(2)}`);
+        writeFileSync(keyPath, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string);
+        config = cfg({ delivery: { signing_key_path: keyPath } });
+      }
+      const s = await start(APPROVAL, { localTest: o.localTest, vars: { github_repo: "acme/app" }, config });
+      expect(s.status).toBe("waiting");
+      writeFileSync(join(s.runDir, "outputs.json"), JSON.stringify({ pull_request: "https://github.com/acme/app/pull/7" }));
+      return resumeRun({ runId: s.runId, runsDir, claudeBin, config, decision: { approved: true, by: "someone" } });
+    };
+
+    for (const key of [true, false]) {
+      it(`gets no contract when it is a local test, ${key ? "with" : "without"} a signing key`, async () => {
+        const r = await resumed({ localTest: true, key });
+        expect(r.status).toBe("succeeded");
+        expect(contractFiles(r.runDir)).toEqual([]);
+        expect(readFileSync(join(r.runDir, "live.log"), "utf8")).toContain("the run is a local test, so it is not eligible for delivery; no contract was written");
+      });
+
+      it(`gets a contract when it is not a local test, so the check above reaches the hook, ${key ? "with" : "without"} a signing key`, async () => {
+        const r = await resumed({ localTest: false, key });
+        expect(r.status).toBe("succeeded");
+        expect(contractFiles(r.runDir)).toContain("contract-1.json");
+      });
+    }
   });
 });

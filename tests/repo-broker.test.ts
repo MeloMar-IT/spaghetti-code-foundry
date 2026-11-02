@@ -837,3 +837,41 @@ describe("with a real repository", () => {
     expect(await brokerRequest(r.ctx, { op: "status" }, grant())).toMatchObject({ outcome: "refused", refusal: "unsafe-git-settings" });
   });
 });
+
+describe("the autonomy level of the run", () => {
+  const LEVELS = ["observe", "plan-only", "guarded-write", "delivery-handoff"] as const;
+  // the lowest level that allows each operation (`status` has no rule)
+  const LOWEST: Record<string, number> = { clone: 1, fetch: 1, branch: 2, commit: 2, push: 3, "pull-request": 3, status: 0 };
+  const REQUESTS: Record<string, object> = {
+    clone: { op: "clone" },
+    fetch: { op: "fetch" },
+    branch: { op: "branch", name: "feat" },
+    commit: { op: "commit", message: "m" },
+    push: { op: "push", branch: "feat" },
+    "pull-request": { op: "pull-request", head: "feat", base: "main", title: "T" },
+    status: { op: "status" },
+  };
+
+  for (const level of LEVELS) {
+    it(`at ${level}: refuses what the level does not allow, with no process, and allows the rest`, async () => {
+      tokenRepo(admin);
+      for (const [op, req] of Object.entries(REQUESTS)) {
+        const f = fakeExec();
+        const r = rig({ exec: f.exec, workdir: join(tmp, `auto-${level}-${op}`) });
+        r.engine.summary.autonomy = { level, flow: level };
+        const res = await brokerRequest(r.ctx, req, grant({ operations: [...REPO_OPERATIONS] }, op === "pull-request" ? "github" : "git"));
+        if (LEVELS.indexOf(level) < LOWEST[op]!) {
+          expect(res, `${level} ${op}`).toMatchObject({ outcome: "refused", refusal: "policy" });
+          expect(res.output).toContain(`autonomy ${level} does not allow`);
+          expect(f.ops(), `${level} ${op}`).toEqual([]);
+          expect(repoEvents(r)[0]).toMatchObject({ operation: op, outcome: "refused", refusal: "policy" });
+          expect(r.events().find((e) => e.type === "step.denied")).toMatchObject({ denial: { kind: "policy", reasonCode: "autonomy.denied" } });
+        } else {
+          // allowed by the level (another rule may still refuse it, e.g. a clone into a folder that is not empty)
+          expect(res.output, `${level} ${op}`).not.toContain("autonomy");
+          expect(r.events().some((e) => e.type === "step.denied" && (e as { denial?: { reasonCode?: string } }).denial?.reasonCode === "autonomy.denied")).toBe(false);
+        }
+      }
+    });
+  }
+});

@@ -1,10 +1,13 @@
 import { mkdirSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
+import { isTimedOut } from "../errors.js";
+import type { StepRecord } from "../engine/state.js";
 import { readOnlyStep, reviewerStepProblem, type ClaudeStep, type Flow } from "../flow/schema.js";
 import { resolveClaudeBinAsync, runClaude } from "../steps/claude.js";
 import { resolveCodexBin, runCodex, type CodexSandbox } from "../steps/codex.js";
 import type { ProcessMeter } from "../steps/process.js";
-import { DEFAULT_PERMISSION_MODE, pushLogFor, refuseByPolicy, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
+import type { SlotWaitWatch } from "../steps/slot-waits.js";
+import { DEFAULT_PERMISSION_MODE, autonomyStop, pushLogFor, refuseByPolicy, slotWaitsFor, stepEnv, type Engine, type Scope, type StepResult } from "../engine/execute.js";
 import { type CommitIdentity, ISOLATED_AGENT_ENV, agentNoSignInEnv, isolationEnv, stepIsolation, tokenVarNames } from "../engine/isolation.js";
 import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
@@ -40,10 +43,50 @@ export { codexSandbox, claudeIsolated, isolationSkills };
 
 type Iso = { who: CommitIdentity };
 
-/** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). */
-type Ran = StepResult & { final?: boolean };
+/** A step result; `final` is a refusal that no other try can change (no key for a boxed step, no private Codex folder). `lostSession`: the session it asked to continue is gone. Neither is stored. */
+type Ran = StepResult & { final?: boolean; lostSession?: boolean };
 
-async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate, meter?: ProcessMeter): Promise<Ran> {
+type Records = Record<string, Record<string, unknown>>;
+
+/** The note in front of the prompt of a step whose last try ran out of time. */
+export const TIMED_OUT_NOTE = "Your last attempt at this step ran out of time. Go on from the work in this folder.";
+
+/** Did the last record of this step end on a time limit? */
+export function stepTimedOut(steps: Records, id: string): boolean {
+  const e = steps[id]?.error;
+  return typeof e === "string" && isTimedOut(e);
+}
+
+/** The step with `resume` on its own session after a time-out. A reviewer never continues a session. Otherwise the same object. */
+export function ownSessionStep<T extends Pick<ClaudeStep, "id" | "resume" | "skill_role">>(step: T, steps: Records): T {
+  if (step.skill_role === "reviewer" || !stepTimedOut(steps, step.id)) return step;
+  return { ...step, resume: step.id };
+}
+
+/**
+ * The records a session is chosen from. A sub-flow starts with none, so the own last record of a step comes from the run's
+ * history, but only when that last record is a time-out: every other outcome behaves as before. `ctx.steps` is never changed.
+ */
+export function sessionRecords(stepId: string, scope: Pick<Scope, "ctx" | "prefix">, history: Pick<StepRecord, "id" | "parent" | "error" | "sessionId" | "codexHome" | "agent" | "skills">[]): Records {
+  const steps = scope.ctx.steps as Records;
+  if (!scope.prefix || steps[stepId]) return steps;
+  const parent = scope.prefix.slice(0, -1);
+  const last = history.filter((h) => h.id === scope.prefix + stepId && (h.parent ?? "") === parent).at(-1);
+  if (!last || !isTimedOut(last.error)) return steps;
+  return {
+    ...steps,
+    [stepId]: {
+      ok: false,
+      error: last.error ?? "",
+      session_id: last.sessionId ?? "",
+      codex_home: last.codexHome ?? "",
+      agent: last.agent ?? "",
+      skills_digest: last.skills?.digest ?? "",
+    },
+  };
+}
+
+async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, logFile: string, timeoutMs: number | undefined, iso: Iso | undefined, boxed: boolean, skills: SkillPayload | undefined, again: boolean, draft: boolean, catalogue: RunCatalogue | undefined, toolCheck: { tools: SessionTools; check: ToolCheck } | undefined, gate: Gate, records: Records, meter?: ProcessMeter): Promise<Ran> {
   // Both agents get the same environment: no token and no Git or GitHub sign-in, an empty gh folder of its own and the commit name.
   const base = stepEnv(scope, engine, undefined, { bound: (e) => boundEnv(e, { stepTypes: stepTypesOf(scope.flow), quarantined: gate.bounded.quarantined, patterns: engine.config.help.sensitive_patterns }) });
   const pushLog = pushLogFor(engine, scope, step, scope.visits[step.id] ?? 1);
@@ -66,7 +109,13 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
     if (short) env = shortEnv(env, engine.config, { agent: t.agent, kind: t.provider.kind });
     if (t.agent === "claude") env = { ...env, ...claudeProviderEnv(t, tokenVarNames(engine.config)) };
     // Test runs the agent starts itself go through the machine's test slots, at low priority (tools/agent-bin). A boxed step cannot write the slots folder.
-    if (!boxed) env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir, env.JAVA_HOME) };
+    let slotWaits: SlotWaitWatch | undefined;
+    if (!boxed) {
+      env = { ...env, ...testGateEnv(env.PATH ?? process.env.PATH, engine.summary.runDir, env.JAVA_HOME) };
+      // The waits for a slot are recorded in a folder of this try, so the time limit can leave them out. A read-only Codex session cannot write it.
+      slotWaits = slotWaitsRecordable(t.agent, gate.mapping.codexSandbox) ? slotWaitsFor(engine, logFile) : undefined;
+      if (slotWaits) env.FACTORY_TEST_SLOT_WAIT_DIR = slotWaits.dir;
+    }
     let profile: string | undefined;
     let bin: string | undefined;
     if (boxed) {
@@ -95,13 +144,22 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
           userRead: engine.config.sandbox.user_read,
           workspaceReadOnly: readOnly,
           requestsDir: env.FACTORY_REPO_REQUESTS ? dirname(env.FACTORY_REPO_REQUESTS) : undefined,
+          pushLogDir: env.FACTORY_PUSH_LOG ? dirname(env.FACTORY_PUSH_LOG) : undefined,
         }),
       );
     }
-    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, meter, ...gate });
+    return await runWith(t, step, scope, engine, logFile, timeoutMs, env, { isolated: Boolean(iso), short, boxed, profile, bin, skills, again, draft, catalogue, toolCheck, meter, slotWaits, records, ...gate });
   } finally {
     removeGhConfigDir(ghDir);
   }
+}
+
+/**
+ * Can the session write a wait record outside the workspace? Claude can (its sandbox gets the folder), and so can Codex with
+ * `workspace-write` (writable roots) or no sandbox. A read-only Codex session cannot, so its limit counts every second as before.
+ */
+export function slotWaitsRecordable(agent: Target["agent"], codex: CodexSandbox): boolean {
+  return agent !== "codex" || codex !== "read-only";
 }
 
 /** What the tool profile of the step decided for one try. */
@@ -117,8 +175,12 @@ interface Gate {
 }
 
 interface WithOptions extends Gate {
+  /** The records `resume:` and the time-out note are read from (see sessionRecords). */
+  records: Records;
   /** Filled by the process of this attempt (see ProcessMeter). */
   meter?: ProcessMeter;
+  /** Where test-slot records the waits of this try (absent: not recorded). */
+  slotWaits?: SlotWaitWatch;
   isolated: boolean;
   short: boolean;
   /** Held by the OS sandbox profile: the agent's own sandbox is off. */
@@ -136,6 +198,12 @@ interface WithOptions extends Gate {
   catalogue?: RunCatalogue;
   /** A Claude coder session: what the step gives and how the locked skills were checked against it. */
   toolCheck?: { tools: SessionTools; check: ToolCheck };
+}
+
+/** The folders outside the workspace a session may write: the request folder of a repo_ops step, the folder of slot waits and the push-log folder (a refused push must always be recorded). Undefined when there are none. */
+export function writable(env: Record<string, string | undefined>, slotWaits?: SlotWaitWatch): string[] | undefined {
+  const dirs = [...(env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : []), ...(slotWaits ? [slotWaits.dir] : []), ...(env.FACTORY_PUSH_LOG ? [dirname(env.FACTORY_PUSH_LOG)] : [])];
+  return dirs.length ? dirs : undefined;
 }
 
 /** Which session a step with `resume:` asks to continue, and the digest of the skill block that session received. */
@@ -204,14 +272,14 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
   const tuned = analystSet(step, flow, engine.config, scope.visits[step.id] ?? 1).effort;
   if (tuned && tuned !== (step.effort ?? d.effort)) engine.log(`    · effort ${tuned}: set by the analyst`);
   const effort = tuned ?? step.effort ?? d.effort;
-  const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, ctx.steps, t.agent);
+  const { asked: resumeAsked, id: askedId, prevAgent, holds } = sessionToResume(step, o.records, t.agent);
   let resumeId = askedId;
-  if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: it ran on ${prevAgent}, this step on ${t.agent}`);
+  if (resumeAsked && !resumeId) engine.log(`    · not resuming ${step.resume}: ${prevAgent === t.agent ? "it kept no session id" : `it ran on ${prevAgent}, this step on ${t.agent}`}`);
   if (resumeId && (step.skills === "off" || step.skills === "catalog")) {
     resumeId = undefined;
     engine.log(`    · not resuming ${step.resume}: this step has skills: ${step.skills} and a resumed session may hold a skill block`);
   }
-  const prev = step.resume ? ctx.steps[step.resume] : undefined;
+  const prev = step.resume ? o.records[step.resume] : undefined;
   // A skill left out of this step for its tools must not come back with the transcript of the earlier session.
   if (resumeId && t.agent === "claude" && resumeHoldsLeftOut(o.toolCheck?.check)) {
     resumeId = undefined;
@@ -272,12 +340,14 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     else engine.log(`    · skill context: ${attach.state} ${keys} (${attach.attachedBytes} bytes, about ${attach.attachedEstimatedTokens} tokens)${attach.state === "reloaded" ? (t.agent === "codex" && resumeId ? ": the full block is sent again" : ": new session") : ""}`);
   };
   const common = {
-    prompt: withSkillPayload(withSkillPayload(o.bounded.prompt, attach?.text ?? ""), o.catalogue?.text ?? ""),
+    prompt: withSkillPayload(withSkillPayload(stepTimedOut(o.records, step.id) ? `${TIMED_OUT_NOTE}\n\n${o.bounded.prompt}` : o.bounded.prompt, attach?.text ?? ""), o.catalogue?.text ?? ""),
     systemPrompt: o.bounded.system,
     cwd: engine.summary.workdir!,
     logFile,
     timeoutMs,
     meter: o.meter,
+    slotWaits: o.slotWaits,
+    priority: engine.config.governor.priority,
     signal: engine.signal,
     resumeSessionId: resumeId,
     onProgress: (m: string) => engine.log(`    · ${m}`),
@@ -310,7 +380,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
         ignoreUserConfig: mode === "off" ? undefined : false,
         clean: Boolean(clean),
         noNetwork: Boolean(clean && !clean.push),
-        writableRoots: env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : undefined,
+        writableRoots: writable(env, o.slotWaits),
         effort,
       });
     } finally {
@@ -318,9 +388,16 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
       const back = clean ? codexLoginReturnLine(clean.done()) : undefined;
       if (back) engine.log(`    ${back}`);
     }
+    // A read-only Codex session (unboxed) has no folder it can write, so the push log cannot hold its refusals: the refusals in
+    // its own command results fail the step here instead, and are recorded the same way.
+    if (t.agent === "codex" && !boxed && o.mapping.codexSandbox === "read-only") {
+      const identity = stepIdentity(step, scope.prefix, scope.visits[step.id] ?? 1);
+      const stopped = (r.refusals ?? []).map((a) => autonomyStop(engine, identity, a === "push" ? "push" : "pull-request")).find(Boolean);
+      if (stopped) r = { ...r, ok: false, error: stopped.error };
+    }
     const p = t.provider.price;
     const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
-    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, ...(effort ? { effort } : {}), tokens: { input: r.inputTokens, output: r.outputTokens }, ...skills, ...catalogueRecord(o) };
+    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, ...(effort ? { effort } : {}), tokens: { input: r.inputTokens, output: r.outputTokens }, ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}), ...skills, ...catalogueRecord(o) };
   }
 
   // No --max-budget-usd at all when cost limits are off (fixed-price subscriptions); costs are still recorded.
@@ -348,7 +425,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     allowedTools: step.allowed_tools ?? d.allowed_tools,
     maxBudgetUsd: caps.length ? Math.max(0.01, Math.min(...caps)) : undefined,
     sandbox: sandboxed,
-    writableDirs: env.FACTORY_REPO_REQUESTS ? [dirname(env.FACTORY_REPO_REQUESTS)] : undefined,
+    writableDirs: writable(env, sandboxed ? o.slotWaits : undefined),
     readOnlyDirs: o.readOnlyDirs,
     noMcp: local,
     isolated: isolatedSession,
@@ -366,6 +443,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     output: r.output,
     error: r.error,
     sessionId: r.sessionId,
+    ...(r.sessionLost ? { lostSession: true } : {}),
     ...(r.denied ? { denied: r.denied } : {}),
     // Claude Code prices unknown local models as if they were Claude — they cost nothing.
     costUsd: local ? 0 : r.costUsd,
@@ -374,6 +452,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
     ...(r.tools ? { tools: r.tools } : {}),
     ...(r.contextTokens !== undefined ? { contextTokens: r.contextTokens } : {}),
+    ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}),
     ...claudeSkills,
     ...catalogueRecord(o),
   };
@@ -420,7 +499,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   // Tool times and context size over every try: a retry must not hide a slower call or a larger context of an earlier one.
   let toolTimes: StepResult["tools"];
   let contextTokens: number | undefined;
-  const seen = (r: Pick<StepResult, "tools" | "contextTokens">) => {
+  let slotWaitMs = 0;
+  const seen = (r: Pick<StepResult, "tools" | "contextTokens" | "slotWaitMs">) => {
+    slotWaitMs += r.slotWaitMs ?? 0;
     if (r.tools) toolTimes = { calls: (toolTimes?.calls ?? 0) + r.tools.calls, totalMs: (toolTimes?.totalMs ?? 0) + r.tools.totalMs, maxMs: Math.max(toolTimes?.maxMs ?? 0, r.tools.maxMs) };
     if (r.contextTokens !== undefined) contextTokens = Math.max(contextTokens ?? 0, r.contextTokens);
   };
@@ -428,6 +509,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     ...(blips || models ? { retried: { blips, models } } : {}),
     ...(toolTimes ? { tools: toolTimes } : {}),
     ...(contextTokens !== undefined ? { contextTokens } : {}),
+    ...(slotWaitMs ? { slotWaitMs } : {}),
   });
   // Built once: one log line and the same bytes for every try, retries and fallbacks included.
   const canon =
@@ -487,12 +569,17 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     return { ok: false, output: e.message, error: e.message };
   }
   const memo = new Map<string, OutputLabel>();
+  // A step that ran out of time continues its own session; a sub-flow finds its record in the run's history.
+  const records = sessionRecords(step.id, scope, engine.summary.history);
+  let own = ownSessionStep(step, records);
+  let lost = false;
   const heldFor = !scope.prefix && engine.summary.heldContent?.step === step.id ? engine.summary.heldContent.sha256 : undefined;
   for (;;) {
     // only the final attempt counts
     if (meter) {
       meter.ms = undefined;
       meter.printedBytes = undefined;
+      meter.slotWaitMs = undefined;
     }
     // Before every session of the agent, retries and fallbacks included: the skills this run locked must still be what they were.
     const session = skillSession(engine, {}, step.skill_role ?? "coder", step.skills !== "off" && step.skills !== "catalog", target.agent === "claude" ? tools : undefined);
@@ -503,6 +590,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     }
     // Before every session that can write, retries and fallbacks included, with the sandbox the target really gets.
     if (!readOnlyStep(step, scope.flow.defaults)) {
+      // The run's autonomy level comes first: below guarded-write no writing agent starts, and no policy "allow" is recorded for it.
+      const stopped = autonomyStop(engine, identity, "agent-write");
+      if (stopped) return { ...stopped, ...tries() };
       const sandboxed = boxed || (target.agent === "codex" ? resolved.mapping.codexSandbox !== "danger-full-access" : resolved.mapping.claudeSandbox);
       const write = engine.policy?.at("agent.write", { repository, step: step.id, isolated: iso !== undefined, sandboxed }, identity);
       if (write?.denied) return { ...refuseByPolicy(engine, identity, write.denied), ...tries() };
@@ -529,9 +619,18 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
       }
       return { ok: false, output: reason, error: reason, held: classified.held.sha256, ...tries() };
     }
-    const { final, ...r } = await runOn(target, step, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified, readOnlyDirs }, meter);
+    const { final, lostSession, ...r } = await runOn(target, own, scope, engine, logFile, timeoutMs, iso, boxed, session.payload, blips + models > 0 || lost, Boolean(session.draft), catalogue, session.tools && { tools, check: session.tools }, { mapping: gated.mapping, toolProfile: resolved.session.profile, bounded: classified, readOnlyDirs }, records, meter);
     seen(r);
     if (r.ok || engine.signal?.aborted || final) return await applyRepoRequests({ engine, scope, step, identity, logFile, profile: resolved.session.profile }, { ...r, ...tries() });
+    // The session this step would continue is gone: a new session, in this same try. Never for a flow's own `resume:`.
+    if (lostSession && own !== step) {
+      engine.log(`    · the session of ${step.id} is gone: starting a new session`);
+      engine.summary.totalCostUsd += r.costUsd ?? 0;
+      const { resume: _resume, ...fresh } = own;
+      own = fresh;
+      lost = true;
+      continue;
+    }
     // The service was briefly unavailable (overloaded, "at capacity", a network blip): wait and try
     // the same step again a few times before treating it as a limit.
     if (isTransientError(r.error, r.output) && !isAuthError(r.error, r.output) && blips < TRANSIENT_RETRIES.length) {

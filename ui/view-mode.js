@@ -213,6 +213,64 @@ export function mountViewSwitch(user, { ids = ["view-switch", "view-switch-menu"
   return selects;
 }
 
+const BUSY_CHOICES = [["off", "No"], ["on", "Until I switch it off"], ["1", "For 1 hour"], ["2", "For 2 hours"], ["4", "For 4 hours"]];
+const BUSY_LABEL = "I'm using this machine";
+const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * "I'm using this machine" in the top bar (admins only; the server decides every call too). While it is on, fewer runs
+ * start at once and new run processes start at background priority. Shows why it is on: by hand (with the end time) or
+ * the program that is running. Polls the server, so a change made elsewhere shows up. Returns the select, or null.
+ */
+export function mountBusySwitch(user, { id = "busy-switch", a = api, everyMs = 60_000 } = {}) {
+  if (user?.role !== "admin") return null;
+  const box = document.getElementById(id);
+  if (!box) return null;
+  const select = h("select", { name: "busy", "aria-label": BUSY_LABEL, title: BUSY_LABEL });
+  const note = h("span", { class: "busy-note" });
+  let state = null;
+  let working = false;
+  const draw = () => {
+    const hand = state?.hand;
+    const options = BUSY_CHOICES.map(([value, text]) => h("option", { value }, text));
+    if (hand?.until) options.push(h("option", { value: "until" }, `Until ${clock(hand.until)}`));
+    select.replaceChildren(...options);
+    select.value = hand ? (hand.until ? "until" : "on") : "off";
+    const apps = state?.apps;
+    note.textContent = !hand && apps ? `On: ${apps.why}` : "";
+    box.classList.toggle("on", Boolean(state?.on));
+    select.title = state?.on ? `${BUSY_LABEL}: ${hand ? "set by you" : apps?.why ?? ""}` : BUSY_LABEL;
+  };
+  const refresh = async () => {
+    try {
+      state = await a.busyState();
+      draw();
+    } catch {
+      // keeps what it shows; the next poll tries again
+    }
+  };
+  select.addEventListener("change", async () => {
+    const value = select.value;
+    if (working || value === "until") return draw();
+    working = true;
+    try {
+      state = value === "off" ? await a.endBusy() : await a.setBusy(value === "on" ? undefined : Number(value));
+    } catch (e) {
+      toast(problemText(e), "error");
+    } finally {
+      working = false;
+    }
+    draw();
+  });
+  mount(box, h("label", {}, h("span", { class: "busy-label" }, BUSY_LABEL), select), note);
+  box.hidden = false;
+  draw();
+  void refresh();
+  const timer = setInterval(refresh, everyMs);
+  timer.unref?.();
+  return select;
+}
+
 /** The card for an address the current view does not have: it names the view that has it and switches to it. */
 export function offerCard(box, offer, view, opts = {}) {
   let busy = false;

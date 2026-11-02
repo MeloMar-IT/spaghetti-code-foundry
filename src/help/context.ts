@@ -207,6 +207,7 @@ export const HELP_PAGES: readonly HelpPage[] = [
   admin("all-repos", "All repositories"),
   admin("credentials", "Credentials"),
   admin("audit", "Audit"),
+  admin("autonomy", "Autonomy"),
   admin("settings", "Settings"),
   admin("maintenance", "Maintenance"),
 ];

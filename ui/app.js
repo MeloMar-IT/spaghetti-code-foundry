@@ -29,6 +29,7 @@ import { renderUsers } from "./users.js";
 import { renderUserDetail } from "./user-detail.js";
 import { renderStart } from "./user/start.js";
 import { renderAudit } from "./audit.js";
+import { renderAutonomy } from "./autonomy.js";
 import { renderBoard } from "./board.js";
 import { renderWork } from "./work.js";
 import { loadHealth, startHealth } from "./health.js";
@@ -236,6 +237,7 @@ async function route() {
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "audit") S.cleanup = await renderAudit(main);
+    else if (section === "autonomy") await renderInBox((box) => renderAutonomy(box, { readOnly }));
     else if (section === "start") {
       // The page draws into its own box, so a slow load that ends after a hash change cannot touch the page that took over.
       const box = h("div", {});

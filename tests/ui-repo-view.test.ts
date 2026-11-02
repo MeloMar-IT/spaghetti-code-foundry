@@ -238,6 +238,25 @@ describe("the sections", () => {
     expect(section("overview").textContent).not.toContain("Invalid");
   });
 
+  it("Overview shows the autonomy level: a user is told only an admin can change it, an admin gets the link", async () => {
+    await show(rec({ autonomy: "plan-only" }));
+    const text = section("overview").textContent;
+    expect(text).toContain("Autonomy level");
+    expect(text).toContain("plan-only");
+    expect(text).toContain("Only an admin can change it.");
+    expect(walk(section("overview")).some((e) => e.tag === "a" && e.attrs.href === "#/autonomy")).toBe(false);
+    expect(walk(section("overview")).some((e) => e.tag === "button" && /autonomy|promote|demote/i.test(e.textContent))).toBe(false);
+    await show(rec({ autonomy: "observe" }), { admin: true });
+    const link = walk(section("overview")).find((e) => e.tag === "a" && e.attrs.href === "#/autonomy");
+    expect(link).toBeDefined();
+    expect(section("overview").textContent).not.toContain("Only an admin can change it.");
+  });
+
+  it("Overview has no autonomy row when the record has no level", async () => {
+    await show(rec());
+    expect(section("overview").textContent).not.toContain("Autonomy level");
+  });
+
   it("Overview says there is nothing to do for a connected repository", async () => {
     await show(rec({ connection: goodConn() }));
     expect(section("overview").textContent).toContain("Nothing to do");

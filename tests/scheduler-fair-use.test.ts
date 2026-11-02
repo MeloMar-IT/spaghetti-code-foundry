@@ -187,6 +187,137 @@ describe("scheduler fair use", () => {
     expect("cap" in s.queue()).toBe(false);
   });
 
+  it("a cap of 0 holds every new run, also an architect run and a chore, lets a resume go on, and ends by itself", async () => {
+    const runDir = join(tmp, "runs", "stopped-1");
+    mkdirSync(join(runDir, "workspace"), { recursive: true });
+    mkdirSync(join(runDir, "logs"));
+    writeFileSync(join(runDir, "run.json"), JSON.stringify({ runId: "stopped-1", flow: "plain", flowDef: PLAIN, task: "t", vars: {}, repo: tmp, status: "stopped", reason: "interrupted", runDir, workdir: join(runDir, "workspace"), startedAt: new Date().toISOString(), totalCostUsd: 0, history: [], state: { next: "a", steps: {} } }));
+    setCap("load", { runs: 0, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+    try {
+      concurrency = 3;
+      mk({ capRecheckMs: 10 });
+      const story = s.submit(job(), { source: "story-1", owner: A });
+      const chore = s.submit(job(), { source: "watcher rel-a schedule", owner: A, lockKey: "acme/a#chore:rel-a" });
+      const architect = s.submit(job(), { source: `${REFINE}1`, owner: A, lockKey: `architect ${A}` });
+      expect(active()).toEqual([]);
+      // the queue says why it waits, so the monitor does not take it for a queue that stands still
+      expect(pending().map((p) => [p.runId, p.capped])).toEqual([[story, true], [chore, true], [architect, true]]);
+      expect(s.queue()).toMatchObject({ concurrency: 3, cap: 0 });
+      // a run that already started goes on
+      s.submit({ kind: "resume", runId: "stopped-1" }, { source: "c" });
+      await waitFor(() => JSON.parse(readFileSync(join(runDir, "run.json"), "utf8")).status === "succeeded");
+      expect(pending().map((p) => p.runId)).toEqual([story, chore, architect]);
+      // the cap ends: no other call, the queue looks again by itself
+      setCap("load", undefined);
+      await waitFor(() => ["story-1", "watcher rel-a schedule", `${REFINE}1`].every((x) => active().includes(x)));
+      expect(pending()).toEqual([]);
+    } finally {
+      setCap("load", undefined);
+    }
+  });
+
+  describe("a retry after a time limit (asNewRun)", () => {
+    const plant = (id: string) => {
+      const runDir = join(tmp, "runs", id);
+      mkdirSync(join(runDir, "workspace"), { recursive: true });
+      mkdirSync(join(runDir, "logs"));
+      const run = { runId: id, flow: "plain", flowDef: PLAIN, task: "t", vars: {}, repo: tmp, status: "stopped", reason: "ran out of time in `a`; trying again (1 of 2)", runDir, workdir: join(runDir, "workspace"), startedAt: new Date().toISOString(), totalCostUsd: 0, history: [], state: { next: "a", steps: {} }, timeLimits: [{ at: "t", step: "a", attempt: 1, of: 2 }] };
+      writeFileSync(join(runDir, "run.json"), JSON.stringify(run));
+      return runDir;
+    };
+    const saved = (dir: string) => JSON.parse(readFileSync(join(dir, "run.json"), "utf8"));
+    const capOf = (runs: number) => setCap("load", { runs, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+
+    it("waits for a helper's cap like a new run, while a plain resume goes on", async () => {
+      const dir1 = plant("retry-1");
+      const dir2 = plant("plain-1");
+      capOf(0);
+      try {
+        concurrency = 2;
+        mk({ capRecheckMs: 10 });
+        s.submit({ kind: "resume", runId: "retry-1" }, { source: "r", asNewRun: true });
+        s.submit({ kind: "resume", runId: "plain-1" }, { source: "p" });
+        await waitFor(() => saved(dir2).status === "succeeded");
+        expect(pending().map((p) => [p.runId, p.capped])).toEqual([["retry-1", true]]);
+        expect(saved(dir1).status).toBe("stopped");
+        setCap("load", undefined);
+        await waitFor(() => saved(dir1).status === "succeeded");
+        expect(saved(dir1).timeLimits[0].startedAt).toEqual(expect.any(String));
+      } finally {
+        setCap("load", undefined);
+      }
+    });
+
+    it("is not a run of the day and survives a restart of the scheduler", () => {
+      plant("retry-2");
+      const queueFile = join(tmp, "queue.json");
+      capOf(0);
+      try {
+        concurrency = 1;
+        limits = { [A]: { maxRunsPerDay: 1 } };
+        mk({ queueFile });
+        s.submit({ kind: "resume", runId: "retry-2" }, { source: "r", owner: A, asNewRun: true });
+        expect(pending()[0]).toMatchObject({ runId: "retry-2", capped: true });
+        expect(pending()[0]).not.toHaveProperty("limit");
+        expect(JSON.parse(readFileSync(queueFile, "utf8")).jobs?.[0] ?? JSON.parse(readFileSync(queueFile, "utf8"))[0]).toMatchObject({ asNewRun: true });
+        mk({ queueFile });
+        expect(pending()[0]).toMatchObject({ runId: "retry-2", capped: true });
+      } finally {
+        setCap("load", undefined);
+      }
+    });
+
+    it("ends the run for good when it is cancelled while queued, and a restart does not queue it again", () => {
+      const dir = plant("retry-3");
+      const queueFile = join(tmp, "queue.json");
+      capOf(0);
+      try {
+        concurrency = 2;
+        mk({ queueFile });
+        s.submit({ kind: "resume", runId: "retry-3" }, { source: "r", asNewRun: true });
+        expect(s.cancel("retry-3")).toBe(true);
+        expect(saved(dir)).toMatchObject({ status: "cancelled", reason: "cancelled by user while stopped" });
+        expect(saved(dir).timeLimits[0].startedAt).toBeUndefined();
+        mk({ queueFile });
+        expect(pending()).toEqual([]);
+      } finally {
+        setCap("load", undefined);
+      }
+    });
+  });
+
+  it("a closed scheduler holds no timer and starts nothing when a cap ends", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      concurrency = 3;
+      mk({ capRecheckMs: 1000 });
+      const before = vi.getTimerCount();
+      setCap("load", { runs: 0, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+      s.submit(job(), { source: "story-1", owner: A });
+      expect(vi.getTimerCount()).toBe(before + 1);
+      // the cap ends while jobs wait: the timer is not needed any more
+      setCap("load", undefined);
+      s.recheck();
+      expect(vi.getTimerCount()).toBe(before);
+      expect(active()).toEqual(["story-1"]);
+      s.cancel(s.queue().active[0]!.runId);
+
+      setCap("load", { runs: 0, until: new Date(Date.now() + 60_000).toISOString(), why: "test" });
+      const held = s.submit(job(), { source: "story-2", owner: A });
+      expect(vi.getTimerCount()).toBe(before + 1);
+      s.close();
+      expect(vi.getTimerCount()).toBe(before);
+      setCap("load", undefined);
+      vi.advanceTimersByTime(5000);
+      s.recheck();
+      expect(pending().map((p) => p.runId)).toEqual([held]);
+      expect(active().includes("story-2")).toBe(false);
+    } finally {
+      setCap("load", undefined);
+      vi.useRealTimers();
+    }
+  });
+
   it("shares slots round-robin: a second user's job is the second start", async () => {
     mk();
     for (let i = 0; i < 5; i++) s.submit(job(), { source: `a${i}`, owner: A });

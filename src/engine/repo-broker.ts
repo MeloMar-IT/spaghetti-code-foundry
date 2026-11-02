@@ -8,9 +8,10 @@ import type { Credential, ToolGrant } from "../tool-profile/schema.js";
 import { TOOL_PROFILE_VERSION } from "../tool-profile/version.js";
 import { checkToolCall, toolNameOf } from "../tool-profile/resolve.js";
 import { GithubAppError, installationTokenInfo, type AppPermissions } from "../github-app.js";
-import { runProcess } from "../steps/process.js";
+import { runProcess, type RunPriority } from "../steps/process.js";
 import { APP_FAILED_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, NO_COMMIT_IDENTITY, TOKEN_REFUSED_RUN, tokenRefused } from "./guards.js";
-import { refuseByPolicy, stepEnv, type Engine, type Scope } from "./execute.js";
+import type { AutonomyAction } from "../governance/autonomy.js";
+import { autonomyStop, refuseByPolicy, stepEnv, type Engine, type Scope } from "./execute.js";
 import { stepIsolated, stepIsolation, noMachineSignIn } from "./isolation.js";
 import { repositoryFact } from "./policy-hooks.js";
 import { appTokenAccess, ghConfigDir, removeGhConfigDir, repoNoCredentialEnv, repoTokenEnv } from "./repo-access.js";
@@ -115,8 +116,8 @@ interface State {
 
 const branchOf = (r: RepoRequest): string | undefined => (r.op === "push" ? r.branch : r.op === "branch" ? r.name : r.op === "fetch" ? r.branch : r.op === "pull-request" ? r.head : undefined);
 
-const defaultExec = (logFile: string): BrokerExec => (cmd, args, o) =>
-  runProcess(cmd, args, { cwd: o.cwd, env: o.env, stdin: o.stdin, timeoutMs: o.timeoutMs, signal: o.signal, logFile, cleanEnv: o.cleanEnv, pinnedSecrets: o.pinnedSecrets, ownGroup: true });
+export const defaultExec = (logFile: string, priority?: RunPriority): BrokerExec => (cmd, args, o) =>
+  runProcess(cmd, args, { cwd: o.cwd, env: o.env, stdin: o.stdin, timeoutMs: o.timeoutMs, signal: o.signal, logFile, cleanEnv: o.cleanEnv, pinnedSecrets: o.pinnedSecrets, ownGroup: true, priority });
 
 /** Carries out one request of a run and records it. Never throws. `grant` is the git or github grant of the tool profile. */
 export async function brokerRequest(ctx: BrokerContext, request: unknown, grant: RepoGrant | undefined): Promise<BrokerResult> {
@@ -176,11 +177,21 @@ const clean = (text: string, token: string | undefined): string => {
   return token ? makeRedactor([token]).redact(plain) : plain;
 };
 
+/** What each operation needs from the autonomy level (`status` reads nothing that matters). */
+const AUTONOMY_ACTION: Partial<Record<RepoOperation, AutonomyAction>> = {
+  clone: "repo-access",
+  fetch: "repo-access",
+  branch: "agent-write",
+  commit: "agent-write",
+  push: "push",
+  "pull-request": "pull-request",
+};
+
 async function attempt(ctx: BrokerContext, req: RepoRequest, grant: RepoGrant | undefined, st: State, gh: () => string): Promise<BrokerResult> {
   const { engine, scope, step } = ctx;
   const cap = grant?.outputCapBytes ?? DEFAULT_CAP_BYTES;
   const timeoutMs = grant?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const exec = ctx.exec ?? defaultExec(ctx.logFile);
+  const exec = ctx.exec ?? defaultExec(ctx.logFile, engine.config.governor.priority);
   const vars = scope.ctx.vars;
   const owner = engine.summary.owner;
   const refuse = (refusal: RepoRefusal, text = REFUSAL_TEXT[refusal]): BrokerResult => ({ outcome: "refused", refusal, output: tailBytes(text, cap) });
@@ -211,6 +222,11 @@ async function attempt(ctx: BrokerContext, req: RepoRequest, grant: RepoGrant | 
     }
     return refuse("other-repository");
   }
+
+  // 2c. the autonomy level of the run: the same rules as the engine and the pre-push hook (a pull request would bypass the hook)
+  const action = AUTONOMY_ACTION[req.op];
+  const stopped = action ? autonomyStop(engine, step, action) : undefined;
+  if (stopped) return refuse("policy", stopped.error);
 
   // 3. the profile
   const call = { kind: tool.kind, operation: tool.operation, target: target.fact };

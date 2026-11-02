@@ -41,7 +41,7 @@ export function serializeVersionBook(book: VersionBook, maxBytes = MAX_VERSIONS_
 }
 
 /** Is `<home>/promotions` missing (undefined), a plain folder (true) or anything else, a link included (false)? */
-function folderState(dir: string): boolean | undefined {
+export function folderState(dir: string): boolean | undefined {
   try {
     return lstatSync(dir).isDirectory();
   } catch (e) {
@@ -77,6 +77,20 @@ export function readVersionBook(home = dataHome()): VersionBookRead {
   return { ok: true, book: res.data };
 }
 
+/** Makes `<home>/promotions` (mode 0700) when it is missing. A link or a file in its place is a reason. */
+export function openPromotionsFolder(home: string): { ok: true; dir: string } | { ok: false; reason: string } {
+  const dir = join(home, PROMOTIONS_FOLDER);
+  try {
+    mkdirSync(dir, { mode: 0o700 });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+  }
+  const st = lstatSync(dir);
+  if (!st.isDirectory()) return { ok: false, reason: `${PROMOTIONS_FOLDER} is a link or not a folder` };
+  if ((st.mode & 0o777) !== 0o700) chmodSync(dir, 0o700);
+  return { ok: true, dir };
+}
+
 export type RecordResult = { ok: true; versions: number[]; recorded: number } | { ok: false; reason: string };
 
 /**
@@ -93,16 +107,9 @@ export function recordVersions(seen: readonly SeenHash[], o: { waitMs?: number }
       if (!counted.changed) return { ok: true as const, versions: counted.versions, recorded: 0 };
       const out = serializeVersionBook(counted.book);
       if (!out.ok) return out;
-      const dir = join(home, PROMOTIONS_FOLDER);
-      try {
-        mkdirSync(dir, { mode: 0o700 });
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      }
-      const st = lstatSync(dir);
-      if (!st.isDirectory()) return { ok: false as const, reason: `${PROMOTIONS_FOLDER} is a link or not a folder` };
-      if ((st.mode & 0o777) !== 0o700) chmodSync(dir, 0o700);
-      writeAtomic(join(dir, VERSIONS_FILE), out.text);
+      const folder = openPromotionsFolder(home);
+      if (!folder.ok) return folder;
+      writeAtomic(join(folder.dir, VERSIONS_FILE), out.text);
       return { ok: true as const, versions: counted.versions, recorded: counted.added };
     }, o.waitMs);
   } catch (e) {

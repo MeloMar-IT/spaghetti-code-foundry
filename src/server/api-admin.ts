@@ -22,6 +22,7 @@ import { FACTORY_HOME } from "../flow/load.js";
 import { describeSettings, startupSettings } from "../settings/describe.js";
 import { resolveClaudeBinAsync } from "../steps/claude.js";
 import { resolveCodexBin } from "../steps/codex.js";
+import { componentsView, listGoverned } from "../promotion/governed.js";
 import type { Route } from "./server.js";
 
 /** The settings in this text of the file; undefined when it cannot be read (the running ones are used then). */
@@ -220,5 +221,6 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
     });
     return send(res, 200, { ...stats, byUser }), true;
   }
+  if (seg[0] === "admin" && seg[1] === "components" && seg.length === 2 && method === "GET") return send(res, 200, componentsView(listGoverned())), true;
   return false;
 };

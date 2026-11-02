@@ -66,7 +66,8 @@ describe("repositories API", () => {
     rec = r.json();
     expect(Object.keys(rec).sort()).toEqual(["added", "credentialId", "github", "id", "method", "owner", "url"]);
     expect((rec as { github?: string }).github).toBe("acme/app");
-    expect(await list(ann)).toEqual([rec]);
+    // the list also has the autonomy level; the answer to the add does not
+    expect(await list(ann)).toEqual([{ ...rec, autonomy: expect.any(String) }]);
     expect((await creds(ann)).map((c) => [c.id, c.name])).toEqual([[rec.credentialId, `repo:${rec.id}`]]);
   });
 

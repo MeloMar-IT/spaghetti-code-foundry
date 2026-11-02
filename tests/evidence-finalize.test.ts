@@ -131,7 +131,7 @@ describe("finalizing a run", () => {
 
   it("finalizes a failed and a cancelled run, and not a run that waits or stopped", async () => {
     const failed = await start("name: f\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: exit 3}\n");
-    expect(manifest(failed)).toMatchObject({ status: "failed", events: { count: 10 } }); // 5 events of the run and 5 decisions of the baseline
+    expect(manifest(failed)).toMatchObject({ status: "failed", events: { count: 11 } }); // 6 events of the run (with run.autonomy) and 5 decisions of the baseline
 
     const waiting = await start(APPROVE);
     expect(waiting.status).toBe("waiting");
@@ -192,7 +192,7 @@ describe("finalizing a run", () => {
         expect(said[0]).not.toContain(tmp);
       };
     };
-    check(/not an unbroken chain \(line 5: /)(good.replace('"id":"write"', '"id":"wrote"'));
+    check(/not an unbroken chain \(line 6: /)(good.replace('"id":"write"', '"id":"wrote"'));
     check(/not an unbroken chain \(line 2: /)([lines[0], ...lines.slice(2)].join("\n"));
     check(/do not end with the end of the run/)(lines.slice(0, -2).join("\n") + "\n");
     check(/cut off/)(good.slice(0, -1));

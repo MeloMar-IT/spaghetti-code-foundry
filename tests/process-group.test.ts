@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -182,6 +182,19 @@ if(process.env.GO){const t=setInterval(()=>{if(fs.existsSync(process.env.GO)){cl
     }
   }, 20_000);
 
+  it("killLiveGroups also kills a command in a group of its own that is stopped (a paused test run below test-slot)", async () => {
+    const d = dir();
+    // the step's own group holds the shell; its child leaves the group (setsid-like, as test-slot's command does) and stops itself
+    const script = `node -e 'const {spawn}=require("child_process");spawn("/bin/sh",["-c","echo $$ > ${join(d, "cmd.pid")}; kill -STOP $$"],{detached:true,stdio:"ignore"});setTimeout(()=>{},60000)'`;
+    const p = runProcess("/bin/sh", ["-c", script], { cwd: d, logFile: join(d, "log"), groupKill: true, trackEveryMs: 50, redactor: makeRedactor([]) });
+    const pid = await untilFile(join(d, "cmd.pid"));
+    await new Promise((r) => setTimeout(r, 300)); // the tracker notes the process
+    expect(killLiveGroups()).toBe(1);
+    await p;
+    for (let i = 0; i < 100 && !dead(pid); i++) await new Promise((r) => setTimeout(r, 25));
+    expect(dead(pid)).toBe(true);
+  }, 20_000);
+
   it("killLiveGroups kills the group of a running step", async () => {
     const d = dir();
     const p = runProcess("/bin/sh", ["-c", `echo $$ > ${join(d, "child.pid")}; sleep 60`], { cwd: d, logFile: join(d, "log"), groupKill: true, redactor: makeRedactor([]) });
@@ -190,5 +203,45 @@ if(process.env.GO){const t=setInterval(()=>{if(fs.existsSync(process.env.GO)){cl
     const res = await p;
     expect(res.exitCode).toBeNull();
     expect(dead(pid)).toBe(true);
+  });
+});
+
+describe("runProcess marks its step", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const dir = () => {
+    const d = mkdtempSync(join(tmpdir(), "pmark-"));
+    dirs.push(d);
+    mkdirSync(join(d, "logs"));
+    return d;
+  };
+
+  it("leaves an empty file named by the pid in step-pids while the step runs, and removes it after", async () => {
+    const d = dir();
+    const res = await runProcess("/bin/sh", ["-c", `echo $$ > ${join(d, "me")}; ls ${join(d, "step-pids")}`], { cwd: d, logFile: join(d, "logs", "001-a.log"), redactor: makeRedactor([]) });
+    expect(res.stdout.trim()).toBe(readFileSync(join(d, "me"), "utf8").trim());
+    expect(readdirSync(join(d, "step-pids"))).toEqual([]);
+  });
+
+  it("marks nothing for a log file outside a logs folder", async () => {
+    const d = dir();
+    await runProcess("/bin/sh", ["-c", "true"], { cwd: d, logFile: join(d, "log"), redactor: makeRedactor([]) });
+    expect(existsSync(join(d, "step-pids"))).toBe(false);
+  });
+
+  it("does not fail the step when the mark cannot be made", async () => {
+    const d = dir();
+    writeFileSync(join(d, "step-pids"), "not a folder");
+    const res = await runProcess("/bin/sh", ["-c", "echo hello"], { cwd: d, logFile: join(d, "logs", "001-a.log"), redactor: makeRedactor([]) });
+    expect(res.exitCode).toBe(0);
+    expect(readFileSync(join(d, "logs", "001-a.log"), "utf8")).toContain("hello");
+  });
+
+  it("leaves no mark when the command cannot start", async () => {
+    const d = dir();
+    await expect(runProcess("/no/such/program", [], { cwd: d, logFile: join(d, "logs", "001-a.log"), redactor: makeRedactor([]) })).rejects.toThrow();
+    expect(existsSync(join(d, "step-pids")) ? readdirSync(join(d, "step-pids")) : []).toEqual([]);
   });
 });

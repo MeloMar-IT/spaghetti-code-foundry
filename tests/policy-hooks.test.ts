@@ -10,7 +10,7 @@ import { parseFlow } from "../src/flow/load.js";
 import { policyInputSha256, policyPackSha256 } from "../src/policy/evaluate.js";
 import { BASELINE_VERSION, NO_BASELINE_CONTROLS, baselinePack } from "../src/policy/baseline.js";
 import type { PolicyDecision } from "../src/policy/schema.js";
-import { baselineEntry, baseFacts, deniedReason, drainPushLog, loadPolicyPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
+import { baselineEntry, baseFacts, deniedReason, drainPushLog, loadPolicyPacks, loadRunPacks, MAX_PACK_BYTES, MAX_PUSHES_PER_STEP, policyFacts, privilegedBoundary, RunPolicy, runPolicy, type LoadedPack } from "../src/engine/policy-hooks.js";
 import { ENGINE_REASONS } from "../src/policy/reasons.js";
 import { POLICY_INPUT_VERSION } from "../src/policy/version.js";
 import { baselineLimits } from "../src/engine/policy-limits.js";
@@ -456,6 +456,46 @@ describe("fail closed", () => {
     const optional = runPolicy(summary, ConfigSchema.parse({ policy: { packs: ["org"] } }), (l) => lines.push(l), undefined, home);
     expect(lines).toEqual(["! policy org: no file policies/org.json — recorded as policy.unavailable; the run goes on"]);
     expect(optional.mandatoryUnusable).toBe(false);
+  });
+
+  describe("a list of packs read at the start", () => {
+    const summary = { runId: "r", vars: {}, flow: "f", flowDef: undefined, owner: undefined } as never;
+
+    it("loadRunPacks reads the configured packs, and none without any", () => {
+      expect(loadRunPacks(summary, ConfigSchema.parse({}), home)).toEqual([]);
+      writePack(home, "p1", pack());
+      const list = loadRunPacks(summary, ConfigSchema.parse({ policy: { packs: ["p1", "missing"] } }), home);
+      expect(list.map((p) => p.id)).toEqual(["p1", "missing"]);
+      expect("problem" in list[1]!).toBe(true);
+    });
+
+    it("runPolicy uses the list, not the files, even when a file changes", () => {
+      writePack(home, "p1", pack());
+      const config = ConfigSchema.parse({ policy: { packs: ["p1"] } });
+      const list = loadRunPacks(summary, config, home);
+      writePack(home, "p1", pack({ policy: { id: "p1", version: "2" } }));
+      const lines: string[] = [];
+      const policy = runPolicy(summary, config, (l) => lines.push(l), undefined, join(home, "never-read"), list);
+      const first = list[0] as Extract<LoadedPack, { pack: PolicyPack }>;
+      expect((policy as unknown as { packs: { id: string }[] }).packs.find((p) => p.id === "p1")).toMatchObject({ pack: first.pack, layer: "optional" });
+      expect(lines).toEqual([]);
+    });
+
+    it("logs a pack that had a problem when it was read", () => {
+      const config = ConfigSchema.parse({ policy: { packs: ["missing"] } });
+      const list = loadRunPacks(summary, config, home);
+      const lines: string[] = [];
+      runPolicy(summary, config, (l) => lines.push(l), undefined, join(home, "never-read"), list);
+      expect(lines).toEqual(["! policy missing: no file policies/missing.json — recorded as policy.unavailable; the run goes on"]);
+    });
+
+    it("fails closed for a mandatory pack that is not in the list, and does not read the file", () => {
+      writePack(home, "org", pack({ policy: { id: "org", version: "1" } }));
+      const lines: string[] = [];
+      const policy = runPolicy(summary, ConfigSchema.parse({ policy: { mandatory: ["org"] } }), (l) => lines.push(l), undefined, home, []);
+      expect(lines).toEqual(["! policy org: it was not read at the start of the run — recorded as policy.unavailable; this mandatory policy denies steps with a sign-in and writing agents"]);
+      expect(policy.mandatoryUnusable).toBe(true);
+    });
   });
 
   it("keeps the text of the engine reasons", () => {

@@ -10,6 +10,7 @@ import { renderGraph } from "./graph.js";
 import { editorPage } from "./templates.js";
 import { insertBlock, pickBlock, saveStepAsBlock } from "./library.js";
 import { runForm } from "./run-form.js";
+import { promotionNotice } from "./promotions.js";
 
 const NAME_RE = /^[\w-]+$/;
 
@@ -149,7 +150,12 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
 
   /** `isCurrent()` is the router's check: an answer that comes after the person went elsewhere draws nothing. */
   async function openFlow(name, isCurrent = () => true) {
-    if (state.cur?.name === name) return renderFlowView(); // keep in-memory edits
+    if (state.cur?.name === name) {
+      // keep in-memory edits; the state may have changed meanwhile (for example in Settings)
+      renderFlowView();
+      void refreshPromotion(state.cur);
+      return;
+    }
     mount(main, loadingState("Loading flow…", { shape: "detail" }));
     let f;
     try {
@@ -166,6 +172,31 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
       yaml: f.yaml, obj, mode: obj ? "visual" : "yaml", dirty: false, selected: null, validation: null, checking: false, problems: [],
     };
     renderFlowView();
+    void refreshPromotion(state.cur);
+  }
+
+  /**
+   * Asks whether a published flow is promoted and shows the answer. Never throws. Each call takes the next number, and only the
+   * newest answer for the flow that is still open is drawn, so an older answer never overwrites a newer one.
+   */
+  async function refreshPromotion(c) {
+    if (!c) return;
+    const gen = (c.promotionGen = (c.promotionGen ?? 0) + 1);
+    const show = (p) => {
+      if (state.cur !== c || c.promotionGen !== gen) return;
+      c.promotion = p;
+      drawPromotion();
+    };
+    if (!c.name || c.scope === "builtin" || c.obj?.publish?.enabled !== true) return show(null);
+    try {
+      show((await api.promotions("flow", c.name))?.components?.[0] ?? null);
+    } catch {
+      show({ failed: true });
+    }
+  }
+
+  function drawPromotion() {
+    if (ui.promotion && main.contains(ui.promotion)) mount(ui.promotion, state.cur ? promotionNotice(state.cur.promotion) : null);
   }
 
   function openNew(yaml = BLANK) {
@@ -180,15 +211,17 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     const head = h("div", {});
     const errors = h("div", { tabindex: "-1", "aria-label": "Problems" });
     const failure = h("div", {});
+    const promotion = h("div", {});
     const body = h("div", {});
     const graph = h("div", {});
     const pane = h("div", { class: "overview-pane", id: "flow-overview" }, h("h3", { class: "mb-8" }, "Overview"), graph);
-    const page = editorPage({ head, notices: [errors, failure], main: body, side: pane });
-    ui = { head, errors, failure, body, graph, pane, page };
+    const page = editorPage({ head, notices: [errors, failure, promotion], main: body, side: pane });
+    ui = { head, errors, failure, promotion, body, graph, pane, page };
     mount(main, page);
     syncOverview();
     applyOverview();
     drawHeader();
+    drawPromotion();
     drawBody();
     drawGraph();
     validate();
@@ -471,6 +504,7 @@ export function createFlowPage({ main, sidebar, state, api, onNavigate, storage 
     }
     toast(effective !== scope ? `Saved ${name} to ${scope} flows, but the ${effective} copy still wins` :
       saved?.version ? `Saved ${name} — version ${saved.version} for users` : `Saved ${name}`);
+    void refreshPromotion(c);
     if (leftover) showRemoveOld(c, old.name, leftover);
   }
 

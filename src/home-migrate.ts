@@ -178,7 +178,7 @@ export function sameSnapshot(a: Map<string, string>, b: Map<string, string>): bo
 }
 
 /** Top-level files the move copies byte for byte (they may hold text that looks like a path). */
-const VERBATIM_FILES = ["users.json", "sessions.json", "credentials.json", "repos.json", "refinements.json", "app-repos.json", "help.json", "policy-break-glass.json"];
+const VERBATIM_FILES = ["users.json", "sessions.json", "credentials.json", "repos.json", "refinements.json", "app-repos.json", "help.json", "policy-break-glass.json", "autonomy.json"];
 
 /** Top-level folders the move copies byte for byte. Must equal QUARANTINE_DIR in src/skills/import-stage.ts (a test ties them). */
 export const VERBATIM_DIRS = ["skill-quarantine"];

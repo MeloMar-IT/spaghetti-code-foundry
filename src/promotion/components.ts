@@ -29,6 +29,14 @@ export const COUNTED_KINDS: readonly CountedKind[] = ["tool-profile", "model-rou
 export const isCounted = (k: ComponentKind): k is CountedKind => (COUNTED_KINDS as readonly string[]).includes(k);
 
 export const MODEL_ROUTES_ID = "default";
+/** The id of the context selector a run uses: runs name none, so its settings are `config.context` (#665). */
+export const CONTEXT_SELECTOR_ID = "default";
+/** The most components one governance decision lists (and one evidence event holds). */
+export const MAX_GOVERNED_COMPONENTS = 200;
+/** The words of a governance decision (#665). They live here because the evidence schema reads them at load time. */
+export const GOVERNANCE_STATUSES = ["ok", "unapproved", "retired", "review-due"] as const;
+export const GOVERNANCE_OUTCOMES = ["allowed", "refused"] as const;
+export const GOVERNANCE_FAILURES = ["book-unreadable", "check-failed"] as const;
 /** The id of a tool profile or a context selector, which is also its file name. */
 export const COMPONENT_ID_RE = /^[a-z0-9][a-z0-9._-]{0,99}$/;
 

@@ -9,7 +9,7 @@ import { REPO_EVIDENCE_OPERATIONS, REPO_OUTCOMES, REPO_REFUSALS, repoToolOf } fr
 import { readEvidenceChain, splitEvidenceLines, type ChainFault } from "./evidence/chain.js";
 import { readRunEvidence } from "./evidence/parse.js";
 import { ReasonCodeSchema } from "./evidence/identity.js";
-import { CONTEXT_EVENT_TYPES, POLICY_EVENT_TYPES, REPO_EVENT_TYPES, RUN_EVENT_TYPES, STEP_EVENT_TYPES, type EvidenceEvent, type RunEvidence } from "./evidence/schema.js";
+import { CONTEXT_EVENT_TYPES, GOVERNANCE_EVENT_TYPES, POLICY_EVENT_TYPES, REPO_EVENT_TYPES, RUN_EVENT_TYPES, STEP_EVENT_TYPES, type EvidenceEvent, type RunEvidence } from "./evidence/schema.js";
 import { evidenceIncomplete, readPlainBytes } from "./evidence/stream.js";
 import { verifyRunEvidence, type VerifyResult } from "./evidence/verify.js";
 import { EVIDENCE_EVENTS_FILE, EVIDENCE_MANIFEST_FILE } from "./evidence/version.js";
@@ -30,7 +30,7 @@ export const CONTROL_KINDS = ["status", "policy", "repo", "tools", "privileges",
 export const EXPECTED_STATUSES = ["succeeded", "failed", "cancelled", "stopped", "waiting"] as const;
 /** Who did something, as the evidence names it (`step.approved` and the other events that carry an actor). */
 export const ACTOR_KINDS = ["user", "cli", "watcher", "system"] as const;
-const EVENT_TYPES = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES, ...REPO_EVENT_TYPES, ...CONTEXT_EVENT_TYPES] as const;
+const EVENT_TYPES = [...RUN_EVENT_TYPES, ...STEP_EVENT_TYPES, ...POLICY_EVENT_TYPES, ...REPO_EVENT_TYPES, ...CONTEXT_EVENT_TYPES, ...GOVERNANCE_EVENT_TYPES] as const;
 const eventStep = z.string().max(200).regex(/^[\w-]+(\/[\w-]+)*$/);
 /** The signals of `engine/untrusted.ts`, listed here because importing that module at load time makes an import cycle (tests compare the two). */
 export const CONTROL_SIGNALS = ["orders", "policy-tag", "secret-removed", "oversize", "timed-out", "classifier", "classifier-error", "held"] as const satisfies readonly Signal[];

@@ -5,7 +5,7 @@ import {
   APP_BROKEN_RUN, APP_FAILED_RUN, APP_NOT_INSTALLED_RUN, APP_NOT_SET_UP_RUN, APP_RATE_LIMIT_RUN, APP_REFUSED_RUN, APP_TOKEN_EXPIRED, APP_UNREACHABLE_RUN,
   DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, NO_COMMIT_IDENTITY, SIGN_IN_NOT_REMOVED,
 } from "../src/engine/guards.js";
-import { errorLine, explainError, type ErrorAbout } from "../src/errors.js";
+import { errorLine, explainError, isTimedOut, type ErrorAbout } from "../src/errors.js";
 
 type Row = [string, string, ErrorAbout, string, boolean?];
 const WHY_GENERAL = "the error is not one the Foundry can explain";
@@ -44,6 +44,7 @@ const rows: Row[] = [
   [`step "m" failed: ${NO_COMMIT_IDENTITY}`, "The step m failed", "run", "the account that owns the run is gone, so its commits have no name"],
   ['step "x" failed: exit code null', "The step x failed", "run", "its command ended with an error"],
   ['step "plan" failed: timed out', "The step plan failed", "run", "it ran longer than its time limit"],
+  ['step "plan" failed: timed out after 10m', "The step plan failed", "run", "it ran longer than its time limit"],
   ['step "plan" failed: claude exited with code 1 and no result. boom\nline 2', "The step plan failed", "run", "the agent stopped without a result"],
   ['step "review" failed: codex exited with code 2. oops', "The step review failed", "run", "the agent stopped with an error"],
   ['step "plan" failed: claude result: error_max_turns', "The step plan failed", "run", "the agent used all its turns"],
@@ -107,6 +108,25 @@ describe("explainError", () => {
     expect(explainError('step "a" failed: claude result: error_max_turns 401').why).toBe("the agent used all its turns");
     expect(explainError("cannot access acme/app with gh: HTTP 401 Unauthorized", "watcher").why).not.toContain("Codex");
     expect(explainError('step "a" failed: API Error: 401 Unauthorized').why).not.toContain("Codex");
+  });
+
+  it("a time-out that waited says whether the wait was left out or capped, for an admin and a user; one without a wait is unchanged", () => {
+    const left = "timed out (waited 18 min for a test slot, which did not count)";
+    const capped = "timed out (waited 95 min for a test slot, more than the 90 min that can be left out)";
+    const e = explainError(`step "plan" failed: ${left}`);
+    expect(e).toMatchObject({ what: "The step plan failed", why: "it ran longer than its time limit; it waited 18 min for a test slot, which did not count" });
+    expect(explainError(`step "plan" failed: ${capped}`).why).toBe("it ran longer than its time limit; it waited 95 min for a test slot, capped at 90 min");
+    expect(explainError(`step "plan" failed: ${capped}`, "run", true).why).toBe("it ran longer than its time limit; it waited 95 min for a test slot, capped at 90 min");
+    expect(e.detail).toContain(left);
+    expect(explainError("timed out").why).toBe("it ran longer than its time limit");
+  });
+
+  it("isTimedOut tells the plain and the waited time-out from other errors", () => {
+    expect(isTimedOut("timed out")).toBe(true);
+    expect(isTimedOut("timed out (waited 18 min for a test slot, which did not count)")).toBe(true);
+    expect(isTimedOut("exit code 1")).toBe(false);
+    expect(isTimedOut("the step timed out")).toBe(false);
+    expect(isTimedOut(undefined)).toBe(false);
   });
 
   it("unwraps sub-flows whatever their name", () => {

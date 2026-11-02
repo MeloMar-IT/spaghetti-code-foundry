@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { REPO_LIMIT, addRepo, listAllRepos, reposPath } from "../src/auth/repos.js";
 import { createUser, type User } from "../src/auth/users.js";
 import { loadConfig, saveConfig } from "../src/config.js";
+import { readAutonomy } from "../src/governance/autonomy-store.js";
 import { moveConfigWatchers } from "../src/repos/migrate-watchers.js";
 import { addRepoWatcher, effectiveRepoWatchers, listRepoWatchers, repoWatchersPath } from "../src/repos/watchers.js";
 import { getRepo } from "../src/auth/repos.js";
@@ -78,6 +79,7 @@ describe("moving the watchers of config.yaml", () => {
       ["https://github.com/acme/web", "none", admin.id],
     ]);
     expect(stored.every((w) => !("owner" in w) && !("github_repo" in w))).toBe(true);
+    expect(readAutonomy().repos).toEqual({}); // repositories of an existing install get no entry: they stay at delivery-handoff
     const cfg = loadConfig(cfgPath());
     expect(cfg.watchers.map((w) => w.id)).toEqual(["mon"]);
     expect(cfg.concurrency).toBe(3);

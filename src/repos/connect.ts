@@ -8,6 +8,7 @@ import type { RepoMethod } from "../auth/repos.js";
 import { dataHome } from "../auth/store.js";
 import { tryParseRepoUrl } from "../auth/repo-url.js";
 import { gh } from "../github.js";
+import { storeFor } from "../stories/store.js";
 
 /** A test could not run at all (not a failed check). The message never holds a secret. */
 export type ConnectErrorCode = "no-git" | "no-temp" | "bad-path" | "no-secret" | "failed";
@@ -341,7 +342,7 @@ async function apiCheck(github: string, input: ConnectInput, dir: string, left: 
   } catch (e) {
     return result("github-api", classifyGh("repo", e, method), method);
   }
-  const [issues, pulls] = await Promise.allSettled([call(`${base}/issues?per_page=1`), call(`${base}/pulls?per_page=1&state=all`)]);
+  const { stories: issues, changes: pulls } = await storeFor(github).probeAccess((args) => gh(args, env, left()));
   const ci: Code = issues.status === "rejected" ? classifyGh("issues", issues.reason, method) : "ok";
   const cp: Code = pulls.status === "rejected" ? classifyGh("pulls", pulls.reason, method) : "ok";
   const code: Code = ci === "no-issues" && cp === "no-pulls" ? "no-issues-pulls" : ci !== "ok" ? ci : cp;

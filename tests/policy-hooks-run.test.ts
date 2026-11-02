@@ -109,7 +109,7 @@ describe("policy hooks at the boundaries of a run", () => {
   it("keeps the order of the events around a step", async () => {
     const s = await start(SHELL);
     expect(events(s).map((e) => (e.type === "policy.decided" ? `policy:${e.decision.boundary}` : e.type))).toEqual([
-      "run.created", "policy:run.start", "policy:repository.access", "run.started", "step.started", "policy:step.before", "policy:repository.access", "policy:step.after", "step.completed", "policy:run.complete", "run.completed",
+      "run.created", "run.autonomy", "policy:run.start", "policy:repository.access", "run.started", "step.started", "policy:step.before", "policy:repository.access", "policy:step.after", "step.completed", "policy:run.complete", "run.completed",
     ]);
   });
 
@@ -161,7 +161,7 @@ steps:
 `);
     expect(ok.status).toBe("succeeded");
     const kinds = events(ok).map((e) => (e.type === "policy.decided" ? e.decision.boundary : e.type));
-    expect(kinds.slice(0, 4)).toEqual(["run.created", "run.start", "repository.access", "run.started"]);
+    expect(kinds.slice(0, 5)).toEqual(["run.created", "run.autonomy", "run.start", "repository.access", "run.started"]);
     expect(decided(ok)[1]!.step).toBeUndefined();
 
     const notRepo = join(tmp, "plain");

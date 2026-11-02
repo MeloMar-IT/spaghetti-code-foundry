@@ -125,7 +125,8 @@ describe("asking a question", () => {
     expect(quota.messages[1]).toMatchObject({ status: "failed", text: FAILURE_WORDS.quota, failure: { code: "quota", retry: false } });
     const down = await asked(bob, "CLAUDE_OVERLOADED");
     expect(down.messages[1]).toMatchObject({ text: FAILURE_WORDS.provider, failure: { code: "provider", retry: true } });
-    expect(JSON.stringify([quota, down])).not.toMatch(/hit your limit|529|overloaded_error|Amsterdam/);
+    // only the words: ids are random and can contain "529"
+    expect(JSON.stringify([quota, down].flatMap((c) => c.messages.map((m: { text: string }) => m.text)))).not.toMatch(/hit your limit|529|overloaded_error|Amsterdam/);
     const again = await call(bob, "POST", `/api/help/conversations/${down.id}/retry`);
     expect(again.status).toBe(202);
     expect(again.json().messages.map((m: { status: string }) => m.status)).toEqual(["done", "pending"]);

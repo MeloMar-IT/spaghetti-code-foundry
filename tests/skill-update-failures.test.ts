@@ -2,7 +2,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CatalogueError, openSourcePullRequests } from "../src/skill-import/catalogue-git.js";
+import { CatalogueError, openPullRequest, openSourcePullRequests } from "../src/skill-import/catalogue-git.js";
 import { bodies, branches, branchOf, FAKE_GH, forbiddenCalls, ghCalls, git, GOOD_REVIEW, setBody, sigCounts, update, useWorlds, W, world, type World } from "./helpers/skill-update-world.js";
 
 // Failures and interrupts of `scf skills update` after the staging: no half-made branch, no text of git or gh, and a branch that
@@ -126,6 +126,12 @@ describe("openSourcePullRequests", () => {
       { url: "https://github.com/a/b/issues/5", headRefName: "skill-update/lib-cccccccccccc", state: "OPEN" },
     ];
     expect(openSourcePullRequests(ctx(JSON.stringify(list)), "a/b", "skill-update/lib-")).toEqual([{ url: "https://github.com/a/b/pull/1", branch: "skill-update/lib-aaaaaaaaaaaa" }]);
+  });
+  it("counts a branch the store refuses as a failed gh call, and does not run gh", () => {
+    // A missing gh would be "no-gh": the code shows that gh never ran.
+    const missing = { cwd: W.root, env: { FACTORY_GH_BIN: join(W.root, "no-such-gh") } };
+    expect(code(() => openPullRequest(missing, "a/b", "-x"))).toBe("gh-failed");
+    expect(code(() => openPullRequest(missing, "a/b", "x"))).toBe("no-gh");
   });
   it("fails with gh-failed on an answer it cannot use or a prefix it refuses", () => {
     expect(code(() => openSourcePullRequests(ctx("not json"), "a/b", "skill-update/lib-"))).toBe("gh-failed");

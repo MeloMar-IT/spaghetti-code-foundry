@@ -10,7 +10,7 @@ import { readEvidenceChain, splitEvidenceLines } from "../evidence/chain.js";
 import { PullRequestIdentitySchema, RepositorySchema, type PullRequestIdentity } from "../evidence/identity.js";
 import { evidenceIncomplete } from "../evidence/stream.js";
 import { EVIDENCE_EVENTS_FILE } from "../evidence/version.js";
-import { buildDeliveryContract, contractDigest, DeliveryContractError, deliveryContractText, evidenceHeadProblem, signDeliveryContract } from "./contract.js";
+import { buildDeliveryContract, contractDigest, DeliveryContractError, deliveryContractText, evidenceHeadProblem, isLocalTestRun, LOCAL_TEST_INELIGIBLE, signDeliveryContract } from "./contract.js";
 import { CommitFactsError, readCommitFacts, type CommitFactsOptions } from "./git-facts.js";
 import { DeliveryContractSchema, type DeliveryContract } from "./schema.js";
 import { publicKeyLine, readSigningKey } from "./sshsig.js";
@@ -66,6 +66,7 @@ export const DELIVERY_WRITE_FAULTS = {
   keyPlace: "the signing key is not in the delivery-keys folder of the data folder; no contract was written",
   key: "the signing key cannot be used; no contract was written",
   write: "the contract cannot be written",
+  localTest: `${LOCAL_TEST_INELIGIBLE}; no contract was written`,
 } as const;
 
 /** The message is always one of DELIVERY_WRITE_FAULTS: no path, no text of an fs error. */
@@ -87,6 +88,8 @@ export interface WriteContractInput {
   delivery: Config["delivery"];
   git?: Omit<CommitFactsOptions, "reuse">;
   maxEvidenceBytes?: number;
+  /** The run is a local test: nothing is written. */
+  localTest?: boolean;
 }
 
 export interface WrittenContract {
@@ -225,6 +228,9 @@ function write(input: WriteContractInput): WrittenContract | undefined {
     throw new DeliveryWriteError(f);
   };
 
+  // 0. a local test gets no contract, and no folder
+  if (input.localTest) return fail("localTest");
+
   // 1. the folder
   const dir = join(runDir, DELIVERY_DIR);
   let st;
@@ -273,6 +279,7 @@ function write(input: WriteContractInput): WrittenContract | undefined {
   if (tail !== "" || lines.length === 0) return fail("evidence");
   const chain = readEvidenceChain(lines, runId);
   if (!chain.ok || chain.terminalHash === null) return fail("evidence");
+  if (isLocalTestRun(chain.events)) return fail("localTest");
   if (prev && evidenceHeadProblem(events, prev) !== undefined) return fail("evidence");
 
   // 4. the git facts
@@ -358,7 +365,7 @@ export function deliveryAfterStep(engine: Engine): void {
     if (!pullRequest) return;
     const delivery = (engine.deliverySettings ?? (() => engine.config.delivery))();
     try {
-      const w = writeContract({ runDir: s.runDir, runId: s.runId, dataDir: process.env.FACTORY_HOME ?? FACTORY_HOME, workdir: s.workdir, repository: repo, pullRequest, delivery });
+      const w = writeContract({ runDir: s.runDir, runId: s.runId, dataDir: process.env.FACTORY_HOME ?? FACTORY_HOME, workdir: s.workdir, repository: repo, pullRequest, delivery, localTest: s.localTest === true });
       if (w) engine.log(`  delivery: contract ${w.sequence} written (${w.signed ? "signed" : "unsigned"})`);
     } catch (e) {
       engine.log(`  delivery: ${e instanceof DeliveryWriteError || e instanceof CommitFactsError ? e.message : DELIVERY_WRITE_FAULTS.write}`);

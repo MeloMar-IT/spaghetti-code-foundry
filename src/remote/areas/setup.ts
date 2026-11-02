@@ -174,5 +174,45 @@ const BLOCKS: Cmd[] = [
   { area: "blocks", action: "remove", method: "DELETE", path: "blocks/:id", args: ["id"], confirm: "The file of this block is deleted.", show: (d) => `deleted ${pick(d, "deleted")}` },
 ];
 
+// ---- autonomy --------------------------------------------------------------------------------------
+
+/** ok: passed, no: failed, ..: pending (the approval check). */
+const mark = (c: Row) => (c.passed === true ? "ok" : c.value === "pending" ? ".." : "no");
+
+/** The levels and gates as lines: a line per repository or flow, then a line per check. */
+export function autonomyLines(d: unknown): string {
+  const problem = pick(d, "problem");
+  const levels = pick(d, "levels");
+  const head = `Autonomy levels: ${Array.isArray(levels) ? levels.join(" < ") : ""}`;
+  const days = pick(d, "window.days");
+  const out = [...(problem ? [String(problem)] : []), `${head}${days ? ` (checked over the last ${days} days)` : ""}`];
+  if (pick(d, "owner.id")) out.push(`Owner (approves promotions): ${pick(d, "owner.id")}${pick(d, "owner.problem") ? ` (${pick(d, "owner.problem")})` : ""}`);
+  const components = rows(d, "components");
+  if (!components.length) out.push("no repositories or flows");
+  for (const c of components) {
+    const gate = (c.gate ?? {}) as Row;
+    out.push("", `${c.kind === "repos" ? "repository" : "flow"} ${c.name}: ${c.level}${c.next ? ` -> next ${c.next}: ${gate.passed ? "evidence passed" : "not yet"}` : " (top level)"}`);
+    if (c.request) out.push(`  request: ${pick(c, "request.from")} -> ${pick(c, "request.to")} (${pick(c, "request.state")}), token ${pick(c, "request.token")}`);
+    for (const k of rows(gate, "checks")) out.push(`  ${mark(k)}  ${k.label}: ${k.detail}`);
+  }
+  return out.join("\n");
+}
+
+const AUTONOMY_REASON: Record<string, Flag> = { reason: { type: "string", required: true, help: "why (1 to 200 characters, no credentials)" } };
+const moved = (d: unknown) => `${pick(d, "kind")} ${pick(d, "id")}: ${pick(d, "from")} -> ${pick(d, "to")}`;
+
+const AUTONOMY: Cmd[] = [
+  { area: "autonomy", action: "status", method: "GET", path: "autonomy", help: "the autonomy level of every repository and flow, and whether it has earned the next one (needs a running, signed-in server; admin)", show: autonomyLines },
+  { area: "autonomy", action: "promote", method: "POST", path: "autonomy/promote", args: ["kind", "id", "to"], flags: AUTONOMY_REASON,
+    help: "ask for one level more (kind: repos or flows) when the gate passes; prints the token the owner needs to approve",
+    show: (d) => `requested ${pick(d, "request.from")} -> ${pick(d, "request.to")}; the owner approves with: scf autonomy approve <kind> <id> ${pick(d, "request.to")} ${pick(d, "request.token")}` },
+  { area: "autonomy", action: "approve", method: "POST", path: "autonomy/approve", args: ["kind", "id", "to", "token"],
+    help: "approve a waiting promotion request (the owner; a move to guarded-write or delivery-handoff needs an approver who did not ask)",
+    show: (d) => `promoted ${moved(d)}${pick(d, "selfApproved") ? " (self-approved)" : ""}` },
+  { area: "autonomy", action: "demote", method: "POST", path: "autonomy/demote", args: ["kind", "id", "to"], flags: AUTONOMY_REASON,
+    confirm: "The level drops at once. It comes back only through the gate and an approval.",
+    help: "lower a level at once (any admin, no gate)", show: (d) => `demoted ${moved(d)}` },
+];
+
 /** Setting the Foundry up: repositories, settings, model providers, the monitor, flows and blocks. */
-export const SETUP: Cmd[] = [...REPOS, ...SETTINGS, ...PROVIDERS, ...MONITOR, ...FLOWS, ...BLOCKS];
+export const SETUP: Cmd[] = [...REPOS, ...SETTINGS, ...PROVIDERS, ...MONITOR, ...FLOWS, ...BLOCKS, ...AUTONOMY];

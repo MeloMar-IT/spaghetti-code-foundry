@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
+import type { RunAutonomy } from "../governance/autonomy.js";
+import type { PromotionRecord } from "../promotion/gate.js";
 import type { AppliedChoice } from "../skills/choices.js";
 import type { CanonicalSelectionRecord } from "../skills/run-canonical.js";
 import type { RunSkillLockSummary } from "../skills/run-lock.js";
@@ -35,6 +37,8 @@ export interface StepRecord {
   tools?: { calls: number; totalMs: number; maxMs: number };
   /** The largest input of one model turn (input + cache read + cache creation tokens), the largest over all tries. Claude steps only; absent on Codex, shell and older runs. */
   contextTokens?: number;
+  /** Time (ms) the step waited for a test slot, over all its tries; the time limit does not count it. Absent on older runs and on steps that did not wait. */
+  slotWaitMs?: number;
   /** The agent hit a usage/rate limit and no fallback model could take over. */
   limited?: boolean;
   /** The AI service could not be reached at all (the limit flag is set so the run pauses). */
@@ -76,6 +80,15 @@ export interface RunState {
   visits: Record<string, number>;
 }
 
+/** Why a run that is not a local test was refused at start by `promotion.enforce: on` (#740). Fixed text: no path, no id. */
+export const PROMOTION_REFUSED =
+  "refused: this run uses components that are not promoted (promotion.enforce is on); promote them, or start a local test with scf run --local-test";
+/** The log line of a local test. */
+export const LOCAL_TEST_LINE = "local test: this run never counts as a promoted delivery";
+
+/** One stop at a step's time limit that the Foundry answers with a retry (auto_retry.timeouts). Only an event with `startedAt` (the retry began) counts. */
+export interface TimeLimitEvent { at: string; step: string; attempt: number; of: number; startedAt?: string }
+
 export interface RunSummary {
   runId: string;
   flow: string;
@@ -110,6 +123,12 @@ export interface RunSummary {
   failureNote?: FailureNote;
   /** How many times the run was resumed. */
   resumes?: number;
+  /** The stops at a time limit that were answered with a retry, oldest first (watcher story runs). Absent on older runs. */
+  timeLimits?: TimeLimitEvent[];
+  /** How often `implement` was handed to the planner after its retries (the next count goes on from there). */
+  timeoutHandovers?: number;
+  /** After a time limit: the step to continue at once the areas are claimed again. Absent: none. */
+  retryStep?: string;
   /** The last 50 resumes (when, and the step each restarted at); the monitor reads it to find restart loops. */
   resumeLog?: { at: string; from: string }[];
   /** Process that last started or resumed the run. */
@@ -122,6 +141,14 @@ export interface RunSummary {
   owner?: string;
   /** The declared tool profile saved at start: the parsed profile, or `null` when the supplied one could not be read (`null` always refuses). Trusted like `owner`. Absent: steps get the profile their settings give. */
   toolProfile?: unknown;
+  /** True for a local test (`scf run --local-test`, evals): it is not checked against `promotion.enforce` and never counts as a promoted delivery (#740). Only evals skip governance (#665). */
+  localTest?: true;
+  /** The most autonomy the run may use, worked out once at the start (#643). Absent on older runs, which read as `delivery-handoff` through `autonomyOfRun`. The engine enforces it (#644); a resume keeps it. */
+  autonomy?: RunAutonomy;
+  /** The id of the custom flow as `scf promote` knows it (its file name), saved so a resume checks the same id (#665). Absent: the flow's name. */
+  flowId?: string;
+  /** The run start check of `promotion.enforce` (warn or on); absent when it is off, for a local test and for older runs. */
+  promotion?: PromotionRecord;
   /** Answers a person gave on the run page to the questions the run stopped with, oldest first. */
   answers?: RunAnswer[];
   /** Summary of <runDir>/skill-lock.json. Absent on runs without a checked plan and on runs of older versions. */
@@ -186,6 +213,8 @@ export interface RunBrief {
   githubRepo?: string;
   /** True when run.json has archivedAt. */
   archived?: boolean;
+  /** `timeLimits` of the run, when it has them. */
+  timeLimits?: TimeLimitEvent[];
   issue?: string;
   /** `vars.pr` and `vars.ci_run` of the run, when it has them. */
   pr?: string;
@@ -198,6 +227,10 @@ export interface RunBrief {
   taskLine?: string;
   /** The title the pull_ticket step printed ("# #37: Title"), at most 200 characters. Memory only; absent when there is none. */
   issueTitle?: string;
+  /** `autonomy` of the run as stored (read it with `autonomyOfRun`); absent on older runs. */
+  autonomy?: unknown;
+  /** True for a local-test run. */
+  localTest?: true;
 }
 
 export const TASK_LINE_MAX = 200;
@@ -253,7 +286,7 @@ function briefOf(runsDir: string, id: string): RunBrief | undefined {
     if (!hit || hit.mtimeMs !== st.mtimeMs || hit.size !== st.size) {
       const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
       if (!s || typeof s.runId !== "string" || typeof s.status !== "string") return undefined;
-      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}),...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(typeof s.vars?.chore_day === "string" ? { choreDay: s.vars.chore_day } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}) } };
+      hit = { mtimeMs: st.mtimeMs, size: st.size, brief: { runId: s.runId, flow: s.flow, status: s.status, startedAt: s.startedAt, finishedAt: s.finishedAt, source: s.source, owner: s.owner, runDir: s.runDir, dirName: id, updatedAt: new Date(Math.round(st.mtimeMs)).toISOString(), ...(typeof s.vars?.github_repo === "string" ? { githubRepo: s.vars.github_repo } : {}), ...(typeof s.archivedAt === "string" ? { archived: true } : {}),...(typeof s.vars?.issue === "string" ? { issue: s.vars.issue } : {}), ...(Array.isArray(s.timeLimits) ? { timeLimits: s.timeLimits } : {}), ...(typeof s.vars?.pr === "string" ? { pr: s.vars.pr } : {}), ...(typeof s.vars?.ci_run === "string" ? { ciRun: s.vars.ci_run } : {}), ...(typeof s.vars?.chore_day === "string" ? { choreDay: s.vars.chore_day } : {}), ...(taskLineOf(s.task) !== undefined ? { taskLine: taskLineOf(s.task) } : {}), ...(issueTitleOf(s) !== undefined ? { issueTitle: issueTitleOf(s) } : {}), ...(s.autonomy !== undefined ? { autonomy: s.autonomy } : {}), ...(s.localTest ? { localTest: true as const } : {}) } };
       briefCache.set(file, hit);
     }
     return hit.brief;
@@ -441,6 +474,8 @@ export function spentToday(runsDir: string, now = new Date()): number {
 /** The stop reason of a run that reached its owner's daily budget. It carries no amount: it reaches users. */
 export const USER_BUDGET_REASON = "your daily limit is reached — resume tomorrow";
 export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "");
+/** A stop that the Foundry answers with a retry after a step ran out of time (see engine/auto-retry.ts). */
+export const isTimeLimitStop = (reason?: string): boolean => /^ran out of time in /.test(reason ?? "");
 
 /** Total spend of the runs of one account that started today (same day rule, 500-run window and early break as spentToday). */
 export function spentTodayBy(runsDir: string, owner: string, now = new Date()): number {

@@ -32,6 +32,17 @@ describe("milestones", () => {
     expect(m[1]).toMatchObject({ key: "step:0", index: 0, ok: true, depth: 0, label: "Build the thing" });
   });
 
+  it("running with paused test runs: the current row says since when; without a pause it has no text", () => {
+    const since = new Date(Date.now() - 60_000).toISOString();
+    const at = new Date(since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const base = { status: "running", finishedAt: undefined, history: [rec("a", 1)], state: { next: "a" }, stepStartedAt: T(5) };
+    expect(mod.milestones(run({ ...base, paused: { since } }))[2].text).toBe(`paused: machine overloaded since ${at}`);
+    expect(mod.pausedText({ since })).toBe(`paused: machine overloaded since ${at}`);
+    expect("text" in mod.milestones(run(base))[2]).toBe(false);
+    expect(mod.pausedText({ since: "not a time" })).toBe("");
+    expect(mod.pausedText(undefined)).toBe("");
+  });
+
   it("waiting: ends with the message and has no current or end", () => {
     const m = mod.milestones(run({ status: "waiting", history: [rec("a", 1)], waiting: { since: T(9), message: "Ship it?" }, state: { next: "a" } }));
     expect(m.map((x: any) => x.kind)).toEqual(["start", "step", "waiting"]);
@@ -189,6 +200,20 @@ describe("createTimeline", () => {
     expect(t.el.all("summary")).toHaveLength(0);
     expect(t.el.textContent).toContain("one sentence");
     expect(a.transcript).not.toHaveBeenCalled();
+  });
+
+  it("shows how long a step waited for a test slot, in the admin and the user row, and nothing without the field", () => {
+    expect(mod.waitedText(18 * 60_000)).toBe("waited 18 min for a test slot");
+    expect(mod.waitedText(40_000)).toBe("waited 40 s for a test slot");
+    expect(mod.waitedText(undefined)).toBe("");
+    for (const admin of [true, false]) {
+      const waited = mod.createTimeline({ runId: "r1", admin, a });
+      waited.update(run({ history: [rec("a", 1, { slotWaitMs: 18 * 60_000 })] }));
+      expect(waited.el.textContent).toContain("waited 18 min for a test slot");
+      const plain = mod.createTimeline({ runId: "r1", admin, a });
+      plain.update(run({ history: [rec("a", 1)] }));
+      expect(plain.el.textContent).not.toContain("for a test slot");
+    }
   });
 
   it("admin: false with records that have output still draws plain rows", () => {

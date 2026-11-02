@@ -609,6 +609,42 @@ describe("the monitor in the WatcherManager", () => {
     });
   });
 
+  describe("automatic demotion (governance.auto_demote)", () => {
+    const loopRun = () => {
+      const runId = "20261001-120001-wire";
+      const runDir = join(gh.tmp, "runs", runId);
+      const at = (ms: number) => new Date(Date.now() - ms).toISOString();
+      mkdirSync(runDir, { recursive: true });
+      saveRun({
+        runId, flow: "wire-demote-flow", task: "t", status: "stopped", startedAt: at(10 * MIN), vars: { github_repo: "acme/app" }, history: [],
+        reason: 'stopped at step "wait_for_area"', resumeLog: Array.from({ length: 24 }, (_, i) => ({ at: at((23 - i) * 25 * SEC), from: "claim_areas" })),
+        totalCostUsd: 0, state: { next: null, steps: {}, visits: {} }, runDir,
+      } as unknown as RunSummary);
+    };
+    const levelOf = () => {
+      const f = join(process.env.FACTORY_HOME!, "autonomy.json");
+      return existsSync(f) ? (JSON.parse(readFileSync(f, "utf8")) as { flows: Record<string, { level: string }> }).flows["wire-demote-flow"]?.level : undefined;
+    };
+    const clean = () => {
+      rmSync(join(process.env.FACTORY_HOME!, "autonomy.json"), { force: true });
+      rmSync(join(process.env.FACTORY_HOME!, "monitor-findings.json"), { force: true });
+    };
+    afterEach(clean);
+
+    for (const [autoDemote, expected] of [[undefined, "guarded-write"], [false, undefined]] as const) {
+      it(`governance.auto_demote ${autoDemote === undefined ? "on (the default)" : "off"} ${expected ? "lowers" : "leaves"} the flow of a restart loop`, async () => {
+        clean();
+        loopRun();
+        cfg = ConfigSchema.parse({ watchers: [mon], governance: autoDemote === undefined ? {} : { auto_demote: autoDemote } });
+        const scheduler = new Scheduler({ runsDir: join(gh.tmp, "runs"), config: () => cfg });
+        manager = new WatcherManager({ scheduler, runsDir: join(gh.tmp, "runs"), repo: gh.tmp, config: () => cfg, log: () => {} });
+        manager.sync();
+        await settled(manager, ["mon"]);
+        expect(levelOf()).toBe(expected);
+      });
+    }
+  });
+
   it("starts no Watcher for it; its status is listed; Check now runs a check; stopAll stops it", async () => {
     const m = setup([mon]);
     await settled(m, ["mon"]);

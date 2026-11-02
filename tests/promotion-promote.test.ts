@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,7 @@ import { stringify } from "yaml";
 import { expectedResultKeys, homeInputs, type EvalInputs } from "../src/eval-inputs.js";
 import { loadSuite, safetySuites, SAFETY_DIR } from "../src/evals.js";
 import { PROMOTE_USAGE, promoteCommand } from "../src/promotion/cli.js";
-import { currentSuiteInputs, MAX_REPORT_BYTES, newestReport, promoteCheck } from "../src/promotion/promote.js";
+import { currentSuiteInputs, MAX_REPORT_BYTES, newestReport, promoteCheck, promoteWithReport, promotionDecision } from "../src/promotion/promote.js";
 import { REQUIRED_SUITES, SAFETY_CATALOGUE } from "../src/promotion/required-suites.js";
 import { COMPONENT_KINDS } from "../src/promotion/components.js";
 
@@ -249,6 +250,147 @@ describe("scf promote", () => {
 function readFlowWithTimeout(path: string): string {
   return readFileSync(path, "utf8").replace("sleep 5", "sleep 6");
 }
+
+const decide = (o: Partial<Parameters<typeof promotionDecision>[2]> = {}, kind: (typeof COMPONENT_KINDS)[number] = "flow", id = "my-flow") =>
+  promotionDecision(kind, id, { live: false, home, evalsDir: evals, safetyDir: safety, builtinFlowsDir: builtin, ...o });
+
+describe("promotionDecision", () => {
+  it("gives the ref and the nine passing reports with their hashes", () => {
+    reportAll();
+    const d = decide();
+    expect(d.ok).toBe(true);
+    expect(d.ref).toMatchObject({ kind: "flow", id: "my-flow", version: "0", sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    expect(d.reports.map((r) => r.suite)).toEqual([...SAFETY_CATALOGUE]);
+    for (const r of d.reports) {
+      expect(r.id).toBe(`${r.suite}-${STAMP}`);
+      expect(r.sha256).toBe(createHash("sha256").update(readFileSync(join(evals, `${r.id}.json`), "utf8")).digest("hex"));
+    }
+    expect(d.lines).toEqual(promoteCheck("flow", "my-flow", { live: false, home, evalsDir: evals, safetyDir: safety, builtinFlowsDir: builtin }).lines);
+  });
+
+  it("lists the blocks in catalogue order, with the suite and the fix, and no detail", () => {
+    const d = decide();
+    expect(d.ok).toBe(false);
+    expect(d.reports).toEqual([]);
+    expect(d.blocking.map((b) => b.suite)).toEqual([...SAFETY_CATALOGUE]);
+    expect(d.blocking[0]).toEqual({ code: "suite-missing", suite: "approval-bypass", remediation: "scf eval safety" });
+    reportAll();
+    report("timeout", { stamp: "2026-02-01T00-00-00-000Z", passed: false });
+    expect(decide().blocking).toEqual([{ code: "suite-failed", suite: "timeout", remediation: "scf eval safety" }]);
+  });
+
+  it("takes a component from the caller, outside the home folder", () => {
+    reportAll();
+    const mine = decide().ref!;
+    const outside = { kind: "flow" as const, id: "elsewhere", version: "0", sha256: mine.sha256 };
+    expect(decide({}, "flow", "elsewhere").blocking[0]?.code).toBe("not-found");
+    // the report holds a flow of another id: the hash of "elsewhere" is not recorded for it
+    const d = decide({ component: outside }, "flow", "elsewhere");
+    expect(d.blocking.every((b) => b.code === "report-stale")).toBe(true);
+    expect(d.ref).toEqual(outside);
+  });
+
+  it("adds the scope hint to a stale or missing block only, not to a failed suite", () => {
+    reportAll();
+    report("timeout", { stamp: "2026-02-01T00-00-00-000Z", passed: false });
+    const other = { kind: "flow" as const, id: "elsewhere", version: "0", sha256: "f".repeat(64) };
+    const d = decide({ component: other, scopeHint: "Move it." }, "flow", "elsewhere");
+    const by = (suite: string) => d.blocking.find((b) => b.suite === suite)!;
+    expect(by("timeout")).toMatchObject({ code: "suite-failed", remediation: "scf eval safety" });
+    expect(by("output-caps")).toMatchObject({ code: "report-stale", remediation: "scf eval safety. Move it." });
+    rmSync(join(evals, `output-caps-${STAMP}.json`));
+    expect(decide({ component: other, scopeHint: "Move it." }, "flow", "elsewhere").blocking.find((b) => b.suite === "output-caps")?.remediation).toBe("scf eval safety. Move it.");
+    // the printed line keeps the plain fix
+    expect(d.lines.filter((l) => l.includes(" output-caps ("))).toEqual(["BLOCKED flow elsewhere: output-caps (report-stale: flow elsewhere) — scf eval safety"]);
+  });
+
+  it("reads each report once when the verdicts are shared", () => {
+    reportAll();
+    const verdicts = new Map();
+    expect(decide({ verdicts }).ok).toBe(true);
+    expect(verdicts.size).toBe(9);
+    rmSync(evals, { recursive: true });
+    expect(decide({ verdicts }).ok).toBe(true); // nothing is read again
+    expect(decide().ok).toBe(false);
+  });
+});
+
+describe("promoteWithReport", () => {
+  const go = (reportId: string, o: Partial<Parameters<typeof promoteWithReport>[3]> = {}) =>
+    promoteWithReport("flow", "my-flow", reportId, { live: false, by: "cli", home, evalsDir: evals, safetyDir: safety, builtinFlowsDir: builtin, ...o });
+  const records = () => join(home, "promotions", "records.json");
+
+  it("writes only records.json when nothing blocks and the report is the newest of a suite", () => {
+    reportAll();
+    const before = tree(home);
+    const r = go(`timeout-${STAMP}`);
+    expect(r.ok).toBe(true);
+    expect(tree(home).filter((x) => !before.includes(x)).sort()).toEqual(["promotions/", "promotions/records.json"]);
+    const saved = JSON.parse(readFileSync(records(), "utf8")).records;
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({ kind: "flow", id: "my-flow", version: "0", reportId: `timeout-${STAMP}`, by: "cli" });
+    expect(saved[0].reports).toHaveLength(9);
+  });
+
+  it("refuses a report that is not the newest passing one of a required suite, and writes nothing", () => {
+    reportAll();
+    report("timeout", { stamp: "2026-03-01T00-00-00-000Z" });
+    for (const id of [`timeout-${STAMP}`, `nothing-${STAMP}`, "timeout-2027-01-01T00-00-00-000Z"]) {
+      const r = go(id);
+      expect(r.ok).toBe(false);
+      expect(r.decision.blocking.at(-1)).toEqual({ code: "report-unknown", remediation: "scf promote flow my-flow" });
+      expect(r.decision.lines.at(-1)).toBe("BLOCKED flow my-flow: (report-unknown) — scf promote flow my-flow");
+    }
+    expect(existsSync(records())).toBe(false);
+    expect(go("timeout-2026-03-01T00-00-00-000Z").ok).toBe(true);
+  });
+
+  it("writes nothing and gives the blocks when a suite blocks", () => {
+    reportAll();
+    report("timeout", { stamp: "2026-02-01T00-00-00-000Z", passed: false });
+    const r = go(`output-caps-${STAMP}`);
+    expect(r.ok).toBe(false);
+    expect(r.decision.blocking.map((b) => b.suite)).toEqual(["timeout"]);
+    expect(existsSync(records())).toBe(false);
+  });
+
+  it("gives the write failure as a reason", () => {
+    reportAll();
+    mkdirSync(join(home, "promotions"));
+    writeFileSync(records(), "{ nope");
+    const r = go(`timeout-${STAMP}`);
+    expect(r).toMatchObject({ ok: false, reason: expect.stringContaining("is not valid") });
+  });
+});
+
+describe("scf promote --report", () => {
+  const run = (args: string[], report?: string) => {
+    const lines: string[] = [];
+    const code = promoteCommand(args, report === undefined ? {} : { report }, (l) => void lines.push(l));
+    return { code, lines };
+  };
+
+  it("prints PROMOTED and exits 0, or the BLOCKED lines and exits 1", () => {
+    reportAll();
+    const ok = run(["flow", "my-flow"], `timeout-${STAMP}`);
+    expect(ok.code).toBe(0);
+    expect(ok.lines.at(-2)).toMatch(/^PROMOTABLE flow my-flow v0 sha256:[0-9a-f]{64}$/);
+    expect(ok.lines.at(-1)).toMatch(new RegExp(`^PROMOTED flow my-flow v0 sha256:[0-9a-f]{64} report:timeout-${STAMP}$`));
+    const blocked = run(["flow", "other"], `nothing-${STAMP}`);
+    expect(blocked.code).toBe(1);
+    expect(blocked.lines.some((l) => l.startsWith("BLOCKED flow other: "))).toBe(true);
+  });
+
+  it("refuses a report id that is not one, and without --report prints what it printed before and writes nothing", () => {
+    reportAll();
+    expect(() => run(["flow", "my-flow"], "../x")).toThrow(PROMOTE_USAGE);
+    const before = tree(home);
+    const plain = run(["flow", "my-flow"]);
+    expect(plain.code).toBe(0);
+    expect(plain.lines.some((l) => l.startsWith("PROMOTED"))).toBe(false);
+    expect(tree(home)).toEqual(before);
+  });
+});
 
 describe("promoteCommand", () => {
   it("refuses a wrong kind, a missing id and extra arguments", () => {

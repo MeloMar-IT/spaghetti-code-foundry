@@ -276,6 +276,21 @@ describe("every posted comment starts with a first-line variable", () => {
     expect(scanNode(node("const comment = `text`;\ngh(['pr', 'comment', '1', '--body-file', '-'], comment);"))).not.toEqual([]);
     expect(scanNode(node(array + 'gh(["issue", "comment", "1", "--body-file", "-"], "text");'))).not.toEqual([]);
   });
+  it("catches a bad store comment", () => {
+    expect(scanNode(node('stories.comment(1, "text");'))).not.toEqual([]);
+    expect(scanNode(node('const comment = `text`;\nstories.comment(Number(n), comment);'))).not.toEqual([]);
+    expect(scanNode(`const first = "**Do it**";\n${array}stories.comment(1, comment);`)).not.toEqual([]);
+  });
+  it("accepts a good store comment, and does not take tools/story for one", () => {
+    expect(scanNode(node(`${array}stories.comment(Number(n), comment);`))).toEqual([]);
+    expect(scanTool(readFileSync("tools/story", "utf8"))).toEqual([]);
+    expect(scanNode(node("c.store.stepComment(c.issue, c.text);"))).toEqual([]);
+  });
+  it("finds the pull request of push-result through the story tool", () => {
+    const text = readFileSync("blocks/push-result.yaml", "utf8");
+    expect(text).toContain('story" pr-find');
+    expect(text).not.toContain("gh pr view");
+  });
   it("accepts good Node tools", () => {
     expect(scanNode(node(array + call))).toEqual([]);
     for (const f of ["tools/post-questions", "tools/create-split", "tools/split-family", "tools/decide-questions.mjs"]) expect(scanTool(readFileSync(f, "utf8")), f).toEqual([]);

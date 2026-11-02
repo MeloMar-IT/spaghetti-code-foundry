@@ -3,7 +3,7 @@ import { accessSync, constants } from "node:fs";
 import { delimiter, join } from "node:path";
 import { withScfAliases } from "./engine/template.js";
 import type { Config } from "./config.js";
-import type { RunSummary } from "./engine/state.js";
+import { isTimeLimitStop, type RunSummary } from "./engine/state.js";
 import { releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "./next-step.js";
 import { runIssueState } from "./issue-states.js";
 import { labelNames } from "./queue/watcher.js";
@@ -196,6 +196,7 @@ export async function notifyRun(config: Config, s: RunSummary): Promise<void> {
   const n = config.notify;
   if (s.status === "running" || !n.command || !n.on.includes(s.status)) return;
   if (runOrigin(s.source) === "refinement") return; // an architect read: its session shows how it went
+  if (s.status === "stopped" && isTimeLimitStop(s.reason)) return; // the Foundry tries again by itself: nothing for a person to do
   // The issue is known closed: nothing is left to do, so nothing is said. An unknown state still tells.
   if (runIssueState(s) === "closed") return;
   const msg = runMessage(config, s);

@@ -993,3 +993,17 @@ describe("something to do (owner_action)", () => {
     expect(text).toContain("handled #8");
   });
 });
+
+describe("a failed repair story that stopped at the baseline", () => {
+  const failed = (output: string) => ({
+    runId: "r1", flow: "issue-gitflow", status: "failed", reason: 'step "baseline_failed" failed: exit code 1', task: "", vars: { issue: "5" }, repo: "o/r", runDir: "/tmp/none",
+    history: [{ id: "baseline_failed", type: "shell", visit: 1, ok: false, output, error: "exit code 1", startedAt: "x", durationMs: 1, logFile: "l" }],
+  }) as unknown as RunSummary;
+  it("names the tests it meets, not the generic step failure", () => {
+    const out = "BASELINE: stopped — some failing tests are not named in the issue\nfailing before the change:\n  - a.B.c\n  - a.B.d\nnot named in the issue:\n  - a.B.d\n";
+    const next = runNextStep(failed(out), { watched: true, failedLabel: "Factory_ERROR" });
+    expect(next.kind).toBe("failed");
+    expect(next.why).toContain("these failing tests are not named in the issue as ones to fix: a.B.d");
+    expect(next.why).not.toContain("exit code");
+  });
+});

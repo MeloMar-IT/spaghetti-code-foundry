@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { fixState } from "../src/monitor/fix.js";
-import { dayOf, loadFindings, mergeFindings, readFindings, saveFindings, type FindingInput } from "../src/monitor/findings.js";
+import { dayOf, loadFindings, MAX_FINDINGS, mergeFindings, readFindings, saveFindings, type FindingInput } from "../src/monitor/findings.js";
 
 const HOUR = 3_600_000;
 const T0 = new Date("2026-10-01T12:00:00Z");
@@ -304,6 +304,32 @@ describe("the findings file", () => {
     expect(readFileSync(file, "utf8")).toBe("{not json");
     expect(existsSync(`${file}.broken`)).toBe(false);
     expect(readFindings(join(dir, "missing.json"))).toEqual({ findings: [], broken: false });
+  });
+
+  it("keeps autoDemote on an open finding, drops it when the finding is gone and reopened, and holds it against the cap", () => {
+    const a = mergeFindings([], [input("x", { severity: "critical" })], T0);
+    a.fresh[0]!.autoDemote = { at: T0.toISOString(), left: [] };
+    const b = mergeFindings(a.findings, [input("x", { severity: "critical" })], at(HOUR));
+    expect(b.findings[0]!.autoDemote).toEqual({ at: T0.toISOString(), left: [] });
+    const missed = mergeFindings(b.findings, [], at(2 * HOUR));
+    expect(missed.findings[0]!.autoDemote).toBeDefined();
+    const gone = mergeFindings(b.findings, [], at(30 * HOUR));
+    const back = mergeFindings(gone.findings, [input("x", { severity: "critical" })], at(31 * HOUR));
+    expect(back.fresh).toHaveLength(1);
+    expect(back.findings[0]!.autoDemote).toBeUndefined();
+    // over the cap, the marked open finding is kept even though it was seen longest ago
+    const many = Array.from({ length: MAX_FINDINGS + 5 }, (_, i) => input(`p${i}`));
+    const full = mergeFindings(a.findings, many, at(HOUR));
+    expect(full.findings.find((f) => f.fingerprint === "x")?.autoDemote).toBeDefined();
+  });
+
+  it("drops a malformed autoDemote when reading", () => {
+    const file = join(dir, "f.json");
+    const { findings } = mergeFindings([], [input("x"), input("y")], T0);
+    saveFindings([{ ...findings[0]!, autoDemote: { at: T0.toISOString(), left: ["flows:f"] } }, { ...findings[1]!, autoDemote: { at: "nope", left: [1] } as never }], file);
+    const read = readFindings(file).findings;
+    expect(read.find((f) => f.fingerprint === "x")!.autoDemote).toEqual({ at: T0.toISOString(), left: ["flows:f"] });
+    expect(read.find((f) => f.fingerprint === "y")!.autoDemote).toBeUndefined();
   });
 
   it("save then load gives the same data, and no .tmp file is left", () => {

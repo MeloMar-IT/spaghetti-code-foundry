@@ -51,9 +51,26 @@ export function scanShell(run: string): string[] {
   return problems;
 }
 
-/** The same for a Node tool that posts with gh([...], body). */
+/** The same for a Node tool that posts with gh([...], body) or with the story store: stories.comment(n, body). */
 export function scanNode(source: string): string[] {
   const problems: string[] = [];
+  // Whether `id` starts with the first line, and `first` is read from a first-line variable. Run once for each comment call.
+  const checkText = (id: string) => {
+    if (!new RegExp(`(?:const|let)\\s+${id.replace(/\$/g, "\\$")}\\s*=\\s*\\[\\s*\\.\\.\\.\\(first \\? \\[first, ""\\] : (?:\\[\\]|\\["", ""\\])\\)`).test(source)) {
+      problems.push(`${id} does not start with the first line`);
+    }
+    const firsts = [...source.matchAll(/(?<![\w$.])first\s*=(?!=)\s*([^;\n]+)/g)];
+    const one = `process\\.env\\.${VAR}`;
+    if (firsts.length !== 1 || !new RegExp(`^(?:${one}|[^?:]+\\?\\s*${one}\\s*:\\s*${one})$`).test(firsts[0]![1]!.trim())) {
+      problems.push("first is not read from process.env.FACTORY_FIRST_<NAME> (or one plain condition between two of them)");
+    }
+  };
+  // The store puts the text on stdin itself. Fails closed: text that is not a variable is a problem.
+  for (const m of source.matchAll(/\.comment\(/g)) {
+    const call = /^\.comment\([^,]*,\s*([A-Za-z_$][\w$]*)\s*\)/.exec(source.slice(m.index!));
+    if (!call) problems.push("the text is not a variable");
+    else checkText(call[1]!);
+  }
   for (const m of source.matchAll(/["'](?:issue|pr)["'],\s*["']comment["']/g)) {
     const i = m.index!;
     if (!/\bgh\(\s*\[\s*$/.test(source.slice(0, i))) {
@@ -66,15 +83,7 @@ export function scanNode(source: string): string[] {
       continue;
     }
     if (!/["']--body-file["'],\s*["']-["']/.test(call[1]!)) problems.push("does not read its text from stdin (--body-file -)");
-    const id = call[2]!;
-    if (!new RegExp(`(?:const|let)\\s+${id.replace(/\$/g, "\\$")}\\s*=\\s*\\[\\s*\\.\\.\\.\\(first \\? \\[first, ""\\] : (?:\\[\\]|\\["", ""\\])\\)`).test(source)) {
-      problems.push(`${id} does not start with the first line`);
-    }
-    const firsts = [...source.matchAll(/(?<![\w$.])first\s*=(?!=)\s*([^;\n]+)/g)];
-    const one = `process\\.env\\.${VAR}`;
-    if (firsts.length !== 1 || !new RegExp(`^(?:${one}|[^?:]+\\?\\s*${one}\\s*:\\s*${one})$`).test(firsts[0]![1]!.trim())) {
-      problems.push("first is not read from process.env.FACTORY_FIRST_<NAME> (or one plain condition between two of them)");
-    }
+    checkText(call[2]!);
   }
   return problems;
 }

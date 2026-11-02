@@ -1,13 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { appJwt, installationToken } from "../github-app.js";
 import type { Config } from "../config.js";
 import { FACTORY_HOME, flowDir, parseFlow } from "../flow/load.js";
 import type { Flow, Step } from "../flow/schema.js";
+import { autonomyRefusal } from "../governance/autonomy-rules.js";
+import type { AutonomyLevel } from "../governance/autonomy.js";
 
 const ZERO = "0000000000000000000000000000000000000000";
 
@@ -20,6 +22,12 @@ if git var GIT_COMMITTER_IDENT >/dev/null 2>&1 </dev/null; then ident=1; else id
 note() { [ -z "$FACTORY_PUSH_LOG" ] || printf '%s\\t%s\\t%s\\t%s\\n' "$branch" "$url" "$1" "$ident" >> "$FACTORY_PUSH_LOG" 2>/dev/null || true; }
 while read local_ref local_sha remote_ref remote_sha; do
   branch=\${remote_ref#refs/heads/}
+  # Autonomy: the run's level does not allow pushes (FACTORY_NO_PUSH holds the level). First, so no exception and no delete passes. The fifth field tells the engine.
+  if [ -n "$FACTORY_NO_PUSH" ]; then
+    echo "Spaghetti Code Foundry: ${autonomyRefusal("$FACTORY_NO_PUSH", "push")}" >&2
+    [ -z "$FACTORY_PUSH_LOG" ] || printf '%s\\t%s\\t\\t%s\\tpush\\n' "$branch" "$url" "$ident" >> "$FACTORY_PUSH_LOG" 2>/dev/null || true
+    exit 1
+  fi
   found=
   rc=0
   set -f
@@ -69,9 +77,10 @@ exit 0
  * secrets. GIT_CONFIG_* applies to all git processes, including the ones agents start.
  * Note: this replaces the repo's own git hooks during runs.
  */
-export function protectedBranchEnv(patterns: string[], secretScan = false, observe = false): Record<string, string> {
+export function protectedBranchEnv(patterns: string[], secretScan = false, observe = false, noPush?: AutonomyLevel): Record<string, string> {
   // `observe`: file policy packs are configured, so the hook is there (even with both guards off) to tell the engine about each push (see FACTORY_PUSH_LOG)
-  if (!patterns.length && !secretScan && !observe) return {};
+  // `noPush`: the run's autonomy level is below delivery-handoff, so the hook refuses every push (FACTORY_NO_PUSH holds the level)
+  if (!patterns.length && !secretScan && !observe && !noPush) return {};
   const dir = join(process.env.FACTORY_HOME ?? FACTORY_HOME, "hooks");
   mkdirSync(dir, { recursive: true });
   const hook = join(dir, "pre-push");
@@ -82,6 +91,7 @@ export function protectedBranchEnv(patterns: string[], secretScan = false, obser
     GIT_CONFIG_KEY_0: "core.hooksPath",
     GIT_CONFIG_VALUE_0: dir,
     FACTORY_PROTECTED_BRANCHES: patterns.join(" "),
+    ...(noPush ? { FACTORY_NO_PUSH: noPush } : {}),
     ...(secretScan ? { FACTORY_SECRET_SCAN: join(TOOLS_DIR, "secret-scan") } : {}),
   };
 }
@@ -335,7 +345,33 @@ export function toolsMounts(): string[] {
   return pairs.filter(([host], i) => i === 0 || existsSync(host)).flatMap(([host, target]) => ["-v", `${host}:${target}:ro`]);
 }
 
-export function dockerCommand(image: string, workdir: string, command: string, envNames: string[]): { cmd: string; args: string[] } {
+/** A folder that is mounted into a container at the same path as on the host (so values that name it stay valid). */
+export interface ExtraMount {
+  path: string;
+  writable: boolean;
+}
+
+/**
+ * The folders a container step needs for the pre-push hook: the hook folder (`core.hooksPath`, read-only) and the folder of the
+ * push log (writable, so a refusal can be recorded). Only what is set in `env`; a path that is not there is left out by dockerCommand.
+ */
+export function hookMounts(env: NodeJS.ProcessEnv): ExtraMount[] {
+  const out: ExtraMount[] = [];
+  if (!env.FACTORY_NO_PUSH) return out;
+  const hooks = env.GIT_CONFIG_COUNT && /^\d+$/.test(env.GIT_CONFIG_COUNT) ? gitConfigValue(env, "core.hooksPath") : undefined;
+  if (hooks && isAbsolute(hooks)) out.push({ path: hooks, writable: false });
+  const log = env.FACTORY_PUSH_LOG;
+  if (log && isAbsolute(log)) out.push({ path: dirname(log), writable: true });
+  return out;
+}
+
+function gitConfigValue(env: NodeJS.ProcessEnv, key: string): string | undefined {
+  const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10) || 0;
+  for (let i = count - 1; i >= 0; i--) if (env[`GIT_CONFIG_KEY_${i}`] === key) return env[`GIT_CONFIG_VALUE_${i}`];
+  return undefined;
+}
+
+export function dockerCommand(image: string, workdir: string, command: string, envNames: string[], extraMounts: ExtraMount[] = []): { cmd: string; args: string[] } {
   const uid = process.getuid?.() ?? 1000;
   const gid = process.getgid?.() ?? 1000;
   const args = [
@@ -343,6 +379,7 @@ export function dockerCommand(image: string, workdir: string, command: string, e
     "--user", `${uid}:${gid}`,
     "-v", `${workdir}:/work`,
     ...toolsMounts(),
+    ...extraMounts.filter((m) => existsSync(m.path)).flatMap((m) => ["-v", `${m.path}:${m.path}:${m.writable ? "rw" : "ro"}`]),
     "-w", "/work",
     "-e", "HOME=/tmp",
     "-e", "FACTORY_TOOLS=/factory-tools",

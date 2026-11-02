@@ -135,6 +135,9 @@ case "$1 $2" in
   "api repos/"*"/git/ref/heads/"*)
     if [ -z "$FAKE_GH_MAIN_SHA" ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
     printf '{"ref":"refs/heads/x","object":{"sha":"%s","type":"commit"}}\n' "$FAKE_GH_MAIN_SHA"; exit 0 ;;
+  "api repos/"*"/compare/"*)
+    # Commits between two ids: $FAKE_GH_COMPARE (JSON) or an empty result.
+    if [ -n "$FAKE_GH_COMPARE" ]; then printf '%s\n' "$FAKE_GH_COMPARE"; else echo '{"commits":[],"total_commits":0}'; fi; exit 0 ;;
   "api repos/"*"/contents/.factory/release-build.yaml?ref="*)
     if [ "$FAKE_GH_RECIPE" != 1 ]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
     echo '{"type":"file","path":".factory/release-build.yaml"}'; exit 0 ;;
