@@ -88,6 +88,17 @@ export function approvalVerdict(o: { approver: string; requester: string; owner:
   return { ok: false, code: "not-owner" };
 }
 
+/**
+ * The admins who may approve a request now, each with whether it would be a self-approval. Calls `approvalVerdict` for
+ * every active admin, so the two-person rule lives in one place.
+ */
+export function approversOf(o: { requester: string; owner: string; to: AutonomyLevel; admins: readonly string[] }): { id: string; selfApproved: boolean }[] {
+  return o.admins.flatMap((id) => {
+    const v = approvalVerdict({ approver: id, requester: o.requester, owner: o.owner, to: o.to, admins: o.admins.length });
+    return v.ok ? [{ id, selfApproved: v.selfApproved }] : [];
+  });
+}
+
 // ---- requests --------------------------------------------------------------------------------------
 
 /** The waiting request of a component, only when it still fits: pending, from the current level, to the next one. */

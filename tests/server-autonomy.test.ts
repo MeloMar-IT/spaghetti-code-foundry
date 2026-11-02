@@ -109,6 +109,14 @@ describe("GET /api/autonomy", () => {
     expect(top.gate.checks).toHaveLength(5);
   });
 
+  it("gives the level of the newest run of a repository, and none for a flow without runs", async () => {
+    const j = (await get(admin)).json();
+    // the test runs have no `autonomy` field: they read as delivery-handoff
+    expect(component(j, "repos", "acme/app").newestRun).toMatchObject({ level: "delivery-handoff", runId: expect.any(String), startedAt: expect.any(String) });
+    expect(component(j, "flows", "issue-plan").newestRun).toBeUndefined();
+    expect(j.runsProblem).toBeUndefined();
+  });
+
   it("names a flow by its declared name, not by its file name, and keeps a stored level", async () => {
     const j = (await get(admin)).json();
     expect(component(j, "flows", "delivery")).toMatchObject({ level: "plan-only", next: "guarded-write" });
@@ -185,6 +193,14 @@ describe("POST /api/autonomy/promote|approve|demote", () => {
       const j = r.json();
       expect(j.owner).toEqual({ id: admin.user.id, source: "first-admin" });
       expect(component(j, "flows", "delivery").request).toMatchObject({ token, state: "pending" });
+      // the requester is the owner and the only admin: the owner approves, marked as self-approved
+      expect(j.ownerName).toBe(admin.user.name);
+      expect(component(j, "flows", "delivery").approval).toEqual({
+        requester: { id: admin.user.id, name: admin.user.name },
+        approvers: [{ id: admin.user.id, name: admin.user.name, selfApproved: true }],
+        mayApprove: true,
+      });
+      expect(component(j, "repos", "acme/app").approval).toBeUndefined();
       expect(component(j, "flows", "delivery").gate.checks.find((c: any) => c.id === "approval")).toMatchObject({ value: "pending", detail: expect.stringContaining("waits") });
       expect(r.text).not.toContain(home);
     } finally {
@@ -200,5 +216,91 @@ describe("POST /api/autonomy/promote|approve|demote", () => {
     expect(component((await get(admin)).json(), "flows", "delivery")).toMatchObject({ level: "observe", next: "plan-only" });
     expect((await post(admin, "demote", { ...flow, to: "observe" })).status).toBe(409);
     expect((await post(admin, "demote", { ...flow, to: "observe", reason: "" })).status).toBe(400);
+  });
+});
+
+describe("newestRunOf", () => {
+  const brief = (over: Record<string, unknown>): any => ({ runId: "r", flow: "delivery", status: "succeeded", startedAt: "2026-10-01T00:00:00.000Z", runDir: "", dirName: "r", updatedAt: "", ...over });
+  let newestRunOf: (b: any[], s: { repo?: string; flow?: string }) => any;
+  beforeAll(async () => {
+    ({ newestRunOf } = await import("../src/server/api-autonomy.js"));
+  });
+
+  it("matches a repository name in any case, and a flow", () => {
+    const b = [
+      brief({ runId: "old", githubRepo: "Acme/App", startedAt: "2026-10-01T00:00:00.000Z", autonomy: { level: "observe", flow: "observe" } }),
+      brief({ runId: "new", githubRepo: "acme/app", startedAt: "2026-10-02T00:00:00.000Z", autonomy: { level: "plan-only", flow: "plan-only" } }),
+      brief({ runId: "other", flow: "feature", startedAt: "2026-10-03T00:00:00.000Z" }),
+    ];
+    expect(newestRunOf(b, { repo: "ACME/app" })).toEqual({ runId: "new", level: "plan-only", startedAt: "2026-10-02T00:00:00.000Z" });
+    expect(newestRunOf(b, { flow: "feature" })).toMatchObject({ runId: "other" });
+    expect(newestRunOf(b, { repo: "acme/none" })).toBeUndefined();
+    expect(newestRunOf(b, {})).toBeUndefined();
+  });
+
+  it("reads a run with no field as delivery-handoff and a bad field as observe", () => {
+    expect(newestRunOf([brief({ githubRepo: "a/b" })], { repo: "a/b" })?.level).toBe("delivery-handoff");
+    expect(newestRunOf([brief({ githubRepo: "a/b", autonomy: { level: "root" } })], { repo: "a/b" })?.level).toBe("observe");
+  });
+
+  it("skips refinement and local-test runs", () => {
+    const b = [
+      brief({ runId: "real", githubRepo: "a/b", startedAt: "2026-10-01T00:00:00.000Z" }),
+      brief({ runId: "local", githubRepo: "a/b", startedAt: "2026-10-05T00:00:00.000Z", localTest: true }),
+      brief({ runId: "refine", githubRepo: "a/b", startedAt: "2026-10-06T00:00:00.000Z", source: "refinement session" }),
+    ];
+    expect(newestRunOf(b, { repo: "a/b" })?.runId).toBe("real");
+  });
+});
+
+describe("GET /api/autonomy/history", () => {
+  const history = async (who: TestSession, query = "") => {
+    const r = await fetch(`${base}/api/autonomy/history${query}`, { headers: who.headers("GET") });
+    const text = await r.text();
+    return { status: r.status, text, json: () => JSON.parse(text) as any };
+  };
+
+  it("is for an admin only, and gives only autonomy lines without a path", async () => {
+    const { writeAudit } = await import("../src/auth/audit.js");
+    writeAudit(admin.user.id, { action: "autonomy-demote", result: "ok", target: "flows:history-a", detail: "plan-only→observe reason: x" });
+    writeAudit(admin.user.id, { action: "settings-change", result: "ok", target: "settings", detail: "x" });
+    writeAudit(admin.user.id, { action: "autonomy-promote", result: "ok", target: "flows:history-a", detail: "observe→plan-only" });
+    expect((await history(ann)).status).toBe(403);
+    const r = await history(admin);
+    expect(r.status).toBe(200);
+    const j = r.json();
+    expect(j.more).toBe(false);
+    expect(j.entries.length).toBeGreaterThan(0);
+    expect(j.entries.every((e: any) => e.action.startsWith("autonomy-"))).toBe(true);
+    expect(j.entries.filter((e: any) => e.target?.text === "flows:history-a").map((e: any) => e.action)).toEqual(["autonomy-promote", "autonomy-demote"]);
+    expect(r.text).not.toContain(home);
+  });
+
+  it("reads a quiet component in full when more than 500 lines exist, and says that it cut", async () => {
+    const { appendAuditLocked } = await import("../src/auth/audit.js");
+    withAuthLock(() => {
+      appendAuditLocked(admin.user.id, { action: "autonomy-demote", result: "ok", target: "flows:quiet", detail: "first" });
+      for (let i = 0; i < 502; i++) appendAuditLocked(admin.user.id, { action: "autonomy-demote", result: "ok", target: "flows:noisy", detail: `n${i}` });
+    });
+    const all = (await history(admin)).json();
+    expect(all.more).toBe(true);
+    expect(all.entries).toHaveLength(500);
+    expect(all.entries.some((e: any) => e.target?.text === "flows:quiet")).toBe(false);
+    const one = (await history(admin, "?target=flows%3Aquiet")).json();
+    expect(one.more).toBe(false);
+    expect(one.entries.map((e: any) => e.detail)).toEqual(["first"]);
+    expect((await history(admin, "?target=anything")).status).toBe(400);
+  });
+
+  it("reads a flow whose name has a space or a colon, the way the store allows it", async () => {
+    const { writeAudit } = await import("../src/auth/audit.js");
+    writeAudit(admin.user.id, { action: "autonomy-promote", result: "ok", target: "flows:Release delivery", detail: "observe→plan-only" });
+    writeAudit(admin.user.id, { action: "autonomy-demote", result: "ok", target: "flows:a:b", detail: "plan-only→observe" });
+    const spaced = (await history(admin, `?target=${encodeURIComponent("flows:Release delivery")}`)).json();
+    expect(spaced.entries.map((e: any) => e.target.text)).toEqual(["flows:Release delivery"]);
+    const colon = (await history(admin, `?target=${encodeURIComponent("flows:a:b")}`)).json();
+    expect(colon.entries.map((e: any) => e.target.text)).toEqual(["flows:a:b"]);
+    expect((await history(admin, `?target=${encodeURIComponent("flows: lead")}`)).status).toBe(400);
+    expect((await history(admin, `?target=${encodeURIComponent("repos:not-a-uuid")}`)).status).toBe(400);
   });
 });

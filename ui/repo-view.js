@@ -62,7 +62,13 @@ function overview(ctx) {
     { label: "Next action", value: nextAction(ctx) },
     { label: "Active runs", value: count },
     { label: "Added", value: added && !Number.isNaN(added.getTime()) ? added.toLocaleDateString() : "—" },
-  ];
+    // The level comes with the record. It does not import the admin page: a user's display must not load admin modules.
+    typeof repo.autonomy === "string" && repo.autonomy ? {
+      label: "Autonomy level",
+      value: h("span", {}, h("span", { class: "mono" }, repo.autonomy), " ",
+        ctx.viewerAdmin ? h("a", { href: "#/autonomy" }, "Change it on the Autonomy page") : h("span", { class: "muted" }, "Only an admin can change it.")),
+    } : null,
+  ].filter(Boolean);
   return [
     statusSummary({ label: "Overview", items }),
     readOnly ? null : h("div", { class: "row" }, h("button", { "data-action": "ready", onClick: ctx.act.ready }, "Definition of Ready")),

@@ -4,15 +4,17 @@ import { writeAudit } from "../auth/audit.js";
 import { StoreError } from "../auth/store.js";
 import { listUsers, type User } from "../auth/users.js";
 import { githubNameOf } from "../auth/repo-url.js";
-import { isRefinementRun } from "../auth/run-owner.js";
+import { isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { listAllRepos } from "../auth/repos.js";
 import type { RunBrief, RunSummary } from "../engine/state.js";
 import { listFlows, parseFlow } from "../flow/load.js";
 import { isRefinementFlow } from "../flow/usage.js";
-import { AUTONOMY_LEVELS, AutonomyLevelSchema, nextLevel, type AutonomyLevel } from "../governance/autonomy.js";
+import { AUTONOMY_LEVELS, AutonomyLevelSchema, autonomyOfRun, nextLevel, type AutonomyLevel } from "../governance/autonomy.js";
 import {
   AutonomyRefused,
   accountableOwner,
+  activeAdmins,
+  approversOf,
   approvePromotion,
   checkPromotable,
   checkReason,
@@ -28,6 +30,7 @@ import { evalCoverage, promotionGate, readGateFindings, type EvalCoverage, type 
 import type { OutcomeWindow } from "../outcomes.js";
 import { factsCacheOf, loadWithFacts, narrowBriefs } from "./api-outcomes.js";
 import { checkedRunAsync } from "./api-runs.js";
+import { autonomyHistory } from "./api-audit.js";
 import { guardedRepos } from "./api-repos.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
@@ -50,7 +53,14 @@ export interface AutonomyComponent {
   gate: PromotionGate;
   /** The promotion request of this component, with its token; a request that no longer fits shows as `expired`. */
   request?: AutonomyRequest;
+  /** The level the newest run of this component had. Absent when it has no run, or when the runs could not be listed (see `runsProblem`). */
+  newestRun?: AutonomyNewestRun;
+  /** Who asked, who may approve, and whether the viewer may. Only for a live request when the owner is known. */
+  approval?: AutonomyApproval;
 }
+export interface AutonomyNewestRun { runId: string; level: AutonomyLevel; startedAt: string }
+export interface AutonomyPerson { id: string; name: string }
+export interface AutonomyApproval { requester: AutonomyPerson; approvers: (AutonomyPerson & { selfApproved: boolean })[]; mayApprove: boolean }
 export interface AutonomyStatus {
   levels: readonly AutonomyLevel[];
   window: { from: string; to: string; days: number };
@@ -58,7 +68,27 @@ export interface AutonomyStatus {
   problem?: string;
   /** Who approves promotions; absent when no admin can sign in. */
   owner?: AutonomyOwner;
+  /** The name of the accountable owner. */
+  ownerName?: string;
+  /** Set when the runs could not be listed: the newest runs are unknown, which is not the same as "no runs". */
+  runsProblem?: string;
   components: AutonomyComponent[];
+}
+
+const GONE = "deleted user";
+
+/** The newest run of a repository (by GitHub name, any case) or of a flow, with its level. Refinement and local-test runs do not count, as in the gate. */
+export function newestRunOf(briefs: readonly RunBrief[], scope: { repo?: string; flow?: string }): AutonomyNewestRun | undefined {
+  if (scope.repo === undefined && scope.flow === undefined) return undefined;
+  const repo = scope.repo?.toLowerCase();
+  let best: RunBrief | undefined;
+  for (const b of briefs) {
+    if (isRefinementRun(b.source) || b.localTest) continue;
+    if (repo !== undefined && b.githubRepo?.toLowerCase() !== repo) continue;
+    if (scope.flow !== undefined && b.flow !== scope.flow) continue;
+    if (!best || Date.parse(b.startedAt) > Date.parse(best.startedAt)) best = b;
+  }
+  return best ? { runId: best.runId, level: autonomyOfRun(best), startedAt: best.startedAt } : undefined;
 }
 
 /** The runs a gate reads: the narrowed ones, plus every run that is still open (it may hold decisions of the window). */
@@ -76,7 +106,7 @@ function gateBriefs(all: readonly RunBrief[], scope: { repo?: string; flow?: str
  * What `promotionGate` needs from this server. Briefs, run loads, the findings and the eval scan are each read once per
  * call of this function, so a status of many components reads each run once. Facts come from the server's shared cache.
  */
-export function gateDepsFor(ctx: ApiContext, now: Date): GateDeps {
+export function gateDepsFor(ctx: ApiContext, now: Date, known?: Promise<RunBrief[]>): GateDeps {
   const settings = ctx.config().governance.promotion;
   let repos: Map<string, string | undefined> | undefined;
   let briefs: Promise<RunBrief[]> | undefined;
@@ -100,7 +130,7 @@ export function gateDepsFor(ctx: ApiContext, now: Date): GateDeps {
       let p = scopes.get(key);
       if (!p) {
         p = (async () => {
-          briefs ??= ctx.scheduler.briefsAsync();
+          briefs ??= known ?? ctx.scheduler.briefsAsync();
           const chosen = gateBriefs(await briefs, scope, window);
           const r = await loadWithFacts(chosen, window, { load, cache: factsCacheOf(ctx) });
           const from = window.from.getTime();
@@ -167,7 +197,7 @@ function withApprovalDetail(gate: PromotionGate, request: AutonomyRequest | unde
 }
 
 /** The levels and gates of every repository and flow. Never reads a path into the answer. */
-export async function autonomyStatus(ctx: ApiContext, now: Date): Promise<AutonomyStatus> {
+export async function autonomyStatus(ctx: ApiContext, now: Date, viewer?: string): Promise<AutonomyStatus> {
   let store: AutonomyStore;
   let problem: string | undefined;
   try {
@@ -177,12 +207,32 @@ export async function autonomyStatus(ctx: ApiContext, now: Date): Promise<Autono
     problem = PROBLEM;
   }
   const unreadable = problem !== undefined;
-  const deps = gateDepsFor(ctx, now);
+  // The runs are listed once and shared with the gates. A gate sees a failure itself; the newest-run lookup reports it.
+  const known = ctx.scheduler.briefsAsync();
+  let all: RunBrief[] | undefined;
+  let runsProblem: string | undefined;
+  try {
+    all = await known;
+  } catch {
+    runsProblem = "The runs could not be listed, so the newest run of each component is not known.";
+    ctx.diagLog?.("autonomy: the run list could not be read");
+  }
+  const deps = gateDepsFor(ctx, now, known);
   const from = new Date(now.getTime() - deps.settings.within_days * DAY_MS);
   const targets: { kind: AutonomyKind; id: string; name: string; level: AutonomyLevel }[] = [
     ...guardedRepos(ctx, listAllRepos).map((r) => ({ kind: "repos" as const, id: r.id, name: githubNameOf(r.url) ?? r.id, level: unreadable ? OBSERVE : levelsOf(store, [r.id], "").repository ?? "delivery-handoff" })),
     ...flowNames(ctx, store).map((n) => ({ kind: "flows" as const, id: n, name: n, level: unreadable ? OBSERVE : levelsOf(store, [], n).flow })),
   ];
+  const owner = ownerNow(ctx);
+  const names = ownerNames();
+  const person = (id: string): AutonomyPerson => ({ id, name: names.get(id) ?? GONE });
+  let admins: string[] = [];
+  try {
+    admins = activeAdmins(listUsers()).map((u) => u.id);
+  } catch {
+    // no list of admins: nobody is shown as an approver
+  }
+  const githubOf = new Map(listAllRepos().map((r) => [r.id, githubNameOf(r.url)]));
   const components: AutonomyComponent[] = [];
   for (const [i, t] of targets.entries()) {
     if (i > 0) await turn();
@@ -190,15 +240,22 @@ export async function autonomyStatus(ctx: ApiContext, now: Date): Promise<Autono
     const stored = unreadable ? undefined : requestOf(store, t.kind, t.id);
     const request = stored && (liveRequest(store, t) ? stored : { ...stored, state: "expired" as const });
     const gate = withApprovalDetail(await promotionGate(t.kind, t.id, next ?? t.level, now, deps), request);
-    components.push({ ...t, next, gate, ...(request ? { request } : {}) });
+    const github = t.kind === "repos" ? githubOf.get(t.id) : undefined;
+    const newest = all && (t.kind === "flows" || github !== undefined) ? newestRunOf(all, t.kind === "flows" ? { flow: t.id } : { repo: github }) : undefined;
+    let approval: AutonomyApproval | undefined;
+    if (request?.state === "pending" && owner) {
+      const approvers = approversOf({ requester: request.by, owner: owner.id, to: request.to, admins }).map((a) => ({ ...person(a.id), selfApproved: a.selfApproved }));
+      approval = { requester: person(request.by), approvers, mayApprove: viewer !== undefined && approvers.some((a) => a.id === viewer) };
+    }
+    components.push({ ...t, next, gate, ...(request ? { request } : {}), ...(newest ? { newestRun: newest } : {}), ...(approval ? { approval } : {}) });
   }
-  const owner = ownerNow(ctx);
   return {
     levels: AUTONOMY_LEVELS,
     window: { from: from.toISOString(), to: now.toISOString(), days: deps.settings.within_days },
     settings: deps.settings,
     ...(problem ? { problem } : {}),
-    ...(owner ? { owner } : {}),
+    ...(owner ? { owner, ownerName: names.get(owner.id) ?? GONE } : {}),
+    ...(runsProblem ? { runsProblem } : {}),
     components,
   };
 }
@@ -293,7 +350,12 @@ export const autonomyRoutes: Route = async (ctx, req, res, seg, method, user) =>
   if (seg[0] !== "autonomy") return false;
   if (seg.length === 1 && method === "GET") {
     if (user.role !== "admin") throw new HttpError(403, "only an admin can see the autonomy levels");
-    send(res, 200, await autonomyStatus(ctx, new Date()));
+    send(res, 200, await autonomyStatus(ctx, new Date(), user.id));
+    return true;
+  }
+  if (seg.length === 2 && seg[1] === "history" && method === "GET") {
+    if (user.role !== "admin") throw new HttpError(403, "only an admin can see the autonomy history");
+    send(res, 200, await autonomyHistory(ctx, req));
     return true;
   }
   const act = seg.length === 2 && method === "POST" ? seg[1] : undefined;

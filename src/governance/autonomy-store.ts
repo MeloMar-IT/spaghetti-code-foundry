@@ -29,6 +29,16 @@ const hasControl = (s: string): boolean => /[\u0000-\u001f\u007f]/.test(s);
 const validFlowName = (s: string): boolean => s.length >= 1 && s.length <= 200 && s === s.trim() && !hasControl(s);
 const flowNameSchema = z.string().refine(validFlowName, "not a flow name");
 
+/** A history target as the audit lines write it: `repos:<repository id>` or `flows:<flow name>`, with the rules of the store. */
+export function validTarget(t: string): boolean {
+  const i = t.indexOf(":");
+  if (i < 0) return false;
+  const kind = t.slice(0, i);
+  const id = t.slice(i + 1);
+  if (kind === "repos") return z.uuid().safeParse(id).success;
+  return kind === "flows" && validFlowName(id);
+}
+
 export const AutonomyEntrySchema = z
   .object({ level: AutonomyLevelSchema, since: z.iso.datetime(), by: AutonomyBySchema, reason: z.string().min(1).max(AUTONOMY_REASON_MAX).optional() })
   .strict();

@@ -46,6 +46,7 @@ The page at `/`. 24 route rows (20 sections in `route()` at `ui/app.js:75` and 4
 | `#/users` | Users | `ui/users.js` | `renderUsers` | `api-users.ts`, `view-as.ts` | admin display only | Add, block and limit users; preview a user | Add user | One modal call site serves 11 dialogs (`users.js:113`) |
 | `#/users/:id` | — | `ui/user-detail.js` | `renderUserDetail` | `api-users.ts`, `view-as.ts` | admin display only | See one account and use its actions | Edit / Limits / App repositories / New link / View as user; Reset password / Unlock / Block; Delete | Same dialogs as the list had (`DIALOGS` in `ui/users.js`) |
 | `#/audit` | Audit | `ui/audit.js` | `renderAudit` | `api-audit.ts`, `api-users.ts` (filter) | admin display only | Find who did what; export | Filter / Export / Details | Table without `.table-box` (`audit.js:79`); a line opens a detail row |
+| `#/autonomy` | Autonomy | `ui/autonomy.js` | `renderAutonomy` | `api-autonomy.ts`, `api-audit.ts` (history) | admin display only | See the level, gate and history of each repository and flow; promote, approve, demote | Promote / Approve / Demote | Checks and history are `cards` tables in named regions; read-only at 767 px and below |
 
 ## User display
 
@@ -130,6 +131,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `#/users` | none found | errors box | none |
 | `#/users/:id` | "This account does not exist." with a link to Users | skeleton, then errors box; a failed reload keeps the page and shows a `staleNote` | none |
 | `#/audit` | "No entries." (`audit.js:122`) | errors box | none |
+| `#/autonomy` | "No repositories." / "No flows." | skeleton, then a note with Retry; a failed history keeps the levels | none |
 | `/user/#/home` | `EMPTY` with Start work and My repositories (`home.js`), `ALL_CLEAR` | errors box | poll 30 s |
 | `/user/#/start` | `NO_FLOWS` and `NO_REPOS` (`user/start.js`, #436) | same as `#/start` | none |
 | `/user/#/runs` | `NO_RUNS` plus a Start work link (`user/runs.js:145`) | errors box | poll 30 s |
@@ -178,6 +180,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `#/users` | Shared table in a scroll box | Same |
 | `#/users/:id` | Cards in one column | Fits |
 | `#/audit` | Table not in `.table-box` | Probably overflows |
+| `#/autonomy` | `cards` tables in named regions | Read-only; fits |
 | `/user/#/home` | Rows wrap (`.home-row`) | Fits |
 | `/user/#/start` | Top bar wraps (`style.css:372`) | Fits |
 | `/user/#/runs` | Cards | Fits |

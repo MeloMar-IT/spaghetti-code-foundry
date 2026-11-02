@@ -94,9 +94,9 @@ admin for a new one.
 | **Runs** | — | Everything that ran or is running; the ones that need you on top |
 | **Repositories** | — | The repositories you work in, and how the Foundry signs in to them |
 | **Flows** | Flows, Library | Flows: Your flows and the built-in ones: edit, create, run. Library: Reusable blocks of steps to drop into flows |
-| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
+| **Administration** | Overview, Problems, Watchers, Models, Dashboard, Users, All repositories, Credentials, Audit, Autonomy, Settings, Maintenance | Overview: What needs attention, on one page. What the monitor found. Watchers: Automatic runs from GitHub issues, PR comments, red CI, or a schedule. Models: Which agents and models are available, and which model runs which step. Dashboard: Spend, success rate, where runs fail, eval results. Users: The accounts: add, edit, block and delete them (admins only). All repositories: The repositories of all accounts, their settings, and transfer to another account. Credentials: The stored credentials of all accounts, without any secret. Audit: Who did what, with filters and a CSV export (admins only). Settings: Budget, safety, notifications, bot identity. Maintenance: Clean up old run workspaces |
 
-**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Epics**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
+**Navigation (admin display).** A sidebar on the left groups the places: **Work** has **Home**, **Board**, **Epics**, **Refinement**, **Runs** and **Repositories**; **Setup** has **Flows** and **Administration**. **Start work** is a button in the top bar, not a place. The top bar also has the menu button, the name of the page, the health chip and your account menu (**Change password**, **Sign out**). Press the health chip to open or close the full health line; it opens by itself when something is wrong. The number of items waiting for you shows on **Home** and on the menu button. The menu button closes and opens the sidebar, and the browser remembers your choice. On a narrow screen (below 768 px wide) the sidebar is a menu over the page: **Close menu**, Escape, pressing outside it or choosing a link closes it, and Tab stays inside it while it is open. The current place is marked for screen readers; the main area is named after the page, focus moves to it after each page change, and the new page is announced. **Skip to content** is the first control. Under the top bar a second row groups the pages of one place: Repositories (My repositories only), Flows (Flows, Library) and Administration. Administration has labelled sections: **Operations** (Overview, Problems, Watchers, Models, Dashboard), **People and access** (Users, All repositories, Credentials, Audit, Autonomy) and **System** (Settings, Maintenance). A line of breadcrumbs shows where you are on detail pages (one run, one flow, one board, one epic, one refinement session); the tab title names the page. An address that is empty or unknown opens Home. All old addresses keep working.
 
 **Small screens.** Below 768 px (phones) the menu is a drawer, pages have one column and a dialog is a sheet at the bottom of the screen: full width, at most 90 % of the height, scrolling inside, with **Close** always in reach. From 768 to 1023 px (tablets) you get the sidebar and one column; from 1024 px the full layout. On a touch screen every button, link, field, menu item and table action is at least 44 × 44 px, with space between them. The buttons of a page (the toolbar) wrap below the title, and the main action stays visible. Long repository names and messages wrap; logs and diffs scroll inside their own box. The page itself does not scroll sideways. Below 768 px the lists of runs (admin and My runs), repositories and refinement sessions show each row as a card: the main link first, a label before each value, and the actions last. Screen readers still read them as tables with headers. Every other table scrolls inside its own box, never the page. From 768 px up, tables look as before.
 
@@ -2187,6 +2187,29 @@ up again only through a new request and an approval, so every step can be undone
 
 The reason follows the break-glass rules: required, at most 200 characters, no control characters and no
 credential-like text. Requests waiting for approval are kept in `autonomy.json` next to the levels.
+
+### The Autonomy page
+
+Admins find the levels on the **Autonomy** page, under **Administration**, in the section **People and access**
+(`#/autonomy`). It lists each repository and each flow, with:
+
+- its level, and the level of its newest run (a link to that run);
+- the gate: the five checks with their value, threshold and detail (the same as `GET /api/autonomy`, see
+  [Promotion gate](#promotion-gate));
+- the waiting requests: who asked, who may approve, and `self-approved` where it applies.
+
+The buttons follow the rules above. **Promote** shows only when the gate passes and no request waits. **Approve**
+shows only to the person who may approve. **Demote** asks for a level and a reason. Each action reloads only this
+section; the rest of the page does not change.
+
+The history is the audit log: every `autonomy-*` line (promotion requests, promotions and demotions, also the
+automatic ones), newest first, with who made the change and the detail. The page shows the newest 500 lines. For one
+component, **Show the changes of this component** reads all of its lines.
+
+If the section cannot load, it says so and offers **Retry**. The rest of the page keeps working.
+
+On a repository's page, the owner sees the repository's **Autonomy level** in the overview. An admin sees a link to
+the Autonomy page there. Only an admin changes a level.
 
 ### Promote a component
 
@@ -4773,7 +4796,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/run-owners` | yes | no | the accounts that have runs, for the owner filter |
 | `GET /api/run-filters` | yes | yes | the repositories and flows of the runs you can see, for the filter menus |
 | `GET /api/outcomes` | yes | yes | the outcome measures of the runs you can see over the last `days` (1 to 90, default 30), with optional `repo` and `flow`, and for an admin `model` (`agent:provider:model`) and `policy` (`id@version`); a user sees no cost, no returning users and no model or policy values |
-| `GET /api/autonomy` | yes | no | the autonomy level of every repository and flow and its promotion gate: whether it has earned the next level, with the checks evidence completeness, eval pass rate, policy conformance, operational SLOs and approval (pending), any waiting promotion request with its token, and the accountable owner; read-only, changes nothing |
+| `GET /api/autonomy` | yes | no | the autonomy level of every repository and flow and its promotion gate: whether it has earned the next level, with the checks evidence completeness, eval pass rate, policy conformance, operational SLOs and approval (pending), any waiting promotion request with its token, who asked and who may approve it, the level of the newest run, and the accountable owner; read-only, changes nothing |
+| `GET /api/autonomy/history` | yes | no | the changes of the autonomy levels, newest first: every audit line whose action starts with `autonomy-` (at most 500, with `more` when older ones exist); `?target=repos:<id>` or `?target=flows:<name>` reads one component; read-only |
 | `POST /api/autonomy/promote` | yes | no | ask for one autonomy level more for a repository or flow (`kind` `repos` or `flows`, `id`, `to`, `reason` of 1 to 200 characters); `to` must be one level above the current one and the promotion gate must pass (else 409 with `gate`); the answer carries the request `token`; writes an audit line |
 | `POST /api/autonomy/approve` | yes | no | carry out a waiting promotion request (`kind`, `id`, `to`, `token`); only the accountable owner may approve, and a move to `guarded-write` or `delivery-handoff` needs an approver who did not ask (unless there is one active admin); the level and the gate are checked again, and a request that no longer fits expires (409); writes an audit line |
 | `POST /api/autonomy/demote` | yes | no | lower an autonomy level at once (`kind`, `id`, `to`, `reason`); any admin, no gate; the component can go up again only through promote and approve; writes an audit line |
@@ -4827,7 +4851,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); 409 for a revoked version or a run that does not lock it; resume the run afterwards |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
-| `GET /api/repos` | yes | yes | your repositories |
+| `GET /api/repos` | yes | yes | your repositories, each with its autonomy level |
 | `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose, and the link to install the GitHub App |
 | `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
@@ -4837,7 +4861,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/repos/:id/epics/:issue` | yes | yes | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
-| `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings |
+| `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings and autonomy level |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line |
 | `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |

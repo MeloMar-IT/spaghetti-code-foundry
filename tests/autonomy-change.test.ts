@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword, type User } from "../src/auth/users.js";
 import { AUTONOMY_LEVELS, type AutonomyLevel } from "../src/governance/autonomy.js";
-import { accountableOwner, activeAdmins, approvalVerdict, checkReason } from "../src/governance/autonomy-change.js";
+import { accountableOwner, activeAdmins, approvalVerdict, approversOf, checkReason } from "../src/governance/autonomy-change.js";
 import { AutonomyError, readAutonomy, setLevel } from "../src/governance/autonomy-store.js";
 import type { PromotionGate } from "../src/governance/gate.js";
 import { approveAutonomy, demoteAutonomy, promoteAutonomy, type GateOf } from "../src/server/api-autonomy.js";
@@ -137,6 +137,23 @@ describe("approvalVerdict", () => {
     expect(v(x!, r!, "plan-only", 2)).toEqual({ ok: false, code: "not-owner" });
     expect(v(r!, r!, "plan-only", 2)).toEqual({ ok: false, code: "not-owner" });
   });
+});
+
+describe("approversOf", () => {
+  const ask = (requester: string, to: AutonomyLevel, admins: string[]) => approversOf({ requester, owner: "owner", to, admins });
+  it("lets the owner approve what another admin asked for", () => {
+    expect(ask("req", "guarded-write", ["owner", "req"])).toEqual([{ id: "owner", selfApproved: false }]);
+  });
+  it("lets only the other admin approve what the owner asked for at a sensitive level", () => {
+    expect(ask("owner", "guarded-write", ["owner", "other"])).toEqual([{ id: "other", selfApproved: false }]);
+  });
+  it("lets the owner self-approve when there is one admin", () => {
+    expect(ask("owner", "guarded-write", ["owner"])).toEqual([{ id: "owner", selfApproved: true }]);
+  });
+  it("lets the owner self-approve plan-only, and the other admin approve too", () => {
+    expect(ask("owner", "plan-only", ["owner", "other"])).toEqual([{ id: "owner", selfApproved: true }, { id: "other", selfApproved: false }]);
+  });
+  it("names nobody when no admin is known", () => expect(ask("owner", "plan-only", [])).toEqual([]));
 });
 
 describe("checkReason", () => {

@@ -241,6 +241,10 @@ export interface AuditRecord {
 export interface AuditFilter {
   user?: string;
   action?: string;
+  /** Keeps the lines whose action starts with this text (for example `autonomy-`). */
+  actionPrefix?: string;
+  /** Keeps the lines with exactly this target text. */
+  target?: string;
   from?: number;
   to?: number;
 }
@@ -327,6 +331,8 @@ export async function* scanAudit(filter: AuditFilter = {}): AsyncGenerator<Audit
     const r = auditRecord(parsed.data);
     if (filter.user !== undefined && r.by !== filter.user && r.userId !== filter.user) continue;
     if (filter.action !== undefined && r.action !== filter.action) continue;
+    if (filter.actionPrefix !== undefined && !r.action.startsWith(filter.actionPrefix)) continue;
+    if (filter.target !== undefined && r.target !== filter.target) continue;
     if (filter.from !== undefined || filter.to !== undefined) {
       const t = Date.parse(r.time);
       if (filter.from !== undefined && t < filter.from) continue;
