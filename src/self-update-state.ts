@@ -1,10 +1,12 @@
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, readdirSync, realpathSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { FACTORY_HOME } from "./flow/load.js";
 import { markFinder } from "./self-update-tests.js";
+import { descendants, processTable, signalRows, type ProcRow } from "./steps/proc-tree.js";
+import { readSlotWaits, slotClock, slotWaitLimitMs } from "./steps/slot-waits.js";
 import type { PendingUpdate, StartGuard } from "./supervise.js";
 
 /**
@@ -127,6 +129,18 @@ export interface UpdateStep {
   startMark?: string;
   /** The test slot folder the step runs through: a slot held by the killed step itself is freed when it ends. */
   slotsDir?: string;
+  /** A folder for the pause records of test-slot: each run gets one of its own inside it, removed when the step ends. The time limit leaves the pauses out. */
+  waitDir?: string;
+}
+
+/** A folder for one run's pause records under `root` (test-slot writes them there); undefined when it cannot be made: the limit then counts the pauses. */
+function newRunWaitDir(root: string): string | undefined {
+  try {
+    mkdirSync(root, { recursive: true });
+    return mkdtempSync(join(root, "run-"));
+  } catch {
+    return undefined;
+  }
 }
 
 /** Removes the slots in `dir` whose holder is `pid` (a killed `test-slot` cannot free its own). Slots of others stay. */
@@ -167,16 +181,36 @@ export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; o
     const mark = killed;
     let output = "";
     let child: ChildProcess;
+    const runWaitDir = step.waitDir ? newRunWaitDir(step.waitDir) : undefined;
     try {
-      child = spawn(step.cmd, step.args, { cwd, env: { ...stepEnv(), ...step.env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawn(step.cmd, step.args, {
+        cwd,
+        env: { ...stepEnv(), ...step.env, ...(runWaitDir ? { FACTORY_TEST_SLOT_WAIT_DIR: runWaitDir } : {}) },
+        detached: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     } catch (e) {
+      if (runWaitDir) rmSync(runWaitDir, { recursive: true, force: true });
       return done({ ok: false, output: String((e as Error).message) });
     }
     running.add(child);
     const take = (b: Buffer) => { output = (output + b.toString()).slice(-20_000); };
     const own = step.timeoutMs ?? 10 * MIN;
     const finder = step.startMark ? markFinder(step.startMark) : undefined;
-    let timer = setTimeout(() => killGroup(child), finder ? (step.waitMs ?? 0) + own : own);
+    // The time limit counts working time: the time test-slot paused the step is left out (its pause records in the run's folder).
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = (limitMs: number) => {
+      const began = Date.now();
+      const check = () => {
+        const now = Date.now();
+        const pauses = runWaitDir ? readSlotWaits(runWaitDir, now).filter((w) => w.kind === "pause") : [];
+        const next = slotClock(pauses, { began, limitMs, maxExtraMs: slotWaitLimitMs(step.env), now }).nextCheckMs;
+        if (next > 0) timer = setTimeout(check, next);
+        else killGroup(child);
+      };
+      timer = setTimeout(check, limitMs);
+    };
+    deadline(finder ? (step.waitMs ?? 0) + own : own);
     if (finder) {
       let started = false;
       child.stdout?.on("data", (b: Buffer) => {
@@ -185,7 +219,7 @@ export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; o
         if (!started && finder.found()) {
           started = true;
           clearTimeout(timer);
-          timer = setTimeout(() => killGroup(child), own);
+          deadline(own);
         }
       });
     } else {
@@ -197,6 +231,7 @@ export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; o
       if (step.slotsDir && child.pid) freeSlots(step.slotsDir, child.pid);
       clearTimeout(timer);
       running.delete(child);
+      if (runWaitDir) rmSync(runWaitDir, { recursive: true, force: true });
       done({ ok, output: output + extra, ...(killed !== mark ? { killed: true } : {}) });
     };
     child.on("error", (e) => end(false, `\n${e.message}`));
@@ -205,6 +240,16 @@ export function runStep(step: UpdateStep, cwd: string): Promise<{ ok: boolean; o
 }
 
 function killGroup(c: ChildProcess) {
+  // The command of a test-slot runs in a group of its own (test-slot pauses it by group), so the step's group does not hold it:
+  // note what runs below the step first, and kill that too.
+  let table: ProcRow[] | undefined;
+  let below: ProcRow[] = [];
+  try {
+    table = c.pid ? processTable(1500) : undefined;
+    below = table && c.pid ? descendants(table, c.pid) : [];
+  } catch {
+    // only the group is killed
+  }
   try {
     if (c.pid) process.kill(-c.pid, "SIGKILL");
   } catch {
@@ -214,6 +259,7 @@ function killGroup(c: ChildProcess) {
       // already gone
     }
   }
+  if (table && below.length) signalRows(below, "SIGKILL", table);
 }
 
 /** Kills every running step and its children, now. */

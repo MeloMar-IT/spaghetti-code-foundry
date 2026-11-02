@@ -424,7 +424,7 @@ export class SelfUpdater {
         }
         // the tests wait for a test slot, like the tests of stories; the tool is the running version's
         const run = name === "test" && this.o.slot !== false
-          ? slotStep(step, { tool: join(this.dir, "tools", "test-slot"), slotsDir: join(dirname(this.file), "test-slots"), ...this.o.slot })
+          ? slotStep(step, { tool: join(this.dir, "tools", "test-slot"), slotsDir: join(dirname(this.file), "test-slots"), waitDir: join(dirname(this.file), "test-slot-waits"), ...this.o.slot })
           : step;
         const r = await runStep(run, this.stageDir());
         if (r.killed || this.stopped) return "stopped";

@@ -21,7 +21,14 @@
 //        a folder that cannot be written changes nothing),
 //      FACTORY_TEST_SLOT_TRACK_MS (how often the processes are noted while a limit or a track file is set; default 2000).
 // The process tracker is loaded from ../dist/steps/proc-tree.js (FACTORY_TEST_SLOT_PS there sets the ps path, for tests).
-// With a limit the command runs in its own process group and SIGINT, SIGTERM and SIGHUP go to the whole group.
+// The command always runs in its own process group; SIGINT, SIGTERM and SIGHUP go to the whole group, each followed by SIGCONT.
+// Pause: while <slots-dir>/pause is fresh (the load governor writes it at every check while the machine stays overloaded; one
+// that was not written for 4 minutes is ignored, like cap), every command except the one that holds slot-1 is stopped with
+// SIGSTOP on its group and tries to take slot-1 at every look; it goes on (SIGCONT) when the file is gone or old, or when
+// it got slot-1. Only this process signals its own group. A pause is recorded in FACTORY_TEST_SLOT_WAIT_DIR as
+// <startMs>-<pid>-pause.wait (touched at least every 5 s, renamed to .done), and paused time counts against no limit: the
+// limit counts working time only, and the started file is moved forward by the paused time. A group that is paused when
+// this process exits is continued first. No pause with FACTORY_VAR_TEST_SLOTS=0 or a slots folder that cannot be used.
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { getPriority } from "node:os";
@@ -57,31 +64,42 @@ const startedFile = process.env.FACTORY_TEST_SLOT_STARTED_FILE || "";
 const trackFile = process.env.FACTORY_TEST_SLOT_TRACK_FILE || "";
 const waitDir = process.env.FACTORY_TEST_SLOT_WAIT_DIR || "";
 
-// The record of one wait (see the header). Every function swallows its errors: recording must never stop a story.
-let waitFile = "";
-function beginWait(start) {
-  if (!waitDir) return;
-  try {
-    const file = join(waitDir, `${start}-${process.pid}.wait`);
-    writeFileSync(file, "");
-    waitFile = file;
-  } catch { /* not recorded */ }
+// The record of one wait or one pause (see the header): `<startMs>-<pid><suffix>.wait`, renamed to .done at the end.
+// Every function swallows its errors: recording must never stop a story.
+function makeRecord(suffix) {
+  let file = "";
+  const beat = () => {
+    if (!file) return;
+    try {
+      const now = new Date();
+      utimesSync(file, now, now);
+    } catch { /* not recorded */ }
+  };
+  return {
+    begin(start) {
+      if (!waitDir) return;
+      try {
+        const f = join(waitDir, `${start}-${process.pid}${suffix}.wait`);
+        writeFileSync(f, "");
+        file = f;
+      } catch { /* not recorded */ }
+    },
+    beat,
+    end() {
+      if (!file) return;
+      beat();
+      try {
+        renameSync(file, file.replace(/\.wait$/, ".done"));
+      } catch { /* the stale file counts up to its last touch */ }
+      file = "";
+    },
+  };
 }
-function beatWait() {
-  if (!waitFile) return;
-  try {
-    const now = new Date();
-    utimesSync(waitFile, now, now);
-  } catch { /* not recorded */ }
-}
-function endWait() {
-  if (!waitFile) return;
-  beatWait();
-  try {
-    renameSync(waitFile, waitFile.replace(/\.wait$/, ".done"));
-  } catch { /* the stale file counts up to its last touch */ }
-  waitFile = "";
-}
+const waitRecord = makeRecord("");
+const pauseRecord = makeRecord("-pause");
+const beginWait = waitRecord.begin;
+const beatWait = waitRecord.beat;
+const endWait = waitRecord.end;
 
 const alive = (pid) => {
   try {
@@ -91,28 +109,33 @@ const alive = (pid) => {
     return e.code === "EPERM";
   }
 };
-/** Take a free slot, or the slot of a holder that is gone. Returns its folder, or undefined. */
-function take() {
-  for (let i = 1; i <= slots; i++) {
-    const slot = join(dir, `slot-${i}`);
+/** Take slot number `i` if it is free, or if its holder is gone. Returns its folder, or undefined. */
+function takeSlot(i) {
+  const slot = join(dir, `slot-${i}`);
+  try {
+    mkdirSync(slot);
+  } catch {
+    let pid = NaN;
+    try {
+      pid = Number(readFileSync(join(slot, "pid"), "utf8"));
+    } catch { /* just taken by another process, its pid is not written yet */ }
+    if (Number.isNaN(pid) || alive(pid)) return undefined;
+    // The holder is gone: clear its slot; whoever makes the folder first gets it.
+    rmSync(slot, { recursive: true, force: true });
     try {
       mkdirSync(slot);
     } catch {
-      let pid = NaN;
-      try {
-        pid = Number(readFileSync(join(slot, "pid"), "utf8"));
-      } catch { /* just taken by another process, its pid is not written yet */ }
-      if (Number.isNaN(pid) || alive(pid)) continue;
-      // The holder is gone: clear its slot; whoever makes the folder first gets it.
-      rmSync(slot, { recursive: true, force: true });
-      try {
-        mkdirSync(slot);
-      } catch {
-        continue;
-      }
+      return undefined;
     }
-    writeFileSync(join(slot, "pid"), String(process.pid));
-    return slot;
+  }
+  writeFileSync(join(slot, "pid"), String(process.pid));
+  return slot;
+}
+/** Take a free slot, or the slot of a holder that is gone. Returns its folder, or undefined. */
+function take() {
+  for (let i = 1; i <= slots; i++) {
+    const slot = takeSlot(i);
+    if (slot) return slot;
   }
   return undefined;
 }
@@ -220,14 +243,85 @@ if (startedFile) {
 let have = 0;
 try { have = getPriority(); } catch { /* unknown: count it as normal */ }
 const more = Math.min(nice, 19) - have;
-const opts = limitSec > 0 ? { stdio: "inherit", env, detached: true } : { stdio: "inherit", env };
+// Always in a group of its own: only this process signals it (the pause below, the limit, the forwarded signals).
+const opts = { stdio: "inherit", env, detached: true };
 const child = more > 0 ? spawn("nice", ["-n", String(more), cmd, ...args], opts) : spawn(cmd, args, opts);
+let ending = false;
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(sig, () => {
-    if (limitSec > 0 && child.pid) signalGroup(child.pid, sig);
-    else child.kill(sig);
+    ending = true;
+    if (child.pid) {
+      signalGroup(child.pid, sig);
+      signalGroup(child.pid, "SIGCONT"); // a paused group would never see the signal
+    } else child.kill(sig);
   });
 }
+
+// The pause. The load governor writes <slots-dir>/pause at every check while the machine stays overloaded. While it is
+// fresh, every command except the one of slot-1 is stopped (SIGSTOP to its group), and it tries to take slot-1 at every look.
+// A pause file that is older than CAP_HOLD_MS (the governor has stopped), no slots (0) or an unusable folder pause nothing.
+let paused = false;
+let pausedAt = 0;
+let pausedMs = 0;
+let pauseTimer;
+function pauseFileFresh() {
+  try {
+    return Date.now() - statSync(join(dir, "pause")).mtimeMs <= CAP_HOLD_MS;
+  } catch {
+    return false;
+  }
+}
+const firstSlot = join(dir, "slot-1");
+/** The time that counts against the limit: working time only. */
+const countedMs = () => {
+  const now = Date.now();
+  return now - startedAt - pausedMs - (paused ? now - pausedAt : 0);
+};
+/** The started file says when the command started, as if it had never been paused. */
+function writeStarted() {
+  if (!startedFile) return;
+  try {
+    writeFileSync(startedFile, `${Math.floor((startedAt + pausedMs) / 1000)}\n`);
+  } catch { /* the first write already reported */ }
+}
+/** Ends a pause: the time is added up and the record closed. `go` also continues the group. */
+function endPause(go) {
+  if (!paused) return;
+  if (go && child.pid) signalGroup(child.pid, "SIGCONT");
+  paused = false;
+  pausedMs += Date.now() - pausedAt;
+  pauseRecord.end();
+}
+function checkPause() {
+  if (ending || !child.pid) return;
+  let want = asked > 0 && usable && pauseFileFresh();
+  if (want && slot !== firstSlot) {
+    try {
+      const got = takeSlot(1);
+      if (got) {
+        release();
+        slot = got;
+      }
+    } catch { /* stays as it is */ }
+  }
+  want = want && slot !== firstSlot;
+  if (want && !paused) {
+    signalGroup(child.pid, "SIGSTOP");
+    paused = true;
+    pausedAt = Date.now();
+    clearTimeout(limitTimer);
+    pauseRecord.begin(pausedAt);
+    console.log("test-slot: paused — the machine is overloaded");
+  } else if (!want && paused) {
+    const from = pausedAt;
+    endPause(true);
+    writeStarted();
+    armLimit();
+    console.log(`test-slot: going on after ${Math.round((Date.now() - from) / 1000)} s paused`);
+  } else if (paused) pauseRecord.beat();
+}
+// Whatever the way out, a group that is still paused goes on: nothing else would continue it.
+process.on("exit", () => endPause(true));
 
 let tracker;
 if (pt && child.pid) {
@@ -255,6 +349,7 @@ async function confirm(rows, deadline, sig) {
       const starts = new Map(t.map((r) => [r.pid, r.start]));
       const ok = rows.filter((r) => starts.get(r.pid) === r.start);
       pt.signalRows(ok, sig, t);
+      if (sig === "SIGTERM") pt.signalRows(ok, "SIGCONT", t); // a stopped process would never see the SIGTERM
       return ok;
     }
     await sleep(100);
@@ -262,8 +357,17 @@ async function confirm(rows, deadline, sig) {
   return undefined;
 }
 
+/** (Re)arms the limit timer for the working time that is left; none while paused. */
+function armLimit() {
+  clearTimeout(limitTimer);
+  if (limitSec <= 0 || paused || ending) return;
+  limitTimer = setTimeout(() => void stopAtLimit(), Math.max(0, limitSec * 1000 - countedMs()));
+}
+
 async function stopAtLimit() {
   stopping = true;
+  ending = true;
+  clearInterval(pauseTimer);
   const pid = child.pid;
   // Note the descendants before anything is signalled, but never let a slow ps hold the signal back for long.
   if (tracker) await Promise.race([tracker.poll().catch(() => {}), sleep(1000)]);
@@ -282,6 +386,7 @@ async function stopAtLimit() {
       .finally(() => { found.pending--; });
   };
   signalGroup(pid, "SIGTERM");
+  signalGroup(pid, "SIGCONT");
   stopRows("SIGTERM", first + 5500);
   let hard = false;
   while (groupAlive(pid) || found.pending || (found.rows.length && pt.anyPidAlive(found.rows))) {
@@ -296,14 +401,25 @@ async function stopAtLimit() {
   }
   release();
   await writeTrack(pt, tracker);
-  const n = Math.round((Date.now() - startedAt) / 1000);
-  process.stdout.write(`test-slot: stopped after ${n} s — the time limit is ${limitSec} s\n`, () => process.exit(124));
+  const n = Math.round(countedMs() / 1000);
+  const note = pausedMs > 0 ? ` (paused ${Math.round(pausedMs / 1000)} s, which did not count)` : "";
+  process.stdout.write(`test-slot: stopped after ${n} s — the time limit is ${limitSec} s${note}\n`, () => process.exit(124));
 }
 
-if (limitSec > 0) limitTimer = setTimeout(() => void stopAtLimit(), limitSec * 1000);
+armLimit();
+if (asked > 0 && usable) {
+  pauseTimer = setInterval(checkPause, Math.min(pollMs, 5000) || 1000);
+  pauseTimer.unref();
+  checkPause();
+}
+const stopPause = () => {
+  clearInterval(pauseTimer);
+  endPause(true);
+};
 
 child.on("error", (e) => {
   clearTimeout(limitTimer);
+  stopPause();
   tracker?.stop();
   release();
   console.error(`test-slot: cannot run ${cmd}: ${e.message}`);
@@ -312,6 +428,7 @@ child.on("error", (e) => {
 child.on("exit", (code, signal) => {
   if (stopping) return; // the stop at the limit owns the exit
   clearTimeout(limitTimer);
+  stopPause();
   tracker?.stop();
   void writeTrack(pt, tracker).finally(() => {
     release();

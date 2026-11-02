@@ -68,6 +68,8 @@ try {
       repoDir: process.cwd(),
       runDir,
       slotsDir,
+      // the folder of this step: test-slot writes the pauses of the builds there, so the step's limit leaves them out
+      waitDir: process.env.FACTORY_TEST_SLOT_WAIT_DIR || undefined,
       testSlot: fileURLToPath(new URL("./test-slot", import.meta.url)),
       plan,
       host: hostOf(),

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadCaps, runLimit } from "../src/ops/caps.js";
-import { changesToday, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
+import { changesToday, clearGovernor, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
 import { minutes, withAverages } from "./fixtures/governor-days.js";
 
 const T0 = new Date(2026, 9, 20, 9, 0);
@@ -47,7 +47,7 @@ describe("decide: down", () => {
 
   it("acts at once in an emergency, also inside the pause and without hot checks", () => {
     const prev: GovernorState = { calm: 0, runs: 3, changedAt: at(0).toISOString() };
-    expect(decide(prev, s(0.5, 0.5, 4), 4, at(1))).toMatchObject({ state: { runs: 2, tests: 1 }, change: "runs at once 3 → 2 (memory pressure critical); test runs at once → 1 (memory pressure critical)" });
+    expect(decide(prev, s(0.5, 0.5, 4), 4, at(1))).toMatchObject({ state: { runs: 2, tests: 1 }, change: "runs at once 3 → 2 (memory pressure critical); test runs at once → 1 (memory pressure critical); test runs beyond the first paused (memory pressure critical)" });
     expect(decide(prev, s(4.5, 1.0), 4, at(1)).state).toMatchObject({ runs: 2, tests: 1 });
     // the floor (half of 4) still holds
     expect(decide({ calm: 0, runs: 2 }, s(4.5, 4.5), 4, at(1)).state.runs).toBe(2);
@@ -170,6 +170,71 @@ describe("decide: the state", () => {
     expect(decide({ calm: 0, changedAt: at(-11).toISOString() }, band, 4, at(0)).state.changedAt).toBeUndefined();
     const future = decide({ calm: 0, changedAt: at(30).toISOString() }, s(3, 3), 4, at(0));
     expect(future.state.runs).toBe(3);
+  });
+});
+
+describe("decide: pausing test runs", () => {
+  it("critical memory pressure pauses at once and holds the tests at 1", () => {
+    const d = decide({ calm: 0 }, s(0.5, 0.5, 4), 4, at(0));
+    expect(d.state).toMatchObject({ tests: 1, paused: at(0).toISOString() });
+    expect(d.change).toContain("test runs beyond the first paused (memory pressure critical)");
+  });
+
+  it("load above testsHigh pauses at the third check in a row, not at the second", () => {
+    const hot = s(4.5, 4.5);
+    const two = feed({ calm: 0 }, [hot, hot]);
+    expect(two.d.state.paused).toBeUndefined();
+    expect(two.d.state.severe).toBe(2);
+    const three = feed({ calm: 0 }, [hot, hot, hot]);
+    expect(three.d.state).toMatchObject({ paused: at(2).toISOString(), tests: 1, severe: 3 });
+    expect(three.d.change).toContain("test runs beyond the first paused (load 4.5 per core for 3 checks)");
+    // a check below the line starts the count again
+    expect(feed({ calm: 0 }, [hot, hot, s(3, 3), hot]).d.state.severe).toBe(1);
+  });
+
+  it("stays paused above `high` and ends at `high` or below, with the start kept meanwhile", () => {
+    const prev: GovernorState = { calm: 0, tests: 1, paused: at(0).toISOString() };
+    const held = decide(prev, s(3, 3), 4, at(5));
+    expect(held.state).toMatchObject({ paused: at(0).toISOString(), tests: 1 });
+    expect(held.change ?? "").not.toContain("paused");
+    const critical = decide(prev, s(1, 1, 4), 4, at(5));
+    expect(critical.state.paused).toBe(at(0).toISOString());
+    const over = decide(prev, s(2, 2), 4, at(5));
+    expect(over.state.paused).toBeUndefined();
+    expect(over.state.tests).toBeUndefined();
+    expect(over.change).toContain("paused test runs go on (load 2.0 per core)");
+  });
+
+  it("loadState keeps severe and paused, and drops garbage", () => {
+    const dir = mkdtempSync(join(tmpdir(), "scf-gov-"));
+    try {
+      writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, severe: 2, paused: at(0).toISOString(), at: at(0).toISOString() }));
+      expect(loadState(dir, at(1))).toEqual({ calm: 0, severe: 2, paused: at(0).toISOString() });
+      writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, severe: "x", paused: "not a time", at: at(0).toISOString() }));
+      expect(loadState(dir, at(1))).toEqual({ calm: 0 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runGovernor writes slots/pause at every check while it holds, removes it at the end; clearGovernor removes it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "scf-gov-"));
+    try {
+      const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 4 };
+      const pauseFile = join(o.slotsDir, "pause");
+      runGovernor({ ...o, now: at(0), sample: s(0.5, 0.5, 4) });
+      expect(readFileSync(pauseFile, "utf8").trim()).toBe(at(0).toISOString());
+      runGovernor({ ...o, now: at(1), sample: s(3, 3) });
+      expect(readFileSync(pauseFile, "utf8").trim()).toBe(at(0).toISOString());
+      runGovernor({ ...o, now: at(2), sample: s(1, 1) });
+      expect(existsSync(pauseFile)).toBe(false);
+      runGovernor({ ...o, now: at(3), sample: s(0.5, 0.5, 4) });
+      expect(existsSync(pauseFile)).toBe(true);
+      clearGovernor(o.dir, o.slotsDir, o.capsFile);
+      expect(existsSync(pauseFile)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

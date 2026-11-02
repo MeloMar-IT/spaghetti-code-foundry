@@ -167,7 +167,8 @@ describe("decide: the game day", () => {
     let changes = 0;
     samples.forEach((x, i) => {
       d = decide(d.state, x, configured, at(i), set);
-      if (d.change) changes++;
+      // the pause of test runs has its own notes (see "decide: pausing test runs"); this counts the changes of the caps
+      if (d.change?.split("; ").some((n) => !/^(test runs beyond the first paused|paused test runs go on)/.test(n))) changes++;
       caps.push(d.state.runs ?? configured);
     });
     return { caps, changes };

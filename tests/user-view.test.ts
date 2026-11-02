@@ -30,6 +30,11 @@ describe("answers in the user view", () => {
       { source: "watcher w issue #7" }, { flowDef: { name: "x", steps: [{ id: "a", type: "shell", run: "echo" }] } }, { flowDef: undefined },
     ]) expect(answerBlock({ ...base, ...over }, w), JSON.stringify(over)).toEqual(expect.any(String));
   });
+  it("userRun passes paused.since and nothing else of it", () => {
+    const v = userRun({ ...base, paused: { since: "2026-01-01T10:42:00.000Z", pid: 7 } } as never);
+    expect(v.paused).toEqual({ since: "2026-01-01T10:42:00.000Z" });
+    expect("paused" in userRun(base as never)).toBe(false);
+  });
   it("lets a plain run and a hand-started run of a watched flow through", () => {
     expect(answerBlock(base, [])).toBeUndefined();
     expect(answerBlock(base, w)).toBeUndefined();

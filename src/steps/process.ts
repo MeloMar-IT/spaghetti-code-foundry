@@ -3,8 +3,8 @@ import { accessSync, constants, createWriteStream, statSync } from "node:fs";
 import { getPriority } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { anyPidAlive, markStep, ProcessTracker, processTableAsync, signalRows, type ProcRow } from "./proc-tree.js";
-import { readSlotWaits, slotClock, waitedLine, type SlotWaitWatch } from "./slot-waits.js";
+import { anyPidAlive, markStep, ProcessTracker, processTable, processTableAsync, signalRows, type ProcRow } from "./proc-tree.js";
+import { pausedLine, readSlotWaits, slotClock, waitedLine, type SlotWaitWatch } from "./slot-waits.js";
 import { combineRedactors, liveRedactor, makeRedactor, redactStream, requireRedaction, type Redactor } from "../credentials/redact.js";
 
 export interface ProcessResult {
@@ -14,14 +14,14 @@ export interface ProcessResult {
   timedOut: boolean;
   aborted: boolean;
   /** The time the process waited for a test slot (see slot-waits.ts). Set only when it waited. */
-  slotWait?: { waitedMs: number; countedMs: number; capped: boolean };
+  slotWait?: { waitedMs: number; countedMs: number; capped: boolean; pausedMs?: number };
 }
 
 /** Filled by runProcess whenever it settles, also when it rejects: how long the process ran and how many bytes it printed. */
 export interface ProcessMeter {
   ms?: number;
   printedBytes?: number;
-  /** The time that did not count against the time limit (waits for a test slot, at most the bound). */
+  /** The time that did not count against the time limit (waits for a test slot and pauses of test runs, at most the bound). */
   slotWaitMs?: number;
 }
 
@@ -165,19 +165,30 @@ function mergeEnv(overrides: NodeJS.ProcessEnv = {}, clean = false): NodeJS.Proc
 }
 
 /** Process groups of running steps that must not outlive this process (see runProcess, `groupKill`). */
-const liveGroups = new Set<number>();
+const liveGroups = new Map<number, ProcessTracker | undefined>();
 let exitHook = false;
 
-/** SIGKILL to every live process group of a step; returns how many. Runs when this process exits (a Ctrl+C no longer reaches a detached group). */
+/**
+ * SIGKILL to every live process group of a step; returns how many. Runs when this process exits (a Ctrl+C no longer reaches a detached group).
+ * The processes a step's tracker knows that left the group (the command of a test-slot runs in a group of its own, and may be
+ * stopped by a pause) are killed too: nothing is left to continue them.
+ */
 export function killLiveGroups(): number {
   let n = 0;
-  for (const pid of liveGroups) {
+  for (const [pid, tracker] of liveGroups) {
+    let extra: ProcRow[] = [];
+    try {
+      extra = tracker?.toStop() ?? [];
+    } catch {
+      // keep going with the group
+    }
     try {
       process.kill(-pid, "SIGKILL");
       n++;
     } catch {
       // already gone
     }
+    if (extra.length) signalRows(extra, "SIGKILL");
   }
   liveGroups.clear();
   return n;
@@ -241,14 +252,14 @@ function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine
       ...(grouped ? { detached: true } : {}),
     });
     const unmark = child.pid ? markStep(opts.logFile, child.pid) : () => {};
+    const tracker = opts.groupKill && child.pid ? new ProcessTracker(child.pid, { everyMs: opts.trackEveryMs ?? 10_000 }) : undefined;
     if (grouped && child.pid) {
-      liveGroups.add(child.pid);
+      liveGroups.set(child.pid, tracker);
       if (!exitHook) {
         exitHook = true;
         process.on("exit", killLiveGroups);
       }
     }
-    const tracker = opts.groupKill && child.pid ? new ProcessTracker(child.pid, { everyMs: opts.trackEveryMs ?? 10_000 }) : undefined;
     tracker?.start();
     const began = Date.now();
     let printed = 0;
@@ -306,9 +317,17 @@ function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine
       }
       // before the group goes: the children that left it still point to their parents
       if (first && tracker) extra = tracker.toStop();
+      // SIGCONT follows every SIGTERM: a test run paused by the load governor is stopped (SIGSTOP) and would never see it
       signalTree("SIGTERM");
+      signalTree("SIGCONT");
       // validated against a fresh table; when that read fails, the SIGKILL path retries it
-      if (first && extra.length) signalRows(extra, "SIGTERM");
+      if (first && extra.length) {
+        const t = processTable(2000);
+        if (t) {
+          signalRows(extra, "SIGTERM", t);
+          signalRows(extra, "SIGCONT", t);
+        }
+      }
     };
     // After a kill, the step is not over until nothing of its group runs: SIGKILL at 5 s, and at most 1 s more.
     const groupGone = async () => {
@@ -425,9 +444,14 @@ function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine
       if (opts.slotWaits) {
         const c = clockNow(Infinity);
         if (c.waitedMs > 0) {
-          slotWait = { waitedMs: c.waitedMs, countedMs: c.countedMs, capped: c.waitedMs > opts.slotWaits.maxExtraMs };
+          // `waitedMs` of the result is the wait for a slot only; the pause is told apart
+          const slotOnly = c.waitedMs - c.pausedMs;
+          slotWait = { waitedMs: slotOnly, countedMs: c.countedMs, capped: c.waitedMs > opts.slotWaits.maxExtraMs, ...(c.pausedMs > 0 ? { pausedMs: c.pausedMs } : {}) };
           if (opts.meter) opts.meter.slotWaitMs = c.countedMs;
-          if (!logError) log.write(`${waitedLine(c.waitedMs)}\n`);
+          if (!logError) {
+            if (slotOnly > 0) log.write(`${waitedLine(slotOnly)}\n`);
+            if (c.pausedMs > 0) log.write(`${pausedLine(c.pausedMs)}\n`);
+          }
         }
       }
       if (logError) {

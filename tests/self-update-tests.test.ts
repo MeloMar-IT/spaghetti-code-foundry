@@ -1,4 +1,6 @@
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runStep, type UpdateStep } from "../src/self-update-state.js";
 import { failingTests, markFinder, slotStep } from "../src/self-update-tests.js";
@@ -169,5 +171,38 @@ describe("runStep with a start mark", () => {
     expect(r.output).not.toMatch(/^FACTORY_HOME=/m);
     expect(r.output).not.toMatch(/^GH_TOKEN=/m);
     expect(r.output.split("\n").filter((l) => l.startsWith("FACTORY_"))).toHaveLength(3);
+  });
+});
+
+describe("runStep and the pauses of test-slot", () => {
+  // The command writes a pause record into the run's folder the way test-slot does (touched while paused, renamed to .done
+  // at the end), holds it for `ms`, then runs `then`.
+  const pausedFor = (ms: number, then: string) =>
+    `f="$FACTORY_TEST_SLOT_WAIT_DIR/$(date +%s)000-$$-pause.wait"; : > "$f"; n=0; while [ $n -lt ${Math.round(ms / 100)} ]; do touch "$f"; sleep 0.1; n=$((n+1)); done; mv "$f" "\${f%.wait}.done"; ${then}`;
+  const folder = () => mkdtempSync(join(tmpdir(), "su-waits-"));
+
+  it("a pause of the step does not count against its time limit; the run's folder is removed at the end", async () => {
+    const waits = folder();
+    const t0 = Date.now();
+    // the limit is 0.8 s of working time; the step pauses for 1 s and then works 0.3 s
+    const r = await runStep({ name: "test", cmd: "sh", args: ["-c", pausedFor(1000, "sleep 0.3; echo ok")], timeoutMs: 800, waitDir: waits }, tmpdir());
+    expect(r.ok).toBe(true);
+    expect(r.output).toContain("ok");
+    expect(Date.now() - t0).toBeGreaterThan(1200);
+    expect(readdirSync(waits)).toEqual([]);
+    rmSync(waits, { recursive: true, force: true });
+  });
+
+  it("the time after a pause still counts: the step is stopped at its limit plus the pause", async () => {
+    const waits = folder();
+    const t0 = Date.now();
+    // 0.3 s paused, then the work goes on: the step is stopped at about 0.8 s + 0.3 s
+    const r = await runStep({ name: "test", cmd: "sh", args: ["-c", pausedFor(300, "sleep 30")], timeoutMs: 800, waitDir: waits }, tmpdir());
+    const ms = Date.now() - t0;
+    expect(r.ok).toBe(false);
+    expect(ms).toBeGreaterThan(900);
+    expect(ms).toBeLessThan(4000);
+    expect(readdirSync(waits)).toEqual([]);
+    rmSync(waits, { recursive: true, force: true });
   });
 });

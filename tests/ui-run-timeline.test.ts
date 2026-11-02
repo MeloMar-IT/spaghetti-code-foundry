@@ -32,6 +32,17 @@ describe("milestones", () => {
     expect(m[1]).toMatchObject({ key: "step:0", index: 0, ok: true, depth: 0, label: "Build the thing" });
   });
 
+  it("running with paused test runs: the current row says since when; without a pause it has no text", () => {
+    const since = new Date(Date.now() - 60_000).toISOString();
+    const at = new Date(since).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const base = { status: "running", finishedAt: undefined, history: [rec("a", 1)], state: { next: "a" }, stepStartedAt: T(5) };
+    expect(mod.milestones(run({ ...base, paused: { since } }))[2].text).toBe(`paused: machine overloaded since ${at}`);
+    expect(mod.pausedText({ since })).toBe(`paused: machine overloaded since ${at}`);
+    expect("text" in mod.milestones(run(base))[2]).toBe(false);
+    expect(mod.pausedText({ since: "not a time" })).toBe("");
+    expect(mod.pausedText(undefined)).toBe("");
+  });
+
   it("waiting: ends with the message and has no current or end", () => {
     const m = mod.milestones(run({ status: "waiting", history: [rec("a", 1)], waiting: { since: T(9), message: "Ship it?" }, state: { next: "a" } }));
     expect(m.map((x: any) => x.kind)).toEqual(["start", "step", "waiting"]);

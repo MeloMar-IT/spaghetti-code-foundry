@@ -4,17 +4,19 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { lastLogWrite } from "../src/monitor/monitor.js";
 import { userRun } from "../src/server/user-view.js";
-import { newestSlotWait, readSlotWaits, SLOT_WAITS_DIR, slotClock, slotWaitLimitMs, slotWaitText, timedOutError, WAIT_STALE_MS, type SlotWait } from "../src/steps/slot-waits.js";
+import { lastActivity } from "../src/server/stuck-runs.js";
+import { newestSlotWait, pausedLine, pausedSince, readSlotWaits, SLOT_WAITS_DIR, slotClock, slotWaitLimitMs, slotWaitText, timedOutError, WAIT_STALE_MS, type SlotWait } from "../src/steps/slot-waits.js";
 import { slotWaitsRecordable } from "../src/agents/run.js";
 
-const closed = (from: number, to: number): SlotWait => ({ from, to, open: false });
-const open = (from: number, to: number): SlotWait => ({ from, to, open: true });
+const closed = (from: number, to: number): SlotWait => ({ from, to, open: false, kind: "slot" });
+const open = (from: number, to: number): SlotWait => ({ from, to, open: true, kind: "slot" });
+const pause = (from: number, to: number, isOpen = false): SlotWait => ({ from, to, open: isOpen, kind: "pause" });
 const clock = (waits: SlotWait[], now: number, o: { limitMs?: number; maxExtraMs?: number } = {}) => slotClock(waits, { began: 0, limitMs: o.limitMs ?? 10_000, maxExtraMs: o.maxExtraMs ?? 5_400_000, now });
 
 describe("slotClock", () => {
   it("a 10 s limit with 8 s of wait is not up at 10 s and is up at 18 s", () => {
     const waits = [closed(2000, 10_000)];
-    expect(clock(waits, 10_000)).toEqual({ nextCheckMs: 8000, waitedMs: 8000, countedMs: 8000 });
+    expect(clock(waits, 10_000)).toEqual({ nextCheckMs: 8000, waitedMs: 8000, countedMs: 8000, pausedMs: 0 });
     expect(clock(waits, 18_000).nextCheckMs).toBe(0);
   });
 
@@ -53,7 +55,16 @@ describe("slotClock", () => {
   });
 
   it("a bound of 0 gives no credit", () => {
-    expect(clock([closed(0, 8000)], 10_000, { maxExtraMs: 0 })).toEqual({ nextCheckMs: 0, waitedMs: 8000, countedMs: 0 });
+    expect(clock([closed(0, 8000)], 10_000, { maxExtraMs: 0 })).toEqual({ nextCheckMs: 0, waitedMs: 8000, countedMs: 0, pausedMs: 0 });
+  });
+
+  it("a pause counts like a wait; pausedMs is the union of the pauses only", () => {
+    // a slot wait 0–4 s and a pause 2–7 s overlap: 7 s left out, 5 s of it paused
+    const c = clock([closed(0, 4000), pause(2000, 7000)], 10_000);
+    expect(c).toMatchObject({ waitedMs: 7000, countedMs: 7000, pausedMs: 5000, nextCheckMs: 7000 });
+    expect(clock([pause(0, 3000), pause(1000, 4000)], 10_000).pausedMs).toBe(4000);
+    // an open pause keeps the next look at least a second away
+    expect(clock([pause(0, 10_000, true)], 10_000)).toMatchObject({ pausedMs: 10_000, nextCheckMs: 10_000 });
   });
 });
 
@@ -72,9 +83,21 @@ describe("readSlotWaits", () => {
     touch(join(d, "300-3.wait"), now - WAIT_STALE_MS - 5000);
     const waits = readSlotWaits(d, now);
     expect(waits).toHaveLength(3);
-    expect(waits).toContainEqual({ from: 100, to: now - 60_000, open: false });
-    expect(waits).toContainEqual({ from: 200, to: now, open: true });
-    expect(waits).toContainEqual({ from: 300, to: now - WAIT_STALE_MS - 5000, open: false });
+    expect(waits).toContainEqual({ from: 100, to: now - 60_000, open: false, kind: "slot" });
+    expect(waits).toContainEqual({ from: 200, to: now, open: true, kind: "slot" });
+    expect(waits).toContainEqual({ from: 300, to: now - WAIT_STALE_MS - 5000, open: false, kind: "slot" });
+  });
+
+  it("reads pause records as kind pause", () => {
+    const d = folder();
+    const now = 1_000_000_000_000;
+    writeFileSync(join(d, "100-7-pause.wait"), "");
+    touch(join(d, "100-7-pause.wait"), now - 1000);
+    writeFileSync(join(d, "200-8-pause.done"), "");
+    touch(join(d, "200-8-pause.done"), now - 30_000);
+    const waits = readSlotWaits(d, now);
+    expect(waits).toContainEqual({ from: 100, to: now, open: true, kind: "pause" });
+    expect(waits).toContainEqual({ from: 200, to: now - 30_000, open: false, kind: "pause" });
   });
 
   it("ignores other names, folders and links, and a missing folder gives nothing", () => {
@@ -94,7 +117,7 @@ describe("readSlotWaits", () => {
     writeFileSync(join(d, "500-7.wait"), "");
     touch(join(d, "500-7.wait"), now - 2000);
     const waits = readSlotWaits(d, now, () => renameSync(join(d, "500-7.wait"), join(d, "500-7.done")));
-    expect(waits).toEqual([{ from: 500, to: now - 2000, open: false }]);
+    expect(waits).toEqual([{ from: 500, to: now - 2000, open: false, kind: "slot" }]);
   });
 
   it("reads at most the newest 1000 files", () => {
@@ -123,6 +146,13 @@ describe("texts and settings", () => {
     expect(timedOutError({ waitedMs: 95 * 60_000, countedMs: 90 * 60_000, capped: true })).toBe("timed out (waited 95 min for a test slot, more than the 90 min that can be left out)");
   });
 
+  it("timedOutError and pausedLine tell the pause apart from the wait for a slot", () => {
+    expect(pausedLine(3 * 60_000)).toBe("paused 3 min while the machine was overloaded");
+    expect(timedOutError({ waitedMs: 0, countedMs: 180_000, pausedMs: 180_000 })).toBe("timed out (paused 3 min while the machine was overloaded, which did not count)");
+    expect(timedOutError({ waitedMs: 40_000, countedMs: 220_000, pausedMs: 180_000 })).toBe("timed out (waited 40 s for a test slot and paused 3 min while the machine was overloaded, which did not count)");
+    expect(timedOutError({ waitedMs: 0, countedMs: 90 * 60_000, pausedMs: 95 * 60_000, capped: true })).toBe("timed out (paused 95 min while the machine was overloaded, more than the 90 min that can be left out)");
+  });
+
   it("a read-only Codex session cannot record waits; the others can", () => {
     expect(slotWaitsRecordable("codex", "read-only")).toBe(false);
     expect(slotWaitsRecordable("codex", "workspace-write")).toBe(true);
@@ -143,6 +173,35 @@ describe("signs of life and the user view", () => {
     utimesSync(join(step, "1-1.wait"), 1_700_000_000, 1_700_000_000);
     expect(newestSlotWait(run)).toBe(1_700_000_000_000);
     expect(lastLogWrite(run)).toBe(new Date(1_700_000_000_000).toISOString());
+  });
+
+  it("newestSlotWait counts a pause record, and so does the run's last activity", () => {
+    const run = mkdtempSync(join(tmpdir(), "run-"));
+    const step = join(run, SLOT_WAITS_DIR, "001-test");
+    mkdirSync(step, { recursive: true });
+    writeFileSync(join(step, "5-1-pause.wait"), "");
+    utimesSync(join(step, "5-1-pause.wait"), 1_700_000_100, 1_700_000_100);
+    expect(newestSlotWait(run)).toBe(1_700_000_100_000);
+    expect(lastActivity(run)).toBe(1_700_000_100_000);
+  });
+
+  it("pausedSince: the earliest start of a fresh pause record; none for a stale, finished or missing one", () => {
+    const run = mkdtempSync(join(tmpdir(), "run-"));
+    const now = 1_700_000_200_000;
+    expect(pausedSince(run, now)).toBeUndefined();
+    const step = join(run, SLOT_WAITS_DIR, "001-test");
+    mkdirSync(step, { recursive: true });
+    const put = (name: string, mtime: number) => {
+      writeFileSync(join(step, name), "");
+      utimesSync(join(step, name), mtime / 1000, mtime / 1000);
+    };
+    put("100-1-pause.wait", now - WAIT_STALE_MS - 1000); // stale
+    put("150-2-pause.done", now - 1000); // finished
+    put("160-3.wait", now - 1000); // a wait for a slot, not a pause
+    expect(pausedSince(run, now)).toBeUndefined();
+    put("300-4-pause.wait", now - 1000);
+    put("200-5-pause.wait", now - 2000);
+    expect(pausedSince(run, now)).toBe(200);
   });
 
   it("userRun passes slotWaitMs of a step and leaves it out when there is none", () => {
