@@ -3984,16 +3984,31 @@ the queue (`capped`, and the queue names the `cap`), and the monitor does not re
 that stands still. While a cap holds jobs back, the queue looks again every 30 seconds, so a cap that
 ends starts the waiting runs even when no run ends.
 
-**The load governor.** Every minute it reads the load average per core and the memory pressure. It
-allows one run fewer per check, down to `governor.floor` (by default half the configured number, at
-least 2; 0 means no run may start), only on sustained
-load: the 5-minute load is above 2.5 per core, or the 1-minute load has been above 2.5 for three
-checks in a row. A spike of a minute or two (a test suite, a build) does not lower the cap. Memory
-pressure "warning" alone does not lower it either: macOS reports it for hours on a full but idle
-machine. It counts only with a load above 2.5 per core.
+**The load governor.** Every minute it reads the load average per core, the memory pressure and, when
+it can, the CPU of your other programs (see "Who uses the CPU" below). When it has that measurement,
+it works out how many runs fit next to your other programs and moves the cap one step per check towards that number:
+
+- **Runs that fit** = (cores − cores used by other programs − `governor.reserve_cores`) ÷ cores one run
+  uses, rounded down, and never below 0. `governor.reserve_cores` is 2 by default. One run uses the mean
+  of the learned figures of the repositories of the active and queued runs; a repository with no
+  learned figure counts as the mean of the others, and a run is taken to use at least 0.25 cores.
+- **Down:** one run fewer when the cap is above the runs that fit, and its runs use more than the free
+  cores plus 0.5 cores, for three checks in a row. The load alone does not lower the cap.
+- **Up:** one run more after five calm checks (see below), and only when the runs that fit are more than the cap.
+
+The cap never goes below `governor.floor` (by default half the configured number, at least 2; 0 means
+no run may start).
+
+Without the measurement (the first check, a failed `ps`, no learned figure yet) the cap follows the
+load instead, and the rules are the same as before: it allows one run fewer per check, down to
+`governor.floor`, only on sustained load: the 5-minute load is above 2.5 per core, or the 1-minute
+load has been above 2.5 for three checks in a row. A spike of a minute or two (a test suite, a build)
+does not lower the cap. Memory pressure "warning" alone does not lower it either: macOS reports it for
+hours on a full but idle machine. It counts only with a load above 2.5 per core.
 
 Two cases act at once, even during a pause: memory pressure critical, and a 1-minute load above 4
 per core. Above 4 per core, or under critical memory pressure, only one test run works at a time.
+These apply with and without the measurement.
 
 After the cap moved, the governor pauses: no further step down for 3 minutes, and no step up for
 10 minutes. Only an emergency breaks the pause. It still moves one step at a time. Each step down in
@@ -4021,12 +4036,14 @@ programs use. The Foundry's share is the step processes of the active runs (incl
 that a step started and left its process group), the test slots, and the server with its helpers. Everything
 else is other programs. The governor learns how much CPU one run uses, separately for each repository, from
 these measurements, and keeps that figure across checks. The learned figure is kept by a reset too.
-The measurement changes no limit. The cause is written after the change in `governor/changes.log`,
-for example `… — the Foundry uses 3.2 cores, other programs use 6.1 cores (top: Xcode 3.1, node 1.4)`.
+The measurement sets the target the cap moves towards (see "The load governor" above). The cause is
+written after the change in `governor/changes.log`, for example
+`… — the Foundry uses 3.2 cores, other programs use 6.1 cores (top: Xcode 3.1, node 1.4); 4 runs fit`.
 Only the base name of a program is kept, in the data folder; program names never go to GitHub.
-`scf governor report` shows the same figures as "now" and "a run uses about", when the last check is
-under 4 minutes old. The last check is in `governor/latest.json`. A check gives no figures on its first
-run, after a long gap, or when `ps` fails or takes too long; the limits are then the same as before.
+`scf governor report` shows the same figures as "now" and "a run uses about", with the runs that fit
+after "now", when the last check is under 4 minutes old. The last check is in `governor/latest.json`.
+A check gives no figures on its first run, after a long gap, or when `ps` fails or takes too long; the
+limits then follow the load, as described above.
 
 **Unreliable tests.** A test is listed when it failed, or passed only on a retry, in at least three
 different stories of one repository in the last 7 days: one story can break its own test, several
@@ -4138,6 +4155,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
 
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
+
+**Cores kept free (load governor)** — `governor.reserve_cores` is how many cores the load governor leaves free for your other programs when it works out how many runs fit (see "The load governor" under Helper processes). The default is 2. A higher number means fewer runs next to your other programs. A configuration without the setting works as before, with 2.
 
 **Promotion gate (governance.promotion)** — `governance.promotion` holds the four numbers of the promotion gate: `min_runs` (default `10`), `evidence_completeness` (`0.95`), `eval_pass_rate` (`0.9`) and `within_days` (`30`, from 1 to 90). They only decide what the gate shows; nothing is enforced by them yet ([Promotion gate](#promotion-gate)). `governance.owner` is the admin account that approves promotions; unset, the first active admin does ([Change a level](#change-a-level)).
 

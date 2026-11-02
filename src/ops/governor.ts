@@ -13,6 +13,18 @@ export interface Sample {
   load15: number;
   /** macOS memory pressure: 1 normal, 2 warning, 4 critical. 1 where it cannot be read. */
   pressure: number;
+  /** What the usage check measured (part 4). Absent: no figures, and the rules of part 3 apply. */
+  measured?: Measured;
+}
+
+/** The figures the target is worked out from. */
+export interface Measured {
+  /** Cores of the machine. */
+  cores: number;
+  /** Cores other programs use now. */
+  other: number;
+  /** Cores one run uses (see `coresPerRun`). */
+  perRun: number;
 }
 
 export interface GovernorState {
@@ -23,6 +35,8 @@ export interface GovernorState {
   calm: number;
   /** Checks in a row in which the 1-minute load was above `high`. Absent: 0. */
   hot?: number;
+  /** Checks in a row in which the cap was above the runs that fit (with a measurement). Absent: 0. */
+  over?: number;
   /** When the cap on runs last moved (ISO time). Kept only while a pause after a change can still hold. */
   changedAt?: string;
   /** When the cap on runs went down in the last hour (ISO times). */
@@ -48,9 +62,23 @@ export interface Settings {
   settleMinutes: number;
   /** Minutes after the cap moved before it may go further down. */
   downPauseMinutes: number;
+  /** Cores kept free for other programs when the runs that fit are worked out. */
+  reserveCores: number;
 }
 
-export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3 };
+export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3, reserveCores: 2 };
+
+/** With a measurement the cap goes down only when its runs use more than the free cores by this much (a figure that wobbles moves nothing). */
+export const SLACK_CORES = 0.5;
+
+const freeCores = (m: Measured, reserve: number) => Math.max(0, m.cores - m.other - reserve);
+
+/** Runs that fit next to the other programs: free cores (cores − other programs − reserve) divided by what one run uses, rounded down. */
+export function runsFit(m: Measured, reserve: number): number {
+  return Math.max(0, Math.floor(freeCores(m, reserve) / m.perRun));
+}
+
+export const fitsText = (n: number): string => `${n} run${n === 1 ? " fits" : "s fit"}`;
 
 /** How long a step down makes the next step up wait longer. */
 export const DOWN_WINDOW_MS = 60 * 60_000;
@@ -67,7 +95,10 @@ function recentDowns(list: unknown, t: number): string[] {
 export interface Decision { state: GovernorState; change?: string }
 
 /**
- * One step at a time. Sustained load (5-minute load above `high`, or the 1-minute load above `high` for
+ * One step at a time. With a measurement (`s.measured`) the cap moves towards the runs that fit (`runsFit`): one run
+ * fewer when it is above that number (and its runs use more than the free cores plus `SLACK_CORES`) for `hotChecks`
+ * checks in a row, one more when it is below and the machine has been calm for `calmChecks` checks; the load alone does
+ * not lower it then. Without a measurement: sustained load (5-minute load above `high`, or the 1-minute load above `high` for
  * `hotChecks` checks in a row): one run fewer (running work is never stopped, only new starts wait). A spike of
  * a minute or two moves nothing. An emergency (memory pressure critical, 1-minute load above `testsHigh`) acts at
  * once. After the cap moved there is no step down for `downPauseMinutes` and no step up for `settleMinutes`,
@@ -86,6 +117,11 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   const have = Math.max(floor, Math.min(prev.runs ?? configured, configured));
   const critical = s.pressure >= 4;
   const emergency = critical || s.load1 > set.testsHigh;
+  const m = s.measured;
+  const fit = m ? runsFit(m, set.reserveCores) : undefined;
+  // with no free cores at all the slack does not apply: a run of any size is then over the target
+  const overFree = m ? freeCores(m, set.reserveCores) : 0;
+  const over = m && have > fit! && (overFree === 0 || have * m.perRun > overFree + SLACK_CORES) ? (prev.over ?? 0) + 1 : 0;
   const hot = s.load1 > set.high ? (prev.hot ?? 0) + 1 : 0;
   const sustained = s.load5 > set.high || hot >= set.hotChecks;
   const loaded = emergency || s.load1 > set.high || s.load5 > set.high;
@@ -96,20 +132,19 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   // no time, an unreadable time or one in the future (the clock moved back): no pause
   const age = Number.isFinite(changed) && changed <= t ? t - changed : Infinity;
   const tests = emergency ? 1 : undefined;
-  const why = critical ? "memory pressure critical" : s.load1 > set.testsHigh ? `load ${s.load1.toFixed(1)} per core` : s.load5 > set.high ? `load ${s.load5.toFixed(1)} per core over 5 minutes` : `load ${s.load1.toFixed(1)} per core for ${hot} checks`;
+  const why = critical ? "memory pressure critical" : s.load1 > set.testsHigh ? `load ${s.load1.toFixed(1)} per core` : fit !== undefined ? fitsText(fit) : s.load5 > set.high ? `load ${s.load5.toFixed(1)} per core over 5 minutes` : `load ${s.load1.toFixed(1)} per core for ${hot} checks`;
   const notes: string[] = [];
   let runs = have;
   let calm = 0;
   let moved = false;
-  if (loaded) {
-    if (have > floor && (emergency || (sustained && age >= set.downPauseMinutes * 60_000))) {
-      runs = have - 1;
-      moved = true;
-      downs = [...downs, now.toISOString()];
-      notes.push(`runs at once ${have} → ${runs} (${why})`);
-    }
-  } else {
-    calm = s.load1 <= set.low && s.load5 <= set.low ? prev.calm + 1 : 0;
+  const wantDown = m ? over >= set.hotChecks : sustained;
+  if (have > floor && (emergency || (wantDown && age >= set.downPauseMinutes * 60_000))) {
+    runs = have - 1;
+    moved = true;
+    downs = [...downs, now.toISOString()];
+    notes.push(`runs at once ${have} → ${runs} (${why})`);
+  } else if (!loaded) {
+    calm = s.load1 <= set.low && s.load5 <= set.low && (fit === undefined || fit > have) ? prev.calm + 1 : 0;
     if (calm >= set.calmChecks) {
       if (have >= configured) calm = 0;
       else if (age >= upWait && (have + 1 < configured || s.load15 < set.low)) {
@@ -128,6 +163,7 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
     calm,
     ...(downs.length ? { downs } : {}),
     ...(hot ? { hot } : {}),
+    ...(over ? { over } : {}),
     ...(runs < configured ? { runs } : {}),
     ...(tests ? { tests } : {}),
     ...(stamp !== undefined ? { changedAt: new Date(stamp).toISOString() } : {}),
@@ -160,7 +196,7 @@ export function loadState(dir: string, now = new Date()): GovernorState {
     const age = now.getTime() - Date.parse(s.at ?? "");
     if (!(age <= HOLD_MS)) return { calm: 0 };
     const downs = recentDowns(s.downs, now.getTime());
-    return { calm: Number(s.calm) || 0, ...(downs.length ? { downs } : {}),...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
+    return { calm: Number(s.calm) || 0, ...(downs.length ? { downs } : {}),...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number(s.over) > 0 ? { over: Number(s.over) } : {}),...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
   } catch {
     return { calm: 0 };
   }

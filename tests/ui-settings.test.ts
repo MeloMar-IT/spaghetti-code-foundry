@@ -193,15 +193,25 @@ describe("Settings → Load governor", () => {
     sel.fire("change", { target: sel });
     main.all("button").find((b) => b.textContent === "Save")!.click();
     await flush();
-    expect(puts[0].governor).toEqual({ priority: "background" });
+    expect(puts[0].governor).toEqual({ priority: "background", reserve_cores: 2 });
     expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  it("saves a changed number of cores kept free", async () => {
+    const { main, puts } = await render({});
+    const input = card(main).all("input").filter((i) => i.attrs.type === "number")[1] as any;
+    input.value = "3.5";
+    input.fire("change", { target: input });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].governor.reserve_cores).toBe(3.5);
   });
 
   const floorInput = (main: FakeElement) => card(main).all("input").filter((i) => i.attrs.type === "number")[0] as any;
 
   it("has one number input for the lowest runs, empty when not set", async () => {
     const { main } = await render({});
-    expect(card(main).all("input").filter((i) => i.attrs.type === "number")).toHaveLength(1);
+    expect(card(main).all("input").filter((i) => i.attrs.type === "number")).toHaveLength(2);
     expect(floorInput(main).value ?? "").toBe("");
   });
 
