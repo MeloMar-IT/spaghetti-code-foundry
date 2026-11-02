@@ -15,6 +15,8 @@ export interface Sample {
   pressure: number;
   /** What the usage check measured (part 4). Absent: no figures, and the rules of part 3 apply. */
   measured?: Measured;
+  /** Cores of the machine. Absent: no worker number is decided */
+  cores?: number;
 }
 
 /** The figures the target is worked out from. */
@@ -31,6 +33,8 @@ export interface GovernorState {
   /** Runs allowed at once now; undefined: no cap (the configured number applies). */
   runs?: number;
   tests?: number;
+  /** Workers per test run now; undefined: no limit. */
+  workers?: number;
   /** Checks in a row in which the machine was calm. */
   calm: number;
   /** Checks in a row in which the 1-minute load was above `high`. Absent: 0. */
@@ -71,6 +75,9 @@ export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmCheck
 /** With a measurement the cap goes down only when its runs use more than the free cores by this much (a figure that wobbles moves nothing). */
 export const SLACK_CORES = 0.5;
 
+/** Workers for a test run on a busy machine: half of vitest's default (half the cores), at least 2. */
+export const testWorkers = (cores: number): number => Math.max(2, Math.floor(cores / 4));
+
 const freeCores = (m: Measured, reserve: number) => Math.max(0, m.cores - m.other - reserve);
 
 /** Runs that fit next to the other programs: free cores (cores − other programs − reserve) divided by what one run uses, rounded down. */
@@ -109,6 +116,9 @@ export interface Decision { state: GovernorState; change?: string }
  * to go down (macOS reports it for hours on a full but idle machine). Very high load: one test run at a time,
  * because tests are what loads the machine most. The cap goes down to the floor (`set.floor`, which may be 0: then
  * nothing new starts until the machine is calmer; not set: half of the configured number, at least 2). `now` is the time of the check.
+ * Test workers: while the machine is loaded (1- or 5-minute load above `high`, or an emergency) each test run gets
+ * `testWorkers(cores)` workers; the number stays while the load is between `low` and `high` and goes when the 1- and
+ * 5-minute load are both at or below `low`. Without the cores (`s.cores`) none is decided.
  */
 export function decide(prev: GovernorState, s: Sample, configured: number, now: Date, set: Settings = DEFAULTS): Decision {
   const floor = Math.min(configured, set.floor ?? Math.max(2, Math.ceil(configured / 2)));
@@ -156,6 +166,9 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
       // held by the wait or the 15-minute load: the count goes on, and the step comes when they are over
     }
   }
+  const cores = s.cores;
+  const workers = cores === undefined ? undefined : loaded ? testWorkers(cores) : s.load1 <= set.low && s.load5 <= set.low ? undefined : prev.workers;
+  if (workers !== prev.workers) notes.push(workers ? `test workers → ${workers} (${critical ? "memory pressure critical" : `load ${Math.max(s.load1, s.load5).toFixed(1)} per core`})` : "test workers: back to normal");
   if (tests !== prev.tests) notes.push(tests ? `test runs at once → 1 (${critical ? "memory pressure critical" : `load ${s.load1.toFixed(1)} per core`})` : "test runs at once: back to normal");
   const keep = Number.isFinite(changed) && age < Math.max(upWait, set.downPauseMinutes * 60_000) ? changed : undefined;
   const stamp = moved ? t : keep;
@@ -166,6 +179,7 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
     ...(over ? { over } : {}),
     ...(runs < configured ? { runs } : {}),
     ...(tests ? { tests } : {}),
+    ...(workers ? { workers } : {}),
     ...(stamp !== undefined ? { changedAt: new Date(stamp).toISOString() } : {}),
   };
   return { state, ...(notes.length ? { change: notes.join("; ") } : {}) };
@@ -180,7 +194,7 @@ export function sample(): Sample {
   } catch {
     // not macOS
   }
-  return { load1: l1! / cores, load5: l5! / cores, load15: l15! / cores, pressure };
+  return { load1: l1! / cores, load5: l5! / cores, load15: l15! / cores, pressure, cores };
 }
 
 /** How long a cap holds without a new check: three missed checks and the Foundry is free again. */
@@ -196,7 +210,7 @@ export function loadState(dir: string, now = new Date()): GovernorState {
     const age = now.getTime() - Date.parse(s.at ?? "");
     if (!(age <= HOLD_MS)) return { calm: 0 };
     const downs = recentDowns(s.downs, now.getTime());
-    return { calm: Number(s.calm) || 0, ...(downs.length ? { downs } : {}),...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number(s.over) > 0 ? { over: Number(s.over) } : {}),...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
+    return { calm: Number(s.calm) || 0, ...(downs.length ? { downs } : {}),...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number(s.over) > 0 ? { over: Number(s.over) } : {}),...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(Number.isInteger(s.workers) && s.workers! >= 1 ? { workers: s.workers } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
   } catch {
     return { calm: 0 };
   }
@@ -217,6 +231,11 @@ export function runGovernor(o: { dir: string; slotsDir: string; capsFile: string
       mkdirSync(o.slotsDir, { recursive: true });
       writeFileSync(capFile, String(d.state.tests));
     } else rmSync(capFile, { force: true });
+    const workersFile = join(o.slotsDir, "workers");
+    if (d.state.workers) {
+      mkdirSync(o.slotsDir, { recursive: true });
+      writeFileSync(workersFile, String(d.state.workers));
+    } else rmSync(workersFile, { force: true });
     if (d.change) appendFileSync(join(o.dir, "changes.log"), `${o.now.toISOString()} ${d.change}${o.cause ? ` — ${o.cause}` : ""}\n`);
   }
   return d;
@@ -266,6 +285,7 @@ export function changesToday(dir: string, now: Date): number {
 /** Take away everything the governor set. */
 export function clearGovernor(dir: string, slotsDir: string, capsFile: string) {
   rmSync(join(slotsDir, "cap"), { force: true });
+  rmSync(join(slotsDir, "workers"), { force: true });
   rmSync(join(dir, "state.json"), { force: true });
   setCap("load", undefined, capsFile);
 }

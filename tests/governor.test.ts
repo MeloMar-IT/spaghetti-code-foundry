@@ -1,9 +1,9 @@
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadCaps, runLimit } from "../src/ops/caps.js";
-import { changesToday, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
+import { changesToday, clearGovernor, DEFAULTS, HOLD_MS, decide, loadState, runGovernor, testWorkers, type Decision, type GovernorState, type Sample, type Settings } from "../src/ops/governor.js";
 import { minutes, withAverages } from "./fixtures/governor-days.js";
 
 const T0 = new Date(2026, 9, 20, 9, 0);
@@ -226,6 +226,74 @@ describe("loadState", () => {
     expect(loadState(dir, at(0))).toEqual({ calm: 1, runs: 3 });
     state(dir, { calm: 2, cool: 2, runs: 3, at: at(0).toISOString() });
     expect(loadState(dir, at(0))).toEqual({ calm: 2, runs: 3 });
+  });
+});
+
+describe("test workers", () => {
+  const dirs: string[] = [];
+  const tmp = () => {
+    const d = mkdtempSync(join(tmpdir(), "scf-gov-w-"));
+    dirs.push(d);
+    return d;
+  };
+  afterEach(() => {
+    for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+  const c16 = (x: Sample): Sample => ({ ...x, cores: 16 });
+
+  it("testWorkers is a quarter of the cores, at least 2", () => {
+    expect([1, 4, 16, 64].map(testWorkers)).toEqual([2, 2, 4, 16]);
+  });
+
+  it("is set above high, kept in the band, and removed when calm; both changes are logged", () => {
+    const hot = decide({ calm: 0 }, c16(s(3, 3)), 4, at(0));
+    expect(hot.state.workers).toBe(4);
+    expect(hot.change).toContain("test workers → 4 (load 3.0 per core)");
+    const kept = decide(hot.state, c16(band), 4, at(1));
+    expect(kept.state.workers).toBe(4);
+    expect(kept.change ?? "").not.toContain("test workers");
+    const gone = decide(kept.state, c16(calm), 4, at(2));
+    expect(gone.state.workers).toBeUndefined();
+    expect(gone.change).toContain("test workers: back to normal");
+  });
+
+  it("names memory pressure as the reason when it is the only one", () => {
+    expect(decide({ calm: 0 }, c16(s(0.5, 0.5, 4)), 4, at(0)).change).toContain("test workers → 4 (memory pressure critical)");
+  });
+
+  it("decides nothing without cores, also with a measurement", () => {
+    const m = { cores: 8, other: 0, perRun: 1 };
+    expect(decide({ calm: 0 }, { ...s(3, 3), measured: m }, 4, at(0)).state.workers).toBeUndefined();
+    expect(decide({ calm: 0 }, s(3, 3), 4, at(0)).state.workers).toBeUndefined();
+  });
+
+  it("loadState reads the number back and drops a bad one", () => {
+    const dir = tmp();
+    const put = (workers: unknown) => writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, workers, at: at(0).toISOString() }));
+    put(4);
+    expect(loadState(dir, at(0))).toEqual({ calm: 0, workers: 4 });
+    for (const bad of [0, "x", 2.5]) {
+      put(bad);
+      expect(loadState(dir, at(0))).toEqual({ calm: 0 });
+    }
+  });
+
+  it("runGovernor writes the file at every check while it holds, removes it when it is gone, and clearGovernor removes it", () => {
+    const dir = tmp();
+    const o = { dir: join(dir, "governor"), slotsDir: join(dir, "test-slots"), capsFile: join(dir, "governor", "caps.json"), configured: 4 };
+    const file = join(o.slotsDir, "workers");
+    runGovernor({ ...o, now: at(0), sample: c16(s(3, 3)) });
+    expect(readFileSync(file, "utf8")).toBe("4");
+    utimesSync(file, 0, 0);
+    runGovernor({ ...o, now: at(1), sample: c16(band) });
+    expect(statSync(file).mtimeMs).toBeGreaterThan(1000);
+    expect(readFileSync(join(o.dir, "changes.log"), "utf8")).toContain("test workers → 4");
+    runGovernor({ ...o, now: at(2), sample: c16(calm) });
+    expect(existsSync(file)).toBe(false);
+    runGovernor({ ...o, now: at(3), sample: c16(s(3, 3)) });
+    expect(existsSync(file)).toBe(true);
+    clearGovernor(o.dir, o.slotsDir, o.capsFile);
+    expect(existsSync(file)).toBe(false);
   });
 });
 

@@ -2647,7 +2647,11 @@ lowest that still holds (`caps.ts`). Every cap carries an end time and is ignore
 the safety rule of this design: a helper that crashes or is removed can only fail towards the
 configured behaviour, never hold the Foundry down. The load governor also writes `test-slots/cap`,
 which `tools/test-slot` reads. Its lowest value is `governor.floor` (`Settings.floor`, optional: unset means half the
-configured number, at least 2). The governor's state (`governor/state.json`) keeps the times of its step downs for an
+configured number, at least 2). The same way it writes `test-slots/workers` (one number, `testWorkers(cores)` =
+`max(2, floor(cores / 4))`) while the machine is loaded, and removes it otherwise. `tools/test-slot` ignores the file
+after 4 minutes, sets `SCF_TEST_WORKERS` and `org.gradle.workers.max` in the command's environment (never on its command
+line), and never raises a limit the user set. `decide()` sets `GovernorState.workers` only when the sample has `cores`
+(`sample()` sets it). The governor's state (`governor/state.json`) keeps the times of its step downs for an
 hour (`downs`, read by `loadState()`); the wait before a step up is `settleMinutes` times one plus the number of them, and
 a step up below the configured number also needs the 15-minute load below `low`. A cap of 0 is valid: `runLimit()` returns it, `pump()` starts no new run (architect runs and
 schedule chores included) and resumes still go on. A cap ends without an event, so while a cap holds jobs back the scheduler

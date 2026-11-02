@@ -75,7 +75,7 @@ function governor(out: Out, now = new Date()) {
   const d = runGovernor({ dir, slotsDir, capsFile: capsPath(dataDir()), configured: c.concurrency, now, sample: sampled, settings: { ...DEFAULTS, floor: c.governor.floor, reserveCores: c.governor.reserve_cores }, ...(cause ? { cause } : {}) });
   // the caps are written by now: a result that cannot be saved must not fail the check
   try {
-    save(dir, "latest.json", JSON.stringify({ at: now.toISOString(), load1: sampled.load1, load5: sampled.load5, pressure: sampled.pressure, ...(d.state.runs !== undefined ? { runs: d.state.runs } : {}), ...(d.state.tests ? { tests: d.state.tests } : {}), ...(usage ? { usage } : {}), ...(fit !== undefined ? { fit } : {}) }, null, 2));
+    save(dir, "latest.json", JSON.stringify({ at: now.toISOString(), load1: sampled.load1, load5: sampled.load5, pressure: sampled.pressure, ...(d.state.runs !== undefined ? { runs: d.state.runs } : {}), ...(d.state.tests ? { tests: d.state.tests } : {}), ...(d.state.workers ? { workers: d.state.workers } : {}), ...(usage ? { usage } : {}), ...(fit !== undefined ? { fit } : {}) }, null, 2));
   } catch {
     // best effort
   }
@@ -317,7 +317,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
       if (name === "governor") {
         // a state the governor did not renew has ended (loadState leaves it out): never show a limit that is over
         const s = loadState(dir, new Date());
-        out(s.runs !== undefined || s.tests ? `limits now: ${s.runs !== undefined ? `${atOnce(s.runs)} (configured: ${configured()})` : "runs as configured"}${s.tests ? ", 1 test run at once" : ""}` : "no limits set: the machine is calm enough");
+        out(s.runs !== undefined || s.tests || s.workers ?`limits now: ${s.runs !== undefined ? `${atOnce(s.runs)} (configured: ${configured()})` : "runs as configured"}${s.tests ? ", 1 test run at once" : ""}${s.workers ? `, at most ${s.workers} workers per test run` : ""}` : "no limits set: the machine is calm enough");
         for (const l of usageReport(dir, new Date())) out(l);
         const log = join(dir, "changes.log");
         if (existsSync(log)) out(readFileSync(log, "utf8").trim().split("\n").slice(-20).join("\n"));

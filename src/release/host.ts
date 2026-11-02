@@ -36,7 +36,7 @@ export const TOOLCHAIN_VARS: readonly string[] = [
 ];
 
 const SECRET_NAME = /TOKEN|SECRET|PASSW|CREDENTIAL|_KEY|AUTH/i;
-const NUMERIC_VARS = ["FACTORY_VAR_TEST_SLOTS", "FACTORY_TEST_SLOT_WAIT_SEC", "FACTORY_TEST_SLOT_POLL_MS", "FACTORY_TEST_NICE"];
+const NUMERIC_VARS = ["FACTORY_VAR_TEST_SLOTS", "FACTORY_TEST_SLOT_WAIT_SEC", "FACTORY_TEST_SLOT_POLL_MS", "FACTORY_TEST_NICE", "SCF_TEST_WORKERS"];
 
 /** Names that never reach a build: the GitHub token variables (also the bot's own) and the provider key variables. */
 export function deniedNames(config?: Pick<Config, "bot" | "providers">): Set<string> {
