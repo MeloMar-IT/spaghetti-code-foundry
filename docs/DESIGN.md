@@ -344,6 +344,15 @@ flow first, read through the shared outcome facts cache, and the loop yields to 
 Each check returns a value and a threshold, or a plain reason when its data is missing; `passed` is the AND of the
 four evidence checks, and `approval` is always "pending" until part 4 fills it in.
 
+Automatic demotion (#647) is in `src/governance/auto-demote.ts`. The monitor calls it after `mergeFindings` has
+saved the findings: `markAutoDemotions` marks only the findings that are new in this check (`fresh`), and only
+those that demote (`AUTO_DEMOTE_DETECTORS` names the `major` detectors; any `critical` one counts). Each marked
+finding carries `autoDemote.left`, the keys still to lower (`repos:<id>` or `flows:<name>`). `runAutoDemotions`
+takes one key out of `left` and saves the findings before it calls `demoteLevel` with `by: "monitor"`. So a crash
+loses one demotion and never repeats one, and a failure on one record leaves the others alone. The findings
+that carry an open `autoDemote` are kept when the 500-finding cap evicts. `Monitor.applyAutoDemotions` runs after
+the save, never throws, and does not wait for the autonomy lock. Turned off, it empties `left` and saves.
+
 ### Policy contracts
 
 `src/policy/` defines what a policy is, what it is asked and what it answers (#141). Nothing in the

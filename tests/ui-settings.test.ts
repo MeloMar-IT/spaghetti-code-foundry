@@ -249,7 +249,7 @@ describe("Settings → Promotion gate", () => {
     const { main, puts } = await render({});
     main.all("button").find((b) => b.textContent === "Save")!.click();
     await flush();
-    expect(puts[0].governance).toEqual({ promotion: { min_runs: 10, evidence_completeness: 0.95, eval_pass_rate: 0.9, within_days: 30 } });
+    expect(puts[0].governance).toEqual({ auto_demote: true, promotion: { min_runs: 10, evidence_completeness: 0.95, eval_pass_rate: 0.9, within_days: 30 } });
   });
 });
 

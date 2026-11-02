@@ -76,6 +76,11 @@ describe("the reader", () => {
     expect(r[2]).not.toHaveProperty("target");
   });
 
+  it("reads a line made by the monitor", async () => {
+    writeFileSync(auditPath(), lines({ time: "2026-10-02T09:00:00.000Z", by: "monitor", action: "autonomy-demote", result: "ok", target: "flows:f", detail: "a→b reason: auto: d fp" }));
+    expect(await collect(scanAudit())).toMatchObject([{ by: "monitor", action: "autonomy-demote", target: "flows:f" }]);
+  });
+
   it("skips lines that do not parse and keeps a last line without a newline", async () => {
     const good = (t: string) => JSON.stringify(ev(t));
     writeFileSync(

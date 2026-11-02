@@ -39,6 +39,7 @@ export const userOptions = (users) => [...users]
 export function actorText(actor) {
   if (actor?.type === "cli") return "command line";
   if (actor?.type === "anonymous") return "not signed in";
+  if (actor?.type === "monitor") return "monitor";
   return actor?.name ?? "";
 }
 
@@ -66,7 +67,7 @@ const onPage = () => {
   }
 };
 
-const isAccount = (x) => x && x.type !== "cli" && x.type !== "anonymous" && x.type !== "text";
+const isAccount = (x) => x && x.type !== "cli" && x.type !== "anonymous" && x.type !== "monitor" && x.type !== "text";
 
 /**
  * Every field of an entry for the detail row: `[{ label, value, id?, href? }]`. An account (actor or target) has its `id`, and an `href`

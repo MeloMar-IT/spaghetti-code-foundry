@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { hashPassword, type User } from "../src/auth/users.js";
 import { AUTONOMY_LEVELS, type AutonomyLevel } from "../src/governance/autonomy.js";
-import { accountableOwner, activeAdmins, approvalVerdict, approversOf, checkReason } from "../src/governance/autonomy-change.js";
+import { accountableOwner, activeAdmins, approvalVerdict, approversOf, checkReason, demoteLevel } from "../src/governance/autonomy-change.js";
 import { AutonomyError, readAutonomy, setLevel } from "../src/governance/autonomy-store.js";
 import type { PromotionGate } from "../src/governance/gate.js";
 import { approveAutonomy, demoteAutonomy, promoteAutonomy, type GateOf } from "../src/server/api-autonomy.js";
@@ -379,6 +379,16 @@ describe("approve", () => {
 });
 
 describe("demote", () => {
+  it("lets the monitor lower a level with no active admin, as system:monitor, and still refuses a non-admin account", () => {
+    at("guarded-write");
+    saveUsers([]);
+    const r = demoteLevel({ ref: { kind: "flows", id: F }, to: "plan-only", reason: "auto: d fp", by: "monitor" });
+    expect(r).toMatchObject({ from: "guarded-write", to: "plan-only" });
+    expect(readAutonomy().flows[F]).toMatchObject({ level: "plan-only", by: "system:monitor" });
+    expect(audit().at(-1)).toMatchObject({ action: "autonomy-demote", result: "ok", by: "monitor", target: `flows:${F}`, detail: "guarded-write→plan-only reason: auto: d fp" });
+    expect(() => demoteLevel({ ref: { kind: "flows", id: F }, to: "observe", reason: "x", by: randomUUID() })).toThrow(/active admin/);
+  });
+
   it("lowers a level at once for any admin, with no gate, and writes the line", async () => {
     at("guarded-write");
     const r = await demoteAutonomy(ctx(), C, body({ to: "observe", reason: "incident" }));
