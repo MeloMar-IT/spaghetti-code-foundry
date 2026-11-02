@@ -128,7 +128,14 @@ describe("what is described", () => {
     expect(isCovered("governor.priority")).toBe(true);
     expect(isCovered("governor.floor")).toBe(true);
     expect(described.find((d) => d.key === "governor.floor")).toMatchObject({ kind: "number", integer: true, min: 0, optional: true, effect: "now", control: "generated" });
-    expect(described).toHaveLength(139);
+    expect(described).toHaveLength(140);
+  });
+
+  it("describes governance.auto_demote as a generated boolean that defaults to true", () => {
+    expect(described.find((d) => d.key === "governance.auto_demote")).toMatchObject({ kind: "yes-no", default: true, control: "generated" });
+    expect(ConfigSchema.parse({}).governance.auto_demote).toBe(true);
+    expect(issuesAt("governance.auto_demote", "yes")).not.toHaveLength(0);
+    expect(issuesAt("governance.auto_demote", false)).toHaveLength(0);
   });
 
   it("describes the promotion gate settings with their defaults and ranges, as generated controls", () => {

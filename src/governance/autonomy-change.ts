@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { renameSync, rmSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { appendAuditLocked, prepareAuditLocked, type ActionAuditEvent } from "../auth/audit.js";
+import { appendAuditLocked, MONITOR_ACTOR, prepareAuditLocked, type ActionAuditEvent } from "../auth/audit.js";
 import { StoreError, withAuthLock } from "../auth/store.js";
 import { listUsers, type User } from "../auth/users.js";
 import { breakGlassReasonProblem } from "../engine/policy-break-glass.js";
 import { randomTmp, writeTmp } from "../engine/policy-store.js";
-import { AUTONOMY_LEVELS, isSensitiveLevel, nextLevel, type AutonomyLevel } from "./autonomy.js";
+import { AUTONOMY_LEVELS, isSensitiveLevel, nextLevel, SYSTEM_MONITOR, type AutonomyLevel } from "./autonomy.js";
 import {
   AutonomyError,
   autonomyFile,
@@ -252,15 +252,19 @@ export function approvePromotion(o: {
   }, o.waitMs ?? 0);
 }
 
-/** Lowers a level at once. Any admin, no gate. Throws AutonomyError, AutonomyRefused or StoreError. */
+/**
+ * Lowers a level at once. Any admin, no gate. `by: "monitor"` (#647) is the monitor's automatic demotion: no admin check, the
+ * store names `system:monitor` and the audit line `monitor`. Only code in this process can pass it: the API always passes an
+ * account id. Throws AutonomyError, AutonomyRefused or StoreError. */
 export function demoteLevel(o: { ref: ComponentRef; to: AutonomyLevel; reason: string; by: string; waitMs?: number }): { from: AutonomyLevel; to: AutonomyLevel; entry: AutonomyEntry } {
   const reason = checkReason(o.reason);
   return withAuthLock(() => {
-    requireActiveAdminLocked(o.by, o.ref, "autonomy-demote");
+    const monitor = o.by === MONITOR_ACTOR;
+    if (!monitor) requireActiveAdminLocked(o.by, o.ref, "autonomy-demote");
     const store = readAutonomy();
     const from = levelIn(store, o.ref.kind, o.ref.id);
     if (AUTONOMY_LEVELS.indexOf(o.to) >= AUTONOMY_LEVELS.indexOf(from)) throw new AutonomyRefused(409, "a demotion goes to a lower level");
-    const entry = newEntry(o.ref.kind, o.ref.id, o.to, o.by, reason);
+    const entry = newEntry(o.ref.kind, o.ref.id, o.to, monitor ? SYSTEM_MONITOR : o.by, reason);
     commitLocked(o.by, { ...store, [o.ref.kind]: { ...store[o.ref.kind], [o.ref.id]: entry } }, {
       action: "autonomy-demote",
       result: "ok",

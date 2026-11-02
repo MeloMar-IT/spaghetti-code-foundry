@@ -123,6 +123,7 @@ describe("pure functions", () => {
   it("actorText and targetText", () => {
     expect(ui.actorText({ type: "cli" })).toBe("command line");
     expect(ui.actorText({ type: "anonymous" })).toBe("not signed in");
+    expect(ui.actorText({ type: "monitor" })).toBe("monitor");
     expect(ui.actorText(account("u1", "Ann"))).toBe("Ann");
     expect(ui.actorText(account("u9", "deleted user"))).toBe("deleted user");
     expect(ui.targetText(null)).toBe("");

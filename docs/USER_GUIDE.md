@@ -2115,7 +2115,8 @@ kept in three places:
 - the evidence, as the event `run.autonomy`, written right after `run.created`. A resumed run does not write it again.
 
 Levels are stored in `autonomy.json` in the Foundry home. A level changes only through the promote, approve and demote
-routes or `scf autonomy` ([Change a level](#change-a-level)). If `autonomy.json` or `repos.json` cannot be read when a run starts, the run counts as
+routes or `scf autonomy` ([Change a level](#change-a-level)), or through the monitor's automatic demotion
+([Automatic demotion](#automatic-demotion)). If `autonomy.json` or `repos.json` cannot be read when a run starts, the run counts as
 `observe`, and the log has a `!` line that says which file it was. Connecting a repository fails when
 `autonomy.json` is broken.
 
@@ -2187,6 +2188,27 @@ up again only through a new request and an approval, so every step can be undone
 
 The reason follows the break-glass rules: required, at most 200 characters, no control characters and no
 credential-like text. Requests waiting for approval are kept in `autonomy.json` next to the levels.
+
+### Automatic demotion
+
+After each monitor check, the monitor lowers a repository or flow by one level when a new serious finding names it.
+A finding is serious when it is `critical`, or `major` from `policy-service-failure` or `evidence-finalization`. The
+finding must name a repository or a flow; a finding about Foundry as a whole demotes nothing.
+
+- A component at `observe` is left alone. It is never lowered below `observe`.
+- Each finding lowers a component at most once. It can lower it again only after the finding has gone and a new one
+  comes.
+- Findings that were already open when the upgrade ran do not lower anything. Only findings that appear afterwards do.
+- Each demotion is written to the audit log as `autonomy-demote`, with `by` `monitor` (shown as `monitor` on the
+  Audit page) and the detail `auto: <detector> <fingerprint>`. The server log gets a line for each one, and each
+  active run of that repository or flow gets a live-log line that says it keeps its level.
+- A failed demotion does not fail the check. It is tried again at the next check, and the problem is logged without a
+  path or a value.
+- A component that was demoted goes up again only through a request and an approval ([Change a level](#change-a-level)).
+
+The switch is `governance.auto_demote` in `config.yaml` (default `true`). The Settings page shows it as "Automatic
+demotion" in the "Promotion gate" card. Turned off, the monitor lowers nothing; findings that appear while it is off do not lower anything
+when it is turned on again.
 
 ### Promote a component
 

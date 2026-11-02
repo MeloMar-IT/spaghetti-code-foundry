@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { AUDIT_ACTIONS, auditTime, isAccountId, latestAudit, scanAudit, type AuditFilter, type AuditRecord } from "../auth/audit.js";
+import { AUDIT_ACTIONS, MONITOR_ACTOR, auditTime, isAccountId, latestAudit, scanAudit, type AuditFilter, type AuditRecord } from "../auth/audit.js";
 import { ownerNames } from "../auth/run-owner.js";
 import { StoreError } from "../auth/store.js";
 import { HttpError, send, sendCsv } from "./http.js";
@@ -50,7 +50,7 @@ function filterOf(req: { url?: string }): AuditFilter {
 
 function view(r: AuditRecord, names: Map<string, string>) {
   const account = (id: string) => ({ type: "account", id, name: names.get(id) ?? GONE });
-  const actor = r.by === "cli" || r.by === "anonymous" ? { type: r.by } : account(r.by);
+  const actor = r.by === "cli" || r.by === "anonymous" || r.by === MONITOR_ACTOR ? { type: r.by } : account(r.by);
   const target = r.userId !== undefined ? account(r.userId) : r.target !== undefined ? { type: "text", text: r.target } : null;
   return { time: r.time, actor, action: r.action, target, result: r.result, ...(r.detail !== undefined ? { detail: r.detail } : {}) };
 }
@@ -60,7 +60,7 @@ function row(r: AuditRecord, names: Map<string, string>): string[] {
   return [
     r.time,
     r.by,
-    r.by === "cli" || r.by === "anonymous" ? "" : named(r.by),
+    r.by === "cli" || r.by === "anonymous" || r.by === MONITOR_ACTOR ? "" : named(r.by),
     r.action,
     r.userId ?? r.target ?? "",
     r.userId !== undefined ? named(r.userId) : "",

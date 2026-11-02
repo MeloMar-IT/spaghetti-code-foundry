@@ -16,6 +16,8 @@ export const DEFAULT_LEVEL: AutonomyLevel = "delivery-handoff";
 /** What a repository gets when it is connected through the API. */
 export const NEW_REPO_LEVEL: AutonomyLevel = "guarded-write";
 export const SYSTEM_CONNECT = "system:connect";
+/** Who the store names as the actor of an automatic demotion by the monitor (#647). The audit line says `monitor`. */
+export const SYSTEM_MONITOR = "system:monitor";
 
 /** Who set a level: an account id or a fixed `system:<actor>` string. */
 export const AutonomyBySchema = z.union([z.uuid(), z.string().regex(/^system:[a-z][a-z0-9-]{0,39}$/)]);
@@ -28,6 +30,11 @@ export function lowerLevel(a: AutonomyLevel, b: AutonomyLevel): AutonomyLevel {
 /** The level one step up, or null at the top. */
 export function nextLevel(level: AutonomyLevel): AutonomyLevel | null {
   return AUTONOMY_LEVELS[AUTONOMY_LEVELS.indexOf(level) + 1] ?? null;
+}
+
+/** The level one step down, or null at the bottom. */
+export function previousLevel(level: AutonomyLevel): AutonomyLevel | null {
+  return AUTONOMY_LEVELS[AUTONOMY_LEVELS.indexOf(level) - 1] ?? null;
 }
 
 /** The levels where a run may write or deliver: a move to one of them needs a second person (#646). */

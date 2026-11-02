@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { addRepo, repoIdsOf } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
-import { AUTONOMY_LEVELS, autonomyLine, autonomyOfRun, AutonomyLevelSchema, isSensitiveLevel, lowerLevel, nextLevel } from "../src/governance/autonomy.js";
+import { AUTONOMY_LEVELS, autonomyLine, autonomyOfRun, AutonomyLevelSchema, isSensitiveLevel, lowerLevel, nextLevel, previousLevel } from "../src/governance/autonomy.js";
 import {
   AutonomyError,
   autonomyFile,
@@ -245,6 +245,7 @@ describe("autonomy levels", () => {
 
     it("steps up one level and knows the sensitive ones", () => {
       expect(AUTONOMY_LEVELS.map(nextLevel)).toEqual(["plan-only", "guarded-write", "delivery-handoff", null]);
+      expect(AUTONOMY_LEVELS.map(previousLevel)).toEqual([null, "observe", "plan-only", "guarded-write"]);
       expect(AUTONOMY_LEVELS.map(isSensitiveLevel)).toEqual([false, false, true, true]);
     });
 

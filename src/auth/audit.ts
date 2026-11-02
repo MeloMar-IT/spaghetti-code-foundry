@@ -14,6 +14,8 @@ import { dataHome, openAppendLocked, replaceFileLocked, StoreError, withAuthLock
 export const auditPath = () => join(dataHome(), "audit.jsonl");
 
 const Role = z.enum(["admin", "user"]);
+/** The actor of an automatic change made by the monitor (#647): not an account, so the audit shows it as `monitor`. */
+export const MONITOR_ACTOR = "monitor";
 const Base = { time: z.iso.datetime(), by: z.union([z.literal("cli"), z.uuid()]), userId: z.uuid() };
 
 /** Actions of an event line. Later parts add names here. */
@@ -65,7 +67,7 @@ const short = (max: number) => z.string().refine((s) => s.length >= 1 && s.lengt
 const EventSchema = z
   .object({
     time: z.iso.datetime(),
-    by: z.union([z.literal("cli"), z.literal("anonymous"), z.uuid()]),
+    by: z.union([z.literal("cli"), z.literal("anonymous"), z.literal(MONITOR_ACTOR), z.uuid()]),
     action: z.enum(EVENT_ACTIONS),
     result: z.enum(["ok", "failed"]),
     userId: z.uuid().optional(),
