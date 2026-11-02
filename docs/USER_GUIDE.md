@@ -3985,8 +3985,8 @@ the queue (`capped`, and the queue names the `cap`), and the monitor does not re
 that stands still. While a cap holds jobs back, the queue looks again every 30 seconds, so a cap that
 ends starts the waiting runs even when no run ends.
 
-**The load governor.** Every minute it reads the load average per core, the memory pressure and, when
-it can, the CPU of your other programs (see "Who uses the CPU" below). When it has that measurement,
+**The load governor.** Every minute it reads the load average per core, the CPU in use, the memory pressure,
+the heat and the swap, and, when it can, the CPU of your other programs (see "Who uses the CPU" below). When it has that measurement,
 it works out how many runs fit next to your other programs and moves the cap one step per check towards that number:
 
 - **Runs that fit** = (cores − cores used by other programs − `governor.reserve_cores`) ÷ cores one run
@@ -4007,8 +4007,29 @@ load has been above 2.5 for three checks in a row. A spike of a minute or two (a
 does not lower the cap. Memory pressure "warning" alone does not lower it either: macOS reports it for
 hours on a full but idle machine. It counts only with a load above 2.5 per core.
 
+**CPU, heat and swap.** The load average also counts threads that only wait (on macOS), so the governor
+reads three more signals. The busy share is the part of the CPU time, over all cores, that was not idle
+since the last check (from the idle time per core; the first check has none). Its rules:
+
+- From the second check on, a load above 2.5 per core counts only when at least 80% of the CPU is busy.
+  A high load on an idle CPU alone lowers nothing, with or without the measurement, and it does not start
+  the sustained-load count. The first check has no busy share, so the load rules alone apply then.
+- From the second check on, a load above 4 per core, which allows only one test run at a time, also needs the busy CPU.
+- A load in the band (above 1.2 and up to 2.5 per core) is calm when at most 50% of the CPU is busy.
+  A busy CPU (80% or more) stops the calm count, even with a low load.
+- A throttled machine counts as loaded: `pmset -g therm` shows a CPU speed limit below 100%, or a thermal
+  warning level. A machine that is swapping counts as loaded: the swap in use (`sysctl -n vm.swapusage`)
+  grew by more than 64 MB since the last check. Swap in use that does not grow does not count, because macOS
+  keeps swap on an idle machine. Throttling or swapping stops the calm count.
+- Throttling or swap growth in three checks in a row lowers the cap by one run, after the usual pause.
+  The change line in `governor/changes.log` names the reason, for example "throttled: CPU speed limit 80%"
+  or "swapping: swap grew by 120 MB".
+
+A signal that cannot be read (not macOS, `pmset` or `sysctl` missing or failing, too slow) is left out,
+and the rules above apply as they did before. These thresholds are built in; they are not set in the configuration.
+
 Two cases act at once, even during a pause: memory pressure critical, and a 1-minute load above 4
-per core. Above 4 per core, or under critical memory pressure, only one test run works at a time.
+per core while the CPU is at least 80% busy. Above 4 per core, or under critical memory pressure, only one test run works at a time.
 These apply with and without the measurement.
 
 **Workers per test run.** While the machine is loaded (the 1-minute or the 5-minute load above 2.5 per
