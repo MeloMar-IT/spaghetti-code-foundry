@@ -5,11 +5,15 @@
 //   baseline-tests red    <marker-file> <run-dir>   tests failed before the change: exit 0 = go on, 1 = stop
 //   baseline-tests green  <run-dir>                 tests passed before the change: notes the named tests
 //   baseline-tests verify <marker-file> <run-dir>   after the change: exit 0 = named tests pass, nothing else broke
+//   baseline-tests known-red <run-dir>              before the tests: stop at once when the base branch is already known to be red
 //   baseline-tests purge  <run-dir>                 before that test run: remove old reports (a runner that skips work must write new ones)
-// Files in <run-dir>: issue-body.md (read), baseline-red.json, baseline-note.md, baseline-verdict.txt (written).
+// Files in <run-dir>: issue-body.md (read), baseline-red.json, baseline-note.md, baseline-verdict.txt, baseline-stop.json (written).
+// Env: FACTORY_BASE_BRANCH, FACTORY_BASE_SHA, FACTORY_BASE_CLEAN=yes (set by the flow), FACTORY_RED_BASE (set by the server).
 // The report walk is the same as tools/test-summary (names are Class.method); keep the two the same, except that
 // here a report must be newer than the marker (no grace second), so a report of an earlier attempt never counts.
+import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 const MAX_LIST = 20;
@@ -68,6 +72,13 @@ export function readReports(marker, root = ".") {
   const files = reportFiles(root, since);
   const failing = [];
   const passed = [];
+  const assertions = [];
+  const hide = [process.cwd(), homedir()].filter((x) => x && x.length > 1);
+  const tidy = (t) => {
+    let o = t;
+    for (const h of hide) o = o.split(h).join("(folder)");
+    return o.length > 500 ? o.slice(0, 500) : o;
+  };
   // Failing cases that cannot be named (no name, or more failures counted by a suite than cases found): the
   // reports cannot be trusted, so nothing is accepted on them.
   let unidentified = 0;
@@ -87,6 +98,11 @@ export function readReports(marker, root = ".") {
       if (isFail) {
         failing.push(id);
         failedHere++;
+        if (assertions.length < 10) {
+          const tag = /<(?:failure|error)\b((?:[^>"']|"[^"]*"|'[^']*')*)>?([^<]*)/.exec(inner);
+          const msg = attr(tag?.[1] ?? "", "message") ?? unxml((tag?.[2] ?? "").trim().split("\n")[0] ?? "");
+          assertions.push({ test: id, message: tidy(msg) });
+        }
       } else if (!/<skipped\b/.test(inner)) passed.push(id);
     }
     let counted = 0;
@@ -95,7 +111,7 @@ export function readReports(marker, root = ".") {
     }
     if (counted > failedHere) unidentified += counted - failedHere;
   }
-  return { files: files.length, failing, passed, unidentified };
+  return { files: files.length, failing, passed, unidentified, assertions };
 }
 
 // An attribute value in double or single quotes, with the five XML entities decoded.
@@ -121,6 +137,40 @@ const list = (items) => {
   return out;
 };
 
+// The base branch facts the flow exports; clean only when the tree was clean before and is still clean now.
+export function baseFacts(env = process.env) {
+  const branch = env.FACTORY_BASE_BRANCH || "";
+  const commit = env.FACTORY_BASE_SHA || "";
+  if (!branch || !/^[0-9a-f]{7,64}$/i.test(commit)) return undefined;
+  let clean = false;
+  if (env.FACTORY_BASE_CLEAN === "yes") {
+    try {
+      clean = execFileSync("git", ["status", "--porcelain"], { encoding: "utf8", timeout: 30_000 }).trim() === "";
+    } catch {
+      clean = false;
+    }
+  }
+  return { branch, commit, clean };
+}
+
+function writeStop(runDir, failing, assertions, extra = {}) {
+  const f = baseFacts();
+  if (!f || !failing.length) return;
+  writeFileSync(
+    join(runDir, "baseline-stop.json"),
+    JSON.stringify({ version: 1, branch: f.branch, commit: f.commit, clean: f.clean, at: new Date().toISOString(), failing, assertions, ...extra }),
+  );
+}
+
+function redBase() {
+  try {
+    const r = JSON.parse(process.env.FACTORY_RED_BASE || "");
+    return r && typeof r.branch === "string" && typeof r.commit === "string" && Array.isArray(r.failing) ? r : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const readBody = (dir) => {
   try {
     return { text: readFileSync(join(dir, "issue-body.md"), "utf8"), read: true };
@@ -141,12 +191,26 @@ function main(argv) {
     if (rest[0] && existsSync(join(rest[0], "baseline-red.json"))) purgeReports(".");
     return 0;
   }
-  const runDir = mode === "green" ? rest[0] : rest[1];
+  const runDir = mode === "green" || mode === "known-red" ? rest[0] : rest[1];
   if (!runDir) {
-    console.error("usage: baseline-tests red|verify <marker-file> <run-dir> | green <run-dir>");
+    console.error("usage: baseline-tests red|verify <marker-file> <run-dir> | green|known-red <run-dir>");
     return 2;
   }
   const verdictFile = join(runDir, "baseline-verdict.txt");
+
+  if (mode === "known-red") {
+    const red = redBase();
+    const base = baseFacts();
+    if (!red || !base || red.branch !== base.branch || red.commit !== base.commit) return 0;
+    if (red.fix !== undefined && String(red.fix) === String(process.env.FACTORY_VAR_ISSUE)) return 0;
+    const names = namedTests(readBody(runDir).text);
+    if (red.failing.length && red.failing.every((t) => names.some((n) => covers(n, t)))) return 0;
+    say(`BASELINE: stopped — ${clean(red.branch)} has failing tests at ${base.commit.slice(0, 7)}`, "failing before the change:", ...list(red.failing));
+    writeStop(runDir, red.failing, [], { clean: false, gate: true });
+    console.log(lines.join("\n"));
+    writeFileSync(verdictFile, `${lines.join("\n")}\n`);
+    return 1;
+  }
 
   if (mode === "red") {
     const r = readReports(rest[0]);
@@ -165,9 +229,11 @@ function main(argv) {
       if (!names.length) {
         say("BASELINE: stopped — the issue names no failing tests to fix", "failing before the change:", ...list(r.failing));
         say("To have a story fix them, list them under a `## Failing tests to fix` heading in the issue, one per line.");
+        writeStop(runDir, r.failing, r.assertions);
       } else if (unexpected.length) {
         say("BASELINE: stopped — some failing tests are not named in the issue", "failing before the change:", ...list(r.failing));
         say("not named in the issue:", ...list(unexpected));
+        writeStop(runDir, r.failing, r.assertions);
       } else {
         code = 0;
         writeFileSync(join(runDir, "baseline-red.json"), JSON.stringify({ version: 1, named: names, failing: r.failing, passed: r.passed }));
@@ -187,6 +253,8 @@ function main(argv) {
         ["### Tests before the change", "", "The tests this issue names as failing already pass before any change:", "", ...fence(names), ""].join("\n"),
       );
     }
+    const f = baseFacts();
+    if (f?.clean) say(`BASE_GREEN: ${f.branch} ${f.commit} ${new Date().toISOString()}`);
   } else if (mode === "verify") {
     let state;
     try {

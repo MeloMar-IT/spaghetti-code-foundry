@@ -68,7 +68,7 @@ export const KIND_SEMANTIC = {
   failed: "danger", watcher_error: "danger", monitor_stopped: "danger", watcher_stale: "danger",
   usage_limit: "warning", daily_budget: "warning", user_limit: "warning", interrupted: "warning", restart: "warning", chore_late: "warning", closed_elsewhere: "warning",
   questions: "waiting", planner_questions: "waiting", owner_action: "waiting", approve_plan: "waiting", approve_split: "waiting", approval: "waiting",
-  monitor_needs_you: "waiting", dependency: "waiting", one_at_a_time: "waiting", area_lock: "waiting", queued: "waiting", release: "waiting",
+  monitor_needs_you: "waiting", dependency: "waiting", red_base: "waiting", one_at_a_time: "waiting", area_lock: "waiting", queued: "waiting", release: "waiting",
   stopped: "waiting", bug_first: "waiting",
   cancelled: "disabled", superseded: "disabled", issue_closed: "disabled", parked: "disabled", epic: "disabled",
 };

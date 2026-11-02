@@ -873,12 +873,21 @@ write("issue-plan", {
   ].join("\n");
   // A story that fixes failing tests: when the tests fail before any change and every failing test is one the issue
   // names ("## Failing tests to fix"), the run goes on (tools/baseline-tests decides, from the JUnit reports).
-  const BASELINE_CLEAN = 'rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt"';
+  const BASELINE_CLEAN = 'rm -f "{{run.dir}}/baseline-red.json" "{{run.dir}}/baseline-note.md" "{{run.dir}}/baseline-verdict.txt" "{{run.dir}}/baseline-stop.json"';
   const baselineCheck = [
     'if [ "$code" -ne 0 ]; then node "$FACTORY_TOOLS/baseline-tests" red "$marker" "{{run.dir}}" && code=0',
     'else node "$FACTORY_TOOLS/baseline-tests" green "{{run.dir}}" || true; fi',
   ].join("\n");
-  const withBaselineCheck = (run) => BASELINE_CLEAN + "\n" + swap(run, '\nexit "$code"', "\n" + baselineCheck + '\nexit "$code"');
+  // The base branch facts for the tool: its commit, and whether the tree is the base commit's tree and clean. A base branch
+  // that is already known to be red (the server's FACTORY_RED_BASE) stops the run before the tests.
+  const BASE_FACTS = [
+    'base="$FACTORY_VAR_DEVELOP_BRANCH"; base_sha=""; base_clean=""',
+    '[ -n "$base" ] && base_sha=$(git rev-parse -q --verify "origin/$base" 2>/dev/null)',
+    '[ -n "$base_sha" ] && [ -z "$(git status --porcelain 2>/dev/null)" ] && [ "$(git rev-parse "HEAD^{tree}" 2>/dev/null)" = "$(git rev-parse "$base_sha^{tree}" 2>/dev/null)" ] && base_clean=yes',
+    'export FACTORY_BASE_BRANCH="$base" FACTORY_BASE_SHA="$base_sha" FACTORY_BASE_CLEAN="$base_clean"',
+    'node "$FACTORY_TOOLS/baseline-tests" known-red "{{run.dir}}" || { rm -f "{{run.dir}}/tests.log"; exit 1; }',
+  ].join("\n");
+  const withBaselineCheck = (run) => BASELINE_CLEAN + "\n" + BASE_FACTS + "\n" + swap(run, '\nexit "$code"', "\n" + baselineCheck + '\nexit "$code"');
   // After a change, with a red baseline: the named tests pass and no test that passed before was lost or broke.
   // Used on every full run that gates a push or merge (the report files of this very run are read, never a cache).
   // The old reports go first, so a runner that skips unchanged work (Gradle's UP-TO-DATE) has to write new ones.
@@ -1138,7 +1147,7 @@ write("issue-plan", {
       // The owner can add the failing tests to the issue: a resume reads the issue again.
       resume_from: "pull_ticket",
       // The log tail first: the verdict (the failing tests) comes last, so a cut of the long log keeps it.
-      run: 'echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log"; echo; cat "{{run.dir}}/baseline-verdict.txt" 2>/dev/null; exit 1',
+      run: 'echo "The tests already fail on $(git branch --show-current) before any change — not starting."; tail -40 "{{run.dir}}/tests.log" 2>/dev/null; echo; cat "{{run.dir}}/baseline-verdict.txt" 2>/dev/null; exit 1',
     },
     {
       id: "wait_for_merge",

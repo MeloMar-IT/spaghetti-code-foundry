@@ -177,6 +177,11 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
       if (closed) return closed;
     }
     if (rec.kind === "issue_closed") return rec;
+    // A story held by a red base branch: no failed card with a Retry, the watcher's hold says it waits for a new commit.
+    if (rec.kind === "failed") {
+      const waits = tracked.flatMap((t) => t.status.holds ?? []).find((h) => h.next.kind === "red_base" && h.next.runId === run.runId);
+      if (waits) return waits.next;
+    }
     // The watcher's hold for the same run and reason knows more (pull request, question count).
     // A hold of a limit or a failure carries the administrator's wording: a user keeps the record of the run; so does a run that is answered on its page.
     const hold = rec.kind === "user_limit" || forUser && (rec.kind === "daily_budget" || rec.kind === "usage_limit" || rec.kind === "failed" || (rec.kind === "planner_questions" && answerHere))

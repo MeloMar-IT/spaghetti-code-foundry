@@ -11,7 +11,7 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic" | "owner_action" | "chore_late";
+  | "red_base" | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic" | "owner_action" | "chore_late";
 
 /** Why a daily schedule run that is late has not started. */
 export type ChoreWait = "restart" | "no_runs" | "other_chore" | "other_run" | "owner_budget" | "budget" | "in_queue" | "watcher_error" | "no_check" | "not_queued";
@@ -104,6 +104,8 @@ export interface NextData {
   message?: string;
   reason?: string;
   blockers?: BlockerInfo[];
+  /** `red_base`: the base branch has failing tests. `line` names them (already redacted); `problem` is a fixed sentence when a person must act. */
+  redBase?: { branch: string; line: string; fix?: { issue: number; url?: string }; problem?: string };
   blockingRun?: string;
   /** `chore_late`: the time of the slot, the name of the run ("release" or "schedule run") and why it waits. */
   choreAt?: string;
@@ -252,6 +254,7 @@ function blockerClause(b: BlockerInfo): string {
     case "approve_split": return "which waits for your decision on its split";
     case "approval": return "which waits for your decision";
     case "dependency": return "which waits for another story";
+    case "red_base": return "which waits for the base branch";
     case "running": return "which is being worked on";
     case "queued": case "one_at_a_time": case "starting": case "checking": return "which is queued";
     case "area_lock": return "which waits for a code area";
@@ -400,6 +403,24 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       say = yours.length ? `nothing to do here, it starts by itself once you've handled ${yours.join(", ")}` : "nothing to do, it starts by itself";
       break;
     }
+    case "red_base": {
+      const r = d.redBase;
+      const line = clean(r?.line) || "the base branch has failing tests";
+      const branch = clean(r?.branch) || "the base branch";
+      if (issue) {
+        who = "Another story";
+        why = `waits: ${line}`;
+        if (r?.fix) w = { label: `Fix story #${r.fix.issue}`, url: r.fix.url ?? `https://github.com/${base.repo ?? ""}/issues/${r.fix.issue}` };
+        until = `a new commit on ${branch}`;
+        say = "nothing to do, it starts by itself on a new commit";
+      } else {
+        who = "Something is wrong";
+        why = `${line}${r?.problem ? `. ${clean(r.problem)}` : ""}`;
+        action = `Fix the failing tests on ${branch}, or write a story that lists them`;
+        say = action.charAt(0).toLowerCase() + action.slice(1);
+      }
+      break;
+    }
     case "one_at_a_time": {
       who = "Another story";
       why = "It runs one at a time and another run is active";
@@ -503,9 +524,11 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
         const what = clean(d.what) || clean(d.reason);
         why = `The Foundry failed, not the code${what ? `: ${what}` : ""}`;
       } else {
-        why = d.failure?.byModel ? `${e.what}: ${d.failure.why.replace(/[.!?]+$/, "")}` : `${e.what}: ${e.why}`;
+        // A baseline stop has its own sentence (the failing tests); a model's sentence follows the step's name.
+        why = d.failure?.baseline ? d.failure.why.replace(/[.!?]+$/, "")
+          : d.failure?.byModel ? `${e.what}: ${d.failure.why.replace(/[.!?]+$/, "")}` : `${e.what}: ${e.why}`;
         // A blocked command is only a hint for a code failure.
-        const hint = d.forUser ? "" : [clean(d.what), clean(d.fix)].filter(Boolean).join(", ");
+        const hint = d.forUser || d.failure?.baseline ? "" : [clean(d.what), clean(d.fix)].filter(Boolean).join(", ");
         if (hint) why += ` (${hint})`;
       }
       let retry: string;
@@ -658,7 +681,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,

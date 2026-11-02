@@ -1590,6 +1590,19 @@ What a watcher takes care of:
   sequential chunks). If the call fails, nothing changes, `failedAt` is set and the watcher
   shows the error `checking closed issues: …`. `knownIssueState(repo, issue)` answers `open`,
   `closed`, `unknown` or `undefined` (no enabled issues watcher). Nothing a user sees uses it yet.
+- **Red base branch (#742).** `src/red-base.ts` keeps one state per repository and branch in
+  `red-base.json`. Its decisions are pure: `judgeStops` (two stops on one commit with the same
+  failing tests, or one clean stop), `advance` (a green on the head clears; a green on an older
+  commit does not), `stoppedOnRed` and `newEvidence` (a stop covered by a moved `cleared` state is
+  no new evidence). The green rule uses `BASE_GREEN`, the last line of a clean baseline run of the
+  same branch; greens come from all runs of the repository, one run per flow, not collapsed by
+  issue. `checkRed` runs inside `inOrder` for the repository and branch. It writes a `pending`
+  entry before it creates the fix story, so a crash after the create finds the story by its marker
+  and does not make a second one. A search that fails, or a search cut before `pending.at`, makes
+  nothing and sets `problem`. A head read happens only when nothing is held and a stop is not yet
+  covered by the stored state. `FACTORY_RED_BASE` (`redBaseEnv`, at most 64,000 characters) gives the
+  baseline step the state, so the gate in `tools/baseline-tests` (`known-red`) stops a held run
+  before the test command. Test names reach GitHub only after `redactText`.
 
 ![Watchers and what each story is waiting for](images/watchers.png)
 
@@ -1817,6 +1830,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `help.json` | The Ask SCF conversations of every account (mode 0600) |
 | `help-stats.json` | The Ask SCF quality numbers: one row per UTC day of counts and latency buckets, no account or text (`src/help/telemetry.ts`) |
 | `telemetry/` | `events-YYYY-MM-DD.jsonl`, one value-free lifecycle event per line per UTC day (0700 folder, 0600 files); old days are removed after `telemetry.keep_days` (`src/telemetry/`) |
+| `red-base.json` | The red base branch state (`version: 1`): per repository and branch, the failing tests of the red commit, the prior commits, the fix story and a `pending` entry. Written in one synchronous step with a rename, so another repository's entry is kept; a broken file reads as no state (`src/red-base.ts`) |
 | `issue-states/` | One file per watched repository: open or closed for each issue with an unfinished run |
 | `issue-lists/` | One file per watched repository: the last full issue list read by the watchers (number, title, state, labels, links, dependencies; no issue text), with `readAt` and `cut`. Written atomically; removed when no watcher is left for the repository |
 | `self-update.json` | The self-update record: `pending` (an install not confirmed yet), `tested`, `retry` (a test failure waiting for the next try: commit, tries, time), `failed` (with `tries` and the failing `tests` after the last try), `updated` |

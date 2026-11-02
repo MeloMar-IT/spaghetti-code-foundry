@@ -231,6 +231,7 @@ describe("failureSummary: the tests failed before any change (baseline_failed)",
     const out = "The tests already fail on develop before any change — not starting.\nBASELINE: stopped — some failing tests are not named in the issue\nfailing before the change:\n  - a.B.c\n  - a.B.d\nnot named in the issue:\n  - a.B.d\n";
     const s = failureSummary(stop(out));
     expect(s.cause).toBe("code");
+    expect(s.baseline).toBe(true);
     expect(s.why).toBe("The tests failed before any change, and these failing tests are not named in the issue as ones to fix: a.B.d.");
     expect(s.byModel).toBeUndefined();
   });

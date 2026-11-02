@@ -24,6 +24,7 @@ import { readDecidedQuestions } from "./questions.js";
 import { readRunOutputs } from "./run-outputs.js";
 import { shortEnv,shortEnvRun } from "./short-env.js";
 import { shellImage, shellSandboxed, stepAfterPaths } from "./step-facts.js";
+import { redBaseEnv } from "../red-base.js";
 import type { RunSummary, StepRecord } from "./state.js";
 import { GitIdentitySchema, RepositorySchema, type Actor, type StepIdentity } from "../evidence/identity.js";
 import { emitLiveTelemetry, telemetryEnabled } from "../telemetry/telemetry.js";
@@ -142,6 +143,8 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   // added by the callers. An agent step may also quarantine them (`bound`). The SCF_ aliases get the same values.
   // A story handed to the planner for timing out must reach a person with its questions: the Foundry does not decide them itself.
   if (scope.ctx.steps.implement?.too_big) env.FACTORY_DECIDE_TECHNICAL = "0";
+  // A base branch known to be red: the baseline step stops at once (the sandbox hides the data folder, so the facts come by env).
+  if (step?.id === "baseline_tests" && engine.summary) Object.assign(env, redBaseEnv(dirname(engine.summary.runDir), scope.ctx.vars));
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
   // The trusted public key comes only from the engine, never from the server's own environment: a missing value is blank.
   const keyEnv = { FACTORY_DELIVERY_PUBLIC_KEY: "", ...deliveryKeyEnv((engine.deliverySettings ?? (() => engine.config?.delivery))(), process.env.FACTORY_HOME ?? FACTORY_HOME) };

@@ -51,7 +51,7 @@ export interface ReleaseCheckResult { kind: ReleaseCheckKind; head?: string; run
 
 /** Checks of one repository and branch run one after the other (also those of different watchers). */
 const chains = new Map<string, Promise<unknown>>();
-function inOrder<T>(key: string, fn: () => Promise<T>): Promise<T> {
+export function inOrder<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const run = (chains.get(key) ?? Promise.resolve()).then(fn, fn);
   const tail = run.catch(() => undefined);
   chains.set(key, tail);
@@ -72,7 +72,7 @@ const notFound = (e: unknown): boolean => {
 /** A branch name for the URL path: every part encoded, the separators kept. */
 const urlBranch = (branch: string) => branch.split("/").map(encodeURIComponent).join("/");
 
-async function readMain(repo: string, branch: string, timeoutMs: number): Promise<string> {
+export async function readMain(repo: string, branch: string, timeoutMs: number): Promise<string> {
   let text: string;
   try {
     text = await gh(["api", `repos/${repo}/git/ref/heads/${urlBranch(branch)}`], undefined, timeoutMs);

@@ -1,4 +1,6 @@
+import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { githubKey } from "../src/auth/repo-url.js";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { failureSummary } from "../src/failure.js";
@@ -48,7 +50,7 @@ describe("a story that fixes failing tests (gitflow)", () => {
     status_labels: LABELS, remove_on_done: ["Factory_go"], dependency_done_labels: ["Factory_done"], vars: VARS,
   }), { scheduler, runsDir: runsDir(), repo: gh.tmp, log: () => {} });
   const go = async (body: string) => {
-    process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 5, title: "issue 5", labels: [{ name: "Factory_go" }] }]);
+    process.env.FAKE_GH_ISSUES = JSON.stringify([{ number: 5, title: "issue 5", labels: [{ name: "Factory_go" }], body }]);
     process.env.FAKE_GH_ISSUE_BODIES = JSON.stringify({ "5": body });
     await watcher().tick();
     await scheduler.idle();
@@ -81,6 +83,38 @@ describe("a story that fixes failing tests (gitflow)", () => {
     expect(s.why).toContain("The tests failed before any change");
     expect(s.why).toContain("a.B.c");
   });
+
+  it("holds the story while the base branch is red, without starting a run", async () => {
+    const sha = gh.remoteGit("rev-parse", "HEAD").trim(); // develop is made from it
+    process.env.FAKE_GH_MAIN_SHA = sha;
+    const fix = { issue: 77, tests: ["a.B.c"], commit: sha, label: "Factory_other" };
+    writeFileSync(join(gh.tmp, "red-base.json"), JSON.stringify({
+      version: 1,
+      repos: { [githubKey(REPO)]: { develop: { branch: "develop", commit: sha, failing: ["a.B.c"], assertions: [], since: new Date().toISOString(), held: true, fix } } },
+    }));
+    try {
+      expect(await go("Please add feature.txt")).toBeUndefined();
+    } finally {
+      delete process.env.FAKE_GH_MAIN_SHA;
+    }
+  });
+
+  it("a story that names the failing tests still runs on a red base branch", async () => {
+    const sha = gh.remoteGit("rev-parse", "HEAD").trim();
+    process.env.FAKE_GH_MAIN_SHA = sha;
+    // a fix story that another watcher owns, so this watcher makes none
+    const fix = { issue: 77, tests: ["a.B.c"], commit: sha, label: "Factory_other" };
+    writeFileSync(join(gh.tmp, "red-base.json"), JSON.stringify({
+      version: 1,
+      repos: { [githubKey(REPO)]: { develop: { branch: "develop", commit: sha, failing: ["a.B.c"], assertions: [], since: new Date().toISOString(), held: true, fix } } },
+    }));
+    try {
+      const run = await go("Please add feature.txt\n\n## Failing tests to fix\n- a.B.c\n");
+      expect(run.status).toBe("succeeded");
+    } finally {
+      delete process.env.FAKE_GH_MAIN_SHA;
+    }
+  });
 });
 
 describe("the flows of a story that fixes failing tests", () => {
@@ -95,6 +129,14 @@ describe("the flows of a story that fixes failing tests", () => {
     expect(by("pull_ticket").run).toContain("issue-body.md");
     expect(by("report").run).toContain("baseline-note.md");
     expect(by("baseline_tests").run).toContain("baseline-tests");
+    expect(by("baseline_tests").run).toContain("baseline-tests\" known-red");
+    expect(by("baseline_tests").run).toContain("FACTORY_BASE_SHA");
+  });
+
+  it("issue-gitflow: the hotfix baseline does not use the red base gate", () => {
+    const run = String(steps("issue-gitflow").find((x) => x.id === "baseline_main")!.run);
+    expect(run).not.toContain("known-red");
+    expect(run).not.toContain("FACTORY_BASE_SHA");
   });
 
   it("issue-gitflow: the hotfix baseline asks the tool before it writes baseline-sha", () => {

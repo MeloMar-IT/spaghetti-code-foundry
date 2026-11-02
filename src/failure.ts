@@ -143,7 +143,7 @@ export const BASELINE_STEP = "baseline_failed";
 export function isBaselineStop(history: StepRecord[] | undefined): boolean {
   if (!Array.isArray(history)) return false;
   const idx = failedIndex(history);
-  return idx >= 0 && history[idx]!.id.split("/").at(-1) === BASELINE_STEP;
+  return idx >= 0 && typeof history[idx]!.id === "string" && history[idx]!.id.split("/").at(-1) === BASELINE_STEP;
 }
 
 export interface BaselineFacts { failing: string[]; unexpected: string[]; moreFailing: number; moreUnexpected: number }
@@ -330,6 +330,8 @@ export interface FailureSummary {
   options: string[];
   /** The sentence in `why` was written by a model. */
   byModel?: boolean;
+  /** The run stopped because the tests failed before any change: `why` names the tests and is used as it is. */
+  baseline?: true;
 }
 
 export interface SummaryOptions {
@@ -419,5 +421,5 @@ export function failureSummary(run: SummaryRun, o: SummaryOptions = {}): Failure
   }
   // A fix that changes the flow counts only for a new run: resuming keeps the used-up total.
   const options = optionsFor({ ...o, canResume: o.canResume !== false && !e.startOver });
-  return { cause: f.cause, kind: KIND_TEXT[f.cause], what, why: why.replace(/[.!?]+$/, "") + ".", tried: triedText(run, user), options, ...(byModel ? { byModel } : {}) };
+  return { cause: f.cause, kind: KIND_TEXT[f.cause], what, why: why.replace(/[.!?]+$/, "") + ".", tried: triedText(run, user), options, ...(byModel ? { byModel } : {}), ...(isBaselineStop(h) ? { baseline: true as const } : {}) };
 }
