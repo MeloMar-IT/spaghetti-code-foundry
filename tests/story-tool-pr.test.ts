@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -228,5 +228,50 @@ describe("steps of the blocks and flows", () => {
     });
     expect(r.stdout).toContain("PR: 99\n");
     expect(ghLines()).toContain("gh pr comment 99 --repo o/r --body-file -");
+  });
+});
+
+describe("tools/story below the autonomy level delivery-handoff", () => {
+  const SENTENCE = "autonomy guarded-write does not allow a pull request; next step: promote the repository or flow";
+
+  it.each<[string[]]>([[["pr-open", "--head", "feat", "--title", "T"]], [["pr-merge", "feat"]]])("%j exits 1 with no gh call and notes the refusal", (args) => {
+    const pushLog = join(tmp, "pushes.log");
+    const r = run(args, { input: "x", env: { FACTORY_NO_PUSH: "guarded-write", FACTORY_PUSH_LOG: pushLog } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toBe(`story: ${SENTENCE}\n`);
+    expect(ghLines()).toEqual([]);
+    expect(readFileSync(pushLog, "utf8")).toBe("-\t\t\t\tpull-request\n");
+  });
+
+  it("still finds and comments on an existing pull request", () => {
+    const env = { FACTORY_NO_PUSH: "guarded-write" };
+    run(["pr-find", "feat"], { env });
+    run(["pr-comment", "5"], { input: "x", env });
+    expect(ghLines().map((l) => l.split(" ").slice(0, 3).join(" "))).toEqual(["gh pr view", "gh pr comment"]);
+  });
+
+  it("opens a pull request with an empty flag", () => {
+    run(["pr-open", "--head", "feat", "--title", "T"], { input: "x", env: { FACTORY_NO_PUSH: "" } });
+    expect(ghLines().some((l) => l.startsWith("gh pr create"))).toBe(true);
+  });
+
+  it("works in the container layout: only dist/ and package.json next to the tool, no node_modules", () => {
+    const root = join(tmp, "container");
+    mkdirSync(join(root, "factory-tools"), { recursive: true });
+    copyFileSync(TOOL, join(root, "factory-tools", "story"));
+    cpSync(resolve("dist"), join(root, "dist"), { recursive: true });
+    copyFileSync(resolve("package.json"), join(root, "package.json"));
+    expect(existsSync(join(root, "node_modules"))).toBe(false);
+    const go = (args: string[], env: Record<string, string>) =>
+      spawnSync(process.execPath, [join(root, "factory-tools", "story"), ...args], {
+        input: "x", cwd: tmp, encoding: "utf8",
+        env: { PATH: process.env.PATH, FACTORY_GH_BIN: FAKE_GH, FAKE_GH_LOG: log, FACTORY_VAR_GITHUB_REPO: "o/r", FACTORY_VAR_ISSUE: "7", ...env } as NodeJS.ProcessEnv,
+      });
+    expect(go(["title"], {}).status).toBe(0);
+    expect(go(["pr-open", "--head", "feat", "--title", "T"], {}).status).toBe(0);
+    expect(ghLines().some((l) => l.startsWith("gh pr create"))).toBe(true);
+    const refused = go(["pr-open", "--head", "feat", "--title", "T"], { FACTORY_NO_PUSH: "guarded-write" });
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toBe(`story: ${SENTENCE}\n`);
   });
 });

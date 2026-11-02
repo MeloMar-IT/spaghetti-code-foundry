@@ -48,6 +48,7 @@ import { prepareWorkspace } from "./workspace.js";
 import { contextBeforeStep } from "./run-context.js";
 import type { Actor } from "../evidence/identity.js";
 import { recordRunAutonomy, runAutonomyAtStart } from "../governance/run-autonomy.js";
+import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
 import { flowFileId } from "../promotion/flow-id.js";
@@ -404,7 +405,8 @@ async function drive(
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...nextStepEnv(),
-      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes),
+      // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
+      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes, autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
       ...selfEnv(),
       ...(opts.pathPrefix?.length ? { PATH: [...opts.pathPrefix, process.env.PATH ?? ""].join(delimiter) } : {}),
     };

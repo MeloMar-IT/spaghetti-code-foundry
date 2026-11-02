@@ -317,13 +317,14 @@ describe("a refinement run", { timeout: 60_000 }, () => {
     expect(out(again, "clone")).toBe("stored");
   });
 
-  it("fails with TOKEN_UNREADABLE and logs the cause when the repository list cannot be read", async () => {
+  // The list cannot be read, so the run's autonomy level is observe (fail closed) and the step is refused before any token is looked up (TOKEN_UNREADABLE itself is covered above).
+  it("refuses the step by autonomy and logs the cause when the repository list cannot be read", async () => {
     tokenRepo(user);
     writeFileSync(reposPath(), "not json");
     const s = await go(probe(), { source: REFINE, owner: user.id });
     expect(s.status).toBe("failed");
-    expect(s.reason).toBe(`step "clone" failed: ${TOKEN_UNREADABLE}`);
-    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("the stored token could not be read:");
+    expect(s.reason).toBe(`step "clone" failed: autonomy observe does not allow a repo_access shell step; next step: promote the repository or flow`);
+    expect(readFileSync(join(s.runDir, "live.log"), "utf8")).toContain("repos.json could not be read");
   });
 
   it("a refinement run without an owner fails and is not adopted", async () => {
@@ -479,7 +480,7 @@ describe("the shipped refine-brief flow", { timeout: 60_000 }, () => {
     tokenRepo(user);
     writeFileSync(reposPath(), "not json");
     const s = await shipUser();
-    expect(s.reason).toBe(`step "clone" failed: ${TOKEN_UNREADABLE}`);
+    expect(s.reason).toBe(`step "clone" failed: autonomy observe does not allow a repo_access shell step; next step: promote the repository or flow`);
     expect(gh.ghLog()).toBe("");
   });
 

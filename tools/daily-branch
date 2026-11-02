@@ -32,8 +32,10 @@ const run = (cmd, args, input) => execFileSync(cmd, args, { encoding: "utf8", in
 const git = (...a) => run("git", a);
 // Every story call goes through the story store (dist/stories/store.js), on this runner.
 let storeFor;
+let pullRequestRefusal;
 try {
   ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+  ({ pullRequestRefusal } = await import(new URL("../dist/governance/autonomy-rules.js", import.meta.url).href));
 } catch (e) {
   fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
 }
@@ -108,6 +110,9 @@ function prText(branch, note = "") {
 }
 
 function openPr(branch, { draft = false, note = "" } = {}) {
+  // below the autonomy level delivery-handoff no pull request is opened
+  const refusal = pullRequestRefusal();
+  if (refusal) fail(refusal);
   const t = prText(branch, note);
   return stories.openChange({ head: branch, base: t.base, title: t.title, body: t.body, draft }).split("\n").pop();
 }

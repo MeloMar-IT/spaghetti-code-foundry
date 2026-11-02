@@ -101,6 +101,8 @@ function evidence(h: StepRecord[]): Failure | undefined {
   const rec = h[idx]!;
   // A composite record that could not be traced to one child holds several outputs: that is doubt.
   if (rec.type === "flow" || rec.type === "parallel") return undefined;
+  // The run's autonomy level did not allow the step: a limit that was set, not a fault.
+  if (/^autonomy \S+ does not allow /.test(rec.error ?? "")) return { cause: "limit" };
   if (rec.denied?.length) {
     return { cause: "factory", what: `the agent was not allowed to run ${shortDenied(rec.denied[0]!)}`, fix: "allow it in the flow (the step's allowed tools or permission mode)" };
   }

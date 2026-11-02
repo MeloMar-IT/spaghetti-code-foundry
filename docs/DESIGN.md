@@ -323,7 +323,19 @@ existing install (moved from `config.yaml`) gets no entry.
 
 The level is read once per run, when `runFlow` starts, and recorded once: a resume does not read it again. If a
 store cannot be read at that point, the run counts as `observe` (the fail-closed choice), and the log says so.
-Nothing reads the level to allow or refuse a step yet.
+The level is enforced where each action starts, not in the prompt:
+
+- `autonomy-rules.ts` holds the rule table (which action needs which level) and `pullRequestRefusal`. It imports only
+  `node:` modules, because `tools/story` and `tools/daily-branch` load it from `dist/` inside a container.
+- `agents/run.ts` refuses a writing agent step before `agent.write` is asked, so no agent starts.
+  `engine/execute.ts` refuses a `repo_access` shell step before any credential is looked up. `autonomyStop` writes
+  the `step.denied` event with `autonomy.denied` and returns the step failure; it does not stop the run.
+- `repo-broker.ts` checks each operation against the same table (`status` is always allowed).
+- A run below `delivery-handoff` gets `FACTORY_NO_PUSH` set to its level. `guards.ts` installs the pre-push hook for
+  it, and the hook refuses every push, deletes included, and writes a refusal line to the push log.
+  `recordStep` reads that log after the step and fails the step, so `git push || true` cannot hide a refusal.
+- For Docker steps, the hook folder is mounted read-only and the push-log folder writable, only when the flag is
+  set. Agent sandboxes keep the push-log folder writable, also in read-only sessions.
 
 ### Policy contracts
 

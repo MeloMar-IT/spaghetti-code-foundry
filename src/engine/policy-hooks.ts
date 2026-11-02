@@ -193,7 +193,7 @@ export function baseFacts(summary: Pick<RunSummary, "vars" | "flow" | "flowDef" 
 
 const stepKey = (s: StepIdentity) => `${s.parent ?? ""}/${s.id}#${s.visit}`;
 
-// ── The pushes of a step: the pre-push hook (guards.ts) appends "<branch>\t<remote url>\t<secrets found>\t<identity>" to FACTORY_PUSH_LOG ──
+// ── The pushes of a step: the pre-push hook (guards.ts) appends "<branch>\t<remote url>\t<secrets found>\t<identity>[\t<push|pull-request, when the autonomy level refused it>]" to FACTORY_PUSH_LOG ──
 
 export const MAX_PUSH_LOG_BYTES = 64 * 1024;
 export const MAX_PUSHES_PER_STEP = 100;
@@ -205,6 +205,8 @@ export interface ObservedPush {
   secretsFound?: number;
   /** Whether git could find a committer identity; absent when not known. */
   commitIdentity?: boolean;
+  /** The autonomy level refused this: the hook refused a push, or a tool refused a pull request. Nothing was pushed. */
+  refused?: "push" | "pull-request";
 }
 
 /** The place where the hook of one visit of a step writes its pushes. */
@@ -242,11 +244,12 @@ export function drainPushLog(file: string): ObservedPush[] {
   const out: ObservedPush[] = [];
   for (const line of text.split("\n")) {
     if (!line || out.length >= MAX_PUSHES_PER_STEP) continue;
-    const [branch, url = "", found = "", ident = ""] = line.split("\t");
+    const [branch, url = "", found = "", ident = "", refused = ""] = line.split("\t");
     if (!branch) continue;
     const repository = repositoryOfUrl(url);
     out.push({
       branch,
+      ...(refused === "push" || refused === "pull-request" ? { refused } : {}),
       ...(repository ? { repository } : {}),
       ...(/^\d{1,9}$/.test(found) ? { secretsFound: Number(found) } : {}),
       ...(ident === "1" || ident === "0" ? { commitIdentity: ident === "1" } : {}),
