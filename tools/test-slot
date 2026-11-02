@@ -20,12 +20,18 @@
 //        at least every 5 s while it lasts and renamed to .done when it ends, so the step's time limit can leave the wait out;
 //        a folder that cannot be written changes nothing),
 //      FACTORY_TEST_SLOT_TRACK_MS (how often the processes are noted while a limit or a track file is set; default 2000).
+// <slots-dir>/workers (one number W, written by the load governor at every check while the machine is busy, ignored after
+// 4 minutes like the cap) limits the workers of the tests: the command gets SCF_TEST_WORKERS=W and Gradle's
+// org.gradle.workers.max=W (appended to GRADLE_OPTS and JDK_JAVA_OPTIONS — the second one is read by a java that a Gradle
+// wrapper script started, which has already turned GRADLE_OPTS into arguments). A limit the user set is never raised:
+// SCF_TEST_WORKERS from 1 to W stays, and the Gradle setting is left out when the one that applies (command line, GRADLE_OPTS,
+// JAVA_OPTS, GRADLE_USER_HOME/gradle.properties, gradle.properties of the build root) is W or less. The command line is not changed.
 // The process tracker is loaded from ../dist/steps/proc-tree.js (FACTORY_TEST_SLOT_PS there sets the ps path, for tests).
 // With a limit the command runs in its own process group and SIGINT, SIGTERM and SIGHUP go to the whole group.
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { getPriority } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const [dir, cmd, ...args] = process.argv.slice(2);
 if (!dir || !cmd) {
@@ -37,12 +43,19 @@ const num = (v, d) => (/^\d+$/.test(v ?? "") ? Number(v) : d);
 // slots; 0 = no limit stays 0. A cap file that was not written for 4 minutes is ignored: its governor has stopped.
 const asked = num(process.env.FACTORY_VAR_TEST_SLOTS, 2);
 const CAP_HOLD_MS = 4 * 60_000;
-function slotsNow() {
-  let cap = NaN;
+/** The whole number (1 or more) in <slots-dir>/<name> when the file was written within the hold time; NaN otherwise. */
+function fresh(name) {
   try {
-    const file = join(dir, "cap");
-    if (Date.now() - statSync(file).mtimeMs <= CAP_HOLD_MS) cap = Number(readFileSync(file, "utf8").trim());
-  } catch { /* no cap */ }
+    const file = join(dir, name);
+    if (Date.now() - statSync(file).mtimeMs > CAP_HOLD_MS) return NaN;
+    const text = readFileSync(file, "utf8").trim();
+    return /^\d+$/.test(text) && Number(text) >= 1 ? Number(text) : NaN;
+  } catch {
+    return NaN;
+  }
+}
+function slotsNow() {
+  const cap = fresh("cap");
   return asked > 0 && Number.isInteger(cap) && cap >= 1 ? Math.min(asked, cap) : asked;
 }
 let slots = slotsNow();
@@ -161,6 +174,59 @@ const release = () => {
 };
 const nice = num(process.env.FACTORY_TEST_NICE, 10);
 const env = { ...process.env, FACTORY_IN_TEST_SLOT: "1" };
+
+/** The last org.gradle.workers.max (1 or more) in a text of options; undefined when there is none. */
+function lastOpt(text) {
+  const all = [...(text ?? "").matchAll(/-Dorg\.gradle\.workers\.max=(\d+)/g)].map((m) => Number(m[1])).filter((n) => n >= 1);
+  return all.at(-1);
+}
+/** org.gradle.workers.max of a gradle.properties file (Java properties syntax: =, : or white space; the last key wins). */
+function propsValue(file) {
+  let text;
+  try { text = readFileSync(file, "utf8"); } catch { return undefined; }
+  text = text.replace(/\r\n?/g, "\n").replace(/(^|[^\\])((?:\\\\)*)\\\n[ \t\f]*/g, "$1$2");
+  let v;
+  for (const line of text.split("\n")) {
+    const m = /^[ \t\f]*org\.gradle\.workers\.max(?:[ \t\f]*[=:]|[ \t\f]|$)[ \t\f]*(.*)$/.exec(line);
+    if (m) v = /^\d+$/.test(m[1].trim()) && Number(m[1].trim()) >= 1 ? Number(m[1].trim()) : undefined;
+  }
+  return v;
+}
+/** The folder of the build: the nearest folder up from here with a settings file, or here. */
+function buildRoot() {
+  let d = process.cwd();
+  for (let i = 0; i < 30; i++) {
+    if (existsSync(join(d, "settings.gradle")) || existsSync(join(d, "settings.gradle.kts"))) return d;
+    const up = dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return process.cwd();
+}
+/** The worker limit the user's own settings give Gradle, from the source that wins; undefined when none is set. */
+function userGradleWorkers() {
+  const joined = args.join(" ");
+  const maxWorkers = [...joined.matchAll(/(?:^| )--max-workers(?:=| )(\d+)/g)].map((m) => Number(m[1])).filter((n) => n >= 1).at(-1);
+  const home = process.env.GRADLE_USER_HOME || join(process.env.HOME ?? "", ".gradle");
+  return maxWorkers ?? lastOpt(joined) ?? lastOpt(process.env.GRADLE_OPTS) ?? lastOpt(process.env.JAVA_OPTS) ?? lastOpt(process.env.JDK_JAVA_OPTIONS) ?? propsValue(join(home, "gradle.properties")) ?? propsValue(join(buildRoot(), "gradle.properties"));
+}
+const workers = fresh("workers");
+if (Number.isInteger(workers)) {
+  let changed = false;
+  const mine = num(process.env.SCF_TEST_WORKERS, 0);
+  if (!(mine >= 1 && mine <= workers)) {
+    env.SCF_TEST_WORKERS = String(workers);
+    changed = true;
+  }
+  const theirs = userGradleWorkers();
+  if (theirs === undefined || theirs > workers) {
+    const opt = `-Dorg.gradle.workers.max=${workers}`;
+    env.GRADLE_OPTS = [process.env.GRADLE_OPTS, opt].filter(Boolean).join(" ");
+    env.JDK_JAVA_OPTIONS = [process.env.JDK_JAVA_OPTIONS, opt].filter(Boolean).join(" ");
+    changed = true;
+  }
+  if (changed) console.log(`test-slot: the machine is busy — the tests use at most ${workers} workers`);
+}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** The process tracker of dist/, or undefined (the process group is then still stopped). */

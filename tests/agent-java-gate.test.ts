@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -22,7 +22,7 @@ function setup() {
   const log = join(d, "log");
   exe(
     join(jdk, "bin", "java"),
-    `#!/bin/sh\necho "java $* nice=$(ps -o nice= -p $$ | tr -d ' ') slot=\${FACTORY_IN_TEST_SLOT:-}" >> "${log}"\n` +
+    `#!/bin/sh\necho "java $* nice=$(ps -o nice= -p $$ | tr -d ' ') slot=\${FACTORY_IN_TEST_SLOT:-} jopts=\${JDK_JAVA_OPTIONS:-}" >> "${log}"\n` +
       `if [ -n "$CALL_AGAIN" ] && [ -z "$NESTED" ]; then NESTED=1 "$JAVA_HOME/bin/java" -classpath x org.gradle.wrapper.GradleWrapperMain test; fi\nexit 7\n`,
   );
   exe(join(jdk, "bin", "javac"), "#!/bin/sh\nexit 0\n");
@@ -122,11 +122,26 @@ describe("wrappers started by their path", () => {
     expect(readdirSync(s.slots)).toEqual([]);
   });
 
+  it("./gradlew test under load: the java the wrapper starts gets the worker limit in JDK_JAVA_OPTIONS (GRADLE_OPTS is already arguments by then)", () => {
+    const s = setup();
+    mkdirSync(s.slots, { recursive: true });
+    writeFileSync(join(s.slots, "workers"), "3");
+    const r = s.sh("./gradlew", ["test"], { GRADLE_OPTS: "", JDK_JAVA_OPTIONS: "-Xmx1g", SCF_TEST_WORKERS: "", GRADLE_USER_HOME: s.d });
+    expect(r.status).toBe(7);
+    const l = lines(s.log)[0]!;
+    expect(l).toContain("GradleWrapperMain -Dorg.gradle.priority=low test");
+    expect(l).toContain("jopts=-Xmx1g -Dorg.gradle.workers.max=3");
+    // without the file nothing is added
+    rmSync(join(s.slots, "workers"));
+    s.sh("./gradlew", ["test"]);
+    expect(lines(s.log)[1]).toMatch(/jopts=$/);
+  });
+
   it("./mvnw verify takes a slot at low priority, without a Gradle flag", () => {
     const s = setup();
     expect(s.sh("./mvnw", ["verify"]).status).toBe(7);
     const l = lines(s.log)[0]!;
-    expect(l).toMatch(/MavenWrapperMain verify nice=\d+ slot=1$/);
+    expect(l).toMatch(/MavenWrapperMain verify nice=\d+ slot=1 jopts=$/);
     expect(niceOf(l)).toBeGreaterThanOrEqual(10);
   });
 
@@ -138,7 +153,7 @@ describe("wrappers started by their path", () => {
     const ls = lines(s.log);
     expect(ls.length).toBe(4);
     for (const l of ls) {
-      expect(l).toMatch(/slot=$/);
+      expect(l).toMatch(/slot= jopts=$/);
       expect(l).not.toContain("priority");
     }
     expect(existsSync(s.slots)).toBe(false);

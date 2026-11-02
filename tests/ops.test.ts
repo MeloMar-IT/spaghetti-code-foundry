@@ -168,6 +168,8 @@ describe("the load governor", () => {
     };
     writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 3, tests: 1, at: new Date().toISOString() }));
     expect(await say()).toContain("limits now: 3 runs at once");
+    writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, workers: 4, at: new Date().toISOString() }));
+    expect(await say()).toContain("limits now: runs as configured, at most 4 workers per test run");
     writeFileSync(join(dir, "state.json"), JSON.stringify({ calm: 0, runs: 3, tests: 1, at: new Date(Date.now() - 10 * 60_000).toISOString() }));
     expect(await say()).toBe("no limits set: the machine is calm enough");
   });

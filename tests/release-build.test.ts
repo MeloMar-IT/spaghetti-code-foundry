@@ -89,6 +89,11 @@ describe("buildEnv", () => {
     });
   });
 
+  it("passes a numeric SCF_TEST_WORKERS and drops a bad one", () => {
+    expect(buildEnv({ ...source, SCF_TEST_WORKERS: "4" }, r, deniedNames()).SCF_TEST_WORKERS).toBe("4");
+    expect(buildEnv({ ...source, SCF_TEST_WORKERS: "x" }, r, deniedNames()).SCF_TEST_WORKERS).toBeUndefined();
+  });
+
   it("drops a configured token or key name even when it is an allowed name", () => {
     const denied = deniedNames({ bot: { gh_token_env: "JAVA_HOME" }, providers: { x: { api_key_env: "GOPATH" } } } as never);
     const env = buildEnv(source, r, denied);

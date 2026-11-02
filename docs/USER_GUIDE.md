@@ -3661,6 +3661,7 @@ flowchart LR
 - **A few test runs at a time.** At most `test_slots` test commands (default `2`) work on the
   machine at once, over all runs and repositories; the others wait their turn. Many test runs at
   once make each of them slow and let timing-sensitive tests fail. `0` switches the limit off.
+  Under load the governor also lowers the workers of each test run (see "The load governor").
   Test runs work at a lower priority (`nice` 10; `FACTORY_TEST_NICE` changes it, `0` keeps the
   normal priority), so the server, its pages and the agents stay responsive while tests work.
   Four environment variables tune the slot runner for the daily checks. `FACTORY_TEST_SLOT_LIMIT_SEC`
@@ -4010,6 +4011,17 @@ Two cases act at once, even during a pause: memory pressure critical, and a 1-mi
 per core. Above 4 per core, or under critical memory pressure, only one test run works at a time.
 These apply with and without the measurement.
 
+**Workers per test run.** While the machine is loaded (the 1-minute or the 5-minute load above 2.5 per
+core, or one of the emergencies above), the governor also limits the workers of each test run. A test
+run gets a quarter of the cores, at least 2: on a 16-core machine, 4 workers. The command gets
+`SCF_TEST_WORKERS` (vitest) and `-Dorg.gradle.workers.max` (Gradle, added to `GRADLE_OPTS` and
+`JDK_JAVA_OPTIONS`; the command line is not changed). The number stays while the load is between 1.2
+and 2.5 per core, and it goes when the 1-minute and the 5-minute load are both 1.2 per core or less.
+A limit you set yourself is never raised: `SCF_TEST_WORKERS` from 1 up to the number stays, and the
+Gradle setting is left out when your own one (command line, `GRADLE_OPTS`, `JAVA_OPTS`, `gradle.properties`)
+is that number or lower. The governor's worker file counts for 4 minutes after its last check, like the
+cap on test runs; with no file nothing changes. `scf governor report` and the "limits now" line show it.
+
 After the cap moved, the governor pauses: no further step down for 3 minutes, and no step up for
 10 minutes. Only an emergency breaks the pause. It still moves one step at a time. Each step down in
 the last hour makes that wait 10 minutes longer: after two step downs, 30 minutes. Once the step
@@ -4025,7 +4037,7 @@ The wait above applies to every step up. These values are built into the governo
 Every change is a line in `governor/changes.log`. `scf governor status` says how many times the
 governor changed the limits today, and Home's health line shows the same count when it is above 0.
 The daily digest mentions the changes only when there were more than 20 in the last 24 hours. The governor's limits end by themselves
-four minutes after the last check — the cap on runs, the cap on test runs, and what the governor
+four minutes after the last check — the cap on runs, the cap on test runs, the workers per test run, and what the governor
 remembers — so a governor that stops can never hold the Foundry down, and the first check after the
 machine slept starts fresh. The step downs of the last hour are part of what it remembers, so after a
 pause of more than four minutes they are forgotten and the wait before a step up is 10 minutes again. `scf governor reset` takes them away at once. The daily release check
