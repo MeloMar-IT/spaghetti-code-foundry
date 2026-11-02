@@ -410,7 +410,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       if (issue) {
         who = "Another story";
         why = `waits: ${line}`;
-        if (r?.fix) w = { label: `Fix story #${r.fix.issue}`, url: r.fix.url ?? `https://github.com/${base.repo ?? ""}/issues/${r.fix.issue}` };
+        if (r?.fix) w = { label: `Fix story #${r.fix.issue}`, url: r.fix.url ?? ["https://github.com", base.repo ?? "", "issues", r.fix.issue].join("/") };
         until = `a new commit on ${branch}`;
         say = "nothing to do, it starts by itself on a new commit";
       } else {
