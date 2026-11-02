@@ -11,12 +11,13 @@ import { renderRepo } from "/repo-view.js";
 import { renderRepos } from "/repos.js";
 import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { renderHome } from "/home.js";
+import { renderSimpleHome, renderSimpleProject } from "/simple.js";
 import { renderStart } from "/user/start.js";
 import { initPalette } from "/palette.js";
 import { initShell, namePage, showPage } from "/shell.js";
 import { errorState, explainError } from "/states.js";
 import { beginView } from "/view-as.js";
-import { offerCard, offerFor, showViewNav, viewOf } from "/view-mode.js";
+import { SIMPLE_SECTIONS, offerCard, offerFor, showViewNav, viewOf } from "/view-mode.js";
 
 const main = document.getElementById("main");
 let cleanup = null;
@@ -61,7 +62,10 @@ async function route() {
     offerCard(card, offer, shownView);
     return;
   }
-  const page = userPage(hash);
+  let page = userPage(hash);
+  // Simple has My projects (#/home) and the project page only; anything else, and the bare repository list, goes to My projects.
+  const simple = shownView === "simple" && !readOnly;
+  if (simple && (!SIMPLE_SECTIONS.includes(page.section) || (page.section === "repos" && !page.id))) page = userPage("#/home");
   // A hash without a page here is never drawn: the address bar goes to the Runs list.
   if (page.hash !== location.hash) history.replaceState(null, "", page.hash);
   cleanup?.();
@@ -71,6 +75,7 @@ async function route() {
   const scoped = to.redirected || page.hash !== hash ? null : context?.scoped(to.hash);
   if (scoped) { history.replaceState(null, "", scoped); to = resolve("user", scoped); }
   showPage("user", to);
+  if (simple) document.getElementById("crumbs")?.setAttribute("hidden", "");
   // Filters change the address without a navigation; with a repository context, clearing the repository writes repo=all.
   const go = (next) => history.replaceState(null, "", context ? context.keep(next) : next);
   // Each call draws into its own box, so a slow page that finishes after a hash change cannot touch the current one.
@@ -78,7 +83,9 @@ async function route() {
   mount(main, box);
   let done = null;
   try {
-    if (page.section === "home") done = await renderHome(box, { readOnly });
+    if (simple && page.section === "home") done = await renderSimpleHome(box);
+    else if (simple && page.section === "repos") done = await renderSimpleProject(box, { id: page.id, onName: (n) => { if (mine === generation) namePage(n); } });
+    else if (page.section === "home") done = await renderHome(box, { readOnly });
     else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });
     else if (page.section === "epics" && page.id) done = await renderEpic(box, { id: page.id, admin: false, me, query: to.query, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "epics") done = await renderEpics(box, { admin: false, me, readOnly, query: to.query, go });
@@ -118,6 +125,8 @@ readOnly = view.readOnly;
 shownView = readOnly ? "advanced" : viewOf(me);
 ownAdmin = isAdmin(me) && !readOnly;
 if (!readOnly) showViewNav(shownView);
+// Simple has no repository switcher: its labels ("All repositories") are Advanced words.
+if (shownView === "simple" && !readOnly) document.getElementById("context")?.setAttribute("hidden", "");
 stopped = !view.ready;
 if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: view.readOnly });
 if (view.ready) context = initContext("user", me, { readOnly, go: contextGo });

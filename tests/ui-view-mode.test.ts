@@ -61,8 +61,11 @@ describe("the rules", () => {
     const o = vm.offerFor;
     expect(o("simple", "user", "#/epics")).toBe("advanced");
     expect(o("simple", "user", "#/refinement/backlog")).toBe("advanced");
-    expect(o("simple", "user", "#/runs?repo=a/b")).toBeNull();
-    expect(o("simple", "user", "#/runs/abc")).toBeNull();
+    expect(o("simple", "user", "#/runs?repo=a/b")).toBe("advanced");
+    expect(o("simple", "user", "#/runs/abc")).toBe("advanced");
+    expect(o("simple", "user", "#/start")).toBe("advanced");
+    expect(o("simple", "user", "#/repos/x")).toBeNull();
+    expect(o("simple", "user", "#/home")).toBeNull();
     expect(o("simple", "admin", "#/settings")).toBe("admin");
     expect(o("advanced", "admin", "#/settings")).toBe("admin");
     expect(o("advanced", "user", "#/settings")).toBeNull();
@@ -171,7 +174,10 @@ describe("chooseView", () => {
     const { a, opts } = make();
     expect(await vm.chooseView("simple", opts)).toBe("");
     expect(a.setView).toHaveBeenCalledWith("simple");
-    expect(opts.go).toHaveBeenCalledWith("/user/#/runs");
+    expect(opts.go).toHaveBeenCalledWith("/user/"); // Simple has no Runs page
+    const keep = make({ hash: () => "#/home" });
+    await vm.chooseView("simple", keep.opts);
+    expect(keep.opts.go).toHaveBeenCalledWith("/user/#/home");
     expect(opts.later).toHaveBeenCalledTimes(1);
     const b = make({ hash: () => "#/settings" });
     await vm.chooseView("simple", b.opts);
@@ -262,7 +268,7 @@ describe("chooseView", () => {
     a.setView.mockRejectedValue(Object.assign(new Error("timeout"), { name: "TimeoutError" }));
     a.myView.mockResolvedValue({ view: "simple" });
     expect(await vm.chooseView("simple", opts)).toBe("");
-    expect(opts.go).toHaveBeenCalledWith("/user/#/runs");
+    expect(opts.go).toHaveBeenCalledWith("/user/"); // Simple has no Runs page
   });
 
   it("gives the page back and says so when a timed-out call did not store the view", async () => {
@@ -419,7 +425,7 @@ describe("mountViewSwitch", () => {
     expect(a.setView).not.toHaveBeenCalled();
     await choose(selects()[0]!, "simple");
     expect(a.setView).toHaveBeenCalledWith("simple");
-    expect(go).toHaveBeenCalledWith("/user/#/runs");
+    expect(go).toHaveBeenCalledWith("/user/"); // Simple has no Runs page
     for (const s of selects()) expect(s.value).toBe("simple");
   });
 
@@ -529,12 +535,12 @@ describe("offerCard", () => {
 });
 
 describe("showViewNav", () => {
-  it("hides the links Simple does not have, and nothing for Advanced", () => {
+  it("hides every link but Home in Simple, and nothing for Advanced", () => {
     const side = new FakeElement("nav");
-    const links = ["home", "epics", "runs", "repos", "refinement"].map((n) => box("a", { "data-nav": n }));
+    const links = ["start", "home", "epics", "runs", "repos", "refinement"].map((n) => box("a", { "data-nav": n }));
     side.append(...links);
     vm.showViewNav("simple", side);
-    expect(links.filter((l) => l.hidden).map((l) => l.attrs["data-nav"])).toEqual(["epics", "refinement"]);
+    expect(links.filter((l) => !l.hidden).map((l) => l.attrs["data-nav"])).toEqual(["home"]);
     vm.showViewNav("advanced", side);
     expect(links.some((l) => l.hidden)).toBe(false);
   });

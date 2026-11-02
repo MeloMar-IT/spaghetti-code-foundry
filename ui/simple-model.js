@@ -1,0 +1,115 @@
+import { sameRepo } from "./filters.js";
+import { needsUser, recordLink } from "./home.js";
+import { myRunsEntries } from "./runs-list.js";
+import { WORDS, kindWords, phaseOf, progressText, safeText, stateLine, summaryOf } from "./simple-words.js";
+
+// The Simple view as plain data: projects, the four groups of work and the cards. No DOM here.
+// Grouping uses the next-step record (`run.next` or `job.next`), never the run status, as Home does.
+
+/**
+ * The identity of a project: "owner/name" for a GitHub repository, "local:<id>" for a local one, null when there is neither.
+ * A local project's work is the work whose `vars.repo_id` (or `job.repoId`) is its id; no record carries that yet (see `workOf`).
+ */
+export const projectKey = (repo) => {
+  if (typeof repo?.github === "string" && repo.github) return repo.github;
+  return repo?.id ? `local:${repo.id}` : null;
+};
+
+/** True when a run or queued job belongs to the project: by the GitHub name, or by the local id. */
+const workOf = (e, key, repo) => {
+  const n = recordOf(e);
+  if (!n) return false;
+  if (key.startsWith("local:")) return String(e.run?.vars?.repo_id ?? e.job?.repoId ?? "") === String(repo.id);
+  return sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo ?? n.repo, key);
+};
+
+const lastPart = (s) => String(s ?? "").replace(/\/+$/, "").replace(/(\.git)+$/i, "").split(/[/:]/).pop() ?? "";
+
+/** The project name: the short name, or the full "owner/name" when two projects of the list share the short name. */
+export function projectName(repo, all = []) {
+  const full = typeof repo?.github === "string" && repo.github ? repo.github : null;
+  const short = full ? full.split("/").pop() : lastPart(repo?.url) || String(repo?.id ?? "");
+  const shortOf = (r) => (typeof r?.github === "string" && r.github ? r.github.split("/").pop() : lastPart(r?.url));
+  const clash = all.some((r) => r !== repo && shortOf(r).toLowerCase() === short.toLowerCase());
+  return clash && full ? full : short;
+}
+
+/** Records Simple does not show as work. */
+export const HIDDEN = new Set(["cancelled", "superseded", "issue_closed", "parked", "epic", "watcher_error", "watcher_stale", "monitor_stopped", "closed_elsewhere", "chore_late"]);
+const ANSWER = new Set(["questions", "planner_questions", "owner_action"]);
+
+const recordOf = (e) => e.run?.next ?? e.job?.next;
+const idOf = (e) => e.run?.runId ?? e.job?.runId;
+const finishedMs = (e) => Date.parse(e.run?.finishedAt ?? e.run?.startedAt ?? "") || 0;
+
+/** "check" | "building" | "planned" | "done", or null for work Simple does not show. */
+export function groupOf(entry) {
+  const n = recordOf(entry);
+  if (!n || HIDDEN.has(n.kind)) return null;
+  if (needsUser(n)) return "check";
+  if (n.kind === "done" || n.kind === "release") return "done";
+  if (n.kind === "running" || (entry.run?.history?.length ?? 0) > 0) return "building";
+  return "planned";
+}
+
+/** One card: only word-list text and the person's own title and summary. Never the server's `text`, `status` or `where.label`. */
+export function cardOf(entry) {
+  const n = recordOf(entry);
+  const { run, job } = entry;
+  const task = String(run?.task ?? job?.task ?? "");
+  const group = groupOf(entry);
+  const words = kindWords(n.kind, n.who);
+  const card = {
+    id: idOf(entry),
+    title: safeText(n.title || task.split(/\r?\n/)[0], WORDS.untitled),
+    sentence: safeText(summaryOf(task)),
+    line: words.line,
+  };
+  if (group === "building" && run) {
+    const step = run.state?.next ?? run.history?.at(-1)?.id ?? "";
+    if (step) card.progress = progressText(phaseOf(step));
+  }
+  if (group === "check") {
+    card.todo = words.todo;
+    const l = recordLink(n, "user", idOf(entry));
+    if (l) card.link = { href: l.href, external: !!l.external };
+  }
+  return card;
+}
+
+/** → { id, name, todo, groups: { planned, building, check, done }, state } of one project. */
+export function projectModel(repo, all, runs, pending) {
+  const key = projectKey(repo);
+  const groups = { planned: [], building: [], check: [], done: [] };
+  let answer = false;
+  if (key) {
+    const mine = myRunsEntries(runs, pending).filter((e) => workOf(e, key, repo));
+    mine.sort((a, b) => finishedMs(b) - finishedMs(a));
+    for (const e of mine) {
+      const g = groupOf(e);
+      if (!g) continue;
+      groups[g].push(cardOf(e));
+      if (g === "check" && ANSWER.has(recordOf(e).kind)) answer = true;
+    }
+  }
+  return {
+    id: repo.id,
+    name: projectName(repo, all),
+    todo: groups.check,
+    groups,
+    state: stateLine({ needs: groups.check.length, needsAnswer: answer, building: groups.building.length, planned: groups.planned.length, done: groups.done.length }),
+  };
+}
+
+/** The projects in the order of the repositories, each with its one big `next` button. */
+export function projectsModel(repos, runs, pending) {
+  const all = Array.isArray(repos) ? repos : [];
+  return all.map((repo) => {
+    const m = projectModel(repo, all, runs, pending);
+    const first = m.todo.find((c) => c.link);
+    const next = first
+      ? { label: first.todo, href: first.link.href, external: first.link.external }
+      : { label: WORDS.open, href: `#/repos/${encodeURIComponent(m.id)}`, external: false };
+    return { ...m, next };
+  });
+}
