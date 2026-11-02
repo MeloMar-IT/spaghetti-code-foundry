@@ -181,11 +181,12 @@ describe("splitCpu: the window", () => {
     const u = splitCpu([row(1, 0, 3)], new Map(), { "1": [OLD, 9] }, PREV_AT, nobody, [], 10);
     expect(u.other.cores).toBe(0);
   });
-  it("groups the top programs and shows 3", () => {
-    const rows = [1, 2, 3, 4, 5].map((i) => row(i, 0, i * 10));
-    const names = new Map([[1, "a"], [2, "a"], [3, "b"], [4, "c"], [5, "d"]]);
+  it("groups the top programs, keeps 5 and names 3 in a line", () => {
+    const rows = [1, 2, 3, 4, 5, 6, 7].map((i) => row(i, 0, i * 10));
+    const names = new Map([[1, "a"], [2, "a"], [3, "b"], [4, "c"], [5, "d"], [6, "e"], [7, "f"]]);
     const u = splitCpu(rows, names, baseline(rows.map((r) => ({ ...r, cpuSec: 0 }))), PREV_AT, nobody, [], 10);
-    expect(u.other.top).toEqual([{ program: "d", cores: 5 }, { program: "c", cores: 4 }, { program: "a", cores: 3 }]);
+    expect(u.other.top).toEqual([{ program: "f", cores: 7 }, { program: "e", cores: 6 }, { program: "d", cores: 5 }, { program: "c", cores: 4 }, { program: "a", cores: 3 }]);
+    expect(usageLine({ foundry: u.foundry, other: u.other })).toContain("(top: f 7.0, e 6.0, d 5.0)");
   });
 });
 

@@ -182,6 +182,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET runs/:id/transcript/:n": no("runs/nope/transcript/0", 404),
   "GET next": no("next", 200),
   "GET health": no("health", 200),
+  "GET governor": no("governor", 200),
   "GET board": no("board", 200),
   "GET search": { path: "search?q=x", user: 200, admin: 200 },
   "GET since": no("since", 400),

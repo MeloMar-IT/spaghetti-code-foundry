@@ -26,6 +26,8 @@ export const LEARN_STEP_MAX = 0.25;
 /** Two checks closer than this give no figures (a manual run right after another). */
 export const MIN_WINDOW_MS = 20_000;
 export const TOP_PROGRAMS = 3;
+/** How many programs a result keeps (`governor/latest.json`); the lines of the log and the report name `TOP_PROGRAMS`. */
+export const TOP_KEPT = 5;
 /** A process may have started this long before the previous check and still count as new (clock slack). */
 const START_SLACK_MS = 5000;
 /** The helpers of the Foundry (`scf <name> run`); tests keep this equal to the keys of JOBS in cli.ts. */
@@ -299,7 +301,7 @@ export function splitCpu(rows: CpuRow[], names: Map<number, string>, prev: Usage
   const repos: Record<string, number> = {};
   for (const r of runList) repos[r.repo] = round((repos[r.repo] ?? 0) + r.cores);
   const runCores = runList.reduce((a, r) => a + r.cores, 0);
-  const top = [...programs].map(([program, c]) => ({ program, cores: round(c) })).filter((p) => p.cores > 0).sort((a, b) => b.cores - a.cores || a.program.localeCompare(b.program)).slice(0, TOP_PROGRAMS);
+  const top = [...programs].map(([program, c]) => ({ program, cores: round(c) })).filter((p) => p.cores > 0).sort((a, b) => b.cores - a.cores || a.program.localeCompare(b.program)).slice(0, TOP_KEPT);
   return {
     windowSec: round(seconds, 1),
     foundry: { cores: round(runCores + tests + server), tests: round(tests), server: round(server), runs: runList, repos },

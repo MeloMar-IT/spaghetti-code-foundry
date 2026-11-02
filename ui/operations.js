@@ -2,6 +2,7 @@ import { actorText, targetText, timeText } from "./audit.js";
 import { api } from "./api.js";
 import { tile } from "./dashboard.js";
 import { h, mount, tableBox, timeAgo, toast } from "./dom.js";
+import { governorBody } from "./governor.js";
 import { askCancelRun, renderHealth } from "./health.js";
 import { ownerLabel } from "./runs.js";
 import { loadingState } from "./states.js";
@@ -90,7 +91,7 @@ export async function renderOperations(main, { readOnly = false } = {}) {
     if (live()) await load();
   };
 
-  const draw = ([health, stats, info, queue, watchers, providers, audit]) => {
+  const draw = ([health, stats, info, queue, watchers, providers, audit, gov]) => {
     const f = ok(health) ? health.value?.monitorFindings : undefined;
     const findingsText = f?.unreadable ? "The findings file cannot be read." : f ? `${f.open} open of ${f.total} stored` : "No findings stored.";
     const q = ok(queue) ? queueSummary(queue.value) : null;
@@ -163,11 +164,12 @@ export async function renderOperations(main, { readOnly = false } = {}) {
       card("Queue", "card", queueBody, link("#/runs", "Runs")),
       card("Watchers", "card", watchersBody, link("#/watchers", "Watchers")),
       card("Limits", "card", limitsBody, h("p", {}, link("#/settings", "Settings"), " · ", link("#/users", "Users"))),
+      card("Load governor", "card span-all", ok(gov) ? governorBody(gov.value) : notAvailable(gov), link("#/settings", "Settings")),
       card("Recent audit", "card span-all", auditBody, link("#/audit", "Audit"))) }));
   };
 
   const load = async () => {
-    const results = await Promise.allSettled([api.health(), api.stats(), api.info(), api.queue(), api.watchers(), api.providers(), api.audit()]);
+    const results = await Promise.allSettled([api.health(), api.stats(), api.info(), api.queue(), api.watchers(), api.providers(), api.audit(), api.governor()]);
     if (!live()) return;
     draw(results);
   };

@@ -113,6 +113,7 @@ const defaults = (): Record<string, any> => ({
   "/api/watchers": [{ id: "w1", enabled: true, status: { lastOk: "2026-10-01T00:00:00Z" } }, { id: "w2", enabled: true, status: { lastError: "bad token\nmore" } }],
   "/api/providers": { agents: [{ agent: "claude", installed: true, detail: "1.0" }], providers: [{ name: "local", ok: false, detail: "down" }] },
   "/api/audit": audit10,
+  "/api/governor": { status: "none", configured: 6, limit: 6, caps: [], history: { since: "2026-10-01T00:00:00.000Z", now: "2026-10-02T00:00:00.000Z", start: 6, steps: [], belowMs: 0, reasons: [] } },
 });
 const GETS = Object.keys(defaults());
 
@@ -153,7 +154,7 @@ const root = () => (document as any).getElementById("modal-root") as FakeElement
 const dialogButton = (text: string) => root().all("button").find((b) => b.textContent === text)!;
 const show = () => ui.renderOperations(main());
 const getsOnly = () => calls.filter((c) => c.method === "GET").map((c) => c.url);
-const CARDS = ["Health", "Problems", "Providers", "Queue", "Watchers", "Limits", "Recent audit"];
+const CARDS = ["Health", "Problems", "Providers", "Queue", "Watchers", "Limits", "Load governor", "Recent audit"];
 
 describe("the page", () => {
   it("draws seven cards with their links and no button", async () => {
@@ -170,7 +171,7 @@ describe("the page", () => {
     expect(cardOf("Problems").textContent).toContain("2 open of 5 stored");
     expect(walk(main()).filter((e) => e.tag === "button")).toEqual([]);
     expect(getsOnly().sort()).toEqual([...GETS].sort());
-    expect(calls).toHaveLength(7);
+    expect(calls).toHaveLength(8);
   });
 
   it("mounts one overview page", async () => {
@@ -180,7 +181,7 @@ describe("the page", () => {
   });
 
   it("shows a skeleton and no card while the answers are out", async () => {
-    const waits: (() => void)[][] = Array.from({ length: 7 }, () => []);
+    const waits: (() => void)[][] = Array.from({ length: 8 }, () => []);
     holdAll = [...waits];
     const p = show();
     await flush();
@@ -250,7 +251,7 @@ describe("Cancel run", () => {
     await flush();
     dialogButton("Keep running").click();
     await flush();
-    expect(calls).toHaveLength(7);
+    expect(calls).toHaveLength(8);
   });
 
   it("has no button when read-only, and sends nothing", async () => {
@@ -266,8 +267,8 @@ describe("Cancel run", () => {
     dialogButton("Cancel the run").click();
     await flush();
     await flush();
-    expect(calls[7]).toEqual({ method: "POST", url: "/api/runs/r1/cancel" });
-    expect(calls.slice(8).map((c) => c.url).sort()).toEqual([...GETS].sort());
+    expect(calls[8]).toEqual({ method: "POST", url: "/api/runs/r1/cancel" });
+    expect(calls.slice(9).map((c) => c.url).sort()).toEqual([...GETS].sort());
   });
 
   it("goes on after a failed cancel and does not reject", async () => {
@@ -278,7 +279,7 @@ describe("Cancel run", () => {
     dialogButton("Cancel the run").click();
     await flush();
     await flush();
-    expect(calls).toHaveLength(7 + 1 + 7);
+    expect(calls).toHaveLength(8 + 1 + 8);
   });
 
   it("does not redraw when the person left the page", async () => {
@@ -289,7 +290,7 @@ describe("Cancel run", () => {
     dialogButton("Cancel the run").click();
     await flush();
     await flush();
-    expect(calls).toHaveLength(8);
+    expect(calls).toHaveLength(9);
   });
 });
 
@@ -304,6 +305,7 @@ describe("a failing call", () => {
     ["/api/info", ["Limits"], ["Spent today"]],
     ["/api/stats", ["Limits"], []],
     ["/api/audit", ["Recent audit"], []],
+    ["/api/governor", ["Load governor"], []],
   ])("%s only hurts what depends on it", async (url, cards, tiles) => {
     failing.add(url);
     await show();
@@ -326,7 +328,7 @@ describe("a failing call", () => {
 
 describe("late answers", () => {
   it("drops an answer that arrives after the person left", async () => {
-    holdAll = Array.from({ length: 7 }, () => []);
+    holdAll = Array.from({ length: 8 }, () => []);
     const waits = [...holdAll];
     const p = show();
     await flush();
@@ -338,8 +340,8 @@ describe("late answers", () => {
   });
 
   it("an old cleanup does not stop the newer render", async () => {
-    const a: (() => void)[][] = Array.from({ length: 7 }, () => []);
-    const b: (() => void)[][] = Array.from({ length: 7 }, () => []);
+    const a: (() => void)[][] = Array.from({ length: 8 }, () => []);
+    const b: (() => void)[][] = Array.from({ length: 8 }, () => []);
     holdAll = [...a, ...b];
     const pa = show();
     await flush();
