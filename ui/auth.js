@@ -2,7 +2,7 @@ import { api, setCsrf } from "./api.js";
 import { h, modal, mount, showError, toast } from "./dom.js";
 import { appearanceButton, initPrefs } from "./prefs.js";
 import { splitHash } from "./ia.js";
-import { displayOf, displayPath, mountViewSwitch, viewOf } from "./view-mode.js";
+import { displayOf, displayPath, mountBusySwitch, mountViewSwitch, viewOf } from "./view-mode.js";
 
 const PASSWORD_MIN = 12;
 
@@ -291,5 +291,6 @@ export async function enterDisplay(display, { signIn = ensureSignedIn, go = (to)
   }
   document.body.classList.remove("signed-out");
   if (!(viewAs && isAdmin(user))) mountViewSwitch(user);
+  if (isAdmin(user) && !viewAs) mountBusySwitch(user);
   return user;
 }

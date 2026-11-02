@@ -82,8 +82,8 @@ export function parseNames(text: string): Map<number, string> {
   return names;
 }
 
-/** Every process now with its CPU time and name; undefined when `ps` fails, is too slow or gives nothing usable. Blocks. */
-export function readCpuTable(timeoutMs = 10_000): { rows: CpuRow[]; names: Map<number, string> } | undefined {
+/** Every process now with its CPU time and name; undefined when `ps` fails, is too slow or gives nothing usable. `namesRead` is false when the names could not be read (`names` is then empty). Blocks. */
+export function readCpuTable(timeoutMs = 10_000): { rows: CpuRow[]; names: Map<number, string>; namesRead?: boolean } | undefined {
   const run = (args: string[]) => execFileSync(psPath(), args, { env: psEnv(), timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   let rows: CpuRow[];
   try {
@@ -93,12 +93,14 @@ export function readCpuTable(timeoutMs = 10_000): { rows: CpuRow[]; names: Map<n
   }
   if (!rows.length) return undefined;
   let names = new Map<number, string>();
+  let namesRead = true;
   try {
     names = parseNames(run(PS_NAME_ARGS));
   } catch {
     // programs are "unknown"; the rest still works
+    namesRead = false;
   }
-  return { rows, names };
+  return { rows, names, namesRead };
 }
 
 /** Runs that are running and have a step process marked in `<run folder>/step-pids/`. Only those run.json files are read. */

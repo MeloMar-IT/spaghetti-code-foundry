@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import { makeRedactor } from "../src/credentials/redact.js";
 import { defaultExec } from "../src/engine/repo-broker.js";
+import { setBusy } from "../src/ops/busy.js";
 import { describeSettings } from "../src/settings/describe.js";
 import { priorityMachine, priorityPrefix, runProcess, spawnTarget, type PriorityMachine } from "../src/steps/process.js";
 import { runShell } from "../src/steps/shell.js";
@@ -46,8 +47,8 @@ describe("spawnTarget with a priority", () => {
 
 describe("governor.priority in the config", () => {
   it("defaults to low, also for a config without the block", () => {
-    expect(ConfigSchema.parse({}).governor).toEqual({ priority: "low", reserve_cores: 2 });
-    expect(ConfigSchema.parse({ concurrency: 3 }).governor).toEqual({ priority: "low", reserve_cores: 2 });
+    expect(ConfigSchema.parse({}).governor).toEqual({ priority: "low", reserve_cores: 2, busy_runs: 2, busy_apps: [] });
+    expect(ConfigSchema.parse({ concurrency: 3 }).governor).toEqual({ priority: "low", reserve_cores: 2, busy_runs: 2, busy_apps: [] });
     expect(ConfigSchema.parse({ governor: { priority: "background" } }).governor.priority).toBe("background");
   });
   it("refuses an unknown value and an unknown key", () => {
@@ -140,6 +141,26 @@ describe("run processes at a priority", () => {
     expect(nums(rel.stdout)).toEqual([Math.max(15, getPriority())]);
     const sh = await runProcess("ps", ["-o", "nice=", "-p", "$$"], { ...base(d), env: { PATH: undefined }, cleanEnv: true, priority: "low" }).catch(() => undefined);
     expect(sh === undefined || sh.exitCode !== null).toBe(true); // found in the default path, so it is not a start failure
+  });
+
+  it("busy mode starts new processes at background; a process without a priority is left alone", async () => {
+    const m = await priorityMachine();
+    if (!m.nice) return;
+    const now = new Date();
+    setBusy({ since: now.toISOString() }, 2, now); // the data folder of this test run (tests/setup.ts)
+    try {
+      for (const priority of ["low", "normal"] as const) {
+        const d = dir();
+        const r = await runProcess("/bin/sh", ["-c", SELF], { ...base(d), priority });
+        expect(nums(r.stdout), priority).toEqual([Math.max(15, getPriority())]);
+      }
+      const none = await runProcess("/bin/sh", ["-c", SELF], base(dir()));
+      expect(nums(none.stdout)).toEqual([getPriority()]);
+    } finally {
+      setBusy(undefined, 2, new Date());
+    }
+    const after = await runProcess("/bin/sh", ["-c", SELF], { ...base(dir()), priority: "low" });
+    expect(nums(after.stdout)).toEqual([Math.max(5, getPriority())]);
   });
 
   it("runShell and the broker's commands take the priority too", async () => {

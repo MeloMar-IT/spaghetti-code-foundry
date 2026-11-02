@@ -193,8 +193,15 @@ describe("Settings → Load governor", () => {
     sel.fire("change", { target: sel });
     main.all("button").find((b) => b.textContent === "Save")!.click();
     await flush();
-    expect(puts[0].governor).toEqual({ priority: "background", reserve_cores: 2 });
+    expect(puts[0].governor).toEqual({ priority: "background", reserve_cores: 2, busy_runs: 2, busy_apps: [] });
     expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  it("shows the busy mode settings", async () => {
+    const { main } = await render({});
+    const text = card(main).textContent;
+    expect(text).toContain("Runs while you use the machine");
+    expect(text).toContain("Programs that mean you use the machine");
   });
 
   it("saves a changed number of cores kept free", async () => {
@@ -211,7 +218,7 @@ describe("Settings → Load governor", () => {
 
   it("has one number input for the lowest runs, empty when not set", async () => {
     const { main } = await render({});
-    expect(card(main).all("input").filter((i) => i.attrs.type === "number")).toHaveLength(2);
+    expect(card(main).all("input").filter((i) => i.attrs.type === "number")).toHaveLength(3);
     expect(floorInput(main).value ?? "").toBe("");
   });
 

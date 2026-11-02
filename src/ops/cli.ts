@@ -8,12 +8,13 @@ import { sendDesktop } from "../notify.js";
 import { storeFor } from "../stories/store.js";
 import type { ServiceHost } from "../service.js";
 import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } from "./blockage.js";
+import { governorBusyApps } from "./busy.js";
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
 import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
 import { changesToday, clearGovernor, DEFAULTS, fitsText, HOLD_MS, loadState, MANY_CHANGES, runGovernor, runsFit, sample, type Sample } from "./governor.js";
 import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, type Family, type LimitsState } from "./limits.js";
-import { measureUsage, measurement, runRepos, usageLine, type Usage } from "./usage.js";
+import { measureUsage, measurement, readCpuTable, runRepos, usageLine, type Usage } from "./usage.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
 
 export const JOBS: Record<string, Job> = {
@@ -67,7 +68,8 @@ function governor(out: Out, now = new Date()) {
   const c = loadConfig();
   const slotsDir = join(dataDir(), "test-slots");
   // before the check, so the change line can name the cause; never throws, and without figures the check is as it always was
-  const usage = measureUsage({ dir, runsDir: join(dataDir(), "runs"), slotsDir, now });
+  const table = readCpuTable();
+  const usage = measureUsage({ dir, runsDir: join(dataDir(), "runs"), slotsDir, now, read: () => table });
   const measured = usage ? measurement(usage, runRepos(join(dataDir(), "queue.json"), join(dataDir(), "runs")), availableParallelism()) : undefined;
   const fit = measured ? runsFit(measured, c.governor.reserve_cores) : undefined;
   const cause = usage ? `${usageLine(usage)}${fit !== undefined ? `; ${fitsText(fit)}` : ""}` : undefined;
@@ -80,6 +82,13 @@ function governor(out: Out, now = new Date()) {
     // best effort
   }
   if (d.change) out(`${now.toISOString()} ${d.change}${cause ? ` — ${cause}` : ""}`);
+  // programs that mean the person uses the machine; their own cap, never the switch set by hand. A failure must not fail the check.
+  try {
+    const busy = governorBusyApps(table, c.governor.busy_apps, c.governor.busy_runs, now, capsPath(dataDir()));
+    if (busy) out(`${now.toISOString()} ${busy}`);
+  } catch {
+    // best effort
+  }
 }
 
 /** The usage lines of `scf governor report`, from the last check. Nothing when that is older than the hold time or does not look right. */
