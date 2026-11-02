@@ -98,7 +98,7 @@ describe("release-build flow", () => {
     for (const v of Object.values(MARKERS)) expect(env).not.toContain(v);
     const allowed = new Set([
       "PATH", "HOME", "LANG", ...TOOLCHAIN_VARS, "FACTORY_RELEASE_VERSION", "FACTORY_RELEASE_TAG", "FACTORY_RELEASE_IN", "FACTORY_RELEASE_OUT", "FACTORY_RELEASE_SHA",
-      "FACTORY_VAR_TEST_SLOTS", "FACTORY_TEST_SLOT_WAIT_SEC", "FACTORY_TEST_SLOT_POLL_MS", "FACTORY_TEST_NICE", "SCF_TEST_WORKERS", "FACTORY_TEST_SLOT_STRICT", "FACTORY_IN_TEST_SLOT", "PWD", "SHLVL", "_", "OLDPWD",
+      "FACTORY_VAR_TEST_SLOTS", "FACTORY_TEST_SLOT_WAIT_SEC", "FACTORY_TEST_SLOT_POLL_MS", "FACTORY_TEST_NICE", "SCF_TEST_WORKERS", "FACTORY_TEST_SLOT_STRICT", "FACTORY_TEST_SLOT_WAIT_DIR", "FACTORY_IN_TEST_SLOT", "PWD", "SHLVL", "_", "OLDPWD",
       "__CF_USER_TEXT_ENCODING", // added by macOS to every process it starts
     ]);
     const names = env.split("\n").filter((l) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(l)).map((l) => l.split("=")[0]!);

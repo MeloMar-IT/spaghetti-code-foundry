@@ -39,6 +39,10 @@ export interface GovernorState {
   calm: number;
   /** Checks in a row in which the 1-minute load was above `high`. Absent: 0. */
   hot?: number;
+  /** Checks in a row in which the 1-minute load was above `testsHigh`. Absent: 0. */
+  severe?: number;
+  /** When test runs beyond the first were paused (ISO time); absent: none is paused. */
+  paused?: string;
   /** Checks in a row in which the cap was above the runs that fit (with a measurement). Absent: 0. */
   over?: number;
   /** When the cap on runs last moved (ISO time). Kept only while a pause after a change can still hold. */
@@ -69,6 +73,9 @@ export interface Settings {
   /** Cores kept free for other programs when the runs that fit are worked out. */
   reserveCores: number;
 }
+
+/** The file in the slots folder that tells tools/test-slot to pause the test runs beyond the first. */
+export const PAUSE_FILE = "pause";
 
 export const DEFAULTS: Settings = { high: 2.5, low: 1.2, testsHigh: 4, calmChecks: 5, hotChecks: 3, settleMinutes: 10, downPauseMinutes: 3, reserveCores: 2 };
 
@@ -119,6 +126,9 @@ export interface Decision { state: GovernorState; change?: string }
  * Test workers: while the machine is loaded (1- or 5-minute load above `high`, or an emergency) each test run gets
  * `testWorkers(cores)` workers; the number stays while the load is between `low` and `high` and goes when the 1- and
  * 5-minute load are both at or below `low`. Without the cores (`s.cores`) none is decided.
+ * Test runs beyond the first are paused (`state.paused`) when memory pressure is critical, or when the 1-minute load is above
+ * `testsHigh` for `hotChecks` checks in a row. The pause ends when the pressure is not critical and the load is at or below
+ * `high`; while it holds, only one test run may work at a time.
  */
 export function decide(prev: GovernorState, s: Sample, configured: number, now: Date, set: Settings = DEFAULTS): Decision {
   const floor = Math.min(configured, set.floor ?? Math.max(2, Math.ceil(configured / 2)));
@@ -141,7 +151,11 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   const upWait = set.settleMinutes * 60_000 * (1 + downs.length);
   // no time, an unreadable time or one in the future (the clock moved back): no pause
   const age = Number.isFinite(changed) && changed <= t ? t - changed : Infinity;
-  const tests = emergency ? 1 : undefined;
+  const severe = s.load1 > set.testsHigh ? (prev.severe ?? 0) + 1 : 0;
+  const calmer = !critical && s.load1 <= set.high;
+  const wasPaused = Boolean(prev.paused);
+  const paused = prev.paused ? (calmer ? undefined : prev.paused) : critical || severe >= set.hotChecks ? now.toISOString() : undefined;
+  const tests = emergency || paused ? 1 : undefined;
   const why = critical ? "memory pressure critical" : s.load1 > set.testsHigh ? `load ${s.load1.toFixed(1)} per core` : fit !== undefined ? fitsText(fit) : s.load5 > set.high ? `load ${s.load5.toFixed(1)} per core over 5 minutes` : `load ${s.load1.toFixed(1)} per core for ${hot} checks`;
   const notes: string[] = [];
   let runs = have;
@@ -170,12 +184,16 @@ export function decide(prev: GovernorState, s: Sample, configured: number, now: 
   const workers = cores === undefined ? undefined : loaded ? testWorkers(cores) : s.load1 <= set.low && s.load5 <= set.low ? undefined : prev.workers;
   if (workers !== prev.workers) notes.push(workers ? `test workers → ${workers} (${critical ? "memory pressure critical" : `load ${Math.max(s.load1, s.load5).toFixed(1)} per core`})` : "test workers: back to normal");
   if (tests !== prev.tests) notes.push(tests ? `test runs at once → 1 (${critical ? "memory pressure critical" : `load ${s.load1.toFixed(1)} per core`})` : "test runs at once: back to normal");
+  if (paused && !wasPaused) notes.push(`test runs beyond the first paused (${critical ? "memory pressure critical" : `load ${s.load1.toFixed(1)} per core for ${severe} checks`})`);
+  if (!paused && wasPaused) notes.push(`paused test runs go on (load ${s.load1.toFixed(1)} per core)`);
   const keep = Number.isFinite(changed) && age < Math.max(upWait, set.downPauseMinutes * 60_000) ? changed : undefined;
   const stamp = moved ? t : keep;
   const state: GovernorState = {
     calm,
     ...(downs.length ? { downs } : {}),
     ...(hot ? { hot } : {}),
+    ...(severe ? { severe } : {}),
+    ...(paused ? { paused } : {}),
     ...(over ? { over } : {}),
     ...(runs < configured ? { runs } : {}),
     ...(tests ? { tests } : {}),
@@ -210,7 +228,7 @@ export function loadState(dir: string, now = new Date()): GovernorState {
     const age = now.getTime() - Date.parse(s.at ?? "");
     if (!(age <= HOLD_MS)) return { calm: 0 };
     const downs = recentDowns(s.downs, now.getTime());
-    return { calm: Number(s.calm) || 0, ...(downs.length ? { downs } : {}),...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number(s.over) > 0 ? { over: Number(s.over) } : {}),...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(Number.isInteger(s.workers) && s.workers! >= 1 ? { workers: s.workers } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
+    return { calm: Number(s.calm) || 0, ...(downs.length ? { downs } : {}),...(Number(s.hot) > 0 ? { hot: Number(s.hot) } : {}), ...(Number(s.over) > 0 ? { over: Number(s.over) } : {}),...(Number(s.severe) > 0 ? { severe: Number(s.severe) } : {}),...(typeof s.paused === "string" && Number.isFinite(Date.parse(s.paused)) ? { paused: s.paused } : {}),...(Number.isInteger(s.runs) ? { runs: s.runs } : {}), ...(s.tests ? { tests: 1 } : {}), ...(Number.isInteger(s.workers) && s.workers! >= 1 ? { workers: s.workers } : {}), ...(typeof s.changedAt === "string" && Number.isFinite(Date.parse(s.changedAt)) ? { changedAt: s.changedAt } : {}) };
   } catch {
     return { calm: 0 };
   }
@@ -236,6 +254,12 @@ export function runGovernor(o: { dir: string; slotsDir: string; capsFile: string
       mkdirSync(o.slotsDir, { recursive: true });
       writeFileSync(workersFile, String(d.state.workers));
     } else rmSync(workersFile, { force: true });
+    // the pause is told the same way: rewritten at every check while it holds, so it goes stale when the governor stops
+    const pauseFile = join(o.slotsDir, PAUSE_FILE);
+    if (d.state.paused) {
+      mkdirSync(o.slotsDir, { recursive: true });
+      writeFileSync(pauseFile, `${d.state.paused}\n`);
+    } else rmSync(pauseFile, { force: true });
     if (d.change) appendFileSync(join(o.dir, "changes.log"), `${o.now.toISOString()} ${d.change}${o.cause ? ` — ${o.cause}` : ""}\n`);
   }
   return d;
@@ -286,6 +310,7 @@ export function changesToday(dir: string, now: Date): number {
 export function clearGovernor(dir: string, slotsDir: string, capsFile: string) {
   rmSync(join(slotsDir, "cap"), { force: true });
   rmSync(join(slotsDir, "workers"), { force: true });
+  rmSync(join(slotsDir, PAUSE_FILE), { force: true });
   rmSync(join(dir, "state.json"), { force: true });
   setCap("load", undefined, capsFile);
 }

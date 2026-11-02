@@ -2679,6 +2679,23 @@ A step up needs `calm` checks and a number above the cap. Without `measured` (no
 the part 3 rules run unchanged. `decide()` stays a pure function of state, sample and settings, so the target is
 tested with recorded days (`tests/governor-target.test.ts`).
 
+**Pausing test runs (part 6).** Under critical memory pressure, or a 1-minute load above `testsHigh` for `hotChecks`
+checks, `decide()` sets `GovernorState.paused` (the time it began) and `tests` to 1. `runGovernor()` then writes
+the time into `test-slots/pause` (`PAUSE_FILE`) at every check, and removes the file when the pause ends or in
+`clearGovernor()`. `tools/test-slot` reads the file: a file not written for `CAP_HOLD_MS` (4 minutes) is ignored, so
+a stopped governor leaves nothing frozen. While the file is fresh, each command in its own process group (now
+every command, not only one with a limit) except the holder of `slot-1` gets `SIGSTOP` on its group and tries
+`slot-1` at every look. Only `test-slot` signals its own group. The pause is recorded in `FACTORY_TEST_SLOT_WAIT_DIR`
+as `<start>-<pid>-pause.wait` (renamed `.done` at the end, touched every 5 s), and the paused time is added to
+`pausedMs`: the limit timer (`armLimit()`, `countedMs()`) counts working time only, and the `started` file moves
+forward by the same amount. Every signal to the group is followed by `SIGCONT`, since a stopped process never acts on
+`SIGTERM`; the process's `exit` handler continues a paused group. On the Foundry's side, `src/steps/process.ts`
+and `src/steps/slot-waits.ts` leave the paused time out of `timeoutMs` and `killLiveGroups()` kills the command
+processes the step tracker knows; `src/release/build.ts` and `src/self-update-state.ts` do the same for their
+commands. `src/server/stuck-runs.ts` counts pause records as activity, and `api-runs.ts`, `user-view.ts` and
+`ui/run-timeline.js` show the pause on the run page. Agent steps are not paused: `tools/agent-bin` only holds its
+test call in `test-slot`.
+
 ## 18. Where it is going
 
 - **Refinement:** (story drafts and the session's Epic are stored in the session; `src/refinement/draft.ts`

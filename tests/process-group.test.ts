@@ -182,6 +182,19 @@ if(process.env.GO){const t=setInterval(()=>{if(fs.existsSync(process.env.GO)){cl
     }
   }, 20_000);
 
+  it("killLiveGroups also kills a command in a group of its own that is stopped (a paused test run below test-slot)", async () => {
+    const d = dir();
+    // the step's own group holds the shell; its child leaves the group (setsid-like, as test-slot's command does) and stops itself
+    const script = `node -e 'const {spawn}=require("child_process");spawn("/bin/sh",["-c","echo $$ > ${join(d, "cmd.pid")}; kill -STOP $$"],{detached:true,stdio:"ignore"});setTimeout(()=>{},60000)'`;
+    const p = runProcess("/bin/sh", ["-c", script], { cwd: d, logFile: join(d, "log"), groupKill: true, trackEveryMs: 50, redactor: makeRedactor([]) });
+    const pid = await untilFile(join(d, "cmd.pid"));
+    await new Promise((r) => setTimeout(r, 300)); // the tracker notes the process
+    expect(killLiveGroups()).toBe(1);
+    await p;
+    for (let i = 0; i < 100 && !dead(pid); i++) await new Promise((r) => setTimeout(r, 25));
+    expect(dead(pid)).toBe(true);
+  }, 20_000);
+
   it("killLiveGroups kills the group of a running step", async () => {
     const d = dir();
     const p = runProcess("/bin/sh", ["-c", `echo $$ > ${join(d, "child.pid")}; sleep 60`], { cwd: d, logFile: join(d, "log"), groupKill: true, redactor: makeRedactor([]) });

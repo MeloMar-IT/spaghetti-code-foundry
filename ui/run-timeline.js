@@ -63,6 +63,13 @@ function ordered(s) {
   return items;
 }
 
+/** "paused: machine overloaded since 10:42" for a run whose test runs are paused (`s.paused.since`); "" otherwise. */
+export function pausedText(p) {
+  const t = p?.since ? new Date(p.since) : null;
+  if (!t || Number.isNaN(t.getTime())) return "";
+  return `paused: machine overloaded since ${t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 /** The milestones of a run in time order. Pure. `key` is `step:<index>` for a history entry, so a second visit is its own entry. */
 export function milestones(s) {
   if (!s) return [];
@@ -79,7 +86,7 @@ export function milestones(s) {
     }
   }
   if (s.status === "waiting" && s.waiting) out.push({ key: "waiting", kind: "waiting", at: s.waiting.since, label: "Waiting for approval", text: String(s.waiting.message ?? ""), depth: 0 });
-  if (s.status === "running" && s.state?.next) out.push({ key: "current", kind: "current", at: s.stepStartedAt, label: `Running ${stepLabel(s, s.state.next)}`, depth: 0 });
+  if (s.status === "running" && s.state?.next) out.push({ key: "current", kind: "current", at: s.stepStartedAt, label: `Running ${stepLabel(s, s.state.next)}`, ...(pausedText(s.paused) ? { text: pausedText(s.paused) } : {}), depth: 0 });
   if (s.status !== "running" && s.status !== "waiting") {
     out.push({ key: "end", kind: "end", at: s.finishedAt, label: END[s.status] ?? `Run ended (${s.status})`, ok: s.status === "succeeded", depth: 0 });
   }

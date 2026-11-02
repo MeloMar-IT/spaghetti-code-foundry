@@ -40,6 +40,8 @@ export interface UserRun {
   answers?: { at: string; text: string }[];
   /** Present (true) only when an answer sent now would be accepted. */
   canAnswer?: true;
+  /** Present only while the run is running and its test runs are paused by the load governor: since when (ISO time). */
+  paused?: { since: string };
   /** What was decided about the skills of the plan, when some could not be used: the sentences the run itself wrote, no paths. */
   /** The skills of the run for its page: built by `runSkillView` with `admin: false`. */
   skillView?: RunSkillView;
@@ -141,7 +143,7 @@ export const userTask = (flow: string | undefined, source: string | undefined, t
   flow === REFINE_ROUND_FLOW && refinementSessionOf(source) ? (task.split("\n", 1)[0] ?? "") : task;
 
 /** The user's view of a run (see the note at the top). Tolerates runs of older versions. */
-export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean; canAnswer?: boolean; skillView?: RunSkillView }): UserRun {
+export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string } }): UserRun {
   const shown = new Set(["github_repo", "issue"]);
   for (const [k, spec] of Object.entries(s.flowDef?.publish?.vars ?? {})) if (spec.mode === "fixed" || spec.mode === "input") shown.add(k);
   const vars = Object.fromEntries(Object.entries(s.vars ?? {}).filter(([k]) => shown.has(k)));
@@ -176,6 +178,7 @@ export function userRun(s: RunSummary & { next?: NextStep; superseded?: boolean;
     ...(Array.isArray(s.answers) && s.answers.length ? { answers: s.answers.map((a) => ({ at: a.at, text: a.text })) } : {}),
     ...(s.outputs && Object.keys(s.outputs).length ? { outputs: s.outputs } : {}),
     ...(s.canAnswer ? { canAnswer: true as const } : {}),
+    ...(typeof s.paused?.since === "string" ? { paused: { since: s.paused.since } } : {}),
     ...(userSkills(s) ? { skills: userSkills(s) } : {}),
     ...(s.skillView ? { skillView: s.skillView } : {}),
   };

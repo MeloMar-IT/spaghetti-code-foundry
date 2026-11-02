@@ -4043,6 +4043,18 @@ machine slept starts fresh. The step downs of the last hour are part of what it 
 pause of more than four minutes they are forgotten and the wait before a step up is 10 minutes again. `scf governor reset` takes them away at once. The daily release check
 asks for a test slot like every test run, but waits five minutes at most.
 
+**Paused test runs.** Under sustained overload the governor pauses test runs beyond the first. It does so at
+once when memory pressure is critical, and when the 1-minute load is above `testsHigh` (4 per core) for three
+checks in a row. Then all test runs but one stop, and the run that holds the first test slot goes on. A paused
+run shows "paused: machine overloaded since HH:MM" on the Runs page, and its log says it was paused. The pause
+ends when the memory pressure is no longer critical and the load is at or below `high` (2.5 per core); the
+paused runs then go on by themselves. Paused time does not count against a test run's time limit. Agent steps
+are never paused in the middle of a model call, and the monitor does not report a paused run as stuck. Cancelling
+a paused run, or reaching its time limit, stops it at once. The pause is also taken away by itself four minutes
+after the governor last wrote it, so a governor that stops cannot leave a test run frozen. One exception: an
+agent's own test command has its own time-out, which a very long pause can still reach; the test is then stopped
+and the agent can run it again.
+
 **Who uses the CPU.** Each check also measures how much CPU the Foundry uses and how much other
 programs use. The Foundry's share is the step processes of the active runs (including the processes
 that a step started and left its process group), the test slots, and the server with its helpers. Everything
