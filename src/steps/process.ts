@@ -3,7 +3,7 @@ import { accessSync, constants, createWriteStream, statSync } from "node:fs";
 import { getPriority } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { anyPidAlive, ProcessTracker, processTableAsync, signalRows, type ProcRow } from "./proc-tree.js";
+import { anyPidAlive, markStep, ProcessTracker, processTableAsync, signalRows, type ProcRow } from "./proc-tree.js";
 import { readSlotWaits, slotClock, waitedLine, type SlotWaitWatch } from "./slot-waits.js";
 import { combineRedactors, liveRedactor, makeRedactor, redactStream, requireRedaction, type Redactor } from "../credentials/redact.js";
 
@@ -240,6 +240,7 @@ function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine
       stdio: ["pipe", "pipe", "pipe"],
       ...(grouped ? { detached: true } : {}),
     });
+    const unmark = child.pid ? markStep(opts.logFile, child.pid) : () => {};
     if (grouped && child.pid) {
       liveGroups.add(child.pid);
       if (!exitHook) {
@@ -397,6 +398,7 @@ function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine
     };
     child.on("error", (err) => {
       if (child.pid) liveGroups.delete(child.pid);
+      unmark();
       cleanup();
       measure();
       log.end();
@@ -410,6 +412,7 @@ function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine
     });
     const settle = (code: number | null) => {
       clearTimeout(killTimer);
+      unmark();
       if (child.pid) liveGroups.delete(child.pid);
       feed(outFilter, outDecoder.end());
       feed(errFilter, errDecoder.end());

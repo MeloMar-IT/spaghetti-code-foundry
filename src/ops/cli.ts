@@ -10,8 +10,9 @@ import { blockageReport, blockers, dependencyWaits, fileWaits, watcherRepos } fr
 import { capsPath, loadCaps, runLimit, setCap } from "./caps.js";
 import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
-import { changesToday, clearGovernor, DEFAULTS, loadState, MANY_CHANGES, runGovernor, sample } from "./governor.js";
+import { changesToday, clearGovernor, DEFAULTS, HOLD_MS, loadState, MANY_CHANGES, runGovernor, sample } from "./governor.js";
 import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, type Family, type LimitsState } from "./limits.js";
+import { measureUsage, usageLine, type Usage } from "./usage.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
 
 export const JOBS: Record<string, Job> = {
@@ -60,11 +61,39 @@ const configured = () => loadConfig().concurrency;
 type Out = (line: string) => void;
 const atOnce = (n: number) => (n === 0 ? "0 runs at once, so nothing new starts" : `${n} runs at once`);
 
-function governor(out: Out) {
+function governor(out: Out, now = new Date()) {
   const dir = jobDir("governor");
   const c = loadConfig();
-  const d = runGovernor({ dir, slotsDir: join(dataDir(), "test-slots"), capsFile: capsPath(dataDir()), configured: c.concurrency, now: new Date(), sample: sample(), settings: { ...DEFAULTS, floor: c.governor.floor } });
-  if (d.change) out(`${new Date().toISOString()} ${d.change}`);
+  const slotsDir = join(dataDir(), "test-slots");
+  // before the check, so the change line can name the cause; never throws, and without figures the check is as it always was
+  const usage = measureUsage({ dir, runsDir: join(dataDir(), "runs"), slotsDir, now });
+  const cause = usage ? usageLine(usage) : undefined;
+  const sampled = sample();
+  const d = runGovernor({ dir, slotsDir, capsFile: capsPath(dataDir()), configured: c.concurrency, now, sample: sampled, settings: { ...DEFAULTS, floor: c.governor.floor }, ...(cause ? { cause } : {}) });
+  // the caps are written by now: a result that cannot be saved must not fail the check
+  try {
+    save(dir, "latest.json", JSON.stringify({ at: now.toISOString(), load1: sampled.load1, load5: sampled.load5, pressure: sampled.pressure, ...(d.state.runs !== undefined ? { runs: d.state.runs } : {}), ...(d.state.tests ? { tests: d.state.tests } : {}), ...(usage ? { usage } : {}) }, null, 2));
+  } catch {
+    // best effort
+  }
+  if (d.change) out(`${now.toISOString()} ${d.change}${cause ? ` — ${cause}` : ""}`);
+}
+
+/** The usage lines of `scf governor report`, from the last check. Nothing when that is older than the hold time or does not look right. */
+export function usageReport(dir: string, now: Date): string[] {
+  try {
+    const l = readJson<{ at?: string; usage?: Usage }>(join(dir, "latest.json"), {});
+    const age = now.getTime() - Date.parse(l.at ?? "");
+    const u = l.usage;
+    if (!(age <= HOLD_MS) || !u || !Number.isFinite(u.foundry?.cores) || !Number.isFinite(u.other?.cores) || !Array.isArray(u.other.top)) return [];
+    const top = u.other.top.filter((p) => typeof p?.program === "string" && Number.isFinite(p.cores));
+    const lines = [`now: ${usageLine({ foundry: u.foundry, other: { cores: u.other.cores, top } })}`];
+    const per = Object.entries(u.perRun ?? {}).filter(([, v]) => Number.isFinite(v));
+    if (per.length) lines.push(`a run uses about: ${per.map(([repo, v]) => `${repo} ${v.toFixed(1)} cores`).join(", ")}`);
+    return lines;
+  } catch {
+    return [];
+  }
 }
 
 interface FlakyState { auto: boolean; label: string; filed: Record<string, string>; tried?: Record<string, string> }
@@ -261,7 +290,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
   switch (sub) {
     case "run": {
       const now = new Date();
-      if (name === "governor") governor(out);
+      if (name === "governor") governor(out, now);
       else if (name === "housekeeping") {
         const { runHousekeeping, readPs } = await import("./housekeeping.js");
         const r = runHousekeeping({ dir, runsDir: join(dataDir(), "runs"), now, ps: readPs() });
@@ -285,6 +314,7 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
         // a state the governor did not renew has ended (loadState leaves it out): never show a limit that is over
         const s = loadState(dir, new Date());
         out(s.runs !== undefined || s.tests ? `limits now: ${s.runs !== undefined ? `${atOnce(s.runs)} (configured: ${configured()})` : "runs as configured"}${s.tests ? ", 1 test run at once" : ""}` : "no limits set: the machine is calm enough");
+        for (const l of usageReport(dir, new Date())) out(l);
         const log = join(dir, "changes.log");
         if (existsSync(log)) out(readFileSync(log, "utf8").trim().split("\n").slice(-20).join("\n"));
         return 0;
