@@ -14,7 +14,8 @@ import { allAppRepos, appRepoAllowed, getAppRepos, onAppList } from "../auth/app
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
 import { KeygenError } from "../credentials/ssh-keygen.js";
-import { connectLevel } from "../governance/autonomy-store.js";
+import { connectLevel, levelIn, readAutonomy } from "../governance/autonomy-store.js";
+import type { AutonomyLevel } from "../governance/autonomy.js";
 import { type DescribeVars, RepoWatcherError, addRepoWatcher, listRepoWatchers, removeRepoWatcher,updateRepoWatcher, watcherRepoProblem } from "../repos/watchers.js";
 import { readFileSync } from "node:fs";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
@@ -134,6 +135,16 @@ const shown = <T extends { url: string }>(r: T): T & { github?: string } => {
   return github === undefined ? r : { ...r, github };
 };
 
+/** The autonomy level of a repository id. A file that cannot be read gives `observe` for all, as a run start treats it. */
+function repoLevels(): (id: string) => AutonomyLevel {
+  try {
+    const store = readAutonomy();
+    return (id) => levelIn(store, "repos", id);
+  } catch {
+    return () => "observe";
+  }
+}
+
 /** The public keys of deploy-key records; `send` keeps them readable (a public key is not a secret). */
 const publicKeys = (repos: Pick<RepoRecord, "publicKey">[]) => repos.flatMap((r) => (r.publicKey ? [r.publicKey] : []));
 
@@ -168,7 +179,8 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
     const rows = guardedRepos(ctx, () => {
       const users = new Map(listUsers().map((u) => [u.id, u]));
       const lists = allAppRepos();
-      return listAllRepos().map((r) => adminRow(r, users, lists));
+      const level = repoLevels();
+      return listAllRepos().map((r) => ({ ...adminRow(r, users, lists), autonomy: level(r.id) }));
     });
     return send(res, 200, rows, publicKeys(rows)), true;
   }
@@ -326,7 +338,8 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     if (m === "none" && user.role !== "admin") throw new HttpError(403, 'only an admin may choose "none" (the server\'s own access)');
   };
   if (seg.length === 1 && method === "GET") {
-    const repos = guardedRepos(ctx, () => listRepos(user.id)).map(shown);
+    const level = repoLevels();
+    const repos = guardedRepos(ctx, () => listRepos(user.id)).map((r) => ({ ...shown(r), autonomy: level(r.id) }));
     return send(res, 200, repos, publicKeys(repos)), true;
   }
   if (seg.length === 2 && seg[1] === "methods" && method === "GET") {

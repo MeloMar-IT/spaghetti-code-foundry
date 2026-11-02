@@ -86,6 +86,28 @@ describe("admin repositories API", () => {
     expect(a.github).toBe("acme/app");
   });
 
+  it("puts the autonomy level on both lists, and reads observe when autonomy.json is broken", async () => {
+    const rows = await all();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(typeof (r as unknown as { autonomy: string }).autonomy).toBe("string");
+    const level = (await mine(ann))[0]!.autonomy;
+    expect(typeof level).toBe("string");
+    const file = autonomyFile();
+    const had = existsSync(file) ? readFileSync(file, "utf8") : undefined;
+    writeFileSync(file, "not json");
+    try {
+      const list = await call(ann, "GET", "/api/repos");
+      expect(list.status).toBe(200);
+      expect(list.json().every((r: { autonomy: string }) => r.autonomy === "observe")).toBe(true);
+      const adminList = await call(admin, "GET", "/api/admin/repos");
+      expect(adminList.status).toBe(200);
+      expect(adminList.json().every((r: { autonomy: string }) => r.autonomy === "observe")).toBe(true);
+    } finally {
+      if (had === undefined) rmSync(file, { force: true });
+      else writeFileSync(file, had);
+    }
+  });
+
   it("sets settings; a user's list never has them", async () => {
     const S = { testCommand: "make secret-test-command", docs: ["docs/CHANGELOG.md"], protectedBranches: ["release/*"], mainBranch: "main", developBranch: "develop" };
     const r = await call(admin, "PUT", `/api/admin/repos/${annRepo.id}/settings`, S);

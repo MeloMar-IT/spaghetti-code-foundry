@@ -159,6 +159,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET run-filters": { path: "run-filters", user: 200, admin: 200 },
   "GET outcomes": { path: "outcomes", user: 200, admin: 200 },
   "GET autonomy": { path: "autonomy", user: 403, admin: 200 },
+  "GET autonomy/history": { path: "autonomy/history", user: 403, admin: 200 },
   "POST autonomy/promote": no("autonomy/promote", 400, {}),
   "POST autonomy/approve": no("autonomy/approve", 400, {}),
   "POST autonomy/demote": no("autonomy/demote", 400, {}),
