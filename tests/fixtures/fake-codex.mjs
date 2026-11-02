@@ -32,8 +32,44 @@ if (args.includes("--help")) {
   process.stdout.write(`Usage: codex exec [resume] [OPTIONS]\n  --json\n  --skip-git-repo-check\n  --ignore-rules\n${process.env.FAKE_CODEX_NO_IGNORE_CONFIG ? "" : "  --ignore-user-config\n"}`);
   process.exit(0);
 }
+// Sign-in state (only when FAKE_CODEX_AUTH_FILE is set; the file exists = signed in): --version, `login status`, `login` (writes the file), and an
+// `exec` call that fails with a 401 when signed out (FAKE_CODEX_CALL_FAIL: another failure). FAKE_CODEX_ARGS_FILE gets the arguments of an `exec` call.
+const authFile = process.env.FAKE_CODEX_AUTH_FILE;
+if (authFile) {
+  if (args[0] === "--version") {
+    process.stdout.write("codex-cli 0.5.0\n");
+    process.exit(0);
+  }
+  if (args[0] === "login" && args[1] === "status") {
+    const on = existsSync(authFile);
+    process.stdout.write(on ? "Logged in using ChatGPT\n" : "Not logged in\n");
+    process.exit(on ? 0 : 1);
+  }
+  if (args.length === 1 && args[0] === "login") {
+    if (process.env.FAKE_CODEX_LOGIN_FAIL) process.exit(1);
+    writeFileSync(authFile, "signed in\n");
+    process.stdout.write("Successfully logged in\n");
+    process.exit(0);
+  }
+}
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
+if (authFile) {
+  if (process.env.FAKE_CODEX_ARGS_FILE) writeFileSync(process.env.FAKE_CODEX_ARGS_FILE, `${JSON.stringify(args)}\n`, { flag: "a" });
+  if (!existsSync(authFile)) {
+    emit0({ type: "thread.started", thread_id: "t" });
+    emit0({ type: "turn.failed", error: { message: "unexpected status 401 Unauthorized" } });
+    process.exit(1);
+  }
+  if (process.env.FAKE_CODEX_CALL_FAIL) {
+    emit0({ type: "thread.started", thread_id: "t" });
+    emit0({ type: "turn.failed", error: { message: "server error 500" } });
+    process.exit(1);
+  }
+}
+function emit0(o) {
+  process.stdout.write(JSON.stringify(o) + "\n");
+}
 
 // The Codex folder as the step sees it: only $CODEX_HOME, never $HOME/.codex.
 function showCodexHome() {

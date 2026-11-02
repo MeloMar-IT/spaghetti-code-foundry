@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createProbe, doctorCommand, parseNeeds, setupCheck, setupText, sharedSetupCheck, type Probe, type ProbeResult } from "../src/setup-check.js";
+import { createProbe, doctorCommand, hasAuthCommand, parseNeeds, setupCheck, setupText, sharedSetupCheck, type Probe, type ProbeResult } from "../src/setup-check.js";
 
 const ok = (out = ""): ProbeResult => ({ code: 0, out, missing: false });
 const fail = (out = "", code = 1): ProbeResult => ({ code, out, missing: false });
@@ -127,6 +127,15 @@ describe("setupCheck", () => {
     expect(missing.r.ready).toBe(false);
     const there = await run(GOOD, { needs: ["node"] });
     expect(item(there.r, "node")!.state).toBe("ok");
+  });
+});
+
+describe("hasAuthCommand", () => {
+  it("is true only when the help lists auth", () => {
+    expect(hasAuthCommand({ code: 0, out: "Commands:\n  auth    Manage\n", missing: false })).toBe(true);
+    expect(hasAuthCommand({ code: 0, out: "Commands:\n  mcp    Servers\n", missing: false })).toBe(false);
+    expect(hasAuthCommand({ code: null, out: "  auth", missing: true })).toBe(false);
+    expect(hasAuthCommand({ code: null, out: "  auth", missing: false })).toBe(false);
   });
 });
 
