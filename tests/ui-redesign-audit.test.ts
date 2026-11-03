@@ -40,7 +40,9 @@ function userRoutes(authSource: string): string[] {
   alts.push(cur);
   const out: string[] = [];
   for (const alt of alts) {
-    const a = /^([\w-]+)(\(\\\/\[\\w-\]\+\)\?)?$/.exec(alt);
+    // pages that plugins add are not in the inventory: the server lists them at run time (#787)
+    if (alt.startsWith("plugins\\/")) continue;
+    const a =/^([\w-]+)(\(\\\/\[\\w-\]\+\)\?)?$/.exec(alt);
     if (!a) throw new Error(`USER_HASH alternative has a shape this test does not know: ${alt}`);
     out.push(`#/${a[1]}`);
     if (a[2]) out.push(`#/${a[1]}/:id`);

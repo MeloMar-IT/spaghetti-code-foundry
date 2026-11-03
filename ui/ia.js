@@ -101,7 +101,33 @@ export function subnavFor(role, destId) {
   return list.length < 2 ? [] : list.map((p) => ({ id: p.id, label: labelOf(p, role), href: p.path, ...(p.section ? { section: p.section } : {}) }));
 }
 
+// The pages that plugins added (#787): set once after sign-in from GET /api/plugins/ui, which lists only what the caller's role may see.
+let pluginPages = [];
+const PLUGIN_NAME = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const PLUGIN_PAGE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
+/** The id of the sidebar link and page of a plugin page. */
+export const pluginPageId = (plugin, id) => `plugin-${plugin}-${id}`;
+
+/** Replaces the plugin pages with `list` ({ plugin, id, title, module }); an entry that is not valid is dropped. Without plugins: `setPluginPages([])`. */
+export function setPluginPages(list) {
+  pluginPages = (Array.isArray(list) ? list : [])
+    .filter((p) => p && PLUGIN_NAME.test(p.plugin ?? "") && PLUGIN_PAGE.test(p.id ?? "") && typeof p.title === "string" && p.title.trim() !== "" && typeof p.module === "string" && p.module.startsWith("/plugins/"))
+    .map((p) => ({
+      id: pluginPageId(p.plugin, p.id), path: `#/plugins/${p.plugin}/${p.id}`, title: p.title, area: "plugins", dest: null, parent: null, nav: "plugin",
+      label: { admin: p.title, user: p.title }, roles: AU, plugin: p.plugin, pageId: p.id, module: p.module,
+    }));
+}
+
+/** True when the plugin page is registered (the server listed it for this role). */
+export const hasPluginPage = (plugin, id) => pluginPages.some((p) => p.id === pluginPageId(plugin, id));
+
 function match(role, parts) {
+  // "#/plugins/<name>/<id>" has four parts. The server listed these pages for the role already.
+  if (parts[1] === "plugins") {
+    const page = parts.length === 4 ? pluginPages.find((p) => p.path === parts.join("/")) : undefined;
+    return page ? { page, arg: undefined } : null;
+  }
   const section = parts[1];
   for (const p of PAGES) {
     if (!forRole(role)(p)) continue;
@@ -183,7 +209,7 @@ export function resolve(role, hash) {
   } catch {
     return fallback("unknown");
   }
-  if (parts.length > 3 || (parts.length === 3 && parts[2] === "")) return fallback("unknown");
+  if (parts.length > (parts[1] === "plugins" ? 4 : 3) || (parts.length === 3 && parts[2] === "")) return fallback("unknown");
   const alias = ALIASES.find((a) => a.from === path && a.roles.includes(role));
   if (alias) return { ...resolve(role, alias.to), hash: alias.to, redirected: true, reason: "alias" };
   const m = match(role, parts);

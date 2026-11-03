@@ -41,6 +41,7 @@ import { stopSignIns } from "../onboarding.js";
 import { restartRoutes, type SettingsRestart } from "./api-restart.js";
 import { BUSY_RENEW_MS, syncBusyCap } from "../ops/busy.js";
 import { loadPlugins, type PluginRegistry } from "../plugins/load.js";
+import { PLUGIN_PATH, servePluginFile } from "./plugin-files.js";
 import { CSP, HSTS, listenProblem, localUrl, requestAccess } from "./net.js";
 import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.js";
 import { adoptRuns } from "../auth/run-owner.js";
@@ -191,6 +192,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     plugins = await loadPlugins(config.plugins, {
       blockedDirs: [opts.runsDir, join(process.env.FACTORY_HOME ?? FACTORY_HOME, "runs"), opts.repo],
       log,
+      pluginSettings: () => config.plugin_settings,
     });
   } catch (e) {
     log((e as Error).message);
@@ -384,6 +386,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       });
       return;
     }
+    if (path.startsWith(PLUGIN_PATH)) return void servePluginFile(ctx, req, res, path);
     if (path.startsWith("/vendor/yaml/")) return serveStatic(res, YAML_BROWSER_DIR, path.slice("/vendor/yaml/".length));
     // The gallery is a development aid: without `dev` every path under /gallery answers 404.
     if (opts.dev !== true && isGalleryPath(path)) return void res.writeHead(404).end("not found");

@@ -5051,6 +5051,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/info` | yes | no | server settings and today's cost |
 | `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set. `plugins` is not returned |
 | `GET /api/plugins` | yes | no | the plugins loaded at server start, in order (label, module, version and what each registered), and plugin problems; never their options |
+| `GET /api/plugins/ui` | yes | yes | the pages and menu items that plugins added and your role may see (`pages`: plugin, id, title, module address, roles; `menu`: plugin, page, label); never a folder, a file path or a plugin option. With `?as=` the role of the viewed user |
 | `PUT /api/config` | yes | no | change the settings (not `plugins`: a body with that key is refused with 400, they are set in `config.yaml` only). With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
 | `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
 | `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
@@ -7132,6 +7133,31 @@ plugins:
   list. The health line shows a plugin problem when `config.yaml` lists other plugins than the ones
   loaded (restart the server), or when the file cannot be read.
 - **Without `plugins`** nothing changes: no plugin loads and the health line has no plugin entry.
+
+#### Plugin pages, menu items and settings
+
+A plugin can also add to the web interface. In `register(api)` it calls `api.ui(spec)` once (see
+[PLUGIN_API.md](PLUGIN_API.md)):
+
+- **Pages.** Each page is an ES module in the plugin's folder. It is served at `/plugins/<name>/<file>`
+  and opens at `#/plugins/<name>/<page>` inside the normal layout. The `<name>` is the plugin's label
+  in lower case (`@`, `/`, `.` and `_` become `-`). A page can name more files of its folder (`.js`,
+  `.css`, `.svg`).
+- **Menu items.** A link under "Plugins" in the sidebar. It names a page and the roles that see it;
+  a role can see the item only when it can see the page.
+- **Who may see what.** A plugin file is served only when a rule of that plugin lists your role.
+  Without a rule the answer is 404; without a session, 401; with a role the rule does not list, 403.
+  Admins pass every rule. Pages and menu items you may not see are not listed for you.
+- **Settings.** A settings section adds a card on the Settings page. Its fields are number, yes-no,
+  text, list or choice, each with a label, an optional help text and a default. Saved values go to
+  `plugin_settings.<name>` in `config.yaml` through the normal settings save. A key the plugin does not
+  declare, or a value that does not fit its field, is refused. So is a change to the values of a plugin that
+  is not loaded.
+- **Limits.** At most 20 pages, 20 menu items, 20 files per page and 50 fields. A file is at most 1 MB
+  and must lie inside the plugin's folder (not a symbolic link out of it, not a folder where runs write).
+- **Checking.** `GET /api/plugins/ui` (any signed-in role) lists the pages and menu items you may see.
+  It never shows a folder, a file path or a plugin option.
+- **Without plugins** the interface is unchanged: no plugin link, no plugin card, no plugin address.
 
 ---
 

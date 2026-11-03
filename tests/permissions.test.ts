@@ -8,7 +8,7 @@ import { parse, stringify } from "yaml";
 import { userCommand } from "../src/auth/cli.js";
 import { parseFlow } from "../src/flow/load.js";
 import { HttpError } from "../src/server/http.js";
-import { RULES, checkReleaseRef, findRule, isReleaseBuildFlow, permissionTable, ruleKey } from "../src/server/permissions.js";
+import { RULES, authorizePlugin, checkReleaseRef, findPluginRule, findRule, isReleaseBuildFlow, permissionTable, ruleKey } from "../src/server/permissions.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
@@ -127,6 +127,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET info": no("info", 200),
   "GET config": no("config", 200),
   "GET plugins": no("plugins", 200),
+  "GET plugins/ui": { path: "plugins/ui", user: 200, admin: 200 },
   "PUT config": no("config", 400, { concurrency: 0 }),
   "GET settings": no("settings", 200),
   "POST settings/reset": no("settings/reset", 400, {}),
@@ -1028,6 +1029,29 @@ describe("security review", () => {
 /** A published flow that is a release-build flow: its step mentions the tool. */
 const RELEASE = (name: string, ref: "input" | "fixed" | "none") =>
   `name: ${name}\nworkspace: empty\nvars:\n  github_repo: owner/repo\n  ref: ${ref === "fixed" ? "feature" : "main"}\npublish:\n  enabled: true\n  vars:\n    github_repo: {mode: input}\n${ref === "input" ? "    ref: {mode: input}\n" : ref === "fixed" ? "    ref: {mode: fixed}\n" : ""}steps:\n  - {id: a, type: shell, run: "# $FACTORY_TOOLS/release-build"}\n`;
+
+describe("plugin rules", () => {
+  const rule = { plugin: "acme", method: "GET" as const, path: "a/b.js", roles: ["user" as const], note: "n" };
+  const adminOnly = { ...rule, path: "c.js", roles: ["admin" as const] };
+  const entries = [{ name: "acme", rules: [rule, adminOnly] }];
+  const who = (role: string) => ({ role }) as never;
+
+  it("finds a rule only for the plugin, the GET method and the exact file path", () => {
+    expect(findPluginRule(entries, "GET", "acme", "a/b.js")).toBe(rule);
+    expect(findPluginRule(entries, "POST", "acme", "a/b.js")).toBeUndefined();
+    expect(findPluginRule(entries, "GET", "other", "a/b.js")).toBeUndefined();
+    expect(findPluginRule(entries, "GET", "acme", "a/../a/b.js")).toBeUndefined();
+    expect(findPluginRule(entries, "GET", "acme", "")).toBeUndefined();
+    expect(findPluginRule([], "GET", "acme", "a/b.js")).toBeUndefined();
+  });
+
+  it("lets a listed role pass, refuses another with 403, and lets an admin pass every rule", () => {
+    expect(() => authorizePlugin(who("user"), rule)).not.toThrow();
+    expect(() => authorizePlugin(who("admin"), rule)).not.toThrow();
+    expect(() => authorizePlugin(who("admin"), adminOnly)).not.toThrow();
+    expect(() => authorizePlugin(who("user"), adminOnly)).toThrow(expect.objectContaining({ status: 403 }));
+  });
+});
 
 describe("release-build refs", () => {
   const flowOf = (ref: "input" | "fixed" | "none") => parseFlow(RELEASE("rb", ref));

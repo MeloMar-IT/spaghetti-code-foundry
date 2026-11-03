@@ -14,6 +14,7 @@ import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { renderHome } from "/home.js";
 import { renderSimpleHome, renderSimpleProject } from "/simple.js";
 import { renderStart } from "/user/start.js";
+import { addPluginMenu, loadPluginUi, renderPluginPage } from "/plugins.js";
 import { initPalette } from "/palette.js";
 import { initShell, namePage, showPage } from "/shell.js";
 import { errorState, explainError } from "/states.js";
@@ -64,6 +65,8 @@ async function route() {
     return;
   }
   let page = userPage(hash);
+  // The address of a plugin page this account has not been given is never drawn: it goes to the Runs list.
+  if (page.section === "plugins" && resolve("user", page.hash).redirected) page = userPage("#/runs");
   // Simple has My projects (#/home) and the project page only; anything else, and the bare repository list, goes to My projects.
   const simple = shownView === "simple" && !readOnly;
   if (simple && (!SIMPLE_SECTIONS.includes(page.section) || (page.section === "repos" && !page.id))) page = userPage("#/home");
@@ -84,7 +87,9 @@ async function route() {
   mount(main, box);
   let done = null;
   try {
-    if (simple && page.section === "home") done = await renderSimpleHome(box);
+    // Decided by the resolved page, not by the address: an unknown plugin address was resolved to the fallback above.
+    if (to.page.nav === "plugin") done = await renderPluginPage(box, to.page, { user: me, readOnly });
+    else if (simple && page.section === "home") done = await renderSimpleHome(box);
     else if (simple && page.section === "repos") done = await renderSimpleProject(box, { id: page.id, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });
     else if (page.section === "setup") done = await renderSetupCheck(box, { admin: ownAdmin, readOnly, needs: needsOf(splitHash(page.hash).query) });
@@ -134,6 +139,11 @@ if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: vie
 if (view.ready) context = initContext("user", me, { readOnly, go: contextGo });
 // Ask SCF: only for the person's own display (a preview shows no conversations), and only when it is switched on.
 if (view.ready && !view.readOnly) void initAsk("user");
+// The pages and links that plugins added; the Simple view has none. Without plugins nothing is added.
+if (view.ready) {
+  const plugin = await loadPluginUi();
+  if (shownView !== "simple" || readOnly) addPluginMenu(plugin.menu);
+}
 // Only now: before the role is known or the context has loaded, a hash change must not draw a page.
 // The first draw below uses the latest address.
 await context?.ready;

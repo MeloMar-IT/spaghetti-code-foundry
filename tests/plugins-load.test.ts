@@ -164,7 +164,7 @@ describe("problems and the view", () => {
     expect(p).toEqual([{ plugin: "config.yaml", reason: "cannot be read; the plugin list could not be checked" }]);
   });
   it("the view has no options", () => {
-    const v = pluginsView({ entries: [entry("a", { secret: "x" })], plugins: [{ label: "a", module: "a", version: "1", registered: [] }], problems: [] }, [entry("a", { secret: "x" })]);
+    const v = pluginsView({ entries: [entry("a", { secret: "x" })], plugins: [{ label: "a", module: "a", version: "1", registered: [] }], problems: [], ui: [] }, [entry("a", { secret: "x" })]);
     expect(JSON.stringify(v)).not.toContain("secret");
     expect(v.apiVersion).toBe(PLUGIN_API_VERSION);
   });
