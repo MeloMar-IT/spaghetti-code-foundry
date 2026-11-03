@@ -796,6 +796,14 @@ export const ConfigSchema = z
       .max(MAX_PLUGINS)
       .refine((l) => new Set(l.map((p) => p.module)).size === l.length, "names the same plugin twice")
       .default([]),
+    /**
+     * The values of the settings sections plugins add (#787), by the plugin's web address name. Checked loosely here, because
+     * config.yaml is read before the plugins load; PUT /api/config checks them against each loaded plugin's own fields.
+     */
+    plugin_settings: z
+      .record(z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(64), z.record(z.string().max(64), z.unknown()))
+      .refine((r) => Object.keys(r).length <= 50, "at most 50 plugins")
+      .default({}),
   })
   .strict()
   .superRefine((c, ctx) => {

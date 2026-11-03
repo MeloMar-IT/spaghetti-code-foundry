@@ -7,6 +7,7 @@ import { poller } from "./live.js";
 import { promotionPanel } from "./promotions.js";
 import { componentsPanel } from "./admin-components.js";
 import { pluginsPanel } from "./admin-plugins.js";
+import { pluginSettingCards } from "./plugins.js";
 import { loadingState } from "./states.js";
 import { settingsPage } from "./templates.js";
 
@@ -151,13 +152,15 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const governorCard = generatedSection("Load governor", "governor.", c, described, { section, readOnly });
   const gateCard = generatedSection("Promotion gate", "governance.", c, described, { section, readOnly });
   const retryCard = generatedSection("Retries", "auto_retry.", c, described, { section, readOnly });
+  // one card per settings section a plugin registered; none without plugins
+  const pluginCards = pluginSettingCards(c, s?.plugins, { section, readOnly });
   // the hand-built controls and the current controls of the described cards (those are drawn again when their message changes)
-  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs(), ...deliveryCard.inputs(), ...policyCard.inputs(), ...promotionCard.inputs(), ...governorCard.inputs(), ...gateCard.inputs(), ...retryCard.inputs() });
+  const fieldsNow = () => ({ ...fields, ...extra.inputs(), ...askScf.inputs(), ...deliveryCard.inputs(), ...policyCard.inputs(), ...promotionCard.inputs(), ...governorCard.inputs(), ...gateCard.inputs(), ...retryCard.inputs(), ...pluginCards.inputs() });
   const QUOTED = new Set(["name", "email", "repo", "command", "pass"]);
   const SETTINGS_PAIRS = Object.keys(fieldsNow()).map((k) => [new RegExp(QUOTED.has(k) ? `"${k}"` : `\\b${k}\\b`), k]);
 
   const save = async () => {
-    const bad = extra.check() ?? askScf.check() ?? deliveryCard.check() ?? policyCard.check() ?? promotionCard.check() ?? governorCard.check() ?? gateCard.check() ?? retryCard.check();
+    const bad = extra.check() ?? askScf.check() ?? deliveryCard.check() ?? policyCard.check() ?? promotionCard.check() ?? governorCard.check() ?? gateCard.check() ?? retryCard.check() ?? pluginCards.check();
     if (bad) {
       mount(err);
       saveNote.setAttribute("class", "status bad");
@@ -200,6 +203,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       governor: governorCard.values(),
       governance: gateCard.values(),
       auto_retry: retryCard.values(),
+      ...(pluginCards.active ? { plugin_settings: pluginCards.value() } : {}),
       isolate_agents: v.isolate_agents,
       failure_summary: v.failure_summary,
       step_env: v.step_env,
@@ -232,6 +236,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       governorCard.restore();
       gateCard.restore();
       retryCard.restore();
+      pluginCards.restore();
       saveNote.setAttribute("class", "status ok");
       mount(saveNote, `Saved at ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
       toast("Settings saved");
@@ -256,6 +261,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       governorCard.restore();
       gateCard.restore();
       retryCard.restore();
+      pluginCards.restore();
       saveNote.setAttribute("class", "status bad");
       mount(saveNote, "Not saved.");
     } finally {
@@ -330,6 +336,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     ...(gateCard.card ? [gateCard.card] : []),
     promotionPanel({ readOnly }),
     ...(retryCard.card ? [retryCard.card] : []),
+    ...pluginCards.cards,
     componentsPanel(),
     pluginsPanel(),
     ...(startup.length ? [startupSection(startup, section)] : []),

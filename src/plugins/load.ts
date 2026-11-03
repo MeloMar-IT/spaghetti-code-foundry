@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "yaml";
 import { FACTORY_HOME } from "../flow/load.js";
+import { checkUiSpec, pluginUiName, registrationsOf, settingsValues, type PluginUiEntry, type PluginUiHandle } from "./ui.js";
 
 /** The version of the plugin API: what `register(api)` gets as `api.version`. */
 export const PLUGIN_API_VERSION = "0.1";
@@ -19,6 +20,8 @@ export interface PluginEntry {
 export interface PluginApi {
   readonly version: string;
   readonly options: Readonly<Record<string, unknown>>;
+  /** Adds pages, menu items and a settings section to the web interface. Once, and only while register(api) runs. */
+  readonly ui: (spec: unknown) => PluginUiHandle;
 }
 export interface Registration {
   point: string;
@@ -38,6 +41,8 @@ export interface PluginRegistry {
   readonly entries: readonly PluginEntry[];
   readonly plugins: readonly LoadedPlugin[];
   readonly problems: PluginProblem[];
+  /** What plugins registered with `api.ui()`. */
+  readonly ui: readonly PluginUiEntry[];
 }
 
 /** A plugin that cannot be loaded. The message always names the plugin's `module`. */
@@ -72,7 +77,7 @@ export function insideFolder(file: string, folder: string): boolean {
 }
 
 export function emptyRegistry(): PluginRegistry {
-  return { entries: [], plugins: [], problems: [] };
+  return { entries: [], plugins: [], problems: [], ui: [] };
 }
 
 export interface LoadDeps {
@@ -82,6 +87,8 @@ export interface LoadDeps {
   importModule?: (url: string) => Promise<Record<string, unknown>>;
   timeoutMs?: number;
   log?: (m: string) => void;
+  /** The `plugin_settings` of config.yaml as it is now (for `handle.settings()`). */
+  pluginSettings?: () => Record<string, unknown> | undefined;
 }
 
 const firstLine = (e: unknown, max = 300) => String((e as Error)?.message ?? e).split("\n")[0]!.slice(0, max);
@@ -149,6 +156,7 @@ export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDep
   const timeoutMs = deps.timeoutMs ?? REGISTER_TIMEOUT_MS;
   const blocked = deps.blockedDirs.map(real);
   const plugins: LoadedPlugin[] = [];
+  const uiEntries: PluginUiEntry[] = [];
   for (const entry of entries) {
     const spec = entry.module;
     const bad = pluginModuleProblem(spec);
@@ -172,18 +180,36 @@ export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDep
     const def = mod?.default as Record<string, unknown> | undefined;
     const register = typeof mod?.register === "function" ? mod.register : typeof def?.register === "function" ? def.register : undefined;
     if (!register) throw new PluginLoadError(spec, "does not export a function register(api)");
-    const api: PluginApi = Object.freeze({ version: PLUGIN_API_VERSION, options: Object.freeze(structuredClone(entry.options)) });
+    const label = pluginLabel(spec);
+    let ui: PluginUiEntry | undefined;
+    let open = true;
+    const api: PluginApi = Object.freeze({
+      version: PLUGIN_API_VERSION,
+      options: Object.freeze(structuredClone(entry.options)),
+      ui: (given: unknown): PluginUiHandle => {
+        if (!open) throw new Error("ui(spec) can only be called while register(api) runs");
+        if (ui) throw new Error("ui(spec) can only be called once");
+        const name = pluginUiName(label);
+        if (uiEntries.some((x) => x.name === name)) throw new Error(`ui(spec): the web address name "${name}" is already used by another plugin`);
+        const mine = checkUiSpec(given, { label, name, blocked });
+        ui = mine;
+        return Object.freeze({ name, settings: () => settingsValues(mine, deps.pluginSettings?.()?.[name]) });
+      },
+    });
     try {
       await withDeadline(spec, "register(api)", timeoutMs, () => (register as (a: PluginApi) => unknown)(api));
     } catch (e) {
       if (e instanceof PluginLoadError) throw e;
       throw new PluginLoadError(spec, `register(api) failed: ${firstLine(e)}`);
+    } finally {
+      open = false;
     }
-    const loaded: LoadedPlugin = { label: pluginLabel(spec), module: spec, version: versionOf(mod, def, path), registered: [] };
+    const loaded: LoadedPlugin = { label, module: spec, version: versionOf(mod, def, path), registered: ui ? registrationsOf(ui) : [] };
+    if (ui) uiEntries.push(ui);
     plugins.push(loaded);
     deps.log?.(`plugin ${loaded.label} ${loaded.version} loaded`);
   }
-  return { entries: structuredClone(entries), plugins, problems: [] };
+  return { entries: structuredClone(entries), plugins, problems: [], ui: uiEntries };
 }
 
 /** The plugins in config.yaml as it is on disk now; undefined when it cannot be read or is not valid. */

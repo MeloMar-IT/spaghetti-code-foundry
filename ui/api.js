@@ -157,6 +157,7 @@ export const api = {
   removeRepoWatcher: (repoId, id) => req("DELETE", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`),
   allCredentials: () => req("GET", "/api/admin/credentials"),
   plugins: () => req("GET", "/api/plugins"),
+  pluginUi: () => req("GET", "/api/plugins/ui"),
   adminComponents:() => req("GET", "/api/admin/components"),
   // `stay`: a 401 must not reload the page while a typed idea is kept in memory
   refinement: (stay = false) => req("GET", "/api/refinement", undefined, stay),

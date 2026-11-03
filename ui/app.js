@@ -9,6 +9,7 @@ import { initPalette } from "./palette.js";
 import { initShell, namePage, showPage } from "./shell.js";
 import { errorState, explainError } from "./states.js";
 import { renderLibrary } from "./library.js";
+import { addPluginMenu, loadPluginUi, renderPluginPage } from "./plugins.js";
 import { renderSettings } from "./admin.js";
 import { renderWatchers, renderWatcherDetail } from "./watchers.js";
 import { renderMaintenance } from "./maintenance.js";
@@ -159,7 +160,15 @@ async function route() {
   showPage("admin", to);
   document.body.classList.toggle("no-side", to.dest !== "flows");
   try {
-    if (section === "home") {
+    if (to.page.nav === "plugin") {
+      // A page a plugin added: its module draws into a box of its own.
+      const box = h("div", {});
+      mount(main, box);
+      const off = await renderPluginPage(box, to.page, { user: me, readOnly });
+      if (mine === routeGen) S.cleanup = off;
+      else off?.(); // the person went on to another page meanwhile
+    }
+    else if (section === "home") {
       // Draws into its own box, so a slow load that ends after a hash change leaves nothing running.
       const box = h("div", {});
       mount(main, box);
@@ -328,6 +337,8 @@ async function startAdmin() {
   const to = startHash(location.hash, await startBadge());
   if (to) history.replaceState(null, "", to);
   await context.ready;
+  // The pages and links that plugins added; without plugins nothing is added.
+  addPluginMenu((await loadPluginUi()).menu);
   booted = true;
   route();
   startSince(sinceEl);

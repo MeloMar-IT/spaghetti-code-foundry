@@ -100,6 +100,7 @@ export async function launchApp(real: Record<string, any>, hash: string, over: R
       "./kit/actions.js": await import("../../ui/kit/actions.js" as string), "./kit/display.js": await import("../../ui/kit/display.js" as string),
     }, ["promotionNotice"]),
     "./library.js": never,
+    "./plugins.js": { addPluginMenu: vi.fn(), loadPluginUi: async () => ({ menu: [] }), renderPluginPage: vi.fn() },
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn() },
     "./home-admin.js": never,
     "./runs-filter.js": await import("../../ui/runs-filter.js" as string),

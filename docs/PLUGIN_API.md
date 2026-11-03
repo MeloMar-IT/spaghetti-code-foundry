@@ -73,7 +73,8 @@ export function register(api) {
 - `api.version` is the plugin API version (`PLUGIN_API_VERSION`, `"0.1"` in this release). A
   plugin that cannot work with it throws; the start stops with a message that names the plugin.
 - `api.options` is a frozen copy of the `options` map of the entry.
-- `api` has one method per plugin point. None ships yet: the points come with the next parts.
+- `api.ui(spec)` adds pages, menu items and a settings section to the web interface. See
+  [The ui point](#the-ui-point). Other plugin points come with the next parts.
 - A plugin fails the start when it cannot be found or imported, has no `register`, throws, or does
   not finish `register` within 30 seconds. The server then does not start at all.
 - Refused: a relative path, a URL, a built-in Node module, and a module inside a runs folder or a
@@ -83,6 +84,57 @@ export function register(api) {
 
 `scf plugins` and `GET /api/plugins` (admins) list the loaded plugins with their version and what
 each registered. Options are never shown.
+
+## The ui point
+
+`api.ui(spec)` adds pages, menu items and a settings section. It may be called once, and only while
+`register(api)` runs; a second call, or a call later, throws. Two plugins with the same web address
+name stop the start. The address name is the label in lower case, with `@`, `/`, `.` and `_` as `-`.
+
+```js
+import { fileURLToPath } from "node:url";
+
+export function register(api) {
+  const ui = api.ui({
+    dir: fileURLToPath(new URL("./ui", import.meta.url)),   // the plugin's folder: pages and files live here
+    pages: [{ id: "report", title: "Report", module: "report.js", roles: ["admin", "user"], files: ["style.css"] }],
+    menu: [{ page: "report", label: "Report", roles: ["admin"] }],
+    settings: {
+      title: "Report",
+      fields: [{ key: "days", kind: "number", label: "Days to show", default: 7, integer: true, min: 1, max: 90 }],
+    },
+  });
+  console.log(ui.name, ui.settings().days);            // the current values, defaults filled in
+}
+```
+
+- **`dir`** is the folder the files are read from. It must not lie inside a folder where runs write.
+- **`pages`** (at most 20): `id` (lower case, letters, digits and `-`, at most 40), `title` (at most 80),
+  `module` (a `.js` file in `dir`), `roles` (`admin` and/or `user`) and optional `files` (at most 20 files
+  of `.js`, `.css` or `.svg`). A file must exist and be at most 1 MB.
+- **`menu`** (at most 20): `page` (an `id` above), `label` (at most 40) and `roles`. The roles must be a
+  subset of the page's roles.
+- **`settings`** (optional): a `title` (at most 60) and `fields` (at most 50). A field has `key`, `kind`,
+  `label` and optional `help`, `default`. Kinds: `number` (`integer`, `min`, `max`), `yes-no`, `text`,
+  `list` (`maxItems`) and `choice` (`choices`). A value that does not fit the field is refused.
+- Anything else in the spec, a wrong type or an unknown key, is refused with a message; the start stops
+  and names the plugin.
+
+What the page gets. The module must export `render(box, ctx)`; it may return a cleanup function. `ctx`
+has `kit` (the UI kit, see [UI_COMPONENTS.md](UI_COMPONENTS.md)), `h` and `mount` (the DOM helpers),
+`role`, `readOnly`, `plugin` and `user` (`id`, `name`, `role`). Text is added as text, never as HTML.
+
+Addresses and access. A page is at `#/plugins/<name>/<id>`, and its module at `/plugins/<name>/<module>`.
+Each file has its own rule, listing the roles of every page that uses it. A file no rule lists is refused:
+404 with no rule, 401 without a session, 403 for a role not listed. Admins pass all rules. The menu item
+and the page appear only for the roles they name.
+
+Settings. `api.ui(...).settings()` returns the values in `config.yaml` under `plugin_settings.<name>`, with
+the defaults filled in. The settings page shows one card per section; a save goes through
+`PUT /api/config`, which checks each key against the fields of the loaded plugin.
+
+The public package names do not change with this point: `ui` is a member of the plugin `api` object, and
+its types are not exported from `@melomar-it/scf-core`. `PLUGIN_API_VERSION` stays `"0.1"` in this release.
 
 ## Semantic versioning
 
