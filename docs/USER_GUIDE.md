@@ -168,6 +168,13 @@ The same check runs in a terminal: `scf doctor --simple` prints the items with t
 versions, and `--json` prints the report. `--need node` adds Node.js. The command exits with 0 only when everything
 needed is ready, so it can be used in a script. It does not need the data folder to be set up.
 
+**Sign in from the Foundry (API).** Two admin-only routes help with the same two steps. `POST /api/onboarding/sign-in`
+with `{ "tool": "claude" }` or `{ "tool": "codex" }` starts the tool's own sign-in (`claude auth login` or
+`codex login`). The sign-in window opens on the computer that runs the Foundry, not in your browser. The Foundry asks
+for no password or key and never shows the tool's output; it answers in plain words. `POST /api/onboarding/test-call`
+with the same body makes one tiny call (no tools, a fixed prompt) and answers `ok`, `missing`, `signed-out` or
+`failed`. Use it after you sign in to check that the tool works. The page has no buttons for these routes yet.
+
 ### Old and new interface
 
 **How to switch.** There is nothing to switch. After the update every account sees the new interface. A setting to go back is not built.
@@ -5031,6 +5038,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/monitor/retry` | yes | no | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
+| `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
+| `POST /api/onboarding/test-call` | yes | no | one tiny call through Claude Code (`haiku`) or Codex (its default model, low effort) (`tool`): no tools, no personal hooks or setup, a fixed prompt; answers `ok`, `missing`, `signed-out` or `failed` with a plain explanation, never the tool's output; admins only |
 | `GET /api/setup-check` | yes | no | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
 | `POST /api/providers/test` | yes | no | test a provider |
 | `GET /api/evals` | yes | no | eval reports |

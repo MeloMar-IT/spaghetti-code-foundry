@@ -148,6 +148,8 @@ const EXAMPLES: Record<string, Example> = {
   "POST clean": no("clean", 200, {}),
   "GET providers": no("providers", 200),
   "GET setup-check": no("setup-check", 200),
+  "POST onboarding/sign-in": no("onboarding/sign-in", 400, {}),
+  "POST onboarding/test-call": no("onboarding/test-call", 400, {}),
   "POST providers/test": no("providers/test", 400, {}),
   "GET evals": no("evals", 200),
   "GET stats": no("stats", 200),
