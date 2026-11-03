@@ -206,7 +206,7 @@ describe("Settings → Load governor", () => {
 
   it("saves a changed number of cores kept free", async () => {
     const { main, puts } = await render({});
-    const input = card(main).all("input").filter((i) => i.attrs.type === "number")[1] as any;
+    const input = card(main).all("input").filter((i) => i.attrs.type === "number")[2] as any; // after the floor and the usage threshold
     input.value = "3.5";
     input.fire("change", { target: input });
     main.all("button").find((b) => b.textContent === "Save")!.click();
@@ -218,7 +218,7 @@ describe("Settings → Load governor", () => {
 
   it("has one number input for the lowest runs, empty when not set", async () => {
     const { main } = await render({});
-    expect(card(main).all("input").filter((i) => i.attrs.type === "number")).toHaveLength(3);
+    expect(card(main).all("input").filter((i) => i.attrs.type === "number")).toHaveLength(4);
     expect(floorInput(main).value ?? "").toBe("");
   });
 

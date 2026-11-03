@@ -4264,6 +4264,11 @@ if needed, lower than the governor goes. It works from the number of runs that a
 moment, lowers its cap as far as needed in one check, and raises it by one per check at most. The
 cap ends by itself two hours after the last check. Off by default.
 
+With `governor.usage_percent: 80`, `scf limits auto on` and a reading, the threshold works on its own:
+once about 80% of a week is used, runs at once go down to 1 (or to `governor.floor` when that is set and
+higher) until the reset, and the report says that this is the reason. Not set, only the forecast slows
+down; a threshold that is set but not yet reached changes nothing.
+
 **What holds work up.** It follows two kinds of waiting: a story that stepped aside for files
 another run holds, and a story that waits for one it depends on (from the service log of the last
 6 hours, until the log shows that the story started or ended). The report lists the stories at
@@ -4341,6 +4346,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
 
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
+
+**Slow down at this share of a weekly limit (load governor)** — `governor.usage_percent` is a whole number from 1 to 100. Once about this share of the Claude or Codex weekly limit is used (from the reading, see "Usage limits" under Helper processes), the limits helper keeps the runs at once at 1, or at `governor.floor` when that is set and higher, until the reset. It works only with `scf limits auto on` and a reading (`scf limits set`), and only while the threshold holds: below it, the forecast alone decides. The cap is global, so one tool at the threshold slows all runs, Codex runs included. The `scf limits` report says "at or above your threshold" for each tool at or above it. Not set, the setting does nothing and only the forecast slows down.
 
 **Cores kept free (load governor)** — `governor.reserve_cores` is how many cores the load governor leaves free for your other programs when it works out how many runs fit (see "The load governor" under Helper processes). The default is 2. A higher number means fewer runs next to your other programs. A configuration without the setting works as before, with 2.
 

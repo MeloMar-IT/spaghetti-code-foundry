@@ -400,6 +400,7 @@ export const ConfigSchema = z
     /**
      * Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy.
      * `floor`: the lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded.
+     * `usage_percent`: from about this share of a weekly limit used (see `scf limits`), the limits helper keeps the runs at once at 1, or at `floor` when that is higher; not set: only the forecast slows down.
      * `reserve_cores`: the cores the governor keeps free for other programs when it works out how many runs fit (default 2).
      * Not set: half of `concurrency`, at least 2. Above `concurrency` it counts as `concurrency` (clamped when used, so lowering `concurrency` never makes the config invalid).
      * `busy_runs`: the most runs at once while busy mode is on ("I'm using this machine" in the top bar; default 2); new run processes then start at background priority.
@@ -409,6 +410,7 @@ export const ConfigSchema = z
       .object({
         priority: z.enum(["normal", "low", "background"]).default("low"),
         floor: z.number().int().min(0).optional(),
+        usage_percent: z.number().int().min(1).max(100).optional(),
         reserve_cores: z.number().min(0).default(2),
         busy_runs: z.number().int().min(0).default(2),
         busy_apps: z.array(z.string().trim().min(1).max(100)).max(50).default([]),

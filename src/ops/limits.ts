@@ -73,7 +73,20 @@ export function forecast(runs: RunSummary[], family: Family, cal: Calibration | 
 
 const when = (iso: string) => iso.slice(0, 16).replace("T", " ") + " UTC";
 
-export function limitsReport(fs: Forecast[], auto: boolean): string {
+/** From `governor.usage_percent`: the share of a week from which the Foundry slows down, and the runs at once it then allows. */
+export interface UsageThreshold { percent: number; runs: number }
+
+/** Undefined without a percent. The runs are 1, or `floor` when higher, never more than `configured` (then no cap is needed). */
+export function usageThreshold(usagePercent: number | undefined, floor: number | undefined, configured: number): UsageThreshold | undefined {
+  return usagePercent === undefined ? undefined : { percent: usagePercent, runs: Math.min(Math.max(1, configured), Math.max(1, floor ?? 1)) };
+}
+
+/** The runs at once the threshold allows for one tool; undefined without a usable reading or below the threshold. */
+export function thresholdRuns(f: Forecast, t: UsageThreshold | undefined): number | undefined {
+  return t && f.percentNow !== undefined && f.percentNow >= t.percent ? t.runs : undefined;
+}
+
+export function limitsReport(fs: Forecast[], auto: boolean, threshold?: UsageThreshold): string {
   const out = ["# Usage limits", ""];
   for (const f of fs) {
     out.push(`## ${f.family === "claude" ? "Claude" : "Codex"}`, "");
@@ -81,11 +94,12 @@ export function limitsReport(fs: Forecast[], auto: boolean): string {
     if (f.limitHits) out.push(`- ${f.limitHits} step${f.limitHits === 1 ? " was" : "s were"} stopped by a usage limit in the last 24 hours.`);
     if (f.note) out.push(`- ${f.note}`);
     if (f.percentNow !== undefined) out.push(`- About ${f.percentNow}% of the week is used (estimate); the week resets ${when(f.resetAt!)}.`);
+    if (threshold && thresholdRuns(f, threshold) !== undefined) out.push(`- That is at or above your threshold of ${threshold.percent}% (\`governor.usage_percent\`): ${threshold.runs} run${threshold.runs === 1 ? "" : "s"} at once until the reset.`);
     if (f.emptyAt) out.push(`- At this pace the limit is reached ${when(f.emptyAt)}, before the reset.${f.runs ? ` ${f.runs} run${f.runs === 1 ? "" : "s"} at once would make it last.` : ""}`);
     else if (f.percentNow !== undefined) out.push("- At this pace the limit lasts until the reset.");
     out.push("");
   }
-  out.push(auto ? "Slowing down is on: when a limit would be reached before its reset, the number of runs at once is lowered." : "Slowing down is off (`scf limits auto on`): this is a forecast only.", "");
+  out.push(auto ? (threshold ? `Slowing down is on: when a limit would be reached before its reset, or about ${threshold.percent}% of a week is used, the number of runs at once is lowered.` : "Slowing down is on: when a limit would be reached before its reset, the number of runs at once is lowered.") : "Slowing down is off (`scf limits auto on`): this is a forecast only.", "");
   return out.join("\n");
 }
 
