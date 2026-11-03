@@ -43,6 +43,7 @@ import { catalogueProblems, overlapStagedSkills } from "./overlap-staged.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors, type SkillSelection } from "./selections.js";
 import { PROFILES_FILE, readSourceProfiles } from "./source-profiles.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
+import { ACCESS_NOT_REGISTERED, accessProblem, type SourceRepo } from "./source-access-rules.js";
 import { selectionsEvaluate } from "./selections-evaluate-cli.js";
 import { suiteLines, suiteRefusal, suiteVerdicts } from "./suite-checks.js";
 import { EVALUATIONS_FILE, readSuiteRecords, type EffectDecision } from "./suite-records.js";
@@ -95,6 +96,8 @@ export interface SkillsCommandOptions extends DiscoverOptions {
   now?: Date;
   /** The date used by `scan` for exceptions, as YYYY-MM-DD (tests). Default: today in UTC. */
   today?: string;
+  /** `sources check`: the registered repositories (repos.json), for a source with `access`. Given by the program's entry point, so this file reads no account data. */
+  repos?: () => readonly SourceRepo[];
   /** `score --agent`: runs the instructions scenarios in the sandbox. Given by the program's entry point, so this file starts no process. */
   agentScore?: (id: string, suiteFile: string | undefined, out: (line: string) => void, opts: EvaluateCliOptions) => Promise<number>;
   /** `effect`: runs the sample tasks with and without a skill in the sandbox. Given by the program's entry point, like `agentScore`. */
@@ -151,7 +154,7 @@ function profilesCheck(file: string, out: (line: string) => void): number {
 }
 
 /** `scf skills sources check`: offline, prints checked fields only. */
-function sourcesCheck(file: string, out: (line: string) => void, today?: string): number {
+function sourcesCheck(file: string, out: (line: string) => void, today?: string, listRepos?: () => readonly SourceRepo[]): number {
   const r = readSources(file, undefined, today);
   if (r.state === "none") {
     out("PROBLEM the skill source file does not exist");
@@ -162,13 +165,30 @@ function sourcesCheck(file: string, out: (line: string) => void, today?: string)
     return 1;
   }
   let enabled = 0;
-  for (const s of r.manifest.sources) {
+  let bad = 0;
+  let repos: readonly SourceRepo[] | undefined;
+  r.manifest.sources.forEach((s, i) => {
     if (s.status === "enabled") enabled++;
     const head = `${s.id.padEnd(24)} ${s.status} ${s.trust} ${s.adapter} ${s.repositoryKey}@${(s.ref.approved ?? "-").slice(0, 12)} ${s.owner}`;
     const reviewed = s.review ? ` reviewed by ${s.review.by} on ${s.review.on}` : "";
     const profile = s.profile ? ` provider ${s.profile.provider} (${s.profile.portable.length} portable)` : "";
-    out(`${head}${reviewed}${profile}${s.reason ? ` (${s.reason})` : ""}`);
-  }
+    const access = s.access ? ` access ${s.repositoryKey}` : "";
+    out(`${head}${reviewed}${profile}${access}${s.reason ? ` (${s.reason})` : ""}`);
+    if (s.access) {
+      let why: string | undefined;
+      try {
+        repos ??= listRepos ? listRepos() : [];
+        why = accessProblem(s, repos);
+      } catch {
+        why = ACCESS_NOT_REGISTERED;
+      }
+      if (why) {
+        out(`PROBLEM sources[${i}] (${s.id}) access: ${why}`);
+        bad++;
+      }
+    }
+  });
+  if (bad) return 1;
   out(`OK ${r.manifest.sources.length} sources, ${enabled} enabled`);
   return 0;
 }
@@ -616,7 +636,7 @@ export async function skillsCommand(
   }
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
-    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out, opts.today);
+    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out, opts.today, opts.repos);
   }
 
   if (sub === "profiles") {

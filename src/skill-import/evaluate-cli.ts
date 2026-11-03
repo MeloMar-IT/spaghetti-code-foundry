@@ -9,9 +9,10 @@ import { discoverSkills } from "../skills/registry.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
 import { evaluateSource, evaluationFailed, evaluationLines } from "../skills/source-evaluation.js";
 import { readScanExceptions, SCAN_EXCEPTIONS_FILE } from "../skills/scan-exceptions.js";
-import { readSources, SOURCES_FILE } from "../skills/sources.js";
+import { readSources, SOURCES_FILE, type SkillLibrarySource } from "../skills/sources.js";
 import { gitSentence } from "./cli.js";
-import { GitTreeError, openGitTree } from "./git-tree.js";
+import { GitTreeError, openGitTree, type GitCredential } from "./git-tree.js";
+import { sourceCredential, type SourceAccess } from "./source-access.js";
 
 // `scf skills evaluate <source-id> [<technology>@<version> ...]`: fetches the approved commit of an enabled source into a
 // temporary git folder and reports compatibility, tools, access, licence and overlap. Stages and writes nothing else.
@@ -27,6 +28,8 @@ export interface SkillEvaluateOptions {
   remote?: string;
   env?: NodeJS.ProcessEnv;
   open?: typeof openGitTree;
+  /** Tests: gives the credential of a source with `access`. */
+  access?: (source: SkillLibrarySource) => Promise<SourceAccess>;
   skills?: Config["skills"];
   now?: Date;
 }
@@ -123,8 +126,17 @@ export async function skillEvaluateCommand(
   try {
     let fetched: { prep: ReturnType<typeof prepareImport>; evidence: ReturnType<typeof collectLicenceEvidence> } | undefined;
     let failed: unknown;
+    let credential: GitCredential | undefined;
+    if (source.access) {
+      const got = await (opts.access ?? sourceCredential)(source);
+      if (!got.ok) {
+        out(`PROBLEM ${got.problem}`);
+        return 1;
+      }
+      credential = got.credential;
+    }
     try {
-      const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: aborter.signal });
+      const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: aborter.signal, ...(credential ? { credential } : {}) });
       try {
         const prep = prepareImport(source, tree);
         const evidence = collectLicenceEvidence({ repositoryKey: prep.record.repositoryKey, commit: prep.record.commit }, prep.record.skills.map((s) => s.root), tree);

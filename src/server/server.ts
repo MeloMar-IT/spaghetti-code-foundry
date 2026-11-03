@@ -36,6 +36,8 @@ import { searchRoutes } from "./search.js";
 import { TurnNotifier } from "./notifier.js";
 import { ClarityRecorder, clarityRoutes } from "./clarity.js";
 import { busyRoutes } from "./api-busy.js";
+import { onboardingRoutes } from "./api-onboarding.js";
+import { stopSignIns } from "../onboarding.js";
 import { restartRoutes, type SettingsRestart } from "./api-restart.js";
 import { BUSY_RENEW_MS, syncBusyCap } from "../ops/busy.js";
 import { CSP, HSTS, listenProblem, localUrl, requestAccess } from "./net.js";
@@ -139,7 +141,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes];
 
 export async function startServer(given: ServerOptions): Promise<{ url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
@@ -454,6 +456,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       scheduler.close();
       notifier?.stop();
       watchers.stopAll();
+      stopSignIns();
       void closeTelemetry();
       server.close();
     },

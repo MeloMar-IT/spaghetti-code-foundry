@@ -32,10 +32,53 @@ function child(code, ...a) {
   }
 }
 
+// Sign-in state (only when FAKE_CLAUDE_AUTH_FILE is set; the file exists = signed in): --version, --help (lists `auth` unless FAKE_CLAUDE_NO_AUTH_CMD),
+// `auth status`, `auth login` (FAKE_CLAUDE_LOGIN_FAIL fails; FAKE_CLAUDE_LOGIN_HANG ignores SIGTERM and never ends), and a prompt call that fails
+// with a sign-in error when signed out (FAKE_CLAUDE_CALL_FAIL: an API error instead). FAKE_CLAUDE_ARGS_FILE gets the arguments of a prompt call.
+const authFile = process.env.FAKE_CLAUDE_AUTH_FILE;
+const argv = process.argv.slice(2);
+if (authFile) {
+  if (argv[0] === "--version") {
+    process.stdout.write("2.1.0 (Claude Code)\n");
+    process.exit(0);
+  }
+  if (argv[0] === "--help") {
+    process.stdout.write(`Usage: claude [options] [command]\n\nCommands:\n${process.env.FAKE_CLAUDE_NO_AUTH_CMD ? "" : "  auth    Manage authentication\n"}  mcp     Configure MCP servers\n`);
+    process.exit(0);
+  }
+  if (argv[0] === "auth" && argv[1] === "status") {
+    const on = existsSync(authFile);
+    process.stdout.write(`{"loggedIn": ${on}}\n`);
+    process.exit(on ? 0 : 1);
+  }
+  if (argv[0] === "auth" && argv[1] === "login") {
+    if (process.env.FAKE_CLAUDE_LOGIN_FAIL) process.exit(1);
+    if (process.env.FAKE_CLAUDE_LOGIN_HANG) {
+      process.on("SIGTERM", () => {});
+      setInterval(() => {}, 1000);
+      await new Promise(() => {});
+    }
+    writeFileSync(authFile, "signed in\n");
+    process.stdout.write("Login successful.\n");
+    process.exit(0);
+  }
+}
+
 let prompt = "";
 for await (const chunk of process.stdin) prompt += chunk;
 const args = process.argv.slice(2);
 const emit = (o) => process.stdout.write(JSON.stringify(o) + "\n");
+if (authFile) {
+  if (process.env.FAKE_CLAUDE_ARGS_FILE) appendFileSync(process.env.FAKE_CLAUDE_ARGS_FILE, `${JSON.stringify(args)}\n`);
+  if (!existsSync(authFile)) {
+    emit({ type: "result", subtype: "success", is_error: true, result: "Failed to authenticate: OAuth session expired and could not be refreshed", session_id: "s", total_cost_usd: 0, num_turns: 1 });
+    process.exit(1);
+  }
+  if (process.env.FAKE_CLAUDE_CALL_FAIL) {
+    emit({ type: "result", subtype: "success", is_error: true, result: "API Error: 500 internal error", session_id: "s", total_cost_usd: 0, num_turns: 1 });
+    process.exit(1);
+  }
+}
 
 // Whether the step had a GH_TOKEN: none, the one in FAKE_GH_EXPECT_TOKEN ("stored") or another. The token itself is never printed.
 const ghSeen = !process.env.GH_TOKEN ? "none" : process.env.GH_TOKEN === process.env.FAKE_GH_EXPECT_TOKEN ? "stored" : "other";
@@ -272,6 +315,17 @@ else if (prompt.includes("CI failed on this branch")) {
   const issue = /# #(\d+):/.exec(prompt)?.[1] ?? "?";
   writeFileSync("feature.txt", process.env.FAKE_IMPL_BUG ? "BUG\n" : `implemented #${issue}\n`);
   canned = "- added feature.txt";
+} else if (prompt.includes("The tests failed on the merge of your change with develop")) {
+  // FAKE_FIX_WAIT_FOR (a file path): writes <path>.started and waits until <path> exists, so a test can let other runs
+  // merge into develop while this run fixes. The fix adds a line, so it still merges with other work on the same file.
+  const gate = process.env.FAKE_FIX_WAIT_FOR;
+  if (gate) {
+    writeFileSync(`${gate}.started`, "1");
+    const pause = new Int32Array(new SharedArrayBuffer(4));
+    for (let i = 0; i < 600 && !existsSync(gate); i++) Atomics.wait(pause, 0, 0, 100);
+  }
+  if (!process.env.FAKE_FIX_NOOP) appendFileSync("feature.txt", "fixed\n");
+  canned = "fixed feature.txt";
 } else if (prompt.includes("The tests fail. Fix the code")) {
   if (!process.env.FAKE_FIX_NOOP) writeFileSync("feature.txt", "fixed\n");
   canned = "fixed feature.txt";

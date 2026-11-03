@@ -24,6 +24,8 @@ export interface WordFacts {
   budget?: boolean;
   /** `cancelled`: cancelled while stopped, so nothing continues the run. */
   ended?: boolean;
+  /** `area_lock`: the run waits for the develop branch (its merge turn), not for a code area. */
+  develop?: boolean;
 }
 
 interface Words {
@@ -63,7 +65,12 @@ const GLOSSARY: Record<NextKind, Words> = {
       : "The tests on the base branch fail, so this story waits. Nothing to do — it starts by itself when a new commit lands."),
   },
   one_at_a_time: { status: "waiting for another run", help: "Only one run at a time works here, and another run is active. Nothing to do — it starts when that run is finished." },
-  area_lock: { status: "waiting for another run in the same code", help: "Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished." },
+  area_lock: {
+    status: (f) => (f.develop ? "waiting for develop" : "waiting for another run in the same code"),
+    help: (f) => (f.develop
+      ? "Another run is merging into develop and testing it, and only one run does that at a time. Nothing to do — it goes on when that run has pushed develop or given up its turn."
+      : "Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished."),
+  },
   usage_limit: {
     status: (f) => (f.signedOut ? "paused — signed out" : f.unreachable ? "paused — AI service not reachable" : "paused — usage limit"),
     help: (f) => (f.signedOut

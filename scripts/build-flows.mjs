@@ -1738,6 +1738,8 @@ write("issue-plan", {
     type: "shell",
     jump_only: true,
     run: [
+      '# The summary lines start with "| ": a test log must not be able to print a route marker (DEVELOP_BEHIND: …).',
+      'node "$FACTORY_TOOLS/failing-tests.mjs" summary "{{run.dir}}/tests.marker" "{{run.dir}}" || true',
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"',
       'n=$(($(cat "{{run.dir}}/back-red" 2>/dev/null || echo 0) + 1)); echo "$n" > "{{run.dir}}/back-red"',
       'if [ "$n" -le 2 ]; then echo "the tests fail on the merge result — fix attempt $n of 2"; exit 0; fi',
@@ -1838,7 +1840,8 @@ write("issue-plan", {
     id: "merge_develop",
     type: "shell",
     repo_access: true,
-    max_visits: 4,
+    // 1 merge, 2 tests again, 2 fixes, and some re-merges because develop moved.
+    max_visits: 10,
     timeout_sec: 28800,
     description: "Merge the feature branch into develop (one merge at a time); conflicts go to an agent",
     run: [
@@ -1956,8 +1959,63 @@ write("issue-plan", {
     // With a red baseline that went on, the result of this very run is compared (a cached pass has no reports).
     run: 'export FACTORY_VAR_TEST_SLOTS=0\n[ -f "{{run.dir}}/baseline-red.json" ] && export FACTORY_VAR_REUSE_TEST_RESULTS=no\n' +
       swap(withPurge(testsRunReuse), '\nexit "$code"', "\n" + verifyCheck + '\nexit "$code"'),
+    max_visits: 10,
     on_success: "push_develop",
-    on_failure: "fix_develop",
+    on_failure: "red_develop",
+  };
+  // A red merge does not keep develop: the merge result is carried onto the feature branch, develop is given up
+  // (other runs merge, test and push meanwhile), the fix is made and pushed on the feature branch, and the run
+  // takes its turn again with the newest develop. The decision (retest, fix or stop) is written once per tested
+  // merge commit (red-decision), before anything else happens, so a step that is run again after an interruption
+  // reads it instead of counting again. Every line of the failing-test summary starts with "| " (see
+  // tools/failing-tests.mjs): the engine matches routes against whole lines, and a test log may print "RETEST".
+  const redDevelop = {
+    id: "red_develop",
+    type: "shell",
+    repo_access: true,
+    jump_only: true,
+    max_visits: 6,
+    description: "The merge with develop fails the tests: give up develop, move the merge result onto the feature branch, then fix there (or test again when the tests did not finish)",
+    run: [
+      'dev="$FACTORY_VAR_DEVELOP_BRANCH"; d="{{run.dir}}"; dec="$d/red-decision"; f=$(cat "$d/feature-branch" 2>/dev/null)',
+      '# A release that fails leaves develop held: stop here, before any fixer runs (this step runs again on a resume).',
+      'giveup() { "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" @develop >/dev/null 2>&1 || { echo "could not give up develop (the area-lock release failed): the merge result is on $f, and develop was not changed"; exit 1; }; }',
+      'case "$f" in "$FACTORY_VAR_FEATURE_PREFIX"*) [ -n "$f" ] || f="" ;; *) f="" ;; esac',
+      'if [ -z "$f" ]; then giveup; echo "no feature branch is recorded for this run, so the merge result cannot be kept; develop was not changed"; exit 1; fi',
+      'val() { sed -n "s/^$1=//p" "$dec" 2>/dev/null | head -1; }',
+      '# 1. The decision: made once for the merge commit that was tested, reused on a second run of this step.',
+      'on=$(git rev-parse --abbrev-ref HEAD); key=""; [ "$on" = "$dev" ] && key=$(git rev-parse HEAD)',
+      'if [ -s "$dec" ] && { [ -z "$key" ] || [ "$key" = "$(val key)" ]; }; then :',
+      'else',
+      '  [ -n "$key" ] || { giveup; echo "the merge result is not in the workspace any more (not on $dev)"; exit 1; }',
+      '  r=$(val retests); r=${r:-0}; x=$(val fixes); x=${x:-0}',
+      '  unf=0; printf \'%s\\n\' "$FACTORY_OUT_TEST_DEVELOP" | grep -q \'^=== summary ===$\' || unf=1',
+      '  if [ "$unf" = 1 ]; then if [ "$r" -lt 2 ]; then next=retest; r=$((r + 1)); n=$r; else next=stop; n=$r; fi',
+      '  else if [ "$x" -lt 2 ]; then next=fix; x=$((x + 1)); n=$x; else next=stop; n=$x; fi; fi',
+      '  printf \'key=%s\\nnext=%s\\nunfinished=%s\\nn=%s\\nretests=%s\\nfixes=%s\\n\' "$key" "$next" "$unf" "$n" "$r" "$x" > "$dec.tmp" && mv -f "$dec.tmp" "$dec" || { echo "cannot write the decision"; exit 1; }',
+      'fi',
+      'next=$(val next); unf=$(val unfinished); n=$(val n)',
+      'flag=""; [ "$unf" = 1 ] && flag="--unfinished"',
+      'node "$FACTORY_TOOLS/failing-tests.mjs" summary "{{run.dir}}/tests.marker" "$d" $flag',
+      '# 2. Carry the merge: the tested tree (conflict resolutions included) becomes a merge of develop into the feature branch.',
+      'if [ "$(git rev-parse --abbrev-ref HEAD)" = "$dev" ]; then',
+      '  before=$(cat "$d/develop-before" 2>/dev/null); tip=$(git rev-parse -q --verify "refs/heads/$f")',
+      '  [ -n "$before" ] && [ -n "$tip" ] || { echo "cannot carry the merge to $f: the commits are missing"; exit 1; }',
+      '  c=$(git commit-tree "HEAD^{tree}" -p "$tip" -p "$before" -m "Merge $dev into $f") && git checkout -q -f -B "$f" "$c" || { echo "cannot move the merge result onto $f (see above)"; exit 1; }',
+      'fi',
+      '# 3. Keep it on the remote, then give up develop (the code areas of the run stay locked).',
+      'git push -q origin "$f" || { echo "the merge result could not be pushed to $f (see above); develop was not changed"; exit 1; }',
+      'giveup; echo "gave up $dev: other runs can merge while this run goes on"',
+      'case "$next" in',
+      '  retest) echo "the tests on the merge with $dev did not finish — merging with the newest $dev and testing again, without an agent turn (test again $n of 2)"; echo "RETEST"; exit 0;;',
+      '  fix) echo "fix attempt $n of 2, on $f"; exit 0;;',
+      'esac',
+      'if [ "$unf" = 1 ]; then echo "The tests on the merge with $dev did not finish, also after testing again 2 times: the machine is too busy, or a test hangs. $dev was not changed, and the work is kept on $f."',
+      'else echo "The tests still fail on the merge with $dev after 2 fix attempts (the failing tests are above). $dev was not changed, and the work is kept on $f."; fi',
+      'exit 1',
+    ].join("\n"),
+    routes: [{ if: "^RETEST\\s*$", goto: "merge_develop" }],
+    on_success: "fix_develop",
   };
   const fixDevelop = {
     id: "fix_develop",
@@ -1966,9 +2024,14 @@ write("issue-plan", {
     max_visits: 2,
     resume: "implement",
     prompt: [
-      "Your change is merged into develop (not pushed yet), and the tests now fail. Fix that — in your code or",
-      "where it meets the work that landed on develop meanwhile. Never weaken or delete tests. Do not commit.",
+      "The tests failed on the merge of your change with develop. The merge result is now on your feature branch",
+      "(develop itself is not changed; other runs may merge into it meanwhile). Fix the failing tests — in your code or",
+      "where it meets the work that landed on develop. Never weaken or delete tests. Do not commit: the Foundry commits",
+      "the fix on the feature branch, then merges it with the newest develop and tests again.",
       "",
+      "{{steps.red_develop.output}}",
+      "",
+      "The end of the test output:",
       "{{steps.test_develop.output}}",
     ].join("\n"),
     on_success: "commit_develop_fix",
@@ -1976,22 +2039,53 @@ write("issue-plan", {
   const commitDevelopFix = {
     id: "commit_develop_fix",
     type: "shell",
+    repo_access: true,
     jump_only: true,
-    // The agent may find nothing to fix (e.g. a test that fails only by chance): then just test again.
-    run: 'git add -A; if git diff --cached --quiet; then echo "the fix changed nothing — testing again"; else git commit -q -m "Fix #$FACTORY_VAR_ISSUE after merging into develop" && git log --oneline -1; fi',
-    on_success: "test_develop",
+    // The agent may find nothing to fix (e.g. a test that fails only by chance): then just merge and test again.
+    // The fix is on the remote feature branch before the run asks for develop again.
+    run: [
+      'f=$(cat "{{run.dir}}/feature-branch" 2>/dev/null)',
+      '[ -n "$f" ] && [ "$(git rev-parse --abbrev-ref HEAD)" = "$f" ] || { echo "not on the feature branch ($f)"; exit 1; }',
+      'case "$f" in "$FACTORY_VAR_FEATURE_PREFIX"*) ;; *) echo "refusing to push $f: not a feature branch"; exit 1;; esac',
+      'git add -A',
+      'if git diff --cached --quiet; then echo "the fix changed nothing — merging with the newest develop and testing again"',
+      'else git commit -q -m "Fix #$FACTORY_VAR_ISSUE after merging into develop" && git log --oneline -1 || exit 1; fi',
+      'git push -q origin "$f" && echo "pushed $f" || { echo "the fix is committed on $f but could not be pushed (see above)"; exit 1; }',
+    ].join("\n"),
+    on_success: "merge_develop",
   };
   // The hotfix path's copies of the develop merge steps (same prompts, wired to merge_back / test_back).
   const resolveBack = structuredClone(resolveConflicts);
   Object.assign(resolveBack, { id: "resolve_back", on_success: "finish_back" });
   resolveBack.prompt = swap(resolveBack.prompt, "{{steps.merge_develop.output}}", "{{steps.merge_back.output}}");
   resolveBack.prompt = swap(resolveBack.prompt, "The merge has conflicts", "This was a hotfix: it is already on main, and main is now merged into develop. The merge has conflicts");
-  const fixBack = structuredClone(fixDevelop);
-  Object.assign(fixBack, { id: "fix_back", on_success: "commit_back_fix" });
-  fixBack.prompt = swap(fixBack.prompt, "{{steps.test_develop.output}}", "{{steps.test_back.output}}");
-  const commitBackFix = structuredClone(commitDevelopFix);
-  Object.assign(commitBackFix, { id: "commit_back_fix", on_success: "test_back" });
-  commitBackFix.run = swap(commitBackFix.run, "after merging into develop", "after merging main into develop");
+  // The hotfix path keeps the develop lock through its fixes: the fix is already on main, and what fails is main merged
+  // into develop. There is no feature branch to carry a fix (the hotfix branch must not take develop's work), and
+  // red_back ends it after 2 fix attempts. It only gets the same list of failing tests.
+  const fixBack = {
+    id: "fix_back",
+    type: "claude",
+    jump_only: true,
+    max_visits: 2,
+    resume: "implement",
+    prompt: [
+      "Your change is merged into develop (not pushed yet), and the tests now fail. Fix that — in your code or",
+      "where it meets the work that landed on develop meanwhile. Never weaken or delete tests. Do not commit.",
+      "",
+      "{{steps.red_back.output}}",
+      "",
+      "The end of the test output:",
+      "{{steps.test_back.output}}",
+    ].join("\n"),
+    on_success: "commit_back_fix",
+  };
+  const commitBackFix = {
+    id: "commit_back_fix",
+    type: "shell",
+    jump_only: true,
+    run: 'git add -A; if git diff --cached --quiet; then echo "the fix changed nothing — testing again"; else git commit -q -m "Fix #$FACTORY_VAR_ISSUE after merging main into develop" && git log --oneline -1; fi',
+    on_success: "test_back",
+  };
   const pushDevelop = {
     id: "push_develop",
     type: "shell",
@@ -2153,6 +2247,7 @@ write("issue-plan", {
     resolveConflicts,
     finishMerge,
     testDevelop,
+    redDevelop,
     fixDevelop,
     commitDevelopFix,
     pushDevelop,
@@ -2165,7 +2260,7 @@ write("issue-plan", {
   gitflowSteps.find((x) => x.id === "risk_gate").on_success = "close_parts";
   gitflowSteps.find((x) => x.id === "approve_plan").on_success = "close_parts";
   for (const id of ["plan", "revise_plan"]) gitflowSteps.find((x) => x.id === id).max_budget_usd = 8;
-  for (const x of gitflowSteps) if (["merge_develop", "resolve_conflicts", "finish_merge", "test_develop", "fix_develop", "commit_develop_fix"].includes(x.id)) x.jump_only = true;
+  for (const x of gitflowSteps) if (["merge_develop", "resolve_conflicts", "finish_merge", "test_develop", "red_develop", "fix_develop", "commit_develop_fix"].includes(x.id)) x.jump_only = true;
   gitflowSteps.splice(gitflowSteps.findIndex((x) => x.id === "review_2"), 0, reviewGate);
   gitflowSteps.find((x) => x.id === "push_feature").on_success = "pretest_merge";
   gitflowSteps.find((x) => x.id === "push_develop").on_success = "report";
@@ -2184,7 +2279,7 @@ write("issue-plan", {
       "  → lock the plan's code areas (runs on other areas code at the same time)",
       "  → Sonnet codes → tests ⟲ fix → 2 × Codex review → docs → commit → push the feature branch",
       "  → merge into develop (one at a time; changelog merges keep both sides; conflicts → agent resolves)",
-      "  → tests on the merged develop ⟲ fix → push develop → report on the issue",
+      "  → tests on the merged develop ⟲ (red: develop is freed, fixed on the feature branch, merged again) → push develop → report on the issue",
       "develop goes to main once a day: see release-daily.",
     ],
   }, {

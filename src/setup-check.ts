@@ -82,6 +82,11 @@ export function createProbe(spawnFn: typeof spawn = spawn, o: { timeoutMs?: numb
     });
 }
 
+/** Whether this Claude Code lists `auth` in its help (an old one does not, and could take the words as a prompt). */
+export function hasAuthCommand(help: ProbeResult): boolean {
+  return help.code !== null && !help.missing && /^\s+auth\b/m.test(help.out);
+}
+
 export interface SetupCheckOptions {
   probe?: Probe;
   platform?: NodeJS.Platform;
@@ -167,7 +172,7 @@ export async function setupCheck(o: SetupCheckOptions = {}): Promise<SetupReport
     const item: SetupItem = { id: "claude-sign-in", name: "Claude Code sign-in", needed: true, state: "unknown", explain: "" };
     const help = await probe(claudeBin, ["--help"]);
     // `auth status` only when this Claude Code lists `auth`: an old one could take the words as a prompt.
-    if (help.code !== null && !help.missing && /^\s+auth\b/m.test(help.out)) {
+    if (hasAuthCommand(help)) {
       const s = await probe(claudeBin, ["auth", "status"]);
       if (/"loggedIn"\s*:\s*false/i.test(s.out) || /not (logged|signed) in/i.test(s.out)) item.state = "signed-out";
       else if (s.code === 0) item.state = "ok";

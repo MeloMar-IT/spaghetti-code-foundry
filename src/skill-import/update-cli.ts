@@ -34,6 +34,8 @@ import {
 } from "./catalogue-git.js";
 import { stageSource, type SkillImportOptions } from "./cli.js";
 import { LsRemoteError, resolveHead, resolveTrack, type TrackResult } from "./ls-remote.js";
+import type { GitCredential } from "./git-tree.js";
+import { ACCESS_CHANGED, sameDestination, sourceCredential } from "./source-access.js";
 
 // `scf skills update <source-id>`: finds the upstream commit, stages it in the quarantine with the checks of `scf skills import`,
 // builds the review report and opens a pull request that changes only skill-sources.yaml. Nothing is approved until the pull
@@ -45,7 +47,7 @@ export const UPDATE_USAGE = "usage: scf skills update <source-id> [--owner <@use
 export interface SkillUpdateOptions extends Omit<SkillImportOptions, "cwd"> {
   cwd?: string;
   /** Tests: reads the upstream commit of a branch or tag (no track: HEAD). */
-  resolve?: (repository: string, track: string | undefined, o: { signal: AbortSignal; remote?: string; env?: NodeJS.ProcessEnv }) => Promise<TrackResult>;
+  resolve?: (repository: string, track: string | undefined, o: { signal: AbortSignal; remote?: string; env?: NodeJS.ProcessEnv; credential?: GitCredential }) => Promise<TrackResult>;
 }
 
 const syntax = (why: string) => new Error(`${why}\n${UPDATE_USAGE}`);
@@ -134,6 +136,8 @@ interface UpdateRun {
   tick: () => Promise<void>;
   /** An unattended `--due` run: the reviewer comes from update.reviewer and is asked after the pull request is opened. */
   due: boolean;
+  /** The credential made for the approved source; only used for a candidate with the same destination. */
+  credential: GitCredential | undefined;
 }
 
 const openLine = (url: string, id: string, c12: string) => `OPEN ${url} for ${id}@${c12}; no second pull request was opened`;
@@ -163,7 +167,13 @@ async function baseState(
 async function proposalInput(r: UpdateRun, candidate: SkillLibrarySource, review: SourceReview | undefined): Promise<UpdatePullRequestInput | "PROBLEM"> {
   const { id, commit, out, opts, signal, tick, cwd, today, existing } = r;
   const oldCommit = existing?.ref.approved;
-  const staged = await stageSource(candidate, commit, out, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal });
+  // The credential belongs to the approved source: a candidate that changes the repository or the access is not fetched.
+  if (existing ? !sameDestination(existing, candidate) : candidate.access !== undefined) {
+    out(`PROBLEM ${ACCESS_CHANGED}`);
+    return "PROBLEM";
+  }
+  const stage = { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal, ...(r.credential ? { credential: r.credential } : {}) };
+  const staged = await stageSource(candidate, commit, out, stage);
   if (staged.code !== 0 || !staged.done) return "PROBLEM";
   const read2 = readStagedImport(id, commit, { home: opts.home });
   if (read2.state !== "ok") {
@@ -186,7 +196,7 @@ async function proposalInput(r: UpdateRun, candidate: SkillLibrarySource, review
       home: opts.home,
       today,
       stage: async (src, c) => {
-        const s = await stageSource(src, c, () => {}, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal });
+        const s = await stageSource(src, c, () => {}, stage);
         await tick();
         return s.code === 0 && s.done !== undefined;
       },
@@ -357,9 +367,16 @@ async function run(
 
   const repository = shape.repository;
   const track = existing ? existing.ref.track : connector!.track;
+  // One new token for this command, made for the approved source; it is used only for a source with the same destination.
+  let credential: GitCredential | undefined;
+  if (existing?.access) {
+    const got = await (opts.access ?? sourceCredential)(existing);
+    if (!got.ok) return problem(got.problem);
+    credential = got.credential;
+  }
   let found: TrackResult;
   try {
-    found = await (opts.resolve ?? defaultResolve)(repository, track, { signal, remote: opts.remote, env: opts.env });
+    found = await (opts.resolve ?? defaultResolve)(repository, track, { signal, remote: opts.remote, env: opts.env, ...(credential ? { credential } : {}) });
   } catch (e) {
     if (e instanceof LsRemoteError) return problem(resolverSentence(e.code, shape.repositoryKey));
     throw e;
@@ -395,7 +412,7 @@ async function run(
     const now = again && again.state === "ok" ? again.manifest.sources.find((s) => s.id === id) : undefined;
     if (!isDeepStrictEqual(now, existing)) return problem(`the entry changed on origin/${base} while it was checked; ${NOTHING}`);
   }
-  const r: UpdateRun = { id, commit, c12, branch, repo, ctx, cwd, today, track, existing, out, opts, signal, tick, due };
+  const r: UpdateRun = { id, commit, c12, branch, repo, ctx, cwd, today, track, existing, out, opts, signal, tick, due, credential };
   if (already !== undefined) return refresh(r, already, path);
   const beforeText = blob?.content.toString("utf8");
 

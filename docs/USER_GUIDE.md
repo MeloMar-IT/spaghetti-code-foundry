@@ -168,6 +168,13 @@ The same check runs in a terminal: `scf doctor --simple` prints the items with t
 versions, and `--json` prints the report. `--need node` adds Node.js. The command exits with 0 only when everything
 needed is ready, so it can be used in a script. It does not need the data folder to be set up.
 
+**Sign in from the Foundry (API).** Two admin-only routes help with the same two steps. `POST /api/onboarding/sign-in`
+with `{ "tool": "claude" }` or `{ "tool": "codex" }` starts the tool's own sign-in (`claude auth login` or
+`codex login`). The sign-in window opens on the computer that runs the Foundry, not in your browser. The Foundry asks
+for no password or key and never shows the tool's output; it answers in plain words. `POST /api/onboarding/test-call`
+with the same body makes one tiny call (no tools, a fixed prompt) and answers `ok`, `missing`, `signed-out` or
+`failed`. Use it after you sign in to check that the tool works. The page has no buttons for these routes yet.
+
 ### Old and new interface
 
 **How to switch.** There is nothing to switch. After the update every account sees the new interface. A setting to go back is not built.
@@ -201,7 +208,7 @@ The top bar has a **View** box with three views. The view changes only what your
 
 | View | Display | What it shows |
 |---|---|---|
-| **Simple** | `/user/` | Home, Start work, My runs and My repositories. Epics and Refinement are not in the sidebar |
+| **Simple** | `/user/` | My projects (Home) and one page per project. Start work, My runs, Epics and Refinement are not in Simple (see [Simple: My projects](#simple-my-projects-and-the-project-page)) |
 | **Advanced** | `/user/` | Everything of the user display: Home, Epics, My runs, My repositories, Refinement and Start work |
 | **Admin** | `/` | The admin display |
 
@@ -220,6 +227,37 @@ The top bar has a **View** box with three views. The view changes only what your
 **Preview.** An admin's preview of a user (**View as user** on the Users page) has no **View** box. It stays in the Advanced display.
 
 **My runs.** An admin in Simple or Advanced sees the runs of all accounts on My runs, as in the admin display. The view does not filter them.
+
+### Simple: My projects and the project page
+
+Simple shows your work per project, in plain words. Home is **My projects**; the links in the menu and the top bar are only **Home**.
+
+**My projects** (`#/home`) has one card per project: its name, a one-line state ("Building 2 things", "Waiting for your answer", "Ready for you to check", "All done") and one big button for the next thing to do. A project with no work yet shows **Open project**. An empty list says there are no projects yet.
+
+**The project page** (`#/repos/<id>`) has three parts, top to bottom:
+
+1. **What you need to do**: the questions to answer and the results to check, each with its button. With nothing waiting it says "Nothing — the Foundry is working."
+2. **What is being made**: four groups, **Planned**, **Being built**, **Ready for you to check** and **Done**. A card shows the title, one sentence about the work and, for **Being built**, the step, e.g. "Step 2 of 4: testing". **Done** shows five cards; **Show all done** shows the rest and stays open while the page refreshes.
+3. The buttons **Ask for a change**, **Try it** and **Make this version final** come with later parts. The page does not show them yet.
+
+Both pages refresh every 30 seconds and use the same lists as Home (repositories, runs and the queue), so Simple shows no data that Home does not. Work that is cancelled, superseded or parked, and epics, are not listed.
+
+Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". Local projects (without GitHub) show "Nothing yet" for now.
+
+### Use the Foundry as a package
+
+If you build your own tool on the Foundry, depend on a release instead of a copy of the source.
+The package is `@melomar-it/scf-core` on GitHub Packages. Point the `@melomar-it` scope at
+`https://npm.pkg.github.com` in `.npmrc`, sign in with a token that can read packages, then:
+
+```bash
+npm install @melomar-it/scf-core
+```
+
+Import only from the package name. The entry point exports the server, the configuration, flow
+loading and running, and the types they use. A deep import into `dist/` is refused. The list of
+names, the plugin API version and the rules for version numbers are in [PLUGIN_API.md](PLUGIN_API.md).
+The `scf` and `factory` commands work from a git checkout as before.
 
 ---
 
@@ -606,6 +644,83 @@ Dates on the page use your browser's time zone, except the chart's day labels (U
 - **a person's answer** — time a story waits for someone to answer a question or approve a plan ("waiting for a person's answer").
 
 It cannot know when a usage limit stops work or when a person will answer. It also cannot know stories that nobody has written yet, and it assumes the pace of the last 14 days goes on. When a forecast looks wrong, first check **Held up by** on the Epics page and the **Waiting** stories on this page.
+
+### Stories as files
+
+A story can be a file, so people and other tools can read and write it without the Foundry. Files go in `.scf/stories/` in the repository, one file per story or epic, named `<number>-<slug>.md`. The number is the story number and the slug is the title in lowercase ASCII, at most 50 characters (`story` when nothing is left, for example for a title in other letters only).
+
+The format status: this part defines the format only. The Foundry does not read or write these files yet; later parts add the store.
+
+A file has three parts:
+
+1. **Front matter**, between two lines `---`, in YAML:
+   - `number` (required): the story number, a whole number. It must match the number in the file name.
+   - `title` (required): the title.
+   - `state` (required): `open` or `closed`.
+   - `kind`: `story` (the default) or `epic`.
+   - `labels`: a list of words.
+   - `epic`: the number of the epic this story belongs to.
+   - `depends_on`: a list of the story numbers this story waits for.
+   - `created`, `updated`, `closed`: times.
+   - `comment_top` (optional): the highest comment id the story has ever used. The Foundry writes it; a comment that is removed never gives its id back. A file written by hand may leave it out.
+2. **The body**: the Markdown text of the story, after the front matter.
+3. **Comments** (optional): a final `## Comments` heading, then one block per comment. A block starts with a heading `### Comment <id> by <author> on <time>` and holds the comment text. The id is the comment's number, the one in its link (`#issuecomment-<id>`). A heading without an id, `### Comment by <author> on <time>`, is also read; the Foundry gives such a comment the next free id when it next writes the file.
+
+The Foundry's status comment is one comment block that keeps the marker `<!-- claude-factory status -->` as its last line, so the Foundry can update it in place.
+
+If a line of the body or a comment is exactly `## Comments`, or starts a comment heading, it is written with a `\` in front. Reading the file removes that `\` again, so the text comes back unchanged.
+
+Example: an epic, and a child story that names it in `epic:`.
+
+`.scf/stories/100-checkout.md`:
+
+```markdown
+---
+number: 100
+title: Checkout
+kind: epic
+state: open
+labels: [epic]
+depends_on: []
+created: "2026-10-01T09:00:00Z"
+updated: "2026-10-03T14:20:00Z"
+---
+
+Customers can pay and get a receipt.
+
+## Comments
+
+### Comment by marcel on 2026-10-02T10:00:00Z
+
+Split into two stories: payment and receipts.
+```
+
+`.scf/stories/101-take-card-payments.md`:
+
+```markdown
+---
+number: 101
+title: Take card payments
+kind: story
+state: open
+labels: [payments]
+epic: 100
+depends_on: [99]
+created: "2026-10-02T10:05:00Z"
+updated: "2026-10-02T10:05:00Z"
+---
+
+Accept Visa and Mastercard at checkout.
+```
+
+A file that cannot be read is reported with the reason. Common reasons:
+
+- the front matter is missing or broken (it must start with `---` and end with `---`);
+- `number` is missing or is not a whole number;
+- the number in the file name is not the `number` in the front matter;
+- `state` is not `open` or `closed`.
+
+Dates must be written as text in quotes, so YAML does not change them.
 
 ### Work page (redesign, off by default)
 
@@ -1137,6 +1252,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | waiting — the owner's limit of runs per day | The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page. |
 | waiting — the owner's daily budget | The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page. |
 | waiting — the owner's limit of runs at the same time | As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page. |
+| waiting for develop | Another run is merging into `develop` and testing it, and only one run does that at a time. It shows who holds the turn and since when. Nothing to do — it goes on when that run has pushed `develop` or given up its turn. |
 | waiting for another run in the same code | Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished. |
 | waiting — a bug story goes first | A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that. |
 | waiting — the base branch has failing tests | The tests on the base branch fail, so this story waits. Nothing to do — it starts by itself when a new commit lands. |
@@ -3659,6 +3775,16 @@ flowchart LR
   leaves it open until the release reaches `main`). If `develop` moved meanwhile, it merges again; conflicts are
   resolved by an agent (keeping both changes), then tested again. The changelog never conflicts:
   both sides' entries are kept (`union_merge_files`).
+- **A red merge does not hold develop.** If the tests on the merge with `develop` fail, the run
+  gives up its turn at `develop` before anything is fixed. The merge result is moved onto its
+  feature branch and pushed there, and the fix is made and pushed on that branch too. Then the run
+  merges again from the newest `develop` and tests again. Other runs can merge, test and push
+  `develop` in the meantime, and the run's page says "waiting for develop" while it waits for
+  its turn. The fixer is given the names and messages of the failing tests, from the JUnit report
+  or the test summary. Tests that fail only under load are run again without a fix. A run that is
+  still red after 2 fixes, or 2 test runs that did not finish, stops with the reason, and its work
+  stays on the feature branch. The hotfix path (`main` into `develop`) keeps its turn through its
+  fixes, because the fix is already on `main` and there is no feature branch to carry it.
 - **Several issues are coded at the same time** when they change different parts of the code:
   each plan names its code areas (`AREAS:`), and a run waits only while another run holds an
   overlapping area — without holding a slot: it steps aside and continues as soon as that run is
@@ -4150,6 +4276,11 @@ if needed, lower than the governor goes. It works from the number of runs that a
 moment, lowers its cap as far as needed in one check, and raises it by one per check at most. The
 cap ends by itself two hours after the last check. Off by default.
 
+With `governor.usage_percent: 80`, `scf limits auto on` and a reading, the threshold works on its own:
+once about 80% of a week is used, runs at once go down to 1 (or to `governor.floor` when that is set and
+higher) until the reset, and the report says that this is the reason. Not set, only the forecast slows
+down; a threshold that is set but not yet reached changes nothing.
+
 **What holds work up.** It follows two kinds of waiting: a story that stepped aside for files
 another run holds, and a story that waits for one it depends on (from the service log of the last
 6 hours, until the log shows that the story started or ended). The report lists the stories at
@@ -4227,6 +4358,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
 
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
+
+**Slow down at this share of a weekly limit (load governor)** — `governor.usage_percent` is a whole number from 1 to 100. Once about this share of the Claude or Codex weekly limit is used (from the reading, see "Usage limits" under Helper processes), the limits helper keeps the runs at once at 1, or at `governor.floor` when that is set and higher, until the reset. It works only with `scf limits auto on` and a reading (`scf limits set`), and only while the threshold holds: below it, the forecast alone decides. The cap is global, so one tool at the threshold slows all runs, Codex runs included. The `scf limits` report says "at or above your threshold" for each tool at or above it. Not set, the setting does nothing and only the forecast slows down.
 
 **Cores kept free (load governor)** — `governor.reserve_cores` is how many cores the load governor leaves free for your other programs when it works out how many runs fit (see "The load governor" under Helper processes). The default is 2. A higher number means fewer runs next to your other programs. A configuration without the setting works as before, with 2.
 
@@ -4939,6 +5072,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/monitor/retry` | yes | no | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
+| `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
+| `POST /api/onboarding/test-call` | yes | no | one tiny call through Claude Code (`haiku`) or Codex (its default model, low effort) (`tool`): no tools, no personal hooks or setup, a fixed prompt; answers `ok`, `missing`, `signed-out` or `failed` with a plain explanation, never the tool's output; admins only |
 | `GET /api/setup-check` | yes | no | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
 | `POST /api/providers/test` | yes | no | test a provider |
 | `GET /api/evals` | yes | no | eval reports |
@@ -5373,7 +5508,9 @@ sources:
       licence: MIT
 ```
 
-- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `licence.reviewed` (optional; the licence review digest, see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `update.reviewer` (optional; a GitHub user or team, as `owner`; see below), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`) and `review` (see below). Unknown keys are refused.
+- **Fields.** `id` (lower-case slug, unique), `repository` (an `https://` git address), `status`, `reason`, `ref`, `paths` (1 to 20 plain folders; `.` is the root; no globs; no folder inside another), `adapter` (`agent-skills`), `trust` (`first-party`, `verified` or `community`), `licence.allow` (accepted: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD, CC0-1.0, CC-BY-4.0, Unlicense), `licence.reviewed` (optional; the licence review digest, see [Licence review and provider assumptions](#licence-review-and-provider-assumptions)), `update.cadence` (`manual`, `daily`, `weekly` or `monthly`), `update.reviewer` (optional; a GitHub user or team, as `owner`; see below), `owner` (a GitHub user or team such as `@octocat` or `@acme/skills`), `review` (see below), `access` and `exclude` (see below). Unknown keys are refused.
+- **Private first-party sources.** `access: { repo: owner/name }` lets a private repository of your own be a source. It is accepted only with `trust: first-party`, and only when `repo` is the same repository as `repository`. That repository must be registered under My repositories with the method GitHub App. The fetch then uses a new token that can read the contents of that one repository. The token comes from the Foundry's GitHub App, for `scf skills import`, `scf skills evaluate` and `scf skills update`. It is passed to git through a one-shot `GIT_ASKPASS` script that reads a file in a temporary folder (mode 0600); the file is removed after the fetch, also when it fails. The token is never on a command line, in an environment variable, in a log or in a message. A source without `access` is fetched as before. A deploy key or a token is not used for a skill source, so such a repository gives a `PROBLEM` naming `access`. `scf skills sources check` prints `PROBLEM … access: …` when the repository is not registered or does not use the GitHub App method.
+- **Excluded folders.** `exclude` is a list of 1 to 200 folders, each inside one of the `paths` (not the repository root, and not listed twice). The import skips them, so a template folder such as `skills/example-skill` is neither staged nor rejected. Promotion also refuses a skill in an excluded folder.
 - **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
 - **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
 - **Review of a community source.** `review` records who checked the maintainer and the licence, and when. It has four fields: `by` (a GitHub user or team, as `owner`), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id, equal to `ref.approved`) and `licence` (one of `licence.allow`). An enabled `trust: community` source is refused without `review`, and when `review.commit` is not `ref.approved`. A new commit needs a new review, so changing one word cannot raise the trust.

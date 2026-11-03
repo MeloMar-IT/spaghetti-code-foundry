@@ -7,6 +7,7 @@ import { connectorProblems } from "./connectors.js";
 import { credentialProblem } from "./credential-scan.js";
 import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
+import { parseAccess, parseExclude } from "./source-fields.js";
 import { relativePathProblem, SKILL_DIGEST_RE, SKILL_ID_RE, SKILL_PROVIDER_LIMITS } from "./schema.js";
 
 export const SOURCES_FILE = "skill-sources.yaml";
@@ -62,6 +63,10 @@ export interface SkillLibrarySource {
   profile?: SourceProfile;
   /** `reviewer`: who an unattended `scf skills update --due` names as the reviewer of a community source. */
   update: { cadence: SourceCadence; reviewer?: string };
+  /** A private first-party source: the registered repository whose access (GitHub App) fetches it. Same address as `repository`. */
+  access?: { repo: string };
+  /** Folders inside `paths` that the import leaves out (for example a template folder). */
+  exclude?: string[];
   owner: string;
   review?: SourceReview;
 }
@@ -227,7 +232,7 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
       return v;
     };
 
-    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "scope", "profile", "update", "owner", "review"], "");
+    keys(e, ["id", "repository", "status", "reason", "ref", "paths", "adapter", "trust", "licence", "scope", "profile", "update", "owner", "review", "access", "exclude"], "");
 
     // id
     const id = text(idRaw, "id");
@@ -476,6 +481,20 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
     // connector: a reviewed repository limits what an entry may select
     if (repositoryKey) for (const m of connectorProblems({ repositoryKey, paths, adapter, trust, licence: { allow } })) err("", m);
 
+    // access, exclude
+    let access: SkillLibrarySource["access"];
+    if (e.access !== undefined) {
+      const a = parseAccess(e.access, { trust, repositoryKey });
+      for (const [f, m] of a.problems) err(f, m);
+      access = a.value;
+    }
+    let exclude: string[] | undefined;
+    if (e.exclude !== undefined) {
+      const x = parseExclude(e.exclude, paths, sourcePathProblem);
+      for (const [f, m] of x.problems) err(f, m);
+      exclude = x.value;
+    }
+
     // owner
     const owner = text(e.owner, "owner");
     if (owner !== undefined && !OWNER_RE.test(owner)) err("owner", "must be a GitHub user or team like @octocat or @acme/skills");
@@ -541,6 +560,8 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
         ...(scope ? { scope } : {}),
         ...(profile ? { profile } : {}),
         update: { cadence, ...(updateReviewer !== undefined ? { reviewer: updateReviewer } : {}) },
+        ...(access ? { access } : {}),
+        ...(exclude ? { exclude } : {}),
         owner,
         ...(review ? { review } : {}),
       });

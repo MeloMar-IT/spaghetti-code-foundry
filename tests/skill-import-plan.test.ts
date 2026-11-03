@@ -58,6 +58,16 @@ const roots = (r: ReturnType<typeof planImport>) => r.skills.map((s) => s.root);
 const reasonsOf = (r: ReturnType<typeof planImport>, root: string) => r.rejected.find((x) => x.root === root)?.reasons ?? [];
 const good = { "skills/good/SKILL.md": md("good") };
 
+describe("prepareImport and exclude", () => {
+  it("leaves an excluded folder out: it is neither staged nor rejected", () => {
+    const files = { ...good, "skills/example-skill/SKILL.md": md("example-skill"), "skills/example-skill/x.md": "x" };
+    const p = prepareImport(source({ exclude: ["skills/example-skill"] }), tree(files));
+    expect(p.record.skills.map((s) => s.root)).toEqual(["skills/good"]);
+    expect(p.record.rejected).toEqual([]);
+    expect(prepareImport(source(), tree(files)).record.skills.map((s) => s.root)).toEqual(["skills/example-skill", "skills/good"]);
+  });
+});
+
 describe("planImport: discovery", () => {
   it("plans nested files of every skill and skips .DS_Store", () => {
     const t = tree({

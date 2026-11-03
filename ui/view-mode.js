@@ -6,8 +6,10 @@ import { confirmDialog, h, mount, toast } from "./dom.js";
 import { resolve, splitHash } from "./ia.js";
 
 export const VIEW_LABELS = { simple: "Simple", advanced: "Advanced", admin: "Admin" };
-/** The pages of the Simple view (the first part of the hash path). Later parts of the Easy epic may change this. */
-export const SIMPLE_SECTIONS = ["home", "setup", "start", "runs", "repos"];
+/** The pages of the Simple view (the first part of the hash path): My projects, the project page and the setup check. Later parts of the Easy epic may change this. */
+export const SIMPLE_SECTIONS = ["home", "setup", "repos"];
+/** The navigation links Simple keeps (`data-nav` names), in the menu and the top bar. */
+export const SIMPLE_NAV = ["home"];
 
 export const UNSAVED_TEXT = "You have unsaved changes. Save them first, then switch view.";
 export const UNSENT_TEXT = "You have text that is not sent. It is kept only on this page and is lost when you switch view.";
@@ -298,8 +300,7 @@ export function offerCard(box, offer, view, opts = {}) {
     h("p", { class: "muted" }, "This switches your view. You can switch back with View in the top bar or the menu.")));
 }
 
-/** Simple hides the links of the pages it does not have. */
-export function showViewNav(view, side = document.getElementById("side")) {
-  if (!side) return;
-  for (const a of side.querySelectorAll("a[data-nav]")) a.hidden = view === "simple" && !SIMPLE_SECTIONS.includes(a.getAttribute("data-nav"));
+/** Simple hides every navigation link (menu and top bar) except those in SIMPLE_NAV. Other views hide none. */
+export function showViewNav(view, root = document) {
+  for (const a of root?.querySelectorAll?.("a[data-nav]") ?? []) a.hidden = view === "simple" && !SIMPLE_NAV.includes(a.getAttribute("data-nav"));
 }

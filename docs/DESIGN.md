@@ -153,6 +153,40 @@ in `src/github.ts`; the store reuses them.
   status must reach the step whole (`pr-open`, `pr-merge`, `pr-checks`, `pr-checkout`), the store runs
   gh with `ghInherit` (`src/github.ts`): gh writes straight to the step's stdout and stderr, and the
   exit status is gh's (a signal gives 128 plus its number). Every other call goes through `gh()`.
+- **A local store for a project without GitHub (#764).** `LocalStore` (`src/stories/local-store.ts`,
+  `new LocalStore(dir, repo)`) implements the same `StoryStore`. A story is a file in
+  `<dir>/.scf/stories/` (the format of `src/stories/story-file.ts`). `src/stories/local-map.ts` scans the
+  folder and maps the files to `RestIssue`, `Issue` and `Comment`. Every call reads the files again, so a
+  hand edit is seen at the next call. Numbers come from `next-number`, or one above the highest number
+  found when it is missing; a number is never reused, because `next-number` is written before a story
+  is created. A write takes the lock `.scf/stories/.lock`, created exclusively with the holder's PID and
+  a token. A lock whose holder is gone, or that is older than 5 s without a readable holder, is taken
+  over under a guard file (`.lock.takeover`). Waiting has a limit (10 s by default). A write goes to a
+  temp file and is then renamed (`writeAtomic`). A file that cannot be read is never dropped or
+  overwritten: lists show it as a story titled "cannot be read" with the reason in its body, `get`
+  reports it, and a write to it fails. Pull request methods fail with "Pull requests are not available
+  for a local project". `storeFor` still returns `GitHubStore` for every repository. The shared contract suite
+  (`tests/story-store-contract.ts`) runs against both stores.
+- **The flow steps on a local store (#765).** `LocalStore` implements the `step…` methods of `StoryStore`
+  and `sync(run)`. The texts are built in `src/stories/local-text.ts` from a `StoryView` (`toView()` in
+  `local-map.ts`, the gh `issue view --json` shape), not by running the jq programs of `github-store.ts`.
+  Every comment has a stable id: `nextCommentId()` gives the next one above the highest used, and
+  `comment_top` in the front matter keeps a removed comment's id from being given out again. Writes from
+  the synchronous part use `withStoryLockSync()` (`story-lock.ts`), which blocks while it waits for the
+  lock, so `sync` is for a tool process only. Both paths share one write body (`applyChange()`).
+
+### The public package (#780)
+
+The package `@melomar-it/scf-core` has one public entry, `src/index.ts`, and `package.json`
+`exports` lists only `"."`, so a deep import into `dist/` fails. `index.ts` re-exports each name by
+hand, with no `export *`, so adding or removing a public name is a visible edit. The build writes
+`.d.ts` files (`declaration: true` in `tsconfig.build.json`), so consumers get the types.
+`tests/public-api.test.ts` compares the real exports (values by kind, types from the text of
+`index.ts`) with `tests/public-api.snapshot.json`, and `apiChange` decides whether a change needs a
+minor or a major bump. `PLUGIN_API_VERSION` is checked against the snapshot. The publish workflow
+runs on `v*.*.*` tags, checks that the tag matches `package.json`, and before `npm publish` imports the
+package by name. `scripts/release-notes.mjs` writes the `Plugin API:` line. The public surface and
+the promise are in [PLUGIN_API.md](PLUGIN_API.md).
 
 ---
 
@@ -1634,12 +1668,23 @@ flowchart LR
   AP --> CA[claim code areas] --> IM[implement] --> TS[tests + fix loop]
   TS --> RV[review 1, and 2 if risky] --> DO[docs] --> CM[commit + push]
   CM --> MD[merge into develop] --> TD[tests on develop] --> RP[report]
+  TD -->|red| RD["give up develop, move the merge<br/>onto the feature branch, fix there"] --> MD
 ```
 
 - **Risk score 0–100** from the plan. Above 75: a person approves. Above 50: the plan is revised
   after review, and the code gets a second review.
 - **Size limit** (default 15 files, 800 lines). Over it, the story is split into smaller issues;
   a low-risk split happens by itself.
+- **Develop turn** (`issue-gitflow`). The merge into `develop` and its test hold the `@develop`
+  lock (`tools/area-lock`) only while they run. If the tests on the merge fail, `red_develop`
+  releases the lock first: the merge result is carried onto the feature branch as a merge commit
+  (`git commit-tree`, parents: the feature tip and the develop tip the run merged), pushed there,
+  and only then is the lock released. `fix_develop` and `commit_develop_fix` work on the feature
+  branch, which is pushed before `merge_develop` runs again. A written decision (`red-decision`,
+  one per tested merge commit) counts the test runs and the fixes, so a repeated step reads it
+  instead of counting again. `merge_develop` shows the wait as `area_lock` with the `@develop`
+  holder, which the UI words as "waiting for develop". The hotfix path (`merge_back`, `fix_back`)
+  keeps the lock through its fixes: there is no feature branch to carry the fix.
 - Supporting flows: `epic-questions` (questions up front) and `release-daily` (the daily pull
   request from `develop` to `main`).
 
@@ -1894,7 +1939,7 @@ Plain JavaScript modules, no build step, no framework. The places of the admin d
 
 ![A run that waits for a decision on a risky plan](images/run-waiting.png)
 
-**Two displays.** The admin page is `ui/index.html` with `ui/app.js` (the router; the flow editor page is `ui/flow-page.js`, made by `createFlowPage`, with its header and navigator in `ui/flow-shell.js` and its pure state in `ui/flow-state.js`); the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account is sent to the display of its view in effect (`viewOf` in `ui/view-mode.js`) before any page is drawn: Admin is the page at `/`, Simple and Advanced are the user display. Simple is the user display with fewer links (`showViewNav` hides the links it does not have). The view switch is mounted there too (`mountViewSwitch`), except in a preview. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
+**Two displays.** The admin page is `ui/index.html` with `ui/app.js` (the router; the flow editor page is `ui/flow-page.js`, made by `createFlowPage`, with its header and navigator in `ui/flow-shell.js` and its pure state in `ui/flow-state.js`); the user display is `ui/user/index.html` with `ui/user/app.js`, served at `/user/` and `/user`. The user script imports only shared modules by absolute path (`/auth.js`, `/dom.js`, `/runs.js`, `/repos.js`, `/refinement.js`) and its own `/user/start.js` and `/user/runs.js` (it no longer imports `/runs.js` directly; that module is reached through `/user/runs.js`), and no admin module; a test checks this. `ui/user/runs.js` draws My runs (cards, queue, Remove) and the run page of a user (Now, Log, Steps, Changes, and the Approve/Reject dialog, Retry and Cancel); it reuses the helpers of `ui/runs.js` and `ui/next.js` and draws only the server's cut-down view. `ui/user/start.js` (the Start work page) imports relatively (`../api.js`, `../auth.js`, `../dom.js`, `../repos.js`) so a test can load it; in the browser these are the same module instances as the absolute ones. Both entries call `enterDisplay` in `ui/auth.js`: it signs in, and an account is sent to the display of its view in effect (`viewOf` in `ui/view-mode.js`) before any page is drawn: Admin is the page at `/`, Simple and Advanced are the user display. Simple is the user display with fewer links (`showViewNav` keeps only Home) and two pages of its own: `ui/simple.js` draws My projects (`#/home`) and the project page (`#/repos/<id>`) from the lists of `GET /api/repos`, `/api/runs` and `/api/queue`, grouped by `ui/simple-model.js`, with every word from `ui/simple-words.js`; other pages in Simple show the "Open this in the Advanced view" card. The view switch is mounted there too (`mountViewSwitch`), except in a preview. The redirect is in the browser and is for comfort only; the server enforces permissions on every call, and the scripts are plain static files.
 
 Dialogs (`modal()` in `ui/dom.js`) take the focus, keep Tab inside, close once on Escape and give the focus back to the opener. `mount()` keeps the focus on the control with the same `data-focus` name when a page draws itself again.
 

@@ -195,6 +195,19 @@ export function killLiveGroups(): number {
   return n;
 }
 
+function ensureExitHook(): void {
+  if (exitHook) return;
+  exitHook = true;
+  process.on("exit", killLiveGroups);
+}
+
+/** Keep a process group in the list killed when this process exits (see killLiveGroups); returns the release. */
+export function holdLiveGroup(pid: number): () => void {
+  liveGroups.set(pid, undefined);
+  ensureExitHook();
+  return () => void liveGroups.delete(pid);
+}
+
 const groupAlive = (pid: number): boolean => {
   try {
     process.kill(-pid, 0);
@@ -203,6 +216,30 @@ const groupAlive = (pid: number): boolean => {
     return (e as NodeJS.ErrnoException).code === "EPERM";
   }
 };
+
+/** SIGTERM and SIGCONT to the group, SIGKILL after `graceMs`; resolves when the group is gone (at most 1 s after the SIGKILL). */
+export async function stopGroup(pid: number, graceMs = 5000): Promise<void> {
+  const signal = (sig: NodeJS.Signals) => {
+    try {
+      process.kill(-pid, sig);
+    } catch {
+      // already gone
+    }
+  };
+  const began = Date.now();
+  signal("SIGTERM");
+  signal("SIGCONT");
+  let hard = 0;
+  while (groupAlive(pid)) {
+    const now = Date.now();
+    if (!hard && now - began >= graceMs) {
+      signal("SIGKILL");
+      hard = now + 1000;
+    }
+    if (hard && now > hard) break;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+}
 
 /** The priority wrapper could not be started at all (the real command never ran), so the command may be started without it. */
 class WrapperStartError extends Error {}
@@ -264,10 +301,7 @@ function startProcess(cmd: string, args: string[], opts: ProcessOptions, machine
     const tracker = opts.groupKill && child.pid ? new ProcessTracker(child.pid, { everyMs: opts.trackEveryMs ?? 10_000 }) : undefined;
     if (grouped && child.pid) {
       liveGroups.set(child.pid, tracker);
-      if (!exitHook) {
-        exitHook = true;
-        process.on("exit", killLiveGroups);
-      }
+      ensureExitHook();
     }
     tracker?.start();
     const began = Date.now();

@@ -28,7 +28,7 @@ function walk(dir: string): string[] {
 describe("scf command", () => {
   it("maps both commands in package.json and the lock file", () => {
     const pkg = readJson("package.json");
-    expect(pkg.name).toBe("spaghetti-code-foundry");
+    expect(pkg.name).toBe("@melomar-it/scf-core");
     expect(pkg.bin).toEqual({ scf: "dist/cli.js", factory: "dist/factory.js" });
     expect(pkg.scripts.build).toContain("chmod +x dist/cli.js dist/factory.js");
     const lock = readJson("package-lock.json");

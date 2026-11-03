@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
 import { blockers, cycles, dependencyWaits, fileWaits, watcherRepos } from "../src/ops/blockage.js";
@@ -10,9 +10,15 @@ import { limitsSet, logTail, opsCommand, runBlockage, runDigest, runFlaky, runLi
 import { digestFacts, localDay } from "../src/ops/digest.js";
 import { collectHits, parsePassed, parseTestLog, stories, suspects } from "../src/ops/flaky.js";
 import { clearGovernor, loadState, runGovernor, type Sample } from "../src/ops/governor.js";
-import { forecast, parseReset } from "../src/ops/limits.js";
+import { forecast, limitsReport, parseReset, thresholdRuns, usageThreshold } from "../src/ops/limits.js";
 import { installJob, jobInstalled, jobPlist, jobState, labelOf, uninstallJob } from "../src/ops/schedule.js";
 import type { ServiceHost } from "../src/service.js";
+
+// the governor reads the real machine; these tests must not depend on how busy it is
+vi.mock("../src/ops/governor.js", async (orig) => {
+  const real = await orig<typeof import("../src/ops/governor.js")>();
+  return { ...real, sample: () => ({ load1: 0.5, load5: 0.5, load15: 0.5, pressure: 1, cores: 8 }) };
+});
 
 const NOW = new Date("2026-10-12T12:00:00Z");
 const HOUR = 3_600_000;
@@ -590,6 +596,119 @@ describe("usage limits", () => {
     setCap("limits", { runs: 1, until: new Date(NOW.getTime() - 1).toISOString(), why: "old" }, capsFile);
     runLimits({ runs: slow, dir, capsFile, configured: 6, now: NOW });
     expect(loadCaps(capsFile).limits).toBeUndefined();
+  });
+
+  describe("usage threshold", () => {
+    const cal = { percent: 50, at: new Date(NOW.getTime() - 30 * HOUR).toISOString(), resetAt: reset };
+    const slow = [step(60, 100), step(10, 12)]; // 56% used, no forecast cap
+    const close = [step(60, 100), step(10, 48)]; // 74% used, forecast cap 3
+    const until = new Date(NOW.getTime() + HOUR).toISOString();
+    const setup = (auto = true, calibrations: object = { claude: cal }) => {
+      const dir = tmp();
+      const capsFile = join(dir, "caps.json");
+      writeFileSync(join(dir, "state.json"), JSON.stringify({ auto, calibrations }));
+      return { dir, capsFile };
+    };
+    const check = (runs: RunSummary[], o: { dir: string; capsFile: string }, extra: { usagePercent?: number; floor?: number; configured?: number } = {}) =>
+      runLimits({ runs, ...o, configured: 6, now: NOW, ...extra });
+
+    it("works out the runs from the settings and the reading", () => {
+      expect(usageThreshold(undefined, 3, 6)).toBeUndefined();
+      expect(usageThreshold(80, undefined, 6)).toEqual({ percent: 80, runs: 1 });
+      expect(usageThreshold(80, 0, 6)!.runs).toBe(1);
+      expect(usageThreshold(80, 3, 6)!.runs).toBe(3);
+      expect(usageThreshold(80, 6, 6)!.runs).toBe(6);
+      expect(usageThreshold(80, 9, 6)!.runs).toBe(6);
+      const f = forecast(slow, "claude", cal, NOW, 6);
+      expect(thresholdRuns(f, usageThreshold(57, undefined, 6))).toBeUndefined();
+      expect(thresholdRuns(f, usageThreshold(56, undefined, 6))).toBe(1);
+      expect(thresholdRuns(f, usageThreshold(50, undefined, 6))).toBe(1);
+      expect(thresholdRuns(forecast(slow, "claude", undefined, NOW, 6), usageThreshold(1, undefined, 6))).toBeUndefined();
+    });
+
+    it("caps the runs at 1 from the threshold on, and says why", () => {
+      let s = setup();
+      check(slow, s, { usagePercent: 57 });
+      expect(loadCaps(s.capsFile).limits).toBeUndefined();
+      s = setup();
+      const text = check(slow, s, { usagePercent: 56 });
+      expect(loadCaps(s.capsFile).limits).toMatchObject({ runs: 1 });
+      expect(loadCaps(s.capsFile).limits!.why).toContain("governor.usage_percent");
+      expect(text).toContain("at or above your threshold of 56%");
+      s = setup();
+      check(slow, s, { usagePercent: 50 });
+      expect(loadCaps(s.capsFile).limits!.runs).toBe(1);
+    });
+
+    it("never goes below governor.floor while the threshold holds", () => {
+      const runsFor = (floor: number | undefined, runs = slow) => {
+        const s = setup();
+        check(runs, s, { usagePercent: 50, floor });
+        return loadCaps(s.capsFile).limits?.runs;
+      };
+      expect(runsFor(3)).toBe(3);
+      expect(runsFor(0)).toBe(1);
+      expect(runsFor(6)).toBeUndefined();
+      expect(runsFor(9)).toBeUndefined();
+      expect(runsFor(4, close)).toBe(4); // the forecast alone gives 3
+      expect(runsFor(6, close)).toBeUndefined();
+      expect(runsFor(undefined, close)).toBe(1);
+      // a held lower cap does not undercut the floor, and a floor at concurrency removes the cap
+      for (const [floor, want] of [[4, 4], [6, undefined], [9, undefined]] as const) {
+        const s = setup();
+        setCap("limits", { runs: 1, until, why: "x" }, s.capsFile);
+        check(close, s, { usagePercent: 70, floor });
+        expect(loadCaps(s.capsFile).limits?.runs).toBe(want);
+      }
+    });
+
+    it("lifts a held cap by one per check below the threshold", () => {
+      const s = setup();
+      setCap("limits", { runs: 4, until, why: "x" }, s.capsFile);
+      check(slow, s, { usagePercent: 57 });
+      expect(loadCaps(s.capsFile).limits!.runs).toBe(5);
+      check(slow, s, { usagePercent: 57 });
+      expect(loadCaps(s.capsFile).limits).toBeUndefined();
+      const s2 = setup();
+      setCap("limits", { runs: 1, until, why: "x" }, s2.capsFile);
+      check(slow, s2, { usagePercent: 57 });
+      expect(loadCaps(s2.capsFile).limits!.runs).toBe(2);
+    });
+
+    it("does nothing without a reading, and changes nothing when not set", () => {
+      const s = setup(true, {});
+      const text = check(slow, s, { usagePercent: 1 });
+      expect(loadCaps(s.capsFile).limits).toBeUndefined();
+      expect(text).not.toContain("threshold");
+      const s2 = setup();
+      const plain = check(close, s2);
+      expect(loadCaps(s2.capsFile).limits!.runs).toBe(3);
+      expect(plain).toContain("3 runs at once would make it last");
+      expect(plain).toContain("Slowing down is on: when a limit would be reached before its reset, the number of runs at once is lowered.");
+      const fs = [forecast(close, "claude", cal, NOW, 6), forecast(close, "codex", undefined, NOW, 6)];
+      expect(limitsReport(fs, true)).toBe(limitsReport(fs, true, undefined));
+      const above = limitsReport(fs, true, usageThreshold(99, undefined, 6));
+      expect(above).not.toContain("at or above");
+      expect(above).toContain("or about 99% of a week is used");
+    });
+
+    it("only reports the threshold when slowing down is off", () => {
+      const s = setup(false);
+      const text = check(slow, s, { usagePercent: 50 });
+      expect(loadCaps(s.capsFile).limits).toBeUndefined();
+      expect(text).toContain("at or above your threshold of 50%");
+      expect(text).toContain("Slowing down is off");
+    });
+
+    it("says nothing about the threshold when it lowers no runs (floor or concurrency of 1)", () => {
+      for (const extra of [{ usagePercent: 50, floor: 6 }, { usagePercent: 50, floor: 9 }, { usagePercent: 50, configured: 1 }]) {
+        const s = setup();
+        const text = check(slow, s, extra);
+        expect(loadCaps(s.capsFile).limits).toBeUndefined();
+        expect(text).not.toContain("threshold");
+        expect(text).toContain("Slowing down is on: when a limit would be reached before its reset, the number of runs at once is lowered.");
+      }
+    });
   });
 
   it("scf limits set reads a reset without a time zone as local time and refuses one more than 7 days ahead", () => {

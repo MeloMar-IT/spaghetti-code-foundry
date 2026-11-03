@@ -2,6 +2,9 @@
 # Stand-in for git in the skill import tests. $STUB_MODE picks the behaviour:
 #   redirect  runs the real git ($STUB_REAL); a fetch of $STUB_URL is rewritten to $STUB_REMOTE. When the sub-command
 #             equals $STUB_ON (ls-tree, or cat-file with --batch) it first sends $STUB_SIGNAL to its parent.
+#             With $STUB_SECRET_FILE set, fetch and ls-remote (also rewritten to $STUB_REMOTE) first write "$*" to $STUB_ARGS and
+#             env to $STUB_ENV when set, then ask $GIT_ASKPASS for the user and the password, and exit 128 unless they are
+#             x-access-token and the contents of $STUB_SECRET_FILE. $STUB_HANG then sleeps instead, and writes "<pid> <sleep pid>" to $STUB_PIDS.
 #   hang      init makes the folder; fetch starts a background sleep, writes "<pid> <sleep pid> <GIT_DIR>" to
 #             $STUB_PIDS, optionally fills $GIT_DIR with $STUB_FILL KiB, and waits.
 #   ls-remote: fake prints a commit and HEAD, or by $STUB_HEAD: junk, two, flood, fail. hang starts a background sleep that
@@ -33,6 +36,23 @@ case "$STUB_MODE" in
     if [ "$sub" = ls-tree ]; then trigger=ls-tree; fi
     if [ "$sub" = cat-file ] && [ "$batch" = 1 ]; then trigger=cat-file; fi
     if [ -n "$STUB_ON" ] && [ "$STUB_ON" = "$trigger" ]; then kill -s "$STUB_SIGNAL" "$PPID"; fi
+    if [ -n "$STUB_SECRET_FILE" ] && { [ "$sub" = fetch ] || [ "$sub" = ls-remote ]; }; then
+      # a private source: git must ask $GIT_ASKPASS for x-access-token and the secret, as it does after a 401
+      [ -n "$STUB_ARGS" ] && echo "$*" > "$STUB_ARGS"
+      [ -n "$STUB_ENV" ] && env > "$STUB_ENV"
+      [ -n "$GIT_ASKPASS" ] || exit 128
+      # git runs GIT_ASKPASS through a shell (the value is a quoted shell word): the stub does the same
+      u=$(sh -c "$GIT_ASKPASS \"\$1\"" askpass "Username for 'https://github.com': ") || exit 128
+      p=$(sh -c "$GIT_ASKPASS \"\$1\"" askpass "Password for 'https://x-access-token@github.com': ") || exit 128
+      [ "$u" = x-access-token ] && [ "$p" = "$(cat "$STUB_SECRET_FILE")" ] || exit 128
+      if [ -n "$STUB_HANG" ]; then
+        sleep 20 </dev/null >/dev/null 2>&1 &
+        echo "$$ $!" > "$STUB_PIDS"
+        wait
+        exit 1
+      fi
+      GIT_ALLOW_PROTOCOL=file exec "$STUB_REAL" -c "url.$STUB_REMOTE.insteadOf=$STUB_URL" "$@"
+    fi
     if [ "$sub" = fetch ]; then
       GIT_ALLOW_PROTOCOL=file exec "$STUB_REAL" -c "url.$STUB_REMOTE.insteadOf=$STUB_URL" "$@"
     fi

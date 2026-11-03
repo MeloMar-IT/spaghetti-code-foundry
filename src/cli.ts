@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { mirrorEnvPrefixes } from "./engine/template.js";
 import { resumeRun, runFlow, type RunSummary } from "./engine/runner.js";
 import { loadRun } from "./engine/state.js";
-import { getRepo } from "./auth/repos.js";
+import { getRepo, listAllRepos } from "./auth/repos.js";
 import { getUser } from "./auth/users.js";
 import { effectiveRepoWatchers, listRepoWatchers } from "./repos/watchers.js";
 import { FORCE_HINT, gateRun } from "./run-gate.js";
@@ -397,7 +397,7 @@ async function main(argv: string[]): Promise<number> {
       if (arg === "discover") return (await import("./skill-import/discover-cli.js")).skillDiscoverCommand({ positionals: positionals.slice(2), values: given }, (line) => void process.stdout.write(line + "\n"));
       const agentScore = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentScore"]>>) => (await import("./skill-eval/score.js")).scoreImportWithAgent(...a);
       const agentEffect = async (...a: Parameters<NonNullable<NonNullable<Parameters<typeof skillsCommand>[2]>["agentEffect"]>>) => (await import("./skill-eval/effect.js")).effectWithAgent(...a);
-      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo, agentScore, agentEffect });
+      return skillsCommand({ positionals: positionals.slice(1), values: given }, (line) => void process.stdout.write(line + "\n"), { repo, agentScore, agentEffect, repos: listAllRepos });
     }
 
     case "release-build": {

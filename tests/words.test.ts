@@ -24,6 +24,7 @@ describe("glossary", () => {
     ["dependency", { blockers: [88] }, "waiting for #88"],
     ["one_at_a_time", {}, "waiting for another run"],
     ["area_lock", {}, "waiting for another run in the same code"],
+    ["area_lock", { develop: true }, "waiting for develop"],
     ["usage_limit", {}, "paused — usage limit"],
     ["daily_budget", {}, "paused — daily budget"],
     ["user_limit", { user: true, perDay: true }, "waiting — your limit for today is reached"],
@@ -63,7 +64,7 @@ describe("glossary", () => {
   });
 
   it("has two sentences of help for every kind", () => {
-    for (const facts of [{}, { blockers: [87, 88] }, { blockers: [] }, { releaseAt: "17:00" }, { factory: true }, { user: true }, { perDay: true }, { user: true, perDay: true }, { budget: true }, { user: true, budget: true }] as WordFacts[]) {
+    for (const facts of [{}, { blockers: [87, 88] }, { blockers: [] }, { releaseAt: "17:00" }, { factory: true }, { user: true }, { perDay: true }, { user: true, perDay: true }, { budget: true }, { user: true, budget: true }, { develop: true }] as WordFacts[]) {
       for (const k of KINDS) expect(statusHelp(k, facts), k).toMatch(/^[^.!?]+[.!?] [^.!?]+[.!?]$/);
     }
   });

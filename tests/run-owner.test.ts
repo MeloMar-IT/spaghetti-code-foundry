@@ -229,4 +229,18 @@ describe("ownRecord", () => {
     expect(JSON.stringify(out)).not.toContain("theirs");
     expect(ownRecord(rec, () => true)).toEqual(rec);
   });
+
+  it("does not name another account's run or issue in the wait for develop; an own run stays named", () => {
+    const rec = nextStep("area_lock", { repo: "o/r", issue: 6, runId: "mine" }, { areaWait: { runId: "r1", areas: "@develop", issue: 7, since: "2026-10-01T09:30:00Z" } });
+    expect(rec.why).toContain("held by run r1, issue #7");
+    const out = ownRecord(rec, (id) => id === "mine");
+    expect(out.why).toBe("It waits for develop (held by another run)");
+    expect(out.status).toBe("waiting for develop");
+    for (const t of [out.why, out.text]) {
+      expect(t).not.toContain("r1");
+      expect(t).not.toContain("#7");
+    }
+    expect(out.afterRun).toBeUndefined();
+    expect(ownRecord(rec, () => true)).toEqual(rec);
+  });
 });

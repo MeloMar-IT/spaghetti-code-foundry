@@ -5,7 +5,8 @@ import { prepareImport, SkillImportError, type ImportRecord, type PreparedImport
 import { publishImport } from "../skills/import-stage.js";
 import { SKILL_ID_RE } from "../skills/schema.js";
 import { readSources, shownValue, SOURCES_FILE, type SkillLibrarySource } from "../skills/sources.js";
-import { GitTreeError, openGitTree, type GitTreeErrorCode } from "./git-tree.js";
+import { GitTreeError, openGitTree, type GitCredential, type GitTreeErrorCode } from "./git-tree.js";
+import { sourceCredential, type SourceAccess } from "./source-access.js";
 
 // `scf skills import <source-id> [<file>]`: fetches the approved commit of an enabled source and stages its skills
 // into the quarantine. Prints checked fields only; git's own text never reaches the output.
@@ -21,6 +22,10 @@ export interface SkillImportOptions {
   open?: typeof openGitTree;
   /** Tests: the time recorded as `retrievedAt`. Default: now. */
   now?: Date;
+  /** Tests: gives the credential of a source with `access` (default: a new GitHub App token of the registered repository). */
+  access?: (source: SkillLibrarySource) => Promise<SourceAccess>;
+  /** A credential that was already made for the approved source (`update` makes one for all its fetches). */
+  credential?: GitCredential;
 }
 
 const syntax = (why: string) => new Error(`${why}\n${IMPORT_USAGE}`);
@@ -70,8 +75,17 @@ export async function stageSource(
 ): Promise<{ code: number; done?: StageDone }> {
   let prep: PreparedImport | undefined;
   let failed: unknown;
+  let credential = opts.credential;
+  if (source.access && !credential) {
+    const got = await (opts.access ?? sourceCredential)(source);
+    if (!got.ok) {
+      out(`PROBLEM ${got.problem}`);
+      return { code: 1 };
+    }
+    credential = got.credential;
+  }
   try {
-    const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: opts.signal });
+    const tree = await (opts.open ?? openGitTree)(source, commit, { remote: opts.remote, env: opts.env, signal: opts.signal, ...(credential ? { credential } : {}) });
     try {
       prep = prepareImport(source, tree);
       // Any git failure, a licence file that cannot be read included, ends the import (the fixed PROBLEM line).
@@ -156,7 +170,7 @@ export async function skillImportCommand(
   process.on("SIGINT", onSignal);
   process.on("SIGTERM", onSignal);
   try {
-    const r = await stageSource(source, commit, out, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, signal: aborter.signal });
+    const r = await stageSource(source, commit, out, { home: opts.home, remote: opts.remote, env: opts.env, open: opts.open, now: opts.now, access: opts.access, credential: opts.credential, signal: aborter.signal });
     return r.code === 0 && r.done && r.done.record.rejected.length > 0 ? 1 : r.code;
   } finally {
     process.off("SIGINT", onSignal);
