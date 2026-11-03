@@ -52,9 +52,11 @@ if [ -n "$FAKE_GH_FAIL_ON" ]; then case "$*" in *"$FAKE_GH_FAIL_ON"*) printf '%s
 # $FAKE_GH_COMMENTS_FROM_LOG=1: the same answer is built from the comments logged in $FAKE_GH_LOG when none of the above is set; its labels are those of the issue in $FAKE_GH_LOG.issues.json.
 # $FAKE_GH_COMMENTS_PLUS_LOG=1: the answer is the comments of $FAKE_GH_COMMENTS followed by the comments logged in $FAKE_GH_LOG (comments_from_log), merged.
 # $FAKE_GH_PERMISSION=fail: the permission lookup ("api repos/…/collaborators/<login>/permission") prints "gh: Bad Gateway (HTTP 502)" to stderr and fails.
+# A comment edit is logged as "--- comment edit <id>:", the body, then "--- end comment edit"; comments_from_log shows the latest edit of each comment.
+# With $FAKE_GH_STORIES, the "api graphql" issue state of a number not in the lists comes from the issues of $FAKE_GH_LOG.issues.json.
 # comments_from_log <number> <1 with labels | 0 without>: that answer.
 comments_from_log() {
-  node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}let labels=[];try{const l=JSON.parse(require("fs").readFileSync(process.argv[1]+".issues.json","utf8"));labels=(l.find(x=>x.number===Number(issue))||{}).labels||[]}catch{}console.log(JSON.stringify(process.argv[3]==="1"?{comments:out,labels}:{comments:out}))' "$FAKE_GH_LOG" "$1" "$2"
+  node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");const issue=process.argv[2];const gone=new Set([...t.matchAll(/^--- comment delete (\d+)$/gm)].map(m=>m[1]));const edits={};for(const m of t.matchAll(/^--- comment edit (\d+):\n([\s\S]*?)\n--- end comment edit$/gm))edits[m[1]]=m[2];let n=0;const out=[];for(const m of t.matchAll(/^--- comment on #(\d+):\n([\s\S]*?)\n--- end comment$/gm)){n++;if(m[1]!==issue||gone.has(String(n)))continue;out.push({body:edits[n]!==undefined?edits[n]:m[2],url:"https://github.com/owner/repo/issues/"+issue+"#issuecomment-"+n,viewerDidAuthor:true})}let labels=[];try{const l=JSON.parse(require("fs").readFileSync(process.argv[1]+".issues.json","utf8"));labels=(l.find(x=>x.number===Number(issue))||{}).labels||[]}catch{}console.log(JSON.stringify(process.argv[3]==="1"?{comments:out,labels}:{comments:out}))' "$FAKE_GH_LOG" "$1" "$2"
 }
 fake_repo=""; prev=""; for a in "$@"; do [ "$prev" = "--repo" ] && fake_repo="$a"; prev="$a"; done
 if [ -n "$FAKE_GH_ISSUES_BY_REPO" ] && [ -n "$fake_repo" ]; then
@@ -67,7 +69,8 @@ case "$all" in "api repos/"*"/issues/comments/"*)
   case "$all" in
     *DELETE*) echo "--- comment delete $id" >> "$FAKE_GH_LOG" ;;
     *) echo "--- comment edit $id:" >> "$FAKE_GH_LOG"
-       node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).body))' >> "$FAKE_GH_LOG" ;;
+       node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).body))' >> "$FAKE_GH_LOG"
+       echo "--- end comment edit" >> "$FAKE_GH_LOG" ;;
   esac
   echo '{}'; exit 0 ;;
 esac
@@ -259,7 +262,9 @@ case "$all" in "api graphql"*)
       const n = Number(m[2]);
       if (missing.includes(String(n))) { repository["i" + n] = null; errors.push({ type: "NOT_FOUND", path: ["repository", "i" + n], message: "Could not resolve to an Issue with the number of " + n + "." }); continue; }
       const found = list.find((x) => x.number === n);
-      repository["i" + n] = { state: String((found && found.state) || "OPEN").toUpperCase() };
+      let state = found && found.state;
+      if (!found && e.FAKE_GH_STORIES) { try { const made = JSON.parse(require("fs").readFileSync(e.FAKE_GH_LOG + ".issues.json", "utf8")).find((x) => x.number === n); if (made) state = made.state; } catch {} }
+      repository["i" + n] = { state: String(state || "OPEN").toUpperCase() };
     }
     const body = { data: { repository } };
     if (errors.length) { body.errors = errors; console.log(JSON.stringify(body)); console.error("gh: Could not resolve to an Issue"); process.exit(1); }
