@@ -5049,8 +5049,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | Call | Admin | User | What it does |
 |---|---|---|---|
 | `GET /api/info` | yes | no | server settings and today's cost |
-| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set |
-| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
+| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set. `plugins` is not returned |
+| `GET /api/plugins` | yes | no | the plugins loaded at server start, in order (label, module, version and what each registered), and plugin problems; never their options |
+| `PUT /api/config` | yes | no | change the settings (not `plugins`: a body with that key is refused with 400, they are set in `config.yaml` only). With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
 | `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
 | `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
 | `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
@@ -7104,6 +7105,34 @@ the answer is hidden as before).
 
 Global settings are stored in `~/.spaghetti-code-foundry/config.yaml`; runs in `~/.spaghetti-code-foundry/runs/`.
 
+### Plugins
+
+A plugin adds behaviour to the Foundry without a change to its code. List them in `config.yaml`:
+
+```yaml
+plugins:
+  - module: "@your-org/scf-plugin-slack"   # a package name, or an absolute path
+    options: { channel: "#factory" }        # any map; the plugin gets it as api.options
+  - module: /opt/scf/plugins/audit.mjs
+```
+
+- **When they load.** Once, when the server starts, in the order listed, before the queue and the
+  watchers start. A plugin that cannot be found or imported, has no `register`, throws, or does not
+  finish `register` within 30 seconds stops the start. The message names the plugin. Nothing runs
+  half-started. A change needs a restart.
+- **What `register` gets.** `register(api)` (sync or async) receives `api.version` (the plugin API
+  version, `0.1`) and `api.options`. A plugin that does not support this version can throw with a
+  message; that stops the start like any other failure. See [PLUGIN_API.md](PLUGIN_API.md).
+- **What is refused.** A relative path, a URL, a built-in Node module, and a module inside a runs
+  folder or a repository the Foundry works on. At most 20 plugins; no name twice.
+- **Where they are set.** In `config.yaml` only. The settings page shows the plugins read-only.
+  `PUT /api/config` refuses a `plugins` key, and a save from the settings page keeps the stored list.
+- **Checking.** `scf plugins` lists the loaded plugins in order, with their version, their module and
+  what each registered. It needs a running, signed-in server (admin); `GET /api/plugins` is the same
+  list. The health line shows a plugin problem when `config.yaml` lists other plugins than the ones
+  loaded (restart the server), or when the file cannot be read.
+- **Without `plugins`** nothing changes: no plugin loads and the health line has no plugin entry.
+
 ---
 
 ## 8. Costs, dashboard and evals
@@ -7607,6 +7636,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
+| `scf plugins` (or `scf plugins list`) | List the plugins loaded at server start, with version, module and what each registered; needs a running, signed-in server (admin) ([Plugins](#plugins)) |
 | `scf eval <suite.yaml> [--flows a,b] [--models …] [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run an eval suite; the `--…-bin` options use other programs ([Evals](#evals)) |
 | `scf eval safety [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run every offline safety suite in `evals/safety`; exits 1 when a case fails ([Safety suites](#safety-suites)) |
 | `scf eval help [--live]` | Check Ask SCF against its fixed scenarios; without `--live` no model is called |

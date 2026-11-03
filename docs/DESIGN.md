@@ -188,6 +188,23 @@ runs on `v*.*.*` tags, checks that the tag matches `package.json`, and before `n
 package by name. `scripts/release-notes.mjs` writes the `Plugin API:` line. The public surface and
 the promise are in [PLUGIN_API.md](PLUGIN_API.md).
 
+### Plugins from config (#781)
+
+`src/plugins/load.ts` loads the `plugins:` list of `config.yaml` once, in `startServer`, after the
+config is checked and before the queue and the watchers are built. `loadPlugins` resolves each
+module (a package name through `import.meta.resolve`, an absolute path as it is), checks that its
+real path is not inside a runs folder or a repository (`blockedDirs`), imports it under a 30 s
+deadline, and calls `register(api)` under the same deadline. The first failure throws a
+`PluginLoadError` that names the module; `startServer` logs it and rethrows, so there is no
+half-started server. `api` is frozen and holds `version` (`PLUGIN_API_VERSION`) and a copy of
+`options`; the plugin points are added to it by the parts after this one.
+
+The registry (`ApiContext.plugins`) is read-only after start. `pluginProblems` combines the problems
+recorded at runtime with a check of the file: when `config.yaml` now lists other plugins than the
+loaded ones, or cannot be read, the health line shows it. `PUT /api/config` refuses a `plugins` key
+(400), and a save without the key keeps the stored list (`withStoredPlugins`), so the settings page
+cannot change it. The settings inventory lists `plugins.*` as exceptions: the file is the only place to set them.
+
 ---
 
 ## 4. Flows and the engine

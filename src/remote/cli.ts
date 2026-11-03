@@ -31,7 +31,10 @@ export const LOCAL_WORDS = ["run", "resume", "approve", "reject", "eval", "clean
 /** The sub-commands the file commands take for a word that is also an area here: these are left to them. */
 export const LOCAL_ACTIONS: Record<string, string[]> = { monitor: ["on", "off", "status"] };
 
-const areasOf = (cmds: Cmd[]) => [...new Set(cmds.map((c) => c.area))].sort();
+/** Words that run an action when none is given. */
+export const DEFAULT_ACTIONS: Record<string, string> = { plugins: "list" };
+
+const areasOf =(cmds: Cmd[]) => [...new Set(cmds.map((c) => c.area))].sort();
 
 export function areaHelp(cmds: Cmd[], area: string): string {
   const mine = cmds.filter((c) => c.area === area);
@@ -126,8 +129,13 @@ async function api(argv: string[], d: RemoteDeps, path: string): Promise<number>
 export async function remoteCommand(argv: string[], d: RemoteDeps): Promise<number | undefined> {
   const cmds = d.cmds ?? ALL;
   const path = d.sessionPath ?? sessionFile();
-  const [word, action, ...rest] = argv;
+  const [word] = argv;
   if (!word) return undefined;
+  // A word with a default action: `scf plugins` is `scf plugins list`.
+  const fallback = DEFAULT_ACTIONS[word];
+  const given = argv[1];
+  const useDefault = fallback !== undefined && (given === undefined || (given.startsWith("-") && given !== "--help" && given !== "-h"));
+  const [action, ...rest] = useDefault ? [fallback, ...argv.slice(1)] : argv.slice(1);
   const err = (line: string) => (d.io.err ? d.io.err(line) : d.io.out(line));
   try {
     if (word === "login") return await login(argv.slice(1), d, path);

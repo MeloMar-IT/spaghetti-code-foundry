@@ -47,6 +47,43 @@ The arguments and results of these names are the types in the package's `.d.ts` 
 exported names and their kinds are kept in `tests/public-api.snapshot.json`; a test fails when
 they change without the version changing.
 
+## Plugin modules (`config.yaml`)
+
+A plugin is a module named in `config.yaml`. It runs inside the server process with the same
+rights as the Foundry, so only add a plugin you trust.
+
+```yaml
+plugins:
+  - module: "@your-org/scf-plugin-audit"   # a package name, or an absolute path
+    options: { level: info }               # any map; given to the plugin as api.options
+```
+
+The module exports `register(api)`, as a named export or as the default export's `register`.
+It may be sync or async. The Foundry calls it once, at server start, in the order of the list,
+before the queue and the watchers start.
+
+```js
+// plugin.mjs
+export function register(api) {
+  if (api.version !== "0.1") throw new Error("needs plugin API 0.1");
+  console.log("audit plugin", api.options.level);
+}
+```
+
+- `api.version` is the plugin API version (`PLUGIN_API_VERSION`, `"0.1"` in this release). A
+  plugin that cannot work with it throws; the start stops with a message that names the plugin.
+- `api.options` is a frozen copy of the `options` map of the entry.
+- `api` has one method per plugin point. None ships yet: the points come with the next parts.
+- A plugin fails the start when it cannot be found or imported, has no `register`, throws, or does
+  not finish `register` within 30 seconds. The server then does not start at all.
+- Refused: a relative path, a URL, a built-in Node module, and a module inside a runs folder or a
+  repository the Foundry works on. The list has at most 20 entries, and a module may be named once.
+- Plugins are set in `config.yaml` only; the web API cannot change them. A change applies after a
+  restart.
+
+`scf plugins` and `GET /api/plugins` (admins) list the loaded plugins with their version and what
+each registered. Options are never shown.
+
 ## Semantic versioning
 
 The version of the package is `MAJOR.MINOR.PATCH`. The plugin API version `x.y` names the

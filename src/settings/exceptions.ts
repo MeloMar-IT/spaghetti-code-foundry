@@ -22,6 +22,8 @@ export const SETTING_EXCEPTIONS: Record<string, string> = {
   "context.max_classification": "Context selection is not used by runs yet; the keys are set in config.yaml for now, and a Settings control is a follow-up.",
   "context.consumers": "Context selection is not used by runs yet; the keys are set in config.yaml for now, and a Settings control is a follow-up.",
   "context.task_max_age_seconds": "Context selection is not used by runs yet; the keys are set in config.yaml for now, and a Settings control is a follow-up.",
+  "plugins.*.module": "Plugins are code that runs inside the server: they are set in config.yaml only, and the Settings page shows them read-only (#781).",
+  "plugins.*.options": "Plugins are code that runs inside the server: they are set in config.yaml only, and the Settings page shows them read-only (#781).",
   "telemetry.keep_days": "Telemetry is a new local file for operators; a Settings control is a follow-up.",
   "telemetry.local": "Telemetry is a new local file for operators; a Settings control is a follow-up.",
   "telemetry.otlp.enabled": "The OTLP exporter is for operators with a collector and is set in config.yaml; a Settings control is a follow-up with endpoint authentication.",

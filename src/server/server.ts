@@ -40,6 +40,7 @@ import { onboardingRoutes } from "./api-onboarding.js";
 import { stopSignIns } from "../onboarding.js";
 import { restartRoutes, type SettingsRestart } from "./api-restart.js";
 import { BUSY_RENEW_MS, syncBusyCap } from "../ops/busy.js";
+import { loadPlugins, type PluginRegistry } from "../plugins/load.js";
 import { CSP, HSTS, listenProblem, localUrl, requestAccess } from "./net.js";
 import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.js";
 import { adoptRuns } from "../auth/run-owner.js";
@@ -131,6 +132,8 @@ export interface ApiContext {
   settingsRestart?: SettingsRestart;
   /** config.yaml as it was when the server started (settings that apply after a restart). */
   started?: Config;
+  /** The plugins, loaded once at start; absent on a context built without startServer. */
+  plugins?: PluginRegistry;
   /**
    * The log without redaction, only for diagnostics the code built itself from fixed words (a file name and a kind),
    * never for exception text. They must stay readable when the credential store is the thing that is broken.
@@ -181,6 +184,17 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   if (problem) {
     log(problem);
     throw new Error(problem);
+  }
+  // Plugins load once, in order, before the queue and the watchers exist. A failure stops the start.
+  let plugins: PluginRegistry;
+  try {
+    plugins = await loadPlugins(config.plugins, {
+      blockedDirs: [opts.runsDir, join(process.env.FACTORY_HOME ?? FACTORY_HOME, "runs"), opts.repo],
+      log,
+    });
+  } catch (e) {
+    log((e as Error).message);
+    throw e;
   }
   // Busy mode set by hand outlasts a restart: its cap is put back before the scheduler can pump, and renewed every minute (a cap always has an end).
   const renewBusy = (busyRuns: number) => {
@@ -265,6 +279,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     },
     listen,
     started: config,
+    plugins,
   };
   // a stored watcher without a repository is removed before the lists are built
   try {

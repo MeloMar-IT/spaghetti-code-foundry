@@ -6,6 +6,7 @@ import { check, field as f, input, lockReadOnly } from "./fields.js";
 import { poller } from "./live.js";
 import { promotionPanel } from "./promotions.js";
 import { componentsPanel } from "./admin-components.js";
+import { pluginsPanel } from "./admin-plugins.js";
 import { loadingState } from "./states.js";
 import { settingsPage } from "./templates.js";
 
@@ -330,6 +331,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
     promotionPanel({ readOnly }),
     ...(retryCard.card ? [retryCard.card] : []),
     componentsPanel(),
+    pluginsPanel(),
     ...(startup.length ? [startupSection(startup, section)] : []),
     ],
   }));

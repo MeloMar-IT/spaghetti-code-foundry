@@ -1,13 +1,14 @@
 import { YAMLParseError } from "yaml";
 import { ZodError } from "zod";
-import { ConfigIssuesError, type Config } from "../config.js";
+import { ConfigIssuesError, type Config, type PluginConfig } from "../config.js";
 
-type View = Omit<Config, "notify"> & { notify: Omit<Config["notify"], "slack_webhook"> & { slack_webhook_set: boolean } };
+type View = Omit<Config, "notify" | "plugins"> & { notify: Omit<Config["notify"], "slack_webhook"> & { slack_webhook_set: boolean } };
 
 /** The settings as the API shows them: no Slack webhook, only whether one is set. */
 export function configView(c: Config): View {
   const { slack_webhook, ...notify } = c.notify;
-  return { ...c, notify: { ...notify, slack_webhook_set: typeof slack_webhook === "string" && slack_webhook !== "" } };
+  const { plugins: _plugins, ...rest } = c;
+  return { ...rest, notify: { ...notify, slack_webhook_set: typeof slack_webhook === "string" && slack_webhook !== "" } };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -24,6 +25,12 @@ export function withStoredWebhook(body: unknown, stored: string | undefined): un
   }
   if (body.notify === undefined && !Object.keys(notify).length) return body;
   return { ...body, notify };
+}
+
+/** The body of a save with the stored plugins put back, so a save from the interface never removes them. Never changes `body`. */
+export function withStoredPlugins(body: unknown, stored: readonly PluginConfig[]): unknown {
+  if (!isObj(body) || !stored.length) return body;
+  return { ...body, plugins: stored };
 }
 
 /** Why the stored file cannot be read, for an API answer. Never the YAML parser's own words: they quote the lines around the error. */
