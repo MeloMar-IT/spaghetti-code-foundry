@@ -131,7 +131,9 @@ describe("what is described", () => {
     expect(described.find((d) => d.key === "governor.reserve_cores")).toMatchObject({ kind: "number", min: 0, default: 2, optional: false, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "governor.busy_runs")).toMatchObject({ kind: "number", integer: true, min: 0, default: 2, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "governor.busy_apps")).toMatchObject({ kind: "list", default: [], maxItems: 50, effect: "now", control: "generated" });
-    expect(described).toHaveLength(143);
+    expect(isCovered("governor.usage_percent")).toBe(true);
+    expect(described.find((d) => d.key === "governor.usage_percent")).toMatchObject({ kind: "number", integer: true, min: 1, max: 100, optional: true, effect: "now", control: "generated" });
+    expect(described).toHaveLength(144);
   });
 
   it("describes governance.auto_demote as a generated boolean that defaults to true", () => {
@@ -174,6 +176,14 @@ describe("what is described", () => {
     expect(issuesAt("governor.reserve_cores", -1)).not.toHaveLength(0);
     expect(issuesAt("governor.floor", -1)).not.toHaveLength(0);
     expect(issuesAt("governor.floor", 1.5)).not.toHaveLength(0);
+  });
+
+  it("checks governor.usage_percent as a whole number from 1 to 100", () => {
+    expect(ConfigSchema.parse({}).governor.usage_percent).toBeUndefined();
+    for (const v of [1, 50, 100]) expect(ConfigSchema.safeParse({ governor: { usage_percent: v } }).success).toBe(true);
+    for (const v of [0, 101, 50.5]) expect(ConfigSchema.safeParse({ governor: { usage_percent: v } }).success).toBe(false);
+    for (const v of [0, 101, 50.5]) expect(issuesAt("governor.usage_percent", v)).not.toHaveLength(0);
+    expect(issuesAt("governor.usage_percent", 80)).toHaveLength(0);
   });
 
   it("lists the keys down to the leaves, lists of records once by their item shape", () => {

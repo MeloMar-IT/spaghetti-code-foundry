@@ -14,7 +14,7 @@ import { digestFacts, digestLine, digestReport, localDay } from "./digest.js";
 import { collectHits, flakyReport, stories, suspects, type Story } from "./flaky.js";
 import { changesToday, clearGovernor, DEFAULTS, fitsText, freeCores, HOLD_MS, loadState, MANY_CHANGES, runGovernor, runsFit, sample, type Sample } from "./governor.js";
 import { belowLine, capHistory, heldCap, logSince } from "./governor-history.js";
-import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, type Family, type LimitsState } from "./limits.js";
+import { EMPTY_LIMITS, FAMILIES, MAX_RESET_AHEAD_MS, forecast, limitsReport, parseReset, thresholdRuns, usageThreshold, type Family, type LimitsState } from "./limits.js";
 import { measureUsage, measurement, readCpuTable, runRepos, usageLine, type Usage } from "./usage.js";
 import { dataDir, installJob, jobDir, jobState, uninstallJob, type Job } from "./schedule.js";
 
@@ -160,7 +160,7 @@ export function runFlaky(o: { runsDir: string; dir: string; now: Date; file?: Fi
   return { text, filed };
 }
 
-export function runLimits(o: { runs: RunSummary[]; dir: string; capsFile: string; configured: number; now: Date }): string {
+export function runLimits(o: { runs: RunSummary[]; dir: string; capsFile: string; configured: number; usagePercent?: number; floor?: number; now: Date }): string {
   const state = { ...EMPTY_LIMITS, ...readJson<Partial<LimitsState>>(join(o.dir, "state.json"), {}) };
   // the pace of the last day was made under the limit that holds now (a cap included), so the forecast scales from that
   const effective = runLimit(o.configured, o.now, o.capsFile);
@@ -174,9 +174,15 @@ export function runLimits(o: { runs: RunSummary[]; dir: string; capsFile: string
     runs = Math.min(runs ?? Infinity, held.runs + 1);
     if (runs >= o.configured) runs = undefined;
   }
+  // While the threshold holds the cap is its number: never below governor.floor, not from a held cap or a lower forecast.
+  const t = usageThreshold(o.usagePercent, o.floor, o.configured);
+  const reached = fs.some((f) => thresholdRuns(f, t) !== undefined);
+  if (reached) runs = t!.runs >= o.configured ? undefined : t!.runs;
+  const why = reached ? `about ${t!.percent}% or more of a weekly usage limit is used (governor.usage_percent)` : "a weekly usage limit would be reached before its reset";
   // the cap holds for two hours: two missed checks and the Foundry is free again
-  setCap("limits", state.auto && runs !== undefined ? { runs, until: new Date(o.now.getTime() + 2 * 3_600_000).toISOString(), why: "a weekly usage limit would be reached before its reset" } : undefined, o.capsFile);
-  const text = limitsReport(fs, state.auto);
+  setCap("limits", state.auto && runs !== undefined ? { runs, until: new Date(o.now.getTime() + 2 * 3_600_000).toISOString(), why } : undefined, o.capsFile);
+  // a threshold that allows as many runs as `configured` lowers nothing, so the report does not mention it
+  const text = limitsReport(fs, state.auto, t && t.runs < o.configured ? t : undefined);
   save(o.dir, "report.md", text);
   save(o.dir, "latest.json", JSON.stringify({ at: o.now.toISOString(), forecasts: fs }, null, 2));
   return text;
@@ -322,8 +328,11 @@ export async function opsCommand(name: string, positionals: string[], cliPath: s
         const r = runFlaky({ runsDir: join(dataDir(), "runs"), dir, now, file: ghFile });
         out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
         for (const f of r.filed) out(`  filed: ${f}`);
-      } else if (name === "limits") runLimits({ runs: loadRuns(), dir, capsFile: capsPath(dataDir()), configured: configured(), now }), out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
-      else if (name === "blockage") runBlockage({ runs: loadRuns(), dir, serviceLog: logTail(), repos: knownWatcherRepos(), limit: runLimit(configured(), now, capsPath(dataDir())), now }), out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
+      } else if (name === "limits") {
+        const c = loadConfig();
+        runLimits({ runs: loadRuns(), dir, capsFile: capsPath(dataDir()), configured: configured(), usagePercent: c.governor.usage_percent, floor: c.governor.floor, now });
+        out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
+      } else if (name === "blockage") runBlockage({ runs: loadRuns(), dir, serviceLog: logTail(), repos: knownWatcherRepos(), limit: runLimit(configured(), now, capsPath(dataDir())), now }), out(`${now.toISOString()} report written: ${join(dir, "report.md")}`);
       else {
         const r = runDigest({ runs: loadRuns(), home: dataDir(), now, configured: configured() });
         await sendDesktop({ title: "Foundry digest", message: r.line });
