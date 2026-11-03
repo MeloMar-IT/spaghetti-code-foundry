@@ -13,6 +13,12 @@ export type NextKind =
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
   | "red_base" | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic" | "owner_action" | "chore_late";
 
+/** A run waits for a lock: the run that holds it, the areas (`@develop` is the merge turn), and for develop the holder's issue and lock time. */
+export interface AreaWait { runId: string; areas: string; issue?: number; since?: string }
+
+/** The steps that take the `@develop` lock: a run waiting in one of them waits for develop. */
+export const DEVELOP_LOCK_STEPS: readonly string[] = ["merge_develop", "merge_back"];
+
 /** Why a daily schedule run that is late has not started. */
 export type ChoreWait = "restart" | "no_runs" | "other_chore" | "other_run" | "owner_budget" | "budget" | "in_queue" | "watcher_error" | "no_check" | "not_queued";
 
@@ -119,7 +125,7 @@ export interface NextData {
   pr?: { number: number; url?: string };
   maxPerTick?: number;
   /** Area lock: the run that holds the areas. */
-  areaWait?: { runId: string; areas: string };
+  areaWait?: AreaWait;
   /** Label of the schedule watcher's release, e.g. "17:00". */
   releaseAt?: string;
   /** When a usage limit is tried again. */
@@ -431,9 +437,16 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     }
     case "area_lock": {
       who = "Another story";
-      why = `It waits for a code area${d.areaWait ? ` (${clean(d.areaWait.areas)})` : ""} that another run uses`;
-      if (d.areaWait) w = { label: "Run page", url: RUN_PAGE(d.areaWait.runId) };
-      say = "nothing to do, it continues when that run is finished";
+      const a = d.areaWait;
+      if (a?.areas === "@develop") {
+        const held = a.runId ? `run ${clean(a.runId)}` : "another run";
+        why = `It waits for develop (held by ${held}${a.issue ? `, issue #${a.issue}` : ""}${a.since ? `, since ${hhmm(a.since, d)}` : ""})`;
+        say = "nothing to do, it merges when that run has pushed develop or given up its turn";
+      } else {
+        why = `It waits for a code area${a ? ` (${clean(a.areas)})` : ""} that another run uses`;
+        say = "nothing to do, it continues when that run is finished";
+      }
+      if (a?.runId) w = { label: "Run page", url: RUN_PAGE(a.runId) };
       break;
     }
     case "usage_limit": {
@@ -681,13 +694,13 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,
     text: sentence(why.replace(/[.!?]+$/, ""), say.replace(/[.!?]+$/, "")),
     ...(kind === "one_at_a_time" && d.blockingRun ? { afterRun: d.blockingRun } : {}),
-    ...(kind === "area_lock" && d.areaWait ? { afterRun: d.areaWait.runId } : {}),
+    ...(kind === "area_lock" && d.areaWait?.runId ? { afterRun: d.areaWait.runId } : {}),
     ...(kind === "dependency" ? { blockers: d.blockers ?? [] } : {}),
     ...(d.cause ? { cause: d.cause } : {}),
     ...(d.retired ? { retired: true as const } : {}),
@@ -815,7 +828,8 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
   switch (run.status) {
     case "succeeded": return o.releaseAt ? make("release") : make("done");
     case "running": {
-      if (o.areaWait && run.state?.next === "claim_areas") return make("area_lock");
+      const at = run.state?.next ?? "";
+      if (o.areaWait && (at === "claim_areas" || (DEVELOP_LOCK_STEPS.includes(at) && o.areaWait.areas === "@develop"))) return make("area_lock");
       return make("running");
     }
     case "waiting": {

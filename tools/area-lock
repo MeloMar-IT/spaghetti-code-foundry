@@ -5,7 +5,9 @@
 //   area-lock acquire <run-id> <run-dir> <area>... [--wait-sec 7200]
 //       waits until no other running run holds an overlapping area, then holds them.
 //       Prints "LOCKED: …" (exit 0) or "TIMEOUT: …" (exit 1).
-//   area-lock release <run-id>        drops everything the run holds
+//   area-lock release <run-id> [area...]
+//       drops everything the run holds; with areas, only those (e.g. "@develop" gives up the merge turn
+//       and keeps the code areas)
 //   area-lock list                    shows the current locks
 //
 // Areas are paths ("platform/src/main/java/…/update", "desktop-compose/…/Main.kt"); two areas
@@ -127,7 +129,9 @@ if (cmd === "acquire") {
       const hit = others.find((l) => l.areas.some((x) => areas.some((a) => overlaps(a, x))));
       if (hit) return hit;
       const name = `${runId.replace(/[^\w.-]/g, "_")}__${Date.now()}.json`;
-      writeFileSync(join(dir, name), JSON.stringify({ runId, runDir, areas, at: new Date().toISOString(), ...(running(runId) ? { marker: true } : {}) }));
+      // The issue the run works on lets the pages say who holds a lock ("held by run X, issue #N").
+      const issue = /^[1-9]\d{0,9}$/.test(process.env.FACTORY_VAR_ISSUE ?? "") ? Number(process.env.FACTORY_VAR_ISSUE) : undefined;
+      writeFileSync(join(dir, name), JSON.stringify({ runId, runDir, areas, ...(issue ? { issue } : {}), at: new Date().toISOString(), ...(running(runId) ? { marker: true } : {}) }));
       return undefined;
     });
     if (!blocker) {
@@ -140,7 +144,7 @@ if (cmd === "acquire") {
     told = msg;
     try {
       const tmp = `${waitFile}.${process.pid}.tmp`;
-      writeFileSync(tmp, JSON.stringify({ runId, waitingFor: blocker.runId, areas: blocker.areas, at: new Date().toISOString() }));
+      writeFileSync(tmp, JSON.stringify({ runId, waitingFor: blocker.runId, areas: blocker.areas, ...(blocker.issue ? { issue: blocker.issue } : {}), since: blocker.at, at: new Date().toISOString() }));
       renameSync(tmp, waitFile);
     } catch {}
     if (Date.now() > deadline) {
@@ -151,15 +155,34 @@ if (cmd === "acquire") {
     await sleep(Number(process.env.AREA_LOCK_POLL_MS || 15_000));
   }
 } else if (cmd === "release") {
-  const [runId] = rest;
-  if (!runId) fail("usage: area-lock release <run-id>");
+  const [runId, ...only] = rest;
+  if (!runId) fail("usage: area-lock release <run-id> [area...]");
   const prefix = `${runId.replace(/[^\w.-]/g, "_")}__`;
+  const drop = only.flatMap((a) => a.split(",")).map(norm).filter(Boolean);
   await withMutex(() => {
-    for (const f of readdirSync(dir)) if (f.startsWith(prefix)) rmSync(join(dir, f), { force: true });
+    for (const f of readdirSync(dir)) {
+      if (!f.startsWith(prefix)) continue;
+      if (!drop.length) {
+        rmSync(join(dir, f), { force: true });
+        continue;
+      }
+      // With areas: only those are given up, the others stay held.
+      let l;
+      try {
+        l = JSON.parse(readFileSync(join(dir, f), "utf8"));
+      } catch {
+        continue; // half-written or unreadable: leave it
+      }
+      // A write or remove that fails is not swallowed: the caller must know the lock is still held.
+      const keep = l.areas.filter((a) => !drop.includes(a));
+      if (keep.length === l.areas.length) continue;
+      if (keep.length) writeFileSync(join(dir, f), JSON.stringify({ ...l, areas: keep }));
+      else rmSync(join(dir, f), { force: true });
+    }
   });
-  console.log("released");
+  console.log(drop.length ? `released: ${drop.join(", ")}` : "released");
 } else if (cmd === "list") {
   for (const l of locks()) console.log(`${l.runId}  ${l.areas.join(", ")}  since ${l.at}`);
 } else {
-  fail("usage: area-lock acquire <run-id> <run-dir> <area>... [--wait-sec N] | release <run-id> | list");
+  fail("usage: area-lock acquire <run-id> <run-dir> <area>... [--wait-sec N] | release <run-id> [area...] | list");
 }

@@ -1251,6 +1251,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | waiting — the owner's limit of runs per day | The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page. |
 | waiting — the owner's daily budget | The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page. |
 | waiting — the owner's limit of runs at the same time | As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page. |
+| waiting for develop | Another run is merging into `develop` and testing it, and only one run does that at a time. It shows who holds the turn and since when. Nothing to do — it goes on when that run has pushed `develop` or given up its turn. |
 | waiting for another run in the same code | Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished. |
 | waiting — a bug story goes first | A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that. |
 | waiting — the base branch has failing tests | The tests on the base branch fail, so this story waits. Nothing to do — it starts by itself when a new commit lands. |
@@ -3773,6 +3774,16 @@ flowchart LR
   leaves it open until the release reaches `main`). If `develop` moved meanwhile, it merges again; conflicts are
   resolved by an agent (keeping both changes), then tested again. The changelog never conflicts:
   both sides' entries are kept (`union_merge_files`).
+- **A red merge does not hold develop.** If the tests on the merge with `develop` fail, the run
+  gives up its turn at `develop` before anything is fixed. The merge result is moved onto its
+  feature branch and pushed there, and the fix is made and pushed on that branch too. Then the run
+  merges again from the newest `develop` and tests again. Other runs can merge, test and push
+  `develop` in the meantime, and the run's page says "waiting for develop" while it waits for
+  its turn. The fixer is given the names and messages of the failing tests, from the JUnit report
+  or the test summary. Tests that fail only under load are run again without a fix. A run that is
+  still red after 2 fixes, or 2 test runs that did not finish, stops with the reason, and its work
+  stays on the feature branch. The hotfix path (`main` into `develop`) keeps its turn through its
+  fixes, because the fix is already on `main` and there is no feature branch to carry it.
 - **Several issues are coded at the same time** when they change different parts of the code:
   each plan names its code areas (`AREAS:`), and a run waits only while another run holds an
   overlapping area — without holding a slot: it steps aside and continues as soon as that run is
