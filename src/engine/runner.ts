@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { stepAfterPaths } from "./step-facts.js";
 import { listAllRepos } from "../auth/repos.js";
-import { decideTechnicalFor, type RepoSettings } from "../auth/repo-settings.js";
+import { decideTechnicalFor, skillLibraryFor, type RepoSettings } from "../auth/repo-settings.js";
 import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
 import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
@@ -33,7 +33,7 @@ import { CODEX_LOGIN_NOT_RETURNED, returnCodexLogin } from "../agents/codex-logi
 import { codexLoginReturnLine } from "../agents/codex-home.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
-import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
+import { hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { removeSignInDir } from "./repo-access.js";
@@ -127,6 +127,23 @@ export function newRunId(now = new Date()): string {
 }
 
 /** "1" when the Foundry may decide technical questions for this repository, else "0"; any error gives "0" (then it asks). */
+/** The sentence for a user's skill-write run: measuring needs the server's model login, and publishing pushes to main. */
+export const SKILL_WRITE_REFUSED = "This flow measures a skill with the server's model login and pushes to main, so only an admin can run it.";
+
+/** The reason a user's run of the skill-write flow is refused; undefined when it may run. Fails closed like `userAccount`. */
+export function skillWriteRefused(flowName: string | undefined, owner: string | undefined): string | undefined {
+  return flowName === SKILL_WRITE_FLOW && userAccount(owner) ? SKILL_WRITE_REFUSED : undefined;
+}
+
+/** Is this run in a repository an admin marked as a skill library, owned by someone who is not a user account? Fails closed. */
+export function skillLibraryRun(githubRepo: string | undefined, owner: string | undefined, records: () => readonly { url: string; settings?: RepoSettings }[] = listAllRepos): boolean {
+  try {
+    return !userAccount(owner) && skillLibraryFor(githubRepo ?? "", records());
+  } catch {
+    return false;
+  }
+}
+
 export function decideTechnicalEnv(githubRepo: string | undefined, records: () => readonly { url: string; settings?: RepoSettings }[] = listAllRepos): "1" | "0" {
   try {
     return decideTechnicalFor(githubRepo ?? "", records()) ? "1" : "0";
@@ -168,7 +185,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
 
   // A run nobody asked for by name (CLI, evals) belongs to the first admin; a refinement run without an owner stays without one.
   const owner = opts.owner ?? (isRefinementRun(opts.source) ? undefined : defaultOwner());
-  const refused = workspaceRefused(flow.workspace, owner);
+  const refused = workspaceRefused(flow.workspace, owner) ?? skillWriteRefused(flow.name, owner);
   // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
   const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
@@ -367,7 +384,7 @@ async function drive(
     if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: summary.state.next, lastOutput: "" });
   }
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
-  const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);
+  const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner) ?? skillWriteRefused(summary.flowDef?.name, summary.owner);
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: summary.state.next, lastOutput: "" });
   // a user's run that cannot be held in an OS sandbox never runs a step (also on resume), unless an admin allowed it
   const sandbox = sandboxedRun(summary.owner, config);
@@ -436,6 +453,7 @@ async function drive(
     baseEnv,
     botEnv,
     hotfix: hotfixState(summary.flowDef, config),
+    skillPublish: skillPublishState(summary.flowDef, skillLibraryRun(summary.vars.github_repo, summary.owner)),
     logsDir: join(summary.runDir, "logs"),
     claudeBin: opts.claudeBin,
     codexBin: opts.codexBin,

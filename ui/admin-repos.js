@@ -9,14 +9,18 @@ const PATTERN_HINT = '"*" matches any text, ? one character.';
 
 /** The request body for the settings: every setting is sent, trimmed; an empty one clears it. */
 export function settingsBody(values = {}) {
+  // a skill library has no test command, develop branch or release recipe: they are cleared, and the server refuses them next to the kind
+  const library = values.kind === "skill-library";
   return {
-    testCommand: String(values.testCommand ?? "").trim(),
+    // the server replaces all settings, so a missing kind clears it
+    ...(library ? { kind: "skill-library" } : {}),
+    testCommand: library ? "" : String(values.testCommand ?? "").trim(),
     docs: lines(values.docs),
     protectedBranches: lines(values.protectedBranches),
     mainBranch: String(values.mainBranch ?? "").trim(),
-    developBranch: String(values.developBranch ?? "").trim(),
+    developBranch: library ? "" : String(values.developBranch ?? "").trim(),
     // not trimmed here: the server tidies the text, and an empty text clears it
-    releaseRecipe: String(values.releaseRecipe ?? ""),
+    releaseRecipe: library ? "" : String(values.releaseRecipe ?? ""),
     // a missing value means on
     questions: { decide_technical: values.decideTechnical !== false },
   };
@@ -67,6 +71,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
   const state = { busy: false, closed: false, pending: null, result: undefined };
   const shown = modal(title, (close) => {
     const all = {
+      kind: h("select", { name: "kind" }, h("option", { value: "" }, "Code"), h("option", { value: "skill-library" }, "Skill library")),
       testCommand: h("input", { name: "testCommand", class: "mono", value: s.testCommand ?? "", autocomplete: "off", placeholder: "npm test" }),
       docs: h("textarea", { name: "docs", rows: 3, class: "mono", placeholder: "docs/CHANGELOG.md" }),
       protectedBranches: h("textarea", { name: "protectedBranches", rows: 3, class: "mono", placeholder: "release/*" }),
@@ -75,12 +80,14 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
       releaseRecipe: h("textarea", { name: "releaseRecipe", rows: 12, class: "mono", spellcheck: "false", placeholder: "builds:\n  - name: …" }),
       decideTechnical: h("input", { type: "checkbox", name: "decideTechnical" }),
     };
+    all.kind.value = s.kind ?? "";
     all.decideTechnical.checked = s.questions?.decide_technical !== false;
     all.releaseRecipe.value = s.releaseRecipe ?? "";
     all.docs.value = (s.docs ?? []).join("\n");
     all.protectedBranches.value = (s.protectedBranches ?? []).join("\n");
     const els = only ? Object.fromEntries(Object.entries(all).filter(([k]) => only.includes(k))) : all;
     const labels = {
+      kind: ["Kind", "A skill library holds skills in skills/<name>/. The skill-write flow may push its main branch. Choosing it clears the test command, develop branch and release recipe."],
       testCommand: ["Test command"], docs: ["Docs to update (one path per line)"], protectedBranches: ["Protected branches (one pattern per line)", PATTERN_HINT],
       mainBranch: ["Main branch"], developBranch: ["Develop branch"],
       releaseRecipe: ["Release-build recipe (YAML)", "Used by release-build when the commit has no .factory/release-build.yaml. A file in the repository wins."],
@@ -88,6 +95,7 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
     };
     const err = h("p", { class: "status bad flush", role: "alert" });
     const pairs = [
+      [/^kind|skill library/, "kind"],
       [/^testCommand/, "testCommand"],
       [/^docs|path inside the repository/, "docs"],
       [/^protectedBranches|branch pattern/, "protectedBranches"],

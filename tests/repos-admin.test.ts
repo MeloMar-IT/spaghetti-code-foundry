@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { decideTechnicalEnv } from "../src/engine/runner.js";
-import { RepoSettingsSchema, checkRepoSettings, decideTechnicalFor, decidesTechnical, type RepoSettings, validBranchName, validBranchPattern, validDocPath } from "../src/auth/repo-settings.js";
+import { RepoSettingsSchema, checkRepoSettings, decideTechnicalFor, decidesTechnical, skillLibraryFor, type RepoSettings, validBranchName, validBranchPattern, validDocPath } from "../src/auth/repo-settings.js";
 import { PERSONAL_METHODS, REPO_BOUND_METHODS, REPO_LIMIT, REPO_METHODS, RepoError, type TransferOptions, addRepo, listAllRepos, listRepos, ownsRepo, removeGithubRepo, removeRepo, reposPath, setRepoAuth, setRepoSettings, transferRepo, watchersRemovedDetail } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
 import { AuditEntrySchema, DETAIL_MAX } from "../src/auth/audit.js";
@@ -219,6 +219,40 @@ describe("settings in the store", () => {
       expect((e as StoreError).kind).toBe("wrong-format");
     }
     expect(a.id).toBeTruthy();
+  });
+});
+
+describe("the kind of a repository", () => {
+  const rec = (url: string, settings?: RepoSettings) => ({ url, settings });
+  const LIB: RepoSettings = { kind: "skill-library" };
+
+  it("stores only skill-library; code and the empty text mean no kind", () => {
+    expect(checkRepoSettings({ kind: "skill-library" })).toEqual(LIB);
+    expect(checkRepoSettings({ kind: " skill-library ", mainBranch: "main" })).toEqual({ kind: "skill-library", mainBranch: "main" });
+    for (const k of ["code", "", "  ", null, undefined]) expect(checkRepoSettings({ kind: k })).toEqual({});
+  });
+
+  it("refuses unknown kinds and a skill library with a test command, develop branch or release recipe", () => {
+    for (const k of ["skills", "Skill-Library", 5, true]) expect(() => checkRepoSettings({ kind: k })).toThrow(/kind/);
+    for (const extra of [{ testCommand: "npm test" }, { developBranch: "develop" }, { releaseRecipe: "builds: []" }]) {
+      expect(() => checkRepoSettings({ kind: "skill-library", ...extra })).toThrow(/skill library has no/);
+    }
+    expect(checkRepoSettings({ kind: "code", testCommand: "npm test" })).toEqual({ testCommand: "npm test" });
+  });
+
+  it("reads old settings without a kind and the strict schema takes only skill-library", () => {
+    expect(RepoSettingsSchema.safeParse({ testCommand: "npm test" }).success).toBe(true);
+    expect(RepoSettingsSchema.safeParse(LIB).success).toBe(true);
+    expect(RepoSettingsSchema.safeParse({ kind: "code" }).success).toBe(false);
+  });
+
+  it("skillLibraryFor needs a record, matches by GitHub name, and every record must say so", () => {
+    expect(skillLibraryFor("acme/skills", [])).toBe(false);
+    expect(skillLibraryFor("Acme/Skills.git", [rec("https://github.com/acme/skills", LIB)])).toBe(true);
+    expect(skillLibraryFor("acme/skills", [rec("https://github.com/acme/skills", LIB), rec("git@github.com:acme/skills.git")])).toBe(false);
+    expect(skillLibraryFor("acme/skills", [rec("https://github.com/acme/other", LIB)])).toBe(false);
+    expect(skillLibraryFor("", [rec("https://github.com/acme/skills", LIB)])).toBe(false);
+    expect(skillLibraryFor("acme/skills", [rec("https://example.com/acme/skills", LIB)])).toBe(false);
   });
 });
 

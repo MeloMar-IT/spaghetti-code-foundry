@@ -74,6 +74,8 @@ export interface Engine {
   botEnv: () => Promise<Record<string, string>>;
   /** Whether this run may take the hotfix path (see hotfixState); "off" when unset. */
   hotfix?: "on" | "off" | "other";
+  /** Whether this run may push main in the publish step of skill-write (see skillPublishState); "other" when unset. */
+  skillPublish?: "on" | "other";
   logsDir: string;
   claudeBin?: string;
   codexBin?: string;
@@ -134,7 +136,7 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   // Never inherited from the server's own environment: only pushAllowEnv() can set it, for one step.
   // FACTORY_NO_PUSH likewise: only the run's own level (in baseEnv) sets it.
   const env: Record<string, string> = { FACTORY_NO_PUSH: "", ...engine.baseEnv, FACTORY_HOTFIX: hotfix, FACTORY_PUSH_ALLOW: "" };
-  if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix));
+  if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix, engine.skillPublish ?? "other"));
   for (const [k, v] of Object.entries(scope.ctx.vars)) env[varEnvName(k)] = v;
   for (const [id, s] of Object.entries(scope.ctx.steps)) env[outputEnvName(id)] = capEnvValue(String(s.output ?? ""), `steps.${id}.output`);
   const ran = ranOrder(engine.summary?.history ?? [], scope.prefix);

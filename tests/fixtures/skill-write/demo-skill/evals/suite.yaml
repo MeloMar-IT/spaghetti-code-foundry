@@ -1,0 +1,41 @@
+schema: 1
+selection:
+  - id: kafka-dependency
+    repo: fixtures/orders
+    task: Add a retry to the consumer.
+    expect: offered
+  - id: web-only
+    repo: fixtures/web
+    task: Refactor the page templates.
+    expect: not-offered
+conflicts:
+  - id: against-approved
+    with: all
+context:
+  - id: coder-budget
+    max_instruction_tokens: 3000
+    max_description_chars: 160
+tools:
+  - id: read-only
+    policy: { shell: false, network: false, filesystem: read }
+instructions:
+  repeat: 4
+  scenarios:
+    - id: first-task
+      repo: fixtures/orders
+      task: In src/consumer.js export a function handle that returns true. Keep the existing exports.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 60
+      check: node -e 'process.exit(0)'
+    - id: second-task
+      repo: fixtures/orders
+      task: In src/consumer.js export a function second that returns 2.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 60
+      check: node -e 'process.exit(0)'
+    - id: third-task
+      repo: fixtures/orders
+      task: In src/consumer.js export a function third that returns 3.
+      policy: { shell: false, network: false, filesystem: write }
+      timeout_sec: 60
+      check: node -e 'process.exit(0)'

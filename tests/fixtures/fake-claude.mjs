@@ -17,7 +17,7 @@
 // For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
 // "REQUEST <json>" appends the line to $FACTORY_REPO_REQUESTS (a repository request for the broker; nothing when the variable is unset).
 // Probes for the OS sandbox tests: "READ <path>", "CHILD READ <path>", "CHILD WRITE <path> <text>" (see the lines above).
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const probeRead = (p) => (statSync(p).isDirectory() ? readdirSync(p).length : readFileSync(p).length);
@@ -262,6 +262,24 @@ if (prompt.includes("You are Ask SCF, the help assistant")) {
       };
   const r = process.env.FAKE_ROUND;
   canned = r === "ECHO" ? JSON.stringify({ ...round, echo: `args=${args.join(" ")}\ncwd=${process.cwd()}\ngh_token=${ghSeen}\nPROMPT<<${prompt}>>` }) : r ?? JSON.stringify(round);
+} else if (prompt.includes("You write one skill for a skill library")) {
+  // skill-write: copies the skill folder FAKE_SKILL_SRC to skills/<FAKE_SKILL_NAME>/ (default demo-skill). FAKE_SKILL_BAD_ONCE (a marker path outside the folder):
+  // while the marker is missing it also writes the invalid root file notes.txt and creates the marker; the next call removes notes.txt first.
+  const skill = process.env.FAKE_SKILL_NAME ?? "demo-skill";
+  const marker = process.env.FAKE_SKILL_BAD_ONCE;
+  const first = marker && !existsSync(marker);
+  if (marker && !first) rmSync("notes.txt", { force: true });
+  rmSync(`skills/${skill}`, { recursive: true, force: true });
+  cpSync(process.env.FAKE_SKILL_SRC, `skills/${skill}`, { recursive: true });
+  if (first) {
+    writeFileSync("notes.txt", "scratch\n");
+    writeFileSync(marker, "x\n");
+  }
+  canned = `Wrote skills/${skill}.`;
+} else if (prompt.includes("You review one skill for a skill library")) {
+  canned = process.env.FAKE_SKILL_REVIEW ?? "No problems.\nVERDICT: APPROVE";
+} else if (prompt.includes("You plan one skill for a skill library")) {
+  canned = process.env.FAKE_SKILL_PLAN ?? "SKILL_NAME: demo-skill\nSKILL_CHANGE: new\n## What it must teach\n- commit offsets late\n## Sample tasks\n- three tasks\nPLAN_STATUS: READY";
 } else if (prompt.includes("You triage tickets")) canned = process.env.FAKE_TRIAGE ?? "Small change.\nROUTE: SMALL";
 else if (prompt.includes("This issue has to be split.")) { // before the generic planner branch: the forced-split prompt may name NEEDS_INFO
   // FAKE_FORCED_SPLIT_CAPTURE (a file path) gets one JSON line per call with the CLI arguments and the prompt; the answer stays canned.
