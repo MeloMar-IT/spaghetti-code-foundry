@@ -57,6 +57,20 @@ const MIXED = {
   "skills/none/SKILL.md": md("none"),
 };
 
+describe("promoteImport and an excluded folder", () => {
+  it("refuses a skill that was staged first and excluded by a later change to the source", () => {
+    const s = setup({ "skills/a/SKILL.md": md("a"), "skills/example-skill/SKILL.md": md("example-skill") });
+    expect(s.skills.map((k) => k.provenance.root)).toContain("skills/example-skill");
+    const later = source({ exclude: ["skills/example-skill"] });
+    expect(() => run(s, { source: later })).toThrowError(/a skill is in an excluded folder/);
+  });
+
+  it("refuses a staged skill that holds a file below a folder excluded later", () => {
+    const s = setup({ "skills/a/SKILL.md": md("a"), "skills/a/examples/demo.md": "demo\n" });
+    expect(() => run(s, { source: source({ exclude: ["skills/a/examples"] }) })).toThrowError(/a skill is in an excluded folder/);
+  });
+});
+
 describe("promoteImport", () => {
   it("promotes the licensed sibling and refuses the source-available and the unlicensed one", () => {
     const r = run(setup(MIXED));

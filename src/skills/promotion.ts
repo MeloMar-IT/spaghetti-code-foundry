@@ -105,6 +105,10 @@ export function promoteImport(input: {
     const p = s.provenance;
     if (p.source !== source.id || p.repositoryKey !== source.repositoryKey || p.commit !== record.commit) throw refusal("a skill is of another source or commit");
     if (!source.paths.some((path) => inside(path, p.root))) throw refusal("a skill is not below an approved path");
+    // A staged skill may hold files of a folder excluded later, below its root: their paths are checked too (package paths are relative to the root).
+    const packaged = [...Object.values(s.package.files).flat(), ...s.extraFiles].map((f) => (p.root === "." ? f.path : `${p.root}/${f.path}`));
+    const excluded = (x: string, path: string) => path === x || path.startsWith(x + "/");
+    if ((source.exclude ?? []).some((x) => excluded(x, p.root) || packaged.some((f) => excluded(x, f)))) throw refusal("a skill is in an excluded folder");
     const entry = record.skills.find((r) => r.root === p.root);
     if (!entry || entry.name !== p.name || entry.digest !== s.package.digest) throw refusal("a skill does not match the import record");
     if (seen.has(p.root)) throw refusal("a skill is listed twice");

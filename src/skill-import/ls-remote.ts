@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { trackRefProblem } from "../skills/sources.js";
-import { gitEnv, OPTIONS } from "./git-tree.js";
+import { gitEnv, OPTIONS, prepareAskpass, type GitCredential } from "./git-tree.js";
 
 // Reads the commit that HEAD of a remote repository points at now: one `git ls-remote`, with the same hardening as the
 // import (own empty HOME, no credentials, no redirects, https only). Git runs in its own process group, which is killed on
@@ -27,6 +27,8 @@ export interface LsRemoteOptions {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** The access of a private source, given to git through a one-shot GIT_ASKPASS. */
+  credential?: GitCredential;
 }
 
 const ANSWER_RE = /^([0-9a-f]{40}|[0-9a-f]{64})\tHEAD\n$/;
@@ -82,7 +84,17 @@ async function ask(repository: string, patterns: readonly string[], opts: LsRemo
     delete env.GIT_DIR;
     env.GIT_CEILING_DIRECTORIES = tmp;
     const url = opts.remote !== undefined ? "file://" + resolve(opts.remote) : repository;
-    return await run(url, patterns, tmp, env, opts.timeoutMs ?? LS_REMOTE_LIMITS.timeoutMs, opts.signal);
+    let askpass: ReturnType<typeof prepareAskpass> | undefined;
+    try {
+      askpass = opts.credential ? prepareAskpass(tmp, opts.credential) : undefined;
+    } catch {
+      throw new LsRemoteError("unreachable");
+    }
+    try {
+      return await run(url, patterns, tmp, askpass ? { ...env, ...askpass.env } : env, opts.timeoutMs ?? LS_REMOTE_LIMITS.timeoutMs, opts.signal);
+    } finally {
+      askpass?.remove();
+    }
   } catch (e) {
     throw e instanceof LsRemoteError ? e : new LsRemoteError("unreachable");
   } finally {
