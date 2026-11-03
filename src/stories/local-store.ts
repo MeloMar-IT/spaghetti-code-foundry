@@ -5,11 +5,13 @@ import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../
 import { isStatusComment, sameBody, STATUS_MARKER } from "../github.js";
 import { checkDirs, type Entry, hasLabel, MAX_BYTES, scan, STORIES_DIR, storyNames, toComments, toIssue, toRest, UNREADABLE_TITLE, updatedMs } from "./local-map.js";
 import { type FileStory, formatStoryFile, storyFileName } from "./story-file.js";
+import { commitStory, type StoryChange } from "./story-commit.js";
 import { pidAlive, type StoryLockOptions, withStoryLock } from "./story-lock.js";
 import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories } from "./store.js";
 import type { CheckRun } from "../delivery/handoff.js";
 
 export { STORIES_DIR, UNREADABLE_TITLE };
+export { StoryCommitError } from "./story-commit.js";
 export const NO_CHANGES = "Pull requests are not available for a local project";
 export const NEXT_NUMBER_FILE = "next-number";
 
@@ -22,6 +24,8 @@ export interface LocalStoreOptions {
   /** The name written on comments (default "Foundry"). */
   author?: string;
   onStale?: StoryLockOptions["onStale"];
+  /** Commit each change with git (default true). */
+  commit?: boolean;
 }
 
 const whole = (n: unknown, max = Number.MAX_SAFE_INTEGER): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 1 && n <= max;
@@ -47,8 +51,10 @@ export class LocalStore implements StoryStore {
   private readonly lockWaitMs: number;
   private readonly now: () => Date;
   private readonly author: string;
+  private readonly commit: boolean;
 
   constructor(private readonly dir: string, readonly repo: string, o: LocalStoreOptions = {}) {
+    this.commit = o.commit ?? true;
     this.lockWaitMs = o.lockWaitMs ?? 10_000;
     this.lock = { pollMs: o.lockPollMs ?? 50, alive: o.alive ?? pidAlive, onStale: o.onStale };
     this.now = o.now ?? (() => new Date());
@@ -158,7 +164,7 @@ export class LocalStore implements StoryStore {
 
   // writes
   /** Reads the story under the lock, lets `change` edit it and saves it in one rename. `change` returns no story when nothing changes. */
-  private async write<T>(issue: number, o: { timeoutMs?: number; deadline?: number }, change: (s: FileStory, now: string) => { story?: FileStory; out: T }): Promise<{ entry: Entry; out: T }> {
+  private async write<T>(issue: number, what: StoryChange, o: { timeoutMs?: number; deadline?: number }, change: (s: FileStory, now: string) => { story?: FileStory; out: T }): Promise<{ entry: Entry; out: T }> {
     const n = num(issue);
     if (!checkDirs(this.dir, false)) throw new Error(`${STORIES_DIR} does not exist`);
     const left = (): number => (o.deadline === undefined ? Infinity : o.deadline - Date.now());
@@ -176,12 +182,18 @@ export class LocalStore implements StoryStore {
         const text = this.checked(formatStoryFile(story));
         if (!held()) throw new Error("the lock was lost; try again");
         writeAtomic(join(this.folder, e.file), text);
+        this.commitFiles(n, [e.rel], what, Math.min(o.timeoutMs ?? Infinity, left()));
         return { entry: { ...e, story, mtimeMs: Date.parse(now) }, out: r.out };
       });
     } catch (e) {
       if (/^the stories are locked/.test((e as Error).message) && o.deadline !== undefined && left() <= 0) outOfTime();
       throw e;
     }
+  }
+
+  /** One commit of the files just written, under the lock. `budgetMs` is the time left for git. */
+  private commitFiles(n: number, files: string[], what: StoryChange, budgetMs?: number): void {
+    if (this.commit) commitStory(this.dir, n, files, what, { budgetMs });
   }
 
   private checked(text: string): string {
@@ -217,22 +229,23 @@ export class LocalStore implements StoryStore {
       // The number goes first: a crash leaves a gap, never a reused number.
       writeAtomic(join(this.folder, NEXT_NUMBER_FILE), `${n + 1}\n`);
       writeAtomic(join(this.folder, file), text);
+      this.commitFiles(n, [`${STORIES_DIR}/${NEXT_NUMBER_FILE}`, `${STORIES_DIR}/${file}`], "created", timeoutMs);
       return toRest({ ok: true, n, file, rel: `${STORIES_DIR}/${file}`, mtimeMs: Date.parse(now), story });
     });
   }
   async edit(issue: number, o: { title?: string; body: string }, timeoutMs?: number): Promise<RestIssue> {
-    const r = await this.write(issue, { timeoutMs }, (s) => ({ story: { ...s, title: o.title ?? s.title, body: o.body }, out: undefined }));
+    const r = await this.write(issue, "edited", { timeoutMs }, (s) => ({ story: { ...s, title: o.title ?? s.title, body: o.body }, out: undefined }));
     return toRest(r.entry);
   }
   async setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number): Promise<void> {
-    await this.write(issue, { timeoutMs }, (s) => {
+    await this.write(issue, "labels", { timeoutMs }, (s) => {
       let labels = s.labels.filter((l) => !remove.some((r) => same(r, l) && !(add && same(add, r))));
       if (add && !labels.some((l) => same(l, add))) labels = [...labels, add];
       return { story: { ...s, labels }, out: undefined };
     });
   }
   async comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined> {
-    const r = await this.write(issue, { timeoutMs }, (s, now) => {
+    const r = await this.write(issue, "comment", { timeoutMs }, (s, now) => {
       const comments = [...s.comments, { author: this.author, createdAt: now, body }];
       return { story: { ...s, comments }, out: String(comments.length) };
     });
@@ -243,7 +256,7 @@ export class LocalStore implements StoryStore {
     const match = o.match ?? isStatusComment;
     const author = this.author;
     const text = isStatusComment({ body }) ? body : `${body}\n\n${STATUS_MARKER}`;
-    const r = await this.write(issue, { timeoutMs: o.timeoutMs, deadline: o.deadline }, (s, now) => {
+    const r = await this.write(issue, "status", { timeoutMs: o.timeoutMs, deadline: o.deadline }, (s, now) => {
       const ours: number[] = [];
       s.comments.forEach((c, i) => {
         const asComment: Comment = { author: { login: c.author }, body: c.body, createdAt: c.createdAt, viewerDidAuthor: c.author === author };
@@ -265,11 +278,11 @@ export class LocalStore implements StoryStore {
     return r.out;
   }
   async close(issue: number, reason: "completed" | "not_planned", timeoutMs?: number): Promise<RestIssue> {
-    const r = await this.write(issue, { timeoutMs }, (s, now) => ({ story: { ...s, state: "closed", closedAt: now }, out: undefined }));
+    const r = await this.write(issue, "closed", { timeoutMs }, (s, now) => ({ story: { ...s, state: "closed", closedAt: now }, out: undefined }));
     return { ...toRest(r.entry), state_reason: reason };
   }
   async reopen(issue: number, timeoutMs?: number): Promise<RestIssue> {
-    const r = await this.write(issue, { timeoutMs }, (s) => {
+    const r = await this.write(issue, "reopened", { timeoutMs }, (s) => {
       const { closedAt: _closed, ...rest } = s;
       return { story: { ...rest, state: "open" }, out: undefined };
     });
