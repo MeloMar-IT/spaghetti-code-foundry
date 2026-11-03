@@ -154,6 +154,19 @@ in `src/github.ts`; the store reuses them.
   gh with `ghInherit` (`src/github.ts`): gh writes straight to the step's stdout and stderr, and the
   exit status is gh's (a signal gives 128 plus its number). Every other call goes through `gh()`.
 
+### The public package (#780)
+
+The package `@melomar-it/scf-core` has one public entry, `src/index.ts`, and `package.json`
+`exports` lists only `"."`, so a deep import into `dist/` fails. `index.ts` re-exports each name by
+hand, with no `export *`, so adding or removing a public name is a visible edit. The build writes
+`.d.ts` files (`declaration: true` in `tsconfig.build.json`), so consumers get the types.
+`tests/public-api.test.ts` compares the real exports (values by kind, types from the text of
+`index.ts`) with `tests/public-api.snapshot.json`, and `apiChange` decides whether a change needs a
+minor or a major bump. `PLUGIN_API_VERSION` is checked against the snapshot. The publish workflow
+runs on `v*.*.*` tags, checks that the tag matches `package.json`, and before `npm publish` imports the
+package by name. `scripts/release-notes.mjs` writes the `Plugin API:` line. The public surface and
+the promise are in [PLUGIN_API.md](PLUGIN_API.md).
+
 ---
 
 ## 4. Flows and the engine

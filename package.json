@@ -1,5 +1,5 @@
 {
-  "name": "spaghetti-code-foundry",
+  "name": "@melomar-it/scf-core",
   "version": "0.1.0",
   "description": "AI coding factory: run custom YAML flows of headless Claude Code CLI and shell steps",
   "license": "FSL-1.1-MIT",
@@ -12,6 +12,15 @@
     "url": "https://github.com/MeloMar-IT/spaghetti-code-foundry/issues"
   },
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "bin": {
     "scf": "dist/cli.js",
     "factory": "dist/factory.js"
@@ -25,6 +34,7 @@
     "tools",
     "evals",
     "docs/FLOW_AUTHORING.md",
+    "docs/PLUGIN_API.md",
     "docs/USER_GUIDE.md",
     "docs/examples/skill-sources.confluent.yaml"
   ],
