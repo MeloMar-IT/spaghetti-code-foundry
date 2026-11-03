@@ -69,7 +69,7 @@ Usage:
   scf skills promote check <source-id> [<exceptions-file>]  Print whether licence, findings and evaluations allow promotion
   scf skills overlap <source-id>                 Compare a staged import with the registered skills (canonical or conflict per capability)
   scf skills score <source-id> [<suite-file>]    Score the skills of a staged import and store the records
-  scf skills effect <source-id> <skill-id> | <id@version> [<suite-file>]  Measure whether a skill helps (runs agents in the sandbox)
+  scf skills effect <source-id> <skill-id> | <id@version> | <skill-folder> [<suite-file>]  Measure whether a skill helps (runs agents in the sandbox)
   scf skills gate <source-id> [<suite-file>]     Print which staged skills may be promoted
   scf skills selections check [<file>]           Check the skill selections (default: skill-selections.yaml)
   scf skills review <source-id> [--markdown]     Print the licence, attribution and collision report of a staged import

@@ -69,12 +69,13 @@ function runSettings(ctx) {
     s
       ? [
         statusSummary({ label: "Run settings", items: [
+          { label: "Kind", value: s.kind === "skill-library" ? "Skill library" : "Code" },
           { label: "Test command", value: text(s.testCommand) },
           { label: "Docs to update", value: list(s.docs) },
           { label: "Decides technical questions", value: s.questions?.decide_technical === false ? "No — asks every question" : "Yes" },
         ] }),
         readOnly ? null : h("div", { class: "row" },
-          h("button", { "data-action": "run-settings", onClick: editSettings(ctx, "run-settings", ["testCommand", "docs", "decideTechnical"], "Run settings") }, "Edit")),
+          h("button", { "data-action": "run-settings", onClick: editSettings(ctx, "run-settings", ["kind", "testCommand", "docs", "decideTechnical"], "Run settings") }, "Edit")),
       ]
       : unavailable("The settings"),
     h("div", { class: "field mt-6" },

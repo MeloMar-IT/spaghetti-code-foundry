@@ -238,6 +238,11 @@ describe("parseEffectOperands", () => {
     expect(parseEffectOperands(["kafka@1.0.0"])).toEqual({ kind: "approved", id: "kafka", version: "1.0.0" });
     expect(parseEffectOperands(["kafka@1.0.0", "s.yaml"])).toEqual({ kind: "approved", id: "kafka", version: "1.0.0", suiteFile: "s.yaml" });
   });
+  it("reads a skill folder, a first operand with a slash", () => {
+    expect(parseEffectOperands(["skills/demo"])).toEqual({ kind: "local", dir: "skills/demo" });
+    expect(parseEffectOperands(["./skills/demo", "suite.yaml"])).toEqual({ kind: "local", dir: "./skills/demo", suiteFile: "suite.yaml" });
+    expect(parseEffectOperands(["skills/demo", "suite.yaml", "x"])).toHaveProperty("problem");
+  });
   it("refuses everything else", () => {
     for (const ops of [[], ["lib"], ["bad@"], ["lib", "s-a", "s.yaml", "x"], ["Lib", "s-a"], ["lib", "bad@1.0.0"], ["k@1.0.0", "s.yaml", "x"]]) {
       expect(parseEffectOperands(ops)).toHaveProperty("problem");

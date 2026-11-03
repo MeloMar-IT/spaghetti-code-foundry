@@ -18,7 +18,8 @@ const RUN_ID_RE = new RegExp(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,${IL.runIdChars - 1}
 
 export type EffectOperands =
   | { kind: "staged"; source: string; skill: string; suiteFile?: string }
-  | { kind: "approved"; id: string; version: string; suiteFile?: string };
+  | { kind: "approved"; id: string; version: string; suiteFile?: string }
+  | { kind: "local"; dir: string; suiteFile?: string };
 
 export interface EffectScenario { id: string; task: string; offered: boolean }
 export interface EffectRun { scenario: string; attempt: number; runId: string; pass: boolean; loaded: boolean; tokens: number; durationMs: number }
@@ -245,11 +246,12 @@ export function effectLines(r: EffectRecord): string[] {
   return lines;
 }
 
-/** The operands of `scf skills effect`: `<source-id> <skill-id> [<suite>]` or `<id@version> [<suite>]`. */
+/** The operands of `scf skills effect`: `<source-id> <skill-id> [<suite>]`, `<id@version> [<suite>]` or `<skill-folder> [<suite>]` (a first operand with a "/"). */
 export function parseEffectOperands(operands: string[]): EffectOperands | { problem: string } {
-  const bad = { problem: "scf skills effect: expects <source-id> <skill-id> or <id@version>, and at most one suite file" };
+  const bad = { problem: "scf skills effect: expects <source-id> <skill-id>, <id@version> or <skill-folder>, and at most one suite file" };
   const [a, b, c] = operands;
   if (operands.length < 1 || operands.length > 3 || a === undefined) return bad;
+  if (a.includes("/")) return operands.length <= 2 ? { kind: "local", dir: a, ...(b !== undefined ? { suiteFile: b } : {}) } : bad;
   if (operands.length === 1 || (operands.length === 2 && a.includes("@"))) {
     const key = parseSkillKey(a);
     if (!key) return bad;

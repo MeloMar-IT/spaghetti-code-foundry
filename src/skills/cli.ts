@@ -74,6 +74,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills score <source-id> [<suite-file>] [--agent]     Score every staged skill with the suite and store one record each (default suite: ${EVALUATION_SUITE_DEFAULT}); --agent also runs the instructions scenarios in the OS sandbox
        scf skills effect <source-id> <skill-id> [<suite-file>]   Run the skill's sample tasks with and without a staged skill and store the verdict
        scf skills effect <id@version> [<suite-file>]            The same for an approved, pinned skill
+       scf skills effect <skill-folder> [<suite-file>]          The same for a skill folder in the working tree (skills/<name>)
        scf skills gate <source-id> [<suite-file>]                Print PASSED or FAILED per staged skill from its newest record; reads only
        scf skills release verify <dir>                           Check a catalogue release folder offline (files, digests, approval); reads only
        scf skills release sign <catalogue>@<version> --key <file>  Sign a stored release with a PEM Ed25519 private key (chmod 600); prints the approved entry to paste into the config

@@ -5,7 +5,8 @@ import { githubNameOf, RepoError } from "./repo-url.js";
  * Per-repository settings an admin sets. They are stored and shown, and runs do not use them yet. The exceptions are
  * `questions` (the engine passes `questions.decide_technical` to every step as `$FACTORY_DECIDE_TECHNICAL`) and
  * `releaseRecipe`: `tools/release-build` reads it through `findReleaseRecipe` in `src/release/recipe.ts` when the commit has
- * no `.factory/release-build.yaml`. Nothing under `auth/` may import `release/recipe.ts` (it imports `auth/repos.ts`: a cycle).
+ * no `.factory/release-build.yaml`. `kind: "skill-library"` marks a repository the skill-write flow may publish to: `skillLibraryFor`
+ * decides it for a run (src/engine/runner.ts), and it allows the second push to a protected branch (see guards.ts). Nothing under `auth/` may import `release/recipe.ts` (it imports `auth/repos.ts`: a cycle).
  */
 export const MAX_BRANCH = 200;
 export const MAX_RECIPE_TEXT = 16_384;
@@ -49,6 +50,7 @@ export const RepoSettingsSchema = z
     developBranch: z.string().refine(validBranchName),
     releaseRecipe: z.string().min(1).max(MAX_RECIPE_TEXT).refine((t) => t.trim() !== "" && !RECIPE_CONTROL.test(t)),
     questions: z.object({ decide_technical: z.boolean() }).strict(),
+    kind: z.literal("skill-library"),
   })
   .partial()
   .strict()
@@ -57,7 +59,7 @@ export const RepoSettingsSchema = z
 export type RepoSettings = z.infer<typeof RepoSettingsSchema>;
 
 const bad = (message: string) => new RepoError("bad-settings", message);
-const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe", "questions"];
+const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe", "questions", "kind"];
 const PATTERN_HELP = '"*" matches any text, "?" one character';
 const shown = (t: string) => JSON.stringify(t.replace(CONTROL_G, "?").slice(0, 80));
 const CONTROL_G = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -122,7 +124,27 @@ export function checkRepoSettings(input: unknown): RepoSettings {
     if (d !== undefined && d !== null && typeof d !== "boolean") throw bad("questions.decide_technical must be true or false");
     if (d === false) out.questions = { decide_technical: false };
   }
+  const kind = o.kind;
+  if (kind !== undefined && kind !== null) {
+    if (typeof kind !== "string") throw bad("kind must be text");
+    const k = kind.trim();
+    if (k !== "" && k !== "code" && k !== "skill-library") throw bad('kind must be "code" or "skill-library"');
+    if (k === "skill-library") {
+      if (out.testCommand || out.developBranch || out.releaseRecipe) throw bad("a skill library has no test command, develop branch or release recipe");
+      out.kind = "skill-library";
+    }
+  }
   return out;
+}
+
+/** For a run's `github_repo`: true only when a record of it exists and every record has `kind: "skill-library"`. Fails closed. */
+export function skillLibraryFor(githubRepo: string, records: readonly { url: string; settings?: RepoSettings }[]): boolean {
+  const name = githubRepo.trim();
+  if (!name) return false;
+  const want = githubNameOf(`https://github.com/${name}`);
+  if (want === undefined) return false;
+  const mine = records.filter((r) => githubNameOf(r.url) === want);
+  return mine.length > 0 && mine.every((r) => r.settings?.kind === "skill-library");
 }
 
 /** Whether the Foundry may decide technical questions itself for these settings: on unless switched off. */

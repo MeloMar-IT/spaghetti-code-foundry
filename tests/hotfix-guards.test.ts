@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
-import { grantPush, hotfixState, isShippedFlow, protectedBranchEnv, pushAllowEnv, selfBuild, selfContains } from "../src/engine/guards.js";
-import { runFlow } from "../src/engine/runner.js";
+import { grantPush, hotfixState, isShippedFlow, protectedBranchEnv, pushAllowEnv, selfBuild, selfContains, skillPublishState } from "../src/engine/guards.js";
+import { runFlow, SKILL_WRITE_REFUSED, skillLibraryRun, skillWriteRefused } from "../src/engine/runner.js";
 import { parseFlow } from "../src/flow/load.js";
 import type { Flow } from "../src/flow/schema.js";
 
@@ -266,5 +266,52 @@ describe("selfContains", () => {
     git(dir, "replace", "--graft", tip, git(dir, "rev-parse", `${tip}^`), side); // the history becomes whole
     expect(first).toBeTruthy();
     expect(selfContains(side, dir)).toBe(true);
+  });
+});
+
+describe("the skill-write push exception", () => {
+  const skillFlow = (): Flow => parseFlow(readFileSync("flows/skill-write.yaml", "utf8"), "flows/skill-write.yaml");
+  const vars = { main_branch: "main" };
+
+  it("skillPublishState is on only for the shipped skill-write flow in a skill library", () => {
+    expect(skillPublishState(skillFlow(), true)).toBe("on");
+    expect(skillPublishState(JSON.parse(JSON.stringify(skillFlow())) as Flow, true)).toBe("on");
+    expect(skillPublishState(skillFlow(), false)).toBe("other");
+    expect(skillPublishState(shipped(), true)).toBe("other");
+    const changed = skillFlow();
+    (changed.steps.find((s) => s.id === "publish") as { run: string }).run += "\necho more";
+    expect(skillPublishState(changed, true)).toBe("other");
+    const renamed = skillFlow();
+    renamed.name = "skill-write-2";
+    expect(skillPublishState(renamed, true)).toBe("other");
+  });
+
+  it("pushAllowEnv grants publish at the top level only, and keeps the hotfix rules", () => {
+    expect(pushAllowEnv({ id: "publish" }, 0, vars, "off", "on")).toEqual({ FACTORY_PUSH_ALLOW: "main" });
+    expect(pushAllowEnv({ id: "publish" }, 1, vars, "off", "on")).toEqual({});
+    expect(pushAllowEnv({ id: "publish" }, 0, vars, "off", "other")).toEqual({});
+    expect(pushAllowEnv({ id: "publish" }, 0, vars, "off")).toEqual({});
+    expect(pushAllowEnv({ id: "publish" }, 0, vars, "on")).toEqual({});
+    expect(pushAllowEnv({ id: "report" }, 0, vars, "off", "on")).toEqual({});
+    expect(pushAllowEnv({ id: "publish" }, 0, { main_branch: "ma*" }, "off", "on")).toEqual({});
+    expect(pushAllowEnv({ id: "push_main" }, 0, vars, "on", "other")).toEqual({ FACTORY_PUSH_ALLOW: "main" });
+    expect(pushAllowEnv({ id: "push_main" }, 0, vars, "off", "on")).toEqual({});
+  });
+
+  it("refuses a user's run and lets a run without an owner go", () => {
+    expect(skillWriteRefused("skill-write", "some-user-id")).toBe(SKILL_WRITE_REFUSED);
+    expect(skillWriteRefused("skill-write", undefined)).toBeUndefined();
+    expect(skillWriteRefused("issue-gitflow", "some-user-id")).toBeUndefined();
+    expect(SKILL_WRITE_REFUSED).toMatch(/only an admin/);
+  });
+
+  it("skillLibraryRun fails closed", () => {
+    const lib = [{ url: "https://github.com/o/skills", settings: { kind: "skill-library" as const } }];
+    expect(skillLibraryRun("o/skills", undefined, () => lib)).toBe(true);
+    expect(skillLibraryRun("o/skills", "some-user-id", () => lib)).toBe(false);
+    expect(skillLibraryRun("o/skills", undefined, () => [...lib, { url: "https://github.com/o/skills.git", settings: { mainBranch: "main" } }])).toBe(false);
+    expect(skillLibraryRun("o/other", undefined, () => lib)).toBe(false);
+    expect(skillLibraryRun(undefined, undefined, () => lib)).toBe(false);
+    expect(skillLibraryRun("o/skills", undefined, () => { throw new Error("broken"); })).toBe(false);
   });
 });

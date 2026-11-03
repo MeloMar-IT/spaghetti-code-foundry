@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+// Checks the skill a `skill-write` run wrote. Usage: skill-check <skill-name> <base-sha>, run in the clone.
+// Prints "PROBLEM <text>" and "NOTE <text>" lines, then "CHECK: ok" or "CHECK: failed" (exit 0 for both; exit 2: the check itself broke).
+// It compares the working tree and HEAD with the base commit, so a change the writer committed counts too. No text of a file is printed.
+// The rules are in dist/skill-eval/write-check.js (build first).
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+
+const [name, base] = process.argv.slice(2);
+if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(name ?? "") || (name ?? "").length > 64 || !/^[0-9a-f]{40}$/.test(base ?? "")) {
+  console.log("PROBLEM the skill name or the base commit is not valid");
+  console.log("CHECK: failed");
+  process.exit(0);
+}
+
+const git = (...args) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
+const lines = (s) => s.split("\n").filter(Boolean);
+
+try {
+  const { checkSkillFolder, CHANGELOG_PATHS } = await import(new URL("../dist/skill-eval/write-check.js", import.meta.url).href);
+  // `--no-renames`: a rename is a delete and an add, so the old path outside the folder counts too
+  const changed = new Set(git("diff", "--name-only", "--no-renames", base).split("\n").filter(Boolean));
+  for (const p of lines(git("ls-files", "--others", "--exclude-standard"))) changed.add(p);
+  const ignored = lines(git("ls-files", "--others", "--ignored", "--exclude-standard", "--", `skills/${name}`));
+  const changelogs = CHANGELOG_PATHS.filter((p) => {
+    try {
+      git("cat-file", "-e", `${base}:${p}`);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  const { problems, notes } = checkSkillFolder(join(process.cwd(), "skills", name), name, { changed: [...changed].sort(), changelogs, ignored });
+  for (const p of problems) console.log(`PROBLEM ${p.replace(/\s+/g, " ")}`);
+  for (const n of notes) console.log(`NOTE ${n.replace(/\s+/g, " ")}`);
+  console.log(problems.length ? "CHECK: failed" : "CHECK: ok");
+} catch (e) {
+  console.error(`skill-check: ${e instanceof Error ? e.message.split("\n")[0] : "failed"}`);
+  process.exit(2);
+}
