@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ConfigSchema, parseConfigText } from "../src/config.js";
 import { ZodError } from "zod";
-import { configIssues, configView, storedConfigProblem, withStoredWebhook } from "../src/server/config-view.js";
+import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredWebhook } from "../src/server/config-view.js";
 
 describe("configIssues", () => {
   const issuesOf = (input: unknown) => {
@@ -34,6 +34,25 @@ describe("configView", () => {
     expect(JSON.stringify(set)).not.toContain("SECRET-HOOK");
     expect(set.notify.slack_webhook_set).toBe(true);
     expect(configView(ConfigSchema.parse({})).notify.slack_webhook_set).toBe(false);
+  });
+});
+
+describe("plugins in the settings", () => {
+  const plugins = [{ module: "acme", options: { token: "SECRET-OPT" } }];
+  it("configView leaves them out, options included", () => {
+    const v = configView(ConfigSchema.parse({ plugins }));
+    expect("plugins" in v).toBe(false);
+    expect(JSON.stringify(v)).not.toContain("SECRET-OPT");
+  });
+  it("withStoredPlugins puts the stored list back without changing the body", () => {
+    const body = { concurrency: 2 };
+    expect(withStoredPlugins(body, plugins)).toEqual({ concurrency: 2, plugins });
+    expect(body).toEqual({ concurrency: 2 });
+  });
+  it("returns a non-object body and an empty list unchanged", () => {
+    expect(withStoredPlugins("x", plugins)).toBe("x");
+    const body = { concurrency: 2 };
+    expect(withStoredPlugins(body, [])).toBe(body);
   });
 });
 

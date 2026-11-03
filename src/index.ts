@@ -1,6 +1,6 @@
 // The only public entry point of the package. See docs/PLUGIN_API.md.
 // Names are re-exported one by one: adding or removing one changes the public API.
-export const PLUGIN_API_VERSION = "0.1";
+export { PLUGIN_API_VERSION } from "./plugins/load.js";
 export { startServer } from "./server/server.js";
 export type { ServerOptions } from "./server/server.js";
 export { ConfigSchema, ConfigIssuesError, loadConfig, parseConfigText } from "./config.js";

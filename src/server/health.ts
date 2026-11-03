@@ -12,6 +12,7 @@ import { cachedSkillRegistry } from "../skills/registry.js";
 import { join } from "node:path";
 import { FACTORY_HOME } from "../flow/load.js";
 import { changesToday } from "../ops/governor.js";
+import { pluginProblems, readFilePlugins, type PluginProblem } from "../plugins/load.js";
 import { send } from "./http.js";
 import { nextFor, watcherProblem } from "./next.js";
 import { lateChores } from "./late-chores.js";
@@ -38,11 +39,14 @@ export interface Health {
   skillProblemsMore?: number;
   /** How often the load governor changed the limits today (local time). A count only. Not a problem: it does not change `ok`. Absent when 0. */
   governor?: { changesToday: number };
+  /** Problems with plugins: labels and reasons, never paths or options. At most 20 are listed. Absent when there are none. */
+  pluginProblems?: PluginProblem[];
 }
 
 const RUNS = { label: "Runs page", url: "#/runs" };
 const MAX_FAILURES = 5;
 const MAX_SKILL_PROBLEMS = 20;
+const MAX_PLUGIN_PROBLEMS = 20;
 /** "11:52", "3:50pm (Europe/Amsterdam)", "the next check": the only shapes of `until` a limit may carry. */
 const RESET_TIME = /^(?:the next check|\d{1,2}(?::\d{2})?\s?(?:am|pm)?(?: \([A-Za-z_]+(?:\/[A-Za-z_+-]+)*\))?)$/i;
 const ended = (r: RunSummary) => Date.parse(r.finishedAt ?? r.startedAt);
@@ -167,7 +171,8 @@ export function health(ctx: ApiContext, now = new Date()): Health {
   const skillProblems = skillAll.slice(0, MAX_SKILL_PROBLEMS);
 
   const list = problems.map(safe);
-  const count = list.length + skillAll.length;
+  const pluginAll = ctx.plugins ? pluginProblems(ctx.plugins, readFilePlugins()) : [];
+  const count = list.length + skillAll.length + pluginAll.length;
   const self = ctx.selfUpdate?.view();
   const monitorFindings = findingsCount(cfg.monitor.report_to);
   const governorChanges = changesToday(join(process.env.FACTORY_HOME ?? FACTORY_HOME, "governor"), now);
@@ -178,6 +183,7 @@ export function health(ctx: ApiContext, now = new Date()): Health {
     repos,
     ...(skillProblems.length ? { skillProblems } : {}),
     ...(skillAll.length > skillProblems.length ? { skillProblemsMore: skillAll.length - skillProblems.length } : {}),
+    ...(pluginAll.length ? { pluginProblems: pluginAll.slice(0, MAX_PLUGIN_PROBLEMS) } : {}),
     ...(monitorFindings ? { monitorFindings } : {}),
     ...(governorChanges > 0 ? { governor: { changesToday: governorChanges } } : {}),
     ...(self?.version ? { version: self.version } : {}),

@@ -75,6 +75,12 @@ describe("renderHealth", () => {
     expect(none.textContent).toBe("All good");
   });
 
+  it("lists plugin problems with the plugin and the reason", () => {
+    const e = el();
+    ui.renderHealth(e, { ...good, ok: false, summary: "1 problem", pluginProblems: [{ plugin: "config.yaml", reason: "lists other plugins" }] });
+    expect(e.all("li").map((li: any) => li.textContent)).toEqual(["Plugin config.yaml: lists other plugins"]);
+  });
+
   it("lists skill problems with the label and reason, and counts the rest", () => {
     const e = el();
     ui.renderHealth(e, { ...good, ok: false, summary: "3 problems", skillProblems: [{ source: "admin", root: "skills.roots[0]", package: "x", reason: "bad version" }, { source: "admin", root: "built-in", reason: "ENOENT" }], skillProblemsMore: 1 });

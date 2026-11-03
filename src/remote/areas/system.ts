@@ -1,6 +1,21 @@
 import { cols, fields, table } from "../render.js";
 import type { Cmd } from "../spec.js";
 
+interface PluginsAnswer {
+  plugins?: { label: string; version: string; module: string; registered?: { point: string; name: string }[] }[];
+  problems?: { plugin: string; reason: string }[];
+}
+
+function pluginsText(d: unknown): string {
+  const a = (d ?? {}) as PluginsAnswer;
+  const rows = (a.plugins ?? []).map((p) => ({
+    plugin: p.label, version: p.version, module: p.module,
+    registered: p.registered?.length ? p.registered.map((x) => `${x.point} ${x.name}`).join(", ") : "nothing yet",
+  }));
+  const problems = (a.problems ?? []).map((p) => `problem: ${p.plugin}: ${p.reason}`);
+  return [table(rows, cols("plugin", "version", "registered", "module"), "no plugins loaded"), ...problems].join("\n");
+}
+
 /** The server itself and its watchers: the template for the other areas. */
 export const SYSTEM: Cmd[] = [
   { area: "server", action: "info", method: "GET", path: "info", show: (d) => fields(d) },
@@ -11,5 +26,6 @@ export const SYSTEM: Cmd[] = [
     flags: { "older-than": { type: "string", as: "number", key: "olderThanDays", help: "only runs older than this many days (default 7)" }, "evidence-older-than": { type: "string", as: "number", key: "evidenceOlderThanDays", help: "also remove the evidence of cleaned runs older than this many days" }, purge: { type: "boolean", help: "remove the runs too, not only their workspaces" }, "include-paused": { type: "boolean", help: "also clean paused runs" }, "dry-run": { type: "boolean", help: "only say what would be removed" } } },
   { area: "watchers", action: "list", method: "GET", path: "watchers",
     show: (d) => table(Array.isArray(d) ? d : ((d as { watchers?: unknown[] })?.watchers ?? []), [...cols("id", "source", "flow", "every", "enabled"), { key: "github_repo", head: "repository" }], "no watchers") },
+  { area: "plugins", action: "list", method: "GET", path: "plugins", help: "the plugins loaded at server start, in order", show: pluginsText },
   { area: "watchers", action: "tick", method: "POST", path: "watchers/:id/tick", args: ["id"], help: "run a watcher's check now" },
 ];

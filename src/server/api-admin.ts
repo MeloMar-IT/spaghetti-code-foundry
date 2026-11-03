@@ -1,7 +1,8 @@
 import { agentStatuses, providerStatuses, testSpec } from "../agents/health.js";
 import { auditActions } from "../auth/audit.js";
 import { changeDetail, configChanges } from "../auth/audit-changes.js";
-import { configIssues, configView, storedConfigProblem, withStoredWebhook } from "./config-view.js";
+import { emptyRegistry, pluginsView, readFilePlugins } from "../plugins/load.js";
+import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredWebhook } from "./config-view.js";
 import { hasAdmin } from "../auth/users.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -101,6 +102,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, { key, removed }), true;
   }
 
+  if (seg[0] === "plugins" && !seg[1] && method === "GET") {
+    return send(res, 200, pluginsView(ctx.plugins ?? emptyRegistry(), readFilePlugins())), true;
+  }
+
   if (seg[0] === "config") {
     if (method === "GET") {
       const text = readConfigText();
@@ -121,7 +126,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       } catch (e) {
         throw new HttpError(400, `invalid config: ${storedConfigProblem(e)}`);
       }
-      const merged = withStoredWebhook(body, before.notify.slack_webhook);
+      if (typeof body === "object" && body !== null && Object.hasOwn(body, "plugins")) {
+        throw new HttpError(400, "plugins are set in config.yaml only: edit the file, then restart the server");
+      }
+      const merged = withStoredPlugins(withStoredWebhook(body, before.notify.slack_webhook), before.plugins);
       try {
         // Do not let a change shut out the browser that sends it (or the proxy it comes through).
         const parsed = ConfigSchema.parse(merged);

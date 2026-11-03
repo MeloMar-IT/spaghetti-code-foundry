@@ -126,6 +126,7 @@ const no = (path: string, admin: number, body?: unknown): Example => ({ path, bo
 const EXAMPLES: Record<string, Example> = {
   "GET info": no("info", 200),
   "GET config": no("config", 200),
+  "GET plugins": no("plugins", 200),
   "PUT config": no("config", 400, { concurrency: 0 }),
   "GET settings": no("settings", 200),
   "POST settings/reset": no("settings/reset", 400, {}),

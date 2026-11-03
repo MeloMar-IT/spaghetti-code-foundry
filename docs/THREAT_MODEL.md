@@ -180,6 +180,31 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 - Before every Claude coder session the locked skills are checked again against the current `skills.tools` and the real step. A skill that needs a shell is not loaded into a step without one. A skill the policy no longer allows, or a locked version with `network` that the gate never saw, refuses the session (under `degrade` it is left out with its dependants). `allowed-tools` in a SKILL.md is never passed on. The step record has `skills.grant`.
 - The grant is an estimate from the mode, rule names and sandbox. It decides only which skills are loaded. The repository's `.claude/settings.json` can approve more tools than the record lists. Codex sessions and reviewer steps are not checked.
 
+## Plugins from config
+
+**Trust.** A plugin is code that runs inside the server process with the server's rights, so the
+trust is that of whoever can edit `config.yaml`. Admins cannot add one from the browser or the API:
+`PUT /api/config` refuses a `plugins` key and keeps the stored list, and the settings page only shows
+it. The list is read once at start.
+
+**Protected by.**
+- A relative path, a URL and a built-in Node module are refused before anything is imported.
+- The real path (symlinks followed) of a module must not be inside a runs folder or a repository the
+  Foundry works on, so a run's own files cannot be loaded as a plugin.
+- A plugin that fails, or does not finish `register` in 30 s, stops the start with a message that
+  names it. No watcher or queue starts first.
+- `api.options` is a frozen copy. The options and the module path are not in `GET /api/plugins`,
+  `scf plugins` or the health line; the health line gets labels and reasons only.
+
+**Limits.**
+- No sandbox and no digest pin: a plugin has the server's full access, and a package it imports can
+  change on disk. The check is at start only; a change takes effect at the next restart.
+- A plugin can read the server's environment and the data folder, which holds the stored
+  credentials. Do not add a plugin you have not reviewed.
+- A timed-out `import` or `register` cannot be cancelled; it keeps running until the process exits.
+- The check that the module is outside the runs folders compares real paths of the module file, not
+  of its dependencies: a plugin may import code from anywhere.
+
 ## Open findings
 
 Issues are filed without the label `Factory_go`. In this build `gh` was not available, so the

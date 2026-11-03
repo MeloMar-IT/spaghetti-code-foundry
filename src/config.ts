@@ -11,6 +11,7 @@ import { FACTORY_HOME } from "./flow/load.js";
 import { BASELINE_POLICY_ID, BASELINE_RULE_IDS } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { ContextSettingsSchema } from "./context/settings.js";
+import { MAX_PLUGINS, pluginModuleProblem } from "./plugins/load.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { CANONICAL_LIMITS } from "./skills/canonical-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
@@ -358,6 +359,19 @@ const deliveryNames = () =>
     )
     .max(500)
     .refine((l) => new Set(l).size === l.length, "names the same entry twice");
+
+const PluginEntrySchema = z
+  .object({
+    /** A package name or an absolute path. */
+    module: z.string().trim().min(1).max(1024).superRefine((m, ctx) => {
+      const problem = pluginModuleProblem(m);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
+    /** Handed to the plugin as `api.options`. Never shown in the API. */
+    options: z.record(z.string(), z.unknown()).default({}),
+  })
+  .strict();
+export type PluginConfig = z.infer<typeof PluginEntrySchema>;
 
 export const ConfigSchema = z
   .object({
@@ -774,6 +788,12 @@ export const ConfigSchema = z
     telemetry: TelemetrySchema.prefault({}),
     /** What a run is given as context: the limits and the privacy of its sources (read from #696 part 2 on). */
     context: ContextSettingsSchema.prefault({}),
+    /** Plugins: code loaded once when the server starts, in this order. Set in config.yaml only; applies after a restart. */
+    plugins: z
+      .array(PluginEntrySchema)
+      .max(MAX_PLUGINS)
+      .refine((l) => new Set(l.map((p) => p.module)).size === l.length, "names the same plugin twice")
+      .default([]),
   })
   .strict()
   .superRefine((c, ctx) => {
