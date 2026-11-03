@@ -1,0 +1,74 @@
+name: Publish
+
+# Publishes @melomar-it/scf-core to GitHub Packages when a v*.*.* tag is pushed.
+# The notes job is separate, so a failed notes step can be re-run without publishing again.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+concurrency:
+  group: publish-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api: ${{ steps.check.outputs.api }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@melomar-it"
+      - run: npm ci --no-audit --no-fund
+      - name: The tag must match the version in package.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: test "v$(node -p 'require("./package.json").version')" = "$TAG"
+      - run: npm run build
+      - name: Public API test
+        run: npx vitest run tests/public-api.test.ts
+      - name: Import check
+        id: check
+        run: |
+          node --input-type=module -e '
+            import { appendFileSync } from "node:fs";
+            const m = await import("@melomar-it/scf-core");
+            if (typeof m.runFlow !== "function") throw new Error("runFlow missing");
+            let code = "";
+            try { await import("@melomar-it/scf-core/dist/config.js"); } catch (e) { code = e.code; }
+            if (code !== "ERR_PACKAGE_PATH_NOT_EXPORTED") throw new Error("deep import was not blocked");
+            appendFileSync(process.env.GITHUB_OUTPUT, `api=${m.PLUGIN_API_VERSION}\n`);
+          '
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  notes:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      API: ${{ needs.publish.outputs.api }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Add the plugin API version to the release notes
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release view "$TAG" --json body --jq .body | node scripts/release-notes.mjs "$API" > notes.md
+            gh release edit "$TAG" --notes-file notes.md
+          else
+            : | node scripts/release-notes.mjs "$API" > notes.md
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file notes.md
+          fi

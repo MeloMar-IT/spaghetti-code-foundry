@@ -244,6 +244,21 @@ Both pages refresh every 30 seconds and use the same lists as Home (repositories
 
 Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". Local projects (without GitHub) show "Nothing yet" for now.
 
+### Use the Foundry as a package
+
+If you build your own tool on the Foundry, depend on a release instead of a copy of the source.
+The package is `@melomar-it/scf-core` on GitHub Packages. Point the `@melomar-it` scope at
+`https://npm.pkg.github.com` in `.npmrc`, sign in with a token that can read packages, then:
+
+```bash
+npm install @melomar-it/scf-core
+```
+
+Import only from the package name. The entry point exports the server, the configuration, flow
+loading and running, and the types they use. A deep import into `dist/` is refused. The list of
+names, the plugin API version and the rules for version numbers are in [PLUGIN_API.md](PLUGIN_API.md).
+The `scf` and `factory` commands work from a git checkout as before.
+
 ---
 
 ## 2. Run a flow
