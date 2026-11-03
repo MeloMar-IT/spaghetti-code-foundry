@@ -20,7 +20,7 @@ function setup() {
   const file = join(folder, "1-story.md");
   writeFileSync(file, formatStoryFile({ number: 1, title: "S", state: "open", kind: "story", labels: [], dependsOn: [], body: "", comments: [] }));
   const lock = join(folder, LOCK_FILE);
-  const store = (o = {}) => new LocalStore(d, "local/x", { lockPollMs: 5, ...o });
+  const store = (o = {}) => new LocalStore(d, "local/x", { lockPollMs: 5, commit: false, ...o });
   const bodies = () => readFileSync(file, "utf8");
   return { d, folder, file, lock, store, bodies };
 }

@@ -18,7 +18,7 @@ const proj = (): string => {
 };
 const NOW = new Date("2026-01-01T00:00:00.000Z");
 const folder = (d: string): string => join(d, ".scf", "stories");
-const store = (d: string, o = {}): LocalStore => new LocalStore(d, "local/x", { lockPollMs: 5, now: () => NOW, ...o });
+const store = (d: string, o = {}): LocalStore => new LocalStore(d, "local/x", { lockPollMs: 5, now: () => NOW, commit: false, ...o });
 const story = (n: number, o: Partial<FileStory> = {}): FileStory => ({
   number: n, title: `Story ${n}`, state: "open", kind: "story", labels: [], dependsOn: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", body: "b", comments: [], ...o,
 });
@@ -32,7 +32,7 @@ const read = (d: string, name: string): string => readFileSync(join(folder(d), n
 const nameOf = (d: string, n: number): string => readdirSync(folder(d)).find((f) => f.startsWith(`${n}-`))!;
 const leftovers = (d: string): string[] => readdirSync(folder(d)).filter((f) => !/^\d+-.*\.md$/.test(f) && f !== "next-number");
 
-storyStoreContract("LocalStore", () => ({ store: new LocalStore(proj(), "local/x"), login: "Foundry" }));
+storyStoreContract("LocalStore", () => ({ store: new LocalStore(proj(), "local/x", { commit: false }), login: "Foundry" }));
 
 describe("LocalStore numbering", () => {
   it("counts up from 1 and never gives a number back", async () => {
