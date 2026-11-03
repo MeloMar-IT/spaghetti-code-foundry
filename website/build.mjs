@@ -304,7 +304,7 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
       .join("");
     const tpl = readFileSync(join(CONTENT, "home.html"), "utf8");
     const body = tpl.replace("{{faq}}", faqHtml).replace("{{howto}}", howCards).replace(/{{repo}}/g, SITE.repo);
-    const description = "Spaghetti Code Foundry is an open-source AI coding factory on your own machine: label a GitHub issue and it plans, codes, tests, reviews and merges.";
+    const description = "Spaghetti Code Foundry is a source-available AI coding factory on your own machine: label a GitHub issue and it plans, codes, tests, reviews and merges.";
     add({
       url: "/",
       kind: "home",
@@ -325,7 +325,7 @@ export function build({ out = join(HERE, "dist"), quiet = false, gitDates = true
           description,
           url: `${SITE.url}/`,
           downloadUrl: SITE.repo,
-          license: "https://opensource.org/licenses/MIT",
+          license: "https://fsl.software/",
           isAccessibleForFree: true,
           offers: { "@type": "Offer", price: "0", priceCurrency: "EUR" },
           screenshot: `${SITE.url}${SITE.image}`,
@@ -401,7 +401,7 @@ ${listed
   writeFileSync(join(out, "robots.txt"), `User-agent: *\nAllow: /\n\nSitemap: ${SITE.url}/sitemap.xml\n`);
   writeFileSync(
     join(out, "llms.txt"),
-    `# ${SITE.name}\n\n> ${SITE.tagline}. Open source (MIT), runs on macOS with Claude Code and the Codex CLI.\n\n## Docs\n\n${listed
+    `# ${SITE.name}\n\n> ${SITE.tagline}. Source available (FSL-1.1-MIT, MIT after two years), runs on macOS with Claude Code and the Codex CLI.\n\n## Docs\n\n${listed
       .filter((p) => p.url !== "/")
       .map((p) => `- [${p.title}](${SITE.url}${p.url}): ${p.description}`)
       .join("\n")}\n`,

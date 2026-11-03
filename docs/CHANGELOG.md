@@ -4,6 +4,7 @@ Changes that are merged but not yet in a release go under **Unreleased**. Newest
 
 ## Unreleased
 
+- **Licence change: MIT → Functional Source License 1.1, MIT future license (FSL-1.1-MIT).** From this version on, you may use, change and self-host the Foundry for any purpose except offering it as a competing commercial service, and each version becomes MIT two years after its release. Versions released before this change stay under MIT. `LICENSE`, `package.json`, the README and the website (home, FAQ, footer, structured data, `llms.txt`) say so.
 - Hotfix: a busy develop no longer makes new runs fail. When `main` had a commit that `develop` lacked, `feature_branch` waited up to an hour for the develop lock to merge `main` first, but the step's own limit is 40 minutes, so every new run timed out while one run held develop for hours testing its merge. The step now waits at most 5 minutes (`FACTORY_DEVELOP_SYNC_WAIT_SEC`), then starts the feature branch from develop as it is and logs `note: develop is busy …`; the next run that finds develop free merges `main`. The process tests of the run priority now give every process a time limit and kill its whole group, so a child that stalls at background priority on a busy machine is no longer left behind.
   - **Code.** `scripts/build-flows.mjs` (`feature_branch`), `flows/issue-gitflow.yaml` (generated).
   - **Tests.** `tests/gitflow.test.ts` (a busy develop: the branch starts, the run finishes, main is not merged by it), `tests/run-priority.test.ts` (limits and group kill).

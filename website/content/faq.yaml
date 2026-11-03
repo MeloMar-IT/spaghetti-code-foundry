@@ -1,7 +1,7 @@
 # Questions on the home page (also published as FAQPage structured data). Answers are Markdown.
 - q: What is Spaghetti Code Foundry?
   a: |
-    An open-source AI coding factory that runs on your own machine. It runs **flows**: pipelines of steps that code,
+    A source-available AI coding factory that runs on your own machine. It runs **flows**: pipelines of steps that code,
     test, review and ship changes with AI coding agents. Its main use: put one label on a GitHub issue, and the
     Foundry asks the open questions, plans, codes, tests, reviews and merges the story.
 - q: Which AI agents and models does it use?
@@ -29,7 +29,9 @@
     can write one for you from the [flow format reference](/flow-format/). See [how to write a flow](/how-to/write-a-flow/).
 - q: What does it cost?
   a: |
-    The Foundry itself is free and open source under the MIT licence. You pay for the AI subscriptions or API usage
+    The Foundry itself is free to use and self-host under the Functional Source License (FSL-1.1-MIT): you may
+    use and change it for anything except a competing commercial service, and each version becomes MIT two years
+    after its release. You pay for the AI subscriptions or API usage
     of the agents and models you choose. The dashboard shows what each run cost. See [controlling costs](/how-to/costs/).
 - q: Is it only for GitHub?
   a: |

@@ -53,10 +53,10 @@ function footer() {
   return `<footer class="site-footer">
   <div class="wrap footer-grid">
     <div><a class="brand" href="/"><span class="logo" aria-hidden="true">◆</span> ${e(SITE.name)}</a>
-      <p>An open-source AI coding factory that runs on your own machine. MIT licence.</p></div>
+      <p>A source-available AI coding factory that runs on your own machine. Free to self-host (FSL-1.1-MIT).</p></div>
     <div><h2>Learn</h2><a href="/how-to/install/">Install</a><a href="/how-to/">How-to guides</a><a href="/guide/">User guide</a><a href="/flow-format/">Flow format</a></div>
     <div><h2>Inside</h2><a href="/features/">Features</a><a href="/design/">Design</a><a href="/security/">Security</a><a href="/lessons-learned/">Lessons learned</a></div>
-    <div><h2>Project</h2><a href="${SITE.repo}" rel="noopener">GitHub</a><a href="${SITE.repo}/issues" rel="noopener">Issues</a><a href="${SITE.repo}/blob/main/docs/CHANGELOG.md" rel="noopener">Changelog</a><a href="${SITE.repo}/blob/main/LICENSE" rel="noopener">MIT licence</a></div>
+    <div><h2>Project</h2><a href="${SITE.repo}" rel="noopener">GitHub</a><a href="${SITE.repo}/issues" rel="noopener">Issues</a><a href="${SITE.repo}/blob/main/docs/CHANGELOG.md" rel="noopener">Changelog</a><a href="${SITE.repo}/blob/main/LICENSE" rel="noopener">Licence (FSL)</a></div>
   </div>
 </footer>`;
 }

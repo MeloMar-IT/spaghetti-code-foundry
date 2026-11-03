@@ -2,7 +2,7 @@
   "name": "spaghetti-code-foundry",
   "version": "0.1.0",
   "description": "AI coding factory: run custom YAML flows of headless Claude Code CLI and shell steps",
-  "license": "MIT",
+  "license": "FSL-1.1-MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MeloMar-IT/spaghetti-code-foundry.git"

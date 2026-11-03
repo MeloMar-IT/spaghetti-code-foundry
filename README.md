@@ -149,4 +149,6 @@ for the rules coding agents follow in this repository.
 
 ## License
 
-[MIT](LICENSE)
+[Functional Source License 1.1, MIT future license (FSL-1.1-MIT)](LICENSE). You may use, change and self-host
+the Foundry for any purpose except offering it as a competing commercial service. Each version becomes MIT
+two years after its release.
