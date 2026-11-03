@@ -1,0 +1,16 @@
+/* pages/simple.css — the Simple view: My projects and the project page (ui/simple.js).
+   Belongs here: the project cards, the groups of work and the big buttons. Class names start with simple-.
+   Does not belong here: rules for other pages and shared component rules. */
+.simple { display: grid; gap: var(--stack-gap); }
+.simple-projects, .simple-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--stack-gap); }
+.simple-card { display: grid; gap: var(--space-sm); padding: var(--card-pad); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.simple-card p { margin: 0; }
+.simple-state { font-weight: 600; }
+.simple-progress { font-size: var(--text-small); color: var(--muted); }
+.simple-group, .simple-todo, .simple-making { display: grid; gap: var(--space-md); }
+.simple-big { display: inline-flex; align-items: center; justify-content: center; min-height: var(--size-touch); padding: var(--space-md) var(--space-xl); text-align: center; }
+.simple-actions { display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.simple-back { min-height: var(--size-touch); display: inline-flex; align-items: center; }
+@media (max-width: 767px) {
+  .simple-big { width: 100%; }
+}

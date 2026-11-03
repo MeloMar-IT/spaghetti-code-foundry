@@ -89,6 +89,7 @@ describe("user router", () => {
     "/context.js": contextStub(),
     "/home.js": never,
     "/setup-check.js": never,
+    "/simple.js": { renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn() },
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
     "/view-mode.js": real.viewMode,
@@ -109,10 +110,56 @@ describe("user router", () => {
       expect(g.location.hash).toBe("#/epics");
     });
 
-    it("draws the pages Simple has", async () => {
-      const runs = runsStub();
-      await loadRouter("user/app.js", deps({ ...as({ id: "u", role: "user", view: "simple" }), "/user/runs.js": runs }));
-      expect(runs.renderMyRuns).toHaveBeenCalled();
+    // A getter: `real` is only loaded when a test runs.
+    const simpleMe = { get "/auth.js"() { return as({ id: "u", role: "user", view: "simple" })["/auth.js"]; } };
+    const simpleStub = () => ({ renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn() });
+
+    it("draws My projects for Simple #/home, and the project page for #/repos/<id>", async () => {
+      setup("#/home");
+      const stub = simpleStub();
+      const renderHome = vi.fn();
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub, "/home.js": { renderHome } }));
+      expect(stub.renderSimpleHome).toHaveBeenCalled();
+      expect(renderHome).not.toHaveBeenCalled();
+      setup("#/repos/abc");
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub }));
+      expect(stub.renderSimpleProject).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: "abc" }));
+    });
+
+    it("sends Simple from the bare repository list and from unknown pages to #/home", async () => {
+      for (const at of ["#/repos", "#/settings"]) {
+        setup(at);
+        const stub = simpleStub();
+        await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub }));
+        expect(g.location.hash).toBe("#/home");
+        expect(stub.renderSimpleHome).toHaveBeenCalled();
+      }
+    });
+
+    it("offers the Advanced view for the pages Simple dropped", async () => {
+      for (const at of ["#/runs", "#/start", "#/epics", "#/refinement"]) {
+        setup(at);
+        await loadRouter("user/app.js", deps({ ...simpleMe, "/user/runs.js": runsStub() }));
+        expect(main().textContent, at).toContain("Open this in the Advanced view");
+      }
+    });
+
+    it("still draws the old Home in Advanced", async () => {
+      setup("#/home");
+      const renderHome = vi.fn();
+      const stub = simpleStub();
+      await loadRouter("user/app.js", deps({ ...as({ id: "u", role: "user", view: "advanced" }), "/simple.js": stub, "/home.js": { renderHome } }));
+      expect(renderHome).toHaveBeenCalled();
+      expect(stub.renderSimpleHome).not.toHaveBeenCalled();
+    });
+
+    it("never uses the Simple pages in a read-only preview", async () => {
+      setup("#/home");
+      const renderHome = vi.fn();
+      const stub = simpleStub();
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub, "/home.js": { renderHome }, "/view-as.js": { beginView: () => ({ readOnly: true, ready: true }) } }));
+      expect(stub.renderSimpleHome).not.toHaveBeenCalled();
+      expect(renderHome).toHaveBeenCalled();
     });
 
     it("offers the Admin view to an admin on an admin-only page", async () => {

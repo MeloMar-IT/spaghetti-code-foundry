@@ -201,7 +201,7 @@ The top bar has a **View** box with three views. The view changes only what your
 
 | View | Display | What it shows |
 |---|---|---|
-| **Simple** | `/user/` | Home, Start work, My runs and My repositories. Epics and Refinement are not in the sidebar |
+| **Simple** | `/user/` | My projects (Home) and one page per project. Start work, My runs, Epics and Refinement are not in Simple (see [Simple: My projects](#simple-my-projects-and-the-project-page)) |
 | **Advanced** | `/user/` | Everything of the user display: Home, Epics, My runs, My repositories, Refinement and Start work |
 | **Admin** | `/` | The admin display |
 
@@ -220,6 +220,22 @@ The top bar has a **View** box with three views. The view changes only what your
 **Preview.** An admin's preview of a user (**View as user** on the Users page) has no **View** box. It stays in the Advanced display.
 
 **My runs.** An admin in Simple or Advanced sees the runs of all accounts on My runs, as in the admin display. The view does not filter them.
+
+### Simple: My projects and the project page
+
+Simple shows your work per project, in plain words. Home is **My projects**; the links in the menu and the top bar are only **Home**.
+
+**My projects** (`#/home`) has one card per project: its name, a one-line state ("Building 2 things", "Waiting for your answer", "Ready for you to check", "All done") and one big button for the next thing to do. A project with no work yet shows **Open project**. An empty list says there are no projects yet.
+
+**The project page** (`#/repos/<id>`) has three parts, top to bottom:
+
+1. **What you need to do**: the questions to answer and the results to check, each with its button. With nothing waiting it says "Nothing — the Foundry is working."
+2. **What is being made**: four groups, **Planned**, **Being built**, **Ready for you to check** and **Done**. A card shows the title, one sentence about the work and, for **Being built**, the step, e.g. "Step 2 of 4: testing". **Done** shows five cards; **Show all done** shows the rest and stays open while the page refreshes.
+3. The buttons **Ask for a change**, **Try it** and **Make this version final** come with later parts. The page does not show them yet.
+
+Both pages refresh every 30 seconds and use the same lists as Home (repositories, runs and the queue), so Simple shows no data that Home does not. Work that is cancelled, superseded or parked, and epics, are not listed.
+
+Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". Local projects (without GitHub) show "Nothing yet" for now.
 
 ---
 
