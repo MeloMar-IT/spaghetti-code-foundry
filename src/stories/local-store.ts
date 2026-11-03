@@ -3,10 +3,11 @@ import { join } from "node:path";
 import { writeAtomic } from "../engine/policy-store.js";
 import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../github.js";
 import { isStatusComment, sameBody, STATUS_MARKER } from "../github.js";
-import { checkDirs, type Entry, hasLabel, MAX_BYTES, scan, STORIES_DIR, storyNames, toComments, toIssue, toRest, UNREADABLE_TITLE, updatedMs } from "./local-map.js";
-import { type FileStory, formatStoryFile, storyFileName } from "./story-file.js";
-import { pidAlive, type StoryLockOptions, withStoryLock } from "./story-lock.js";
-import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories } from "./store.js";
+import { checkDirs, type Entry, hasLabel, MAX_BYTES, scan, STORIES_DIR, type StoryView, storyNames, toComments, toIssue, toRest, toView, UNREADABLE_TITLE, updatedMs } from "./local-map.js";
+import { checkFields, commentLines, foundryIds, jsonText, pickFields, plainText, ticketText } from "./local-text.js";
+import { type FileStory, formatStoryFile, highestCommentId, nextCommentId, storyFileName, withCommentIds } from "./story-file.js";
+import { pidAlive, type StoryLockOptions, withStoryLock, withStoryLockSync } from "./story-lock.js";
+import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
 import type { CheckRun } from "../delivery/handoff.js";
 
 export { STORIES_DIR, UNREADABLE_TITLE };
@@ -40,6 +41,18 @@ const noChanges = (): never => { throw new Error(NO_CHANGES); };
 const notYet = (name: string): never => { throw new Error(`${name} is not yet available for a local project`); };
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 const desc = (a: Entry, b: Entry): number => b.n - a.n;
+const noCheck = (): void => {};
+type Change<T> = (s: FileStory, now: string) => { story?: FileStory; out: T };
+
+/** The labels after removals (an added label of the same name stays) and the addition. */
+function labelsAfter(labels: string[], add: string | undefined, remove: string[]): string[] {
+  const kept = labels.filter((l) => !remove.some((r) => same(r, l) && !(add && same(add, r))));
+  return add && !kept.some((l) => same(l, add)) ? [...kept, add] : kept;
+}
+const reasonOf = (reason: unknown): "completed" | "not_planned" => {
+  if (reason !== "completed" && reason !== "not planned") throw new Error("not a close reason");
+  return reason === "completed" ? "completed" : "not_planned";
+};
 
 /** Stories kept as files in `<dir>/.scf/stories/`. It has no cache: every call reads the files again. */
 export class LocalStore implements StoryStore {
@@ -158,7 +171,7 @@ export class LocalStore implements StoryStore {
 
   // writes
   /** Reads the story under the lock, lets `change` edit it and saves it in one rename. `change` returns no story when nothing changes. */
-  private async write<T>(issue: number, o: { timeoutMs?: number; deadline?: number }, change: (s: FileStory, now: string) => { story?: FileStory; out: T }): Promise<{ entry: Entry; out: T }> {
+  private async write<T>(issue: number, o: { timeoutMs?: number; deadline?: number }, change: Change<T>): Promise<{ entry: Entry; out: T }> {
     const n = num(issue);
     if (!checkDirs(this.dir, false)) throw new Error(`${STORIES_DIR} does not exist`);
     const left = (): number => (o.deadline === undefined ? Infinity : o.deadline - Date.now());
@@ -166,22 +179,37 @@ export class LocalStore implements StoryStore {
     if (left() <= 0) outOfTime();
     const waitMs = Math.min(this.lockWaitMs, o.timeoutMs ?? Infinity, left());
     try {
-      return await withStoryLock(this.folder, { ...this.lock, waitMs }, (held) => {
-        if (left() <= 0) outOfTime();
-        const e = this.need(this.all(), n);
-        const now = this.now().toISOString();
-        const r = change(structuredClone(e.story), now);
-        if (!r.story) return { entry: e, out: r.out };
-        const story = { ...r.story, updatedAt: now };
-        const text = this.checked(formatStoryFile(story));
-        if (!held()) throw new Error("the lock was lost; try again");
-        writeAtomic(join(this.folder, e.file), text);
-        return { entry: { ...e, story, mtimeMs: Date.parse(now) }, out: r.out };
-      });
+      return await withStoryLock(this.folder, { ...this.lock, waitMs }, (held) => this.applyChange(n, change, held, () => { if (left() <= 0) outOfTime(); }));
     } catch (e) {
       if (/^the stories are locked/.test((e as Error).message) && o.deadline !== undefined && left() <= 0) outOfTime();
       throw e;
     }
+  }
+
+  /** The same write for the synchronous part: it blocks the thread while it waits for the lock. */
+  private writeNow<T>(issue: number, change: Change<T>): { entry: Entry; out: T } {
+    const n = num(issue);
+    if (!checkDirs(this.dir, false)) throw new Error(`${STORIES_DIR} does not exist`);
+    return withStoryLockSync(this.folder, { ...this.lock, waitMs: this.lockWaitMs }, (held) => this.applyChange(n, change, held));
+  }
+
+  /** The body of a write, under the lock. Every comment has an id before `change` sees the story and when it is saved. */
+  private applyChange<T>(n: number, change: Change<T>, held: () => boolean, check: () => void = noCheck): { entry: Entry; out: T } {
+    check();
+    const e = this.need(this.all(), n);
+    const now = this.now().toISOString();
+    const before = structuredClone(e.story);
+    before.comments = withCommentIds(before.comments, before.commentTop);
+    before.commentTop = highestCommentId(before);
+    const r = change(before, now);
+    if (!r.story) return { entry: e, out: r.out };
+    // The high-water mark survives a removed comment: an id that was used is never given out again.
+    const comments = withCommentIds(r.story.comments, r.story.commentTop);
+    const story = { ...r.story, comments, commentTop: highestCommentId({ comments, commentTop: r.story.commentTop }), updatedAt: now };
+    const text = this.checked(formatStoryFile(story));
+    if (!held()) throw new Error("the lock was lost; try again");
+    writeAtomic(join(this.folder, e.file), text);
+    return { entry: { ...e, story, mtimeMs: Date.parse(now) }, out: r.out };
   }
 
   private checked(text: string): string {
@@ -205,38 +233,42 @@ export class LocalStore implements StoryStore {
     if (typeof o.title !== "string" || !o.title.trim()) throw new Error("the story title is empty");
     checkDirs(this.dir, true);
     const wait = Math.min(this.lockWaitMs, timeoutMs ?? Infinity);
+    return withStoryLock(this.folder, { ...this.lock, waitMs: wait }, (held) => this.makeStory(o, held));
+  }
+  private createNow(o: { title: string; body: string; labels: string[] }): RestIssue {
+    if (typeof o.title !== "string" || !o.title.trim()) throw new Error("the story title is empty");
+    checkDirs(this.dir, true);
+    return withStoryLockSync(this.folder, { ...this.lock, waitMs: this.lockWaitMs }, (held) => this.makeStory(o, held));
+  }
+  /** The body of `create`, under the lock. */
+  private makeStory(o: { title: string; body: string; labels: string[] }, held: () => boolean): RestIssue {
     const labels = o.labels.filter((l, i) => o.labels.findIndex((x) => same(x, l)) === i);
-    return withStoryLock(this.folder, { ...this.lock, waitMs: wait }, (held) => {
-      const names = storyNames(this.folder);
-      const n = Math.max(this.nextNumber() ?? 0, Math.max(0, ...names.keys()) + 1, 1);
-      const now = this.now().toISOString();
-      const story: FileStory = { number: n, title: o.title, state: "open", kind: "story", labels, dependsOn: [], createdAt: now, updatedAt: now, body: o.body, comments: [] };
-      const text = this.checked(formatStoryFile(story));
-      const file = storyFileName(n, o.title);
-      if (!held()) throw new Error("the lock was lost; try again");
-      // The number goes first: a crash leaves a gap, never a reused number.
-      writeAtomic(join(this.folder, NEXT_NUMBER_FILE), `${n + 1}\n`);
-      writeAtomic(join(this.folder, file), text);
-      return toRest({ ok: true, n, file, rel: `${STORIES_DIR}/${file}`, mtimeMs: Date.parse(now), story });
-    });
+    const names = storyNames(this.folder);
+    const n = Math.max(this.nextNumber() ?? 0, Math.max(0, ...names.keys()) + 1, 1);
+    const now = this.now().toISOString();
+    const story: FileStory = { number: n, title: o.title, state: "open", kind: "story", labels, dependsOn: [], createdAt: now, updatedAt: now, body: o.body, comments: [] };
+    const text = this.checked(formatStoryFile(story));
+    const file = storyFileName(n, o.title);
+    if (!held()) throw new Error("the lock was lost; try again");
+    // The number goes first: a crash leaves a gap, never a reused number.
+    writeAtomic(join(this.folder, NEXT_NUMBER_FILE), `${n + 1}\n`);
+    writeAtomic(join(this.folder, file), text);
+    return toRest({ ok: true, n, file, rel: `${STORIES_DIR}/${file}`, mtimeMs: Date.parse(now), story });
   }
   async edit(issue: number, o: { title?: string; body: string }, timeoutMs?: number): Promise<RestIssue> {
     const r = await this.write(issue, { timeoutMs }, (s) => ({ story: { ...s, title: o.title ?? s.title, body: o.body }, out: undefined }));
     return toRest(r.entry);
   }
   async setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number): Promise<void> {
-    await this.write(issue, { timeoutMs }, (s) => {
-      let labels = s.labels.filter((l) => !remove.some((r) => same(r, l) && !(add && same(add, r))));
-      if (add && !labels.some((l) => same(l, add))) labels = [...labels, add];
-      return { story: { ...s, labels }, out: undefined };
-    });
+    await this.write(issue, { timeoutMs }, (s) => ({ story: { ...s, labels: labelsAfter(s.labels, add, remove) }, out: undefined }));
   }
   async comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined> {
-    const r = await this.write(issue, { timeoutMs }, (s, now) => {
-      const comments = [...s.comments, { author: this.author, createdAt: now, body }];
-      return { story: { ...s, comments }, out: String(comments.length) };
-    });
+    const r = await this.write(issue, { timeoutMs }, (s, now) => this.addComment(s, now, body));
     return r.out;
+  }
+  private addComment(s: FileStory, now: string, body: string): { story: FileStory; out: string } {
+    const id = nextCommentId(s.comments, s.commentTop);
+    return { story: { ...s, comments: [...s.comments, { id, author: this.author, createdAt: now, body }] }, out: String(id) };
   }
   async upsertStatusComment(issue: number, body: string, o: UpsertOptions): Promise<UpsertResult> {
     if (o.on === "pr") noChanges();
@@ -252,15 +284,17 @@ export class LocalStore implements StoryStore {
       const none: UpsertResult = { changed: false, removed: 0, left: 0, login: author };
       if (!ours.length) {
         if (!o.create) return { out: none };
-        const comments = [...s.comments, { author, createdAt: now, body: text }];
-        return { story: { ...s, comments }, out: { id: String(comments.length), changed: true, created: true, removed: 0, left: 0, login: author } };
+        const id = nextCommentId(s.comments, s.commentTop);
+        const comments = [...s.comments, { id, author, createdAt: now, body: text }];
+        return { story: { ...s, comments }, out: { id: String(id), changed: true, created: true, removed: 0, left: 0, login: author } };
       }
       const first = ours[0]!;
+      const id = String(s.comments[first]!.id);
       const changed = !sameBody(s.comments[first]!.body, text);
       const extra = new Set(ours.slice(1));
-      if (!changed && !extra.size) return { out: { ...none, id: String(first + 1) } };
+      if (!changed && !extra.size) return { out: { ...none, id } };
       const comments = s.comments.flatMap((c, i) => (extra.has(i) ? [] : i === first && changed ? [{ ...c, body: text }] : [c]));
-      return { story: { ...s, comments }, out: { id: String(first + 1), changed, removed: extra.size, left: 0, login: author } };
+      return { story: { ...s, comments }, out: { id, changed, removed: extra.size, left: 0, login: author } };
     });
     return r.out;
   }
@@ -276,20 +310,39 @@ export class LocalStore implements StoryStore {
     return { ...toRest(r.entry), state_reason: "reopened" };
   }
 
-  // what a later part adds
-  async stepIssue(): Promise<string> { return notYet("stepIssue"); }
-  async stepBody(): Promise<string> { return notYet("stepBody"); }
-  async stepText(): Promise<string> { return notYet("stepText"); }
-  async stepComments(): Promise<string> { return notYet("stepComments"); }
-  async stepFoundryComments(): Promise<string> { return notYet("stepFoundryComments"); }
-  async stepComment(): Promise<string> { return notYet("stepComment"); }
-  async stepCreate(): Promise<string> { return notYet("stepCreate"); }
-  async stepTitle(): Promise<string> { return notYet("stepTitle"); }
-  async stepLabels(): Promise<string> { return notYet("stepLabels"); }
-  async stepCommentsAndLabels(): Promise<string> { return notYet("stepCommentsAndLabels"); }
-  async stepPlainText(): Promise<string> { return notYet("stepPlainText"); }
-  async stepAuthors(): Promise<string> { return notYet("stepAuthors"); }
-  async stepClose(): Promise<string> { return notYet("stepClose"); }
+  // what flow steps save and print: the text of gh, made from the files (see local-text.ts)
+  /** The story as gh shows it; rejects when it is missing or broken. */
+  private one(issue: number): StoryView {
+    return toView(this.need(this.all(), num(issue)), this.author);
+  }
+  async stepIssue(issue: number): Promise<string> { return jsonText(pickFields(this.one(issue), "body,number,title,updatedAt")); }
+  async stepBody(issue: number): Promise<string> { return `${this.one(issue).body}\n`; }
+  async stepText(issue: number): Promise<string> { return ticketText(this.one(issue)); }
+  async stepComments(issue: number): Promise<string> { return commentLines(this.one(issue)); }
+  async stepFoundryComments(issue: number): Promise<string> { return foundryIds(this.one(issue)); }
+  async stepComment(issue: number, body: string, timeoutMs?: number): Promise<string> {
+    const id = await this.comment(issue, body, timeoutMs);
+    return `${this.need(this.all(), num(issue)).rel}#issuecomment-${id}\n`;
+  }
+  /** The address of the new story: its file and `#<number>`, which the tools read the number from. */
+  async stepCreate(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<string> {
+    const r = await this.create(o, timeoutMs);
+    return `${r.html_url}#${r.number}\n`;
+  }
+  async stepTitle(issue: number): Promise<string> { return `${this.one(issue).title}\n`; }
+  async stepLabels(issue: number): Promise<string> { return this.one(issue).labels.map((l) => `${l.name}\n`).join(""); }
+  async stepCommentsAndLabels(issue: number): Promise<string> { return jsonText(pickFields(this.one(issue), "comments,labels")); }
+  async stepPlainText(issue: number): Promise<string> { return plainText(this.one(issue)); }
+  /** A story file records no author and no editor: the answer gh gives when both are empty. */
+  async stepAuthors(issue: number): Promise<string> {
+    num(issue);
+    return " \n";
+  }
+  async stepClose(issue: number, reason: "completed" | "not planned", timeoutMs?: number): Promise<string> {
+    num(issue);
+    await this.close(issue, reasonOf(reason), timeoutMs);
+    return "";
+  }
   async stepFindChange(): Promise<string> { return notYet("stepFindChange"); }
   async stepReviewDecision(): Promise<string> { return notYet("stepReviewDecision"); }
   async stepListChanges(): Promise<string> { return notYet("stepListChanges"); }
@@ -298,12 +351,59 @@ export class LocalStore implements StoryStore {
   async stepChangeText(): Promise<string> { return notYet("stepChangeText"); }
   async stepReviewComments(): Promise<string> { return notYet("stepReviewComments"); }
   async stepReviews(): Promise<string> { return notYet("stepReviews"); }
-  async stepOpenStories(): Promise<number> { return notYet("stepOpenStories"); }
+  async stepOpenStories(o: { limit: number; comments: boolean }): Promise<number> {
+    process.stdout.write(this.openJson(listSize(o.limit), o.comments ? "number,title,body,labels,comments" : "number,title,body,labels"));
+    return 0;
+  }
+  /** The open stories, newest first, as a JSON list with these fields. A broken file is listed as "cannot be read". */
+  private openJson(limit: number, fields: string): string {
+    checkFields(fields);
+    return jsonText(this.open().sort(desc).slice(0, limit).map((e) => pickFields(toView(e, this.author), fields)));
+  }
   async stepOpenChange(): Promise<number> { return notYet("stepOpenChange"); }
   async stepChecks(): Promise<number> { return notYet("stepChecks"); }
   async stepCheckout(): Promise<number> { return notYet("stepCheckout"); }
   async stepMerge(): Promise<number> { return notYet("stepMerge"); }
-  sync(_run: GhCall): SyncStories { return notYet("sync"); }
+  /**
+   * The synchronous part works on the files and never calls `run`. A write blocks the thread while it waits for the lock, so
+   * only a tool in its own process may use it, never the server.
+   */
+  sync(_run: GhCall): SyncStories {
+    const story = (e: Entry): SyncStory => { const r = toRest(e); return { number: r.number, title: r.title, state: r.state.toUpperCase(), body: r.body ?? "" }; };
+    return {
+      get: (n) => {
+        const e = this.all().find((x) => x.n === num(n));
+        return e && story(this.need([e], e.n));
+      },
+      list: (limit) => this.all().sort(desc).slice(0, listSize(limit)).map(story),
+      setBody: (n, body) => { this.writeNow(n, (s) => ({ story: { ...s, body }, out: undefined })); },
+      view: (n, fields) => {
+        checkFields(fields);
+        return jsonText(pickFields(this.one(n), fields));
+      },
+      openList: (limit, fields) => this.openJson(listSize(limit), fields),
+      create: (o) => {
+        const r = this.createNow(o);
+        return `${r.html_url}#${r.number}\n`;
+      },
+      comment: (n, body) => {
+        const { out: id } = this.writeNow(n, (s, now) => this.addComment(s, now, body));
+        return `${this.need(this.all(), n).rel}#issuecomment-${id}\n`;
+      },
+      setLabels: (n, add, remove) => { this.writeNow(n, (s) => ({ story: { ...s, labels: labelsAfter(s.labels, add, remove) }, out: undefined })); },
+      close: (n, reason) => {
+        reasonOf(reason);
+        num(n);
+        this.writeNow(n, (s, now) => ({ story: { ...s, state: "closed", closedAt: now }, out: undefined }));
+      },
+      viewer: () => `${this.author}\n`,
+      listChanges: () => noChanges(),
+      viewChange: () => noChanges(),
+      openChange: () => noChanges(),
+      updateChange: () => noChanges(),
+      requestReview: () => noChanges(),
+    };
+  }
 
   // pull requests: a local project has none
   async findChange(_branch: string): Promise<ChangeRef | undefined> { return noChanges(); }

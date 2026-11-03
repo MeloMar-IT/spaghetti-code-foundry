@@ -110,6 +110,51 @@ const pidOf = (content: string): number | undefined => {
  * live lock or guard that replaced the stale one is never removed. `fn` runs synchronously; `held()` checks the token.
  */
 export async function withStoryLock<T>(folder: string, o: StoryLockOptions, fn: (held: () => boolean) => T): Promise<T> {
+  const l = acquire(folder, o);
+  for (let r = l.steps.next(); !r.done; r = l.steps.next()) {
+    if ("stale" in r.value) await o.onStale?.(r.value.stale);
+    else await sleep(r.value.sleepMs);
+  }
+  try {
+    return fn(l.held);
+  } finally {
+    l.release();
+  }
+}
+
+/**
+ * The same lock for a caller that cannot wait for a promise (the synchronous part of the store, used by tools that run in their
+ * own process). It sleeps with `Atomics.wait`, which blocks the thread: never call it in the server. `onStale` must be synchronous;
+ * a promise from it is refused (and its rejection is handled), because the takeover cannot wait for it.
+ */
+export function withStoryLockSync<T>(folder: string, o: StoryLockOptions, fn: (held: () => boolean) => T): T {
+  const l = acquire(folder, o);
+  const nap = new Int32Array(new SharedArrayBuffer(4));
+  for (let r = l.steps.next(); !r.done; r = l.steps.next()) {
+    if ("stale" in r.value) {
+      const out: unknown = o.onStale?.(r.value.stale);
+      if (out && typeof (out as PromiseLike<void>).then === "function") {
+        Promise.resolve(out).catch(() => {});
+        throw new Error("onStale must be synchronous for a synchronous write");
+      }
+    } else {
+      Atomics.wait(nap, 0, 0, r.value.sleepMs);
+    }
+  }
+  try {
+    return fn(l.held);
+  } finally {
+    l.release();
+  }
+}
+
+type Step = { stale: string } | { sleepMs: number };
+
+/**
+ * The acquire loop, shared by both drivers. The generator yields what the driver must do (run the hook for a stale lock, or
+ * sleep) and ends when the lock is ours. It throws when the wait is over.
+ */
+function acquire(folder: string, o: StoryLockOptions): { steps: Generator<Step, void, undefined>; held: () => boolean; release: () => void } {
   const lock = join(folder, LOCK_FILE);
   const guard = join(folder, GUARD_FILE);
   const token = randomBytes(8).toString("hex");
@@ -120,8 +165,7 @@ export async function withStoryLock<T>(folder: string, o: StoryLockOptions, fn: 
   const busy = (content: string | undefined): Error =>
     new Error(`the stories are locked by process ${content === undefined ? "?" : (pidOf(content) ?? "?")}; try again, or delete .scf/stories/.lock if no Foundry is running`);
 
-  const takeOver = async (seen: string): Promise<boolean> => {
-    await o.onStale?.(seen);
+  const takeOver = (seen: string): boolean => {
     if (!createExclusive(guard, mine)) {
       // Another writer holds the guard. A guard left by a crash is removed (only the content seen as old), then the caller retries.
       const held = readContent(guard);
@@ -138,24 +182,26 @@ export async function withStoryLock<T>(folder: string, o: StoryLockOptions, fn: 
     }
   };
 
-  for (;;) {
-    ageOf(lock, ".lock");
-    if (createExclusive(lock, mine)) break;
-    const seen = readContent(lock);
-    if (seen !== undefined) {
-      const pid = pidOf(seen);
-      const age = ageOf(lock, ".lock");
-      const stale = pid !== undefined ? !o.alive(pid) : age !== undefined && age > OLD_MS;
-      if (stale && (await takeOver(seen))) break;
-      if (Date.now() >= end) throw busy(seen);
-    } else if (Date.now() >= end) {
-      throw busy(seen);
+  function* steps(): Generator<Step, void, undefined> {
+    for (;;) {
+      ageOf(lock, ".lock");
+      if (createExclusive(lock, mine)) return;
+      const seen = readContent(lock);
+      if (seen !== undefined) {
+        const pid = pidOf(seen);
+        const age = ageOf(lock, ".lock");
+        const stale = pid !== undefined ? !o.alive(pid) : age !== undefined && age > OLD_MS;
+        if (stale) {
+          yield { stale: seen };
+          if (takeOver(seen)) return;
+        }
+        if (Date.now() >= end) throw busy(seen);
+      } else if (Date.now() >= end) {
+        throw busy(seen);
+      }
+      yield { sleepMs: Math.max(1, Math.min(o.pollMs, end - Date.now())) };
     }
-    await sleep(Math.max(1, Math.min(o.pollMs, end - Date.now())));
   }
-  try {
-    return fn(held);
-  } finally {
-    claim(lock, token, (c) => c === mine);
-  }
+
+  return { steps: steps(), held, release: () => { claim(lock, token, (c) => c === mine); } };
 }

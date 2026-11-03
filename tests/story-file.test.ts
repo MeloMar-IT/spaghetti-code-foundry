@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STATUS_MARKER } from "../src/github.js";
-import { formatStoryFile, parseStoryFile, storyFileName, withStatusComment, type FileStory } from "../src/stories/story-file.js";
+import { formatStoryFile, MAX_COMMENT_ID, nextCommentId, parseStoryFile, storyFileName, withCommentIds, withStatusComment, type FileStory } from "../src/stories/story-file.js";
 
 const story = (over: Partial<FileStory> = {}): FileStory => ({
   number: 12, title: "Sign in with a magic link", state: "open", kind: "story", labels: ["claude-factory"],
@@ -45,7 +45,7 @@ describe("round trip", () => {
   it("pins the layout and key order", () => {
     const s = story({ epic: 10, dependsOn: [11], createdAt: "2026-11-02T10:00:00Z", comments: [{ author: "alice", createdAt: "2026-11-02T10:30:00Z", body: "Hi" }] });
     expect(formatStoryFile(s)).toBe([
-      "---", "number: 12", "title: Sign in with a magic link", "kind: story", "state: open", "labels:", "  - claude-factory",
+      "---", "format: 2", "number: 12", "title: Sign in with a magic link", "kind: story", "state: open", "labels:", "  - claude-factory",
       "epic: 10", "depends_on:", "  - 11", "created: 2026-11-02T10:00:00Z", "---", "", "Body text.", "", "## Comments", "",
       "### Comment by alice on 2026-11-02T10:30:00Z", "", "Hi", "",
     ].join("\n"));
@@ -194,5 +194,90 @@ describe("withStatusComment", () => {
   it("ignores a comment that only quotes the marker", () => {
     const s = story({ comments: [{ author: "a", createdAt: "t", body: `see ${STATUS_MARKER} here` }] });
     expect(withStatusComment(s, status("New")).comments).toHaveLength(2);
+  });
+  it("keeps the id of the replaced comment and gives an appended one the next id", () => {
+    const s = story({ comments: [{ id: 4, author: "a", createdAt: "t", body: "hi" }, { id: 9, author: "Foundry", createdAt: "t", body: `old\n${STATUS_MARKER}` }, { id: 12, author: "b", createdAt: "t", body: "later" }] });
+    const replaced = withStatusComment(s, status("New"));
+    expect(replaced.comments.map((c) => c.id)).toEqual([4, 9, 12]);
+    expect(roundTrip(replaced)).toEqual({ ok: true, story: replaced });
+    const appended = withStatusComment(story({ comments: [{ id: 4, author: "a", createdAt: "t", body: "hi" }] }), status("First"));
+    expect(appended.comments.map((c) => c.id)).toEqual([4, 5]);
+    expect(roundTrip(appended)).toEqual({ ok: true, story: appended });
+  });
+});
+
+describe("comment ids", () => {
+  const c = (id: number | undefined, body = "x") => ({ ...(id === undefined ? {} : { id }), author: "a", createdAt: "t", body });
+  const head = (id: number) => `---\nformat: 2\nnumber: 12\ntitle: T\nstate: open\n---\n\nb\n\n## Comments\n\n### Comment ${id} by a on t\n\nx\n`;
+
+  it("writes the id in the heading and reads it back", () => {
+    const s = story({ comments: [c(3, "one"), c(undefined, "two")] });
+    expect(formatStoryFile(s)).toContain("### Comment 3 by a on t\n\none");
+    expect(formatStoryFile(s)).toContain("### Comment by a on t\n\ntwo");
+    expect(roundTrip(s)).toEqual({ ok: true, story: s });
+  });
+  it("still reads the heading without an id", () => {
+    const r = parse(head(5).replace("Comment 5 by", "Comment by"));
+    expect(r).toMatchObject({ ok: true, story: { comments: [{ author: "a", createdAt: "t", body: "x" }] } });
+    if (r.ok) expect(r.story.comments[0]).not.toHaveProperty("id");
+  });
+  it("escapes a body line that looks like a heading with an id, and restores it", () => {
+    const s = story({ comments: [c(1, "### Comment 7 by x on y\n\\### Comment 8 by x on y")], body: "### Comment 7 by x on y" });
+    expect(formatStoryFile(s)).not.toMatch(/^### Comment 7 by x on y$/m);
+    expect(roundTrip(s)).toEqual({ ok: true, story: s });
+  });
+  it("rejects an id that is not a whole number from 1 to 15 digits, and reads the largest one", () => {
+    for (const id of [0, -1, 1.5, 1_000_000_000_000_000, Number.MAX_SAFE_INTEGER]) {
+      expect(() => formatStoryFile(story({ comments: [c(id)] }))).toThrow(/comment id/);
+    }
+    const s = story({ comments: [c(MAX_COMMENT_ID, "last"), c(1, "first")] });
+    expect(roundTrip(s)).toEqual({ ok: true, story: s });
+    expect(MAX_COMMENT_ID).toBe(10 ** 15 - 1);
+  });
+  it("does not read a heading with a 16 digit id as a comment", () => {
+    const text = `${head(1)}\n### Comment 1000000000000000 by b on t\n\ny\n`;
+    const r = parse(text);
+    expect(r).toMatchObject({ ok: true, story: { comments: [{ id: 1 }] } });
+    if (r.ok) expect(r.story.comments).toHaveLength(1);
+  });
+  it("reads a format 1 file as the old formatter wrote it: an id-like line in a body is text", () => {
+    // Written by the first format's formatter: the body line `### Comment 7 by …` is not escaped, and the comment has no id.
+    const old = [
+      "---", "number: 12", "title: T", "kind: story", "state: open", "labels: []", "depends_on: []", "---", "",
+      "Body", "### Comment 7 by Alice on today", "", "## Comments", "", "### Comment by Bob on 2026-01-01T00:00:00Z", "",
+      "Hi", "### Comment 8 by Alice on today", "",
+    ].join("\n");
+    const r = parse(old);
+    expect(r).toMatchObject({ ok: true, story: { body: "Body\n### Comment 7 by Alice on today", comments: [{ author: "Bob", createdAt: "2026-01-01T00:00:00Z", body: "Hi\n### Comment 8 by Alice on today" }] } });
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.story.comments).toHaveLength(1);
+    expect(r.story.comments[0]).not.toHaveProperty("id");
+    // Written again (format 2), the same text is escaped and read back unchanged.
+    expect(formatStoryFile(r.story)).toContain("\\### Comment 7 by Alice on today");
+    expect(roundTrip(r.story)).toEqual(r);
+  });
+  it("rejects an unknown format and a high-water mark that is not a whole number", () => {
+    expect(reason(`---\nnumber: 12\ntitle: T\nstate: open\nformat: 3\n---\n\nb\n`)).toMatch(/format is unknown/);
+    expect(reason(`---\nnumber: 12\ntitle: T\nstate: open\ncomment_top: -1\n---\n\nb\n`)).toMatch(/comment_top/);
+    expect(() => formatStoryFile(story({ commentTop: 1.5 }))).toThrow(/high-water mark/);
+  });
+  it("keeps the high-water mark in the file and allocates above it", () => {
+    const s = story({ commentTop: 9, comments: [c(2, "x")] });
+    expect(formatStoryFile(s)).toContain("comment_top: 9");
+    expect(roundTrip(s)).toEqual({ ok: true, story: s });
+    expect(nextCommentId(s.comments, s.commentTop)).toBe(10);
+    expect(withCommentIds([c(undefined)], 4).map((x) => x.id)).toEqual([5]);
+  });
+  it("withCommentIds numbers a comment without an id or with a used id above the highest, in order", () => {
+    expect(withCommentIds([c(undefined), c(5), c(undefined), c(5), c(2)]).map((x) => x.id)).toEqual([6, 5, 7, 8, 2]);
+    expect(withCommentIds([])).toEqual([]);
+    const set = [c(1), c(2)];
+    expect(withCommentIds(set)).toEqual(set);
+  });
+  it("nextCommentId is one above the highest, and refuses past the limit", () => {
+    expect(nextCommentId([])).toBe(1);
+    expect(nextCommentId([c(3), c(undefined)])).toBe(5);
+    expect(() => nextCommentId([c(MAX_COMMENT_ID)])).toThrow("no comment id is left");
+    expect(() => withCommentIds([c(MAX_COMMENT_ID), c(undefined)])).toThrow("no comment id is left");
   });
 });

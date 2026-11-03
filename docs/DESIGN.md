@@ -165,9 +165,15 @@ in `src/github.ts`; the store reuses them.
   temp file and is then renamed (`writeAtomic`). A file that cannot be read is never dropped or
   overwritten: lists show it as a story titled "cannot be read" with the reason in its body, `get`
   reports it, and a write to it fails. Pull request methods fail with "Pull requests are not available
-  for a local project"; the `step…` methods and `sync` are "not yet available" until part 3 of #598.
-  `storeFor` still returns `GitHubStore` for every repository. The shared contract suite
+  for a local project". `storeFor` still returns `GitHubStore` for every repository. The shared contract suite
   (`tests/story-store-contract.ts`) runs against both stores.
+- **The flow steps on a local store (#765).** `LocalStore` implements the `step…` methods of `StoryStore`
+  and `sync(run)`. The texts are built in `src/stories/local-text.ts` from a `StoryView` (`toView()` in
+  `local-map.ts`, the gh `issue view --json` shape), not by running the jq programs of `github-store.ts`.
+  Every comment has a stable id: `nextCommentId()` gives the next one above the highest used, and
+  `comment_top` in the front matter keeps a removed comment's id from being given out again. Writes from
+  the synchronous part use `withStoryLockSync()` (`story-lock.ts`), which blocks while it waits for the
+  lock, so `sync` is for a tool process only. Both paths share one write body (`applyChange()`).
 
 ### The public package (#780)
 

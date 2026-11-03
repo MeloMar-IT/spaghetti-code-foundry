@@ -1,7 +1,7 @@
 import { lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Comment, Issue, RestIssue } from "../github.js";
-import { type FileStory, parseStoryFile } from "./story-file.js";
+import { type FileStory, parseStoryFile, withCommentIds } from "./story-file.js";
 
 export const STORIES_DIR = ".scf/stories";
 export const UNREADABLE_TITLE = "cannot be read";
@@ -91,7 +91,33 @@ export function toIssue(e: Entry): Issue {
 }
 
 export function toComments(e: Entry & { ok: true }, author: string): Comment[] {
-  return e.story.comments.map((c, i) => ({ author: { login: c.author }, body: c.body, createdAt: c.createdAt, url: `${e.rel}#issuecomment-${i + 1}`, viewerDidAuthor: c.author === author }));
+  return withCommentIds(e.story.comments, e.story.commentTop).map((c) => ({ author: { login: c.author }, body: c.body, createdAt: c.createdAt, url: `${e.rel}#issuecomment-${c.id}`, viewerDidAuthor: c.author === author }));
+}
+
+/** A comment as gh's `--json comments` has it. What a story file cannot know has a plain default. */
+export interface ViewComment {
+  id: string; author: { login: string }; authorAssociation: string; body: string; createdAt: string; includesCreatedEdit: boolean;
+  isMinimized: boolean; minimizedReason: string; reactionGroups: unknown[]; url: string; viewerDidAuthor: boolean;
+}
+/** A story as gh's `issue view --json …` has it (all the fields the store can name). */
+export interface StoryView {
+  number: number; title: string; state: "OPEN" | "CLOSED"; body: string; url: string;
+  labels: { id: string; name: string; description: string; color: string }[];
+  comments: ViewComment[]; createdAt: string; updatedAt: string; closedAt: string | null;
+}
+
+/** The story as gh would show it. A broken file gets the placeholder of `toRest`, with no labels or comments. `author` is the viewer. */
+export function toView(e: Entry, author: string): StoryView {
+  const r = toRest(e);
+  const comments: ViewComment[] = e.ok ? withCommentIds(e.story.comments, e.story.commentTop).map((c) => ({
+    id: `IC_${e.n}_${c.id}`, author: { login: c.author }, authorAssociation: "NONE", body: c.body, createdAt: c.createdAt, includesCreatedEdit: false,
+    isMinimized: false, minimizedReason: "", reactionGroups: [], url: `${e.rel}#issuecomment-${c.id}`, viewerDidAuthor: c.author === author,
+  })) : [];
+  return {
+    number: r.number, title: r.title, state: r.state.toUpperCase() as "OPEN" | "CLOSED", body: r.body ?? "", url: r.html_url,
+    labels: (r.labels as { name: string }[]).map(({ name }) => ({ id: "", name, description: "", color: "ededed" })),
+    comments, createdAt: r.created_at, updatedAt: r.updated_at ?? r.created_at, closedAt: r.closed_at ?? null,
+  };
 }
 
 export const hasLabel = (e: Entry, label: string): boolean => e.ok && e.story.labels.some((l) => l.toLowerCase() === label.toLowerCase());

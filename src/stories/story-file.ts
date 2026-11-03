@@ -7,24 +7,76 @@ import type { StoryState } from "./store.js";
  * then an optional final `## Comments` section. Pure functions only: no file, process or clock access.
  */
 export type StoryKind = "story" | "epic";
-export interface StoryComment { author: string; createdAt: string; body: string }
+/** `id` is the stable number of the comment (the one in `#issuecomment-<id>`); a file written by hand may have none. */
+export interface StoryComment { id?: number; author: string; createdAt: string; body: string }
 export interface FileStory {
   number: number; title: string; state: StoryState; kind: StoryKind;
   labels: string[]; epic?: number; dependsOn: number[];
   createdAt?: string; updatedAt?: string; closedAt?: string;
+  /** The highest comment id the story has ever used (`comment_top`). A removed comment never gives its id back. */
+  commentTop?: number;
   body: string; comments: StoryComment[];
 }
 export type ParsedStoryFile = { ok: true; story: FileStory } | { ok: false; reason: string };
 
 const COMMENTS_HEADING = "## Comments";
-const HEADER_RE = /^### Comment by (.+) on (\S+)$/gm;
-const ESCAPE_RE = /^\\*(## Comments$|### Comment by |\\cr:)/;
-const UNESCAPE_RE = /^\\(\\*(?:## Comments$|### Comment by |\\cr:))/;
+/** The largest comment id: 15 digits, which the heading can hold. The parser, the formatter and the allocation all use this limit. */
+export const MAX_COMMENT_ID = 999_999_999_999_999;
+/**
+ * The format a file is written in (`format` in the front matter). A file without `format` is format 1: the headings and the escapes
+ * of the first version, where a body line `### Comment 7 by …` is plain text. Format 2 adds the comment id to the heading.
+ */
+export const STORY_FORMAT = 2;
+interface Syntax { header: RegExp; escape: RegExp; unescape: RegExp }
+/** Format 1: a comment heading has no id, so an id-like line in a body is text. The group for the id is empty. */
+const SYNTAX: Record<number, Syntax> = {
+  1: {
+    header: /^### Comment ()by (.+) on (\S+)$/gm,
+    escape: /^\\*(## Comments$|### Comment by |\\cr:)/,
+    unescape: /^\\(\\*(?:## Comments$|### Comment by |\\cr:))/,
+  },
+  2: {
+    header: /^### Comment (?:([1-9]\d{0,14}) )?by (.+) on (\S+)$/gm,
+    escape: /^\\*(## Comments$|### Comment (?:\d+ )?by |\\cr:)/,
+    unescape: /^\\(\\*(?:## Comments$|### Comment (?:\d+ )?by |\\cr:))/,
+  },
+};
 /** A line with a carriage return is written as `\cr:` plus the line with `\` and CR escaped; no CR reaches the file. */
 const CR_LINE_RE = /^\\cr:/;
 const SLUG_MAX = 50;
 
 const isWhole = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n > 0;
+const isCommentId = (n: unknown): n is number => isWhole(n) && n <= MAX_COMMENT_ID;
+
+/**
+ * The comments with an id each: one with none, or with an id an earlier comment has, gets the next free id above the highest one used,
+ * in file order. `floor` is the story's high-water mark: no new id is at or below it.
+ */
+export function withCommentIds(comments: StoryComment[], floor = 0): (StoryComment & { id: number })[] {
+  const seen = new Set<number>();
+  let top = floor;
+  for (const c of comments) if (isCommentId(c.id) && !seen.has(c.id)) { seen.add(c.id); top = Math.max(top, c.id); }
+  const used = new Set<number>();
+  return comments.map((c) => {
+    if (isCommentId(c.id) && !used.has(c.id)) { used.add(c.id); return c as StoryComment & { id: number }; }
+    if (top >= MAX_COMMENT_ID) throw new Error("no comment id is left");
+    top++;
+    used.add(top);
+    return { ...c, id: top };
+  });
+}
+
+/** The highest comment id the story has used: its high-water mark or a comment id, whichever is higher. */
+export function highestCommentId(s: Pick<FileStory, "comments" | "commentTop">): number {
+  return Math.max(s.commentTop ?? 0, ...s.comments.map((c) => (isCommentId(c.id) ? c.id : 0)));
+}
+
+/** The id for a new comment: one above the highest used, the high-water mark included. Throws when there is none left. */
+export function nextCommentId(comments: StoryComment[], floor = 0): number {
+  const top = Math.max(floor, ...withCommentIds(comments, floor).map((c) => c.id));
+  if (top >= MAX_COMMENT_ID) throw new Error("no comment id is left");
+  return top + 1;
+}
 
 export function storyFileName(number: number, title: string): string {
   if (!isWhole(number)) throw new RangeError(`story number must be a positive whole number: ${number}`);
@@ -35,15 +87,15 @@ export function storyFileName(number: number, title: string): string {
 }
 
 const encodeLine = (l: string): string => {
-  if (!l.includes("\r")) return ESCAPE_RE.test(l) ? `\\${l}` : l;
+  if (!l.includes("\r")) return SYNTAX[STORY_FORMAT]!.escape.test(l) ? `\\${l}` : l;
   return `\\cr:${l.replace(/\\/g, "\\\\").replace(/\r/g, "\\r")}`;
 };
-const decodeLine = (l: string): string => {
-  if (!CR_LINE_RE.test(l)) return l.replace(UNESCAPE_RE, "$1");
+const decodeLine = (l: string, syn: Syntax): string => {
+  if (!CR_LINE_RE.test(l)) return l.replace(syn.unescape, "$1");
   return l.slice(4).replace(/\\([\\r])/g, (_, c: string) => (c === "r" ? "\r" : "\\"));
 };
 const escapeText = (t: string): string => t.split("\n").map(encodeLine).join("\n");
-const unescapeText = (t: string): string => t.split("\n").map(decodeLine).join("\n");
+const unescapeText = (t: string, syn: Syntax): string => t.split("\n").map((l) => decodeLine(l, syn)).join("\n");
 /** Short text for a reason: a list or mapping is named, not printed (a mapping can carry its own toString). */
 const show = (v: unknown): string => (typeof v === "object" && v !== null ? (Array.isArray(v) ? "a list" : "a mapping") : String(v));
 
@@ -53,16 +105,21 @@ export function formatStoryFile(story: FileStory): string {
   for (const c of story.comments) {
     if (!c.author || /[\r\n]/.test(c.author)) throw new Error("a comment author is empty or has a line break");
     if (!c.createdAt || /\s/.test(c.createdAt)) throw new Error("a comment time is empty or has white space");
+    if (c.id !== undefined && !isCommentId(c.id)) throw new Error(`a comment id must be a whole number from 1 to ${MAX_COMMENT_ID}`);
   }
-  const fm: Record<string, unknown> = { number: story.number, title: story.title, kind: story.kind, state: story.state, labels: story.labels };
+  if (story.commentTop !== undefined && !(Number.isSafeInteger(story.commentTop) && story.commentTop >= 0 && story.commentTop <= MAX_COMMENT_ID)) {
+    throw new Error(`the comment id high-water mark must be a whole number from 0 to ${MAX_COMMENT_ID}`);
+  }
+  const fm: Record<string, unknown> = { format: STORY_FORMAT, number: story.number, title: story.title, kind: story.kind, state: story.state, labels: story.labels };
   if (story.epic !== undefined) fm.epic = story.epic;
   fm.depends_on = story.dependsOn;
   if (story.createdAt !== undefined) fm.created = story.createdAt;
   if (story.updatedAt !== undefined) fm.updated = story.updatedAt;
   if (story.closedAt !== undefined) fm.closed = story.closedAt;
+  if (story.commentTop !== undefined) fm.comment_top = story.commentTop;
   let out = `---\n${stringify(fm, { lineWidth: 0 })}---\n\n${escapeText(story.body)}`;
   if (story.comments.length) {
-    const blocks = story.comments.map((c) => `### Comment by ${c.author} on ${c.createdAt}\n\n${escapeText(c.body)}`);
+    const blocks = story.comments.map((c) => `### Comment ${c.id === undefined ? "" : `${c.id} `}by ${c.author} on ${c.createdAt}\n\n${escapeText(c.body)}`);
     out += `\n\n${COMMENTS_HEADING}\n\n${blocks.join("\n\n")}`;
   }
   return `${out}\n`;
@@ -96,6 +153,9 @@ export function parseStoryFile(text: string, fileName: string): ParsedStoryFile 
 
   if (!has("title") || f.title === "") return fail("title is missing");
   if (typeof f.title !== "string") return fail("title must be text");
+  const format = has("format") ? f.format : 1;
+  if (format !== 1 && format !== 2) return fail(`format is unknown: ${show(format)} (use 1 or 2)`);
+  const syn = SYNTAX[format as number]!;
   const state = has("state") ? f.state : undefined;
   if (state !== "open" && state !== "closed") return fail(`state is unknown: ${state === undefined ? "(none)" : show(state)} (use open or closed)`);
   const kind = has("kind") ? f.kind : "story";
@@ -107,6 +167,10 @@ export function parseStoryFile(text: string, fileName: string): ParsedStoryFile 
   if (!Array.isArray(dependsOn) || !dependsOn.every(isWhole)) return fail("depends_on must be a list of story numbers");
   for (const k of ["created", "updated", "closed"]) {
     if (has(k) && typeof f[k] !== "string") return fail(`${k} must be a time`);
+  }
+  const top = has("comment_top") ? f.comment_top : undefined;
+  if (top !== undefined && !(typeof top === "number" && Number.isSafeInteger(top) && top >= 0 && top <= MAX_COMMENT_ID)) {
+    return fail(`comment_top must be a whole number from 0 to ${MAX_COMMENT_ID}`);
   }
 
   // One blank line separates the front matter from the body; one line break ends the file.
@@ -129,7 +193,7 @@ export function parseStoryFile(text: string, fileName: string): ParsedStoryFile 
 
   const comments: StoryComment[] = [];
   if (commentsText !== undefined) {
-    const heads = [...commentsText.matchAll(HEADER_RE)];
+    const heads = [...commentsText.matchAll(syn.header)];
     const first = heads[0]?.index ?? commentsText.length;
     if (!heads.length || commentsText.slice(0, first).trim() !== "") {
       return fail("the text after ## Comments must start with a comment heading (### Comment by <name> on <time>)");
@@ -139,26 +203,31 @@ export function parseStoryFile(text: string, fileName: string): ParsedStoryFile 
       let t = commentsText!.slice(h.index + h[0].length, heads[i + 1]?.index ?? commentsText!.length);
       t = t.startsWith("\n\n") ? t.slice(2) : t.startsWith("\n") ? t.slice(1) : t;
       if (!last) t = dropSeparator(t);
-      comments.push({ author: h[1]!, createdAt: h[2]!, body: unescapeText(t) });
+      comments.push({ ...(h[1] ? { id: Number(h[1]) } : {}), author: h[2]!, createdAt: h[3]!, body: unescapeText(t, syn) });
     });
   }
 
-  const story: FileStory = { number, title: f.title, state, kind, labels: labels as string[], dependsOn: dependsOn as number[], body: unescapeText(bodyText), comments };
+  const story: FileStory = { number, title: f.title, state, kind, labels: labels as string[], dependsOn: dependsOn as number[], body: unescapeText(bodyText, syn), comments };
   if (has("epic")) story.epic = f.epic as number;
   if (has("created")) story.createdAt = f.created as string;
   if (has("updated")) story.updatedAt = f.updated as string;
   if (has("closed")) story.closedAt = f.closed as string;
+  if (top !== undefined) story.commentTop = top as number;
   return { ok: true, story };
 }
 
 /** The story with its status comment replaced in place (or appended when it has none). The marker stays the last line. */
 export function withStatusComment(story: FileStory, c: StoryComment): FileStory {
   const body = isStatusComment({ body: c.body }) ? c.body : `${c.body}\n\n${STATUS_MARKER}`;
-  const next: StoryComment = { author: c.author, createdAt: c.createdAt, body };
   const comments = [...story.comments];
   let i = comments.length - 1;
   while (i >= 0 && !isStatusComment(comments[i]!)) i--;
-  if (i >= 0) comments[i] = next;
-  else comments.push(next);
-  return { ...story, comments };
+  // The replaced comment keeps its id; an appended one gets the given id, or the next free one.
+  if (i >= 0) {
+    const kept = comments[i]!.id;
+    comments[i] = { ...(kept !== undefined ? { id: kept } : {}), author: c.author, createdAt: c.createdAt, body };
+  } else {
+    comments.push({ id: c.id ?? nextCommentId(comments, story.commentTop), author: c.author, createdAt: c.createdAt, body });
+  }
+  return { ...story, comments, commentTop: highestCommentId({ comments, commentTop: story.commentTop }) };
 }
