@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { developWait } from "../src/server/next.js";
 import { WatcherSchema } from "../src/config.js";
 import { STOPPED_CANCEL_REASON, USER_BUDGET_REASON, type RunSummary } from "../src/engine/state.js";
 import { statusName } from "../src/words.js";
@@ -1005,5 +1009,76 @@ describe("a failed repair story that stopped at the baseline", () => {
     expect(next.kind).toBe("failed");
     expect(next.why).toContain("these failing tests are not named in the issue as ones to fix: a.B.d");
     expect(next.why).not.toContain("exit code");
+  });
+});
+
+describe("waiting for develop", () => {
+  const since = "2026-10-01T09:30:00Z";
+  const wait = { runId: "r2", areas: "@develop", issue: 7, since };
+  const at = (next: string, over: Partial<RunSummary> = {}) => run({ status: "running", state: { next, steps: {}, visits: {} }, ...over } as Partial<RunSummary>);
+
+  it("a run at merge_develop or merge_back that waits for develop is an area_lock with the holder named", () => {
+    for (const step of ["merge_develop", "merge_back"]) {
+      const n = runNextStep(at(step), { areaWait: wait, timeZone: "UTC" });
+      expect(n.kind).toBe("area_lock");
+      expect(n.status).toBe("waiting for develop");
+      expect(n.why).toBe("It waits for develop (held by run r2, issue #7, since 09:30)");
+      expect(n.afterRun).toBe("r2");
+      expect(n.where.url).toBe("#/runs/r2");
+    }
+  });
+
+  it("leaves out what is not known (old lock files have no issue and no time)", () => {
+    expect(nextStep("area_lock", { repo: "a/b" }, { areaWait: { runId: "r2", areas: "@develop" } }).why).toBe("It waits for develop (held by run r2)");
+  });
+
+  it("any other step is simply running, and a code area wait keeps its words", () => {
+    expect(runNextStep(at("test_develop"), { areaWait: wait }).kind).toBe("running");
+    expect(runNextStep(at("merge_develop"), { areaWait: { runId: "r2", areas: "src" } }).kind).toBe("running");
+    const area = runNextStep(at("claim_areas"), { areaWait: { runId: "r2", areas: "src" } });
+    expect(area.status).toBe("waiting for another run in the same code");
+    expect(area.why).toBe("It waits for a code area (src) that another run uses");
+  });
+});
+
+describe("developWait", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "dw-")); });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const file = { runId: "r1", waitingFor: "r2", areas: ["@develop"], issue: 7, since: "2026-10-01T09:30:00Z", at: "2026-10-01T09:31:00Z" };
+  const write = (o: unknown, age = 0) => {
+    writeFileSync(join(dir, "area-wait.json"), JSON.stringify(o));
+    const t = new Date(Date.now() - age);
+    utimesSync(join(dir, "area-wait.json"), t, t);
+  };
+  const r = (next: string, over: Partial<RunSummary> = {}) => run({ status: "running", runDir: dir, state: { next, steps: {}, visits: {} }, ...over } as Partial<RunSummary>);
+
+  it("reads a fresh wait file of a run at merge_develop", () => {
+    write(file);
+    expect(developWait(r("merge_develop"))).toEqual({ runId: "r2", areas: "@develop", issue: 7, since: file.since });
+    expect(developWait(r("merge_back"))?.runId).toBe("r2");
+  });
+
+  it("is nothing for a stale file, another step, another status, a bad id, other areas or junk", () => {
+    write(file, 5 * 60_000);
+    expect(developWait(r("merge_develop"))).toBeUndefined();
+    write(file);
+    expect(developWait(r("test_develop"))).toBeUndefined();
+    expect(developWait(r("merge_develop", { status: "failed" }))).toBeUndefined();
+    write({ ...file, waitingFor: "../x y" });
+    expect(developWait(r("merge_develop"))).toBeUndefined();
+    write({ ...file, areas: ["src"] });
+    expect(developWait(r("merge_develop"))).toBeUndefined();
+    writeFileSync(join(dir, "area-wait.json"), "{not json");
+    expect(developWait(r("merge_develop"))).toBeUndefined();
+    rmSync(join(dir, "area-wait.json"));
+    expect(developWait(r("merge_develop"))).toBeUndefined();
+  });
+
+  it("keeps the issue and the time only when they are valid", () => {
+    write({ ...file, issue: "7; rm -rf", since: "yesterday-ish" });
+    expect(developWait(r("merge_develop"))).toEqual({ runId: "r2", areas: "@develop" });
+    write({ ...file, issue: 0 });
+    expect(developWait(r("merge_develop"))?.issue).toBeUndefined();
   });
 });

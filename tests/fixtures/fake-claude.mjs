@@ -272,6 +272,17 @@ else if (prompt.includes("CI failed on this branch")) {
   const issue = /# #(\d+):/.exec(prompt)?.[1] ?? "?";
   writeFileSync("feature.txt", process.env.FAKE_IMPL_BUG ? "BUG\n" : `implemented #${issue}\n`);
   canned = "- added feature.txt";
+} else if (prompt.includes("The tests failed on the merge of your change with develop")) {
+  // FAKE_FIX_WAIT_FOR (a file path): writes <path>.started and waits until <path> exists, so a test can let other runs
+  // merge into develop while this run fixes. The fix adds a line, so it still merges with other work on the same file.
+  const gate = process.env.FAKE_FIX_WAIT_FOR;
+  if (gate) {
+    writeFileSync(`${gate}.started`, "1");
+    const pause = new Int32Array(new SharedArrayBuffer(4));
+    for (let i = 0; i < 600 && !existsSync(gate); i++) Atomics.wait(pause, 0, 0, 100);
+  }
+  if (!process.env.FAKE_FIX_NOOP) appendFileSync("feature.txt", "fixed\n");
+  canned = "fixed feature.txt";
 } else if (prompt.includes("The tests fail. Fix the code")) {
   if (!process.env.FAKE_FIX_NOOP) writeFileSync("feature.txt", "fixed\n");
   canned = "fixed feature.txt";

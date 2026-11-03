@@ -1634,12 +1634,23 @@ flowchart LR
   AP --> CA[claim code areas] --> IM[implement] --> TS[tests + fix loop]
   TS --> RV[review 1, and 2 if risky] --> DO[docs] --> CM[commit + push]
   CM --> MD[merge into develop] --> TD[tests on develop] --> RP[report]
+  TD -->|red| RD["give up develop, move the merge<br/>onto the feature branch, fix there"] --> MD
 ```
 
 - **Risk score 0–100** from the plan. Above 75: a person approves. Above 50: the plan is revised
   after review, and the code gets a second review.
 - **Size limit** (default 15 files, 800 lines). Over it, the story is split into smaller issues;
   a low-risk split happens by itself.
+- **Develop turn** (`issue-gitflow`). The merge into `develop` and its test hold the `@develop`
+  lock (`tools/area-lock`) only while they run. If the tests on the merge fail, `red_develop`
+  releases the lock first: the merge result is carried onto the feature branch as a merge commit
+  (`git commit-tree`, parents: the feature tip and the develop tip the run merged), pushed there,
+  and only then is the lock released. `fix_develop` and `commit_develop_fix` work on the feature
+  branch, which is pushed before `merge_develop` runs again. A written decision (`red-decision`,
+  one per tested merge commit) counts the test runs and the fixes, so a repeated step reads it
+  instead of counting again. `merge_develop` shows the wait as `area_lock` with the `@develop`
+  holder, which the UI words as "waiting for develop". The hotfix path (`merge_back`, `fix_back`)
+  keeps the lock through its fixes: there is no feature branch to carry the fix.
 - Supporting flows: `epic-questions` (questions up front) and `release-daily` (the daily pull
   request from `develop` to `main`).
 

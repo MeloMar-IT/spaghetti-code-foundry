@@ -1,17 +1,17 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { stepLogFile } from "../engine/execute.js";
 import { buildHistory, runProgress, runTiming, withWaitLeft, type DurationHistory } from "../estimate.js";
 import { answerRoom, isUserBudgetStop, type RunSummary } from "../engine/state.js";
 import { issueRank, issueRecord } from "../issue-record.js";
 import { runIssueState } from "../issue-states.js";
-import { nextStep, releaseAtFor, runNextStep, trackingWatcher, type NextStep } from "../next-step.js";
+import { DEVELOP_LOCK_STEPS, nextStep, releaseAtFor, runNextStep, trackingWatcher, type AreaWait, type NextStep } from "../next-step.js";
 import { flowExists, flowRetired } from "../run-gate.js";
 import { needsUser } from "../your-turn.js";
 import { labelNames, parseInterval, type Hold, type WatcherStatus } from "../queue/watcher.js";
 import type { WatcherConfig } from "../config.js";
 import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
-import { watcherState, type WatcherState } from "../words.js";
+import { statusName, watcherState, type WatcherState } from "../words.js";
 import { send } from "./http.js";
 import { answerBlock, userRecord, userTask } from "./user-view.js";
 import type { ApiContext, Route } from "./server.js";
@@ -33,6 +33,29 @@ export function areaWait(run: RunSummary): { runId: string; areas: string } | un
     const last = log.split("\n").map((l) => l.trim()).filter(Boolean).at(-1) ?? "";
     const m = /^waiting for run (\S+) \((.*)\)$/.exec(last);
     return m ? { runId: m[1]!, areas: m[2]! } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** area-wait.json counts as written by a live wait for this long (the same as AREA_WAIT_FRESH_MS in stuck-runs.ts, which imports this file). */
+const DEVELOP_WAIT_FRESH_MS = 90_000;
+
+/**
+ * The run waits in merge_develop / merge_back for the `@develop` lock: area-lock writes <run dir>/area-wait.json
+ * while it waits (who holds it, that run's issue, since when). Never throws.
+ */
+export function developWait(run: RunSummary, now = Date.now()): AreaWait | undefined {
+  if (run.status !== "running" || !DEVELOP_LOCK_STEPS.includes(run.state?.next ?? "")) return undefined;
+  try {
+    const file = join(run.runDir, "area-wait.json");
+    if (now - statSync(file).mtimeMs > DEVELOP_WAIT_FRESH_MS) return undefined;
+    const w = JSON.parse(readFileSync(file, "utf8")) as { waitingFor?: unknown; areas?: unknown; issue?: unknown; since?: unknown };
+    if (typeof w.waitingFor !== "string" || !/^[\w.-]{1,100}$/.test(w.waitingFor)) return undefined;
+    if (!Array.isArray(w.areas) || !w.areas.includes("@develop")) return undefined;
+    const issue = typeof w.issue === "number" && Number.isInteger(w.issue) && w.issue >= 1 && w.issue <= 1e9 ? w.issue : undefined;
+    const since = typeof w.since === "string" && !isNaN(Date.parse(w.since)) ? w.since : undefined;
+    return { runId: w.waitingFor, areas: "@develop", ...(issue ? { issue } : {}), ...(since ? { since } : {}) };
   } catch {
     return undefined;
   }
@@ -167,7 +190,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
       failedLabel: w && labelNames(w).failed,
       releaseAt: run.status === "succeeded" ? releaseAtFor(cfg.watchers, run, load()) : undefined,
       title,
-      areaWait: areaWait(run),
+      areaWait: areaWait(run) ?? developWait(run),
       forUser,
       retired: isRetired(run),
     });
@@ -266,6 +289,11 @@ export function ownRecord(rec: NextStep, mine: (runId: string) => boolean): Next
   if (out.afterRun && !mine(out.afterRun)) {
     const { afterRun: _gone, ...rest } = out;
     out = { ...rest, where: { label: "Runs page", url: "#/runs" } };
+    // The wait for develop names the holder's run and issue in its words: say "another run" only.
+    if (out.kind === "area_lock" && out.status === statusName("area_lock", { develop: true })) {
+      const again = nextStep("area_lock", { repo: out.repo, issue: out.issue, title: out.title, runId: out.runId }, { areaWait: { runId: "", areas: "@develop" } });
+      out = { ...out, why: again.why, text: again.text };
+    }
   }
   if (out.blockers) {
     // Every blocker is cut to its issue number: what it waits for in turn may be another account's run.
