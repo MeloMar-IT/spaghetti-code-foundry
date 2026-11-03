@@ -32,7 +32,7 @@ const read = (d: string, name: string): string => readFileSync(join(folder(d), n
 const nameOf = (d: string, n: number): string => readdirSync(folder(d)).find((f) => f.startsWith(`${n}-`))!;
 const leftovers = (d: string): string[] => readdirSync(folder(d)).filter((f) => !/^\d+-.*\.md$/.test(f) && f !== "next-number");
 
-storyStoreContract("LocalStore", () => ({ store: new LocalStore(proj(), "local/x") }));
+storyStoreContract("LocalStore", () => ({ store: new LocalStore(proj(), "local/x"), login: "Foundry" }));
 
 describe("LocalStore numbering", () => {
   it("counts up from 1 and never gives a number back", async () => {
@@ -195,7 +195,7 @@ describe("LocalStore size", () => {
     expect(read(d, name)).toBe(before);
     const parsed = parseStoryFile(before, name);
     if (!parsed.ok) throw new Error(parsed.reason);
-    const base = Buffer.byteLength(formatStoryFile({ ...parsed.story, comments: [{ author: "Foundry", createdAt: NOW.toISOString(), body: "" }] }));
+    const base = Buffer.byteLength(formatStoryFile({ ...parsed.story, commentTop: 1, comments: [{ id: 1, author: "Foundry", createdAt: NOW.toISOString(), body: "" }] }));
     await s.comment(n, "é".repeat(Math.floor((MAX - base) / 2)));
     expect(statSync(join(folder(d), name)).size).toBeLessThanOrEqual(MAX);
     expect((await s.comments(n)).length).toBe(1);
@@ -393,13 +393,17 @@ describe("LocalStore refusals", () => {
     await expect(call()).rejects.toThrow(new RegExp(`^${NO_CHANGES}$`));
   });
 
-  const steps = ["stepIssue", "stepBody", "stepText", "stepComments", "stepFoundryComments", "stepComment", "stepCreate", "stepTitle", "stepLabels", "stepCommentsAndLabels", "stepPlainText", "stepAuthors", "stepClose",
-    "stepFindChange", "stepReviewDecision", "stepListChanges", "stepCommentOnChange", "stepSetReady", "stepChangeText", "stepReviewComments", "stepReviews", "stepOpenStories", "stepOpenChange", "stepChecks", "stepCheckout", "stepMerge"];
+  const steps = ["stepFindChange", "stepReviewDecision", "stepListChanges", "stepCommentOnChange", "stepSetReady", "stepChangeText", "stepReviewComments", "stepReviews", "stepOpenChange", "stepChecks", "stepCheckout", "stepMerge"];
   it.each(steps)("%s is not yet available", async (name) => {
     await expect((s as unknown as Record<string, () => Promise<unknown>>)[name]!()).rejects.toThrow("not yet available");
   });
-  it("sync is not yet available", () => {
-    expect(() => s.sync(() => "")).toThrow("sync is not yet available for a local project");
+  it("the pull request calls of sync say there are no pull requests", () => {
+    const y = s.sync(() => { throw new Error("run was called"); });
+    const calls = [
+      () => y.listChanges({ state: "open", limit: 1, fields: "number" }), () => y.viewChange(1, "number"),
+      () => y.openChange({ head: "h", title: "t", body: "" }), () => y.updateChange(1, { body: "" }), () => y.requestReview(1, "someone"),
+    ];
+    for (const call of calls) expect(call).toThrow(new RegExp(`^${NO_CHANGES}$`));
   });
 });
 

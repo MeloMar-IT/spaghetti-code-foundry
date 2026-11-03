@@ -74,6 +74,35 @@ case "$all" in "api repos/"*"/issues/comments/"*)
   esac
   echo '{}'; exit 0 ;;
 esac
+# $FAKE_GH_JQ=1 (with FAKE_GH_STORIES and FAKE_GH_COMMENTS_FROM_LOG): the text steps run the REAL jq programs, as gh does. Needs a jq binary.
+#   "issue view <n> --json F [--jq|-q P]" for an issue of $FAKE_GH_LOG.issues.json builds the object gh builds for the fields F
+#   (number, title, body, url, state, labels, createdAt, updatedAt, closedAt, comments; sorted keys; comments with all the fields gh exports,
+#   written by $FAKE_GH_LOGIN, default foundry-owner, with viewerDidAuthor true) and prints it as compact JSON, or pipes it through `jq -rc P`.
+#   "api --paginate repos/R/issues/<n>/comments… --jq P" pipes the REST comments {id, html_url, created_at, updated_at, body, user} through `jq -rc P`.
+JQ_JS='const fs=require("fs"),cp=require("child_process");const [mode,log,num,fields,prog,cj]=process.argv.slice(1);
+let l=[];try{l=JSON.parse(fs.readFileSync(log+".issues.json","utf8"))}catch{}
+const i=l.find(x=>x.number===Number(num));if(!i)process.exit(3);
+const login=process.env.FAKE_GH_LOGIN||"foundry-owner",at=i.created_at,cs=JSON.parse(cj).comments;
+const sort=(x)=>Array.isArray(x)?x.map(sort):x&&typeof x==="object"?Object.fromEntries(Object.keys(x).sort().map(k=>[k,sort(x[k])])):x;
+let out;
+if(mode==="view"){const all={number:i.number,title:i.title,body:i.body,url:i.html_url,state:String(i.state).toUpperCase(),labels:(i.labels||[]).map(x=>({id:"",name:x.name,description:"",color:"ededed"})),createdAt:at,updatedAt:i.updated_at||at,closedAt:i.closed_at||null,
+comments:cs.map(c=>({id:"IC_"+c.url.split("-").pop(),author:{login},authorAssociation:"NONE",body:c.body,createdAt:at,includesCreatedEdit:false,isMinimized:false,minimizedReason:"",reactionGroups:[],url:c.url,viewerDidAuthor:true}))};
+out={};for(const f of fields.split(",")){if(!(f in all)){console.error("Unknown JSON field: \""+f+"\"");process.exit(1)}out[f]=all[f]}out=sort(out)}
+else out=cs.map(c=>({id:Number(c.url.split("-").pop()),html_url:c.url,created_at:at,updated_at:at,body:c.body,user:{login}}));
+if(!prog){console.log(JSON.stringify(out));process.exit(0)}
+const r=cp.spawnSync("jq",["-rc",prog],{input:JSON.stringify(out),encoding:"utf8"});process.stdout.write(r.stdout);process.stderr.write(r.stderr);process.exit(r.status===null?1:r.status)'
+if [ -n "$FAKE_GH_JQ" ]; then
+  jq_fields=""; jq_prog=""; prev=""
+  for a in "$@"; do case "$prev" in --json) jq_fields="$a" ;; --jq|-q) jq_prog="$a" ;; esac; prev="$a"; done
+  jq_comments='{"comments":[]}'
+  case "$1 $2" in
+    "issue view") [ -f "$FAKE_GH_LOG" ] && jq_comments=$(comments_from_log "$3" 0)
+      node -e "$JQ_JS" view "$FAKE_GH_LOG" "$3" "$jq_fields" "$jq_prog" "$jq_comments"; rc=$?; [ "$rc" -ne 3 ] && exit "$rc" ;;
+    "api --paginate") case "$3" in "repos/"*"/issues/"[0-9]*"/comments"*)
+      n=${3#*/issues/}; n=${n%%/*}; [ -f "$FAKE_GH_LOG" ] && jq_comments=$(comments_from_log "$n" 0)
+      node -e "$JQ_JS" comments "$FAKE_GH_LOG" "$n" "" "$jq_prog" "$jq_comments"; rc=$?; [ "$rc" -ne 3 ] && exit "$rc" ;; esac ;;
+  esac
+fi
 # REST calls for bug stories. State: $FAKE_GH_LOG.issues.json (issues made by the POST). $FAKE_GH_FAIL_API=list|read|create|update makes that call fail.
 # "api repos/…/issues/<n> -X PATCH --input -" sets the title and body of that issue and logs "--- updated issue <n> (api):" with the JSON from stdin.
 # $FAKE_GH_FAIL_CREATE_AT=<n>: the nth create call (the count is kept in $FAKE_GH_LOG.creates) fails with $FAKE_GH_FAIL_TEXT (default "boom").

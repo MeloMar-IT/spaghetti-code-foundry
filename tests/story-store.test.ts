@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -660,6 +661,7 @@ describe("GitHubStore with the fake gh", () => {
   afterEach(() => {
     delete process.env.FAKE_GH_STORIES;
     delete process.env.FAKE_GH_COMMENTS_FROM_LOG;
+    delete process.env.FAKE_GH_JQ;
   });
   storyStoreContract("GitHubStore", () => {
     const log = join(fake.tmp, "gh.log");
@@ -669,6 +671,7 @@ describe("GitHubStore with the fake gh", () => {
     rmSync(log + ".graphql", { force: true });
     process.env.FAKE_GH_STORIES = "1";
     process.env.FAKE_GH_COMMENTS_FROM_LOG = "1";
-    return { store: storeFor(R) };
-  });
+    process.env.FAKE_GH_JQ = "1";
+    return { store: storeFor(R), login: "foundry-owner" };
+  }, { texts: spawnSync("jq", ["--version"]).status === 0 });
 });

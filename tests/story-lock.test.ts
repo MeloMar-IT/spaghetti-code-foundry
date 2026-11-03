@@ -166,3 +166,58 @@ describe("story lock", () => {
     expect(leftovers(t.folder)).toEqual([]);
   });
 });
+
+describe("synchronous story lock", () => {
+  const run = (t: ReturnType<typeof setup>, o = {}) => t.store(o).sync(() => "");
+
+  it("writes under the lock and leaves no lock behind", () => {
+    const t = setup();
+    run(t).comment(1, "sync");
+    expect(t.bodies()).toContain("sync");
+    expect(leftovers(t.folder)).toEqual([]);
+  });
+
+  it("fails with the locked message when a live lock is held", () => {
+    const t = setup();
+    writeFileSync(t.lock, `${process.pid} other\n`);
+    const before = t.bodies();
+    expect(() => run(t, { lockWaitMs: 40, alive: () => true }).comment(1, "x")).toThrow(/the stories are locked by process/);
+    expect(t.bodies()).toBe(before);
+  });
+
+  it("takes over a lock of a process that is gone", () => {
+    const t = setup();
+    writeFileSync(t.lock, "4242 dead\n");
+    let seen = "";
+    run(t, { alive: () => false, onStale: (c: string) => { seen = c; } }).comment(1, "after takeover");
+    expect(seen).toBe("4242 dead\n");
+    expect(t.bodies()).toContain("after takeover");
+    expect(leftovers(t.folder)).toEqual([]);
+  });
+
+  it("refuses an onStale that returns a promise, handles its rejection and leaves the stale lock alone", async () => {
+    const t = setup();
+    writeFileSync(t.lock, "4242 dead\n");
+    const before = t.bodies();
+    const hook = () => Promise.reject(new Error("hook failed"));
+    expect(() => run(t, { alive: () => false, onStale: hook }).comment(1, "x")).toThrow("onStale must be synchronous");
+    await new Promise((r) => setImmediate(r)); // an unhandled rejection would fail the run here
+    expect(t.bodies()).toBe(before);
+    expect(readFileSync(t.lock, "utf8")).toBe("4242 dead\n");
+  });
+
+  it("passes on an error of a synchronous onStale and takes no lock", () => {
+    const t = setup();
+    writeFileSync(t.lock, "4242 dead\n");
+    expect(() => run(t, { alive: () => false, onStale: () => { throw new Error("hook failed"); } }).comment(1, "x")).toThrow("hook failed");
+    expect(readFileSync(t.lock, "utf8")).toBe("4242 dead\n");
+  });
+
+  it("is refused while an async writer holds the lock", async () => {
+    const t = setup();
+    await withStoryLock(t.folder, { waitMs: 50, pollMs: 5, alive: pidAlive }, () => {
+      expect(() => run(t, { lockWaitMs: 50 }).comment(1, "x")).toThrow(/the stories are locked/);
+    });
+    expect(leftovers(t.folder)).toEqual([]);
+  });
+});

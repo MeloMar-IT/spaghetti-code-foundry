@@ -662,8 +662,9 @@ A file has three parts:
    - `epic`: the number of the epic this story belongs to.
    - `depends_on`: a list of the story numbers this story waits for.
    - `created`, `updated`, `closed`: times.
+   - `comment_top` (optional): the highest comment id the story has ever used. The Foundry writes it; a comment that is removed never gives its id back. A file written by hand may leave it out.
 2. **The body**: the Markdown text of the story, after the front matter.
-3. **Comments** (optional): a final `## Comments` heading, then one block per comment. A block starts with a heading `### Comment by <author> on <time>` and holds the comment text.
+3. **Comments** (optional): a final `## Comments` heading, then one block per comment. A block starts with a heading `### Comment <id> by <author> on <time>` and holds the comment text. The id is the comment's number, the one in its link (`#issuecomment-<id>`). A heading without an id, `### Comment by <author> on <time>`, is also read; the Foundry gives such a comment the next free id when it next writes the file.
 
 The Foundry's status comment is one comment block that keeps the marker `<!-- claude-factory status -->` as its last line, so the Foundry can update it in place.
 
