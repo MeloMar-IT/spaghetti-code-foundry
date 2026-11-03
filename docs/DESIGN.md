@@ -153,6 +153,21 @@ in `src/github.ts`; the store reuses them.
   status must reach the step whole (`pr-open`, `pr-merge`, `pr-checks`, `pr-checkout`), the store runs
   gh with `ghInherit` (`src/github.ts`): gh writes straight to the step's stdout and stderr, and the
   exit status is gh's (a signal gives 128 plus its number). Every other call goes through `gh()`.
+- **A local store for a project without GitHub (#764).** `LocalStore` (`src/stories/local-store.ts`,
+  `new LocalStore(dir, repo)`) implements the same `StoryStore`. A story is a file in
+  `<dir>/.scf/stories/` (the format of `src/stories/story-file.ts`). `src/stories/local-map.ts` scans the
+  folder and maps the files to `RestIssue`, `Issue` and `Comment`. Every call reads the files again, so a
+  hand edit is seen at the next call. Numbers come from `next-number`, or one above the highest number
+  found when it is missing; a number is never reused, because `next-number` is written before a story
+  is created. A write takes the lock `.scf/stories/.lock`, created exclusively with the holder's PID and
+  a token. A lock whose holder is gone, or that is older than 5 s without a readable holder, is taken
+  over under a guard file (`.lock.takeover`). Waiting has a limit (10 s by default). A write goes to a
+  temp file and is then renamed (`writeAtomic`). A file that cannot be read is never dropped or
+  overwritten: lists show it as a story titled "cannot be read" with the reason in its body, `get`
+  reports it, and a write to it fails. Pull request methods fail with "Pull requests are not available
+  for a local project"; the `step…` methods and `sync` are "not yet available" until part 3 of #598.
+  `storeFor` still returns `GitHubStore` for every repository. The shared contract suite
+  (`tests/story-store-contract.ts`) runs against both stores.
 
 ---
 

@@ -1,11 +1,12 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import * as github from "../src/github.js";
 import { STATUS_MARKER, withGhEnv } from "../src/github.js";
 import { GitHubStore } from "../src/stories/github-store.js";
 import { storeFor, type GhCall } from "../src/stories/store.js";
 import { fakeGithub, type FakeIssue } from "./helpers/fake-github.js";
+import { storyStoreContract } from "./story-store-contract.js";
 
 // The store must send the same gh calls as the functions it wraps, and the exact arguments of the calls it makes itself.
 // The fake gh logs every call (and the text sent on stdin for the calls that matter); we compare those logs.
@@ -651,5 +652,23 @@ describe("probeAccess", () => {
     ]);
     expect(out.stories).toEqual({ status: "fulfilled", value: "ok" });
     expect(out.changes.status).toBe("rejected");
+  });
+});
+
+// The same contract runs against the files (tests/local-store.test.ts); here it runs against the fake gh.
+describe("GitHubStore with the fake gh", () => {
+  afterEach(() => {
+    delete process.env.FAKE_GH_STORIES;
+    delete process.env.FAKE_GH_COMMENTS_FROM_LOG;
+  });
+  storyStoreContract("GitHubStore", () => {
+    const log = join(fake.tmp, "gh.log");
+    fake.setBugIssues([]);
+    writeFileSync(log, "");
+    rmSync(log + ".comments", { force: true });
+    rmSync(log + ".graphql", { force: true });
+    process.env.FAKE_GH_STORIES = "1";
+    process.env.FAKE_GH_COMMENTS_FROM_LOG = "1";
+    return { store: storeFor(R) };
   });
 });
