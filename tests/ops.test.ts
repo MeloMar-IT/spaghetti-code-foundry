@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execFileSync, spawn } from "node:child_process";
 import type { RunSummary, StepRecord } from "../src/engine/state.js";
 import { blockers, cycles, dependencyWaits, fileWaits, watcherRepos } from "../src/ops/blockage.js";
@@ -13,6 +13,12 @@ import { clearGovernor, loadState, runGovernor, type Sample } from "../src/ops/g
 import { forecast, parseReset } from "../src/ops/limits.js";
 import { installJob, jobInstalled, jobPlist, jobState, labelOf, uninstallJob } from "../src/ops/schedule.js";
 import type { ServiceHost } from "../src/service.js";
+
+// the governor reads the real machine; these tests must not depend on how busy it is
+vi.mock("../src/ops/governor.js", async (orig) => {
+  const real = await orig<typeof import("../src/ops/governor.js")>();
+  return { ...real, sample: () => ({ load1: 0.5, load5: 0.5, load15: 0.5, pressure: 1, cores: 8 }) };
+});
 
 const NOW = new Date("2026-10-12T12:00:00Z");
 const HOUR = 3_600_000;
