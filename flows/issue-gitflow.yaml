@@ -237,13 +237,16 @@ steps:
           *) printf '%s\n' "ℹ This issue has the \`$match\` label, but the flow is a changed copy of issue-gitflow, and only the unchanged one may push to \`$main\`, so it was built as a feature." > "{{run.dir}}/hotfix-note" ;;
         esac
       fi
-      # Keep develop up to date with main (merged pull requests from elsewhere, hotfixes).
+      # Keep develop up to date with main (merged pull requests from elsewhere, hotfixes). Only when develop is free soon:
+      # another run may hold it for hours while it tests a merge, and this step must not run out of time waiting.
+      # Skipping is safe: the next run that finds develop free merges main.
       if [ "$(git rev-list --count "origin/$dev..origin/$main")" -gt 0 ]; then
-        "$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @develop --wait-sec 3600 >/dev/null || exit 1
-        git fetch -q origin && git checkout -q -B "$dev" "origin/$dev"
-        if git merge -q --no-edit -m "Merge $main into $dev" "origin/$main" >/dev/null 2>&1 && git push -q origin "$dev"; then echo "brought $dev up to date with $main"
-        else git merge --abort >/dev/null 2>&1; echo "note: could not merge $main into $dev automatically — do it by hand"; fi
-        "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null; git fetch -q origin
+        if "$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @develop --wait-sec "${FACTORY_DEVELOP_SYNC_WAIT_SEC:-300}" >/dev/null; then
+          git fetch -q origin && git checkout -q -B "$dev" "origin/$dev"
+          if git merge -q --no-edit -m "Merge $main into $dev" "origin/$main" >/dev/null 2>&1 && git push -q origin "$dev"; then echo "brought $dev up to date with $main"
+          else git merge --abort >/dev/null 2>&1; echo "note: could not merge $main into $dev automatically — do it by hand"; fi
+          "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null; git fetch -q origin
+        else echo "note: $dev is busy (another run is merging into it), so $main is merged into $dev by a later run"; fi
       fi
       # The changelog only ever gets new entries: keep both sides when branches meet.
       for f in $FACTORY_VAR_UNION_MERGE_FILES; do echo "$f merge=union" >> .git/info/attributes; done

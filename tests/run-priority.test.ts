@@ -71,7 +71,10 @@ describe("run processes at a priority", () => {
     dirs.push(d);
     return d;
   };
-  const base = (d: string) => ({ cwd: d, logFile: join(d, "log"), redactor: makeRedactor([]) });
+  // Every process here ends within the limit, with its whole group: a child at background priority on a busy machine can
+  // stall for longer than the test, and it must not be left behind (they piled up by the hundred).
+  const LIMIT = 30_000;
+  const base = (d: string) => ({ cwd: d, logFile: join(d, "log"), redactor: makeRedactor([]), timeoutMs: LIMIT, groupKill: true });
   const SELF = `ps -o nice= -p $$`;
   const nested = `sh -c 'sh -c "ps -o nice= -p \\$\\$"'`;
   const nums = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean).map(Number);
@@ -98,7 +101,7 @@ describe("run processes at a priority", () => {
   it("an abort and a time-out stop the real process, with and without a group", async () => {
     const d = dir();
     const ctl = new AbortController();
-    const p = runProcess("/bin/sh", ["-c", `echo $$ > ${join(d, "pid")}; exec sleep 60`], { ...base(d), priority: "low", signal: ctl.signal });
+    const p = runProcess("/bin/sh", ["-c", `echo $$ > ${join(d, "pid")}; exec sleep 60`], { ...base(d), timeoutMs: undefined, groupKill: false, priority: "low", signal: ctl.signal });
     const end = Date.now() + 10_000;
     let pid = 0;
     while (!pid && Date.now() < end) {
@@ -167,7 +170,7 @@ describe("run processes at a priority", () => {
     const m = await priorityMachine();
     if (!m.nice) return;
     const d = dir();
-    const r = await runShell({ command: SELF, cwd: d, env: {}, logFile: join(d, "log"), priority: "background" });
+    const r = await runShell({ command: SELF, cwd: d, env: {}, logFile: join(d, "log"), priority: "background", timeoutMs: LIMIT, ownGroup: true });
     expect(nums(r.output)).toEqual([Math.max(15, getPriority())]);
     mkdirSync(join(d, "bin"));
     writeFileSync(join(d, "bin", "git"), `#!/bin/sh\n${SELF}\n`);

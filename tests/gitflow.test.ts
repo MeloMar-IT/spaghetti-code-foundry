@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ConfigSchema, WatcherSchema } from "../src/config.js";
 import { runFlow } from "../src/engine/runner.js";
 import { loadFlow } from "../src/flow/load.js";
@@ -137,6 +137,43 @@ describe("gitflow pipeline", () => {
     expect(runOf("6")!.history.find((h) => h.id === "feature_branch")!.output).toContain("brought develop up to date with main");
     expect(gh.remoteGit("show", "develop:hotfix.txt")).toBe("fix\n");
     expect(gh.remoteGit("log", "--format=%s", "develop")).toMatch(/Merge #6:[\s\S]*Merge main into develop/);
+  });
+
+  it("does not wait for a busy develop to bring it up to date with main: it starts the branch and a later run merges main", async () => {
+    issues(5);
+    const w = watcher();
+    await w.tick();
+    await settle();
+    const work = mkdtempSync(join(tmpdir(), "hotfix-"));
+    const git = (...a: string[]) => spawnSync("git", a, { cwd: work, encoding: "utf8" });
+    git("clone", "-q", process.env.FAKE_GH_REMOTE!, ".");
+    writeFileSync(join(work, "hotfix.txt"), "fix\n");
+    git("add", "."); git("commit", "-qm", "hotfix on main"); git("push", "-q", "origin", "main");
+    // Another run holds develop (it is testing its merge).
+    const other = join(gh.tmp, "other-run");
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "run.json"), JSON.stringify({ status: "running" }));
+    const lockDir = join(gh.tmp, "locks", "acme_app");
+    mkdirSync(lockDir, { recursive: true });
+    const lock = join(lockDir, "other__1.json");
+    writeFileSync(lock, JSON.stringify({ runId: "other", runDir: other, areas: ["@develop"], at: new Date().toISOString() }));
+    process.env.FACTORY_DEVELOP_SYNC_WAIT_SEC = "0";
+    onTestFinished(() => { delete process.env.FACTORY_DEVELOP_SYNC_WAIT_SEC; });
+    issues(6);
+    await w.tick();
+    // The other run finishes once this run is past feature_branch; then this run may merge.
+    await vi.waitFor(() => {
+      const dir = runOf("6")?.runDir;
+      expect(dir ? readFileSync(join(dir, "live.log"), "utf8") : "").toMatch(/✔ feature_branch/);
+    }, { timeout: 30_000, interval: 100 });
+    writeFileSync(join(other, "run.json"), JSON.stringify({ status: "done" }));
+    await settle();
+    const fb = runOf("6")!.history.find((h) => h.id === "feature_branch")!;
+    expect(fb.output).toContain("note: develop is busy (another run is merging into it), so main is merged into develop by a later run");
+    expect(fb.output).not.toContain("brought develop up to date");
+    expect({ status: runOf("6")!.status, reason: runOf("6")!.reason }).toEqual({ status: "succeeded", reason: undefined });
+    expect(gh.remoteGit("log", "--format=%s", "develop")).toMatch(/Merge #6:/);
+    expect(gh.remoteGit("log", "--format=%s", "develop")).not.toMatch(/Merge main into develop/);
   });
 
   it("low-risk plan: no revision, Codex's notes go to the coder; riskier plan: Opus revises", async () => {
