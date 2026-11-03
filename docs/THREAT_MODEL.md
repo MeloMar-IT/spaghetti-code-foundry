@@ -159,12 +159,14 @@ Every shell step and every Claude or Codex step of a user's run starts under `/u
 - Repository skills are `unapproved` and cannot be pinned.
 - The lock is written with the guarded store code (mode 0600, no symlinks); an unreadable lock makes every skill `unverified` instead of trusted. Health shows changes and lock problems without paths.
 - A library source with `trust: community` is used only when it is enabled, has a `review` of its maintainer and licence, and the review names the approved commit. A repository on the shipped community list cannot be given another trust tier. Both are checked when `skill-sources.yaml` is read, before `scf skills import` fetches or `scf skills scan` reads anything.
+- A private first-party source (`access: { repo }`) is fetched only with a token for that one registered GitHub App repository, `contents: read`. The token is made fresh for each fetch and is not in argv, the environment of other processes, logs, stop reasons or API responses; it reaches git only through a one-shot `GIT_ASKPASS` file (mode 0600) that is removed afterwards. Git keeps its own empty HOME, https only, no redirects, and the same fsck and size limits. `update` uses the token only for a candidate with the same repository and access as the approved source; a changed destination stops with a fixed message and nothing is fetched.
 
 **Limits.**
 - The lock detects a change after the pin, not a bad first copy. A person must check the package before `scf skills pin`.
 - Built-in skills are pinned at server start without a person, because they ship with the release.
 - Whoever can write the data folder can rewrite the lock.
 - The `review` is a person's record in `skill-sources.yaml`. The check is offline: it cannot verify the maintainer, the licence or the content of the commit.
+- The token sits in a file in the fetch's temporary folder while git runs. Anyone who can read that folder of the server during the fetch can read it. The token is limited to one repository and to reading it, and it expires.
 
 ## Skill tools and connectors
 

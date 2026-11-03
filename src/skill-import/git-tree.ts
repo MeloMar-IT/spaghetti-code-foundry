@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcess, type SpawnSyncReturns } from "node:child_process";
-import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { SourceTree, TreeEntry } from "../skills/import-plan.js";
@@ -34,6 +34,51 @@ export interface GitTreeOptions {
   repoBytes?: number;
   pollMs?: number;
   signal?: AbortSignal;
+  /** The access of a private source: given to git for the fetch only, through a one-shot GIT_ASKPASS. */
+  credential?: GitCredential;
+}
+
+/**A username and password for the one https host. Only used through a one-shot GIT_ASKPASS script. */
+export interface GitCredential {
+  username: string;
+  password: string;
+}
+
+const SECRET_RE = /^[A-Za-z0-9_.-]{1,1024}$/;
+/** git runs GIT_ASKPASS through a shell when its value holds a quote or a space: the path is given as one quoted shell word. */
+export const shellWord = (path: string): string => `'${path.replace(/'/g, "'\\''")}'`;
+const hasControl = (s: string): boolean => [...s].some((c) => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
+const ASKPASS = '#!/bin/sh\ncase "$1" in\n  Username*) echo x-access-token ;;\n  Password*) cat "$(dirname "$0")/token" ;;\n  *) exit 1 ;;\nesac\n';
+
+/**
+ * Writes `<tmp>/access/token` (0600) and `<tmp>/access/askpass` (0700, in a 0700 folder). Only the script path goes into the
+ * environment: neither the token nor its file path is in an argument or a variable. `remove()` deletes the folder and is safe to
+ * call again. When the setup fails halfway, what was written is removed before the error is thrown.
+ */
+export function prepareAskpass(tmp: string, credential: GitCredential): { env: NodeJS.ProcessEnv; remove(): void } {
+  const dir = join(tmp, "access");
+  const remove = () => {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      // nothing more to do
+    }
+  };
+  try {
+    if (credential.username !== "x-access-token" || !SECRET_RE.test(credential.password)) throw new Error("credential");
+    const script = join(dir, "askpass");
+    if (hasControl(script)) throw new Error("path");
+    mkdirSync(dir, { mode: 0o700 });
+    chmodSync(dir, 0o700);
+    writeFileSync(join(dir, "token"), credential.password + "\n", { mode: 0o600 });
+    chmodSync(join(dir, "token"), 0o600);
+    writeFileSync(script, ASKPASS, { mode: 0o700 });
+    chmodSync(script, 0o700);
+    return { env: { GIT_ASKPASS: shellWord(script) }, remove };
+  } catch {
+    remove();
+    throw new GitTreeError("fetch-failed");
+  }
 }
 
 const COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -205,7 +250,12 @@ export async function openGitTree(source: Pick<SkillLibrarySource, "repository">
     const initFailure = failure(init, "fetch-failed");
     if (initFailure) throw initFailure;
     const url = opts.remote !== undefined ? "file://" + resolve(opts.remote) : source.repository;
-    await fetchCommit(["--quiet", "--depth", "1", "--no-tags", "--no-recurse-submodules", "--no-auto-gc", "--", url, commit], env, join(tmp, "repo"), { timeoutMs, repoBytes, pollMs }, opts.signal);
+    const askpass = opts.credential ? prepareAskpass(tmp, opts.credential) : undefined;
+    try {
+      await fetchCommit(["--quiet", "--depth", "1", "--no-tags", "--no-recurse-submodules", "--no-auto-gc", "--", url, commit], askpass ? { ...env, ...askpass.env } : env, join(tmp, "repo"), { timeoutMs, repoBytes, pollMs }, opts.signal);
+    } finally {
+      askpass?.remove();
+    }
     const type = spawnSync("git", argv("cat-file", "-t", commit), { ...run, stdio: ["ignore", "pipe", "ignore"], maxBuffer: 65536 });
     const typeFailure = failure(type, "no-commit");
     if (typeFailure) throw typeFailure;

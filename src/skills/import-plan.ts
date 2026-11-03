@@ -393,7 +393,8 @@ export function prepareImport(
   if (source.adapter !== "agent-skills") throw refusal("adapter is not agent-skills");
   if (!isStr(source.id) || !SKILL_ID_RE.test(source.id)) throw refusal("id is not a valid source id");
 
-  const plan = planImport(source.paths, (p) => tree.list(p));
+  const excluded = source.exclude ?? [];
+  const plan = planImport(source.paths, (p) => (excluded.length === 0 ? tree.list(p) : tree.list(p).filter((e) => !excluded.some((x) => inside(x, e.path)))));
   if (plan.skills.reduce((n, s) => n + s.bytes, 0) > IMPORT_LIMITS.totalBytes) throw new SkillImportError("too-large", `the skills hold more than ${IMPORT_LIMITS.totalBytes} bytes`);
 
   const rejected: { raw: string; r: RejectedSkill }[] = plan.rejected.map((r) => ({ raw: r.root, r }));
