@@ -32,6 +32,9 @@ export const HELP = {
     { q: "How do I change the colours?", a: "Ask for a change and say which colours you want, for example: Make the buttons dark blue. Use Ask for a change on your project's page; if it has no such button yet, switch to the Advanced view with View at the top and use Start work." },
     { q: "How do I make it public?", a: "Whether and how a project becomes public depends on how it was set up. Some final versions go out by themselves; others need a step from you or from someone else. Ask the person who set up the Foundry for you for the public address and the steps." },
   ],
+  agentsTitle: "Claude and Codex",
+  agentsText: "Which AI helpers the Foundry uses, and how busy it may be.",
+  agentsLink: "Set up Claude and Codex",
   contactTitle: "Who to ask",
 };
 

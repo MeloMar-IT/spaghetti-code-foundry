@@ -30,6 +30,7 @@ import { renderUsers } from "./users.js";
 import { renderUserDetail } from "./user-detail.js";
 import { renderStart } from "./user/start.js";
 import { needsOf, renderSetupCheck } from "./setup-check.js";
+import { renderOnboardingAgents } from "./onboarding-agents.js";
 import { renderAudit } from "./audit.js";
 import { renderAutonomy } from "./autonomy.js";
 import { renderBoard } from "./board.js";
@@ -252,6 +253,13 @@ async function route() {
       const box = h("div", {});
       mount(main, box);
       const done = await renderSetupCheck(box, { admin: true, readOnly, needs: needsOf(splitHash(hash).query) });
+      if (mine !== routeGen) done?.();
+      else S.cleanup = done;
+    }
+    else if (section === "agents") {
+      const box = h("div", {});
+      mount(main, box);
+      const done = await renderOnboardingAgents(box, { admin: true, readOnly });
       if (mine !== routeGen) done?.();
       else S.cleanup = done;
     }

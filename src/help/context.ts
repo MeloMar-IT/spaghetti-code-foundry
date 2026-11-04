@@ -180,6 +180,7 @@ const admin = (id: string, title: string): HelpPage => ({ id, path: `#/${id}`, t
 export const HELP_PAGES: readonly HelpPage[] = [
   { id: "home", path: "#/home", title: "Home", roles: AU },
   { id: "setup", path: "#/setup", title: "Setup check", roles: AU },
+  { id: "agents", path: "#/agents", title: "Claude and Codex", roles: AU },
   { id: "help", path: "#/help", title: "Help", roles: U },
   { id: "board", path: "#/board", title: "Board", roles: A },
   { id: "board-repo", path: "#/board/:id", title: "Board of one repository", roles: A },

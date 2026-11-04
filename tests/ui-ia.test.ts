@@ -327,9 +327,17 @@ describe("commandsFor", () => {
 
   it("gives a user four pages and two actions, without board, flows or users", () => {
     const { goTo, actions } = ia.commandsFor("user");
-    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Setup check", "Help", "Epics", "Refinement", "My runs", "My repositories"]);
+    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Setup check", "Claude and Codex", "Help", "Epics", "Refinement", "My runs", "My repositories"]);
     expect(actions.map((a: any) => a.label)).toEqual(["Start work", "New refinement session"]);
     expect(actions[1]).toMatchObject({ href: "#/refinement", intent: "refinement", key: null });
+  });
+
+  it("has the Claude and Codex page for both roles, with no sub-navigation on Home", () => {
+    for (const role of ["admin", "user"]) {
+      expect(ia.resolve(role, "#/agents")).toMatchObject({ page: { id: "agents" }, title: "Claude and Codex", redirected: false });
+      expect(ia.subnavFor(role, "home")).toEqual([]);
+    }
+    expect(auth.isUserHash("#/agents")).toBe(true);
   });
 
   it("has the Setup check page for both roles, with Home as its parent and no sub-navigation", () => {
