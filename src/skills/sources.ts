@@ -8,6 +8,7 @@ import { credentialProblem } from "./credential-scan.js";
 import { NORMALIZE_LIMITS } from "./normalize-rules.js";
 import { readRegular } from "./package.js";
 import { parseAccess, parseExclude } from "./source-fields.js";
+import { withApprovedRefs } from "./approvals.js";
 import { relativePathProblem, SKILL_DIGEST_RE, SKILL_ID_RE, SKILL_PROVIDER_LIMITS } from "./schema.js";
 
 export const SOURCES_FILE = "skill-sources.yaml";
@@ -62,7 +63,7 @@ export interface SkillLibrarySource {
   /** Which upstream capabilities are portable; every other one belongs to the vendor. Absent: capabilities stay as upstream wrote them. */
   profile?: SourceProfile;
   /** `reviewer`: who an unattended `scf skills update --due` names as the reviewer of a community source. */
-  update: { cadence: SourceCadence; reviewer?: string };
+  update: { cadence: SourceCadence; reviewer?: string; auto?: boolean };
   /** A private first-party source: the registered repository whose access (GitHub App) fetches it. Same address as `repository`. */
   access?: { repo: string };
   /** Folders inside `paths` that the import leaves out (for example a template folder). */
@@ -278,9 +279,14 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
     // update
     let cadence: SkillLibrarySource["update"]["cadence"] | undefined;
     let updateReviewer: string | undefined;
+    let updateAuto: boolean | undefined;
     const upd = sub(e.update, "update");
     if (upd) {
-      keys(upd, ["cadence", "reviewer"], "update");
+      keys(upd, ["cadence", "reviewer", "auto"], "update");
+      if (upd.auto !== undefined) {
+        if (typeof upd.auto !== "boolean") err("update.auto", "must be true or false");
+        else updateAuto = upd.auto;
+      }
       cadence = known(text(upd.cadence, "update.cadence"), "update.cadence", SOURCE_CADENCES, `must be one of ${list(SOURCE_CADENCES)}`);
       updateReviewer = text(upd.reviewer, "update.reviewer", false);
       if (updateReviewer !== undefined && !OWNER_RE.test(updateReviewer)) {
@@ -545,6 +551,10 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
       err("trust", "must be community: this repository is on the list of known community repositories");
     }
 
+    if (updateAuto === true && trust && trust !== "first-party") {
+      err("update.auto", "only a first-party source can approve its updates automatically");
+    }
+
     if (id !== undefined && repository && repositoryKey && status && cadence && adapter && trust && owner !== undefined && OWNER_RE.test(owner)) {
       out.push({
         id,
@@ -559,7 +569,7 @@ export function parseSources(raw: unknown, today: string = new Date().toISOStrin
         licence: { allow, ...(reviewed !== undefined ? { reviewed } : {}) },
         ...(scope ? { scope } : {}),
         ...(profile ? { profile } : {}),
-        update: { cadence, ...(updateReviewer !== undefined ? { reviewer: updateReviewer } : {}) },
+        update: { cadence, ...(updateReviewer !== undefined ? { reviewer: updateReviewer } : {}), ...(updateAuto !== undefined ? { auto: updateAuto } : {}) },
         ...(access ? { access } : {}),
         ...(exclude ? { exclude } : {}),
         owner,
@@ -579,7 +589,17 @@ export function usableSources(m: SourcesManifest): SkillLibrarySource[] {
 const fail = (message: string): SourcesRead => ({ state: "invalid", problems: [problem("file", message)] });
 
 /** Reads the file safely (no links, no special files, size limit), then parseSources. No message repeats a path or file content. */
-export function readSources(path: string, maxBytes = MAX_SOURCES_BYTES, today?: string): SourcesRead {
+export function readSources(
+  path: string,
+  maxBytes = MAX_SOURCES_BYTES,
+  today?: string,
+  opts: { approvals?: boolean; home?: string } = {},
+): SourcesRead {
+  const read = readSourcesRaw(path, maxBytes, today);
+  return opts.approvals === false ? read : withApprovedRefs(read, { home: opts.home });
+}
+
+function readSourcesRaw(path: string, maxBytes: number, today?: string): SourcesRead {
   let st;
   try {
     st = lstatSync(path);

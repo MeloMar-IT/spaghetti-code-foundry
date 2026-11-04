@@ -273,6 +273,17 @@ Design rules:
 
 ![The flow editor with a built-in flow](images/flows.png)
 
+#### Approvals in the data folder (#798)
+
+Part 2a of #775 lets the server record approvals itself, in `skill-approvals.json` in the data folder (`src/skills/approvals.ts`):
+
+- **Store.** Schema 1, per source id: the repository key, an optional approved commit (`ref`) and the releases (catalogue, version, digest, and optional `key` and `signature`). The file is at most 256 KiB and at most 200 sources and 100 releases per source. It is written atomically with mode 0600, under the `skill-approvals.lock` file. A read never throws: a missing file is `none`; a link, a special file, a bad schema or an over-size file is `unreadable`. A write over the size limit is refused (`too-large`) and keeps the old bytes.
+- **Merge point.** `approvedReleases(rel)` is the only place where the config list and the stored list meet. The same digest in both is one entry (the config entry wins). Two different digests for one catalogue and version drop both and report a conflict. The registry, `release list`/`verify` and the approval code all call it, so they see one list.
+- **Refusal.** A root whose release is in conflict is refused (`root-refused`) before the `allow_unreleased` check, for store and administrator roots alike. An unreadable store is a problem; the config entries still load.
+- **Ref overlay.** `readSources` replaces `ref.approved` with the stored commit for an enabled `update.auto` source of the same repository key (`withApprovedRefs`). The default reads the data folder; `{ approvals: false }` returns the raw file. `update --due` and release publish overlay the entries they use. `update-cli` edits the raw file, so its "changed on origin" check compares the raw entry (`existingRaw`), and a stored commit is never a false change.
+- **Automatic approval.** `approveAutoRelease` (`src/skills/auto-approve.ts`) is the entry point for part 2b. It checks the source (first-party, enabled, `update.auto`), the stored release and its verification, and that every package comes from the source's repository with first-party trust. It refuses a conflict with config or store. When `skills.releases.keys` is set it signs with `skills.releases.auto_key` (the key must match `keys[id]`). Its order is fixed: the audit line is prepared under the audit lock first (a failure refuses and changes nothing); then the store entry is written; then the audit line is appended. If the append fails after the write, the result is `approved` with a note, and the store entry is the durable record. A rollback is not done, because it would be riskier than the note.
+- **Not in this part.** No production code calls `approveAutoRelease` or `recordApprovedRef`, so the data-folder store stays empty. Retention of automatic releases (removing old folders under a lock, with run-lock checks) is a later part and is not here; no release is deleted by this change.
+
 #### Evaluation gate
 
 A candidate skill is promoted only on one verdict from its evaluation record (`src/skills/evaluation.ts`, #501):

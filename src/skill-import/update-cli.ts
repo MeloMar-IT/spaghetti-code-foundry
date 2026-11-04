@@ -56,6 +56,8 @@ export const UPDATE_DUE_USAGE = "usage: scf skills update --due [--all]";
 /** The input of a due run: the entries of skill-sources.yaml as they are on origin/<base>. */
 export interface DueInput {
   sources: readonly SkillLibrarySource[];
+  /** The entries as written in the file, without the refs of the data folder. The "changed on origin" check compares with these. */
+  raw?: readonly SkillLibrarySource[];
 }
 
 const defaultResolve: NonNullable<SkillUpdateOptions["resolve"]> = async (repository, track, o) =>
@@ -331,7 +333,7 @@ async function run(
   let sources: readonly SkillLibrarySource[];
   if (dueInput) sources = dueInput.sources;
   else {
-    const read = readSources(file, undefined, today);
+    const read = readSources(file, undefined, today, { approvals: false });
     if (read.state === "invalid") {
       for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
       return "PROBLEM";
@@ -410,7 +412,8 @@ async function run(
     // The list was read before; the entry must still be the one on origin now.
     const again = blob && sourcesFromBytes(blob.content, today);
     const now = again && again.state === "ok" ? again.manifest.sources.find((s) => s.id === id) : undefined;
-    if (!isDeepStrictEqual(now, existing)) return problem(`the entry changed on origin/${base} while it was checked; ${NOTHING}`);
+    const was = dueInput?.raw?.find((s) => s.id === id) ?? existing;
+    if (!isDeepStrictEqual(now, was)) return problem(`the entry changed on origin/${base} while it was checked; ${NOTHING}`);
   }
   const r: UpdateRun = { id, commit, c12, branch, repo, ctx, cwd, today, track, existing, out, opts, signal, tick, due, credential };
   if (already !== undefined) return refresh(r, already, path);

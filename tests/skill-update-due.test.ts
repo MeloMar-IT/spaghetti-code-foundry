@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { UPDATE_DUE_USAGE } from "../src/skill-import/update-cli.js";
+import { recordApprovedRef } from "../src/skills/approvals.js";
 import { LsRemoteError } from "../src/skill-import/ls-remote.js";
 import { branches, branchOf, catalogueYaml, ghCalls, git, NOW, sigCounts, snapshot, update, useWorlds, W, world, type World } from "./helpers/skill-update-world.js";
 
@@ -221,6 +222,20 @@ describe("the record", () => {
     const r = await run(w);
     expect(r.rc).toBe(0);
     expect(r.lines.filter((l) => l.includes("could not be written"))).toEqual(["NOTE skill-update-checks.json could not be written to the data folder; the next run may check the same sources again"]);
+  });
+});
+
+describe("an auto source with a ref in the data folder", () => {
+  it("is checked against the stored commit, and its entry on origin is not reported as changed", async () => {
+    const yaml = dueYaml({ lib: "manual", ver: "weekly", verAt: W.c1 })
+      .replace("trust: verified", "trust: first-party")
+      .replace(/update: \{cadence: weekly\}/, "update: {cadence: weekly, auto: true}");
+    const w = world(yaml);
+    recordApprovedRef("ver", "github.com/example/verified", W.c2, { home: w.home });
+    const r = await run(w);
+    expect(r.rc).toBe(0);
+    expect(r.text).not.toContain("changed on origin");
+    expect(r.lines).toContain(`ver: UNCHANGED ver is at ${c12(W.c2)} (ref.approved); nothing to propose`);
   });
 });
 

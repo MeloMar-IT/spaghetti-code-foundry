@@ -384,7 +384,7 @@ export function storeSources(listing: StoreListing, approved: readonly ApprovedR
       continue;
     }
     if (++unapproved <= MAX_NOTES) {
-      notes.push({ kind: "unapproved-release", text: `release ${r.catalogue}@${r.version} is published but not in skills.releases.approved, so it is not loaded; see "scf skills release list".` });
+      notes.push({ kind: "unapproved-release", text: `release ${r.catalogue}@${r.version} is published but not approved, so it is not loaded; see "scf skills release list".` });
     }
   }
   if (unapproved > MAX_NOTES) notes.push({ kind: "unapproved-release", text: `… and ${unapproved - MAX_NOTES} more unapproved releases` });
