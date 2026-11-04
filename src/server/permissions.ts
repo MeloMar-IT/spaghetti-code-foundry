@@ -26,8 +26,10 @@ const r = (method: string, path: string, user: UserAccess, note: string): Rule =
 
 export const RULES: Rule[] = [
   r("GET", "info", "no", "server settings and today's cost"),
-  r("GET", "config", "no", "read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set"),
-  r("PUT", "config", "no", "change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error`"),
+  r("GET", "config", "no", "read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set. `plugins` is not returned"),
+  r("GET", "plugins", "no", "the plugins loaded at server start, in order (label, module, version and what each registered), and plugin problems; never their options"),
+  r("GET", "plugins/ui", "yes", "the pages and menu items that plugins added and your role may see (`pages`: plugin, id, title, module address, roles; `menu`: plugin, page, label); never a folder, a file path or a plugin option. With `?as=` the role of the viewed user"),
+  r("PUT", "config", "no", "change the settings (not `plugins`: a body with that key is refused with 400, they are set in `config.yaml` only). With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error`"),
   r("GET", "settings", "no", "the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret"),
   r("POST", "settings/reset", "no", "remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed`"),
   r("GET", "restart", "no", "which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs)"),
@@ -102,7 +104,7 @@ export const RULES: Rule[] = [
   r("POST", "your-turn/act", "no", "answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume"),
   r("GET", "clarity", "no", "how long items waited for you, and what Your turn missed"),
   r("POST", "password", "yes", "change your own password (the other sessions of the account end)"),
-  r("GET", "me/view", "yes", "your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced"),
+  r("GET", "me/view", "yes", "your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced; also the contact text of the Help page (`helpContact`, empty when not set)"),
   r("PUT", "me/view", "yes", "choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows"),
   r("GET", "credentials", "yes", "your stored credentials"),
   r("POST", "credentials", "yes", "store a credential"),
@@ -127,8 +129,8 @@ export const RULES: Rule[] = [
   r("GET", "audit", "no", "read the audit log, newest first, with filters"),
   r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),
   r("GET", "repos", "yes", "your repositories, each with its autonomy level"),
-  r("GET", "repos/methods", "yes", "the sign-in methods you may choose, and the link to install the GitHub App"),
-  r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it)"),
+  r("GET", "repos/methods", "yes", "the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App"),
+  r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`)"),
   r("PUT", "repos/:id/auth", "yes", "change the method, user name, token or address of your repository, or make a new deploy key"),
   r("POST", "repos/:id/test", "yes", "test the connection of your repository (an admin: any repository); the result is saved as its connection status"),
   r("GET", "repos/:id/ready", "yes", "the Definition of Ready of your repository (an admin: any repository)"),
@@ -228,6 +230,31 @@ export function authorize(ctx: ApiContext, user: User, rule: Rule, seg: string[]
   if (ctx.scheduler.ownerOf(seg[1] ?? "") !== user.id) throw new HttpError(404, "run not found");
 }
 
+/**
+ * A route a plugin registered: one file it serves at /plugins/<plugin>/<path>. Plugin routes are not in RULES, but they
+ * follow the same law: no rule is 404, no session is 401, a role not listed is 403, and an admin passes every rule.
+ */
+export interface PluginRule {
+  plugin: string;
+  method: "GET";
+  /** The path of the file inside the plugin's folder, e.g. "report.js". */
+  path: string;
+  roles: ("admin" | "user")[];
+  note: string;
+}
+
+/** The rule of a plugin call: the exact plugin, the GET method and the file path. */
+export function findPluginRule(entries: readonly { name: string; rules: readonly PluginRule[] }[], method: string, plugin: string, path: string): PluginRule | undefined {
+  if (method !== "GET") return undefined;
+  return entries.find((e) => e.name === plugin)?.rules.find((x) => x.method === "GET" && x.path === path);
+}
+
+/** Throws 403 when the user's role is not in the rule. An admin always passes. */
+export function authorizePlugin(user: User, rule: PluginRule): void {
+  if (user.role === "admin" || rule.roles.includes(user.role as "user")) return;
+  throw new HttpError(403, "not allowed for your role");
+}
+
 /** The flows a user may see and start: valid, published ones whose name a run can use. The list and the start check both use this. */
 export function publishedFlows(repo: string): FlowListing[] {
   return listFlows(repo).filter((f) => !f.error && NAME_RE.test(f.name) && f.published === true && !isRefinementFlow(f.name));
@@ -236,6 +263,13 @@ export function publishedFlows(repo: string): FlowListing[] {
 /** True for the release-build flow, or any flow with a shell step that runs the release-build tool. */
 export function isReleaseBuildFlow(flow: Flow): boolean {
   return flow.name === "release-build" || flow.steps.some((s) => s.type === "shell" && s.run.includes("$FACTORY_TOOLS/release-build"));
+}
+
+/** Only an admin may choose the method "none" (the server's own access) or "local" (a folder on this machine). Throws 403. */
+export function checkRepoMethod(user: Pick<User, "role">, method: unknown): void {
+  if (user.role === "admin") return;
+  if (method === "none") throw new HttpError(403, 'only an admin may choose "none" (the server\'s own access)');
+  if (method === "local") throw new HttpError(403, 'only an admin may choose "local" (a folder on this machine)');
 }
 
 /**

@@ -1,22 +1,30 @@
 import { parse, stringify } from "yaml";
 import { isStatusComment, STATUS_MARKER } from "../github.js";
-import type { StoryState } from "./store.js";
 
 /**
  * A story as a file: `.scf/stories/<number>-<slug>.md`. Front matter (YAML), then the Markdown body,
  * then an optional final `## Comments` section. Pure functions only: no file, process or clock access.
  */
 export type StoryKind = "story" | "epic";
+/** `go` is an open story that is ready to build ("Yes, build this"). */
+export const GO_STATE = "go";
+export type FileStoryState = "open" | "go" | "closed";
 /** `id` is the stable number of the comment (the one in `#issuecomment-<id>`); a file written by hand may have none. */
 export interface StoryComment { id?: number; author: string; createdAt: string; body: string }
 export interface FileStory {
-  number: number; title: string; state: StoryState; kind: StoryKind;
+  number: number; title: string; state: FileStoryState; kind: StoryKind;
   labels: string[]; epic?: number; dependsOn: number[];
   createdAt?: string; updatedAt?: string; closedAt?: string;
   /** The highest comment id the story has ever used (`comment_top`). A removed comment never gives its id back. */
   commentTop?: number;
+  /** Set when the story was moved to GitHub: the issue number and the repository (`owner/name`) it is in. */
+  githubIssue?: number; githubRepo?: string;
+  /** True once the move finished everything for the issue (labels, state, comment). */
+  githubDone?: boolean;
   body: string; comments: StoryComment[];
 }
+/** The GitHub repository name a story file may hold in `github_repo`. */
+export const GITHUB_REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 export type ParsedStoryFile = { ok: true; story: FileStory } | { ok: false; reason: string };
 
 const COMMENTS_HEADING = "## Comments";
@@ -117,6 +125,9 @@ export function formatStoryFile(story: FileStory): string {
   if (story.updatedAt !== undefined) fm.updated = story.updatedAt;
   if (story.closedAt !== undefined) fm.closed = story.closedAt;
   if (story.commentTop !== undefined) fm.comment_top = story.commentTop;
+  if (story.githubIssue !== undefined) fm.github_issue = story.githubIssue;
+  if (story.githubRepo !== undefined) fm.github_repo = story.githubRepo;
+  if (story.githubDone) fm.github_done = true;
   let out = `---\n${stringify(fm, { lineWidth: 0 })}---\n\n${escapeText(story.body)}`;
   if (story.comments.length) {
     const blocks = story.comments.map((c) => `### Comment ${c.id === undefined ? "" : `${c.id} `}by ${c.author} on ${c.createdAt}\n\n${escapeText(c.body)}`);
@@ -157,7 +168,7 @@ export function parseStoryFile(text: string, fileName: string): ParsedStoryFile 
   if (format !== 1 && format !== 2) return fail(`format is unknown: ${show(format)} (use 1 or 2)`);
   const syn = SYNTAX[format as number]!;
   const state = has("state") ? f.state : undefined;
-  if (state !== "open" && state !== "closed") return fail(`state is unknown: ${state === undefined ? "(none)" : show(state)} (use open or closed)`);
+  if (state !== "open" && state !== GO_STATE && state !== "closed") return fail(`state is unknown: ${state === undefined ? "(none)" : show(state)} (use open, go or closed)`);
   const kind = has("kind") ? f.kind : "story";
   if (kind !== "story" && kind !== "epic") return fail(`kind is unknown: ${show(kind)} (use story or epic)`);
   const labels = has("labels") ? f.labels : [];
@@ -168,6 +179,9 @@ export function parseStoryFile(text: string, fileName: string): ParsedStoryFile 
   for (const k of ["created", "updated", "closed"]) {
     if (has(k) && typeof f[k] !== "string") return fail(`${k} must be a time`);
   }
+  if (has("github_issue") && !isWhole(f.github_issue)) return fail("github_issue must be an issue number");
+  if (has("github_repo") && !(typeof f.github_repo === "string" && GITHUB_REPO_RE.test(f.github_repo))) return fail("github_repo must be a repository name (owner/name)");
+  if (has("github_done") && f.github_done !== true) return fail("github_done must be true");
   const top = has("comment_top") ? f.comment_top : undefined;
   if (top !== undefined && !(typeof top === "number" && Number.isSafeInteger(top) && top >= 0 && top <= MAX_COMMENT_ID)) {
     return fail(`comment_top must be a whole number from 0 to ${MAX_COMMENT_ID}`);
@@ -213,6 +227,9 @@ export function parseStoryFile(text: string, fileName: string): ParsedStoryFile 
   if (has("updated")) story.updatedAt = f.updated as string;
   if (has("closed")) story.closedAt = f.closed as string;
   if (top !== undefined) story.commentTop = top as number;
+  if (has("github_issue")) story.githubIssue = f.github_issue as number;
+  if (has("github_repo")) story.githubRepo = f.github_repo as string;
+  if (has("github_done")) story.githubDone = true;
   return { ok: true, story };
 }
 

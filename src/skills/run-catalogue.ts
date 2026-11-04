@@ -1,5 +1,5 @@
 import type { Config, SkillsConfig } from "../config.js";
-import { buildSkillCatalogue, catalogueOptionsFrom, estimateTokens, renderSkillCatalogue } from "./catalogue.js";
+import { buildSkillCatalogue, catalogueOptionsFrom, estimateTokens, profileTechnologies, renderSkillCatalogue } from "./catalogue.js";
 import { CATALOGUE_SCORING } from "./catalogue-rules.js";
 import type { CanonicalResult } from "./canonical.js";
 import { CHOICE_LIMITS } from "./choice-rules.js";
@@ -41,6 +41,8 @@ export interface RunCatalogueRecord {
   /** The catalogue descriptions from skill-selections that the agent saw, with the release they came from (at most DESCRIPTION_RECORD_LIMIT). */
   descriptions?: { skill: string; text: string; from: "skill-selections"; release: string }[];
   descriptionsOmitted?: number;
+  /** The technologies the repository profile showed (at most 10; observations only, never coverage). Read by the skill gap sweep. */
+  technologies?: { name: string; confidence: string; version?: string }[];
 }
 export interface RunCatalogue {
   /** "" when no block is attached. */
@@ -179,6 +181,8 @@ export function runSkillCatalogue(i: { workdir?: string; config: Pick<Config, "s
       if (ch?.pins?.state === "ok") record.choicesSource = { pins: ch.pins.source };
     }
     if (canonicalRec) record.canonical = canonicalRec;
+    const techs = profileTechnologies(profile).slice(0, 10).map((t) => ({ name: t.name, confidence: t.confidence, ...(t.version ? { version: t.version } : {}) }));
+    if (techs.length) record.technologies = techs;
     // The owner's catalogue descriptions the agent was shown: the text and the release it came from (bounded; same text as in the prompt).
     const described: NonNullable<RunCatalogueRecord["descriptions"]> = [];
     for (const e of cat.entries) {

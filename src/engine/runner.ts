@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { stepAfterPaths } from "./step-facts.js";
 import { listAllRepos } from "../auth/repos.js";
-import { decideTechnicalFor, type RepoSettings } from "../auth/repo-settings.js";
+import { decideTechnicalFor, skillLibraryFor, type RepoSettings } from "../auth/repo-settings.js";
 import { defaultOwner, isRefinementRun } from "../auth/run-owner.js";
 import { nextStepEnv } from "../next-step.js";
 import { loadConfig, loadRepoVars, type Config } from "../config.js";
@@ -33,10 +33,10 @@ import { CODEX_LOGIN_NOT_RETURNED, returnCodexLogin } from "../agents/codex-logi
 import { codexLoginReturnLine } from "../agents/codex-home.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
-import { hotfixState, identityEnv, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
+import { hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
-import { removeSignInDir } from "./repo-access.js";
+import { localRepoEnv, removeSignInDir } from "./repo-access.js";
 import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
 import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
@@ -58,6 +58,8 @@ import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR, type RunRecorder } fr
 import { snapshotToolProfile } from "../tool-profile/session.js";
 import { configureTelemetry } from "../telemetry/telemetry.js";
 import { emitRunMeasured } from "../monitor/measures.js";
+import { runEndEvents, runStartedEvent } from "../usage/events.js";
+import { emitUsage } from "../usage/hub.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
 
@@ -127,6 +129,23 @@ export function newRunId(now = new Date()): string {
 }
 
 /** "1" when the Foundry may decide technical questions for this repository, else "0"; any error gives "0" (then it asks). */
+/** The sentence for a user's skill-write run: measuring needs the server's model login, and publishing pushes to main. */
+export const SKILL_WRITE_REFUSED = "This flow measures a skill with the server's model login and pushes to main, so only an admin can run it.";
+
+/** The reason a user's run of the skill-write flow is refused; undefined when it may run. Fails closed like `userAccount`. */
+export function skillWriteRefused(flowName: string | undefined, owner: string | undefined): string | undefined {
+  return flowName === SKILL_WRITE_FLOW && userAccount(owner) ? SKILL_WRITE_REFUSED : undefined;
+}
+
+/** Is this run in a repository an admin marked as a skill library, owned by someone who is not a user account? Fails closed. */
+export function skillLibraryRun(githubRepo: string | undefined, owner: string | undefined, records: () => readonly { url: string; settings?: RepoSettings }[] = listAllRepos): boolean {
+  try {
+    return !userAccount(owner) && skillLibraryFor(githubRepo ?? "", records());
+  } catch {
+    return false;
+  }
+}
+
 export function decideTechnicalEnv(githubRepo: string | undefined, records: () => readonly { url: string; settings?: RepoSettings }[] = listAllRepos): "1" | "0" {
   try {
     return decideTechnicalFor(githubRepo ?? "", records()) ? "1" : "0";
@@ -168,7 +187,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
 
   // A run nobody asked for by name (CLI, evals) belongs to the first admin; a refinement run without an owner stays without one.
   const owner = opts.owner ?? (isRefinementRun(opts.source) ? undefined : defaultOwner());
-  const refused = workspaceRefused(flow.workspace, owner);
+  const refused = workspaceRefused(flow.workspace, owner) ?? skillWriteRefused(flow.name, owner);
   // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
   const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
@@ -199,6 +218,11 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     mkdirSync(join(runDir, "logs"), { recursive: true });
     saveRun(summary);
   });
+  try {
+    emitUsage(runStartedEvent(summary));
+  } catch {
+    /* usage is best effort */
+  }
   opts.onUpdate?.(summary);
   const evidence = runRecorder(summary);
   evidence.queued(opts.queuedAt);
@@ -367,7 +391,7 @@ async function drive(
     if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: summary.state.next, lastOutput: "" });
   }
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
-  const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner);
+  const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner) ?? skillWriteRefused(summary.flowDef?.name, summary.owner);
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: summary.state.next, lastOutput: "" });
   // a user's run that cannot be held in an OS sandbox never runs a step (also on resume), unless an admin allowed it
   const sandbox = sandboxedRun(summary.owner, config);
@@ -404,6 +428,7 @@ async function drive(
       FACTORY_TOOLS: TOOLS_DIR,
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
+      ...localRepoEnv(summary.vars.github_repo),
       ...nextStepEnv(),
       // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes, autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
@@ -436,6 +461,7 @@ async function drive(
     baseEnv,
     botEnv,
     hotfix: hotfixState(summary.flowDef, config),
+    skillPublish: skillPublishState(summary.flowDef, skillLibraryRun(summary.vars.github_repo, summary.owner)),
     logsDir: join(summary.runDir, "logs"),
     claudeBin: opts.claudeBin,
     codexBin: opts.codexBin,
@@ -530,6 +556,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
   emitRunMeasured(s);
+  emitRunEnd(s);
   appendLiveLog(s.runDir, "■ cancelled while waiting for approval");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -547,6 +574,7 @@ export function cancelStoppedRun(runsDir: string, runId: string, config: Config 
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
   emitRunMeasured(s);
+  emitRunEnd(s);
   appendLiveLog(s.runDir, "■ cancelled while stopped");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -573,6 +601,15 @@ export function saveAnswer(runsDir: string, runId: string, text: string, by: str
   s.answers = [...(Array.isArray(s.answers) ? s.answers : []), { at: new Date().toISOString(), text: clean, by }];
   saveRun(s);
   return { run: s, undo: () => writeFileSync(runFile(s.runDir), before) };
+}
+
+/** The usage events of a run that ended (nothing for a run that is only stopped or waiting). Never throws. */
+function emitRunEnd(run: RunSummary): void {
+  try {
+    emitUsage(runEndEvents(run));
+  } catch {
+    /* usage is best effort */
+  }
 }
 
 async function finish(summary: RunSummary, opts: CommonOptions, config: Config, r: LoopResult): Promise<RunSummary> {
@@ -604,6 +641,7 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
     }
   }
   emitRunMeasured(summary); // after the evidence is final and the last cost is added; nothing for a run that is only stopped or waiting
+  emitRunEnd(summary);
   await notifyRun(config, summary).catch(() => {});
   if (summary.status === "stopped") {
     // Cancelled while the notification ran: the saved cancel stands, and the caller must see it.

@@ -201,6 +201,38 @@ describe("the steps", () => {
     expect(field("method")!.value).toBe("ssh-deploy-key");
   });
 
+  it("a path preselects Local (no GitHub) and saves it", async () => {
+    const options = { ...ALL, methods: [...ALL.methods, "local"] };
+    void open({ options });
+    type("url", "/srv/app");
+    press("Next");
+    expect(field("method")!.value).toBe("local");
+    expect(field("url")).toBeUndefined();
+    press("Add repository");
+    await flush();
+    expect(saves()[0]!.body).toEqual({ url: "/srv/app", method: "local" });
+  });
+
+  it("only an admin is offered Local (no GitHub)", () => {
+    const options = { ...ALL, methods: [...ALL.methods, "local"] };
+    expect(repos.methodsFor(true, options).map((m: any) => m.id)).toContain("local");
+    expect(repos.methodsFor(false, options).map((m: any) => m.id)).not.toContain("local");
+  });
+
+  it("Local after an https address asks for the folder, and a path with a token method asks for an HTTPS address", async () => {
+    const options = { ...ALL, methods: [...ALL.methods, "local"] };
+    void open({ options });
+    type("url", "https://github.com/o/a");
+    press("Next");
+    choose("local");
+    expect(walk(root()).some((e) => e.textContent === "Folder (absolute path)")).toBe(true);
+    press("Back");
+    type("url", "/srv/app");
+    press("Next");
+    choose("github-token");
+    expect(walk(root()).some((e) => e.textContent === "HTTPS address")).toBe(true);
+  });
+
   it("an https address with the deploy key asks for the SSH address", async () => {
     await add("https://github.com/o/a", "ssh-deploy-key", {}, {});
     // the first press found no SSH address

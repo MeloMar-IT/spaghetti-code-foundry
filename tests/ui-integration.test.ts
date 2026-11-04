@@ -20,6 +20,11 @@ describe("providerOf", () => {
     expect(m.providerOf("git@Host.Example:path/x.git")).toBe("host.example");
   });
 
+  it("is This machine for a folder, with its own identity", () => {
+    expect(m.providerOf("/srv/app")).toBe("This machine");
+    expect(identity({ method: "local", url: "/srv/app" })).toBe("no sign-in (a folder on this machine)");
+  });
+
   it("is Unknown host for no address", () => {
     for (const v of ["", "  ", undefined, null, 5]) expect(m.providerOf(v), String(v)).toBe("Unknown host");
   });

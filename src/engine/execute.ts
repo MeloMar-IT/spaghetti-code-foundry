@@ -1,6 +1,8 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { Config } from "../config.js";
+import { stepFinishedEvent } from "../usage/events.js";
+import { emitUsage } from "../usage/hub.js";
 import { deliveryAfterStep, deliveryKeyEnv } from "../delivery/write.js";
 import { FACTORY_HOME } from "../home.js";
 import { loadFlow } from "../flow/load.js";
@@ -74,6 +76,8 @@ export interface Engine {
   botEnv: () => Promise<Record<string, string>>;
   /** Whether this run may take the hotfix path (see hotfixState); "off" when unset. */
   hotfix?: "on" | "off" | "other";
+  /** Whether this run may push main in the publish step of skill-write (see skillPublishState); "other" when unset. */
+  skillPublish?: "on" | "other";
   logsDir: string;
   claudeBin?: string;
   codexBin?: string;
@@ -134,7 +138,7 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   // Never inherited from the server's own environment: only pushAllowEnv() can set it, for one step.
   // FACTORY_NO_PUSH likewise: only the run's own level (in baseEnv) sets it.
   const env: Record<string, string> = { FACTORY_NO_PUSH: "", ...engine.baseEnv, FACTORY_HOTFIX: hotfix, FACTORY_PUSH_ALLOW: "" };
-  if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix));
+  if (step) Object.assign(env, pushAllowEnv(step, scope.depth, scope.ctx.vars, hotfix, engine.skillPublish ?? "other"));
   for (const [k, v] of Object.entries(scope.ctx.vars)) env[varEnvName(k)] = v;
   for (const [id, s] of Object.entries(scope.ctx.steps)) env[outputEnvName(id)] = capEnvValue(String(s.output ?? ""), `steps.${id}.output`);
   const ran = ranOrder(engine.summary?.history ?? [], scope.prefix);
@@ -180,6 +184,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     ...(scope.prefix ? { parent: scope.prefix.slice(0, -1) } : {}),
   };
   engine.summary.history.push(rec);
+  const historyIndex = engine.summary.history.length - 1;
   engine.summary.totalCostUsd += res.costUsd ?? 0;
   scope.ctx.steps[step.id] = {
     ok: res.ok,
@@ -268,6 +273,12 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     });
   }
   if (res.slotWaitMs) engine.log(`    · ${waitedLine(res.slotWaitMs)}`);
+  // the usage event of the step (once per history record; it never throws into the run)
+  try {
+    emitUsage(stepFinishedEvent(engine.summary, rec, historyIndex, engine.config));
+  } catch {
+    /* usage is best effort */
+  }
   const secs =(rec.durationMs / 1000).toFixed(1);
   const tok = res.tokens ? `, ${Math.round((res.tokens.input + res.tokens.output) / 1000)}k tok` : "";
   engine.log(`${rec.ok ? "✔" : "✘"} ${rec.id} (${secs}s${res.costUsd ? `, $${res.costUsd.toFixed(4)}` : ""}${tok})${rec.error ? ` — ${rec.error}` : ""}`);

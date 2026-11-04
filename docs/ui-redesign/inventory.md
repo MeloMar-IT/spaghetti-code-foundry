@@ -58,6 +58,7 @@ The page at `/user/`. 7 route rows. `USER_HASH` allows exactly these (`ui/auth.j
 | `/user/#/home` | Home | `ui/home.js` | `renderHome` | `api-runs.ts` | user; admin read-only preview | See what needs me, what is running and what finished | Follow the best next action (head button) | Polls every 30 s; groups come from each run's next-step record |
 | `/user/#/start` | Start work | `ui/user/start.js` | `renderStart` | `api-flows.ts`, `api-repos.ts`, `api-runs.ts` | user; admin read-only preview | Start a run | Start | Needs a published flow and a GitHub repository (`NO_FLOWS`, `NO_REPOS`) |
 | `/user/#/setup` | Setup check | `ui/setup-check.js` | `renderSetupCheck` | `api-admin.ts` (`setup-check`) | admin; a user gets a plain card | See whether git, Claude Code, Codex and their sign-ins are ready | Check again | No input fields |
+| `/user/#/help` | Help | `ui/simple.js` | `renderSimpleHelp` | `api-auth.ts` (`me/view`) | user display, Simple and Advanced | Read what the Foundry's words mean and who to ask | none | No input fields |
 | `/user/#/runs` | My runs | `ui/user/runs.js` | `renderMyRuns` | `api-runs.ts` | user; admin read-only preview | Find a run and its next step | Open a run (card link) | Polls every 30 s; Remove asks with `confirmDialog` |
 | `/user/#/runs/:id` | — | `ui/user/runs.js` | `renderMyRun` | `api-runs.ts` (incl. event stream) | user; admin read-only preview | Follow one run, answer, approve, cancel | Send answer / Approve / Cancel | A second detail page for the same run (F3) |
 | `/user/#/repos` | My repositories | `ui/repos.js` | `renderRepos` with `admin: false` | `api-repos.ts` | user; admin read-only preview | Add and manage own repositories | Add repository | Same module as the admin page; a row has the next step and Open |
@@ -138,6 +139,7 @@ Loading, empty, error and live update per route, from the code. "Errors" means t
 | `/user/#/start` | `NO_FLOWS` and `NO_REPOS` (`user/start.js`, #436) | same as `#/start` | none |
 | `#/setup` | none (a plain card for a user or a preview) | skeleton, then `errorState` with Retry | none (Check again buttons) |
 | `/user/#/setup` | none (a plain card for a user) | same as `#/setup` | none |
+| `/user/#/help` | none | the page draws without the contact line when it cannot be read | none |
 | `/user/#/runs` | `NO_RUNS` plus a Start work link (`user/runs.js:145`) | errors box | poll 30 s |
 | `/user/#/runs/:id` | `NOT_FOUND` with a link back, `NO_STEPS`, `NO_CHANGES` | skeleton, `permissionState` or `errorState` with Retry on first load; stream loss gives a banner with Reconnect; a diff failure gives an inline `errorState` with Retry | stream and poll 30 s |
 | `/user/#/repos` | "No repositories yet..." | errors box | none |
@@ -189,6 +191,7 @@ From code, not measured. `ui/style.css` has two width rules. R1 is `max-width: 1
 | `/user/#/home` | Rows wrap (`.home-row`) | Fits |
 | `/user/#/start` | Top bar wraps (`style.css:372`) | Fits |
 | `/user/#/setup` | Cards, max 640 px | Fits |
+| `/user/#/help` | One column of text | Fits |
 | `/user/#/runs` | Cards | Fits |
 | `/user/#/runs/:id` | `.run-grid` one column | Long page |
 | `/user/#/repos` | `.table-box` scrolls | Same |

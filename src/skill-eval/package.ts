@@ -1,7 +1,8 @@
 import { cpSync, lstatSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { addSkillPins } from "../skills/lock.js";
-import type { NormalizedSkill } from "../skills/normalize.js";
+import { normalizeSkill, type NormalizedSkill, type NormalizeOrigin } from "../skills/normalize.js";
+import { scanSkill } from "../skills/scan.js";
 import { foundryPackageFiles, loadSkillPackage, readRegular } from "../skills/package.js";
 import type { RegisteredSkill } from "../skills/registry.js";
 import { SKILL_LIMITS } from "../skills/schema.js";
@@ -69,6 +70,74 @@ export function packageScanFiles(dir: string): { path: string; content: Uint8Arr
   };
   walk(dir, "", 0);
   return out;
+}
+
+// ── A skill folder in a working tree (`scf skills effect skills/<name>`) ──
+
+/** The origin of a skill read from a folder: it has no source and no commit. */
+export const LOCAL_SKILL_ORIGIN: NormalizeOrigin = { source: "local", repository: "local", repositoryKey: "local", commit: "0".repeat(40) };
+
+type Files = { path: string; content: Uint8Array }[];
+
+/**
+ * Reads a skill folder strictly: a link, a file that is not regular, a file over `fileBytes`, more than `files` files, a path over
+ * `pathChars` or `pathSegments`, or a total over `totalBytes` is a problem, never skipped. All limits apply to the whole folder.
+ */
+export function readSkillFolder(dir: string): { files: Files; problems: string[] } {
+  const L = SKILL_LIMITS;
+  const files: Files = [];
+  const problems: string[] = [];
+  let total = 0;
+  let count = 0;
+  const walk = (abs: string, rel: string) => {
+    for (const name of readdirSync(abs).sort()) {
+      const full = join(abs, name);
+      const path = rel ? `${rel}/${name}` : name;
+      const st = lstatSync(full);
+      if (st.isSymbolicLink()) problems.push(`${path} is a symbolic link`);
+      else if (st.isDirectory()) walk(full, path);
+      else if (!st.isFile()) problems.push(`${path} is not a regular file`);
+      else if (path.length > L.pathChars || path.split("/").length > L.pathSegments) {
+        problems.push(`path ${path.slice(0, 60)} is too long or too deep (at most ${L.pathChars} characters, ${L.pathSegments} parts)`);
+      } else if (++count > L.files) {
+        if (count === L.files + 1) problems.push(`more than ${L.files} files`);
+      } else {
+        const bytes = readRegular(full, L.fileBytes);
+        if (bytes === "large") problems.push(`${path} is larger than ${L.fileBytes} bytes`);
+        else if (typeof bytes === "string") problems.push(`${path} cannot be read (${bytes})`);
+        else {
+          total += bytes.length;
+          files.push({ path, content: bytes });
+        }
+      }
+    }
+  };
+  try {
+    walk(dir, "");
+  } catch {
+    problems.push("the skill folder cannot be read");
+  }
+  if (total > L.totalBytes) problems.push(`the folder is larger than ${L.totalBytes} bytes in all`);
+  return { files, problems };
+}
+
+/**
+ * readSkillFolder, then the scanner over ALL files (high and medium findings are problems, low ones are notes; never the matched text),
+ * then `evals/**` is dropped and the rest normalized. The returned `files` are the complete folder.
+ */
+export function loadLocalSkill(dir: string, origin: NormalizeOrigin = LOCAL_SKILL_ORIGIN): { skill?: NormalizedSkill; files: Files; problems: string[]; notes: string[] } {
+  const read = readSkillFolder(dir);
+  const problems = [...read.problems];
+  const notes: string[] = [];
+  if (problems.length > 0) return { files: read.files, problems, notes };
+  for (const f of scanSkill({ root: "skill", files: read.files }).findings) {
+    if (f.severity === "low") notes.push(`scan: ${f.rule} in ${f.path}`);
+    else problems.push(`scan: ${f.rule} in ${f.path}`);
+  }
+  const kept = read.files.filter((f) => f.path !== "evals" && !f.path.startsWith("evals/"));
+  const result = normalizeSkill(origin, { root: "skill", files: kept });
+  if (!result.ok) for (const r of result.reasons) problems.push(`normalize: ${r}`);
+  return { skill: result.ok ? result.skill : undefined, files: read.files, problems, notes };
 }
 
 /** Pins the arm's skill in the lock of the current data folder. Call it after `switchDataFolder`: it writes the arm's `skills.lock.json`. */

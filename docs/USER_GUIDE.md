@@ -208,7 +208,7 @@ The top bar has a **View** box with three views. The view changes only what your
 
 | View | Display | What it shows |
 |---|---|---|
-| **Simple** | `/user/` | My projects (Home) and one page per project. Start work, My runs, Epics and Refinement are not in Simple (see [Simple: My projects](#simple-my-projects-and-the-project-page)) |
+| **Simple** | `/user/` | My projects (Home), one page per project and the Help page. Start work, My runs, Epics and Refinement are not in Simple (see [Simple: My projects](#simple-my-projects-and-the-project-page)) |
 | **Advanced** | `/user/` | Everything of the user display: Home, Epics, My runs, My repositories, Refinement and Start work |
 | **Admin** | `/` | The admin display |
 
@@ -230,7 +230,7 @@ The top bar has a **View** box with three views. The view changes only what your
 
 ### Simple: My projects and the project page
 
-Simple shows your work per project, in plain words. Home is **My projects**; the links in the menu and the top bar are only **Home**.
+Simple shows your work per project, in plain words. Home is **My projects**; the links in the menu and the top bar are only **Home** and **Help**. The Help link is shown only in Simple.
 
 **My projects** (`#/home`) has one card per project: its name, a one-line state ("Building 2 things", "Waiting for your answer", "Ready for you to check", "All done") and one big button for the next thing to do. A project with no work yet shows **Open project**. An empty list says there are no projects yet.
 
@@ -243,6 +243,16 @@ Simple shows your work per project, in plain words. Home is **My projects**; the
 Both pages refresh every 30 seconds and use the same lists as Home (repositories, runs and the queue), so Simple shows no data that Home does not. Work that is cancelled, superseded or parked, and epics, are not listed.
 
 Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". Local projects (without GitHub) show "Nothing yet" for now.
+
+### Simple: the Help page
+
+The **Help** link in the top bar, next to Home, opens `#/help`. It is written in plain words and has three parts:
+
+1. **The words**: the Foundry's words for Simple, each with its plain meaning (the same list the rest of Simple uses).
+2. **How do I …**: short how-tos, for example "How do I change the colours?" and "How do I make it public?".
+3. **Who to ask**: the contact line for your project, from the setting `simple.help_contact` (see [Settings and safety](#7-settings-and-safety)). The line is hidden while the setting is empty, and the section with it is left out.
+
+The contact is shown as plain text, never as HTML. If the Foundry cannot read the contact, the page still shows the words and the how-tos. The Help link is not shown in Advanced or Admin, but `#/help` still opens the same page there.
 
 ### Use the Foundry as a package
 
@@ -649,20 +659,23 @@ It cannot know when a usage limit stops work or when a person will answer. It al
 
 A story can be a file, so people and other tools can read and write it without the Foundry. Files go in `.scf/stories/` in the repository, one file per story or epic, named `<number>-<slug>.md`. The number is the story number and the slug is the title in lowercase ASCII, at most 50 characters (`story` when nothing is left, for example for a title in other letters only).
 
-The format status: this part defines the format only. The Foundry does not read or write these files yet; later parts add the store.
+The format status: the format is defined, and the store for a local project reads and writes these files. A repository connected as **Local (no GitHub)** keeps its stories here (see "Local (no GitHub)" under My repositories). GitHub repositories are unchanged. The commits that the store makes are described below.
+
+On a local project, the flow steps work on these stories as they do on GitHub: **Depends on** (a story waits until the story it depends on is done), splits into epics and child stories, questions with `/defaults`, and approvals. You are the owner of the machine, so you have write access for approvals. A local project has no pull requests: a daily-branch step that asks for one stops with "Pull requests are not available for a local project".
 
 A file has three parts:
 
 1. **Front matter**, between two lines `---`, in YAML:
    - `number` (required): the story number, a whole number. It must match the number in the file name.
    - `title` (required): the title.
-   - `state` (required): `open` or `closed`.
+   - `state` (required): `open`, `go` or `closed`. `go` is an open story that is ready to build: it is what "Yes, build this" sets, and a watcher on a local repository starts the stories in this state. A `go` story counts as open everywhere else. Files with `open` or `closed` read unchanged.
    - `kind`: `story` (the default) or `epic`.
    - `labels`: a list of words.
    - `epic`: the number of the epic this story belongs to.
    - `depends_on`: a list of the story numbers this story waits for.
    - `created`, `updated`, `closed`: times.
    - `comment_top` (optional): the highest comment id the story has ever used. The Foundry writes it; a comment that is removed never gives its id back. A file written by hand may leave it out.
+   - `github_issue`, `github_repo`, `github_done` (optional): set by the move to GitHub (see "Move a local project to GitHub"). `github_issue` is the issue number, `github_repo` the repository (`owner/name`), and `github_done` is `true` once the move has finished that issue. Older Foundry versions ignore them.
 2. **The body**: the Markdown text of the story, after the front matter.
 3. **Comments** (optional): a final `## Comments` heading, then one block per comment. A block starts with a heading `### Comment <id> by <author> on <time>` and holds the comment text. The id is the comment's number, the one in its link (`#issuecomment-<id>`). A heading without an id, `### Comment by <author> on <time>`, is also read; the Foundry gives such a comment the next free id when it next writes the file.
 
@@ -721,6 +734,60 @@ A file that cannot be read is reported with the reason. Common reasons:
 - `state` is not `open` or `closed`.
 
 Dates must be written as text in quotes, so YAML does not change them.
+
+### Local projects
+
+A local project is a git repository on this machine, connected as **Local (no GitHub)** (see "Local (no GitHub)" under My repositories). The Foundry plans, builds, tests, reviews and merges its stories without GitHub and without the `gh` command. Nothing leaves the machine unless you turn on **Also push to the remote**.
+
+When a story is set to `go`, the gitflow flow (`issue-gitflow`) does this:
+
+1. **Clone.** The run copies your folder with plain git. Its feature branch (`feature/<number>-…`) lives in the run's own workspace, never in your folder.
+2. **Test and review.** The review reads the local changes: `git diff develop...feature`, which includes the commits already on the feature branch, and the changes not yet committed. A local project has no pull request, so the `pr-*` commands of `tools/story` are refused for it.
+3. **Merge into develop.** After the tests and the review pass, the feature is merged into `develop` in your folder. The Foundry never pushes into a branch that is checked out in your folder. It moves `develop` only when `develop` has not moved since the run cloned it; if it has, the run merges again with the newer `develop`. If `develop` is the branch you have checked out, the files are updated only when your folder is clean.
+4. **Paused by your work.** If `develop` is checked out with uncommitted changes, or with files the update would replace, the run waits without holding a slot, and it merges again by itself when the way is clear. Commit, stash or move the changes, or switch branch. Your uncommitted work is never overwritten.
+5. **Release.** A feature does not touch `main`. To release, merge `develop` into `main` yourself.
+
+A hotfix label does not apply to a local project: the story is built as a feature, and the report says so.
+
+The report of a finished story names the commit (its short hash) and says that it is in `develop` in your folder.
+
+**Also push to the remote** (a setting, off by default). It is shown only when your folder has a git remote. When it is on, the Foundry runs a plain `git push` of `develop` from your folder after each merge. No GitHub API is used. If the push fails, the report says why, with any sign-in removed from the text, and the merge in your folder stays.
+
+### Commits for story changes
+
+When the Foundry writes a story file in a local project, it also makes one git commit for that change, so every change to your stories is in the history:
+
+- The message is `scf: story #<n> <what>`, where `<what>` is one of `created`, `edited`, `labels`, `comment`, `status`, `closed` or `reopened`. Examples: `scf: story #12 created`, `scf: story #12 comment`, `scf: story #12 closed`.
+- The commit goes on the branch `scf/stories`, which the Foundry creates on first use. Your checked-out branch, its staged and unstaged changes and its working files are not touched. A repository connected as Local (no GitHub) keeps its story history this way, so story commits never appear on your main line. To bring them into your branch, merge or cherry-pick `scf/stories` yourself. The branch name is shown in an error message.
+- The commit holds only the story files that the write changed. A new story also adds `.scf/stories/next-number`.
+- A write that changes nothing makes no commit.
+- The Foundry does not commit your hand edits. A story you edit by hand is still read the next time, and it is committed only when the Foundry writes that same story.
+- The file is saved before the commit. If the commit fails, the story keeps the change, and the Foundry reports the story number, the file, the branch (when known) and the reason. Typical reasons: the folder is not a git repository, git is not installed, or git took longer than the time limit.
+
+### Move a local project to GitHub
+
+The open stories of a local project can become issues in a GitHub repository. The target must already be connected under **My repositories** by the same owner. The text of each story is kept: its title, body, labels, comments, epic and dependencies.
+
+Start with a dry run. It lists each story and what the move would do with it, and it changes nothing: no issue is created and no file is written. Only the sign-in of the target repository is prepared.
+
+- **create**: the story becomes a new issue. Stories set to `open` or `go` are listed. Closed stories are listed only when you ask to move them too.
+- **already moved**: the story has a `github_issue` number and is not moved again.
+- **unreadable**: the story file cannot be read. It is listed with the reason and is not moved.
+- **too large**: its comments would be longer than GitHub allows in one comment. It is not moved.
+
+When you run the move, it works in two passes:
+
+1. **Create.** The stories are moved one at a time, the lowest number first. Each story gets one issue with its title, body and labels. A story that is `go` gets the build label of the target repository's issue watcher, or the label `go` when there is none. All its comments go into one GitHub comment, each with its author and time. The Foundry's status comment marker is removed from that text, so no watcher reads it as its own status. Right after each issue is created, its number and the repository are written into the story file (`github_issue` and `github_repo`), and the change is committed on `scf/stories` (see "Commits for story changes", message `scf: story #<n> moved`).
+2. **Map and finish.** When all issues exist, each moved issue's body is written again from your local text. A number in "Depends on" and an epic link now point to the new GitHub numbers. A dependency on a story that was not moved (closed, or unreadable) is written as `local story N, not moved`, so it never points at the wrong issue. Then the issue gets its build label, a closed story is closed on GitHub, and the combined comment is posted. The story file gets `github_done: true` when this is finished.
+
+Running the move again creates no new issue. It only repeats the number mapping and finishes what is not yet done. If a run stops halfway, the next run goes on from where it stopped. Only one move of the same folder runs at a time.
+
+The move refuses to start, and changes nothing, when:
+
+- the project was already moved to another repository, or a story file has `github_issue` but no `github_repo`;
+- the target repository is not connected by you, or has no usable GitHub sign-in. The message is "connect this repository to GitHub first". The Foundry never asks for a token; it uses the sign-in of the target repository (see the sign-in of the repository under My repositories).
+
+**Known limit.** If the Foundry stops after GitHub has created an issue but before the story file records its number, the next run creates that story's issue again. Check the target repository for a duplicate and close the extra one before you run the move again.
 
 ### Work page (redesign, off by default)
 
@@ -4357,6 +4424,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
 
+**Simple view (Help contact)** — `simple.help_contact` is the line under "Who to ask" on the Help page of the Simple view: a name and an e-mail address, for example. It is up to 300 characters, without line breaks or control characters, and shown as plain text. Empty (the default) hides the line. The control is the **Simple view** card on the Settings page, between Ask SCF and Delivery. Users read the text through `GET /api/me/view` (field `helpContact`); they cannot change it.
+
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
 
 **Slow down at this share of a weekly limit (load governor)** — `governor.usage_percent` is a whole number from 1 to 100. Once about this share of the Claude or Codex weekly limit is used (from the reading, see "Usage limits" under Helper processes), the limits helper keeps the runs at once at 1, or at `governor.floor` when that is set and higher, until the reset. It works only with `scf limits auto on` and a reading (`scf limits set`), and only while the threshold holds: below it, the forecast alone decides. The cap is global, so one tool at the threshold slows all runs, Codex runs included. The `scf limits` report says "at or above your threshold" for each tool at or above it. Not set, the setting does nothing and only the forecast slows down.
@@ -4845,6 +4914,15 @@ there, it says so (409) and nothing is saved. The row keeps the link, to install
 change which ones it may use. If the administrator removes the app, the row says "The administrator removed the
 GitHub App" under its attention state; choose another authentication. **Remove** does not uninstall the app on GitHub.
 
+**Local (no GitHub).** An admin can connect a git repository on the server's machine instead. Choose **Local (no GitHub)** and type its absolute path (starting with `/`), for example `/Users/me/projects/shop`. Only an admin may add it; a user who is not an admin does not see the choice, and the server refuses it with 403. The Foundry checks the folder when you test the connection:
+
+- the folder exists, and it is the top folder of a git repository (not a folder inside one);
+- the folder and its `.scf/stories/` folder can be written;
+- a branch is checked out (HEAD is not detached).
+
+A watcher on a local repository works the same way without GitHub: it starts the stories set to `go` and reads the folder itself. Watchers that need GitHub (review comments, CI failures, release files) are refused for it, and the watcher form says why.
+
+It does not call GitHub, and it asks for no token, user name or key. The repository keeps its stories in `.scf/stories/` (see "Stories as files") and its story commits on `scf/stories`. The path must not contain control characters, must not be inside the Foundry's data folder, and cannot be changed later: to use another folder, remove the repository and add it again.
 With **SSH deploy key** you type the SSH address of the repository (`git@host:path` or `ssh://…`) and no
 secret. The Foundry makes a key pair, keeps the private key and shows the **public key** in the
 Authentication column, with **Copy** (it needs HTTPS or localhost; otherwise select the key and copy it
@@ -4883,11 +4961,12 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
   on by default, so a repository that has no such setting, including one registered before this change, counts as
   on. Off: the Foundry asks you every question on the issue. Runs get it as `$FACTORY_DECIDE_TECHNICAL` (`1` or `0`), read when a run starts or resumes. See [Questions the Foundry decides itself](#questions-the-foundry-decides-itself).
   If a run's repository is registered under two accounts and one of them is off, the run is treated as off.
-- **The settings are only stored and shown, with two exceptions.** Runs do not use the other settings yet: the test command still
+- **Also push to the remote** (a checkbox in the Run settings dialog, field `pushRemote`, for a local project with a git remote only): off by default; off removes the field. When on, the Foundry pushes `develop` from your folder after each merge (see "Local projects"). Runs get it as `$FACTORY_LOCAL_PUSH` (`yes`).
+- **The settings are only stored and shown, with three exceptions.** Runs do not use the other settings yet: the test command still
   comes from the flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. The
   release-build recipe is read by the flow `release-build` when the commit has no `.factory/release-build.yaml`
   (see "Build release files on this machine"). The "decide technical questions" switch is read by the engine when a run starts
-  or resumes (see above). The settings are never in `GET /api/repos` and never shown on
+  or resumes (see above). The "also push to the remote" switch is read by the engine for each run of a local project (see "Local projects"). The settings are never in `GET /api/repos` and never shown on
   **My repositories**.
 - **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
   the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of
@@ -5049,8 +5128,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | Call | Admin | User | What it does |
 |---|---|---|---|
 | `GET /api/info` | yes | no | server settings and today's cost |
-| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set |
-| `PUT /api/config` | yes | no | change the settings. With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
+| `GET /api/config` | yes | no | read the settings from `config.yaml`; the `X-Config-Version` header names this version of the file. The Slack webhook is not returned: `notify.slack_webhook_set` says whether one is set. `plugins` is not returned |
+| `GET /api/plugins` | yes | no | the plugins loaded at server start, in order (label, module, version and what each registered), and plugin problems; never their options |
+| `GET /api/plugins/ui` | yes | yes | the pages and menu items that plugins added and your role may see (`pages`: plugin, id, title, module address, roles; `menu`: plugin, page, label); never a folder, a file path or a plugin option. With `?as=` the role of the viewed user |
+| `PUT /api/config` | yes | no | change the settings (not `plugins`: a body with that key is refused with 400, they are set in `config.yaml` only). With an `X-Config-Version` header from a read, a stale version is refused with 409 (reload first); the answer carries the new version. Without the header nothing is checked. A `notify.slack_webhook` left out keeps the stored webhook; `null` removes it; a string sets it. A broken `config.yaml` answers 400 with the line number. A refused save answers 400 and lists its problems as `issues` (`path`, `message`; at most 50) next to `error` |
 | `GET /api/settings` | yes | no | the description of the settings (label, help, kind, range, default, when a change takes effect) and the start-up settings with their values; no secret |
 | `POST /api/settings/reset` | yes | no | remove one described setting from `config.yaml` so it takes its default (a parent left empty goes too; comments above it stay). With an `X-Config-Version` header a stale version is refused with 409; the answer carries the new version and `removed` |
 | `GET /api/restart` | yes | no | which saved settings need a restart, whether the server can restart itself, and whether a restart waits (why, since when, active runs) |
@@ -5125,7 +5206,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/your-turn/act` | yes | no | answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume |
 | `GET /api/clarity` | yes | no | how long items waited for you, and what Your turn missed |
 | `POST /api/password` | yes | yes | change your own password (the other sessions of the account end) |
-| `GET /api/me/view` | yes | yes | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced |
+| `GET /api/me/view` | yes | yes | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced; also the contact text of the Help page (`helpContact`, empty when not set) |
 | `PUT /api/me/view` | yes | yes | choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows |
 | `GET /api/credentials` | yes | yes | your stored credentials |
 | `POST /api/credentials` | yes | yes | store a credential |
@@ -5150,8 +5231,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories, each with its autonomy level |
-| `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose, and the link to install the GitHub App |
-| `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it) |
+| `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App |
+| `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
 | `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
@@ -5263,6 +5344,7 @@ skills:
   catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] }
   selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [], exclusive: [] }
   review: { max_tokens: 3000, max_skill_tokens: 1000 }
+  authoring: { repository: "", label: Factory_go, max_open: 5, max_per_day: 3 }
   unresolved:
     unknown: stop
     missing: stop
@@ -5273,6 +5355,54 @@ skills:
 ```
 
 `skills.tools` is read but no run uses it yet.
+
+#### Skill gaps
+
+The Foundry can ask for a missing skill itself. Set `skills.authoring.repository` to a skill-library repository (`owner/name`, marked as a skill library in its Run settings). Empty means off. The **Skill gaps** group of the Skills card changes the four settings:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `repository` | empty (off) | The repository where the issues are opened. |
+| `label` | `Factory_go` | The label of a new issue. The `skill-write` watcher of that repository picks it up. |
+| `max_open` | 5 | No new issue while this many skill issues (gap and improve) are open (1 to 50). |
+| `max_per_day` | 3 | The most new skill issues (gap and improve) in 24 hours (0 to 20). |
+
+A signal opens an issue when it finds:
+
+- **Unknown skill.** A plan asked for a skill id that is not in the catalogue. Seen in runs of the last 30 days.
+- **Uncovered technology.** The repository profile found a technology (with high or medium confidence) that no skill in the catalogue covers. Seen in runs of the last 30 days.
+- **Repeated review finding.** The same kind of `[high]` or `[medium]` review finding (security, error handling, test coverage, and so on) in 3 or more runs of one repository within 14 days.
+- **Repeated failure.** A run failed at a test step, or went through the same fix step 3 or more times, in a repository whose technology is known. Three such runs in 14 days, or one run that repaired 3 times, is enough. An open monitor finding for the same step or a red develop also counts.
+
+Rules that always hold:
+
+- One issue per skill topic. A topic is named like `kafka` or `kafka-testing`. The issue has the marker `<!-- scf skill-gap=<topic> -->`: while it is open, no new issue for that topic is opened, and a closed one is not reopened for 30 days.
+- The limits count the open gap and improve issues and the issues made in the last 24 hours, over all the marked issues in the repository.
+- The title is `Skill gap: <topic>`. The body says what to teach, the evidence (run ids, finding kinds, technology and version, the repository), and three sample tasks. It never holds file content, paths, review text, issue text or secrets.
+- If the repository's issue list is too long to check, nothing is opened, and the log says so.
+- The label is created in the repository if it is missing.
+
+A run that stopped because of an `unknown` skill gets `Skill gap issue: <url>` in its stop reason. When every unknown skill of that run is in the catalogue, the watcher resumes the run by itself. The sweep runs once an hour and when a run stops for skills. Its log lines start with `skill-gaps:`. It needs an administrator's GitHub sign-in for the repository (a repository record with its own token or app); without one, it logs why and opens nothing. The ledger of the issues is `skill-gaps.json` in the data folder.
+
+#### Skill improvement
+
+A skill of the library that does not help, or keeps being overruled, gets an issue to improve it. The same settings (`skills.authoring`) turn it on. A signal opens one issue per library skill, titled `Improve skill <name>`, when it finds:
+
+- **No measurable effect or harm.** The newest `scf skills effect` result of an installed version of the skill is `no-measurable-effect` or `harms`.
+- **Repeated review finding.** The same kind of `[high]` or `[medium]` review finding in 3 or more runs within 14 days, where a coder had that exact version of the skill loaded.
+- **Quarantined.** An installed version of the skill is quarantined.
+
+The issue has the marker `<!-- scf skill-improve=<name> -->`. It lists the installed versions, the signals, the evidence (run ids, finding kinds, the effect counts or the state) and never file content or review text. The duplicate rules and the limits of the gap issues apply to it too.
+
+The `skill-write` flow handles an improve issue as a change to the existing skill (the issue must name the same skill, and the new `version` must be higher than the one in the repository):
+
+1. It writes the new version and checks it as usual.
+2. It measures the new version with and without the skill, and measures the old version on the same scenarios.
+3. It publishes only when the new version helps, and scores at least as well as the old one (the same number of runs with the skill). Otherwise the new version is not published, and the issue says why. The scores are in the comment.
+
+A skill that fails to improve twice is set to `deprecated`, with the reason `did not improve in 2 tries (issue #<n>)`. Only an `active` skill is deprecated; a quarantined, retired or revoked one keeps its state, and the owner decides. The issue then gets the label `Factory_needs_info`. A failed try counts only when it is a Foundry comment on that issue, so a reply that resumes the same run does not count twice.
+
+Not yet in the Foundry: an improve signal for a gate that blocks an automatic update of a library skill. It waits for the automatic update part of the skill library (#775).
 
 #### Write a skill
 
@@ -7104,6 +7234,59 @@ the answer is hidden as before).
 
 Global settings are stored in `~/.spaghetti-code-foundry/config.yaml`; runs in `~/.spaghetti-code-foundry/runs/`.
 
+### Plugins
+
+A plugin adds behaviour to the Foundry without a change to its code. List them in `config.yaml`:
+
+```yaml
+plugins:
+  - module: "@your-org/scf-plugin-slack"   # a package name, or an absolute path
+    options: { channel: "#factory" }        # any map; the plugin gets it as api.options
+  - module: /opt/scf/plugins/audit.mjs
+```
+
+- **When they load.** Once, when the server starts, in the order listed, before the queue and the
+  watchers start. A plugin that cannot be found or imported, has no `register`, throws, or does not
+  finish `register` within 30 seconds stops the start. The message names the plugin. Nothing runs
+  half-started. A change needs a restart.
+- **What `register` gets.** `register(api)` (sync or async) receives `api.version` (the plugin API
+  version, `0.2`) and `api.options`. A plugin can also get the usage events with `api.onUsage`. A plugin that does not support this version can throw with a
+  message; that stops the start like any other failure. See [PLUGIN_API.md](PLUGIN_API.md).
+- **What is refused.** A relative path, a URL, a built-in Node module, and a module inside a runs
+  folder or a repository the Foundry works on. At most 20 plugins; no name twice.
+- **Where they are set.** In `config.yaml` only. The settings page shows the plugins read-only.
+  `PUT /api/config` refuses a `plugins` key, and a save from the settings page keeps the stored list.
+- **Checking.** `scf plugins` lists the loaded plugins in order, with their version, their module and
+  what each registered. It needs a running, signed-in server (admin); `GET /api/plugins` is the same
+  list. The health line shows a plugin problem when `config.yaml` lists other plugins than the ones
+  loaded (restart the server), or when the file cannot be read.
+- **Without `plugins`** nothing changes: no plugin loads and the health line has no plugin entry.
+
+#### Plugin pages, menu items and settings
+
+A plugin can also add to the web interface. In `register(api)` it calls `api.ui(spec)` once (see
+[PLUGIN_API.md](PLUGIN_API.md)):
+
+- **Pages.** Each page is an ES module in the plugin's folder. It is served at `/plugins/<name>/<file>`
+  and opens at `#/plugins/<name>/<page>` inside the normal layout. The `<name>` is the plugin's label
+  in lower case (`@`, `/`, `.` and `_` become `-`). A page can name more files of its folder (`.js`,
+  `.css`, `.svg`).
+- **Menu items.** A link under "Plugins" in the sidebar. It names a page and the roles that see it;
+  a role can see the item only when it can see the page.
+- **Who may see what.** A plugin file is served only when a rule of that plugin lists your role.
+  Without a rule the answer is 404; without a session, 401; with a role the rule does not list, 403.
+  Admins pass every rule. Pages and menu items you may not see are not listed for you.
+- **Settings.** A settings section adds a card on the Settings page. Its fields are number, yes-no,
+  text, list or choice, each with a label, an optional help text and a default. Saved values go to
+  `plugin_settings.<name>` in `config.yaml` through the normal settings save. A key the plugin does not
+  declare, or a value that does not fit its field, is refused. So is a change to the values of a plugin that
+  is not loaded.
+- **Limits.** At most 20 pages, 20 menu items, 20 files per page and 50 fields. A file is at most 1 MB
+  and must lie inside the plugin's folder (not a symbolic link out of it, not a folder where runs write).
+- **Checking.** `GET /api/plugins/ui` (any signed-in role) lists the pages and menu items you may see.
+  It never shows a folder, a file path or a plugin option.
+- **Without plugins** the interface is unchanged: no plugin link, no plugin card, no plugin address.
+
 ---
 
 ## 8. Costs, dashboard and evals
@@ -7117,11 +7300,13 @@ them depends on how the agents are logged in:
   toward your plan's limits.
 - Claude Code with an **API key** (`ANTHROPIC_API_KEY`): billed per token — the amounts are
   real.
-- Codex with your **ChatGPT login**: included in your ChatGPT plan; recorded as $0 with the
-  token count. With `CODEX_API_KEY` you can set a price per token for the provider.
+- Codex with your **ChatGPT login**: included in your ChatGPT plan. The Foundry prices a Codex step from
+  its model's price (see [Usage events and prices](#usage-events-and-prices)), so the amount is an estimate.
+  Set a price in `usage.prices` to match what you pay, or to 0 to record $0.
 - **Local models**: free, recorded as $0.
 
-Budgets use these amounts either way, so they also protect your subscription limits.
+Budgets use these amounts either way, so they also protect your subscription limits. Codex costs count
+toward a run's `max_cost_usd` and the daily budget, as Claude Code's do.
 
 **The failure summary call.** When a run fails with what looks like a code problem, the Foundry
 makes one short call to a small model (default `haiku`) that reads the end of the failing output
@@ -7140,6 +7325,35 @@ turn it off for one process, set `SCF_NO_FAILURE_MODEL=1`.
 Costs are still recorded and shown everywhere, but nothing is ever stopped because of money — no
 run limit, no step limit, no daily budget. The usage limits that Claude and Codex report
 themselves still pause runs; they continue by themselves when the limit resets.
+
+### Usage events and prices
+
+Each run writes its usage facts to `<data folder>/usage/usage-YYYY-MM.jsonl`, one JSON line per event, in
+the month of the event. The events are `run.started`, `step.finished` (one for each step, with its tokens,
+cost and duration), `run.finished` (status, a fixed reason word, duration and the run's cost), and for a
+story run `issue.done`, `issue.split` (with the parent and the parts) or `issue.failed`. A line holds only
+ids, numbers and fixed words, never task text, step output, error text or secrets. Plugins get the same
+events through `api.onUsage`; see [PLUGIN_API.md](PLUGIN_API.md#usage-events).
+
+Each event is written once, on a best-effort basis. If the Foundry stops just after a run is saved and
+before an event is written, that event is lost; nothing is written again later.
+
+**Prices of Codex models.** Prices are US dollars per million tokens: input, cached input and output.
+The price of a model is taken from `usage.prices` in `config.yaml`; without one, from the provider's own
+`price`; without that, from the built-in table. The built-in table has the GPT-5 family: `gpt-5`,
+`gpt-5-codex`, `gpt-5.1` and `gpt-5.1-codex` at 1.25 / 0.125 / 10, and `gpt-5-mini` and
+`gpt-5.1-codex-mini` at 0.25 / 0.025 / 2. These are list prices and go out of date; set your own when they
+differ. A model with no price has no cost in its events and adds nothing to the run's total. Local models
+cost 0.
+
+```yaml
+usage:
+  prices:
+    gpt-5: {input_per_mtok: 1.25, cached_input_per_mtok: 0.125, output_per_mtok: 10}
+    gpt-5-mini: {input_per_mtok: 0, cached_input_per_mtok: 0, output_per_mtok: 0}   # 0 records $0
+```
+
+The default is `usage.prices: {}` (no entries; the built-in table applies). Up to 200 models.
 
 ### Operations overview
 
@@ -7607,6 +7821,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf validate <flow or file>` | Check a flow |
 | `scf flow-guide` | Print the flow-writing guide for AI assistants ([Let any AI write a flow](#let-any-ai-write-a-flow)) |
 | `scf watch [flow] --var github_repo=o/r [--source …] [--once]` | Run one watcher from the terminal |
+| `scf plugins` (or `scf plugins list`) | List the plugins loaded at server start, with version, module and what each registered; needs a running, signed-in server (admin) ([Plugins](#plugins)) |
 | `scf eval <suite.yaml> [--flows a,b] [--models …] [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run an eval suite; the `--…-bin` options use other programs ([Evals](#evals)) |
 | `scf eval safety [--claude-bin p] [--codex-bin p] [--gh-bin p]` | Run every offline safety suite in `evals/safety`; exits 1 when a case fails ([Safety suites](#safety-suites)) |
 | `scf eval help [--live]` | Check Ask SCF against its fixed scenarios; without `--live` no model is called |
@@ -8508,6 +8723,18 @@ Under each finished answer, the drawer asks **Was this answer helpful?** with tw
 Your rating stays with that answer in your conversation, and you can change it. It is deleted with the conversation. It is not sent to any AI service, and rating an answer does not give consent to use your conversations for training. Only counts go to the quality numbers that administrators see (see "Who may ask, what is kept, and what is logged"). Rating still works while Ask SCF is paused.
 
 **To report a bad answer:** rate it **Not helpful** and tick the reason. For a wrong answer about the product, also tell an administrator of this Foundry, with the question, so the documentation or the setting can be fixed. The quality numbers show how many answers were rated, but not which one.
+
+### Ask SCF in the Simple view
+
+In the Simple view, Ask SCF answers in plain words, for someone who does not know the Foundry:
+
+- **Words.** The same word list as the rest of Simple is used (for example "change" for a story, "work" for a run, "got stuck" for a failed run). A sentence that still needs a word of the Advanced view is left out.
+- **Only your own work.** It explains only your own projects and runs. Another account's work is not used.
+- **Links.** A reply links only to **My projects**, **Help** and your own project pages. Any other link is dropped.
+- **No changes.** A Simple reply offers no actions, no offers and no drafts. Earlier questions of the conversation are not sent with a new one.
+- **Where links go.** Links open in place; the reply does not offer a hand-off to an Advanced page.
+
+The panel shows the Simple suggestions instead of the Advanced ones. If a reply has nothing left in plain words, the panel says so and asks you to switch to the Advanced view to read it.
 
 ### What you can ask
 

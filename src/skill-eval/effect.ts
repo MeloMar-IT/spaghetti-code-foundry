@@ -15,7 +15,7 @@ import { buildRepoProfile, type RepoProfile } from "../skills/repo-profile.js";
 import type { SkillPackage } from "../skills/schema.js";
 import { hidden } from "../skills/staged-import.js";
 import { snapshotFixtures } from "./fixture.js";
-import { copyBaselinePackage, writeCandidatePackage } from "./package.js";
+import { copyBaselinePackage, loadLocalSkill, writeCandidatePackage } from "./package.js";
 import { agentPreflight, blockedReason, INTERRUPTED, type AgentScoreOptions } from "./score.js";
 import { EvaluationInterrupted, runArm, type Arm, type ArmContext, type ArmRun } from "./run.js";
 
@@ -33,7 +33,7 @@ type Out = (line: string) => void;
 const stamp = (d: Date) => d.toISOString().replace(/\.\d+Z$/, "Z");
 
 /** The skill as the selection catalogue sees it: always active, approved and pinned (the caller has checked that). */
-function asEntry(pkg: SkillPackage): RegisteredSkill {
+export function effectEntry(pkg: SkillPackage): RegisteredSkill {
   return { key: `${pkg.id}@${pkg.version}`, id: pkg.id, version: pkg.version, source: "admin", label: "effect", dir: "", active: true, trust: "approved", pin: "pinned", digest: pkg.digest, pkg };
 }
 
@@ -99,13 +99,45 @@ function resolveStaged(ops: Extract<EffectOperands, { kind: "staged" }>, out: Ou
     id: item.id,
     version: item.version,
     digest: pkg.digest,
-    entry: asEntry(pkg),
+    entry: effectEntry(pkg),
     origin: { source: staged.source.id, commit: staged.commit },
     write: (dir) => writeCandidatePackage(item.skill, dir),
     suiteDigest: suite.digest,
     ins: suite.suite.instructions,
     instructionFixtures: suite.instructionFixtures,
     suiteDir: dirname(resolve(opts.cwd, ops.suiteFile ?? EVALUATION_SUITE_DEFAULT)),
+  };
+}
+
+/** A skill folder of the working tree: read strictly and scanned as a whole, then `evals/` is dropped for the arm. The record has no source and no commit. */
+function resolveLocal(ops: Extract<EffectOperands, { kind: "local" }>, out: Out, opts: AgentEffectOptions): Resolved | undefined {
+  const dir = resolve(opts.cwd, ops.dir);
+  const loaded = loadLocalSkill(dir);
+  for (const n of loaded.notes) out(`NOTE ${n}`);
+  for (const p of loaded.problems) out(`PROBLEM ${hidden(p)}`);
+  if (loaded.problems.length > 0 || !loaded.skill) return undefined;
+  const file = ops.suiteFile ? resolve(opts.cwd, ops.suiteFile) : join(dir, "evals", "suite.yaml");
+  const read = readEvaluationSuite(file);
+  if (read.state === "none") {
+    out("PROBLEM the evaluation suite file does not exist");
+    return undefined;
+  }
+  if (read.state === "invalid") {
+    for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return undefined;
+  }
+  const skill = loaded.skill;
+  const pkg = skill.package;
+  return {
+    id: pkg.id,
+    version: pkg.version,
+    digest: pkg.digest,
+    entry: effectEntry(pkg),
+    write: (to) => writeCandidatePackage(skill, to),
+    suiteDigest: read.digest,
+    ins: read.suite.instructions,
+    instructionFixtures: read.instructionFixtures,
+    suiteDir: dirname(file),
   };
 }
 
@@ -151,7 +183,7 @@ function resolveApproved(ops: Extract<EffectOperands, { kind: "approved" }>, out
 const toRun = (r: ArmRun): EffectRun => ({ scenario: r.scenario, attempt: r.attempt, runId: r.runId, pass: r.passed, loaded: r.loaded, tokens: r.tokens, durationMs: r.durationMs });
 
 export async function effectWithAgent(ops: EffectOperands, out: Out, opts: AgentEffectOptions): Promise<number> {
-  const skill = ops.kind === "staged" ? resolveStaged(ops, out, opts) : resolveApproved(ops, out, opts);
+  const skill = ops.kind === "staged" ? resolveStaged(ops, out, opts) : ops.kind === "local" ? resolveLocal(ops, out, opts) : resolveApproved(ops, out, opts);
   if (!skill) return 1;
   const label = `${skill.id}@${skill.version}`;
   const config = opts.config ?? loadConfig();

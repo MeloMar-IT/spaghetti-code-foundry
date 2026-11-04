@@ -132,8 +132,17 @@ for (const [f, ok] of Object.entries(spec.oneOf ?? {})) if (!ok.includes(values.
 if (spec.anyOf && !spec.anyOf.some((f) => values.has(f) || repeats.has(f))) fail(`${sub} needs ${spec.anyOf.join(" or ")}`);
 if (spec.limit && !(/^[1-9]\d{0,3}$/.test(values.get(spec.limit)) && Number(values.get(spec.limit)) <= 1000)) fail(`${spec.limit} must be 1 to 1000`);
 
+let lib;
+let loadProblem = "";
+try {
+  lib = await import(new URL("../dist/stories/store.js", import.meta.url).href);
+} catch (e) {
+  loadProblem = String(e?.message || e).split("\n")[0];
+}
 const repo = process.env.FACTORY_VAR_GITHUB_REPO ?? "";
-if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+if (lib ? !lib.isStoryRepoName(repo) : !/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+// A local project has no pull requests: refuse before the store is loaded or anything is called.
+if (sub.startsWith("pr-") && (lib ? lib.isLocalRepoName(repo) : repo.startsWith("local:"))) fail("Pull requests are not available for a local project");
 const issueText = process.env.FACTORY_VAR_ISSUE ?? "";
 if (spec.issue && !/^[1-9]\d{0,8}$/.test(issueText)) fail("set var issue to the issue number");
 const issue = Number(issueText);
@@ -142,8 +151,8 @@ const text = spec.stdin ? readFileSync(0, "utf8") : "";
 let store;
 let refusal;
 try {
-  const lib = await import(new URL("../dist/stories/store.js", import.meta.url).href);
-  store = lib.storeFor(repo);
+  if (!lib) throw new Error(loadProblem);
+  store = lib.storeForTool(repo);
   // dependency-free on purpose: this tool also runs in a container that has no node_modules
   ({ pullRequestRefusal: refusal } = await import(new URL("../dist/governance/autonomy-rules.js", import.meta.url).href));
 } catch (e) {

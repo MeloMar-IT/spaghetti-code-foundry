@@ -1,7 +1,9 @@
 import { agentStatuses, providerStatuses, testSpec } from "../agents/health.js";
 import { auditActions } from "../auth/audit.js";
 import { changeDetail, configChanges } from "../auth/audit-changes.js";
-import { configIssues, configView, storedConfigProblem, withStoredWebhook } from "./config-view.js";
+import { emptyRegistry, pluginsView, readFilePlugins } from "../plugins/load.js";
+import { pluginSettingsProblem, settingSections, uiView } from "../plugins/ui.js";
+import { configIssues, configView, storedConfigProblem, withStoredPlugins, withStoredWebhook } from "./config-view.js";
 import { hasAdmin } from "../auth/users.js";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -35,6 +37,13 @@ function fileSnapshot(text: string): Config | undefined {
   }
 }
 
+/** A plugin setting that PUT /api/config refuses: the dotted key path and the reason. */
+class PluginSettingsIssue extends Error {
+  constructor(readonly path: string, message: string) {
+    super(message);
+  }
+}
+
 export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const { opts, scheduler, watchers } = ctx;
 
@@ -53,9 +62,15 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
     }), true;
   }
 
+  if (seg[0] === "plugins" && seg[1] === "ui" && seg.length === 2 && method === "GET") {
+    return send(res, 200, uiView(ctx.plugins?.ui ?? [], user.role)), true;
+  }
+
   if (seg[0] === "settings" && !seg[1] && method === "GET") {
+    const plugins = settingSections(ctx.plugins?.ui ?? [], ctx.fileConfig().plugin_settings);
     return send(res, 200, {
       settings: describeSettings(),
+      ...(plugins.length ? { plugins } : {}),
       startup: startupSettings({
         home: process.env.FACTORY_HOME ?? FACTORY_HOME,
         port: opts.port,
@@ -101,6 +116,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
     return send(res, 200, { key, removed }), true;
   }
 
+  if (seg[0] === "plugins" && !seg[1] && method === "GET") {
+    return send(res, 200, pluginsView(ctx.plugins ?? emptyRegistry(), readFilePlugins())), true;
+  }
+
   if (seg[0] === "config") {
     if (method === "GET") {
       const text = readConfigText();
@@ -121,7 +140,10 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
       } catch (e) {
         throw new HttpError(400, `invalid config: ${storedConfigProblem(e)}`);
       }
-      const merged = withStoredWebhook(body, before.notify.slack_webhook);
+      if (typeof body === "object" && body !== null && Object.hasOwn(body, "plugins")) {
+        throw new HttpError(400, "plugins are set in config.yaml only: edit the file, then restart the server");
+      }
+      const merged = withStoredPlugins(withStoredWebhook(body, before.notify.slack_webhook), before.plugins);
       try {
         // Do not let a change shut out the browser that sends it (or the proxy it comes through).
         const parsed = ConfigSchema.parse(merged);
@@ -139,7 +161,18 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
         const stored = [...ctx.config().watchers.filter((w) => w.repoId !== undefined), ...ctx.blockedWatchers()];
         const bad = fileWatcherProblem(parsed.watchers, inFile) ?? configIdProblem(parsed.watchers, inFile, stored);
         if (bad) throw new Error(bad);
-        const edited = editConfigText(text, merged);
+        // A body without plugin_settings keeps what is stored (the schema default {} would remove it). Obsolete keys of loaded plugins are dropped, never an error.
+        let toWrite = merged;
+        if (typeof merged === "object" && merged !== null) {
+          if (Object.hasOwn(merged, "plugin_settings")) {
+            const checked = pluginSettingsProblem(parsed.plugin_settings, before.plugin_settings, ctx.plugins?.ui ?? []);
+            if (checked.problem) throw new PluginSettingsIssue(checked.problem.path, checked.problem.message);
+            toWrite = { ...merged, plugin_settings: checked.cleaned };
+          } else {
+            toWrite = { ...merged, plugin_settings: before.plugin_settings };
+          }
+        }
+        const edited = editConfigText(text, toWrite);
         out = edited;
         saved = edited.config;
         if (edited.text !== text) {
@@ -147,6 +180,9 @@ export const adminRoutes: Route = async (ctx, req, res, seg, method, user) => {
           writeFileSync(CONFIG_PATH(), edited.text);
         }
       } catch (e) {
+        if (e instanceof PluginSettingsIssue) {
+          throw new HttpError(400, `invalid config: ${e.path}: ${e.message}`, undefined, { issues: [{ path: e.path, message: e.message }] });
+        }
         const issues = configIssues(e);
         throw new HttpError(400, `invalid config: ${(e as Error).message}`, undefined, issues ? { issues } : undefined);
       }

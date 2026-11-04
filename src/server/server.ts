@@ -5,6 +5,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, updateEveryMs, type Config } from "../config.js";
 import { SKILL_UPDATE_TICK_MS, skillUpdateSweeper } from "./skill-update-sweep.js";
+import { GAP_RUN_LIMIT, GAP_TICK_MS, skillGapSweeper, type SkillGapSweeper } from "./skill-gap-sweep.js";
+import { discoverSkills } from "../skills/registry.js";
+import { readFindings } from "../monitor/findings.js";
+import { loadRun, type RunSummary } from "../engine/state.js";
 import { hideKeyVars, redactText } from "../credentials/redact.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { TOKEN_MIN } from "../credentials/store.js";
@@ -40,6 +44,8 @@ import { onboardingRoutes } from "./api-onboarding.js";
 import { stopSignIns } from "../onboarding.js";
 import { restartRoutes, type SettingsRestart } from "./api-restart.js";
 import { BUSY_RENEW_MS, syncBusyCap } from "../ops/busy.js";
+import { loadPlugins, type PluginRegistry } from "../plugins/load.js";
+import { PLUGIN_PATH, servePluginFile } from "./plugin-files.js";
 import { CSP, HSTS, listenProblem, localUrl, requestAccess } from "./net.js";
 import { ACCOUNT_SWEEP_MS, accountActive, accountSweeper } from "./account-work.js";
 import { adoptRuns } from "../auth/run-owner.js";
@@ -71,6 +77,7 @@ import { USER_ERROR, movedText } from "./user-view.js";
 import { turnActionRoutes } from "./turn-actions.js";
 import { READ_ONLY, asParam, viewAsRoutes, viewRunning, viewedUser } from "./view-as.js";
 import { closeTelemetry, configureTelemetry } from "../telemetry/telemetry.js";
+import { usageIdle } from "../usage/hub.js";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../ui");
 const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("yaml/package.json")), "browser");
@@ -131,6 +138,8 @@ export interface ApiContext {
   settingsRestart?: SettingsRestart;
   /** config.yaml as it was when the server started (settings that apply after a restart). */
   started?: Config;
+  /** The plugins, loaded once at start; absent on a context built without startServer. */
+  plugins?: PluginRegistry;
   /**
    * The log without redaction, only for diagnostics the code built itself from fixed words (a file name and a kind),
    * never for exception text. They must stay readable when the credential store is the thing that is broken.
@@ -143,7 +152,20 @@ export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse,
 
 const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes];
 
-export async function startServer(given: ServerOptions): Promise<{ url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
+type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
+
+export async function startServer(given: ServerOptions): Promise<StartedServer> {
+  const loaded: { plugins?: PluginRegistry } = {};
+  try {
+    return await start(given, loaded);
+  } catch (e) {
+    // a start that fails after the plugins loaded (a bind error, for example) never reaches close(): their handlers go now
+    loaded.plugins?.dispose?.();
+    throw e;
+  }
+}
+
+async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry }): Promise<StartedServer> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
   const sink = given.log ?? (() => {});
   const ring = logRing(); // the newest redacted lines, for the monitor
@@ -182,6 +204,19 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     log(problem);
     throw new Error(problem);
   }
+  // Plugins load once, in order, before the queue and the watchers exist. A failure stops the start.
+  let plugins: PluginRegistry;
+  try {
+    plugins = await loadPlugins(config.plugins, {
+      blockedDirs: [opts.runsDir, join(process.env.FACTORY_HOME ?? FACTORY_HOME, "runs"), opts.repo],
+      log,
+      pluginSettings: () => config.plugin_settings,
+    });
+  } catch (e) {
+    log((e as Error).message);
+    throw e;
+  }
+  loaded.plugins = plugins;
   // Busy mode set by hand outlasts a restart: its cap is put back before the scheduler can pump, and renewed every minute (a cap always has an end).
   const renewBusy = (busyRuns: number) => {
     try {
@@ -197,6 +232,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   if (swept.failed > 0) log(`! ${swept.failed} leftover sign-in folder(s) could not be removed; delete the folder "sign-in" in those run folders`);
   // a crash leaves markers and code-area locks of runs that no longer run: free them before anything can wait for them
   const startSweep = sweepStaleRunning(opts.runsDir, () => false, { atStart: true });
+  let gapSweep: SkillGapSweeper | undefined;
   const scheduler = new Scheduler({
     runsDir: opts.runsDir,
     claudeBin: opts.claudeBin,
@@ -207,6 +243,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);
+      // A run that stopped for a missing skill may be the reason for a skill gap issue.
+      if (s.status === "stopped" && s.skillPlan?.action === "stop") gapSweep?.kick();
       // The architect's read for a refinement session: the session takes in the end; no watcher has anything to do with it.
       if (isRefinementRun(s.source)) return void settleFinished({ scheduler, repo: opts.repo, log: sink }, s);
       // When a run ends, the watchers of its repository check at once instead of at the next interval.
@@ -265,6 +303,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     },
     listen,
     started: config,
+    plugins,
   };
   // a stored watcher without a repository is removed before the lists are built
   try {
@@ -297,6 +336,28 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     },
     log,
     findingsIdle: (fn) => watchers.monitorIdle(fn),
+  });
+  // Skill gap issues (skills.authoring): empty repository means off. Reads at most the 500 newest recent runs once an hour.
+  gapSweep = skillGapSweeper({
+    config: () => ctx.config(),
+    runs: () => {
+      const since = Date.now() - 30 * 86_400_000;
+      const out: RunSummary[] = [];
+      for (const b of scheduler.briefs()) {
+        if (out.length >= GAP_RUN_LIMIT) break;
+        if (b.status === "running" || !(Date.parse(b.updatedAt) >= since)) continue;
+        try {
+          const r = scheduler.get(b.runId);
+          if (r) out.push(r);
+        } catch { /* an unreadable run is left out */ }
+      }
+      return out;
+    },
+    findings: () => readFindings().findings,
+    skills: () => discoverSkills(ctx.config().skills).skills,
+    isBusy: (id) => scheduler.isQueued(id) || scheduler.isActive(id),
+    load: (id) => loadRun(opts.runsDir, id),
+    log,
   });
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string) {
@@ -369,6 +430,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       });
       return;
     }
+    if (path.startsWith(PLUGIN_PATH)) return void servePluginFile(ctx, req, res, path);
     if (path.startsWith("/vendor/yaml/")) return serveStatic(res, YAML_BROWSER_DIR, path.slice("/vendor/yaml/".length));
     // The gallery is a development aid: without `dev` every path under /gallery answers 404.
     if (opts.dev !== true && isGalleryPath(path)) return void res.writeHead(404).end("not found");
@@ -403,6 +465,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   auditTimer.unref();
   const skillTimer = setInterval(() => void skillSweep.tick(), opts.skillUpdateTickMs ?? SKILL_UPDATE_TICK_MS);
   skillTimer.unref();
+  const gapTimer = setInterval(() => void gapSweep?.tick(), GAP_TICK_MS);
+  gapTimer.unref();
   const breakGlassTick = breakGlassWatch(log);
   breakGlassTick();
   const breakGlassTimer = setInterval(breakGlassTick, BREAK_GLASS_WATCH_MS);
@@ -448,6 +512,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       helpTurnsOf(ctx).stopAll();
       clearInterval(auditTimer);
       clearInterval(skillTimer);
+      clearInterval(gapTimer);
+      gapSweep?.stop();
       clearInterval(breakGlassTimer);
       clearInterval(staleTimer);
       clearInterval(busyTimer);
@@ -458,6 +524,9 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       watchers.stopAll();
       stopSignIns();
       void closeTelemetry();
+      // no plugin handler gets another event; queued ones are dropped
+      plugins.dispose?.();
+      void usageIdle(2000);
       server.close();
     },
   };

@@ -1,7 +1,9 @@
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { localRepoName } from "../auth/local-name.js";
 import { githubKey, githubNameOf } from "../auth/repo-url.js";
+import { GO_STATE } from "../stories/story-file.js";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { varValueProblem, type VarInfo } from "../flow/schema.js";
 import { RepoWatcherSchema, type RepoWatcherOptions, type WatcherConfig } from "../config.js";
@@ -86,9 +88,20 @@ function checkVars(options: RepoWatcherOptions, describe?: DescribeVars): void {
   }
 }
 
-/** Adds a watcher. `taken` are the ids that exist elsewhere (config.yaml); an id is unique on the whole install. `describe` turns on the variable check. */
-export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: string[]; repoName?: string; describe?: DescribeVars } = {}): StoredWatcher {
+/** A sentence (starting with the option's name) when a watcher with these options needs GitHub, so a local repository cannot have it. */
+export function localWatcherProblem(o: { source: string; release_build?: boolean; pause_while_pr_open?: string }): string | undefined {
+  if (o.source === "pr-feedback") return "source: a local project has no pull requests, so it cannot have a watcher for review comments";
+  if (o.source === "ci-failures") return "source: a local project has no GitHub CI, so it cannot have a watcher for CI failures";
+  if (o.release_build) return "release_build: a local project has no GitHub releases, so it cannot build release files";
+  if (o.pause_while_pr_open) return "pause_while_pr_open: a local project has no pull requests";
+  return undefined;
+}
+
+/** Adds a watcher. `taken` are the ids that exist elsewhere (config.yaml); an id is unique on the whole install. `describe` turns on the variable check. `local` refuses options that need GitHub. */
+export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: string[]; repoName?: string; describe?: DescribeVars; local?: boolean } = {}): StoredWatcher {
   const options = parseOptions(input);
+  const refused = opts.local ? localWatcherProblem(options) : undefined;
+  if (refused) throw bad(refused);
   checkVars(options, opts.describe);
   return withAuthLock(() => {
     const all = read();
@@ -103,7 +116,7 @@ export function addRepoWatcher(repoId: string, input: unknown, opts: { taken?: s
  * Changes a watcher: a value sets, `null` removes an option. The id cannot change. `changed` names the options that differ.
  * With `describe`, a patch that names vars, flow or source is checked; one that only enables or disables is not.
  */
-export function updateRepoWatcher(repoId: string, id: string, patch: unknown, opts: { describe?: DescribeVars } = {}): { watcher: StoredWatcher; changed: string[]; before: Record<string, unknown>; after: Record<string, unknown> } {
+export function updateRepoWatcher(repoId: string, id: string, patch: unknown, opts: { describe?: DescribeVars; local?: boolean } = {}): { watcher: StoredWatcher; changed: string[]; before: Record<string, unknown>; after: Record<string, unknown> } {
   if (typeof patch !== "object" || patch === null || Array.isArray(patch)) throw bad("the change must be an object");
   const p = patch as Record<string, unknown>;
   if ("id" in p && p.id !== id) throw bad("the id of a watcher cannot be changed");
@@ -118,6 +131,8 @@ export function updateRepoWatcher(repoId: string, id: string, patch: unknown, op
       else merged[k] = v;
     }
     const options = parseOptions(merged);
+    const refused = opts.local ? localWatcherProblem(options) : undefined;
+    if (refused) throw bad(refused);
     if ("vars" in p || "flow" in p || "source" in p) checkVars(options, opts.describe);
     const before = current as Record<string, unknown>;
     const after = options as Record<string, unknown>;
@@ -194,6 +209,7 @@ export const repoWatchersMtime = (): number => {
 // ---- who may have a watcher, and what runs ----------------------------------------------------------
 
 interface RepoLike {
+  id?: string;
   url: string;
   method: string;
   owner: string;
@@ -206,6 +222,10 @@ interface UserLike {
 
 /** A sentence when a repository cannot have a watcher; undefined when it can. */
 export function watcherRepoProblem(rec: RepoLike, owner: UserLike | undefined): string | undefined {
+  if (rec.method === "local") {
+    if (!owner) return "the owner of this repository is not an account any more";
+    return owner.role === "admin" ? undefined : "a watcher on a local repository needs an owner who is an admin";
+  }
   if (githubNameOf(rec.url) === undefined) return "a watcher needs a GitHub repository";
   if (rec.method === "ssh-deploy-key" || rec.method === "https-token") {
     return "this repository's sign-in cannot call the GitHub API; use a GitHub token, the GitHub App, or the server's own access";
@@ -249,18 +269,19 @@ export function effectiveRepoWatchers(
       continue;
     }
     const owner = getUser(rec.owner);
-    const lower = githubNameOf(rec.url) ?? "";
+    const local = rec.method === "local";
+    const lower = local ? localRepoName({ id: rec.id, url: rec.url }) : (githubNameOf(rec.url) ?? "");
     // the spelling the watcher had in config.yaml, when it names this repository
-    const github_repo = repoName && githubKey(repoName) === `github.com/${lower}` ? repoName : lower;
+    const github_repo = !local && repoName && githubKey(repoName) === `github.com/${lower}` ? repoName : lower;
     if (owner && owner.status !== "active") {
       // a blocked owner wins over the other problems of the repository; the watcher starts again on unblock
       blocked.push({ ...w, github_repo, owner: owner.email, problem: OWNER_BLOCKED, paused: true });
       continue;
     }
-    const problem = watcherRepoProblem(rec, owner);
+    const problem = watcherRepoProblem(rec, owner) ?? (local ? localWatcherProblem(w) : undefined);
     if (problem || !owner) {
       blocked.push({ ...w, github_repo, owner: owner?.email, problem: problem ?? "the owner of this repository is not an account any more" });
-    } else runnable.push({ ...w, github_repo, owner: owner.email, ownerId: rec.owner });
+    } else runnable.push({ ...w, github_repo, ...(local ? { label: GO_STATE } : {}), owner: owner.email, ownerId: rec.owner });
   }
   return { runnable, blocked };
 }

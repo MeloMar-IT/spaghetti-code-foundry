@@ -1,5 +1,6 @@
 import type { CheckRun } from "../delivery/handoff.js";
 import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../github.js";
+import { isLocalRepoName } from "../auth/local-name.js";
 import { GitHubStore } from "./github-store.js";
 
 export type StoryState = "open" | "closed";
@@ -139,11 +140,57 @@ export interface StoryStore {
 
 const stores = new Map<string, StoryStore>();
 
-/** The store of a repository: today always GitHub. One instance per repository string. */
+// The local store needs packages (zod, yaml) and the repository registry. It is loaded once, here, and only used for a `local:`
+// name: a process that has no node_modules (the story tool in a container) still serves every GitHub repository, and says why
+// when it is asked for a local one.
+let local: typeof import("./local-binding.js") | undefined;
+let localProblem = "";
+try {
+  local = await import("./local-binding.js");
+} catch (e) {
+  localProblem = e instanceof Error ? e.message : String(e);
+}
+
+export const LOCAL_DIR_ENV = "FACTORY_LOCAL_REPO_DIR";
+export { isLocalRepoName } from "../auth/local-name.js";
+
+/** Is this a name the story tools accept: a GitHub `owner/repo` or a connected local repository's name? */
+export function isStoryRepoName(repo: string): boolean {
+  return typeof repo === "string" && (/^[\w.-]+\/[\w.-]+$/.test(repo) || isLocalRepoName(repo));
+}
+
+const bound = new Map<string, string>();
+
+/**
+ * The store for a tool process. A GitHub name is the same as `storeFor`. A local name is bound to the folder in
+ * `FACTORY_LOCAL_REPO_DIR` (set by the engine), not to the repository registry; later `storeFor` calls in this process get it too.
+ */
+export function storeForTool(repo: string, env: NodeJS.ProcessEnv = process.env): StoryStore {
+  if (!isLocalRepoName(repo)) return storeFor(repo);
+  if (!local) throw new Error(`local repositories are not available in this process: ${localProblem}`);
+  const dir = env[LOCAL_DIR_ENV];
+  if (!dir) throw new Error(`${LOCAL_DIR_ENV} is not set: the Foundry sets it for a run on a local repository`);
+  const have = stores.get(repo);
+  if (have && bound.get(repo) === dir) return have;
+  const s = local.localStoreAt(dir, repo);
+  stores.set(repo, s);
+  bound.set(repo, dir);
+  return s;
+}
+
+/**
+ * The store of a repository. A `local:<slug>-<id8>` string is a connected local repository (a `LocalStore` on its folder);
+ * every other string is a GitHub repository. One instance per repository string; a failed lookup caches nothing.
+ */
 export function storeFor(repo: string): StoryStore {
   let s = stores.get(repo);
   if (!s) {
-    s = new GitHubStore(repo);
+    if (isLocalRepoName(repo)) {
+      if (!local) throw new Error(`local repositories are not available in this process: ${localProblem}`);
+      s = local.localStoreFor(repo);
+    } else {
+      s = new GitHubStore(repo);
+    }
     stores.set(repo, s);
   }
   return s;

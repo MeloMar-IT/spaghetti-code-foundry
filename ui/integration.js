@@ -8,6 +8,7 @@ const BOUND = "limited to this repository";
 
 /** "GitHub" for github.com (case ignored), else the lower-case host name, else "Unknown host". */
 export function providerOf(url) {
+  if (typeof url === "string" && url.trim().startsWith("/")) return "This machine";
   const m = typeof url === "string" ? HOST_RE.exec(url.trim()) : null;
   if (!m) return "Unknown host";
   const host = m[1].toLowerCase();
@@ -32,6 +33,7 @@ function identityOf(repo, admin, options) {
     case "https-token": return repo.username ? `token of ${repo.username}` : "token";
     case "github-token": return "fine-grained token";
     case "ssh-deploy-key": return deployKeyIdentity(repo.publicKey);
+    case "local": return "no sign-in (a folder on this machine)";
     case "none": return admin ? "the server's own access" : "Needs authentication";
     default: return String(repo.method);
   }

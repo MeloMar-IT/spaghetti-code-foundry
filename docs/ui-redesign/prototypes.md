@@ -102,6 +102,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/autonomy` | admin | Administration, Autonomy | yes | |
 | `/user/#/start` | user | Start work panel, any page | yes | |
 | `/user/#/setup` | user | Setup check page | yes | |
+| `/user/#/help` | user | Help page | yes | Not prototyped |
 | `/user/#/runs` | user | Runs | yes | |
 | `/user/#/runs/:id` | user | Run | yes | |
 | `/user/#/repos` | user | Repositories | yes | |

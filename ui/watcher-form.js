@@ -102,8 +102,10 @@ export function repoWatcherDialog({ repos, flows, existing }) {
   const state = { busy: false };
   return modal(existing ? `Edit watcher ${w.id}` : "Add a watcher", (close) => {
     const id = input(w.id, { class: "mono", placeholder: "my-repo", disabled: !!existing });
-    const repo = h("select", { name: "repo" }, available.map((r) => h("option", { value: r.id }, `${r.url} — ${r.account?.email ?? "unknown owner"}`)));
+    const repo = h("select", { name: "repo", onChange: () => showFor() }, available.map((r) => h("option", { value: r.id }, `${r.url} — ${r.account?.email ?? "unknown owner"}`)));
     if (available.length) repo.value = available[0].id;
+    // A local project (no GitHub) cannot have the options that need GitHub; its trigger is the state go.
+    const isLocal = () => (existing ? String(existing.github_repo ?? "").startsWith("local:") : (repos ?? []).find((r) => r.id === repo.value)?.method === "local");
     const flow = input(w.flow, { class: "mono", list: "watcher-flows", onChange: () => void load() });
     const sources = { ...SOURCES, ...(OLD_SOURCES[w.source] ? { [w.source]: OLD_SOURCES[w.source] } : {}) };
     const source = h("select", { name: "source", onChange: () => {
@@ -180,9 +182,9 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     const opts = watcherOptions(w, flows);
     const enabled = check(w.enabled, "Enabled");
     const err = h("p", { class: "status bad flush", role: "alert" });
-    const fields = { id, flow, label, exclude, every, max, task, branch, at, timezone: tz, vars };
+    const fields = { id, flow, label, exclude, every, max, task, branch, at, timezone: tz, vars, source, releaseBuild: releaseBuild.el };
     const PAIRS = [[/^vars:/, "vars"], ...ID_PAIRS, [/^flow:/, "flow"], [/^label:/, "label"], [/^exclude_labels:/, "exclude"],
-      [/^every:/, "every"], [/^max_per_tick:/, "max"], [/^task:/, "task"], [/^branch:/, "branch"], [/^at:/, "at"], [/^timezone:/, "timezone"]];
+      [/^every:/, "every"], [/^max_per_tick:/, "max"], [/^task:/, "task"], [/^branch:/, "branch"], [/^at:/, "at"], [/^timezone:/, "timezone"], [/^source:/, "source"], [/^release_build:/, "releaseBuild"]];
     const mark = (m) => {
       const controls = shown?.controls ?? {};
       const named = /^vars\.([\w-]+):/.exec(String(m ?? ""))?.[1];
@@ -207,12 +209,14 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       if (read.error) return void mark(read.error);
       const body = repoWatcherBody({
         id: id.value, source: source.value, flow: flow.value, label: label.value, exclude: exclude.value, every: every.value, max: max.value,
-        enabled: enabled.el.checked, vars: mergeVars({ ...held(), ...parsed.vars }, read.values), task: task.value, branch: branch.value, at: at.value, timezone: tz.value, releaseBuild: releaseBuild.el.checked, options: opts.values(),
+        enabled: enabled.el.checked, vars: mergeVars({ ...held(), ...parsed.vars }, read.values), task: task.value, branch: branch.value, at: at.value, timezone: tz.value, releaseBuild: isLocal() ? false : releaseBuild.el.checked, options: opts.values(),
       }, !!existing);
       const send = () => (existing ? api.saveRepoWatcher(existing.repoId, existing.id, body) : api.addRepoWatcher(repo.value, body));
       return guarded(state, save, send, close, mark)();
     } }, "Save watcher");
-    const labelField = h("div", { class: "grid" }, f("Trigger label", label), f("Skip issues with these labels", exclude));
+    const labelPart = f("Trigger label", label);
+    const localNote = h("p", { class: "muted text-sm flush" }, 'A local project: the watcher starts the stories set to "Yes, build this" (state go). Review comments, CI failures and release files need GitHub.');
+    const labelField = h("div", { class: "grid" }, labelPart, f("Skip issues with these labels", exclude));
     const atField = h("div", { class: "grid" }, f("Once a day at", at, "Instead of every interval"), f("Time zone", tz));
     const taskField = h("div", {}, f("Chore", task, "Becomes the run's task. The flow opens a PR only if something changed."),
       h("div", { class: "chips mt-6" }, CHORES.map(([name, text]) => h("button", { class: "chip", type: "button", onClick: () => (task.value = text) }, name))));
@@ -223,7 +227,11 @@ export function repoWatcherDialog({ repos, flows, existing }) {
       labelField.hidden = source.value !== "issues";
       taskField.hidden = source.value !== "schedule";
       atField.hidden = source.value !== "schedule";
-      releaseField.hidden = source.value !== "schedule";
+      const local = isLocal();
+      if (local) releaseBuild.el.checked = false;
+      releaseField.hidden = source.value !== "schedule" || local;
+      labelPart.hidden = local;
+      localNote.hidden = !local;
       branchField.hidden = source.value !== "ci-failures";
       opts.showFor(source.value);
     };
@@ -238,6 +246,7 @@ export function repoWatcherDialog({ repos, flows, existing }) {
     return h("div", { class: "stack" },
       h("datalist", { id: "watcher-flows" }, (flows ?? []).map((x) => h("option", { value: x.name }))),
       repoField,
+      localNote,
       !existing && unavailable.length
         ? h("div", { class: "muted text-sm" }, h("div", {}, "Not available:"),
           unavailable.map(({ repo: r, reason }) => h("div", {}, `${r.url} — ${reason}`)))

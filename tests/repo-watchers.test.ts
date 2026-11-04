@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withAuthLock } from "../src/auth/store.js";
 import { WatcherSchema } from "../src/config.js";
 import {
-  OWNER_BLOCKED, addRepoWatcher, configIdProblem, effectiveRepoWatchers, fileWatcherProblem, listRepoWatchers, removeOrphanWatchers, removeRepoWatcher, removeWatchersOfRepos, removeWatchersOfReposLocked, repoWatchersPath, updateRepoWatcher, watcherRepoProblem,
+  OWNER_BLOCKED, addRepoWatcher, configIdProblem, effectiveRepoWatchers, fileWatcherProblem, listRepoWatchers, localWatcherProblem, removeOrphanWatchers, removeRepoWatcher, removeWatchersOfRepos, removeWatchersOfReposLocked, repoWatchersPath, updateRepoWatcher, watcherRepoProblem,
 } from "../src/repos/watchers.js";
 
 let home: string;
@@ -154,6 +154,54 @@ describe("effectiveRepoWatchers", () => {
     expect(r.blocked.map((b) => b.id)).toEqual(["https", "blocked-owner", "orphan"]);
     expect(r.blocked.every((b) => b.problem.length > 0)).toBe(true);
     expect(r.blocked[2]!.problem).toMatch(/not connected any more/);
+  });
+});
+
+describe("watchers of a local repository", () => {
+  const admin = { id: randomUUID(), email: "a@b.io", role: "admin", status: "active" };
+  const user = { id: randomUUID(), email: "u@b.io", role: "user", status: "active" };
+  const local = (owner: string) => ({ id: repo, url: "/srv/my-app", method: "local", owner });
+
+  it("names what needs GitHub, one sentence each", () => {
+    expect(localWatcherProblem({ source: "pr-feedback" })).toMatch(/^source: .*review comments/);
+    expect(localWatcherProblem({ source: "ci-failures" })).toMatch(/^source: .*no GitHub CI/);
+    expect(localWatcherProblem({ source: "schedule", release_build: true })).toMatch(/^release_build: /);
+    expect(localWatcherProblem({ source: "issues", pause_while_pr_open: "factory/" })).toMatch(/^pause_while_pr_open: /);
+    expect(localWatcherProblem({ source: "issues" })).toBeUndefined();
+    expect(localWatcherProblem({ source: "schedule", release_build: false })).toBeUndefined();
+  });
+
+  it("refuses them on add and change, and lets an issues watcher in", () => {
+    refused(() => addRepoWatcher(repo, { id: "w", source: "pr-feedback" }, { local: true }), "bad-watcher");
+    expect(() => addRepoWatcher(repo, { id: "w", source: "ci-failures" }, { local: true })).toThrow(/no GitHub CI/);
+    expect(listRepoWatchers()).toEqual([]);
+    addRepoWatcher(repo, { id: "ok" }, { local: true });
+    refused(() => updateRepoWatcher(repo, "ok", { source: "ci-failures" }, { local: true }), "bad-watcher");
+    refused(() => updateRepoWatcher(repo, "ok", { pause_while_pr_open: "x/" }, { local: true }), "bad-watcher");
+    expect(listRepoWatchers()[0]!.source).toBe("issues");
+    // a GitHub repository is not affected
+    expect(addRepoWatcher(other, { id: "gh", source: "ci-failures" }).source).toBe("ci-failures");
+  });
+
+  it("lets a local repository have a watcher when its owner is an admin", () => {
+    expect(watcherRepoProblem(local(admin.id), admin)).toBeUndefined();
+    expect(watcherRepoProblem(local(user.id), user)).toMatch(/needs an owner who is an admin/);
+    expect(watcherRepoProblem(local(admin.id), undefined)).toMatch(/owner/);
+  });
+
+  it("makes the watcher runnable with the local name and the trigger go, and blocks what needs GitHub", () => {
+    const users = new Map([admin, user].map((u) => [u.id, u]));
+    const repos = new Map([[repo, local(admin.id)], [other, { ...local(user.id), id: other, url: "/srv/other" }]]);
+    const stored = [
+      addRepoWatcher(repo, { id: "go", label: "claude-factory" }),
+      addRepoWatcher(repo, { id: "ci", source: "ci-failures" }),
+      addRepoWatcher(other, { id: "user-owned" }),
+    ];
+    const r = effectiveRepoWatchers(stored, (id) => repos.get(id), (id) => users.get(id));
+    expect(r.runnable).toHaveLength(1);
+    expect(r.runnable[0]).toMatchObject({ id: "go", label: "go", owner: "a@b.io", ownerId: admin.id });
+    expect(r.runnable[0]!.github_repo).toMatch(/^local:my-app-[0-9a-f]{8}$/);
+    expect(r.blocked.map((b) => [b.id, b.problem])).toEqual([["ci", expect.stringMatching(/no GitHub CI/)], ["user-owned", expect.stringMatching(/needs an owner who is an admin/)]]);
   });
 });
 

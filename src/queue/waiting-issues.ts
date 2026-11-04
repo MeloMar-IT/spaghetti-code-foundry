@@ -3,6 +3,7 @@ import { isTimeLimitStop, isUserBudgetStop, type RunSummary } from "../engine/st
 import { isTimeLimitNote } from "../engine/auto-retry.js";
 import { asksQuestions, countQuestions } from "../next-step.js";
 import { flowRetired } from "../run-gate.js";
+import { isSkillGapStop } from "../skills/gap-issues.js";
 
 /** The comment reads of one watcher check: one time limit per read, one budget for all, one gh call per issue. */
 export interface CommentReads {
@@ -62,7 +63,7 @@ export interface WaitingLabels { needsInfo: string; waiting: string }
 
 /** Stopped for a reason that clears by itself: daily budget, a usage limit, signed out, or a `wait_*` step. */
 export function isPaused(s: RunSummary): boolean {
-  return isUserBudgetStop(s.reason) || isTimeLimitStop(s.reason) || /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "");
+  return isUserBudgetStop(s.reason) || isTimeLimitStop(s.reason) || /daily budget|usage limit reached|signed out —|stopped at step "(?:[\w-]+\/)*wait_/.test(s.reason ?? "") || isSkillGapStop(s);
 }
 
 /** Stepped aside for a busy code area (stopped at wait_for_area): the run that holds the area. */

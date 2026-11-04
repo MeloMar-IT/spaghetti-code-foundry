@@ -4,6 +4,7 @@ import { auditAction, auditActions } from "../auth/audit.js";
 import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
 import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { checkRepoSettings } from "../auth/repo-settings.js";
+import { localHasRemote } from "../auth/local-repo.js";
 import { RecipeError, parseRecipe } from "../release/recipe.js";
 import { readyView } from "../refinement/ready-list.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
@@ -23,6 +24,7 @@ import { DEFAULT_FLOWS } from "../queue/watcher.js";
 import { watcherState } from "../words.js";
 import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
+import { checkRepoMethod } from "./permissions.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the repository list is not working; see the server log";
@@ -149,14 +151,26 @@ function repoLevels(): (id: string) => AutonomyLevel {
 const publicKeys = (repos: Pick<RepoRecord, "publicKey">[]) => repos.flatMap((r) => (r.publicKey ? [r.publicKey] : []));
 
 /** A record for the admin page: with `github` ("owner/name") when it is a GitHub repository, its settings (`{}` when none) and the owner's name, e-mail, role and status (null when the account is gone). */
-function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string, string[]>) {
+function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string, string[]>, hasRemote?: boolean) {
   const u = users ? users.get(rec.owner) : getUser(rec.owner);
   const github = rec.method === "github-app" ? tryParseRepoUrl(rec.url)?.github : undefined;
   const offList = github !== undefined && u?.role === "user" && !onAppList(lists ? (lists.get(rec.owner) ?? []) : getAppRepos(rec.owner), github);
   const name = githubNameOf(rec.url);
   const problem = watcherRepoProblem(rec, u ?? undefined);
   const { definitionOfReady, ...rest } = rec;
-  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}) };
+  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}), ...(rec.method === "local" ? { hasRemote: hasRemote === true } : {}) };
+}
+
+/** Does the folder of each local record have a git remote? Asynchronous, at most 4 checks at a time (see `localHasRemote`). */
+async function remoteFlags(recs: readonly RepoRecord[]): Promise<Map<string, boolean>> {
+  const local = recs.filter((r) => r.method === "local");
+  const out = new Map<string, boolean>();
+  let next = 0;
+  const worker = async () => {
+    for (let r = local[next++]; r; r = local[next++]) out.set(r.id, await localHasRemote(r.url));
+  };
+  await Promise.all(Array.from({ length: Math.min(4, local.length) }, worker));
+  return out;
 }
 
 /** Checks a `releaseRecipe` in the settings body with the recipe schema (here, not in checkRepoSettings: that would be an import cycle). */
@@ -176,11 +190,13 @@ function checkReleaseRecipe(body: unknown): void {
 async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, by: string): Promise<boolean> {
   if (seg[1] !== "repos") return false;
   if (seg.length === 2 && method === "GET") {
+    const all = guardedRepos(ctx, () => listAllRepos());
+    const remotes = await remoteFlags(all);
     const rows = guardedRepos(ctx, () => {
       const users = new Map(listUsers().map((u) => [u.id, u]));
       const lists = allAppRepos();
       const level = repoLevels();
-      return listAllRepos().map((r) => ({ ...adminRow(r, users, lists), autonomy: level(r.id) }));
+      return all.map((r) => ({ ...adminRow(r, users, lists, remotes.get(r.id)), autonomy: level(r.id) }));
     });
     return send(res, 200, rows, publicKeys(rows)), true;
   }
@@ -191,7 +207,7 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
       return setRepoSettings(seg[2]!, body);
     });
     if (r.changed.length) auditAction(ctx.diagLog, by, "repo-change", r.repo.id, `settings: ${r.changed.join(", ")}`);
-    const row = adminRow(r.repo);
+    const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
     return send(res, 200, row, publicKeys([row])), true;
   }
   if (seg.length === 4 && seg[3] === "ready" && method === "PUT") {
@@ -201,7 +217,7 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
       const detail = r.repo.definitionOfReady ? `definition of ready: ${r.repo.definitionOfReady.length} items` : "definition of ready: back to the default";
       auditAction(ctx.diagLog, by, "repo-change", r.repo.id, detail);
     }
-    const row = adminRow(r.repo);
+    const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
     return send(res, 200, row, publicKeys([row])), true;
   }
   if (seg.length === 4 && seg[3] === "transfer" && method === "POST") {
@@ -212,7 +228,7 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
       ctx.watchers.sync(); // the new owner gets the runs
     }
     oldKeys(ctx, r.oldKeysLeft, "the repository was transferred");
-    const row = adminRow(r.repo);
+    const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
     return send(res, 200, row, publicKeys([row])), true;
   }
   if (seg[3] === "watchers" && seg.length <= 5) return adminWatchers(ctx, req, res, seg, method, by);
@@ -254,15 +270,15 @@ async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerR
     const rec = known();
     const problem = guardedRepos(ctx, () => watcherRepoProblem(rec, getUser(rec.owner)));
     if (problem) throw new HttpError(400, problem);
-    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id), describe: describeVars(ctx) }));
+    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id), describe: describeVars(ctx), local: rec.method === "local" }));
     audit(`watcher ${w.id}: added`);
     ctx.watchers.sync();
     return send(res, 201, rowOf(w.id, w)), true;
   }
   if (seg.length === 5 && method === "PUT") {
     const body = await readJson(req);
-    known();
-    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body, { describe: describeVars(ctx) }));
+    const rec = known();
+    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body, { describe: describeVars(ctx), local: rec.method === "local" }));
     if (r.changed.length) {
       auditActions(ctx.diagLog, by, "repo-change", repoId, watcherChanges(r.before, r.after).map((c) => changeDetail(c, `watcher ${wid}: `)));
       ctx.watchers.sync();
@@ -307,7 +323,7 @@ export async function testRepo(ctx: ApiContext, user: User, id: string): Promise
         if (!found.ok) blocked = blockedResult(BLOCKED[found.problem], rec.method);
         else ({ installationId, token: secret } = found);
       }
-    } else if (rec.method !== "none") {
+    } else if (rec.method !== "none" && rec.method !== "local") {
       secret = guardedRepos(ctx, () => readRepoSecret(rec));
     }
     let result;
@@ -334,9 +350,6 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg[0] === "admin") return adminRepos(ctx, req, res, seg, method, caller.id);
   if (seg[0] !== "repos") return false;
   const user = caller;
-  const noServerAccess = (m: unknown) => {
-    if (m === "none" && user.role !== "admin") throw new HttpError(403, 'only an admin may choose "none" (the server\'s own access)');
-  };
   if (seg.length === 1 && method === "GET") {
     const level = repoLevels();
     const repos = guardedRepos(ctx, () => listRepos(user.id)).map((r) => ({ ...shown(r), autonomy: level(r.id) }));
@@ -344,12 +357,12 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
   if (seg.length === 2 && seg[1] === "methods" && method === "GET") {
     const app = repoApp(ctx.config());
-    const methods = REPO_METHODS.filter((m) => (m !== "none" || user.role === "admin") && (m !== "github-app" || app));
+    const methods = REPO_METHODS.filter((m) => ((m !== "none" && m !== "local") || user.role === "admin") && (m !== "github-app" || app));
     return send(res, 200, { methods, githubApp: app ? { available: true, installUrl: installUrl(app.slug) } : { available: false } }), true;
   }
   if (seg.length === 1 && method === "POST") {
     const body = await readJson(req);
-    noServerAccess(body.method);
+    checkRepoMethod(user, body.method);
     const input = { url: given(body, "url") ?? given(body, "name"), method: given(body, "method"), username: given(body, "username"), token: given(body, "token") };
     let installationId: string | undefined;
     let authorize: (() => void) | undefined;
@@ -369,7 +382,7 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
   if (seg.length === 3 && seg[2] === "auth" && method === "PUT") {
     const body = await readJson(req);
-    noServerAccess(body.method);
+    checkRepoMethod(user, body.method);
     const change = { method: given(body, "method"), username: given(body, "username"), token: given(body, "token"), url: given(body, "url"), newKey: given(body, "newKey") };
     let installationId: string | undefined;
     let authorize: (() => void) | undefined;

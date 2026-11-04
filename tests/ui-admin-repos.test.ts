@@ -98,6 +98,20 @@ describe("pure functions", () => {
     expect(ui.settingsBody()).toEqual({ testCommand: "", docs: [], protectedBranches: [], mainBranch: "", developBranch: "", releaseRecipe: "", questions: { decide_technical: true } });
   });
 
+  it("settingsBody sends pushRemote only when it is true", () => {
+    expect(ui.settingsBody({ pushRemote: true }).pushRemote).toBe(true);
+    expect("pushRemote" in ui.settingsBody({ pushRemote: false })).toBe(false);
+    expect("pushRemote" in ui.settingsBody()).toBe(false);
+  });
+
+  it("settingsBody clears the test command, develop branch and release recipe for a skill library", () => {
+    const body = ui.settingsBody({ kind: "skill-library", testCommand: "npm test", developBranch: "develop", releaseRecipe: "builds: []", mainBranch: "main" });
+    expect(body).toMatchObject({ kind: "skill-library", testCommand: "", developBranch: "", releaseRecipe: "", mainBranch: "main" });
+    const code = ui.settingsBody({ kind: "code", testCommand: "npm test" });
+    expect(code).toMatchObject({ testCommand: "npm test" });
+    expect(code).not.toHaveProperty("kind");
+  });
+
   it("ownerText and sortRepos", () => {
     expect(ui.ownerText(rec())).toBe("Ann (ann@example.com)");
     expect(ui.ownerText({ account: null })).toBe("Unknown account");

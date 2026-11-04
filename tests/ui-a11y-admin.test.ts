@@ -60,6 +60,7 @@ beforeEach(() => {
     const found = key in routes ? key : key.split("?")[0]!;
     // the "Promoted versions" card of Settings loads by itself; these tests are about other things
     if (found === "GET /api/promotions" && !(found in routes)) return { ok: true, status: 200, statusText: "OK", headers: { get: () => null }, json: async () => ({ components: [], problems: [] }) };
+    if (found === "GET /api/plugins" && !(found in routes)) return { ok: true, status: 200, statusText: "OK", headers: { get: () => null }, json: async () => ({ apiVersion: "0.1", plugins: [], problems: [] }) };
     if (found === "GET /api/admin/components" && !(found in routes)) return { ok: true, status: 200, statusText: "OK", headers: { get: () => null }, json: async () => ({ components: [], problems: [] }) };
     if (!(found in routes)) throw new Error(`unexpected call: ${key}`);
     const version = versions[found]?.shift();

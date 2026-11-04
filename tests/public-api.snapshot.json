@@ -1,5 +1,5 @@
 {
-  "apiVersion": "0.1",
+  "apiVersion": "0.2",
   "exports": {
     "ApprovalStep": "type",
     "ClaudeStep": "type",
@@ -15,6 +15,7 @@
     "FlowStep": "type",
     "PLUGIN_API_VERSION": "string",
     "ParallelStep": "type",
+    "PluginApi": "type",
     "ResumeOptions": "type",
     "RunOptions": "type",
     "RunStatus": "type",
@@ -23,6 +24,8 @@
     "ShellStep": "type",
     "Step": "type",
     "StepRecord": "type",
+    "UsageEvent": "type",
+    "UsageHandler": "type",
     "listFlows": "function/1",
     "loadConfig": "function/0",
     "loadFlow": "function/2",

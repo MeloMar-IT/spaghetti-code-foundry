@@ -111,7 +111,7 @@ describe("GET /api/repos/methods", () => {
       const r = await call(who, "GET", "/api/repos/methods");
       expect(r.status).toBe(200);
       expect(r.json()).toEqual({
-        methods: [...(none ? ["none"] : []), "github-token", "https-token", "ssh-deploy-key", "github-app"],
+        methods: [...(none ? ["none"] : []), "github-token", "https-token", "ssh-deploy-key", "github-app", ...(none ? ["local"] : [])],
         githubApp: { available: true, installUrl: `https://github.com/apps/${fake.slug}/installations/new` },
       });
     }

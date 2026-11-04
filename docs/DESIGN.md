@@ -188,6 +188,23 @@ runs on `v*.*.*` tags, checks that the tag matches `package.json`, and before `n
 package by name. `scripts/release-notes.mjs` writes the `Plugin API:` line. The public surface and
 the promise are in [PLUGIN_API.md](PLUGIN_API.md).
 
+### Plugins from config (#781)
+
+`src/plugins/load.ts` loads the `plugins:` list of `config.yaml` once, in `startServer`, after the
+config is checked and before the queue and the watchers are built. `loadPlugins` resolves each
+module (a package name through `import.meta.resolve`, an absolute path as it is), checks that its
+real path is not inside a runs folder or a repository (`blockedDirs`), imports it under a 30 s
+deadline, and calls `register(api)` under the same deadline. The first failure throws a
+`PluginLoadError` that names the module; `startServer` logs it and rethrows, so there is no
+half-started server. `api` is frozen and holds `version` (`PLUGIN_API_VERSION`) and a copy of
+`options`; the plugin points are added to it by the parts after this one.
+
+The registry (`ApiContext.plugins`) is read-only after start. `pluginProblems` combines the problems
+recorded at runtime with a check of the file: when `config.yaml` now lists other plugins than the
+loaded ones, or cannot be read, the health line shows it. `PUT /api/config` refuses a `plugins` key
+(400), and a save without the key keeps the stored list (`withStoredPlugins`), so the settings page
+cannot change it. The settings inventory lists `plugins.*` as exceptions: the file is the only place to set them.
+
 ---
 
 ## 4. Flows and the engine
@@ -296,6 +313,31 @@ The gate reads no clock, file, process or network, and gives the same answer for
 - **Promotion (#543).** `effectPromotion(read, decisions, id, digest)` in `src/skills/effect.ts` is the one rule of `scf skills gate` and `scf skills promote check`. It returns `{ verdict, code?, decision? }`: `harms` (`effect-harms`) and an invalid record (`effect-invalid`) always fail; `no-effect` (`effect-no-effect`) and no record (`effect-not-measured`) fail unless an owner decision matches the skill, the digest and the kind. The decisions are the `effect_decisions` list of `skill-evaluations.yaml`, parsed with the same owner, date and note checks as the evaluations (`src/skills/suite-records.ts`). The codes are not evaluation reason codes, so `judgeItems`, `release publish` and the evaluation records do not change. Known gap: `release publish` does not apply the rule yet.
 - **Sample tasks.** The owner-written `instructions` section of the suite. The example set is in `evals/skill-effect/kafka/`. Files shipped inside upstream skills are not used as tasks.
 - **What `scf eval` lacks.** `scf eval` already supports `repeat` (up to 20) and runs the repetitions, so this is not missing. What it does not have: an automatic comparison with and without a skill, the statistical verdict, loading a staged candidate (it runs flows × models only), and storage against a skill digest.
+
+### Skill gaps (#776)
+
+The Foundry asks for a missing skill by opening an issue in the skill library, and the skill-write flow (#774) picks it up. The parts are split so the signals stay testable without GitHub:
+
+- **Signals** (`src/skills/gap-signals.ts`, pure). `gapSignals()` reads the runs, the monitor's findings and the registry, and returns one signal per topic. The four kinds are `unknown` (a plan's `skillPlan.unresolved` with code `unknown`, skipped when the skill is active now), `technology` (a technology the profile recorded in `skillCatalogue.technologies` with high or medium confidence, that `skillCoversTechnology()` finds uncovered now), `review` (a `[high]` or `[medium]` line of a review step's output, classified by the fixed `REVIEW_KINDS` table; 3 runs in 14 days) and `failure` (a failed test step, or a fix step visited 3 times; 3 runs in 14 days, or one run, or an open `same-step-failing` or `develop-red` finding). Only signals with a known technology in their repository can be `failure`. Windows and thresholds are constants (`GAP_WINDOWS`, `GAP_THRESHOLDS`). Only validated tokens leave the module (topics, run ids, kinds, versions, repository names). Topics are checked against `SKILL_ID_RE`.
+- **Duplicates and limits** (`src/skills/gap-issues.ts`, pure). `gapIssuesOf()` reads the marker from the issue bodies. An open issue blocks its topic; a closed one blocks it for `REOPEN_DAYS` (30) after its closing time, and a closed issue without a closing time blocks it (fail closed). `planGapIssues()` applies `max_open` over all open marked issues and `max_per_day` over the ones created in the last 24 hours. Both counts come from GitHub's list, not from the ledger.
+- **Issue text.** `gapIssueText()` builds the title `Skill gap: <topic>` and a body from fixed sections (what to teach, evidence, sample tasks), with the marker last. The evidence names the repository the signal is about and nothing from another repository.
+- **Sweeper** (`src/server/skill-gap-sweep.ts`). `skillGapSweeper()` runs an hourly timer in `startServer` and a kick when a run stops for skills. The steps are: read the signals from at most 500 runs updated in 30 days; list the library's issues (a cut list opens nothing); create the label if missing and the issues; write the ledger (`skill-gaps.json`, one repository, written by a temporary file and a rename); link the runs that stopped for an `unknown` skill that has a ledger entry. Its sign-in is the administrator's record of the library (`kind: skill-library`, not a user's record); it runs with `withGhEnv` and is disposed after each tick. Ticks do not overlap, and `stop()` ends a tick before it writes the ledger or links a run.
+- **Linking and resume.** `withGapLink()` in `src/skills/run-plan.ts` adds the link when a plan is checked, and the sweeper adds it later. The link is `run.skillGap` (topic, issue, url) and the sentence `Skill gap issue: <url>` in the stop reason. `isSkillGapStop()` is a stop with a link whose unknown skills can clear. `isPaused()` counts it as paused, so the waiting list shows it as waiting. The watcher resumes it only when `skillGapReady()` finds every unknown skill in the registry, the watcher is not paused and the run's code area is free. The sweep never resumes a run.
+- **Ledger.** The ledger holds the marked issues of one repository (`readGapLedger()` returns an empty ledger for another repository). It is a cache for links only: a missing or broken ledger links nothing, and the next tick rebuilds it from GitHub.
+- **Record of a run.** `runSkillCatalogue()` stores the technologies the profile showed (at most 10, observations only, never coverage) on the step's catalogue record. That is the only input of the `technology` signal that the run does not already have.
+
+The tests run without GitHub: the signals and the limits are pure functions, and the sweeper takes fakes for the runs, the findings, the sign-in and the store.
+
+### Skill improvement (#777)
+
+A library skill that does not help gets an issue to improve it. It reuses the gap parts (#776): the sweeper, the marker check and the limits.
+
+- **Signals** (`src/skills/improve.ts`, pure). `improveSignals()` returns one signal per library name from three inputs: `effectImproveSignals()` (the newest effect record of each installed `id@version` is `no-measurable-effect` or `harms`), `reviewImproveSignals()` (the same review finding kind in 3 or more distinct runs of 14 days, counting only the exact installed versions the coder loaded) and `quarantineImproveSignals()`. The library names come from the authoring source's selections and from the names the ledger keeps (`library` in `skill-gaps.json`, written when `skill-write` publishes, see `publishedLibrarySkills()`).
+- **Issues** (`src/skills/gap-issues.ts`). `gapIssuesOf()` reads both markers and sets `kind` (`gap` or `improve`). The topic of an improve issue is `improve:<name>`, so the duplicate and reopen rules are the same. `planGapIssues()` is generic over the signal type and counts both kinds for `max_open` and `max_per_day`. `improveIssueText()` builds the title `Improve skill <name>`.
+- **Publish rule** (`improveDecision()`). The new version must have verdict `helps` with runs. An old version with no runs on the scenarios lets the new one stand alone; otherwise both must have the same number of runs with the skill and the new one must pass at least as many. Anything unreadable does not publish.
+- **Flow** (`tools/skill-improve`, `scripts/build-flows.mjs`). The `skill-write` flow reads the target from the issue (`improveTarget()`), measures the old version from `git archive` of the base, compares the two `EFFECT` lines with `skill-improve compare`, and counts the failed tries with `improveFailures()` (Foundry comments with a `skill-improve-failed` marker, plus the current run). The second failure runs `scf skills lifecycle <key> deprecated` only when `improveStateOf()` reads the version as `active`, and adds `Factory_needs_info`.
+
+The tests run without GitHub or a model: `tests/skill-improve.test.ts` calls the pure functions, and the flow tests use the fake `scf`.
 
 ### Evidence formats
 

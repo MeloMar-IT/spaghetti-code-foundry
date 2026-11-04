@@ -85,11 +85,12 @@ describe("user router", () => {
     "/user/start.js": { homeHash: async () => "#/runs", renderStart: vi.fn() },
     "/shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "/palette.js": { initPalette: vi.fn(() => () => {}) },
+    "/plugins.js": { addPluginMenu: vi.fn(), loadPluginUi: async () => ({ menu: [] }), renderPluginPage: vi.fn() },
     "/ask.js": { initAsk: vi.fn(async () => null) },
     "/context.js": contextStub(),
     "/home.js": never,
     "/setup-check.js": never,
-    "/simple.js": { renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn() },
+    "/simple.js": { renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn(), renderSimpleHelp: vi.fn() },
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
     "/view-mode.js": real.viewMode,
@@ -112,7 +113,23 @@ describe("user router", () => {
 
     // A getter: `real` is only loaded when a test runs.
     const simpleMe = { get "/auth.js"() { return as({ id: "u", role: "user", view: "simple" })["/auth.js"]; } };
-    const simpleStub = () => ({ renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn() });
+    const simpleStub = () => ({ renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn(), renderSimpleHelp: vi.fn() });
+
+    it("draws the Help page for #/help in Simple and in Advanced, and keeps the address", async () => {
+      setup("#/help");
+      const stub = simpleStub();
+      const renderHome = vi.fn();
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub, "/home.js": { renderHome } }));
+      expect(stub.renderSimpleHelp).toHaveBeenCalled();
+      expect(stub.renderSimpleHome).not.toHaveBeenCalled();
+      expect(renderHome).not.toHaveBeenCalled();
+      expect(g.location.hash).toBe("#/help");
+      setup("#/help");
+      const adv = simpleStub();
+      await loadRouter("user/app.js", deps({ ...as({ id: "u", role: "user", view: "advanced" }), "/simple.js": adv }));
+      expect(adv.renderSimpleHelp).toHaveBeenCalled();
+      expect(main().textContent).not.toContain("Open this in another view");
+    });
 
     it("draws My projects for Simple #/home, and the project page for #/repos/<id>", async () => {
       setup("#/home");
@@ -251,7 +268,8 @@ describe("user router", () => {
   it("starts Ask SCF for a user, and not in a preview or when the view cannot be shown", async () => {
     const initAsk = vi.fn(async () => null);
     await loadRouter("user/app.js", deps({ "/ask.js": { initAsk } }));
-    expect(initAsk.mock.calls).toEqual([["user"]]);
+    // the drawer is told whether the Simple view is shown (here the default, Advanced)
+    expect(initAsk.mock.calls).toEqual([["user", { simple: false }]]);
     initAsk.mockClear();
     await loadRouter("user/app.js", deps({ "/ask.js": { initAsk }, "/view-as.js": { beginView: () => ({ readOnly: true, ready: true }) } }));
     await loadRouter("user/app.js", deps({ "/ask.js": { initAsk }, "/view-as.js": { beginView: () => ({ readOnly: false, ready: false }) } }));
@@ -418,6 +436,7 @@ describe("admin router", () => {
       "./viewport.js": real.viewport,
       "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
       "./palette.js": { initPalette: vi.fn() },
+      "./plugins.js": { addPluginMenu: vi.fn(), loadPluginUi: async () => ({ menu: [] }), renderPluginPage: vi.fn() },
       "./ask.js": { initAsk: vi.fn(async () => null) },
       "./context.js": contextStub(),
       "./states.js": real.states,
@@ -618,6 +637,7 @@ describe("support levels", () => {
     "./viewport.js": real.viewport,
     "./shell.js": { showPage: vi.fn(), initShell: vi.fn(), namePage: vi.fn() },
     "./palette.js": { initPalette: vi.fn() },
+    "./plugins.js": { addPluginMenu: vi.fn(), loadPluginUi: async () => ({ menu: [] }), renderPluginPage: vi.fn() },
     "./ask.js": { initAsk: vi.fn(async () => null) },
     "./context.js": contextStub(),
     "./states.js": real.states,

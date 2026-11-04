@@ -104,13 +104,26 @@ const thread = resumeAt >= 0 ? args[args.indexOf("-") - 1] : `thread-${Math.rand
 emit({ type: "thread.started", thread_id: thread });
 emit({ type: "turn.started" });
 // "at capacity" until the file named by CODEX_CAPACITY_ONCE exists (fails once, then works).
+// A prompt line "PAID_FAIL" makes a failed try report token usage too (a try that cost money and still failed).
+const paidFail = () => {
+  if (prompt.includes("PAID_FAIL")) emit({ type: "turn.completed", usage: { input_tokens: 2000, cached_input_tokens: 0, output_tokens: 100 } });
+};
 const once = /CODEX_CAPACITY_ONCE (\S+)/.exec(prompt)?.[1];
 if (once && !existsSync(once)) {
   writeFileSync(once, "");
+  paidFail();
   emit({ type: "turn.failed", error: { message: "Selected model is at capacity. Please try a different model." } });
   process.exit(1);
 }
-if (prompt.includes("CODEX_LIMIT")) {
+// Hits the usage limit until the file exists (fails once, then works), so a fallback or a retry can succeed.
+const limitOnce = /CODEX_LIMIT_ONCE (\S+)/.exec(prompt)?.[1];
+if (limitOnce && !existsSync(limitOnce)) {
+  writeFileSync(limitOnce, "");
+  paidFail();
+  emit({ type: "turn.failed", error: { message: "You've hit your usage limit (429 rate limit)" } });
+  process.exit(1);
+}
+if (/CODEX_LIMIT(?!_ONCE)/.test(prompt)) {
   emit({ type: "turn.failed", error: { message: "You've hit your usage limit (429 rate limit)" } });
   process.exit(1);
 }
@@ -164,4 +177,6 @@ if (prompt.includes("VERDICT: APPROVE") && prompt.includes("RISK_SCORE:") && pro
   answer = answer.replace(/(\n?VERDICT:)/, `\nRISK_SCORE: ${process.env.FAKE_CODEX_RISK}$1`);
 }
 emit({ type: "item.completed", item: { id: `item_${n++}`, type: "agent_message", text: answer } });
-emit({ type: "turn.completed", usage: { input_tokens: 1000, cached_input_tokens: 0, output_tokens: 50 } });
+// "CACHED <n>" on a prompt line: that many of the input tokens came from the cache.
+const cached = Number(/^CACHED (\d+)$/m.exec(prompt)?.[1] ?? 0);
+emit({ type: "turn.completed", usage: { input_tokens: 1000, cached_input_tokens: cached, output_tokens: 50 } });

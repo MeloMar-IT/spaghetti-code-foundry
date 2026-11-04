@@ -32,7 +32,9 @@ export interface StepRecord {
   agent?: string;
   /** The effort the agent step ran with, when one was set (by the flow or by the analyst). Absent on older runs. */
   effort?: string;
-  tokens?: { input: number; output: number };
+  tokens?: { input: number; output: number; cached?: number };
+  /** The cost (USD) of earlier tries of this step (paid retries and fallbacks); it is already in the run's total. Absent when there were none. */
+  earlierCostUsd?: number;
   /** Tool calls of this agent step and the time they took (whole ms), added up over all tries. Claude steps only; absent on Codex, shell and older runs. */
   tools?: { calls: number; totalMs: number; maxMs: number };
   /** The largest input of one model turn (input + cache read + cache creation tokens), the largest over all tries. Claude steps only; absent on Codex, shell and older runs. */
@@ -52,7 +54,7 @@ export interface StepRecord {
   /** Foundry skills given to this agent session: `id@version` in load order, and the size of the block. `state` and `digest` say whether the session got the block (`loaded`, `reloaded`) or already held it (`reused`); `attached*` is what this step added to the prompt (0 when reused). `role` is set for a reviewer block. Absent without a current skill lock. `grant`: what a Claude coder session was given when the skill tools were checked; an estimate, absent on older runs, Codex and reviewer steps. */
   skills?: { grant?: SessionToolGrant; loaded: string[]; omitted?: string[]; bytes: number; estimatedTokens: number; role?: "reviewer"; state?: "loaded" | "reloaded" | "reused"; digest?: string; attachedBytes?: number; attachedEstimatedTokens?: number };
   /** A skill catalogue was put before this step's prompt: counts only, never the text. `hidden`: skills left out only because they are not pinned. */
-  skillCatalogue?: { entries: number; omitted: number; estimatedTokens: number; hidden?: number; /** Skills with the same text, offered once: `id@version` only. */ mirrors?: { kept: string; collapsed: string[] }[]; mirrorsOmitted?: number; choices?: AppliedChoice[]; choicesOmitted?: number; choicesSource?: { pins: { commit: string; blob: string } }; canonical?: CanonicalSelectionRecord[]; /** Owner catalogue descriptions the agent saw, with their release. */ descriptions?: { skill: string; text: string; from: "skill-selections"; release: string }[]; descriptionsOmitted?: number };
+  skillCatalogue?: { entries: number; omitted: number; estimatedTokens: number; hidden?: number; /** Skills with the same text, offered once: `id@version` only. */ mirrors?: { kept: string; collapsed: string[] }[]; mirrorsOmitted?: number; choices?: AppliedChoice[]; choicesOmitted?: number; choicesSource?: { pins: { commit: string; blob: string } }; canonical?: CanonicalSelectionRecord[]; /** Owner catalogue descriptions the agent saw, with their release. */ descriptions?: { skill: string; text: string; from: "skill-selections"; release: string }[]; descriptionsOmitted?: number; /** Technologies seen in the repository profile (observations only). */ technologies?: { name: string; confidence: string; version?: string }[] };
   /** What the output of this step is: source, trust class, content type, size, hash, who may read it, risk (see untrusted.ts). Absent on older runs. */
   label?: OutputLabel;
   /** The step did not run: the content hashes it waits for a person to approve. Absent on older runs. */
@@ -157,6 +159,8 @@ export interface RunSummary {
   skillSelection?: { planHash: string; canonical: CanonicalSelectionRecord[] };
   /** The skill resolution of the plan and what was decided about skills that could not be used. Absent on older runs and when no skill was asked for. */
   skillPlan?: RunSkillPlan;
+  /** Skill-gap issues opened for the unknown skills this run stopped for (#776). While set, a stop for those skills waits and resumes by itself. */
+  skillGap?: { topic: string; issue: number; url: string }[];
   /** The skill request carried from the plan record at plan_check. Absent on older runs and on runs without a plan record. */
   skillCarry?: RunSkillCarry;
   /** What plan_check found (see plan-carry.ts). Absent on older runs and on runs with their own plan gate. */

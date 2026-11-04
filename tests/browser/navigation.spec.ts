@@ -46,7 +46,7 @@ for (const role of ["admin", "user"] as const) {
       try {
         await expectNoSidewaysScroll(page);
         const { primary, actions } = await navFor(role);
-        const hrefs = await page.locator("#side a[data-nav]").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+        const hrefs = await page.locator("#side a[data-nav]:not([hidden])").evaluateAll((els) => els.map((e) => e.getAttribute("href")));
         expect(hrefs, "the links in the page match ui/ia.js").toEqual(primary.map((p) => p.href));
 
         for (const p of primary) {

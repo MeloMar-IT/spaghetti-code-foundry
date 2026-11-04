@@ -33,7 +33,7 @@ steps:
     type: shell
     repo_access: true
     run: |-
-      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git fetch -q origin; elif [ -n "$FACTORY_LOCAL_REPO_DIR" ]; then git clone -q -- "$FACTORY_LOCAL_REPO_DIR" .; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       git log --oneline -1
   - id: resolve
     type: shell

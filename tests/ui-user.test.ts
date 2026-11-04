@@ -14,17 +14,24 @@ describe("ui/user/index.html", () => {
     expect(html).toMatch(/<span id="top-actions" class="top-actions">\s*<span id="context" class="context"><\/span>/);
     expect(html).not.toContain("health-btn");
   });
-  it("has exactly six links with the user pages", () => {
-    const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)">([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[3]]);
+  it("has exactly seven links with the user pages", () => {
+    const links = [...html.matchAll(/<a href="([^"]+)" data-nav="([^"]+)"( hidden)?>([^<]+)<\/a>/g)].map((m) => [m[1], m[2], m[4]]);
     expect(links).toEqual([
       ["#/start", "start", "Start work"], // the top action comes first in the document
+      ["#/help", "help", "Help"], // top bar, next to Start work; hidden until the Simple view shows it
       ["#/home", "home", "Home"], // the first link of the sidebar
       ["#/epics", "epics", "Epics"],
       ["#/runs", "runs", "My runs"],
       ["#/repos", "repos", "My repositories"],
       ["#/refinement", "refinement", "Refinement"],
     ]);
-    expect(html.split("data-nav=").length - 1).toBe(6);
+    expect(html.split("data-nav=").length - 1).toBe(7);
+    expect(html).toContain('<a href="#/help" data-nav="help" hidden>Help</a>');
+    // in the top bar, not the sidebar: it stays reachable when the menu is closed
+    const side = html.slice(html.indexOf('<nav id="side"'), html.indexOf("</nav>", html.indexOf('<nav id="side"')));
+    expect(side).not.toContain('data-nav="help"');
+    expect(html.indexOf('data-nav="help"')).toBeGreaterThan(html.indexOf('id="top-actions"'));
+    expect(html.indexOf('data-nav="help"')).toBeLessThan(html.indexOf('id="search-btn"'));
     expect(html).toContain('<a class="brand" href="#/home">');
   });
   it("has nothing of the admin page", () => {

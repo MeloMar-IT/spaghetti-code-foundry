@@ -40,8 +40,18 @@ const call = async (who: TestSession, method: string, path: string, body?: unkno
 
 describe("/api/me/view", () => {
   it("answers the defaults and the views of the role", async () => {
-    expect((await call(ann, "GET", "/api/me/view")).json).toEqual({ view: "advanced", views: ["simple", "advanced"] });
-    expect((await call(admin, "GET", "/api/me/view")).json).toEqual({ view: "admin", views: ["simple", "advanced", "admin"] });
+    expect((await call(ann, "GET", "/api/me/view")).json).toEqual({ view: "advanced", views: ["simple", "advanced"], helpContact: "" });
+    expect((await call(admin, "GET", "/api/me/view")).json).toEqual({ view: "admin", views: ["simple", "advanced", "admin"], helpContact: "" });
+  });
+
+  it("gives the help contact the admin saved to a user, and only on GET", async () => {
+    const cfg = (await call(admin, "GET", "/api/config")).json;
+    const put = await call(admin, "PUT", "/api/config", { ...cfg, simple: { help_contact: "Ask Dee, dee@example.com" } });
+    expect(put.status).toBe(200);
+    expect((await call(ann, "GET", "/api/me/view")).json.helpContact).toBe("Ask Dee, dee@example.com");
+    expect((await call(ann, "PUT", "/api/me/view", { view: "advanced" })).json).not.toHaveProperty("helpContact");
+    await call(admin, "PUT", "/api/config", { ...cfg, simple: {} });
+    expect((await call(ann, "GET", "/api/me/view")).json.helpContact).toBe("");
   });
 
   it("keeps the choice for the next sign-in, also after sign-out", async () => {

@@ -1,6 +1,6 @@
 # UI components (the kit)
 
-The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. It has actions, form controls, display primitives, and overlay and navigation primitives, and record components. No page uses the kit yet.
+The kit is a small set of plain JavaScript modules in `ui/kit/` that build common controls with `h` from `ui/dom.js`. Pages use the kit instead of repeating markup and inline styles. It has actions, form controls, display primitives, and overlay and navigation primitives, and record components. No built-in page uses the kit yet; plugin pages get it as `ctx.kit` (see [Plugin pages](#plugin-pages)).
 
 ## Conventions
 
@@ -328,6 +328,25 @@ In `ui/kit/product.js`, styled in `ui/kit/product.css`. They are built only from
 |---|---|
 | Escape | Cancel (not while `send()` runs) |
 | Enter | Confirm, when the danger button is enabled |
+
+## Plugin pages
+
+A plugin page (added with `api.ui()`, see [PLUGIN_API.md](PLUGIN_API.md#the-ui-point)) is an ES module
+with `render(box, ctx)`. It builds its screen with `ctx.kit` and checks the same list as a built-in screen:
+
+```js
+export function render(box, ctx) {
+  const { display, actions } = ctx.kit;
+  ctx.mount(box, display.card({ title: "Report" }, actions.button({ variant: "primary" }, "Refresh")));
+}
+```
+
+- `ctx.kit` is the kit as a whole: `actions`, `forms`, `display`, `overlays` and `records`, with the same
+  functions as the modules above. `ctx.h` and `ctx.mount` are the DOM helpers from `ui/dom.js`.
+- The page's CSS is a plugin file (`files` in the spec, `.css`). It uses the `scf-` classes and the theme
+  tokens, not its own colours or inline styles.
+- A plugin page should pass the same checks as a built-in screen ([Building a new screen](#building-a-new-screen)).
+  The Foundry does not test a plugin's page; its author should check it in light and dark, and with the keyboard.
 
 ## The gallery
 

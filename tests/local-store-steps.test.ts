@@ -18,7 +18,7 @@ const proj = (): string => {
   return d;
 };
 let tick = 0;
-const store = (d: string, o = {}): LocalStore => new LocalStore(d, "local/x", { lockPollMs: 5, now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)), ...o });
+const store = (d: string, o = {}): LocalStore => new LocalStore(d, "local/x", { lockPollMs: 5, commit: false, now: () => new Date(Date.UTC(2026, 0, 1, 0, 0, tick++)), ...o });
 const folder = (d: string): string => join(d, ".scf", "stories");
 const story = (n: number, o: Partial<FileStory> = {}): FileStory => ({
   number: n, title: `Story ${n}`, state: "open", kind: "story", labels: [], dependsOn: [], createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z", body: "b", comments: [], ...o,

@@ -32,6 +32,7 @@ export const SKILL_GROUPS = [
   { title: "Skills that cannot be used", keys: ["skills.unresolved."] },
   { title: "Tools a skill may ask for", keys: ["skills.tools."] },
   { title: "Skill source checks", keys: ["skills.update_check."] },
+  { title: "Skill gaps", keys: ["skills.authoring."] },
 ];
 
 const matches = (key, p) => (p.endsWith(".") ? key.startsWith(p) : key === p);
@@ -95,6 +96,15 @@ export const RISKS = [
     key: "tools.missing",
     sentences: (before, after) => (valueAt(after, "tools.missing") === "degrade" && valueAt(before, "tools.missing") !== "degrade"
       ? ["A skill whose tool is not available no longer stops the run; it runs without that tool."] : []),
+  },
+  {
+    key: "authoring.repository",
+    sentences: (before, after) => {
+      const now = valueAt(after, "authoring.repository");
+      return typeof now === "string" && now !== "" && now !== valueAt(before, "authoring.repository")
+        ? ["The Foundry opens issues in this repository by itself when it finds a missing skill; they list run ids, finding kinds and technology names, never file content."]
+        : [];
+    },
   },
   {
     key: "update_check.folder",

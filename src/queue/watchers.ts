@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isLocalRepoName } from "../auth/local-name.js";
 import type { Config, WatcherConfig } from "../config.js";
 import { selfBuild, selfContains } from "../engine/guards.js";
 import { flowDir, parseFlow } from "../flow/load.js";
@@ -15,6 +16,7 @@ import { buildLabelFor, Reporter } from "../monitor/report.js";
 import type { BuiltinSteps } from "../monitor/story.js";
 import type { RunSummary } from "../engine/state.js";
 import { type RepoGhIdentity, repoGhIdentity } from "./gh-identity.js";
+import { skillGapReady } from "../skills/gap-issues.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments, statusFile } from "./status-comment.js";
 import { Watcher, type WatcherStatus } from "./watcher.js";
@@ -74,8 +76,8 @@ export class WatcherManager {
   constructor(private o: WatcherManagerOptions) {}
 
   /** The sign-in of a stored watcher's repository (made once, kept while a watcher uses it); undefined for a watcher of config.yaml. */
-  identityOf(cfg: Pick<WatcherConfig, "repoId">): RepoGhIdentity | undefined {
-    if (!cfg.repoId) return undefined;
+  identityOf(cfg: Pick<WatcherConfig, "repoId" | "github_repo">): RepoGhIdentity | undefined {
+    if (!cfg.repoId || isLocalRepoName(cfg.github_repo)) return undefined; // a local project has no GitHub sign-in
     let id = this.identities.get(cfg.repoId);
     if (!id) {
       id = this.o.ghIdentity ? this.o.ghIdentity(cfg.repoId) : repoGhIdentity(cfg.repoId, { config: this.o.config, log: this.o.log });
@@ -138,8 +140,9 @@ export class WatcherManager {
         watchers: () => this.o.config().watchers,
         hotfixToMain: () => this.o.config().hotfix_to_main,
         peers: () => this.tracked(),
-        afterCheck: () => this.noteRateLimit(),
+        afterCheck: isLocalRepoName(cfg.github_repo) ? undefined : () => this.noteRateLimit(),
         gh: this.identityOf(cfg),
+        skillReady: (run) => skillGapReady(run, this.o.config().skills),
       });
       this.running.set(id, { watcher, key: JSON.stringify(cfg), board });
       watcher.start();

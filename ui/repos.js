@@ -64,6 +64,16 @@ export const METHODS = [
     ],
   },
   {
+    id: "local",
+    local: true,
+    label: "Local (no GitHub)",
+    help: [
+      "A git repository on this machine, with or without a remote. The Foundry keeps its stories in .scf/stories/ in that folder and never calls GitHub for it.",
+      "Give the absolute path of the top folder, for example /Users/you/projects/app.",
+    ],
+    fields: [],
+  },
+  {
     id: "none",
     label: "The server's own access",
     help: ["The server uses its own access to this repository. No token is stored."],
@@ -76,7 +86,7 @@ export const METHODS = [
  * `GET /api/repos/methods`) the entries it lists; without, the GitHub App is left out because it may not be set up.
  */
 export const methodsFor = (admin, options) =>
-  METHODS.filter((m) => (admin || m.id !== "none") && (Array.isArray(options?.methods) ? options.methods.includes(m.id) : m.id !== "github-app"));
+  METHODS.filter((m) => (admin || (m.id !== "none" && m.id !== "local")) && (Array.isArray(options?.methods) ? options.methods.includes(m.id) : m.id !== "github-app"));
 
 /** The link to install the app, only when it is a github.com/apps/<name>/installations/new address; else "". */
 export const appInstallUrl = (options) => {
@@ -117,6 +127,9 @@ const text = (s) => String(s ?? "").trim();
 
 /** True for an SSH address: ssh://… or git@host:path. */
 export const isSshUrl = (url) => /^(ssh:\/\/|git@)/i.test(text(url));
+
+/** True for the absolute path of a folder on this machine (starts with /). */
+export const isLocalPath = (url) => text(url).startsWith("/");
 
 /** Copies text to the clipboard. False when the browser has none (plain http) or refuses. */
 export async function copyText(value) {

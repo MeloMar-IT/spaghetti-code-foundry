@@ -1,5 +1,6 @@
 import type { Config } from "../config.js";
 import type { RunSummary } from "../engine/state.js";
+import { gapLinksFor, gapLinkSentence, readGapLedger, unknownTopicIds } from "./gap-issues.js";
 import { discoverSkills } from "./registry.js";
 import { FlowSkillsSchema } from "../flow/schema.js";
 import { planHashOf } from "./run-lock.js";
@@ -119,9 +120,30 @@ function check(run: RunSummary, config: Config, stepId: string, log: (m: string)
     for (const m of tools.met) if (!out.has(m.key)) log(`· ${SKILL_TOOLS_PREFIX}${m.key} ${m.need} — ${m.sources.join(", ")}`);
   }
   for (const w of plan.warnings) log(`⚠ ${w}`);
-  if (plan.action !== "stop") return undefined;
-  log(`■ ${plan.reason}`);
-  return plan.reason;
+  if (plan.action !== "stop") {
+    delete run.skillGap;
+    return undefined;
+  }
+  const reason = withGapLink(run, config, plan.reason ?? CHECK_FAILED);
+  log(`■ ${reason}`);
+  return reason;
+}
+
+/** Adds `Skill gap issue: <url>` for the unknown skills that have a ledger entry of the configured repository, and sets or clears run.skillGap. */
+function withGapLink(run: RunSummary, config: Config, reason: string): string {
+  delete run.skillGap;
+  try {
+    const repo = config.skills.authoring?.repository ?? "";
+    if (!repo || !run.skillPlan) return reason;
+    const links = gapLinksFor(unknownTopicIds(run), readGapLedger(undefined, repo));
+    if (!links.length) return reason;
+    run.skillGap = links;
+    const text = `${reason} ${gapLinkSentence(links)}`;
+    run.skillPlan.reason = text;
+    return text;
+  } catch {
+    return reason;
+  }
 }
 
 /** Stops the run for skills with a fixed reason (fail closed). Returns the reason. */

@@ -11,6 +11,7 @@ import { FACTORY_HOME } from "./flow/load.js";
 import { BASELINE_POLICY_ID, BASELINE_RULE_IDS } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { ContextSettingsSchema } from "./context/settings.js";
+import { MAX_PLUGINS, pluginModuleProblem } from "./plugins/load.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { CANONICAL_LIMITS } from "./skills/canonical-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
@@ -283,6 +284,9 @@ export const STEP_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*(_\*)?$/;
 export const STEP_ENV_REFUSED = /^(FACTORY_|SCF_|GH_|GITHUB_|GIT_|SSH_)/;
 const stepEnvName = z.string().refine((n) => STEP_ENV_NAME.test(n) && !STEP_ENV_REFUSED.test(n), "not a variable name the steps of a user's run may get");
 
+/** A GitHub repository as "owner/name" (skills.authoring.repository). */
+const AUTHORING_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/;
+
 /** The interval of `skills.update_check.every` in ms: `<n>m` or `<n>h` from 5m to 24h; undefined for anything else. */
 export function updateEveryMs(text: unknown): number | undefined {
   if (typeof text !== "string") return undefined;
@@ -359,6 +363,19 @@ const deliveryNames = () =>
     .max(500)
     .refine((l) => new Set(l).size === l.length, "names the same entry twice");
 
+const PluginEntrySchema = z
+  .object({
+    /** A package name or an absolute path. */
+    module: z.string().trim().min(1).max(1024).superRefine((m, ctx) => {
+      const problem = pluginModuleProblem(m);
+      if (problem) ctx.addIssue({ code: "custom", message: problem });
+    }),
+    /** Handed to the plugin as `api.options`. Never shown in the API. */
+    options: z.record(z.string(), z.unknown()).default({}),
+  })
+  .strict();
+export type PluginConfig = z.infer<typeof PluginEntrySchema>;
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -397,6 +414,11 @@ export const ConfigSchema = z
     secret_scan: z.boolean().default(true),
     /** The redesigned pages (still being built); off by default. */
     ui: z.object({ redesign: z.boolean().default(false) }).strict().prefault({}),
+    /** The Simple view. `help_contact`: who a person can ask, shown as plain text on the Help page (`#/help`); not set: the line is hidden. */
+    simple: z.object({
+      help_contact: z.string().trim().max(300, "at most 300 characters")
+        .refine((s) => !/[\u0000-\u001f\u007f]/.test(s), "has a control character").optional(),
+    }).strict().prefault({}),
     /**
      * Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy.
      * `floor`: the lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded.
@@ -708,6 +730,16 @@ export const ConfigSchema = z
           })
           .strict()
           .prefault({}),
+        /** The Foundry opens skill-gap issues in this skill-library repository (#776). Empty repository: off. */
+        authoring: z
+          .object({
+            repository: z.string().trim().default("").refine((s) => s === "" || AUTHORING_REPO_RE.test(s), 'must be "owner/name", or empty for off'),
+            label: z.string().trim().min(1).max(50).regex(/^[^\u0000-\u001f\u007f,]+$/).default("Factory_go"),
+            max_open: z.number().int().min(1).max(50).default(5),
+            max_per_day: z.number().int().min(0).max(20).default(3),
+          })
+          .strict()
+          .prefault({}),
       })
       .strict()
       .superRefine((s, ctx) => {
@@ -776,6 +808,33 @@ export const ConfigSchema = z
     telemetry: TelemetrySchema.prefault({}),
     /** What a run is given as context: the limits and the privacy of its sources (read from #696 part 2 on). */
     context: ContextSettingsSchema.prefault({}),
+    /** Prices (USD per million tokens) by model name, for the usage events and the cost of Codex steps. They win over the built-in table. */
+    usage: z
+      .object({
+        prices: z
+          .record(
+            z.string().min(1).max(200),
+            z.object({ input_per_mtok: z.number().nonnegative(), cached_input_per_mtok: z.number().nonnegative(), output_per_mtok: z.number().nonnegative() }).strict(),
+          )
+          .refine((r) => Object.keys(r).length <= 200, "at most 200 prices")
+          .default({}),
+      })
+      .strict()
+      .prefault({}),
+    /** Plugins: code loaded once when the server starts, in this order. Set in config.yaml only; applies after a restart. */
+    plugins: z
+      .array(PluginEntrySchema)
+      .max(MAX_PLUGINS)
+      .refine((l) => new Set(l.map((p) => p.module)).size === l.length, "names the same plugin twice")
+      .default([]),
+    /**
+     * The values of the settings sections plugins add (#787), by the plugin's web address name. Checked loosely here, because
+     * config.yaml is read before the plugins load; PUT /api/config checks them against each loaded plugin's own fields.
+     */
+    plugin_settings: z
+      .record(z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(64), z.record(z.string().max(64), z.unknown()))
+      .refine((r) => Object.keys(r).length <= 50, "at most 50 plugins")
+      .default({}),
   })
   .strict()
   .superRefine((c, ctx) => {

@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type RepoAccess, repoAccess } from "../auth/repos.js";
+import { isLocalRepoName } from "../auth/local-name.js";
+import { type RepoAccess, findLocalRepo, repoAccess } from "../auth/repos.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import type { Config } from "../config.js";
 import type { Step } from "../flow/schema.js";
@@ -332,4 +333,15 @@ export function sweepSignInDirs(runsDir: string): { removed: number; failed: num
     else out.failed++;
   }
   return out;
+}
+
+/** The folder of a connected local repository for the tools of a step (`FACTORY_LOCAL_REPO_DIR`); nothing for any other repository. */
+export function localRepoEnv(githubRepo: string | undefined, find: (name: string) => { url: string; settings?: { pushRemote?: boolean } } | undefined = findLocalRepo): Record<string, string> {
+  if (!githubRepo || !isLocalRepoName(githubRepo)) return {};
+  try {
+    const rec = find(githubRepo);
+    return rec ? { FACTORY_LOCAL_REPO_DIR: rec.url, ...(rec.settings?.pushRemote === true ? { FACTORY_LOCAL_PUSH: "yes" } : {}) } : {};
+  } catch {
+    return {};
+  }
 }

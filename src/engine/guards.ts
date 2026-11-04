@@ -143,11 +143,29 @@ export function hotfixState(flow: Flow, config: Pick<Config, "hotfix_to_main">):
 /** Branch names the exception may name: plain names, no glob characters, no spaces or shell syntax. */
 const PUSH_ALLOW_OK = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
-/** FACTORY_PUSH_ALLOW for a step: set only for push_main of the unchanged shipped flow (top level). */
-export function pushAllowEnv(step: Pick<Step, "id">, depth: number, vars: Record<string, string>, state: "on" | "off" | "other"): Record<string, string> {
+/** The second exception: the publish step of the unchanged shipped skill-write flow pushes main of a repository an admin marked as a skill library. */
+export const SKILL_WRITE_FLOW = "skill-write";
+export const SKILL_PUBLISH_STEP = "publish";
+
+/** "on" only for the shipped skill-write flow and a skill library; anything else is "other". Fails closed. */
+export function skillPublishState(flow: Flow, skillLibrary: boolean): "on" | "other" {
+  try {
+    return skillLibrary && flow.name === SKILL_WRITE_FLOW && isShippedFlow(flow) ? "on" : "other";
+  } catch {
+    return "other";
+  }
+}
+
+/**
+ * FACTORY_PUSH_ALLOW for a step: set only for push_main of the unchanged shipped issue-gitflow, or for publish of the
+ * unchanged shipped skill-write flow in a skill library (top level both).
+ */
+export function pushAllowEnv(step: Pick<Step, "id">, depth: number, vars: Record<string, string>, state: "on" | "off" | "other", skillPublish: "on" | "other" = "other"): Record<string, string> {
   const branch = vars.main_branch ?? "";
-  if (step.id !== HOTFIX_PUSH_STEP || depth !== 0 || state !== "on" || !PUSH_ALLOW_OK.test(branch)) return {};
-  return { FACTORY_PUSH_ALLOW: branch };
+  if (depth !== 0 || !PUSH_ALLOW_OK.test(branch)) return {};
+  if (step.id === HOTFIX_PUSH_STEP && state === "on") return { FACTORY_PUSH_ALLOW: branch };
+  if (step.id === SKILL_PUBLISH_STEP && skillPublish === "on") return { FACTORY_PUSH_ALLOW: branch };
+  return {};
 }
 
 /**

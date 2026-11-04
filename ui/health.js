@@ -24,6 +24,7 @@ export function renderHealth(el, health, { onCancel, readOnly = false } = {}) {
   const problems = health.problems ?? [];
   const repos = health.repos ?? [];
   const skills = health.skillProblems ?? [];
+  const plugins = health.pluginProblems ?? [];
   mount(el,
     h("b", {}, health.summary),
     problems.length ? h("ul", { class: "holds" }, problems.map((n) => h("li", {},
@@ -33,6 +34,7 @@ export function renderHealth(el, health, { onCancel, readOnly = false } = {}) {
       ...skills.map((p) => h("li", {}, `Skills (${p.root}${p.package ? " / " + p.package : ""}): ${p.reason}`)),
       health.skillProblemsMore > 0 ? h("li", {}, `and ${health.skillProblemsMore} more skill problem${health.skillProblemsMore === 1 ? "" : "s"}: run "scf skills" to see all`) : null,
     ]) : null,
+    plugins.length ? h("ul", { class: "holds" }, plugins.map((p) => h("li", {}, `Plugin ${p.plugin}: ${p.reason}`))) : null,
     health.monitorFindings ? h("a", { class: "health-findings", "data-focus": "health-findings", href: "#/problems" }, findingsLink(health.monitorFindings)) : null,
     health.governor?.changesToday > 0 ? h("span", { class: "health-governor muted" }, `The load governor changed the limits ${health.governor.changesToday} time${health.governor.changesToday === 1 ? "" : "s"} today`) : null,
     repos.length ? h("span", { class: "health-repos muted" }, repos.map((r) => h("span", {}, h("span", { class: "mono" }, r.repo), lastOkText({ lastOk: r.lastOk })))) : null,

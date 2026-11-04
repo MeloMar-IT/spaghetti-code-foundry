@@ -56,7 +56,7 @@ steps:
     type: shell
     repo_access: true
     run: |-
-      if [ -d .git ]; then git fetch -q origin || { echo "could not fetch origin"; exit 1; }; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git fetch -q origin || { echo "could not fetch origin"; exit 1; }; elif [ -n "$FACTORY_LOCAL_REPO_DIR" ]; then git clone -q -- "$FACTORY_LOCAL_REPO_DIR" .; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       git log --oneline -1
       b=$("$FACTORY_TOOLS/daily-branch" latest) || { echo "could not find the newest daily branch (see above)"; exit 1; }
       if [ "$b" != NONE ]; then git checkout -q --detach "origin/$b" || { echo "could not check out $b"; exit 1; }; echo "Code: main plus unmerged work on $b"

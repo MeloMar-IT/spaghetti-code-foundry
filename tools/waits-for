@@ -21,7 +21,19 @@ function fail(msg) {
 
 if (process.argv.length > 2) fail("usage: waits-for  (the plan comes on stdin)");
 const repo = process.env.FACTORY_VAR_GITHUB_REPO ?? "";
-if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+// The story store first: for a local repository it binds the folder in FACTORY_LOCAL_REPO_DIR, which the library then uses.
+let storeLib;
+try {
+  storeLib = await import(new URL("../dist/stories/store.js", import.meta.url).href);
+} catch (e) {
+  fail(`could not load the waits-for library: ${String(e?.message || e).split("\n")[0]}`);
+}
+if (!storeLib.isStoryRepoName(repo)) fail("set var github_repo to owner/repo");
+try {
+  storeLib.storeForTool(repo);
+} catch (e) {
+  fail(String(e?.message || e).split("\n")[0]);
+}
 const issue = process.env.FACTORY_VAR_ISSUE ?? "";
 if (!/^[1-9]\d{0,8}$/.test(issue)) fail("set var issue to the issue number");
 const self = Number(issue);

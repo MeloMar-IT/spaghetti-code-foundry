@@ -156,7 +156,9 @@ export const api = {
   saveRepoWatcher: (repoId, id, body) => req("PUT", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`, body),
   removeRepoWatcher: (repoId, id) => req("DELETE", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`),
   allCredentials: () => req("GET", "/api/admin/credentials"),
-  adminComponents: () => req("GET", "/api/admin/components"),
+  plugins: () => req("GET", "/api/plugins"),
+  pluginUi: () => req("GET", "/api/plugins/ui"),
+  adminComponents:() => req("GET", "/api/admin/components"),
   // `stay`: a 401 must not reload the page while a typed idea is kept in memory
   refinement: (stay = false) => req("GET", "/api/refinement", undefined, stay),
   // `stay`: a 401 must not reload the page, so the typed idea is still there

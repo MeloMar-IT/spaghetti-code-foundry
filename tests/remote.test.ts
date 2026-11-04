@@ -127,6 +127,25 @@ describe("against a running server", () => {
     expect((await w.scf(["whoami"], { as: "nobody" })).out).toBe("not signed in: scf login");
   });
 
+  it("scf plugins lists by default, as a table or as JSON, and has help", async () => {
+    expect((await w.scf(["plugins"])).out).toBe("no plugins loaded");
+    expect((await w.scf(["plugins", "list"])).out).toBe("no plugins loaded");
+    expect((await w.scf(["plugins", "--json"])).json<{ plugins: unknown[] }>().plugins).toEqual([]);
+    expect((await w.scf(["plugins", "--help"])).out).toContain("scf plugins list");
+  });
+
+  it("prints the plugin table and the problem lines", () => {
+    const show = ALL.find((c) => c.area === "plugins")!.show!;
+    const text = show({
+      plugins: [{ label: "acme", module: "acme", version: "1.0.0", registered: [] }, { label: "b.mjs", module: "/p/b.mjs", version: "2", registered: [{ point: "flow", name: "x" }] }],
+      problems: [{ plugin: "config.yaml", reason: "lists other plugins" }],
+    }, {});
+    expect(text).toContain("acme");
+    expect(text).toContain("nothing yet");
+    expect(text).toContain("flow x");
+    expect(text).toContain("problem: config.yaml: lists other plugins");
+  });
+
   it("makes read and write calls with the session, as tables or as JSON", async () => {
     expect((await w.scf(["server", "health", "--json"])).json<object>()).toBeTypeOf("object");
     expect((await w.scf(["watchers", "list"])).out).toBe("no watchers");

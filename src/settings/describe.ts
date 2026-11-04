@@ -144,7 +144,7 @@ export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
   if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns" || key === "governance.owner") return false;
   if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce", "promotion.enforce"].includes(key)) return true;
-  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry."].some((p) => key.startsWith(p));
+  return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry.", "simple."].some((p) => key.startsWith(p));
 }
 
 type Text = { label: string; help: string; effect: SettingEffect; control?: string };
@@ -180,6 +180,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "policy.enforce": N("Enforced built-in rules", "Rule ids of the built-in policy (foundry.baseline), such as path-forbidden, that decide in block mode and are asked first; a deny stops the step or the run (at a push it is only recorded), and if the built-in policy cannot be used, the steps of those rules are denied."),
   "auto_retry.timeouts": N("Retries after a time limit", "How often a story of a watcher is tried again by itself when a step ran out of time, counted per story over all its runs, where 0 turns it off and a time limit then goes to Needs you as before, and a run you start yourself is never retried."),
   "promotion.enforce": N("Use only promoted versions", "Whether a new run checks that its flow, sub-flows, policy packs, model routes and tool profile are promoted (scf promote): off does not check, warn logs what is not promoted, on refuses the run, and scf run --local-test is always allowed."),
+  "simple.help_contact": G("Help contact", "Who people in the Simple view can ask, shown as plain text on their Help page, for example a name and an e-mail address; empty hides the line."),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
   "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
   "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),
@@ -270,6 +271,10 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "skills.tools.missing": N("Skill tool not available", "What to do when a tool a skill asks for is not available."),
   "skills.update_check.folder": G("Catalogue clone for source checks", "Absolute path of a clone of the catalogue repository; the server checks its due skill sources there and opens pull requests with its own git and gh sign-in; not set means off."),
   "skills.update_check.every": G("Look for due source checks every", "How often the server looks for due sources, like 30m or 6h, from 5m to 24h; each source keeps its own update cadence."),
+  "skills.authoring.repository": G("Skill gaps: repository", "The skill-library repository (owner/name) where the Foundry opens an issue by itself when a skill is missing; it must be marked as a skill library, and not set means off."),
+  "skills.authoring.label": G("Skill gaps: label", "The label of a new skill-gap issue; it starts the skill-write watcher of that repository."),
+  "skills.authoring.max_open": G("Skill gaps: most open issues", "The Foundry opens no new skill-gap issue while this many are open."),
+  "skills.authoring.max_per_day": G("Skill gaps: most new issues a day", "The most new skill-gap issues in 24 hours; 0 opens none."),
   isolate_agents: A("Isolate agents", "Run agent steps without your personal setup: no MCP servers, plugins, skills, hooks or user settings.", "new-runs", "admin-sections.js"),
   cost_limits: A("Enforce cost limits", "Stop runs at the run, step and daily budgets; off still records costs but never stops a run because of money.", "new-runs"),
   daily_budget_usd: A("Daily budget ($)", "When today's spending reaches this, runs pause and resume the next day.", "new-runs"),

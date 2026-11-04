@@ -66,6 +66,25 @@ const ctxOf = (s: Setup = {}): ApiContext => {
 };
 const kinds = (h: ReturnType<typeof health>) => h.problems.map((p) => p.kind);
 
+describe("health(): plugins", () => {
+  it("adds nothing without plugins, or when the file matches", () => {
+    expect(health(ctxOf())).not.toHaveProperty("pluginProblems");
+    const c = ctxOf();
+    c.plugins = { entries: [], plugins: [], problems: [] };
+    const h = health(c);
+    expect(h).not.toHaveProperty("pluginProblems");
+    expect(h.ok).toBe(true);
+  });
+  it("lists a plugin problem and counts it", () => {
+    const c = ctxOf();
+    c.plugins = { entries: [], plugins: [], problems: [{ plugin: "acme", reason: "late failure" }] };
+    const h = health(c);
+    expect(h.pluginProblems).toEqual([{ plugin: "acme", reason: "late failure" }]);
+    expect(h.ok).toBe(false);
+    expect(h.summary).toBe("1 problem");
+  });
+});
+
 describe("health(): skills", () => {
   const dirs: string[] = [];
   afterEach(() => {

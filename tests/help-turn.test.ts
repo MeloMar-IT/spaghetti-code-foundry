@@ -697,6 +697,109 @@ describe("actions in the prompt", () => {
   });
 });
 
+describe("Ask SCF in the Simple view", () => {
+  const P1 = { id: "p1", name: "My app" };
+  const history: Message[] = [
+    { id: "m1", role: "user", status: "done", text: "What about Bobs-secret-project?" },
+    { id: "m2", role: "assistant", status: "done", text: "Bobs-secret-project is waiting.", reply: { type: "status", summary: "Bobs-secret-project is waiting.", explanation: "", certainty: "unverified", evidence: [], recommendations: [], links: [], drafts: [], actions: [] } },
+  ] as unknown as Message[];
+  const input = { owner: ANN.id, role: "user" as const, question: "q", history };
+  const links = (id: string) => ({ ...GOOD, links: [{ to: "#/home" }, { to: "#/repos/p1" }, { to: "#/repos/bob1" }, { to: "#/runs" }], drafts: [{ text: "x" }], summary: id });
+  const stored = (owner: string, id: string) => last(owner, id).reply!;
+
+  it("asks for plain words, names the own projects and leaves out history, offers, actions and drafts", () => {
+    const p = turnPrompt(input, [], [], undefined, { actions: true, simple: { projects: [P1] } });
+    for (const pair of ["story → change", "issue → change", "run → work", "failed → got stuck", "release → final version", "repository → project", "queued → planned", "merged → done"]) expect(p).toContain(pair);
+    expect(p).toContain("Do not use these: costs, tokens, models, agents, logs");
+    expect(p).toContain('"#/repos/p1"');
+    expect(p).toContain('"projects":[{"id":"p1","name":"My app"}]');
+    expect(p).toContain('"earlier":[]');
+    expect(p).not.toContain("Bobs-secret-project");
+    expect(p).not.toContain("#/runs");
+    expect(p).not.toContain("open-run");
+    expect(p).not.toContain("resume-run");
+    for (const line of ['"actions": [],', '"offers": [],', '"drafts": [],']) expect(p).toContain(line);
+  });
+
+  it("is byte-identical without the Simple option, and keeps history and offers", () => {
+    const p = turnPrompt(input, []);
+    expect(p).not.toContain('"projects"');
+    expect(p).toContain("Bobs-secret-project");
+    expect(p).toContain("#/runs");
+    expect(p).toContain("open-run");
+  });
+
+  it("runs a Simple turn of an administrator as a user, and keeps the real role for the admission check", async () => {
+    const seen: { role: string; simple?: boolean }[] = [];
+    const allowed: string[] = [];
+    const s = svc(answer(GOOD), { projects: () => [P1], evidence: (i) => (seen.push({ role: i.role, simple: i.simple }), []), allow: (a) => (allowed.push(a.role), undefined) });
+    s.ask({ ...ROOT, simple: true }, { question: "What is waiting?" });
+    await s.idle();
+    expect(seen).toEqual([{ role: "user", simple: true }]);
+    expect(allowed).toEqual(["admin"]);
+    expect(calls[0]!.prompt).toContain("a user, not an administrator");
+    expect(calls[0]!.prompt).not.toContain("#/problems");
+  });
+
+  it("puts no earlier question or answer of another role in the prompt of a Simple turn", async () => {
+    const s = svc(answer(GOOD), { projects: () => [P1] });
+    const first = s.ask(ROOT, { question: "Tell me about Bobs-secret-project" });
+    await s.idle();
+    s.ask({ ...ROOT, simple: true }, { conversation: first.conversation.id, question: "And now?" });
+    await s.idle();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.prompt).not.toContain("Bobs-secret-project");
+    expect(calls[1]!.prompt).toContain('"earlier":[]');
+  });
+
+  it("stores only Simple links that belong to the asker, and no draft", async () => {
+    const s = svc(answer(links("x")), { projects: () => [P1, { id: "p2", name: "Other" }].slice(0, 1) });
+    const turn = s.ask({ ...ANN, simple: true }, { question: "Where?" });
+    await s.idle();
+    const r = stored(ANN.id, turn.conversation.id);
+    expect(r.links.map((l) => l.to)).toEqual(["#/home", "#/repos/p1"]);
+    expect(r.drafts).toEqual([]);
+  });
+
+  it("reads the projects again when the reply is checked", async () => {
+    let n = 0;
+    const s = svc(answer(links("x")), { projects: () => (n++ === 0 ? [P1] : []) });
+    const turn = s.ask({ ...ANN, simple: true }, { question: "Where?" });
+    await s.idle();
+    expect(stored(ANN.id, turn.conversation.id).links.map((l) => l.to)).toEqual(["#/home"]);
+  });
+
+  it("answers without a project link when the projects cannot be read", async () => {
+    const s = svc(answer(links("x")), { projects: () => { throw new Error("secret detail"); } });
+    const turn = s.ask({ ...ANN, simple: true }, { question: "Where?" });
+    await s.idle();
+    expect(stored(ANN.id, turn.conversation.id).links.map((l) => l.to)).toEqual(["#/home"]);
+    expect(logs).toContain("help: the projects of a turn could not be read");
+    expect(logs.join("\n")).not.toContain("secret detail");
+  });
+
+  it("keeps no action and has no action rule with help.actions on", async () => {
+    config = cfg({ actions: true });
+    const s = svc(answer({ ...GOOD, actions: [{ id: "resume-run", source: "state-run-1" }] }), { projects: () => [] });
+    const turn = s.ask({ ...ANN, simple: true }, { question: "Why does it wait?" });
+    await s.idle();
+    expect(stored(ANN.id, turn.conversation.id).actions).toEqual([]);
+    expect(calls[0]!.prompt).not.toContain("resume-run");
+  });
+
+  it("uses the Simple prompt again when a failed turn is tried again", async () => {
+    let n = 0;
+    const s = svc(async (o) => (n++ === 0 ? fails("boom")(o) : answer(GOOD)(o)), { projects: () => [P1] });
+    const turn = s.ask({ ...ANN, simple: true }, { question: "Where?" });
+    await s.idle();
+    s.retry({ ...ANN, simple: true }, turn.conversation.id);
+    await s.idle();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.prompt).toContain("plain words");
+    expect(calls[1]!.prompt).toContain('"projects":[{"id":"p1","name":"My app"}]');
+  });
+});
+
 describe("the documentation of help turns", () => {
   const guide = readFileSync("docs/USER_GUIDE.md", "utf8");
   it("has every sentence a person can read when no answer comes, and the settings with their defaults", () => {

@@ -204,15 +204,17 @@ const replaceSignIn = async () => {
 
 describe("pure functions", () => {
   it("lists the methods", () => {
-    expect(ui.METHODS.map((m: any) => m.id)).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app", "none"]);
+    expect(ui.METHODS.map((m: any) => m.id)).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app", "local", "none"]);
     for (const m of ui.METHODS) {
       expect(m.label).toBeTruthy();
       expect(Array.isArray(m.help)).toBe(true);
       expect(Array.isArray(m.fields)).toBe(true);
     }
     expect(ui.methodsFor(false).map((m: any) => m.id)).not.toContain("none");
+    expect(ui.methodsFor(false).map((m: any) => m.id)).not.toContain("local");
+    expect(ui.methodsFor(false, appOptions({ methods: ["github-token", "local"] })).map((m: any) => m.id)).toEqual(["github-token"]);
     // without the server's list the GitHub App is left out, because it may not be set up
-    expect(ui.methodsFor(true)).toHaveLength(4);
+    expect(ui.methodsFor(true)).toHaveLength(5);
     expect(ui.methodsFor(true).map((m: any) => m.id)).not.toContain("github-app");
     expect(ui.methodsFor(false, appOptions()).map((m: any) => m.id)).toEqual(["github-token", "https-token", "ssh-deploy-key", "github-app"]);
     expect(ui.methodsFor(false, appOptions({ methods: ["github-token"] })).map((m: any) => m.id)).toEqual(["github-token"]);

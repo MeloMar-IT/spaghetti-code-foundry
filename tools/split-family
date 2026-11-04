@@ -36,9 +36,11 @@ const issueArg = process.env.FACTORY_VAR_ISSUE;
 const MAX_BUFFER = 256 * 1024 * 1024;
 const gh = (args, input) => execFileSync(process.env.FACTORY_GH_BIN || "gh", args, { encoding: "utf8", input, maxBuffer: MAX_BUFFER, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] }).trim();
 // Every story call goes through the story store (dist/stories/store.js), on this runner and its limits.
-let storeFor;
+let storeForTool;
+let isStoryRepoName;
+let isLocalRepoName;
 try {
-  ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+  ({ storeForTool, isStoryRepoName, isLocalRepoName } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
 } catch (e) {
   fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
 }
@@ -48,10 +50,16 @@ function fail(msg) {
   process.exit(1);
 }
 
-if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+if (!repo || !isStoryRepoName(repo)) fail("set var github_repo to owner/repo");
 if (!/^\d+$/.test(issueArg ?? "")) fail("set var issue to the issue number");
 const self = Number(issueArg);
-const stories = storeFor(repo).sync(gh);
+const local = isLocalRepoName(repo);
+let stories;
+try {
+  stories = storeForTool(repo).sync(gh);
+} catch (e) {
+  fail(String(e?.message || e).split("\n")[0]);
+}
 const mode = process.argv[2];
 if (mode !== undefined && mode !== "close-parts") fail("usage: split-family [close-parts]");
 
@@ -230,7 +238,9 @@ async function closeParts() {
   const { dependencies, mergeDependsOn, removeFromDependsOn, foundryDependsOn } = await import(new URL("../dist/queue/deps.js", import.meta.url).href);
 
   let prs;
-  try {
+  if (local) {
+    prs = []; // a local project has no pull requests
+  } else try {
     const list = JSON.parse(stories.listChanges({ state: "open", limit: LIMIT, fields: "number,title,body,headRefName" }));
     if (Array.isArray(list) && list.length < LIMIT) prs = list;
   } catch {

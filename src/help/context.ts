@@ -170,6 +170,7 @@ export interface HelpPage {
 
 const A: HelpRole[] = ["admin"];
 const AU: HelpRole[] = ["admin", "user"];
+const U: HelpRole[] = ["user"];
 const admin = (id: string, title: string): HelpPage => ({ id, path: `#/${id}`, title, roles: A });
 
 /**
@@ -179,6 +180,7 @@ const admin = (id: string, title: string): HelpPage => ({ id, path: `#/${id}`, t
 export const HELP_PAGES: readonly HelpPage[] = [
   { id: "home", path: "#/home", title: "Home", roles: AU },
   { id: "setup", path: "#/setup", title: "Setup check", roles: AU },
+  { id: "help", path: "#/help", title: "Help", roles: U },
   { id: "board", path: "#/board", title: "Board", roles: A },
   { id: "board-repo", path: "#/board/:id", title: "Board of one repository", roles: A },
   { id: "epics", path: "#/epics", title: "Epics", roles: AU },

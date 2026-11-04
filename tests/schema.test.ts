@@ -67,7 +67,7 @@ describe("{{context.index}}", () => {
 describe("flow schema", () => {
   it("parses the built-in flows", () => {
     const shipped = readdirSync("flows").filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""));
-    expect(shipped.sort()).toEqual(["daily-pr", "epic-questions", "issue-code-daily", "issue-gitflow", "issue-plan", "refine-brief", "refine-round", "release-build", "release-daily"]);
+    expect(shipped.sort()).toEqual(["daily-pr", "epic-questions", "issue-code-daily", "issue-gitflow", "issue-plan", "refine-brief", "refine-round", "release-build", "release-daily", "skill-write"]);
     for (const f of shipped) {
       const flow = parseFlow(readFileSync(`flows/${f}.yaml`, "utf8"), f);
       expect(flow.name).toBe(f);
@@ -235,6 +235,19 @@ describe("template", () => {
 
   it("builds env names", () => {
     expect(outputEnvName("run-tests")).toBe("FACTORY_OUT_RUN_TESTS");
+  });
+});
+
+describe("config: simple.help_contact", () => {
+  it("defaults to an empty group and trims the text", () => {
+    expect(ConfigSchema.parse({}).simple).toEqual({});
+    expect(ConfigSchema.parse({ simple: { help_contact: "  Ann, ann@example.com " } }).simple.help_contact).toBe("Ann, ann@example.com");
+  });
+  it("refuses 301 characters, control characters and unknown keys", () => {
+    expect(ConfigSchema.safeParse({ simple: { help_contact: "a".repeat(300) } }).success).toBe(true);
+    expect(ConfigSchema.safeParse({ simple: { help_contact: "a".repeat(301) } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ simple: { help_contact: "a\nb" } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ simple: { x: 1 } }).success).toBe(false);
   });
 });
 
