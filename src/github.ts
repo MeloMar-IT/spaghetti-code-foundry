@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:os";
 import { promisify } from "node:util";
+import { isLocalRepoName } from "./auth/local-name.js";
 
 const exec = promisify(execFile);
 
@@ -197,6 +198,8 @@ export async function prComments(repo: string, pr: number | string, timeoutMs?: 
 
 /** The permission GitHub reports for this user on the repo ("admin", "write", "read", …). Rejects when GitHub cannot tell. */
 export async function repoPermission(repo: string, login: string, timeoutMs?: number): Promise<string> {
+  // A local repository has no collaborators: its owner is the owner of this machine (only an admin connects one).
+  if (isLocalRepoName(repo)) return "admin";
   return (await gh(["api", `repos/${repo}/collaborators/${login}/permission`, "--jq", ".permission"], undefined, timeoutMs)).trim();
 }
 

@@ -651,6 +651,8 @@ A story can be a file, so people and other tools can read and write it without t
 
 The format status: the format is defined, and the store for a local project reads and writes these files. A repository connected as **Local (no GitHub)** keeps its stories here (see "Local (no GitHub)" under My repositories). GitHub repositories are unchanged. The commits that the store makes are described below.
 
+On a local project, the flow steps work on these stories as they do on GitHub: **Depends on** (a story waits until the story it depends on is done), splits into epics and child stories, questions with `/defaults`, and approvals. You are the owner of the machine, so you have write access for approvals. A local project has no pull requests: a daily-branch step that asks for one stops with "Pull requests are not available for a local project".
+
 A file has three parts:
 
 1. **Front matter**, between two lines `---`, in YAML:

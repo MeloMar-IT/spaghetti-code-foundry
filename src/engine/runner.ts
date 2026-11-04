@@ -36,7 +36,7 @@ import { explainFailure } from "../failure-explain.js";
 import { hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
-import { removeSignInDir } from "./repo-access.js";
+import { localRepoEnv, removeSignInDir } from "./repo-access.js";
 import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
 import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
@@ -421,6 +421,7 @@ async function drive(
       FACTORY_TOOLS: TOOLS_DIR,
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
+      ...localRepoEnv(summary.vars.github_repo),
       ...nextStepEnv(),
       // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes, autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),

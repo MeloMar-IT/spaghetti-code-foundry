@@ -86,6 +86,13 @@ describe("size_gate", () => {
     expect(size(plan(OVER, OWNER), { FAKE_GH_ISSUE_AUTHOR: "alice" }).stdout).toContain("SIZE: mechanical");
   });
 
+  it("accepts an owner's exception on a local repository without any gh call", () => {
+    const r = size(plan(OVER, OWNER), { FACTORY_VAR_GITHUB_REPO: "local:shop-0123abcd" });
+    expect(r.stdout).toContain("SIZE: mechanical");
+    expect(r.ghLog).toBe("");
+    expect(size(plan(OVER), { FACTORY_VAR_GITHUB_REPO: "local:shop-0123abcd" }).stdout).toContain("SIZE: over");
+  });
+
   it("rejects it when the author has only read access", () => {
     const r = size(plan(OVER, OWNER), { FAKE_GH_ISSUE_AUTHOR: "alice", FAKE_GH_READONLY: "alice" });
     expect(r.stdout).toContain("the owner's exception does not count");

@@ -3,6 +3,7 @@
  * Synchronous. All GitHub access goes through the synchronous part of the story store (`storeFor(repo).sync(gh)`), which runs the
  * injected GhCall (argument arrays, body on stdin, no shell).
  */
+import { isLocalRepoName } from "../auth/local-name.js";
 import { storeFor, type GhCall, type SyncStories, type SyncStory } from "../stories/store.js";
 import {
   cleanReason, dependencies, foundryDependsOn, mergeDependsOn, removeFromDependsOn, titleIndex, withoutFoundryPart,
@@ -89,7 +90,7 @@ function makeLookup(stories: SyncStories, listed: readonly WaitIssue[], viewOnly
 
 /** One `issue list` call now; issues missing from it are viewed on demand (and remembered). */
 export function issueLookup(gh: GhCall, repo: string): IssueLookup {
-  if (!REPO.test(repo)) throw new Error(`Not a repository name: ${repo}`);
+  if (!REPO.test(repo) && !isLocalRepoName(repo)) throw new Error(`Not a repository name: ${repo}`);
   const stories = storeFor(repo).sync(gh);
   return makeLookup(stories, stories.list(MAX_LIST), false);
 }
