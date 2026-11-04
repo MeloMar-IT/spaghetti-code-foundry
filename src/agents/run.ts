@@ -31,6 +31,7 @@ import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAu
 import { stepOverride, type Override } from "../analyst/overrides.js";
 import { modelOf } from "../analyst/reference.js";
 import type { Config } from "../config.js";
+import { costOf, priceFor } from "../usage/events.js";
 import { repositoryOf, stepIdentity } from "../evidence/record.js";
 import { ToolIdentitySchema } from "../evidence/identity.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
@@ -395,9 +396,10 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
       const stopped = (r.refusals ?? []).map((a) => autonomyStop(engine, identity, a === "push" ? "push" : "pull-request")).find(Boolean);
       if (stopped) r = { ...r, ok: false, error: stopped.error };
     }
-    const p = t.provider.price;
-    const costUsd = p ? (r.inputTokens * p.input_per_mtok + r.outputTokens * p.output_per_mtok) / 1e6 : 0;
-    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, costUsd, agent: t.label, ...(effort ? { effort } : {}), tokens: { input: r.inputTokens, output: r.outputTokens }, ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}), ...skills, ...catalogueRecord(o) };
+    // Local models cost nothing; others are priced by model (config, the provider's price, the built-in table). An unknown model has no cost.
+    const cached = r.cachedInputTokens ?? 0;
+    const costUsd = local ? 0 : costOf({ input: r.inputTokens, cached, output: r.outputTokens }, priceFor(t.model, engine.config, t.provider));
+    return { ok: r.ok, output: r.output, error: r.error, sessionId: r.sessionId, codexHome: home, ...(costUsd !== undefined ? { costUsd } : {}), agent: t.label, ...(effort ? { effort } : {}), tokens: { input: r.inputTokens, output: r.outputTokens, cached }, ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}), ...skills, ...catalogueRecord(o) };
   }
 
   // No --max-budget-usd at all when cost limits are off (fixed-price subscriptions); costs are still recorded.
@@ -449,7 +451,7 @@ async function runWith(t: Target, step: ClaudeStep, scope: Scope, engine: Engine
     costUsd: local ? 0 : r.costUsd,
     agent: t.label,
     ...(effort ? { effort } : {}),
-    tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0 } : undefined,
+    tokens: r.inputTokens !== undefined ? { input: r.inputTokens, output: r.outputTokens ?? 0, ...(r.cachedTokens !== undefined ? { cached: r.cachedTokens } : {}) } : undefined,
     ...(r.tools ? { tools: r.tools } : {}),
     ...(r.contextTokens !== undefined ? { contextTokens: r.contextTokens } : {}),
     ...(r.slotWaitMs ? { slotWaitMs: r.slotWaitMs } : {}),
@@ -500,6 +502,12 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
   let toolTimes: StepResult["tools"];
   let contextTokens: number | undefined;
   let slotWaitMs = 0;
+  // The cost of earlier tries. Each is already in the run's total: it goes in only when another try follows.
+  let earlier = 0;
+  const paid = (r: Pick<StepResult, "costUsd">) => {
+    engine.summary.totalCostUsd += r.costUsd ?? 0;
+    earlier += r.costUsd ?? 0;
+  };
   const seen = (r: Pick<StepResult, "tools" | "contextTokens" | "slotWaitMs">) => {
     slotWaitMs += r.slotWaitMs ?? 0;
     if (r.tools) toolTimes = { calls: (toolTimes?.calls ?? 0) + r.tools.calls, totalMs: (toolTimes?.totalMs ?? 0) + r.tools.totalMs, maxMs: Math.max(toolTimes?.maxMs ?? 0, r.tools.maxMs) };
@@ -510,6 +518,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     ...(toolTimes ? { tools: toolTimes } : {}),
     ...(contextTokens !== undefined ? { contextTokens } : {}),
     ...(slotWaitMs ? { slotWaitMs } : {}),
+    ...(earlier ? { earlierCostUsd: earlier } : {}),
   });
   // Built once: one log line and the same bytes for every try, retries and fallbacks included.
   const canon =
@@ -625,7 +634,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     // The session this step would continue is gone: a new session, in this same try. Never for a flow's own `resume:`.
     if (lostSession && own !== step) {
       engine.log(`    · the session of ${step.id} is gone: starting a new session`);
-      engine.summary.totalCostUsd += r.costUsd ?? 0;
+      paid(r);
       const { resume: _resume, ...fresh } = own;
       own = fresh;
       lost = true;
@@ -636,8 +645,9 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     if (isTransientError(r.error, r.output) && !isAuthError(r.error, r.output) && blips < TRANSIENT_RETRIES.length) {
       const wait = TRANSIENT_RETRIES[blips++]!;
       engine.log(`    ↻ ${target.label}: ${(r.error || r.output).trim().split("\n")[0]!.slice(0, 120)} — trying again in ${Math.round(wait / 1000)}s`);
-      engine.summary.totalCostUsd += r.costUsd ?? 0;
+      // cancelled during the wait: the failed try is the step's own result, and recordStep adds its cost
       if (!(await pause(wait, engine.signal))) return { ...r, ...tries() };
+      paid(r);
       engine.evidence?.stepRetried(identity, "outage");
       continue;
     }
@@ -657,7 +667,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     // No model left to try: the loop pauses the run until the limit resets.
     if (!next) return { ...r, ...tries(), limited: true, ...(isTransientError(r.error, r.output) && !isQuotaError(r.error, r.output) ? { unreachable: true } : {}), error: `usage limit reached: ${r.output.trim().split("\n")[0] || r.error}` };
     engine.log(`    ↪ ${target.label} hit a limit — retrying on ${next.label}`);
-    engine.summary.totalCostUsd += r.costUsd ?? 0;
+    paid(r);
     models++;
     engine.evidence?.stepRetried(identity, "limit");
     fallbackFrom = target.label;

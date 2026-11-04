@@ -106,6 +106,8 @@ export interface CodexRunResult {
   sessionId?: string;
   inputTokens: number;
   outputTokens: number;
+  /** Part of `inputTokens` the service read from its cache. */
+  cachedInputTokens?: number;
   error?: string;
   /** Time the session waited for a test slot (ms). Absent when it did not wait. */
   slotWaitMs?: number;
@@ -130,7 +132,7 @@ interface CodexEvent {
   type?: string;
   thread_id?: string;
   item?: CodexItem;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number };
   error?: { message?: string };
   message?: string;
 }
@@ -182,6 +184,7 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
   let failure: string | undefined;
   let inputTokens = 0;
   let outputTokens = 0;
+  let cachedInputTokens = 0;
   const refusals: ("push" | "pull-request")[] = [];
 
   const env: NodeJS.ProcessEnv = { ...o.env, NO_COLOR: "1" };
@@ -212,6 +215,7 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
         else if (ev.type === "turn.completed") {
           inputTokens += ev.usage?.input_tokens ?? 0;
           outputTokens += ev.usage?.output_tokens ?? 0;
+          cachedInputTokens += ev.usage?.cached_input_tokens ?? 0;
         } else if (ev.type === "turn.failed") failure = ev.error?.message ?? "turn failed";
         else if (ev.type === "error") failure = ev.message ?? "error";
         else if (ev.type === "item.completed" && ev.item) {
@@ -227,10 +231,10 @@ export async function runCodex(o: CodexRunOptions): Promise<CodexRunResult> {
     });
   } catch (e) {
     const msg = /ENOENT/.test((e as Error).message) ? `codex CLI not found — install it with: npm i -g @openai/codex` : (e as Error).message;
-    return { ok: false, output: "", inputTokens, outputTokens, error: msg };
+    return { ok: false, output: "", inputTokens, outputTokens, cachedInputTokens, error: msg };
   }
 
-  const base = { output: last, sessionId, inputTokens, outputTokens, ...(res.slotWait ? { slotWaitMs: res.slotWait.waitedMs } : {}), ...(refusals.length ? { refusals } : {}) };
+  const base = { output: last, sessionId, inputTokens, outputTokens, cachedInputTokens, ...(res.slotWait ? { slotWaitMs: res.slotWait.waitedMs } : {}), ...(refusals.length ? { refusals } : {}) };
   if (res.aborted) return { ...base, ok: false, error: "cancelled" };
   if (res.timedOut) return { ...base, ok: false, error: timedOutError(res.slotWait) };
   if (failure || res.exitCode !== 0) {

@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { startServer } from "../src/server/server.js";
 import { signInAs, type TestSession } from "./helpers/session.js";
 
 // startServer with plugins: order, failures, the config-only rule, the fresh drift check. Ports are picked by the system.
@@ -42,7 +43,7 @@ describe("plugins at server start", () => {
       expect(r.status).toBe(200);
       const text = await r.text();
       expect(text).not.toContain("SECRET-OPT");
-      expect(JSON.parse(text)).toMatchObject({ apiVersion: "0.1", plugins: [{ label: "order-a.mjs", version: "1.0.0" }, { label: "order-b.mjs", version: "2.0.0" }], problems: [] });
+      expect(JSON.parse(text)).toMatchObject({ apiVersion: "0.2", plugins: [{ label: "order-a.mjs", version: "1.0.0" }, { label: "order-b.mjs", version: "2.0.0" }], problems: [] });
       const user = await signInAs(s.base, { email: "user@example.com", role: "user", name: "User" });
       expect((await call(s.base, user, "GET", "/api/plugins")).status).toBe(403);
       expect((await fetch(`${s.base}/api/plugins`)).status).toBe(401);
@@ -99,6 +100,51 @@ describe("plugins at server start", () => {
     } finally {
       s.close();
     }
+  });
+
+  describe("usage handlers", () => {
+    const got = () => ((globalThis as { __scfUsage?: { instance: number; event: unknown }[] }).__scfUsage ??= []);
+    const event = (id: string) => ({ id, time: "2026-11-04T10:00:00.000Z", runId: "r", workspace: "", name: "run.started" }) as never;
+
+    it("gets events while the server runs, and none after close()", async () => {
+      const { emitUsage, usageIdle } = await import("../src/usage/hub.js");
+      got().length = 0;
+      const s = await start([fx("usage.mjs")]);
+      try {
+        expect(s.ctx.plugins!.plugins[0]!.registered).toEqual([{ point: "usage", name: "onUsage" }]);
+        emitUsage(event("srv:1"));
+        await usageIdle();
+        expect(got().map((g) => (g.event as { id: string }).id)).toEqual(["srv:1"]);
+      } finally {
+        s.close();
+      }
+      emitUsage(event("srv:2"));
+      await usageIdle();
+      expect(got()).toHaveLength(1);
+    });
+
+    it("drops the handlers of a start that fails after the plugins loaded, so a second instance is not mixed up with it", async () => {
+      const { emitUsage, usageIdle } = await import("../src/usage/hub.js");
+      got().length = 0;
+      const first = await start([]);
+      try {
+        // the same port again: listen() fails after the plugin was loaded
+        writeFileSync(configPath(), yamlOf([fx("usage.mjs")]));
+        await expect(startServer({ repo: tmp, runsDir: join(tmp, "runs"), watchers: false, claudeBin: resolve("tests/fixtures/fake-claude.mjs"), port: first.port })).rejects.toThrow(/EADDRINUSE/);
+        const second = await start([fx("usage.mjs")]);
+        try {
+          emitUsage(event("srv:3"));
+          await usageIdle();
+          // only the second instance (the second load of the plugin module) got it
+          expect(got().map((g) => g.instance)).toHaveLength(1);
+          expect(got()[0]!.instance).toBe(Math.max(...got().map((g) => g.instance)));
+        } finally {
+          second.close();
+        }
+      } finally {
+        first.close();
+      }
+    });
   });
 
   it("notices an edited plugin list on disk without a settings write", async () => {

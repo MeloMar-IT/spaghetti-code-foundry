@@ -17,11 +17,11 @@ The package has one entry point, `@melomar-it/scf-core`. Nothing else is importa
 `exports` map in `package.json` lists only that entry. A deep import such as
 `@melomar-it/scf-core/dist/config.js` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
 
-The public names are (plugin API `0.1`):
+The public names are (plugin API `0.2`):
 
 | Name | Kind | What it is |
 |---|---|---|
-| `PLUGIN_API_VERSION` | string | The plugin API version of this release (`"0.1"`) |
+| `PLUGIN_API_VERSION` | string | The plugin API version of this release (`"0.2"`) |
 | `startServer(options)` | function | Starts the Foundry HTTP server; resolves to its URL, port, `close()` and context |
 | `ServerOptions` | type | Options of `startServer` |
 | `ConfigSchema` | object | The zod schema of the configuration |
@@ -39,9 +39,11 @@ The public names are (plugin API `0.1`):
 | `runFlow(flow, options)` | function | Runs a flow and resolves to a `RunSummary` |
 | `resumeRun(options)` | function | Continues a run at the step where it stopped |
 | `RunOptions`, `ResumeOptions`, `RunSummary`, `StepRecord`, `RunStatus` | types | Options and results of a run |
+| `PluginApi` | type | The object `register(api)` gets |
+| `UsageEvent`, `UsageHandler` | types | A usage event, and the function `api.onUsage` takes |
 
-Plugin points (the plugin API proper) come with the next part of #779. They are added to this
-list and this file when they ship, and the plugin API version rises with them.
+Plugin points are added to this list and this file when they ship, and the plugin API version rises
+with them. Version `0.2` added `api.onUsage` (see [Usage events](#usage-events)).
 
 The arguments and results of these names are the types in the package's `.d.ts` files. The
 exported names and their kinds are kept in `tests/public-api.snapshot.json`; a test fails when
@@ -65,16 +67,17 @@ before the queue and the watchers start.
 ```js
 // plugin.mjs
 export function register(api) {
-  if (api.version !== "0.1") throw new Error("needs plugin API 0.1");
+  if (api.version !== "0.2") throw new Error("needs plugin API 0.2");
   console.log("audit plugin", api.options.level);
 }
 ```
 
-- `api.version` is the plugin API version (`PLUGIN_API_VERSION`, `"0.1"` in this release). A
+- `api.version` is the plugin API version (`PLUGIN_API_VERSION`, `"0.2"` in this release). A
   plugin that cannot work with it throws; the start stops with a message that names the plugin.
 - `api.options` is a frozen copy of the `options` map of the entry.
 - `api.ui(spec)` adds pages, menu items and a settings section to the web interface. See
-  [The ui point](#the-ui-point). Other plugin points come with the next parts.
+  [The ui point](#the-ui-point).
+- `api.onUsage(handler)` gets the usage events of the runs. See [Usage events](#usage-events).
 - A plugin fails the start when it cannot be found or imported, has no `register`, throws, or does
   not finish `register` within 30 seconds. The server then does not start at all.
 - Refused: a relative path, a URL, a built-in Node module, and a module inside a runs folder or a
@@ -134,7 +137,73 @@ the defaults filled in. The settings page shows one card per section; a save goe
 `PUT /api/config`, which checks each key against the fields of the loaded plugin.
 
 The public package names do not change with this point: `ui` is a member of the plugin `api` object, and
-its types are not exported from `@melomar-it/scf-core`. `PLUGIN_API_VERSION` stays `"0.1"` in this release.
+its types are not exported from `@melomar-it/scf-core`. `PLUGIN_API_VERSION` is `"0.2"` in this release.
+
+## Usage events
+
+`api.onUsage(handler)` gets one event for each fact of a run. It may be called at most 10 times per
+plugin, and only while `register(api)` runs. A later call, or a value that is not a function, throws.
+
+```js
+export function register(api) {
+  api.onUsage((event) => {
+    if (event.name === "run.finished") console.log(event.runId, event.status, event.costUsd);
+  });
+}
+```
+
+The events are the type `UsageEvent`, told apart by `name`. Each has `id`, `time` (ISO 8601), `runId`
+and `workspace` (always `""` for now). When known, it also has `repository` (`owner/name`) and `issue`
+(a number).
+
+| Name | When | Fields besides the common ones |
+|---|---|---|
+| `run.started` | a run starts; never again on resume | none |
+| `step.finished` | once for each step record of a run | `step`, `stepType`, `ok`, `agent`, `provider`, `model`, `tokensIn`, `tokensCached`, `tokensOut`, `costUsd` (`null` when the price is unknown), `durationMs`, `earlierCostUsd` |
+| `run.finished` | a run ends as succeeded, failed or cancelled | `status`, `reason`, `durationMs`, `costUsd` |
+| `issue.done` | a story run succeeded | none |
+| `issue.split` | a story run whose last step is a successful split | `parent` (optional), `parts` (the numbers of the parts) |
+| `issue.failed` | a story run failed | none |
+
+A run that is stopped or waiting sends no `run.finished`. A cancelled run sends `run.finished`, and no
+issue event. `reason` is `none` when the run succeeded; otherwise it is the kind of failure: `code`,
+`factory`, `limit` or `decision`. `costUsd` of a run is its total, the one in the run summary. `earlierCostUsd`
+is the cost of paid tries that came before the one the record shows (a retry or a fallback model);
+the total already counts them, so do not add them again.
+
+**Ids and once.** Each id names one fact: `<runId>:started`, `<runId>:step:<index in the history>`,
+`<runId>:finished:<resumes>` and `<runId>:issue:<resumes>`. The Foundry sends each event once, as far
+as it can tell. Delivery is best effort with no outbox: if the process stops after `run.json` is saved
+and before an event is sent, that event is lost and is not replayed. A reader can drop duplicates by
+`id`.
+
+**Privacy.** Events hold only ids, numbers and fixed words. They never hold task or issue text, step
+output, error text, secrets, paths or file content. A step id, provider or model that looks like a
+secret or an absolute path is sent as `redacted`. Other characters than letters, digits and `_ . / : -`
+become `_`, and the value is cut at 200 characters. The flow name is not in any event.
+
+**Handlers.**
+
+- A handler gets a frozen copy of each event. Each handler has its own queue of at most 1000 events. When
+  the queue is full, further events for that handler are dropped and the drop is reported.
+- Handlers run outside the run's own call stack. The run never waits for a handler, and its result and
+  timing do not change because of one.
+- A call that takes more than 5 seconds is reported. After 3 calls of one handler are still running, the
+  handler is skipped and its events are dropped (reported).
+- A handler that throws, or whose call times out, is reported. A report is logged once per plugin and
+  reason, and is listed as a plugin problem by `scf plugins` and `GET /api/plugins`.
+- A synchronous loop inside a handler cannot be stopped. It blocks the server process, so keep the
+  synchronous part of a handler short, and do slow work in a queue of your own with a limit.
+
+**Where the events are kept.** Every valid event is also appended to
+`<data folder>/usage/usage-YYYY-MM.jsonl`, one JSON object per line, in the UTC month of the event.
+The file and its folder are private to the user (mode 0700 and 0600). A symbolic link, a file that is
+not a plain file, and a named pipe are refused.
+
+**Lifetime.** A subscription belongs to the set of plugins that loaded it. `close()` of the server
+removes the handlers, so no later event reaches a plugin; events still queued are dropped. When a
+plugin fails to start, the handlers of the plugins loaded before it are removed too. Two servers in
+one process deliver events only to their own plugins.
 
 ## Semantic versioning
 

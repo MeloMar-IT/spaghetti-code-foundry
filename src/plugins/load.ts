@@ -5,12 +5,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "yaml";
 import { FACTORY_HOME } from "../flow/load.js";
+import { disposeUsage, subscribeUsage } from "../usage/hub.js";
+import type { UsageHandler } from "../usage/schema.js";
 import { checkUiSpec, pluginUiName, registrationsOf, settingsValues, type PluginUiEntry, type PluginUiHandle } from "./ui.js";
 
 /** The version of the plugin API: what `register(api)` gets as `api.version`. */
-export const PLUGIN_API_VERSION = "0.1";
+export const PLUGIN_API_VERSION = "0.2";
 export const REGISTER_TIMEOUT_MS = 30_000;
 export const MAX_PLUGINS = 20;
+export const MAX_USAGE_HANDLERS = 10;
+let ownerSeq = 0;
 
 export interface PluginEntry {
   module: string;
@@ -22,6 +26,11 @@ export interface PluginApi {
   readonly options: Readonly<Record<string, unknown>>;
   /** Adds pages, menu items and a settings section to the web interface. Once, and only while register(api) runs. */
   readonly ui: (spec: unknown) => PluginUiHandle;
+  /**
+   * Gets every usage event (a frozen copy), later and never inside the run. At most 10 handlers per plugin, and only while
+   * register(api) runs. A handler that throws or takes longer than 5 s is reported in the problem list.
+   */
+  readonly onUsage: (handler: UsageHandler) => void;
 }
 export interface Registration {
   point: string;
@@ -43,6 +52,8 @@ export interface PluginRegistry {
   readonly problems: PluginProblem[];
   /** What plugins registered with `api.ui()`. */
   readonly ui: readonly PluginUiEntry[];
+  /** Removes what the plugins subscribed to (usage handlers). The server calls it when it closes or fails to start. */
+  dispose?: () => void;
 }
 
 /** A plugin that cannot be loaded. The message always names the plugin's `module`. */
@@ -151,6 +162,17 @@ function versionOf(mod: Record<string, unknown>, def: Record<string, unknown> | 
 /** Loads the plugins once, in order. The first one that fails throws a PluginLoadError and the rest are not loaded. */
 export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDeps): Promise<PluginRegistry> {
   if (!entries.length) return emptyRegistry();
+  const owner = `plugins-${++ownerSeq}`;
+  try {
+    return await loadAll(entries, deps, owner, []);
+  } catch (e) {
+    // what the plugins before the failing one subscribed to must not outlive the failed start
+    disposeUsage(owner);
+    throw e;
+  }
+}
+
+async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: string, problems: PluginProblem[]): Promise<PluginRegistry> {
   const resolveSpec = deps.resolve ?? defaultResolve;
   const importModule = deps.importModule ?? ((u: string) => import(u) as Promise<Record<string, unknown>>);
   const timeoutMs = deps.timeoutMs ?? REGISTER_TIMEOUT_MS;
@@ -183,6 +205,7 @@ export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDep
     const label = pluginLabel(spec);
     let ui: PluginUiEntry | undefined;
     let open = true;
+    const usage: Registration[] = [];
     const api: PluginApi = Object.freeze({
       version: PLUGIN_API_VERSION,
       options: Object.freeze(structuredClone(entry.options)),
@@ -195,6 +218,21 @@ export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDep
         ui = mine;
         return Object.freeze({ name, settings: () => settingsValues(mine, deps.pluginSettings?.()?.[name]) });
       },
+      onUsage: (handler: UsageHandler): void => {
+        if (!open) throw new Error("onUsage(handler) can only be called while register(api) runs");
+        if (typeof handler !== "function") throw new TypeError("onUsage(handler): the handler must be a function");
+        if (usage.length >= MAX_USAGE_HANDLERS) throw new Error(`onUsage(handler): at most ${MAX_USAGE_HANDLERS} handlers per plugin`);
+        subscribeUsage({
+          owner,
+          plugin: label,
+          handler,
+          report: (reason) => {
+            problems.push({ plugin: label, reason });
+            deps.log?.(`plugin ${label}: ${reason}`);
+          },
+        });
+        usage.push({ point: "usage", name: "onUsage" });
+      },
     });
     try {
       await withDeadline(spec, "register(api)", timeoutMs, () => (register as (a: PluginApi) => unknown)(api));
@@ -204,12 +242,12 @@ export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDep
     } finally {
       open = false;
     }
-    const loaded: LoadedPlugin = { label, module: spec, version: versionOf(mod, def, path), registered: ui ? registrationsOf(ui) : [] };
+    const loaded: LoadedPlugin = { label, module: spec, version: versionOf(mod, def, path), registered: [...(ui ? registrationsOf(ui) : []), ...usage] };
     if (ui) uiEntries.push(ui);
     plugins.push(loaded);
     deps.log?.(`plugin ${loaded.label} ${loaded.version} loaded`);
   }
-  return { entries: structuredClone(entries), plugins, problems: [], ui: uiEntries };
+  return { entries: structuredClone(entries), plugins, problems, ui: uiEntries, dispose: () => disposeUsage(owner) };
 }
 
 /** The plugins in config.yaml as it is on disk now; undefined when it cannot be read or is not valid. */

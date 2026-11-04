@@ -154,6 +154,8 @@ export interface ClaudeRunResult {
   numTurns?: number;
   inputTokens?: number;
   outputTokens?: number;
+  /** Part of `inputTokens` read from the prompt cache. */
+  cachedTokens?: number;
   error?: string;
   /** Tool calls Claude Code refused (at most 5), without intentional `git push`. */
   denied?: string[];
@@ -377,6 +379,7 @@ export async function runClaude(o: ClaudeRunOptions): Promise<ClaudeRunResult> {
     numTurns: final.num_turns,
     inputTokens: final.usage ? (final.usage.input_tokens ?? 0) + (final.usage.cache_read_input_tokens ?? 0) + (final.usage.cache_creation_input_tokens ?? 0) : undefined,
     outputTokens: final.usage?.output_tokens,
+    cachedTokens: final.usage ? (final.usage.cache_read_input_tokens ?? 0) : undefined,
     // An API error comes back as is_error with subtype "success": show its message, not "success".
     error: ok ? undefined : final.subtype && final.subtype !== "success" ? `claude result: ${final.subtype}` : (final.result || "claude reported an error").slice(0, 300),
     ...(!ok && o.resumeSessionId && noConversation(res.stderr, final) ? { sessionLost: true } : {}),

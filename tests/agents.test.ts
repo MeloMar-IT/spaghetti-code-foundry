@@ -186,7 +186,7 @@ describe("running on other agents and providers", () => {
   afterEach(() => rmSync(tmp, { recursive: true, force: true }));
   const start = (yaml: string, config = cfg()) => runFlow(parseFlow(yaml), { task: "t", repo, runsDir, claudeBin, config });
 
-  it("runs a codex step, resumes its session, and records tokens at $0", async () => {
+  it("runs a codex step, resumes its session, and records tokens and a cost from the price table", async () => {
     const s = await start(`
 name: t
 workspace: inplace
@@ -197,8 +197,8 @@ steps:
     expect(s.status).toBe("succeeded");
     const [a, b] = s.history;
     expect(a!.agent).toBe("codex:openai:gpt-5");
-    expect(a!.tokens).toEqual({ input: 1000, output: 50 });
-    expect(a!.costUsd).toBe(0);
+    expect(a!.tokens).toEqual({ input: 1000, output: 50, cached: 0 });
+    expect(a!.costUsd).toBeCloseTo((1000 * 1.25 + 50 * 10) / 1e6, 12);
     expect(a!.output).toContain('sandbox_mode="workspace-write"');
     expect(b!.output).toBe("again");
     expect(b!.sessionId).toBe(a!.sessionId);
@@ -207,6 +207,76 @@ steps:
     expect(t.map((e) => e.kind)).toEqual(["tool", "tool", "text", "result"]);
     expect(t[0]).toMatchObject({ name: "Edit", input: { file_path: "out.txt" } });
     expect(t[1]).toMatchObject({ name: "Bash", result: "clean\n", isError: false });
+  });
+
+  describe("Codex cost and cached tokens", () => {
+    const one = (extra: string, config = cfg(), model = "gpt-5") =>
+      start(`
+name: t
+workspace: inplace
+steps:
+  - {id: a, type: claude, agent: codex, model: ${model}, prompt: "${extra}SAY ok"}
+`, config);
+
+    it("prices a Codex step from the built-in table, with the cached tokens at their own rate", async () => {
+      const s = await one("CACHED 400\\n");
+      expect(s.history[0]!.tokens).toEqual({ input: 1000, output: 50, cached: 400 });
+      expect(s.history[0]!.costUsd).toBeCloseTo((600 * 1.25 + 400 * 0.125 + 50 * 10) / 1e6, 12);
+      expect(s.totalCostUsd).toBeCloseTo(s.history[0]!.costUsd!, 12);
+    });
+
+    it("lets a configured price win over the built-in one", async () => {
+      const s = await one("", cfg({ usage: { prices: { "gpt-5": { input_per_mtok: 2, cached_input_per_mtok: 1, output_per_mtok: 4 } } } }));
+      expect(s.history[0]!.costUsd).toBeCloseTo((1000 * 2 + 50 * 4) / 1e6, 12);
+    });
+
+    it("leaves the cost out for a model with no price, and adds nothing to the total", async () => {
+      const s = await one("", cfg(), "gpt-unknown-9");
+      expect(s.status).toBe("succeeded");
+      expect(s.history[0]!.costUsd).toBeUndefined();
+      expect(s.totalCostUsd).toBe(0);
+    });
+
+    it("counts a paid failed try once: in the total, and in earlierCostUsd of the fallback that finished the step", async () => {
+      const marker = join(mkdtempSync(join(tmpdir(), "lim-")), "seen");
+      const s = await one(`PAID_FAIL\\nCODEX_LIMIT_ONCE ${marker}\\n`, cfg({ router: { fallback: ["codex:openai:gpt-5-mini"] } }));
+      const rec = s.history[0]!;
+      const failed = (2000 * 1.25 + 100 * 10) / 1e6;
+      const final = (1000 * 0.25 + 50 * 2) / 1e6;
+      expect(rec.agent).toBe("codex:openai:gpt-5-mini");
+      expect(rec.retried?.models).toBe(1);
+      expect(rec.earlierCostUsd).toBeCloseTo(failed, 12);
+      expect(rec.costUsd).toBeCloseTo(final, 12);
+      expect(s.totalCostUsd).toBeCloseTo(failed + final, 12);
+    });
+
+    it("counts a paid failed try once after a brief outage, too", async () => {
+      const marker = join(mkdtempSync(join(tmpdir(), "cap-")), "seen");
+      const s = await one(`PAID_FAIL\\nCODEX_CAPACITY_ONCE ${marker}\\n`);
+      const failed = (2000 * 1.25 + 100 * 10) / 1e6;
+      expect(s.history[0]!.retried).toEqual({ blips: 1, models: 0 });
+      expect(s.history[0]!.earlierCostUsd).toBeCloseTo(failed, 12);
+      expect(s.totalCostUsd).toBeCloseTo(failed + (1000 * 1.25 + 50 * 10) / 1e6, 12);
+    });
+
+    it("does not count the failed try twice when the run is cancelled during the wait before the retry", async () => {
+      const marker = join(mkdtempSync(join(tmpdir(), "cap-")), "seen");
+      const stop = new AbortController();
+      const s = await runFlow(
+        parseFlow(`
+name: t
+workspace: inplace
+steps:
+  - {id: a, type: claude, agent: codex, model: gpt-5, prompt: "PAID_FAIL\\nCODEX_CAPACITY_ONCE ${marker}\\nSAY ok"}
+`),
+        { task: "t", repo, runsDir, claudeBin, config: cfg(), signal: stop.signal, log: (l) => void (l.includes("trying again") && stop.abort()) },
+      );
+      const failed = (2000 * 1.25 + 100 * 10) / 1e6;
+      expect(s.status).toBe("cancelled");
+      const summed = s.history.reduce((n, r) => n + (r.costUsd ?? 0), 0);
+      expect(summed).toBeCloseTo(failed, 12);
+      expect(s.totalCostUsd).toBeCloseTo(failed, 12);
+    });
   });
 
   it("points Claude Code at a local provider, without MCP, at $0", async () => {

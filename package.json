@@ -1,6 +1,6 @@
 {
   "name": "@melomar-it/scf-core",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AI coding factory: run custom YAML flows of headless Claude Code CLI and shell steps",
   "license": "FSL-1.1-MIT",
   "repository": {
