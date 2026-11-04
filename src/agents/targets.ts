@@ -84,24 +84,48 @@ export function specOf(text: string | undefined, config: Config): ModelSpec {
   return parseSpec(text, Object.keys(providers(config)));
 }
 
-/** First router rule matching this step, if any. */
-export function routeModel(config: Config, flowName: string, stepId: string, visit: number): string | undefined {
+/**
+ * First router rule matching this step, if any. A rule with `agent` matches only when `agentOf()` gives that
+ * agent (the agent the step would run on without the router).
+ */
+export function routeModel(config: Config, flowName: string, stepId: string, visit: number, agentOf?: () => Agent | undefined): string | undefined {
   return config.router.rules.find(
     (r) =>
       (!r.step || new RegExp(r.step).test(stepId)) &&
       (!r.flow || new RegExp(r.flow).test(flowName)) &&
-      (!r.min_visit || visit >= r.min_visit),
+      (!r.min_visit || visit >= r.min_visit) &&
+      (!r.agent || agentOf?.() === r.agent),
   )?.model;
+}
+
+/** The router's model for this step. A rule with `agent` looks at the step's own target (once, and only when needed). */
+export function stepRoute(step: ClaudeStep, flow: Flow, config: Config, visit: number): string | undefined {
+  let own: Agent | undefined | null = null;
+  const agentOf = () => {
+    if (own === null) {
+      try {
+        own = ownTarget(step, flow, config).agent;
+      } catch {
+        own = undefined; // the step's own error is reported when it runs
+      }
+    }
+    return own;
+  };
+  return routeModel(config, flow.name, step.id, visit, agentOf);
 }
 
 /**
  * Which agent/provider/model runs this step. A matching router rule wins (it is your global
- * policy, and blocks hard-code models); otherwise step.model → flow defaults.model →
- * config.default_model, with explicit agent/provider fields (step, then flow) on top.
+ * policy, and blocks hard-code models); otherwise the step's own target.
  */
 export function resolveTarget(step: ClaudeStep, flow: Flow, config: Config, visit: number): Target {
-  const routed = routeModel(config, flow.name, step.id, visit);
+  const routed = stepRoute(step, flow, config, visit);
   if (routed) return toTarget(specOf(routed, config), config);
+  return ownTarget(step, flow, config);
+}
+
+/** The target of a step without the router: step.model → flow defaults.model → config.default_model, with explicit agent/provider fields (step, then flow) on top. */
+export function ownTarget(step: ClaudeStep, flow: Flow, config: Config): Target {
   const d = flow.defaults;
   if (step.model) {
     const spec = specOf(step.model, config);

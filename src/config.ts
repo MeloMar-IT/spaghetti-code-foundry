@@ -195,7 +195,7 @@ const ProviderSchema = z
   })
   .strict();
 
-const RouterRuleSchema = z
+export const RouterRuleSchema = z
   .object({
     /** Regex on the step id. */
     step: z.string().optional(),
@@ -203,6 +203,8 @@ const RouterRuleSchema = z
     flow: z.string().optional(),
     /** Only from this visit on (2 = retries / fix loops). */
     min_visit: z.number().int().positive().optional(),
+    /** Only steps whose own target (without the router) runs on this agent. */
+    agent: z.enum(["claude", "codex"]).optional(),
     /** Model spec, e.g. sonnet, codex, codex:gpt-5, ollama:qwen3-coder. */
     model: z.string().min(1),
   })

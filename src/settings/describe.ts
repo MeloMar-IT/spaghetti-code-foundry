@@ -347,7 +347,7 @@ export const ITEM_SETTINGS: Record<string, ItemSettingText> = {
     label: "Routing rules",
     help: "The first rule that matches a step picks its model.",
     effect: "new-runs",
-    fields: on("models.js", ["step", "flow", "min_visit", "model"]),
+    fields: on("models.js", ["step", "flow", "min_visit", "agent", "model"]),
   },
 };
 

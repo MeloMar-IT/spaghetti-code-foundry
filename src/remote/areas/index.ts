@@ -14,6 +14,8 @@ export const API_ONLY: Record<string, string> = {
   "GET setup-check": "the Setup check page; on the machine itself `scf doctor --simple` prints the same",
   "POST onboarding/sign-in": "starts the sign-in of Claude Code or Codex on the server's computer; done from the Setup check page, or in a terminal with `claude` then `/login`, or `codex login`",
   "POST onboarding/test-call": "one tiny call that checks Claude Code or Codex works; done from the Setup check page",
+  "GET onboarding/agents": "the onboarding answers about Claude Code and Codex (#769); there is no command for them yet",
+  "PUT onboarding/agents": "saves the onboarding answers about Claude Code and Codex and writes the settings they give (#769); there is no command for them yet",
   "GET plugins/ui": "the pages and menu links plugins add to the web interface (#787); the command line has no pages",
   "GET me/view": "the view of the web interface (#595): it changes only what the interface shows; the command line has no views",
   "PUT me/view": "chooses that view; done with the switch in the top bar",
