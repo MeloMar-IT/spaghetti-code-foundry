@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { StoreError } from "../auth/store.js";
+import { withApprovedRefs } from "../skills/approvals.js";
 import { SOURCES_FILE, sourcesFromBytes, type SkillLibrarySource } from "../skills/sources.js";
 import { UPDATE_CHECK_OUTCOMES, UPDATE_CHECKS_FILE, isDue, readUpdateChecks, recordUpdateCheck, type UpdateCheckOutcome } from "../skills/update-schedule.js";
 import { CatalogueError, defaultBranch, fetchBase, originRepo, readBlob, showPrefix, type CatalogueContext } from "./catalogue-git.js";
@@ -30,6 +31,7 @@ export async function updateDue(
   const tick = tickFor(signal);
 
   let manifest: SkillLibrarySource[];
+  let rawManifest: SkillLibrarySource[];
   try {
     const prefix = showPrefix(ctx);
     await tick();
@@ -41,12 +43,14 @@ export async function updateDue(
     const blob = readBlob(ctx, baseCommit, prefix + SOURCES_FILE);
     await tick();
     if (blob === undefined) return problem(`${SOURCES_FILE} is not on origin/${base}; ${NOTHING}`);
-    const read = sourcesFromBytes(blob.content, today);
+    const rawRead = sourcesFromBytes(blob.content, today);
+    const read = withApprovedRefs(rawRead, { home: opts.home });
     if (read.state === "invalid") {
       for (const p of read.problems) out(`PROBLEM ${p.where}: ${p.message}`);
       return 1;
     }
     manifest = read.state === "ok" ? read.manifest.sources : [];
+    rawManifest = rawRead.state === "ok" ? rawRead.manifest.sources : [];
   } catch (e) {
     if (e instanceof CatalogueError) return problem(catalogueSentence(e.code));
     if (e instanceof Interrupted) return problem(`the update was interrupted; ${NOTHING}`);
@@ -79,7 +83,7 @@ export async function updateDue(
     const line = (text: string) => out(`${s.id}: ${text}`);
     let outcome: UpdateCheckOutcome;
     try {
-      outcome = await check(s.id, {}, line, opts, signal, { sources: manifest });
+      outcome = await check(s.id, {}, line, opts, signal, { sources: manifest, raw: rawManifest });
     } catch {
       line(`PROBLEM the check failed unexpectedly; ${NOTHING}`);
       outcome = "PROBLEM";

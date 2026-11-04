@@ -90,7 +90,7 @@ describe("retained approved releases", () => {
 
     reg = discover(cfg([a2]));
     expect(verifyRunSkillLock(old, reg).map((p) => p.code)).toEqual(["missing"]);
-    expect(reg.notes.some((x) => x.kind === "unapproved-release" && x.text.includes("release c@1.0.0 is published but not in skills.releases.approved"))).toBe(true);
+    expect(reg.notes.some((x) => x.kind === "unapproved-release" && x.text.includes("release c@1.0.0 is published but not approved"))).toBe(true);
     for (const v of ["1.0.0", "1.1.0"]) expect(existsSync(join(home, "skill-releases", "c", v, "catalogue-release.json"))).toBe(true);
   });
 
@@ -122,7 +122,7 @@ describe("retained approved releases", () => {
       expect(reg.problems.filter((p) => p.kind !== "lock")).toEqual([]);
       expect(reg.sources.some((s) => s.label === "release c@1.1.0")).toBe(false);
       expect(reg.byKey.has("x@1.1.0")).toBe(false);
-      expect(reg.notes.map((x) => x.text)).toContain('release c@1.1.0 is published but not in skills.releases.approved, so it is not loaded; see "scf skills release list".');
+      expect(reg.notes.map((x) => x.text)).toContain('release c@1.1.0 is published but not approved, so it is not loaded; see "scf skills release list".');
     }
   });
 
@@ -287,7 +287,7 @@ describe("scf skills with the release store", () => {
     store("c", "1.1.0", { x: "1.1.0" });
     const r = await run([], cfg([a]));
     expect(r.code).toBe(0);
-    expect(r.lines).toContain('NOTE release c@1.1.0 is published but not in skills.releases.approved, so it is not loaded; see "scf skills release list".');
+    expect(r.lines).toContain('NOTE release c@1.1.0 is published but not approved, so it is not loaded; see "scf skills release list".');
   });
 
   it("release list shows state, run locks and the catalogue source", async () => {

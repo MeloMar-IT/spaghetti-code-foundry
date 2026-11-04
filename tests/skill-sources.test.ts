@@ -177,6 +177,28 @@ describe("blank values", () => {
   });
 });
 
+describe("update.auto", () => {
+  const auto = (trust: string, a: unknown, o: Record<string, unknown> = {}) => valid({ trust, update: { cadence: "weekly", auto: a }, ...o });
+  it("is accepted for a first-party source, also with access", () => {
+    const r = parseSources(file(auto("first-party", true)));
+    expect(r.problems).toEqual([]);
+    expect(r.manifest!.sources[0]!.update.auto).toBe(true);
+    expect(check(auto("first-party", true, { access: { repo: "acme/skills" }, repository: "https://github.com/acme/skills" }))).toEqual([]);
+  });
+  it("is refused for a verified or community source", () => {
+    for (const trust of ["verified", "community"]) {
+      expect(text(check(auto(trust, true)))).toContain("update.auto: only a first-party source can approve its updates automatically");
+    }
+  });
+  it("accepts false on any source and refuses a non-boolean", () => {
+    expect(check(auto("community", false, { review: undefined }))).not.toContain("update.auto");
+    expect(text(check(auto("first-party", "yes")))).toContain("update.auto: must be true or false");
+  });
+  it("is undefined when missing", () => {
+    expect(parseSources(file(valid())).manifest!.sources[0]!.update.auto).toBeUndefined();
+  });
+});
+
 describe("readSources", () => {
   const dir = () => mkdtempSync(join(tmpdir(), "scf-sources-"));
 

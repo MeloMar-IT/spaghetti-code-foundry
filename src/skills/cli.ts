@@ -42,6 +42,7 @@ import { overlapLines, overlapReport, versionLines } from "./overlap.js";
 import { catalogueProblems, overlapStagedSkills } from "./overlap-staged.js";
 import { readSkillSelections, SELECTIONS_FILE, selectionConnectors, type SkillSelection } from "./selections.js";
 import { PROFILES_FILE, readSourceProfiles } from "./source-profiles.js";
+import { approvedReleases, approvedRefSources, withApprovedRefs } from "./approvals.js";
 import { readSources, shownValue, SOURCES_FILE } from "./sources.js";
 import { ACCESS_NOT_REGISTERED, accessProblem, type SourceRepo } from "./source-access-rules.js";
 import { selectionsEvaluate } from "./selections-evaluate-cli.js";
@@ -155,22 +156,28 @@ function profilesCheck(file: string, out: (line: string) => void): number {
 }
 
 /** `scf skills sources check`: offline, prints checked fields only. */
-function sourcesCheck(file: string, out: (line: string) => void, today?: string, listRepos?: () => readonly SourceRepo[]): number {
-  const r = readSources(file, undefined, today);
-  if (r.state === "none") {
+function sourcesCheck(file: string, out: (line: string) => void, today?: string, listRepos?: () => readonly SourceRepo[], home?: string): number {
+  const raw = readSources(file, undefined, today, { approvals: false });
+  if (raw.state === "none") {
     out("PROBLEM the skill source file does not exist");
     return 1;
   }
-  if (r.state === "invalid") {
-    for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+  if (raw.state === "invalid") {
+    for (const p of raw.problems) out(`PROBLEM ${p.where}: ${p.message}`);
     return 1;
   }
+  const r = withApprovedRefs(raw, { home });
+  if (r.state !== "ok") {
+    if (r.state === "invalid") for (const p of r.problems) out(`PROBLEM ${p.where}: ${p.message}`);
+    return 1;
+  }
+  const fromStore = approvedRefSources(raw, { home });
   let enabled = 0;
   let bad = 0;
   let repos: readonly SourceRepo[] | undefined;
   r.manifest.sources.forEach((s, i) => {
     if (s.status === "enabled") enabled++;
-    const head = `${s.id.padEnd(24)} ${s.status} ${s.trust} ${s.adapter} ${s.repositoryKey}@${(s.ref.approved ?? "-").slice(0, 12)} ${s.owner}`;
+    const head = `${s.id.padEnd(24)} ${s.status} ${s.trust} ${s.adapter} ${s.repositoryKey}@${(s.ref.approved ?? "-").slice(0, 12)} ${s.owner}${s.update.auto ? " auto" : ""}${fromStore.has(s.id) ? " (approved in the data folder)" : ""}`;
     const reviewed = s.review ? ` reviewed by ${s.review.by} on ${s.review.on}` : "";
     const profile = s.profile ? ` provider ${s.profile.provider} (${s.profile.portable.length} portable)` : "";
     const access = s.access ? ` access ${s.repositoryKey}` : "";
@@ -627,9 +634,14 @@ export async function skillsCommand(
     }
     if (operands[0] === "list") {
       const home = opts.home ?? dataHome();
-      return releaseList(out, { home, runsDir: join(home, "runs"), approved: rel.approved, keys: rel.keys });
+      const merged = approvedReleases(rel, { home });
+      for (const p of merged.problems) out(`PROBLEM ${p.text}`);
+      const code = releaseList(out, { home, runsDir: join(home, "runs"), approved: merged.approved, keys: rel.keys });
+      return merged.problems.length > 0 ? 1 : code;
     }
-    return releaseVerify(resolve(opts.cwd ?? process.cwd(), operands[1]!), out, rel.approved, rel.keys);
+    const merged = approvedReleases(rel, { home: opts.home ?? dataHome() });
+    for (const p of merged.problems) out(`NOTE ${p.text}`);
+    return releaseVerify(resolve(opts.cwd ?? process.cwd(), operands[1]!), out, merged.approved, rel.keys);
   }
   if (sub === "releases") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills releases: expects "check" and at most one file');
@@ -637,7 +649,7 @@ export async function skillsCommand(
   }
   if (sub === "sources") {
     if (operands[0] !== "check" || operands.length > 2) throw syntax('scf skills sources: expects "check" and at most one file');
-    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out, opts.today, opts.repos);
+    return sourcesCheck(resolve(opts.cwd ?? process.cwd(), operands[1] ?? SOURCES_FILE), out, opts.today, opts.repos, opts.home ?? dataHome());
   }
 
   if (sub === "profiles") {

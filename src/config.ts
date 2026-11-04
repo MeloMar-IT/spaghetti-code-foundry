@@ -623,6 +623,11 @@ export const ConfigSchema = z
               .default([]),
             /** Trusted Ed25519 public keys. Once set, every approved release must be signed by one of them. */
             keys: z.array(z.object({ id: SkillIdSchema, ed25519: z.string() }).strict()).max(MAX_RELEASE_KEYS).default([]),
+            /** The private key file the server signs automatic approvals with (`update.auto` sources). Its id must be in `keys`. */
+            auto_key: z
+              .object({ id: SkillIdSchema, file: z.string().max(1024).refine((p) => isAbsolute(p), "must be an absolute path") })
+              .strict()
+              .optional(),
             /** The deployment repository `scf skills release propose` opens its pull request in, and the config file in it. */
             deployment: z
               .object({
@@ -646,6 +651,7 @@ export const ConfigSchema = z
               if (ids.has(k.id)) ctx.addIssue({ code: "custom", path: ["keys", i, "id"], message: `"${k.id}" is listed twice` });
               ids.add(k.id);
             });
+            if (r.auto_key && !ids.has(r.auto_key.id)) ctx.addIssue({ code: "custom", path: ["auto_key", "id"], message: `"${r.auto_key.id}" is not in skills.releases.keys` });
             r.approved.forEach((a, i) => {
               if ((a.key === undefined) !== (a.signature === undefined)) ctx.addIssue({ code: "custom", path: ["approved", i], message: "needs both key and signature" });
               else if (a.key !== undefined && !ids.has(a.key)) ctx.addIssue({ code: "custom", path: ["approved", i, "key"], message: `"${a.key}" is not in skills.releases.keys` });

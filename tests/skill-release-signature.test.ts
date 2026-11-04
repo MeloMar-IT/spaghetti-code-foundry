@@ -77,6 +77,14 @@ describe("config", () => {
   const k = (id: string, byte = 1) => ({ id, ed25519: Buffer.alloc(32, byte).toString("base64") });
   const sig = Buffer.alloc(64, 3).toString("base64");
   const parse = (releases: Record<string, unknown>) => ConfigSchema.safeParse({ skills: { releases } }).success;
+  it("checks skills.releases.auto_key", () => {
+    const keys = [{ id: "k1", ed25519: Buffer.alloc(32, 1).toString("base64") }];
+    expect(parse({ keys, auto_key: { id: "k1", file: "/etc/scf/auto.pem" } })).toBe(true);
+    expect(parse({ keys, auto_key: { id: "other", file: "/etc/scf/auto.pem" } })).toBe(false);
+    expect(parse({ keys, auto_key: { id: "k1", file: "auto.pem" } })).toBe(false);
+    expect(parse({ keys, auto_key: { id: "k1", file: "/a", extra: 1 } })).toBe(false);
+    expect(parse({ auto_key: { id: "k1", file: "/etc/scf/auto.pem" } })).toBe(false);
+  });
   const entry = { ...ID };
 
   it("accepts keys and signed entries, defaults to no keys", () => {

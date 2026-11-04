@@ -4,12 +4,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
+import { approvedReleases } from "./approvals.js";
 import { addSkillPins, parseSkillKey, readSkillLock, SkillLockError, type SkillPin } from "./lock.js";
 import { credentialProblem } from "./credential-scan.js";
 import { effectiveLifecycle, readSkillLifecycle, type EffectiveLifecycle, type SkillLifecycleStatus, type SkillReleaseRevocation } from "./lifecycle.js";
 import { quarantinePath } from "./import-stage.js";
 import { loadSkillPackage, SkillPackageError, type SkillIssue } from "./package.js";
-import { matchRelease, readRelease, releaseContentProblem, releaseProblemText, type ReleaseCheck, type ReleaseRead } from "./release.js";
+import { matchRelease, readRelease, releaseContentProblem, releaseProblemText, type ApprovedRelease, type ReleaseCheck, type ReleaseRead } from "./release.js";
 import { listStoredReleases, releaseStorePath, storeSources, unstoredApproved, type StoreListing } from "./release-store.js";
 import { verifyRelease } from "./release-verify.js";
 import { SkillIntegrityError, SkillPinError, SkillSelectError, type SkillPinErrorCode, type SkillSelectCode } from "./registry-errors.js";
@@ -112,10 +113,10 @@ export const MAX_SKILL_BYTES_TOTAL = 64 * 1024 * 1024;
 export { personalAgentPath };
 
 /** Order: data folder, approved store releases (newest version first), skills.roots, built-in, repository. Store paths in skills.roots are skipped. */
-function buildSources(skills: Config["skills"], opts: DiscoverOptions, listing: StoreListing): SkillSource[] {
+function buildSources(skills: Config["skills"], opts: DiscoverOptions, listing: StoreListing, approved: readonly ApprovedRelease[]): SkillSource[] {
   const home = opts.home ?? dataHome();
   const list: SkillSource[] = [{ kind: "admin", label: "data folder", root: join(home, "skills"), optional: true }];
-  for (const s of storeSources(listing, skills.releases.approved).sources) list.push({ kind: "catalogue", optional: false, ...s });
+  for (const s of storeSources(listing, approved).sources) list.push({ kind: "catalogue", optional: false, ...s });
   skills.roots.forEach((root, i) => {
     if (!releaseStorePath(root, home)) list.push({ kind: "admin", label: `skills.roots[${i}]`, root, optional: false });
   });
@@ -125,7 +126,8 @@ function buildSources(skills: Config["skills"], opts: DiscoverOptions, listing: 
 }
 
 export function skillSources(skills: Config["skills"], opts: DiscoverOptions = {}): SkillSource[] {
-  return buildSources(skills, opts, listStoredReleases(opts.home ?? dataHome()));
+  const home = opts.home ?? dataHome();
+  return buildSources(skills, opts, listStoredReleases(home), approvedReleases(skills.releases, { home }).approved);
 }
 
 const TRUST: Record<SkillSourceKind, SkillTrust> = { admin: "approved", catalogue: "approved", builtin: "builtin", repository: "unapproved" };
@@ -160,14 +162,18 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
   const storeSeen = new Set<string>();
 
   const listing = listStoredReleases(home);
-  const store = storeSources(listing, skills.releases.approved);
+  const rel0 = approvedReleases(skills.releases, { home });
+  const store = storeSources(listing, rel0.approved);
+  for (const p of rel0.problems) {
+    problems.push({ kind: p.kind === "conflict" ? "root-refused" : "root-unreadable", source: "catalogue", label: "release store", root: "release store", reason: p.text });
+  }
   for (const n of store.notes) notes.push({ kind: n.kind, label: "release store", text: n.text });
   skills.roots.forEach((root, i) => {
     if (releaseStorePath(root, home)) notes.push({ kind: "store-root", label: `skills.roots[${i}]`, text: `skills.roots[${i}] is inside the release store; published releases load through skills.releases.approved, so this entry is ignored. Remove it from skills.roots.` });
   });
   if (store.refused) problems.push({ kind: "root-refused", source: "catalogue", label: "release store", root: "release store", reason: store.refused });
 
-  for (const src of buildSources(skills, opts, listing)) {
+  for (const src of buildSources(skills, opts, listing, rel0.approved)) {
     const report: SkillSourceReport = { ...src, status: "ok", packages: 0 };
     reports.push(report);
     const base = { source: src.kind, label: src.label, root: src.label };
@@ -230,7 +236,12 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
     const revokedIds = new Set<string>();
     if (src.kind === "admin" || src.kind === "catalogue") {
       read = readRelease(src.root);
-      rel = report.release = matchRelease(read, skills.releases.approved, skills.releases.keys);
+      rel = report.release = matchRelease(read, rel0.approved, skills.releases.keys);
+      // A release approved with different digests (config against data folder) is refused whatever allow_unreleased says.
+      if (read.state === "ok" && rel0.conflicts.has(`${read.manifest.catalogue}@${read.manifest.version}`)) {
+        fail("root-refused", "refused", "this release is approved with different digests");
+        continue;
+      }
       // A store folder must hold exactly the schema-2 release its folder name says.
       if (src.stored) {
         const m = read.state === "ok" ? read.manifest : undefined;
@@ -428,7 +439,7 @@ export function discoverSkills(skills: Config["skills"], opts: DiscoverOptions =
       notes.push({ kind: "shadowed", label: s.label, package: s.id, text: `${s.key} (${s.label}) is shadowed by ${w.key} (${w.label}).` });
     }
   }
-  for (const u of unstoredApproved(listing, skills.releases.approved)) {
+  for (const u of unstoredApproved(listing, rel0.approved)) {
     problems.push({ kind: "root-missing", source: "admin", label: "release store", root: u.root, reason: u.text });
   }
   const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);

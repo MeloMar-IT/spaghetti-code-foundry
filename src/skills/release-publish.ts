@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { resolve } from "node:path";
 import { localGit } from "../engine/local-git.js";
+import { withApprovedRefs } from "./approvals.js";
 import { CHOICE_LIMITS } from "./choice-rules.js";
 import { credentialProblem } from "./credential-scan.js";
 import { CATALOGUE_DESCRIPTION_FROM, catalogueDescriptionOf } from "./catalogue-description.js";
@@ -152,7 +153,7 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
   const headCommit = committed.commit;
 
   // 4. The same bytes, parsed. From here on no step reads either file again.
-  const srcRead = sourcesFromBytes(srcIn.bytes, opts.today);
+  const srcRead = withApprovedRefs(sourcesFromBytes(srcIn.bytes, opts.today), { home: opts.home });
   if (srcRead.state === "none") return stop("the skill source file does not exist");
   if (srcRead.state === "invalid") return stop(...srcRead.problems.map((p) => `${p.where}: ${p.message}`));
   const sources: SourcesManifest = srcRead.manifest;

@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const SKILLS = "src/skills";
 const BUILTIN = new Set(["crypto", "fs", "path", "os", "url", "module"]);
 const PACKAGES = new Set(["zod", "yaml"]);
-const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js", "../flow/load.js"]);
+const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/audit.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js", "../flow/load.js"]);
 
 const codeLines = (text: string) => text.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
 

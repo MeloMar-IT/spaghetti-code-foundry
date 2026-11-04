@@ -9,6 +9,10 @@ export interface V2Options {
   version?: string;
   verdict?: "passed" | "failed" | "not-run";
   provenancePath?: string;
+  /** Repository key and trust of every skill's provenance (default github.com/acme/skills, verified); `perSkill` overrides one skill. */
+  repositoryKey?: string;
+  trust?: "first-party" | "verified" | "community";
+  perSkill?: Record<string, { repositoryKey?: string; trust?: "first-party" | "verified" | "community" }>;
   /** Skill id → revocation. */
   revoked?: Record<string, { on: string; reason: string }>;
   /** Skill id → attribution path → content. Written to `<root>/.attribution/<id>/<path>`. */
@@ -48,7 +52,7 @@ export function writeV2Release(root: string, opts: V2Options = {}): { manifest: 
         version: p.version,
         digest: p.digest,
         files: files(dir).map((path) => entry(path, readFileSync(join(dir, path)))),
-        provenance: { source: "acme-source", repositoryKey: "github.com/acme/skills", commit: "b".repeat(40), path: opts.provenancePath ?? `skills/${p.id}`, trust: "verified" as const },
+        provenance: { source: "acme-source", repositoryKey: opts.perSkill?.[p.id]?.repositoryKey ?? opts.repositoryKey ?? "github.com/acme/skills", commit: "b".repeat(40), path: opts.provenancePath ?? `skills/${p.id}`, trust: opts.perSkill?.[p.id]?.trust ?? opts.trust ?? ("verified" as const) },
         licences: ["MIT"],
         attribution,
         evaluation: { suite: "default-suite", record: "sha256:" + "c".repeat(64), verdict: opts.verdict ?? ("passed" as const) },
