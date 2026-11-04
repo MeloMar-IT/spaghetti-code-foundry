@@ -113,6 +113,8 @@ export interface NextData {
   /** `owner_action`: what the owner must do (the question, as one safe line), and the files the Foundry waits for. */
   ownerAction?: string;
   ownerFiles?: { paths: string[]; where: string };
+  /** `questions` / `planner_questions`: the watcher answers them itself with the recommendations (auto_defaults), so nobody has to. */
+  autoDefaults?: boolean;
   /** `planner_questions`: the answer is typed on the run page of the user display (no watcher follows the run, its flow reads the task). */
   answerHere?: boolean;
   /** Text of the approval request or the failure reason. */
@@ -355,6 +357,12 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
 
   switch (kind) {
     case "questions": case "planner_questions": {
+      if (d.autoDefaults && !d.answerHere) {
+        // auto_defaults: the watcher answers with the recommendations as soon as the issue can go on; a person may still answer first.
+        why = kind === "questions" ? "It has questions, and the Foundry takes its own recommendations" : "The planner has questions, and the Foundry takes its own recommendations";
+        say = "nothing to do, it goes on with the recommendations when it can start; answer on the issue to choose otherwise";
+        break;
+      }
       who = "You";
       why = kind === "questions" ? "It has questions before it starts" : "The planner has questions";
       action = q ? `Answer ${plural(q, "question")}` : "Answer the questions";
@@ -745,13 +753,13 @@ export type CommentKind = Extract<NextKind, "questions" | "planner_questions" | 
 export const COMMENT_KINDS: readonly CommentKind[] = ["questions", "planner_questions", "approve_plan", "approve_split", "approval"];
 
 /** The fixed record of a comment kind, without per-run details. */
-function commentRecord(kind: CommentKind): NextStep {
+function commentRecord(kind: CommentKind, { autoDefaults = false }: { autoDefaults?: boolean } = {}): NextStep {
   // issueUrl is set only so "approval" does not fall back to "on the run page"; it never appears in text.
-  return nextStep(kind, {}, { watched: true, issueUrl: "issue" });
+  return nextStep(kind, {}, { watched: true, issueUrl: "issue", autoDefaults });
 }
 
 /** The sentence a Foundry comment on an issue ends with: the record's text for an issue that is answered on GitHub, without per-run details (number of questions, approval message). */
-export function commentText(kind: CommentKind): string { return commentRecord(kind).text; }
+export function commentText(kind: CommentKind, o: { autoDefaults?: boolean } = {}): string { return commentRecord(kind, o).text; }
 
 /** One line, no end punctuation. */
 const tidy = (t: string) => t.replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "");
@@ -767,7 +775,7 @@ export function firstLine(n: Pick<NextStep, "who" | "action" | "why">): string {
 }
 
 /** firstLine() of the fixed record of a comment kind. */
-export function commentFirst(kind: CommentKind): string { return firstLine(commentRecord(kind)); }
+export function commentFirst(kind: CommentKind, o: { autoDefaults?: boolean } = {}): string { return firstLine(commentRecord(kind, o)); }
 
 /** Comments that report something (plan, result, split, daily report): the fixed first line of each. */
 export const REPORT_KINDS = ["info", "merge_pr", "open_pr", "start_coding", "ships", "look", "merge_release", "draft", "start_parts", "fixed", "merge_back", "decided"] as const;
@@ -796,13 +804,19 @@ export function reportFirst(kind: ReportKind): string { return firstLine(REPORTS
 /** The line added to a "not a coding task" comment (FACTORY_PARK_HINT). */
 export const PARK_HINT = "Reply **/park** to keep this issue open but out of the build queue, or answer to have it planned again.";
 
-/** Step environment: FACTORY_NEXT_<KIND> and FACTORY_FIRST_<KIND> for every comment kind, plus FACTORY_FIRST_<REPORT> for every report kind and FACTORY_FIRST_NOTHING. */
-export function nextStepEnv(): Record<string, string> {
+/**
+ * Step environment: FACTORY_NEXT_<KIND> and FACTORY_FIRST_<KIND> for every comment kind, plus FACTORY_FIRST_<REPORT> for every report kind and FACTORY_FIRST_NOTHING.
+ * `autoDefaults`: the run's watcher answers questions itself, so the question lines say that nothing is needed. The planner's
+ * "not a coding task" stop is never answered that way: FACTORY_FIRST_PLANNER_QUESTIONS_PERSON and FACTORY_NEXT_PLANNER_QUESTIONS_PERSON always ask the person.
+ */
+export function nextStepEnv({ autoDefaults = false }: { autoDefaults?: boolean } = {}): Record<string, string> {
   return {
     ...Object.fromEntries(COMMENT_KINDS.flatMap((k) => [
-      [`FACTORY_NEXT_${k.toUpperCase()}`, commentText(k)],
-      [`FACTORY_FIRST_${k.toUpperCase()}`, commentFirst(k)],
+      [`FACTORY_NEXT_${k.toUpperCase()}`, commentText(k, { autoDefaults })],
+      [`FACTORY_FIRST_${k.toUpperCase()}`, commentFirst(k, { autoDefaults })],
     ])),
+    FACTORY_NEXT_PLANNER_QUESTIONS_PERSON: commentText("planner_questions"),
+    FACTORY_FIRST_PLANNER_QUESTIONS_PERSON: commentFirst("planner_questions"),
     ...Object.fromEntries(REPORT_KINDS.map((k) => [`FACTORY_FIRST_${k.toUpperCase()}`, reportFirst(k)])),
     FACTORY_FIRST_NOTHING: firstLine(nextStep("running")),
     FACTORY_PARK_HINT: PARK_HINT,

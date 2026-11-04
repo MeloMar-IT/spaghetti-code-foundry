@@ -155,6 +155,9 @@ describe("columnOf", () => {
     ["superseded", rec("superseded"), undefined],
     ["issue closed", rec("issue_closed"), undefined],
     ["running", rec("running"), "coding"],
+    ["questions", rec("questions"), "your_turn"],
+    ["questions the Foundry answers itself", rec("questions", { autoDefaults: true }), "waiting"],
+    ["planner questions the Foundry answers itself", rec("planner_questions", { autoDefaults: true }), "waiting"],
   ];
   for (const [name, next, column] of cases) it(`${name} → ${column}`, () => expect(columnOf(next)).toBe(column));
   it("puts running work in its phase", () => expect(columnOf(rec("running"), "reviewing")).toBe("reviewing"));

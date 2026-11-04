@@ -310,11 +310,13 @@ steps:
             out=$(printf '%s\n' "$out" | sed -E '/^[[:space:]]*WAITS_FOR(_REASON)?:/d'); park="$q"; extra="$q" ;;
           *) echo "planning failed: no PLAN_STATUS line"; exit 1 ;;
         esac
-        { echo "$FACTORY_FIRST_PLANNER_QUESTIONS"; echo
+        first="$FACTORY_FIRST_PLANNER_QUESTIONS"; next="$FACTORY_NEXT_PLANNER_QUESTIONS"
+        if [ "$status" = NOT_CODE ]; then first="$FACTORY_FIRST_PLANNER_QUESTIONS_PERSON"; next="$FACTORY_NEXT_PLANNER_QUESTIONS_PERSON"; fi
+        { echo "$first"; echo
           echo "🤖 **Spaghetti Code Foundry** $head"; echo
           printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'
           if [ -n "$park" ]; then echo; echo "$park"; fi
-          echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"
+          echo; echo "_${next}_"
           echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } \
           | node "$FACTORY_TOOLS/story" comment >/dev/null || exit 1
         body=$(printf '%s\n' "$out" | sed '/^PLAN_STATUS:/d'; if [ -n "$extra" ]; then echo; printf '%s\n' "$extra"; fi)

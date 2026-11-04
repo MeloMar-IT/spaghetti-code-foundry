@@ -429,7 +429,8 @@ async function drive(
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...localRepoEnv(summary.vars.github_repo),
-      ...nextStepEnv(),
+      // the run's watcher answers questions itself (auto_defaults): question comments say that nothing is needed
+      ...nextStepEnv({ autoDefaults: summary.vars.auto_defaults === "true" }),
       // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
       // A final release (see finalReleaseState) needs the hook folder in the environment, or its grant is never recognised: observe it.
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes || finalReleaseState(summary.flowDef, summary.vars.github_repo) === "on", autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),

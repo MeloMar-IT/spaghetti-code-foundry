@@ -430,6 +430,10 @@ describe("deliver pipeline", () => {
     await w.tick();
     await settle();
     expect(gh.ghLog()).toContain("**Q1. Which package format?**");
+    // Nobody is asked to answer: the comment says the Foundry goes on with its recommendations.
+    const q = gh.comments().find((c) => c.issue === 6 && c.body.includes("has questions before it builds"))!.body;
+    expect(q).toMatch(/^\*\*Nothing needed from you\*\* — it has questions, and the Foundry takes its own recommendations\./);
+    expect(q).not.toContain("What you need to do");
     // The questions are asked; at the next check nobody has answered, so the watcher takes the recommendations and builds.
     issues([6, ["Factory_go", "Factory_needs_info"]]);
     process.env.FAKE_GH_COMMENTS = JSON.stringify({ comments: [{ author: { login: "foundry-owner" }, createdAt: "2026-01-01T00:00:00Z", body: gh.comments().find((c) => c.issue === 6 && c.body.includes("has questions before it builds"))!.body }], labels: [] });

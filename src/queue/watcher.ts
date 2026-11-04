@@ -493,6 +493,11 @@ export class Watcher {
     }
   }
 
+  /** The run variable that tells a run's question comments that this watcher answers them itself (auto_defaults). */
+  private autoDefaultsVar(): Record<string, string> {
+    return this.cfg.auto_defaults ? { auto_defaults: "true" } : {};
+  }
+
   /** Would takeDefaults answer now: auto_defaults on and the per-issue limit not reached. */
   private canTakeDefaults(comments: Comment[]): boolean {
     if (!this.cfg.auto_defaults) return false;
@@ -914,7 +919,7 @@ export class Watcher {
     const { flow } = loadFlow(this.flowName(), this.d.repo);
     const runId = this.submit(issue.number, "issue", {
       kind: "run", flow, task: "", repo: this.d.repo,
-      vars: { trigger_label: this.cfg.label, ...this.cfg.vars, github_repo: this.repo, issue: String(issue.number) },
+      vars: { trigger_label: this.cfg.label, ...this.cfg.vars, github_repo: this.repo, issue: String(issue.number), ...this.autoDefaultsVar() },
     }, first);
     this.act(`#${issue.number} “${issue.title}” → run ${runId} · label → ${this.L.working}`);
     return runId;
@@ -2050,7 +2055,7 @@ export class Watcher {
     const nums = list.map((i) => i.number);
     const runId = this.queue({
       kind: "run", flow, task: "", repo: this.d.repo,
-      vars: { ...this.cfg.vars, github_repo: this.repo, issues: nums.join(" "), needs_info_label: this.L.needsInfo },
+      vars: { ...this.cfg.vars, github_repo: this.repo, issues: nums.join(" "), needs_info_label: this.L.needsInfo, ...this.autoDefaultsVar() },
     }, { lockKey, source: `watcher ${this.cfg.id} precheck ${nums.map((x) => `#${x}`).join(" ")}`, ...firstMeta(first) });
     this.act(`checking ${nums.map((x) => `#${x}`).join(", ")} for open questions → run ${runId}`);
     hold("checking");
