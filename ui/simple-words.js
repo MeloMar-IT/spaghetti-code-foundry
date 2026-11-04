@@ -7,6 +7,34 @@ export const TERMS = {
   repository: "project", queued: "planned", merged: "done", step: "step",
 };
 
+/** The distinct Simple words of TERMS, in order. */
+export const termWords = () => [...new Set(Object.values(TERMS))];
+
+/** A plain meaning for each Simple word. */
+export const TERM_MEANINGS = {
+  change: "Something you asked for: a new part of your project, a fix or an improvement.",
+  work: "What the Foundry does to make one change.",
+  "got stuck": "The Foundry could not finish the work by itself and needs a person.",
+  "final version": "A version of your project that is finished and ready to use.",
+  project: "One thing the Foundry makes for you, such as an app or a website.",
+  planned: "The work waits its turn and starts soon.",
+  done: "The change is finished and part of your project.",
+  step: "One part of the work: planning, building, testing or finishing.",
+};
+
+/** The text of the Help page. */
+export const HELP = {
+  title: "Help",
+  wordsTitle: "What the words mean",
+  wordsIntro: "The Foundry uses these words on your pages.",
+  howTitle: "How do I …",
+  howtos: [
+    { q: "How do I change the colours?", a: "Ask for a change and say which colours you want, for example: Make the buttons dark blue. Use Ask for a change on your project's page; if it has no such button yet, switch to the Advanced view with View at the top and use Start work." },
+    { q: "How do I make it public?", a: "Whether and how a project becomes public depends on how it was set up. Some final versions go out by themselves; others need a step from you or from someone else. Ask the person who set up the Foundry for you for the public address and the steps." },
+  ],
+  contactTitle: "Who to ask",
+};
+
 export const WORDS = {
   myProjects: "My projects",
   todo: "What you need to do",

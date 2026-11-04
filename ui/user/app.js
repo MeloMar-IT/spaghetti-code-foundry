@@ -12,7 +12,7 @@ import { renderRepo } from "/repo-view.js";
 import { renderRepos } from "/repos.js";
 import { renderMyRun, renderMyRuns } from "/user/runs.js";
 import { renderHome } from "/home.js";
-import { renderSimpleHome, renderSimpleProject } from "/simple.js";
+import { renderSimpleHelp, renderSimpleHome, renderSimpleProject } from "/simple.js";
 import { renderStart } from "/user/start.js";
 import { initPalette } from "/palette.js";
 import { initShell, namePage, showPage } from "/shell.js";
@@ -86,6 +86,7 @@ async function route() {
   try {
     if (simple && page.section === "home") done = await renderSimpleHome(box);
     else if (simple && page.section === "repos") done = await renderSimpleProject(box, { id: page.id, onName: (n) => { if (mine === generation) namePage(n); } });
+    else if (page.section === "help") done = await renderSimpleHelp(box);
     else if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });
     else if (page.section === "setup") done = await renderSetupCheck(box, { admin: ownAdmin, readOnly, needs: needsOf(splitHash(page.hash).query) });
     else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });

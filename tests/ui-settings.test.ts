@@ -116,8 +116,34 @@ describe("Settings → Ask SCF", () => {
   it("sits between User runs and Notifications", async () => {
     const t = cardTitles((await render({})).main);
     expect(t.indexOf("Ask SCF")).toBe(t.indexOf("User runs") + 1);
-    expect(t.indexOf("Delivery")).toBe(t.indexOf("Ask SCF") + 1);
+    expect(t.indexOf("Simple view")).toBe(t.indexOf("Ask SCF") + 1);
+    expect(t.indexOf("Delivery")).toBe(t.indexOf("Simple view") + 1);
     expect(t.indexOf("Notifications")).toBe(t.indexOf("Delivery") + 1);
+  });
+
+  it("has a Simple view card with one text input for the help contact", async () => {
+    const { main, puts } = await render({});
+    const card = cardOf(main, "Simple view");
+    const inputs = card.all("input");
+    expect(inputs).toHaveLength(1);
+    const contact = inputs[0] as any;
+    contact.value = "Ask Ann";
+    contact.fire("change", { target: contact });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].simple).toEqual({ help_contact: "Ask Ann" });
+    expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
+  });
+
+  it("saves an empty help contact as not set", async () => {
+    const { main, puts } = await render({}, "127.0.0.1", 200, { simple: { help_contact: "Ask Ann" } });
+    const contact = cardOf(main, "Simple view").all("input")[0] as any;
+    expect(contact.value).toBe("Ask Ann");
+    contact.value = "";
+    contact.fire("change", { target: contact });
+    main.all("button").find((b) => b.textContent === "Save")!.click();
+    await flush();
+    expect(puts[0].simple).toEqual({});
   });
 
   it("saves the switch and a number and keeps the private patterns and accounts", async () => {

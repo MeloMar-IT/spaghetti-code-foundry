@@ -48,6 +48,11 @@ describe("the rules", () => {
     expect(vm.inView("simple", "#/setup?need=node")).toBe(true);
   });
 
+  it("has the Help page in Simple and in Advanced", () => {
+    expect(vm.inView("simple", "#/help")).toBe(true);
+    expect(vm.inView("advanced", "#/help")).toBe(true);
+  });
+
   it("picks the view in effect and the views of an account", () => {
     expect(vm.viewOf({ role: "user" })).toBe("advanced");
     expect(vm.viewOf({ role: "admin" })).toBe("admin");
@@ -71,6 +76,7 @@ describe("the rules", () => {
     expect(o("simple", "user", "#/start")).toBe("advanced");
     expect(o("simple", "user", "#/repos/x")).toBeNull();
     expect(o("simple", "user", "#/home")).toBeNull();
+    expect(o("simple", "user", "#/help")).toBeNull();
     expect(o("simple", "admin", "#/settings")).toBe("admin");
     expect(o("advanced", "admin", "#/settings")).toBe("admin");
     expect(o("advanced", "user", "#/settings")).toBeNull();
@@ -540,14 +546,14 @@ describe("offerCard", () => {
 });
 
 describe("showViewNav", () => {
-  it("hides every link but Home in Simple, and nothing for Advanced", () => {
+  it("hides every link but Home and Help in Simple, and only Help for Advanced", () => {
     const side = new FakeElement("nav");
-    const links = ["start", "home", "epics", "runs", "repos", "refinement"].map((n) => box("a", { "data-nav": n }));
+    const links = ["start", "home", "help", "epics", "runs", "repos", "refinement"].map((n) => box("a", { "data-nav": n }));
     side.append(...links);
     vm.showViewNav("simple", side);
-    expect(links.filter((l) => !l.hidden).map((l) => l.attrs["data-nav"])).toEqual(["home"]);
+    expect(links.filter((l) => !l.hidden).map((l) => l.attrs["data-nav"])).toEqual(["home", "help"]);
     vm.showViewNav("advanced", side);
-    expect(links.some((l) => l.hidden)).toBe(false);
+    expect(links.filter((l) => l.hidden).map((l) => l.attrs["data-nav"])).toEqual(["help"]);
   });
 });
 

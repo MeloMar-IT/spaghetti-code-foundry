@@ -89,7 +89,7 @@ describe("user router", () => {
     "/context.js": contextStub(),
     "/home.js": never,
     "/setup-check.js": never,
-    "/simple.js": { renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn() },
+    "/simple.js": { renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn(), renderSimpleHelp: vi.fn() },
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
     "/view-mode.js": real.viewMode,
@@ -112,7 +112,23 @@ describe("user router", () => {
 
     // A getter: `real` is only loaded when a test runs.
     const simpleMe = { get "/auth.js"() { return as({ id: "u", role: "user", view: "simple" })["/auth.js"]; } };
-    const simpleStub = () => ({ renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn() });
+    const simpleStub = () => ({ renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn(), renderSimpleHelp: vi.fn() });
+
+    it("draws the Help page for #/help in Simple and in Advanced, and keeps the address", async () => {
+      setup("#/help");
+      const stub = simpleStub();
+      const renderHome = vi.fn();
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub, "/home.js": { renderHome } }));
+      expect(stub.renderSimpleHelp).toHaveBeenCalled();
+      expect(stub.renderSimpleHome).not.toHaveBeenCalled();
+      expect(renderHome).not.toHaveBeenCalled();
+      expect(g.location.hash).toBe("#/help");
+      setup("#/help");
+      const adv = simpleStub();
+      await loadRouter("user/app.js", deps({ ...as({ id: "u", role: "user", view: "advanced" }), "/simple.js": adv }));
+      expect(adv.renderSimpleHelp).toHaveBeenCalled();
+      expect(main().textContent).not.toContain("Open this in another view");
+    });
 
     it("draws My projects for Simple #/home, and the project page for #/repos/<id>", async () => {
       setup("#/home");

@@ -320,10 +320,10 @@ export async function authRoutes(ctx: ApiContext, req: IncomingMessage, res: Ser
   return false;
 }
 
-/** GET and PUT /api/me/view: the account's own view. It changes what the display shows, never what the server allows. */
+/** GET and PUT /api/me/view: the account's own view (GET also carries the contact text of the Help page). It changes what the display shows, never what the server allows. */
 export const meRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] !== "me" || seg[1] !== "view" || seg.length !== 2) return false;
-  if (method === "GET") return send(res, 200, viewFields(user)), true;
+  if (method === "GET") return send(res, 200, { ...viewFields(user), helpContact: ctx.config().simple.help_contact ?? "" }), true;
   if (method !== "PUT") return false;
   const body = await readJson(req);
   const view = body.view;

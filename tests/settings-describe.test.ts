@@ -133,7 +133,10 @@ describe("what is described", () => {
     expect(described.find((d) => d.key === "governor.busy_apps")).toMatchObject({ kind: "list", default: [], maxItems: 50, effect: "now", control: "generated" });
     expect(isCovered("governor.usage_percent")).toBe(true);
     expect(described.find((d) => d.key === "governor.usage_percent")).toMatchObject({ kind: "number", integer: true, min: 1, max: 100, optional: true, effect: "now", control: "generated" });
-    expect(described).toHaveLength(144);
+    expect(isCovered("simple.help_contact")).toBe(true);
+    expect(described.find((d) => d.key === "simple.help_contact")).toMatchObject({ kind: "text", optional: true, effect: "now", control: "generated" });
+    expect(described.find((d) => d.key === "simple.help_contact")?.default).toBeUndefined();
+    expect(described).toHaveLength(145);
   });
 
   it("describes governance.auto_demote as a generated boolean that defaults to true", () => {

@@ -153,7 +153,7 @@ const ITEMS: Record<StressName, (browser: Browser) => Promise<void>> = {
           await expect(page.locator("body")).toHaveClass(/drawer-open/);
           await lengthen(page, "#side");
           expect(await clipped(page, "#side", { strict: true }), `drawer clipped on ${role} ${hash}`).toEqual([]);
-          for (const link of await page.locator("#side a[data-nav]").all()) await use(page, link);
+          for (const link of await page.locator("#side a[data-nav]:not([hidden])").all()) await use(page, link);
           await expectControlsUsable(page, "#side");
           await expectNoSidewaysScroll(page);
           await page.keyboard.press("Escape");

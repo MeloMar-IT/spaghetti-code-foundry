@@ -208,7 +208,7 @@ The top bar has a **View** box with three views. The view changes only what your
 
 | View | Display | What it shows |
 |---|---|---|
-| **Simple** | `/user/` | My projects (Home) and one page per project. Start work, My runs, Epics and Refinement are not in Simple (see [Simple: My projects](#simple-my-projects-and-the-project-page)) |
+| **Simple** | `/user/` | My projects (Home), one page per project and the Help page. Start work, My runs, Epics and Refinement are not in Simple (see [Simple: My projects](#simple-my-projects-and-the-project-page)) |
 | **Advanced** | `/user/` | Everything of the user display: Home, Epics, My runs, My repositories, Refinement and Start work |
 | **Admin** | `/` | The admin display |
 
@@ -230,7 +230,7 @@ The top bar has a **View** box with three views. The view changes only what your
 
 ### Simple: My projects and the project page
 
-Simple shows your work per project, in plain words. Home is **My projects**; the links in the menu and the top bar are only **Home**.
+Simple shows your work per project, in plain words. Home is **My projects**; the links in the menu and the top bar are only **Home** and **Help**. The Help link is shown only in Simple.
 
 **My projects** (`#/home`) has one card per project: its name, a one-line state ("Building 2 things", "Waiting for your answer", "Ready for you to check", "All done") and one big button for the next thing to do. A project with no work yet shows **Open project**. An empty list says there are no projects yet.
 
@@ -243,6 +243,16 @@ Simple shows your work per project, in plain words. Home is **My projects**; the
 Both pages refresh every 30 seconds and use the same lists as Home (repositories, runs and the queue), so Simple shows no data that Home does not. Work that is cancelled, superseded or parked, and epics, are not listed.
 
 Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". Local projects (without GitHub) show "Nothing yet" for now.
+
+### Simple: the Help page
+
+The **Help** link in the top bar, next to Home, opens `#/help`. It is written in plain words and has three parts:
+
+1. **The words**: the Foundry's words for Simple, each with its plain meaning (the same list the rest of Simple uses).
+2. **How do I …**: short how-tos, for example "How do I change the colours?" and "How do I make it public?".
+3. **Who to ask**: the contact line for your project, from the setting `simple.help_contact` (see [Settings and safety](#7-settings-and-safety)). The line is hidden while the setting is empty, and the section with it is left out.
+
+The contact is shown as plain text, never as HTML. If the Foundry cannot read the contact, the page still shows the words and the how-tos. The Help link is not shown in Advanced or Admin, but `#/help` still opens the same page there.
 
 ### Use the Foundry as a package
 
@@ -4357,6 +4367,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 
 **Load governor (priority of runs)** — `governor.priority` (`low` by default, or `normal` or `background`) sets how much processor time the agents, builds and tests of a run leave to your other programs. `low` starts each run process at nice 5 and, on macOS, at utility quality of service; `background` uses nice 15 and background quality of service, which can slow runs a lot. `normal` starts them as they always did. The server itself stays at normal priority, and the setting applies when a run starts or resumes. A Mac without `taskpolicy`, or a process that cannot be started at a priority, runs with `nice` only or unchanged, so a run never fails because of it. This is not the helper that lowers the runs at once (the helper "governor" under "Helper processes" above).
 
+**Simple view (Help contact)** — `simple.help_contact` is the line under "Who to ask" on the Help page of the Simple view: a name and an e-mail address, for example. It is up to 300 characters, without line breaks or control characters, and shown as plain text. Empty (the default) hides the line. The control is the **Simple view** card on the Settings page, between Ask SCF and Delivery. Users read the text through `GET /api/me/view` (field `helpContact`); they cannot change it.
+
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
 
 **Slow down at this share of a weekly limit (load governor)** — `governor.usage_percent` is a whole number from 1 to 100. Once about this share of the Claude or Codex weekly limit is used (from the reading, see "Usage limits" under Helper processes), the limits helper keeps the runs at once at 1, or at `governor.floor` when that is set and higher, until the reset. It works only with `scf limits auto on` and a reading (`scf limits set`), and only while the threshold holds: below it, the forecast alone decides. The cap is global, so one tool at the threshold slows all runs, Codex runs included. The `scf limits` report says "at or above your threshold" for each tool at or above it. Not set, the setting does nothing and only the forecast slows down.
@@ -5125,7 +5137,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/your-turn/act` | yes | no | answer, approve, reject or retry an item, as a comment on the issue; retry of a closed issue is 409, as for resume |
 | `GET /api/clarity` | yes | no | how long items waited for you, and what Your turn missed |
 | `POST /api/password` | yes | yes | change your own password (the other sessions of the account end) |
-| `GET /api/me/view` | yes | yes | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced |
+| `GET /api/me/view` | yes | yes | your view (Simple, Advanced or Admin) and the views your role may choose; without a choice an admin gets Admin and a user Advanced; also the contact text of the Help page (`helpContact`, empty when not set) |
 | `PUT /api/me/view` | yes | yes | choose your view (`view`: `simple`, `advanced` or `admin`); it is kept for your account and used at the next sign-in on any device; a view your role may not use is refused with 403. The view changes only what the display shows, never what the server allows |
 | `GET /api/credentials` | yes | yes | your stored credentials |
 | `POST /api/credentials` | yes | yes | store a credential |

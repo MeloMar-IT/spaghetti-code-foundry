@@ -3,7 +3,7 @@ import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { projectsModel } from "./simple-model.js";
-import { WORDS } from "./simple-words.js";
+import { HELP, TERM_MEANINGS, WORDS, termWords } from "./simple-words.js";
 
 // The Simple view: My projects (#/home) and the project page (#/repos/<id>). All text comes from the word list.
 
@@ -103,6 +103,33 @@ async function live(main, { a, draw }) {
   });
   await poll.ready;
   return () => poll.stop();
+}
+
+/** The Help page: the words, two how-tos and, when there is contact text, who to ask. The contact is drawn as text, never as HTML. */
+export function helpView(contact = "") {
+  const who = String(contact ?? "").trim();
+  return [
+    h("h1", {}, HELP.title),
+    h("section", { class: "simple-group" },
+      h("h2", {}, HELP.wordsTitle),
+      h("p", {}, HELP.wordsIntro),
+      h("dl", {}, termWords().flatMap((w) => [h("dt", {}, w), h("dd", {}, TERM_MEANINGS[w])]))),
+    h("section", { class: "simple-group" },
+      h("h2", {}, HELP.howTitle),
+      HELP.howtos.flatMap((t) => [h("h3", {}, t.q), h("p", {}, t.a)])),
+    who ? h("section", { class: "simple-group simple-help-contact" }, h("h2", {}, HELP.contactTitle), h("p", {}, who)) : null,
+  ];
+}
+
+/** The Help page; reads the contact text from the view answer, and draws without it when that fails. Never rejects. */
+export async function renderSimpleHelp(main, { a = api } = {}) {
+  let contact = "";
+  try {
+    const v = await a.myView();
+    if (typeof v?.helpContact === "string") contact = v.helpContact;
+  } catch { /* no contact line */ }
+  mount(main, h("div", { class: "simple" }, ...helpView(contact)));
+  return () => {};
 }
 
 /** My projects; never rejects; returns a cleanup. */

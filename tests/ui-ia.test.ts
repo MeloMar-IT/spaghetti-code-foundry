@@ -81,7 +81,12 @@ describe("the navigation lists", () => {
   it("matches the data-nav links of both HTML files", () => {
     for (const [file, role] of [["ui/index.html", "admin"], ["ui/user/index.html", "user"]] as const) {
       const want = [...ia.actionsFor(role), ...ia.primaryFor(role)];
-      const links = navLinks(read(file));
+      const all = navLinks(read(file));
+      // a link with the hidden attribute is one only the Simple view shows: Help, right after Home
+      const links = all.filter((l) => !/\bhidden\b/.test(l.attrs));
+      const hidden = all.filter((l) => /\bhidden\b/.test(l.attrs));
+      expect(hidden.map((l) => [l.id, l.label, l.href]), file).toEqual(role === "user" ? [["help", "Help", "#/help"]] : []);
+      if (role === "user") expect(all.findIndex((l) => l.id === "help")).toBe(all.findIndex((l) => l.id === "start") + 1);
       expect(links.map((l) => [l.id, l.label, l.href]), file).toEqual(want.map((w: any) => [w.id, w.label, w.href]));
       if (role === "admin") for (const l of links) expect(l.attrs.includes('class="setup"'), l.id).toBe(want.find((w: any) => w.id === l.id).group === "setup");
     }
@@ -265,7 +270,8 @@ describe("the data", () => {
     // the set-password link is read by the sign-in screen (ui/auth.js) before any page exists; the command line prints it for an admin to pass on
     found.delete("#/set-password");
     for (const h of found) {
-      const to = ia.resolve("admin", h);
+      // #/help is a page of the user display only
+      const to = ia.resolve(h === "#/help" ? "user" : "admin", h);
       expect([null, "alias"], h).toContain(to.reason);
     }
   });
@@ -285,15 +291,16 @@ describe("the grouped shell", () => {
     expect(read("ui/user/index.html")).not.toContain("side-head");
   });
 
-  it("every page link but Start work is in the sidebar; the top bar has only Start work", () => {
+  it("every page link but Start work and Help is in the sidebar; the top bar has Start work and, for the user display, Help", () => {
     for (const file of ["ui/index.html", "ui/user/index.html"]) {
       const html = read(file);
       const top = html.slice(html.indexOf('<header class="top"'), html.indexOf("</header>"));
-      expect([...top.matchAll(/data-nav="([\w-]+)"/g)].map((m) => m[1]), file).toEqual(["start"]);
+      const want = file === "ui/user/index.html" ? ["start", "help"] : ["start"];
+      expect([...top.matchAll(/data-nav="([\w-]+)"/g)].map((m) => m[1]), file).toEqual(want);
       const from = html.indexOf('<nav id="side"');
       const side = html.slice(from, html.indexOf("</nav>", from));
       const all = [...html.matchAll(/data-nav="([\w-]+)"/g)].length;
-      expect([...side.matchAll(/data-nav="([\w-]+)"/g)].length + 1, file).toBe(all);
+      expect([...side.matchAll(/data-nav="([\w-]+)"/g)].length + want.length, file).toBe(all);
     }
   });
 });
@@ -320,7 +327,7 @@ describe("commandsFor", () => {
 
   it("gives a user four pages and two actions, without board, flows or users", () => {
     const { goTo, actions } = ia.commandsFor("user");
-    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Setup check", "Epics", "Refinement", "My runs", "My repositories"]);
+    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Setup check", "Help", "Epics", "Refinement", "My runs", "My repositories"]);
     expect(actions.map((a: any) => a.label)).toEqual(["Start work", "New refinement session"]);
     expect(actions[1]).toMatchObject({ href: "#/refinement", intent: "refinement", key: null });
   });
@@ -333,6 +340,9 @@ describe("commandsFor", () => {
       expect(ia.subnavFor(role, "home")).toEqual([]);
     }
     expect(auth.isUserHash("#/setup")).toBe(true);
+    expect(auth.isUserHash("#/help")).toBe(true);
+    expect(ia.resolve("user", "#/help")).toMatchObject({ page: { id: "help" }, title: "Help", crumbs: [], redirected: false });
+    expect(ia.resolve("admin", "#/help")).toMatchObject({ hash: "#/home", redirected: true });
     expect(auth.isUserHash("#/setup?need=node")).toBe(true);
   });
 

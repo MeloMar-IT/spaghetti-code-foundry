@@ -397,6 +397,11 @@ export const ConfigSchema = z
     secret_scan: z.boolean().default(true),
     /** The redesigned pages (still being built); off by default. */
     ui: z.object({ redesign: z.boolean().default(false) }).strict().prefault({}),
+    /** The Simple view. `help_contact`: who a person can ask, shown as plain text on the Help page (`#/help`); not set: the line is hidden. */
+    simple: z.object({
+      help_contact: z.string().trim().max(300, "at most 300 characters")
+        .refine((s) => !/[\u0000-\u001f\u007f]/.test(s), "has a control character").optional(),
+    }).strict().prefault({}),
     /**
      * Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy.
      * `floor`: the lowest number of runs at once the governor may go down to; 0 stops new runs while the machine is overloaded.

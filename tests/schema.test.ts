@@ -238,6 +238,19 @@ describe("template", () => {
   });
 });
 
+describe("config: simple.help_contact", () => {
+  it("defaults to an empty group and trims the text", () => {
+    expect(ConfigSchema.parse({}).simple).toEqual({});
+    expect(ConfigSchema.parse({ simple: { help_contact: "  Ann, ann@example.com " } }).simple.help_contact).toBe("Ann, ann@example.com");
+  });
+  it("refuses 301 characters, control characters and unknown keys", () => {
+    expect(ConfigSchema.safeParse({ simple: { help_contact: "a".repeat(300) } }).success).toBe(true);
+    expect(ConfigSchema.safeParse({ simple: { help_contact: "a".repeat(301) } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ simple: { help_contact: "a\nb" } }).success).toBe(false);
+    expect(ConfigSchema.safeParse({ simple: { x: 1 } }).success).toBe(false);
+  });
+});
+
 describe("config: ui.redesign", () => {
   it("is off by default and strict", () => {
     expect(ConfigSchema.parse({}).ui).toEqual({ redesign: false });
