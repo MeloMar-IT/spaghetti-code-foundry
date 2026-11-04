@@ -1,4 +1,5 @@
 import { resolve, splitHash } from "./ia.js";
+import { ASK, HELP, WORDS, plainWords, safeText } from "./simple-words.js";
 
 // Ask SCF, the help drawer: what it decides, without a page. Pure functions only (no document, no fetch, no timer),
 // so every rule here is tested as it is. The drawer itself is ui/ask.js, its nodes are ui/ask-view.js.
@@ -53,7 +54,8 @@ const BY_AREA = {
 };
 
 /** The questions offered for the page a person is on. A suggestion only fills the question box; the person sends it. */
-export function suggestionsFor(where) {
+export function suggestionsFor(where, { simple = false } = {}) {
+  if (simple) return [...ASK.suggestions];
   return [...(BY_PAGE[where?.id] ?? BY_AREA[where?.area] ?? []), ...GENERAL].slice(0, 4);
 }
 
@@ -119,20 +121,23 @@ export function triesNote(message) {
  * What the drawer shows for one message: `kind` is question, waiting, answer, failed, limit or stopped. Text stays
  * text. `limit`: a failure that trying again now cannot solve (a limit, a budget, the setup).
  */
-export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () => [], outcomes = () => [] } = {}) {
+export function entryOf(message, { elapsedMs = 0, role = "user", planDone = () => [], outcomes = () => [], simple = false } = {}) {
   const text = typeof message?.text === "string" ? message.text : "";
+  // the Simple view shows every text in plain words: a text that cannot be made plain is not shown
+  const plain = (t, fallback) => (simple ? plainWords(t, fallback) : t || fallback);
   if (message?.role === "user") return { id: message.id, kind: "question", who: "You", text, note: "" };
-  if (message?.role === "check") return { id: message.id, kind: "check", who: "Check", text, note: "", check: checkLayout(message.check, message.at) };
+  if (message?.role === "check") return { id: message.id, kind: "check", who: "Check", text: simple ? "" : text, note: "", check: checkLayout(message.check, message.at, { simple }) };
   const note = triesNote(message);
   if (message?.status === "pending") return { id: message?.id, kind: "waiting", who: "Ask SCF", text: waitNote(elapsedMs).text, note };
-  if (message?.status === "failed") return { id: message.id, kind: message.failure?.retry === false ? "limit" : "failed", who: "Ask SCF", text: text || "Ask SCF could not answer.", note };
-  if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: text || "You stopped this answer.", note };
+  if (message?.status === "failed") return { id: message.id, kind: message.failure?.retry === false ? "limit" : "failed", who: "Ask SCF", text: plain(text, ASK.noAnswer), note };
+  if (message?.status === "cancelled") return { id: message.id, kind: "stopped", who: "Ask SCF", text: simple && text ? plainWords(text, "You stopped this answer.") : text || "You stopped this answer.", note };
   // a reply with its checked parts is laid out by them; the text is what is left when there are none
-  const layout = replyLayout(message?.reply, role, planDone(message?.id));
-  if (layout) layout.outcomes = outcomesFor(message, outcomes(message?.id));
+  const layout = replyLayout(message?.reply, role, planDone(message?.id), { simple });
+  // stored action outcomes use words of the Advanced view: the Simple view does not show them
+  if (layout) layout.outcomes = simple ? [] : outcomesFor(message, outcomes(message?.id));
   const vote = message?.feedback?.vote === "helpful" || message?.feedback?.vote === "not-helpful" ? message.feedback.vote : null;
   const reasons = vote === "not-helpful" ? list(message.feedback.reasons).filter((r) => r in REASON_WORDS) : [];
-  return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : text, note, rateable: true, feedback: { vote, reasons }, ...(layout ? { layout } : {}) };
+  return { id: message?.id, kind: "answer", who: "Ask SCF", text: layout ? "" : simple && text ? plainWords(text, ASK.noPlainAnswer) : text, note, rateable: true, feedback: { vote, reasons }, ...(layout ? { layout } : {}) };
 }
 
 // ---- rating an answer -------------------------------------------------------------------------------
@@ -401,8 +406,9 @@ export const CHECK_OUTCOME_WORDS = { read: "Read again", passed: "Connection wor
 const CHECK_PILLS = { read: "sem-neutral", passed: "sem-success", failed: "sem-danger" };
 
 /** A stored check message as the drawer shows it: title, outcome pill, lines and the time it was read. Null when it is malformed. */
-export function checkLayout(check, at = "") {
+export function checkLayout(check, at = "", { simple = false } = {}) {
   if (!check || typeof check !== "object" || !str(check.title) || !Object.hasOwn(CHECK_PILLS, check.outcome)) return null;
+  if (simple) return { title: safeText(check.title, ASK.checkTitle), outcome: ASK.checkOutcomes[check.outcome], pill: CHECK_PILLS[check.outcome], lines: list(check.lines).map((l) => plainWords(str(l))).filter(Boolean), observedAt: str(check.observedAt) || str(at), uncertain: check.uncertain === true };
   return { title: str(check.title), outcome: CHECK_OUTCOME_WORDS[check.outcome], pill: CHECK_PILLS[check.outcome], lines: list(check.lines).map(str).filter(Boolean), observedAt: str(check.observedAt) || str(at), uncertain: check.uncertain === true };
 }
 
@@ -432,8 +438,9 @@ export function explainOfferError(e) {
  * sources and assumptions to unfold. Null when there is no reply to lay out. `basis`: the sources of the kind the
  * question needs, shown next to the answer, so a statement about the current state can be traced to what was read.
  */
-export function replyLayout(reply, role = "user", done = []) {
+export function replyLayout(reply, role = "user", done = [], { simple = false } = {}) {
   if (!reply || typeof reply !== "object" || !str(reply.summary)) return null;
+  if (simple) return simpleLayout(reply, done);
   const sources = reply.limit ? [] : sourcesOf(reply, role);
   const trust = trustOf(reply, sources);
   const needs = NEEDS[reply.type] ?? "doc";
@@ -445,6 +452,50 @@ export function replyLayout(reply, role = "user", done = []) {
     cards: cardsOf(reply, role),
     offers: offersOf(reply),
     plan: planOf(reply, role, done),
+    sources,
+    assumptions: assumptionsOf(reply, sources, trust),
+  };
+}
+
+/**
+ * A link of the Simple view, or null: My projects, Help, or the page of one project (`#/repos/<id>`). The title of a
+ * project is its name when that is plain, else a fixed word. The server checked the project; here only the form.
+ */
+export function simpleLink(to, label = "") {
+  if (to === "#/home") return { href: to, title: WORDS.myProjects };
+  if (to === "#/help") return { href: to, title: HELP.title };
+  if (typeof to !== "string" || !/^#\/repos\/[A-Za-z0-9._~%-]{1,200}$/.test(to)) return null;
+  const r = resolve("user", to);
+  if (r.redirected || r.hash !== to) return null;
+  return { href: to, title: safeText(label, ASK.project) };
+}
+
+/** A checked reply laid out for the Simple view: plain words, Simple links only, no sources to open, no drafts, actions or offers. */
+function simpleLayout(reply, done) {
+  const sources = reply.limit ? [] : list(reply.evidence).filter((e) => e && str(e.title)).map((e) => {
+    const at = Date.parse(str(e.observedAt));
+    const state = e.kind === "state";
+    return { id: str(e.id), kind: state ? "state" : "doc", what: state ? "Current state" : "Documentation", title: safeText(e.title, state ? ASK.stateSource : ASK.docSource), ref: "", href: null, observedAt: Number.isFinite(at) ? new Date(at).toISOString() : null };
+  });
+  const trust = trustOf(reply, sources);
+  const needs = NEEDS[reply.type] ?? "doc";
+  const cards = [];
+  for (const r of list(reply.recommendations)) {
+    const text = plainWords(str(r));
+    if (text) cards.push({ kind: "recommendation", effect: "read-only", title: reply.limit ? "What you can do" : "What you could do", text, note: "You decide and you do it. Nothing happens by itself." });
+  }
+  for (const l of list(reply.links)) {
+    const link = simpleLink(str(l?.to), str(l?.label));
+    if (link) cards.push({ kind: "navigation", effect: "read-only", title: "A page you can open", text: "", link, note: "Opening the page changes nothing." });
+  }
+  return {
+    summary: plainWords(str(reply.summary), ASK.noPlainAnswer),
+    explanation: plainWords(str(reply.explanation)),
+    trust,
+    basis: { needs, sources: sources.filter((s) => s.kind === needs) },
+    cards,
+    offers: [],
+    plan: planOf(reply, "user", done, { simple: true }),
     sources,
     assumptions: assumptionsOf(reply, sources, trust),
   };
@@ -473,11 +524,11 @@ export const planKey = (messageId) => `scf-ask-plan-${String(messageId ?? "").re
  * indices the person marked in this tab. The first step not marked is the current one. A step never says that it
  * worked: `note` is only what the person marked.
  */
-export function planOf(reply, role = "user", done = []) {
+export function planOf(reply, role = "user", done = [], { simple = false } = {}) {
+  const words = (v) => (simple ? plainWords(str(v)) : str(v));
   const steps = list(reply?.plan);
   if (reply?.limit || !steps.length) return null;
   const marked = new Set(list(done).filter((n) => Number.isInteger(n)));
-  const current = steps.findIndex((_, i) => !marked.has(i));
   const rows = steps.map((s, i) => {
     const kind = Object.hasOwn(STEP_WORDS, s?.kind) ? s.kind : "explanation";
     const wouldBe = s?.wouldBe === "high-impact" || s?.wouldBe === "reversible" ? s.wouldBe : "";
@@ -486,25 +537,31 @@ export function planOf(reply, role = "user", done = []) {
       kind,
       label: STEP_WORDS[kind],
       danger: kind === "high-impact" || wouldBe === "high-impact",
-      title: str(s?.title),
-      instructions: str(s?.instructions),
-      link: pageLink(role, str(s?.to), { fixed: true }),
-      expected: str(s?.expected),
-      failure: str(s?.failure),
-      fallback: str(s?.fallback),
+      title: simple ? words(s?.title) || STEP_WORDS[kind] : str(s?.title),
+      instructions: words(s?.instructions),
+      link: simple ? simpleLink(str(s?.to)) : pageLink(role, str(s?.to), { fixed: true }),
+      expected: words(s?.expected),
+      failure: words(s?.failure),
+      fallback: words(s?.fallback),
       wouldBe,
       wouldBeLabel: wouldBe === "high-impact" ? "Would be a high-impact change" : wouldBe ? "Would be a change" : "",
-      proposal: str(s?.proposal),
+      proposal: words(s?.proposal),
       done: marked.has(i),
-      current: i === current,
+      current: false,
       note: stepNote(marked.has(i)),
     };
   });
-  const high = rows.filter((r) => r.danger).length;
+  // In the Simple view a change step is shown only with its safeguards (what you should see, what if it fails, what then) in plain words: the server requires all three, so a step that loses one is left out
+  const isChange = (r) => r.kind === "reversible" || r.kind === "high-impact" || r.wouldBe !== "";
+  const kept = simple ? rows.filter((r) => !isChange(r) || (r.expected && r.failure && r.fallback)) : rows;
+  if (!kept.length) return null;
+  const current = kept.findIndex((r) => !r.done);
+  const shown = kept.map((r, k) => ({ ...r, n: k + 1, current: k === current }));
+  const high = shown.filter((r) => r.danger).length;
   return {
-    steps: rows,
+    steps: shown,
     highImpact: high,
-    header: `${rows.length === 1 ? "1 step" : `${rows.length} steps`}${high ? `, ${high === 1 ? "1 is a high-impact change" : `${high} are high-impact changes`}` : ""}. Nothing is done until you do it.`,
+    header: `${shown.length === 1 ? "1 step" : `${shown.length} steps`}${high ? `, ${high === 1 ? "1 is a high-impact change" : `${high} are high-impact changes`}` : ""}. Nothing is done until you do it.`,
     manual: true,
   };
 }

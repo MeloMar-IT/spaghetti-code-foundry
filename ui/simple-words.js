@@ -181,6 +181,39 @@ export function plainText(s, max = 140) {
   return t.length > max ? `${t.slice(0, max - 1).trimEnd()}…` : t;
 }
 
+/**
+ * A longer text (a reply of Ask SCF) in plain words: per line and per sentence the terms are mapped, and a sentence
+ * that still has a forbidden term is left out. Line breaks stay. `fallback` when nothing is left.
+ */
+export function plainWords(s, fallback = "") {
+  const lines = String(s ?? "").replace(/\r\n/g, "\n").split("\n").map((line) => {
+    // a sentence ends at . ! or ? followed by a space: "1.5" and "example.com" stay whole
+    const sentences = line.split(/(?<=[.!?])\s+/);
+    return sentences.map((sentence) => {
+      const t = sentence.trim();
+      if (!t) return "";
+      const mapped = mapTerms(t);
+      if (forbiddenIn(mapped).length > 0) return "";
+      const capital = t[0] !== t[0].toLowerCase();
+      return capital ? mapped[0].toUpperCase() + mapped.slice(1) : mapped;
+    }).filter(Boolean).join(" ");
+  }).filter((l) => l.trim());
+  const out = lines.join("\n");
+  return out || fallback;
+}
+
+/** The words of Ask SCF in the Simple view. Fixed text: a test keeps it free of forbidden terms. */
+export const ASK = {
+  suggestions: ["What can Ask SCF help me with?", "What does this word mean?", "Why does my change wait?", "How do I ask for a change?"],
+  noPlainAnswer: "Ask SCF answered in words of the Advanced view. Switch to the Advanced view with View at the top to read it.",
+  project: "Your project",
+  stateSource: "What the Foundry saw of your work",
+  docSource: "The guide of the Foundry",
+  noAnswer: "Ask SCF could not answer.",
+  checkTitle: "A check",
+  checkOutcomes: { read: "Read again", passed: "Works", failed: "Does not work" },
+};
+
 /** The first sentence of the first prose line after the title; "" when there is none. */
 export function summaryOf(task) {
   const lines = String(task ?? "").split(/\r?\n/).slice(1);

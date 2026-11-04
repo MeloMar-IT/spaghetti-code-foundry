@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { OFFER_MAX, OfferSchema, offerDef, type Subject } from "./actions.js";
+import { SIMPLE_DROPPED, simplePage, type SimpleProject } from "./simple.js";
 import { PLAN_MAX, PlanStepSchema, STEP_KINDS, STEP_RULES, checkPlan, claimsResult, type Impact } from "./plan.js";
 
 /**
@@ -339,6 +340,8 @@ export interface CheckInput {
   targets?: Readonly<Record<string, About>>;
   /** The subject of each offered state source, by evidence id (`Prepared.subjects`). An offer can point only at one of these. */
   subjects?: Readonly<Record<string, Subject>>;
+  /** The Simple view: links only to Home, Help and these projects (read again when the reply is checked); no drafts, actions or offers. */
+  simple?: { projects: readonly SimpleProject[] };
 }
 
 export interface Checked {
@@ -362,6 +365,7 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
   if (!parsed.success) return undefined;
   const r = parsed.data;
   const dropped: string[] = [];
+  const pageFor = (to: string): { to: string; title: string } | undefined => (input.simple ? simplePage(to, input.simple.projects) : navPage(input.role, to));
   const clean = (v: unknown, max: number): string => (typeof v === "string" ? (input.clean ?? ((t) => t))(v.replace(/\r\n/g, "\n").replace(CONTROL, "")).trim().slice(0, max).trim() : "");
   const obj = (v: unknown): Record<string, unknown> | undefined => (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 
@@ -369,10 +373,12 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
   if (r.limit !== undefined && r.limit !== null && limitCode === undefined) dropped.push("limit: unknown code");
   if (limitCode !== undefined) {
     // A request that is not served: only the server's own words, a page the role has, and nothing else.
-    const limit = limitationFor(limitCode, input.role);
-    const page = limit.to !== undefined ? navPage(input.role, limit.to) : undefined;
+    const full = limitationFor(limitCode, input.role);
+    const page = full.to !== undefined ? pageFor(full.to) : undefined;
+    const { to: _to, ...rest } = full;
+    const limit: Limitation = page ? { ...rest, to: page.to } : rest;
     return {
-      reply: { type: r.type, summary: limit.limitation, explanation: "", certainty: "confirmed", evidence: [], recommendations: [limit.nextStep], links: page ? [{ label: page.title, to: page.to }] : [], drafts: [], actions: [], limit },
+      reply: { type: r.type, summary: limit.limitation, explanation: "", certainty: "confirmed", evidence: [], recommendations: [limit.nextStep], links: page ? [{ label: page.title.slice(0, TEXT_MAX.label), to: page.to }] : [], drafts: [], actions: [], limit },
       dropped,
     };
   }
@@ -392,14 +398,20 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
 
   const links: Reply["links"] = [];
   for (const l of r.links) {
-    const page = navPage(input.role, typeof obj(l)?.to === "string" ? (obj(l)!.to as string) : "");
-    if (!page) dropped.push("link: not a page of this role");
+    const page = pageFor(typeof obj(l)?.to === "string" ? (obj(l)!.to as string) : "");
+    if (!page) dropped.push(input.simple ? SIMPLE_DROPPED.link : "link: not a page of this role");
     // the label is the page's own title: a model cannot dress a link up as something else
-    else if (!links.some((x) => x.to === page.to) && links.length < LIST_MAX.links) links.push({ label: page.title, to: page.to });
+    else if (!links.some((x) => x.to === page.to) && links.length < LIST_MAX.links) links.push({ label: page.title.slice(0, TEXT_MAX.label), to: page.to });
   }
 
+  // drafts, actions and offers lead to Advanced pages and controls: the Simple view has none
+  if (input.simple) {
+    if (r.drafts.length) dropped.push(SIMPLE_DROPPED.draft);
+    if (r.actions.length) dropped.push(SIMPLE_DROPPED.action);
+    if (r.offers.length) dropped.push(SIMPLE_DROPPED.offer);
+  }
   const drafts: Reply["drafts"] = [];
-  for (const d of r.drafts) {
+  for (const d of input.simple ? [] : r.drafts) {
     const text = clean(obj(d)?.text, TEXT_MAX.draft);
     if (!text) dropped.push("draft: empty");
     else if (drafts.length < LIST_MAX.drafts) drafts.push({ title: clean(obj(d)?.title, TEXT_MAX.label) || "Draft", text });
@@ -408,7 +420,7 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
   const actions: Reply["actions"] = [];
   const targets = input.targets ?? {};
   const doubt = input.uncertain ?? [];
-  for (const a of r.actions) {
+  for (const a of input.simple ? [] : r.actions) {
     const o = obj(a);
     const def = ACTIONS.find((x) => x.id === o?.id && x.roles.includes(input.role));
     if (!def) {
@@ -429,7 +441,7 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
 
   // an offer is only a type and the id of an offered state source; the title and the subject are the server's own
   const offers: NonNullable<Reply["offers"]> = [];
-  for (const o of r.offers) {
+  for (const o of input.simple ? [] : r.offers) {
     const type = obj(o)?.type;
     const id = typeof obj(o)?.evidence === "string" ? (obj(o)!.evidence as string) : "";
     const def = offerDef(input.role, type);
@@ -453,7 +465,7 @@ export function checkReply(raw: unknown, input: CheckInput): Checked | undefined
       const def = ACTIONS.find((x) => x.id === id && x.roles.includes(input.role));
       return def ? { id: def.id, impact: def.impact } : undefined;
     },
-    page: (to) => navPage(input.role, to),
+    page: pageFor,
     clean,
   });
   dropped.push(...checkedPlan.dropped);

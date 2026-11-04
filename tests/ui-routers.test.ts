@@ -268,7 +268,8 @@ describe("user router", () => {
   it("starts Ask SCF for a user, and not in a preview or when the view cannot be shown", async () => {
     const initAsk = vi.fn(async () => null);
     await loadRouter("user/app.js", deps({ "/ask.js": { initAsk } }));
-    expect(initAsk.mock.calls).toEqual([["user"]]);
+    // the drawer is told whether the Simple view is shown (here the default, Advanced)
+    expect(initAsk.mock.calls).toEqual([["user", { simple: false }]]);
     initAsk.mockClear();
     await loadRouter("user/app.js", deps({ "/ask.js": { initAsk }, "/view-as.js": { beginView: () => ({ readOnly: true, ready: true }) } }));
     await loadRouter("user/app.js", deps({ "/ask.js": { initAsk }, "/view-as.js": { beginView: () => ({ readOnly: false, ready: false }) } }));

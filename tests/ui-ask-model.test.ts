@@ -626,3 +626,126 @@ describe("offers of a reply", () => {
     expect(e(500)).toBe("Ask SCF is not working now. Try again later.");
   });
 });
+
+describe("Ask SCF in the Simple view", () => {
+  let w: any;
+  beforeAll(async () => {
+    w = await import("../ui/simple-words.js" as string);
+  });
+  const SEEN = "2026-10-12T10:00:00.000Z";
+  const reply = (over: any = {}) => ({ type: "status", summary: "Your run failed.", explanation: "", certainty: "confirmed", evidence: [], recommendations: [], links: [], drafts: [], actions: [], ...over });
+  const simpleLayout = (r: any, done: number[] = []) => m.replyLayout(r, "user", done, { simple: true });
+  /** Every text a layout shows. */
+  const allText = (l: any): string[] => [
+    l.summary, l.explanation, l.trust.label, l.trust.text, ...l.assumptions,
+    ...l.cards.flatMap((c: any) => [c.title, c.text, c.note, c.link?.title ?? ""]),
+    ...l.sources.flatMap((s: any) => [s.what, s.title, s.ref]),
+    ...(l.plan ? [l.plan.header, ...l.plan.steps.flatMap((s: any) => [s.label, s.title, s.instructions, s.expected, s.failure, s.fallback, s.wouldBeLabel, s.proposal, s.note, s.link?.title ?? ""])] : []),
+  ];
+
+  it("plainWords maps terms, drops a sentence that keeps a forbidden term, keeps lines and capitals, and has a fallback", () => {
+    expect(w.plainWords("Your run failed on the repository.")).toBe("Your work got stuck on the project.");
+    expect(w.plainWords("The issue was merged. Check the logs. Then wait.")).toBe("The change was done. Then wait.");
+    expect(w.plainWords("First line.\n\nCheck the branch.\nSecond line.")).toBe("First line.\nSecond line.");
+    expect(w.plainWords("Check the logs.", "nothing")).toBe("nothing");
+    expect(w.plainWords(undefined)).toBe("");
+  });
+
+  it("keeps numbers, addresses and file names whole", () => {
+    expect(w.plainWords("Wait 1.5 minutes.")).toBe("Wait 1.5 minutes.");
+    expect(w.plainWords("Open example.com.")).toBe("Open example.com.");
+    expect(w.plainWords("Edit config.yaml first. Then wait 1.5 minutes.")).toBe("Edit config.yaml first. Then wait 1.5 minutes.");
+  });
+
+  it("leaves out a change step whose failure or fallback cannot be made plain, and keeps the others", () => {
+    const plan = [
+      { kind: "reversible", title: "Restart the work", instructions: "Restart it.", expected: "It runs.", failure: "Check the logs and stop.", fallback: "Ask again.", evidence: [] },
+      { kind: "check", title: "Look", instructions: "Look at the page.", expected: "", failure: "", fallback: "", evidence: [] },
+      { kind: "high-impact", title: "Change the setting", instructions: "Change it.", expected: "It is set.", failure: "It is not set.", fallback: "Leave it.", evidence: [] },
+    ];
+    const l = simpleLayout(reply({ type: "guided-resolution", plan }));
+    expect(l.plan.steps.map((s: any) => s.title)).toEqual(["Look", "Change the setting"]);
+    expect(l.plan.steps.map((s: any) => s.n)).toEqual([1, 2]);
+    expect(l.plan.steps[0].current).toBe(true);
+    expect(l.plan.header).toBe("2 steps, 1 is a high-impact change. Nothing is done until you do it.");
+    for (const t of allText(l)) expect(w.forbiddenIn(t), t).toEqual([]);
+  });
+
+  it("keeps the fixed Simple words free of forbidden terms", () => {
+    const fixed = [...w.ASK.suggestions, w.ASK.noPlainAnswer, w.ASK.project, w.ASK.stateSource, w.ASK.docSource, w.ASK.noAnswer, w.ASK.checkTitle, ...Object.values(w.ASK.checkOutcomes)];
+    for (const t of fixed) expect(w.forbiddenIn(t as string), String(t)).toEqual([]);
+    expect(m.suggestionsFor({ id: "runs" }, { simple: true })).toEqual(w.ASK.suggestions);
+    expect(m.suggestionsFor({ id: "runs" })).not.toEqual(w.ASK.suggestions);
+  });
+
+  it("links only to My projects, Help and a project page", () => {
+    expect(m.simpleLink("#/home")).toEqual({ href: "#/home", title: "My projects" });
+    expect(m.simpleLink("#/help")).toEqual({ href: "#/help", title: "Help" });
+    expect(m.simpleLink("#/repos/p1", "My app")).toEqual({ href: "#/repos/p1", title: "My app" });
+    expect(m.simpleLink("#/repos/p1", "The logs")).toEqual({ href: "#/repos/p1", title: "Your project" });
+    for (const bad of ["#/repos", "#/runs", "#/runs/r1", "#/settings", "https://x.y", "#/home?x=1", "#/repos/p1/x", "javascript:1", "", null, undefined]) expect(m.simpleLink(bad), String(bad)).toBeNull();
+  });
+
+  it("lays a reply out in plain words, with no offer, draft, action or source address", () => {
+    const l = simpleLayout(reply({
+      summary: "Your run failed on the repository.", explanation: "Look at the branch.",
+      evidence: [{ id: "s1", kind: "state", title: "Run r-1 failed", ref: "#/runs/r-1", observedAt: SEEN }, { id: "s2", kind: "doc", title: "The logs of a run", ref: "User guide, chapter 3" }],
+      recommendations: ["Check the logs.", "Wait a little."],
+      links: [{ label: "Runs", to: "#/runs" }, { label: "x", to: "#/home" }, { label: "App", to: "#/repos/p1" }],
+      drafts: [{ title: "d", text: "t" }], actions: [{ id: "resume-run", title: "Resume the run", impact: "x", about: { kind: "run", id: "r1" } }],
+      offers: [{ type: "open-run", title: "Open this run", evidence: "s1", subject: { kind: "run", id: "r1" } }],
+    }));
+    expect(l.summary).toBe("Your work got stuck on the project.");
+    expect(l.explanation).toBe("");
+    expect(l.offers).toEqual([]);
+    expect(l.cards.map((c: any) => c.kind)).toEqual(["recommendation", "navigation", "navigation"]);
+    expect(l.cards[0].text).toBe("Wait a little.");
+    expect(l.cards.filter((c: any) => c.link).map((c: any) => c.link.href)).toEqual(["#/home", "#/repos/p1"]);
+    expect(l.sources.map((s: any) => [s.ref, s.href])).toEqual([["", null], ["", null]]);
+    expect(l.sources[1].title).toBe("The guide of the Foundry");
+    for (const t of allText(l)) expect(w.forbiddenIn(t), t).toEqual([]);
+  });
+
+  it("falls back to a fixed sentence when no sentence of the summary is plain", () => {
+    expect(simpleLayout(reply({ summary: "Check the logs of the branch." })).summary).toBe(w.ASK.noPlainAnswer);
+  });
+
+  it("maps a plan and links its pages the Simple way", () => {
+    const plan = [{ kind: "navigation", title: "Open the run", instructions: "Open the repository page.", to: "#/runs/r1", expected: "You see the run.", failure: "Nothing.", fallback: "Ask again.", evidence: [] }, { kind: "check", title: "", instructions: "Look at the logs.", to: "#/home", expected: "", failure: "", fallback: "", evidence: [] }];
+    const l = simpleLayout(reply({ type: "guided-resolution", plan }));
+    expect(l.plan.steps.map((s: any) => s.link?.href ?? null)).toEqual([null, "#/home"]);
+    expect(l.plan.steps[0].title).toBe("Open the work");
+    expect(l.plan.steps[0].instructions).toBe("Open the project page.");
+    expect(l.plan.steps[1].title).toBe("Read-only check");
+    expect(l.plan.steps[1].instructions).toBe("");
+    for (const t of allText(l)) expect(w.forbiddenIn(t), t).toEqual([]);
+  });
+
+  it("shows a stored check in plain words with the fixed outcome words", () => {
+    const check = { title: "Connection of the repository acme/app", outcome: "failed", lines: ["The token was refused.", "Read the logs.", "Try again later."], observedAt: SEEN };
+    const e = m.entryOf({ id: "c1", role: "check", check, text: "x" }, { simple: true });
+    expect(e.check.outcome).toBe("Does not work");
+    expect(e.check.lines).toEqual(["Try again later."]);
+    for (const t of [e.check.title, e.check.outcome, ...e.check.lines]) expect(w.forbiddenIn(t), t).toEqual([]);
+    expect(m.entryOf({ id: "c1", role: "check", check }, {}).check.outcome).toBe("Connection failed");
+  });
+
+  it("maps every kind of message text and hides stored action outcomes", () => {
+    const outcome = { action: "resume-run", about: { kind: "run", id: "r1" }, result: "done", words: "The run went on.", at: SEEN };
+    const done = m.entryOf({ id: "a1", role: "assistant", status: "done", text: "x", reply: reply(), outcomes: [outcome] }, { simple: true });
+    expect(done.layout.outcomes).toEqual([]);
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "x", reply: reply(), outcomes: [outcome] }, {}).layout.outcomes).toHaveLength(1);
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "The run failed. See the logs." }, { simple: true }).text).toBe("The work got stuck.");
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "done", text: "See the logs." }, { simple: true }).text).toBe(w.ASK.noPlainAnswer);
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "failed", text: "The model failed." }, { simple: true }).text).toBe(w.ASK.noAnswer);
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "failed", text: "" }, { simple: true }).text).toBe(w.ASK.noAnswer);
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "cancelled", text: "Stopped. See the logs." }, { simple: true }).text).toBe("Stopped.");
+    expect(m.entryOf({ id: "a1", role: "assistant", status: "cancelled", text: "" }, { simple: true }).text).toBe("You stopped this answer.");
+  });
+
+  it("changes nothing for the other views", () => {
+    const l = m.replyLayout(reply({ summary: "Your run failed.", links: [{ label: "Runs", to: "#/runs" }] }), "user", []);
+    expect(l.summary).toBe("Your run failed.");
+    expect(l.cards[0].link.href).toBe("#/runs");
+  });
+});

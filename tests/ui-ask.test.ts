@@ -78,7 +78,7 @@ describe("both displays use the one drawer", () => {
     expect(admin).toContain('void initAsk("admin");');
     expect(user).toContain('import { initAsk } from "/ask.js";');
     // never in a preview of another person's display: the server shows no conversations there
-    expect(user).toContain('if (view.ready && !view.readOnly) void initAsk("user");');
+    expect(user).toContain('if (view.ready && !view.readOnly) void initAsk("user", { simple: shownView === "simple" });');
     for (const src of [admin, user]) expect(src).not.toMatch(/ask-drawer|askFrame|createAsk/);
     for (const html of ["ui/index.html", "ui/user/index.html"]) expect(readFileSync(html, "utf8"), html).toContain('<span id="ask-scf" class="ask-scf" hidden></span>');
   });
@@ -1276,5 +1276,56 @@ describe("offers in the drawer", () => {
     await first;
     expect(helpOffer).toHaveBeenCalledTimes(1);
     expect(go).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the drawer in the Simple view", () => {
+  const SEEN = "2026-10-12T10:00:00.000Z";
+  const check = { id: "k1", role: "check", status: "done", text: "Connection failed", at: SEEN, check: { title: "Connection of the repository", outcome: "failed", lines: ["The token was refused.", "See the logs."], observedAt: SEEN } };
+  const reply = {
+    type: "status", summary: "Your run failed on the repository.", explanation: "The issue was merged. Check the logs.", certainty: "unverified",
+    evidence: [{ id: "s1", kind: "state", title: "Run r-1 failed", ref: "#/runs/r-1", observedAt: SEEN }], recommendations: ["Wait a little."],
+    links: [{ label: "Runs", to: "#/runs" }, { label: "App", to: "#/repos/p1" }], drafts: [], actions: [],
+    offers: [{ type: "open-run", title: "Open this run", evidence: "s1", subject: { kind: "run", id: "r-1" } }],
+  };
+  const talk = () => conv([
+    q("Why?"),
+    a("done", { text: "plain", reply, outcomes: [{ action: "resume-run", about: { kind: "run", id: "r-1" }, result: "done", words: "The run went on.", at: SEEN }] }),
+    check,
+    q("And?", "q2"),
+    a("done", { id: "a2", replyTo: "q2", text: "See the logs of the run." }),
+  ], { handoffs: [{ message: "a1", where: "run", page: "#/runs/r-1", at: SEEN }] });
+
+  async function shown(simple: boolean) {
+    const made = make({ deps: { simple, now: () => Date.parse(SEEN) + 60_000 }, api: { helpConversation: vi.fn(async () => talk()) } });
+    made.d.open();
+    await made.d.openConversation("c1");
+    return { ...made, all: walk(made.d.ui.thread) };
+  }
+
+  it("shows nothing with a Foundry term, no hand-off and no change result, and opens a project in place", async () => {
+    const w: any = await import("../ui/simple-words.js" as string);
+    const { d, all } = await shown(true);
+    const text = d.ui.thread.textContent;
+    expect(w.forbiddenIn(text), text).toEqual([]);
+    expect(text).toContain("Your work got stuck on the project.");
+    expect(all.filter((e) => e.attrs["data-handoff"] !== undefined)).toEqual([]);
+    expect(text).not.toContain("You took this answer");
+    expect(text).not.toContain("The run went on.");
+    const links = all.filter((e) => e.tag === "a");
+    expect(links.map((l) => l.attrs.href)).toEqual(["#/repos/p1"]);
+    expect(links[0]!.attrs.target).toBeUndefined();
+    d.open();
+    expect(d.state.open).toBe(true);
+    links[0]!.click();
+    expect(d.state.open).toBe(false);
+    expect(walk(d.ui.suggest).map((e) => e.textContent)).toEqual(w.ASK.suggestions);
+  });
+
+  it("still shows the Advanced pieces when the view is not Simple", async () => {
+    const { all, d } = await shown(false);
+    expect(d.ui.thread.textContent).toContain("You took this answer to Run details");
+    expect(all.some((e) => e.attrs["data-handoff"] !== undefined)).toBe(true);
+    expect(all.filter((e) => e.tag === "a").map((l) => l.attrs.href)).toContain("#/runs");
   });
 });

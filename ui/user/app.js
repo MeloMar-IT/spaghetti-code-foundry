@@ -139,7 +139,7 @@ stopped = !view.ready;
 if (view.ready) stopPalette = initPalette({ role: "user", user: me, preview: view.readOnly });
 if (view.ready) context = initContext("user", me, { readOnly, go: contextGo });
 // Ask SCF: only for the person's own display (a preview shows no conversations), and only when it is switched on.
-if (view.ready && !view.readOnly) void initAsk("user");
+if (view.ready && !view.readOnly) void initAsk("user", { simple: shownView === "simple" });
 // The pages and links that plugins added; the Simple view has none. Without plugins nothing is added.
 if (view.ready) {
   const plugin = await loadPluginUi();
