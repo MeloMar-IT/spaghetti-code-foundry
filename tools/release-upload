@@ -3,47 +3,77 @@
 // (the logic is in src/release/upload.ts).
 //   release-upload <run-dir>   upload <run-dir>/release/out to the draft for the tag in <run-dir>/release/plan.json, in the
 //                              repository $FACTORY_VAR_GITHUB_REPO; writes release_url and release_tag to <run-dir>/outputs.json
+//   release-upload <run-dir> --local-tag <tag>
+//                              for a local project ($FACTORY_VAR_GITHUB_REPO is "local:…"): never calls gh; keeps the files in
+//                              <data folder>/releases/<name>/<tag>/ and writes release_tag, release_folder and release_files
 // The files include the delivery validator (scf-delivery-validate-<version>.mjs) and its .sha256, added by release-build.
-// Needs the gh login, so the flow step has repo_access. $FACTORY_GH_BIN replaces the gh program (tests).
+// Needs the gh login (not for a local project), so the flow step has repo_access. $FACTORY_GH_BIN replaces the gh program (tests).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const [runDir] = process.argv.slice(2);
+const args = process.argv.slice(2);
+let localTag;
+const at = args.indexOf("--local-tag");
+if (at >= 0) {
+  localTag = args[at + 1];
+  args.splice(at, 2);
+}
+const [runDir] = args;
 const fail = (msg) => {
   console.error(`release-upload: ${msg}`);
   process.exit(1);
 };
-if (!runDir) {
-  console.error("usage: release-upload <run-dir>");
+if (!runDir || args.length !== 1 || (at >= 0 && !localTag)) {
+  console.error("usage: release-upload <run-dir> [--local-tag <tag>]");
   process.exit(2);
 }
 
 try {
-  const { uploadRelease, ghRunner } = await import(new URL("../dist/release/upload.js", import.meta.url).href);
+  const { uploadRelease, ghRunner, keepReleaseFiles, formatSize } = await import(new URL("../dist/release/upload.js", import.meta.url).href);
   const { validGithubName } = await import(new URL("../dist/auth/repo-url.js", import.meta.url).href);
+  const { isLocalRepoName } = await import(new URL("../dist/auth/local-name.js", import.meta.url).href);
   const { writeRunOutputs } = await import(new URL("../dist/engine/run-outputs.js", import.meta.url).href);
   const repo = process.env.FACTORY_VAR_GITHUB_REPO || "";
-  if (!validGithubName(repo)) throw new Error('the variable github_repo must be "owner/name"');
   const plan = JSON.parse(readFileSync(join(runDir, "release", "plan.json"), "utf8"));
-  if (plan.skip) {
-    console.log(`skipped: ${plan.skip}`);
-    process.exit(0);
+  const summary = (list) => {
+    // the files with their sizes, for people who do not see the step output (cut at 1900 characters)
+    const files = list.map((f) => `${f.name} (${formatSize(f.size)})`).join("; ");
+    return files.length > 1900 ? `${files.slice(0, 1900)} …` : files;
+  };
+  if (isLocalRepoName(repo)) {
+    if (plan.skip) {
+      console.log(`skipped: ${plan.skip}`);
+      process.exit(0);
+    }
+    const { FACTORY_HOME } = await import(new URL("../dist/flow/load.js", import.meta.url).href);
+    const res = keepReleaseFiles({
+      repo,
+      tag: localTag || plan.tag,
+      outDir: join(runDir, "release", "out"),
+      releasesDir: join(process.env.FACTORY_HOME ?? FACTORY_HOME, "releases"),
+      runId: process.env.FACTORY_RUN_ID || "run",
+    });
+    console.log(`${res.reused ? "KEPT (already there)" : "KEPT"}: ${res.files.length} files in ${res.dir}`);
+    for (const f of res.files) console.log(`  ${f.name}  ${formatSize(f.size)}`);
+    writeRunOutputs(runDir, { release_tag: localTag || plan.tag, release_folder: res.dir, release_files: summary(res.files) });
+  } else {
+    if (!validGithubName(repo)) throw new Error('the variable github_repo must be "owner/name"');
+    if (plan.skip) {
+      console.log(`skipped: ${plan.skip}`);
+      process.exit(0);
+    }
+    const stop = new AbortController();
+    for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, () => stop.abort());
+    const res = await uploadRelease({
+      repo,
+      plan,
+      outDir: join(runDir, "release", "out"),
+      stageDir: join(runDir, "release", "upload"),
+      gh: ghRunner({ bin: process.env.FACTORY_GH_BIN || "gh", signal: stop.signal }),
+      log: (line) => console.log(line),
+    });
+    writeRunOutputs(runDir, { release_url: res.url, release_tag: res.tag, release_files: summary(res.files) });
   }
-  const stop = new AbortController();
-  for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.on(sig, () => stop.abort());
-  const res = await uploadRelease({
-    repo,
-    plan,
-    outDir: join(runDir, "release", "out"),
-    stageDir: join(runDir, "release", "upload"),
-    gh: ghRunner({ bin: process.env.FACTORY_GH_BIN || "gh", signal: stop.signal }),
-    log: (line) => console.log(line),
-  });
-  // the uploaded files with their sizes, for people who do not see the step output (cut at 1900 characters)
-  const { formatSize } = await import(new URL("../dist/release/upload.js", import.meta.url).href);
-  let files = res.files.map((f) => `${f.name} (${formatSize(f.size)})`).join("; ");
-  if (files.length > 1900) files = `${files.slice(0, 1900)} …`;
-  writeRunOutputs(runDir, { release_url: res.url, release_tag: res.tag, release_files: files });
 } catch (e) {
   fail(e.message);
 }

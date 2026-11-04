@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
-import { copyFileSync, linkSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { closeSync, copyFileSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { isLocalRepoName } from "../auth/local-name.js";
 import { releaseMarker, tagPattern, type Recipe } from "./recipe.js";
 
 /** Runs `gh` with these arguments and returns its output. Rejects when gh fails. */
@@ -267,4 +269,87 @@ export async function uploadRelease(i: UploadInput): Promise<UploadResult> {
   if (deleted.length) i.log(`PRUNED: ${deleted.join(", ")}`);
   if (pick.kept.length) i.log(`KEPT: ${pick.kept.map((r) => `${r.tag} (${r.id})`).join(", ")}`);
   return { url: rel.url, tag: rel.tag, id: rel.id, created, files, deleted, skipped, warnings };
+}
+
+export interface KeepInput {
+  /** The local name of the project, "local:<name>". */
+  repo: string;
+  tag: string;
+  outDir: string;
+  /** `<data folder>/releases` */
+  releasesDir: string;
+  runId: string;
+}
+
+const KEEP_TAG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
+const KEEP_MARK = ".release-id";
+
+/** SHA-256 of a file, read in chunks (release files can be large). */
+function sha256File(path: string): string {
+  const h = createHash("sha256");
+  const fd = openSync(path, "r");
+  try {
+    const buf = Buffer.allocUnsafe(1024 * 1024);
+    for (let n = readSync(fd, buf, 0, buf.length, null); n > 0; n = readSync(fd, buf, 0, buf.length, null)) h.update(buf.subarray(0, n));
+  } finally {
+    closeSync(fd);
+  }
+  return h.digest("hex");
+}
+
+/**
+ * Does the kept folder hold exactly the files of `listing`, each with its size and hash, and the marker `text`? Every file is
+ * read again; a missing, extra, changed or unreadable file is a mismatch.
+ */
+function keptMatches(dir: string, text: string, listing: { name: string; size: number; sha256: string }[]): boolean {
+  try {
+    if (readFileSync(join(dir, KEEP_MARK), "utf8") !== text) return false;
+    const have = walk(dir).filter((f) => f !== KEEP_MARK);
+    if (have.length !== listing.length) return false;
+    return listing.every((f, k) => have[k] === f.name && statSync(join(dir, f.name)).size === f.size && sha256File(join(dir, f.name)) === f.sha256);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Keeps the release files of a local project in `<releasesDir>/<name>/<tag>/`: copied into `<dest>.part-<runId>`, a marker with
+ * the tag and the file list is written, and the folder is renamed in one step. The same release again (same marker and files)
+ * is reused; a folder of any other content is never overwritten.
+ */
+export function keepReleaseFiles(i: KeepInput): { dir: string; files: { name: string; size: number }[]; reused: boolean } {
+  if (!isLocalRepoName(i.repo)) throw new UploadError("release files are kept only for a local project");
+  if (!KEEP_TAG.test(i.tag)) throw new UploadError("the tag of the release is not usable as a folder name");
+  if (!/^[\w.-]{1,100}$/.test(i.runId)) throw new UploadError("the run id is not usable");
+  const src = walk(i.outDir);
+  if (!src.length) throw new UploadError("there are no release files to keep (release/out is empty)");
+  const listing = src.map((f) => ({ name: f, size: statSync(join(i.outDir, f)).size, sha256: sha256File(join(i.outDir, f)) }));
+  const text = JSON.stringify({ tag: i.tag, files: listing });
+  const dest = join(i.releasesDir, i.repo.slice(6), i.tag);
+  const part = `${dest}.part-${i.runId}`;
+  rmSync(part, { recursive: true, force: true });
+  let exists = true;
+  try {
+    statSync(dest);
+  } catch {
+    exists = false;
+  }
+  if (exists) {
+    // Reused only when the folder holds exactly these files, with these hashes, and the marker says so.
+    if (keptMatches(dest, text, listing)) return { dir: dest, files: listing.map(({ name, size }) => ({ name, size })), reused: true };
+    throw new UploadError(`${dest} already exists; nothing was overwritten`);
+  }
+  try {
+    mkdirSync(part, { recursive: true });
+    for (const f of src) {
+      mkdirSync(dirname(join(part, f)), { recursive: true });
+      copyFileSync(join(i.outDir, f), join(part, f));
+    }
+    writeFileSync(join(part, KEEP_MARK), text);
+    renameSync(part, dest);
+  } catch (e) {
+    rmSync(part, { recursive: true, force: true });
+    throw new UploadError(`the release files could not be kept: ${(e as Error).message}`, { cause: e });
+  }
+  return { dir: dest, files: listing.map(({ name, size }) => ({ name, size })), reused: false };
 }

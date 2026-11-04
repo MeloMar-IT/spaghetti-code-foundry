@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isProtectedBranch, pushOwnerBranch, scrubCredentials, updateOwnerBranch, worktrees } from "../src/repos/local-branch.js";
+import { grantedBranch, isProtectedBranch, pushOwnerBranch, pushTagToOwner, scrubCredentials, updateOwnerBranch, worktrees } from "../src/repos/local-branch.js";
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
 const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, env: ENV, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -243,6 +243,119 @@ describe("pushOwnerBranch", () => {
     const r = pushOwnerBranch({ ownerDir: owner, branch: "develop", timeoutMs: 20_000 });
     expect(r.kind).toBe("failed");
     expect(JSON.stringify(r)).not.toContain("secret");
+  });
+});
+
+describe("the final release: allowProtected, the grant, the tag", () => {
+  /** A merge of the workspace's develop into main, tagged, in the workspace. */
+  const release = (tag = "release-2026-01-01") => {
+    git(ws, "checkout", "-q", "-B", "main", "origin/main");
+    git(ws, "merge", "-q", "--no-ff", "--no-edit", "-m", "Release", "develop");
+    git(ws, "tag", "-a", tag, "-m", tag);
+    return git(ws, "rev-parse", "main");
+  };
+  const home = () => {
+    const prev = process.env.FACTORY_HOME;
+    process.env.FACTORY_HOME = join(root, "home");
+    return () => { if (prev === undefined) delete process.env.FACTORY_HOME; else process.env.FACTORY_HOME = prev; };
+  };
+  const hooksEnv = (dir: string, allow: string): NodeJS.ProcessEnv => ({ FACTORY_PUSH_ALLOW: allow, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.hooksPath", GIT_CONFIG_VALUE_0: dir });
+  const token = "ab12".repeat(8);
+
+  it("moves a protected branch only with allowProtected", () => {
+    const sha = release();
+    git(owner, "checkout", "-q", "develop");
+    expect(update({ branch: "main" })).toEqual({ kind: "refused", reason: "main is a protected branch" });
+    expect(git(owner, "rev-parse", "main")).not.toBe(sha);
+    expect(update({ branch: "main", allowProtected: true })).toEqual({ kind: "updated", branch: "main", sha, synced: false });
+    expect(git(owner, "rev-parse", "main")).toBe(sha);
+    // the same commit again counts as updated, so a resume can go on
+    expect(update({ branch: "main", allowProtected: true }).kind).toBe("updated");
+  });
+
+  it("grantedBranch reads the engine's token file, and nothing else", () => {
+    const restore = home();
+    try {
+      const hooks = join(root, "home", "hooks");
+      write(hooks, `allow/${token}`, "main");
+      expect(grantedBranch(hooksEnv(hooks, `main:${token}`))).toBe("main");
+      expect(grantedBranch(hooksEnv(hooks, `develop:${token}`))).toBeUndefined();
+      expect(grantedBranch(hooksEnv(hooks, `main:${"cd34".repeat(8)}`))).toBeUndefined();
+      expect(grantedBranch(hooksEnv(hooks, "main:../x"))).toBeUndefined();
+      expect(grantedBranch(hooksEnv("hooks", `main:${token}`))).toBeUndefined();
+      expect(grantedBranch({})).toBeUndefined();
+      expect(grantedBranch({ FACTORY_PUSH_ALLOW: `main:${token}` })).toBeUndefined();
+      // a fabricated hooks folder with a matching token file is not the engine's
+      const fake = join(root, "fake-hooks");
+      write(fake, `allow/${token}`, "main");
+      expect(grantedBranch(hooksEnv(fake, `main:${token}`))).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  it("pushTagToOwner creates the tag, repeats safely and never moves another one", () => {
+    release();
+    update({ branch: "main", allowProtected: true });
+    const t = (tag: string) => pushTagToOwner({ workspace: ws, ownerDir: owner, tag });
+    expect(t("release-2026-01-01")).toEqual({ kind: "tagged" });
+    expect(git(owner, "rev-parse", "release-2026-01-01^{commit}")).toBe(git(ws, "rev-parse", "main"));
+    expect(t("release-2026-01-01")).toEqual({ kind: "tagged" });
+    // the owner has a tag of that name on another object
+    git(owner, "tag", "other", "develop");
+    git(ws, "tag", "-a", "other", "-m", "other");
+    const r = t("other");
+    expect(r.kind).toBe("refused");
+    expect(git(owner, "rev-parse", "other")).toBe(git(owner, "rev-parse", "develop"));
+    for (const bad of ["../x", "-x", "a b", ""]) expect(t(bad).kind).toBe("refused");
+    expect(t("missing").kind).toBe("refused");
+  });
+
+  it("pushOwnerBranch can push a tag with the branch", () => {
+    release();
+    update({ branch: "main", allowProtected: true });
+    pushTagToOwner({ workspace: ws, ownerDir: owner, tag: "release-2026-01-01" });
+    const bare = join(root, "bare.git");
+    git(root, "init", "-q", "--bare", bare);
+    git(owner, "remote", "add", "origin", bare);
+    expect(pushOwnerBranch({ ownerDir: owner, branch: "main", tags: ["release-2026-01-01"] })).toEqual({ kind: "pushed", remote: "origin" });
+    expect(git(bare, "rev-parse", "release-2026-01-01")).toBe(git(owner, "rev-parse", "release-2026-01-01"));
+    expect(pushOwnerBranch({ ownerDir: owner, branch: "main", tags: ["../x"] }).kind).toBe("failed");
+  });
+
+  it("the tool refuses `release` without a grant, and does not move main", () => {
+    release();
+    const before = git(owner, "rev-parse", "main");
+    const r = spawnSync("node", [join(process.cwd(), "tools", "local-branch"), "release", "main", "release-2026-01-01"], {
+      cwd: ws, encoding: "utf8", env: { ...ENV, FACTORY_LOCAL_REPO_DIR: owner, FACTORY_RUN_ID: "run1", FACTORY_PROTECTED_BRANCHES: "main", FACTORY_PUSH_ALLOW: `main:${token}` },
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("only the final step");
+    expect(git(owner, "rev-parse", "main")).toBe(before);
+    expect(git(owner, "tag")).toBe("");
+  });
+
+  it("the tool exits 1 with TAG_FAILED when the tag cannot be placed, and 0 with the grant otherwise", () => {
+    const restore = home();
+    try {
+      const sha = release();
+      const hooks = join(root, "home", "hooks");
+      write(hooks, `allow/${token}`, "main");
+      const env = { ...ENV, FACTORY_HOME: join(root, "home"), FACTORY_LOCAL_REPO_DIR: owner, FACTORY_RUN_ID: "run1", FACTORY_PROTECTED_BRANCHES: "main", ...hooksEnv(hooks, `main:${token}`) };
+      const run = (tag: string) => spawnSync("node", [join(process.cwd(), "tools", "local-branch"), "release", "main", tag], { cwd: ws, encoding: "utf8", env });
+      git(owner, "tag", "taken", "develop");
+      git(ws, "tag", "-a", "taken", "-m", "taken");
+      const bad = run("taken");
+      expect(bad.status).toBe(1);
+      expect(bad.stdout).toContain("TAG_FAILED:");
+      expect(git(owner, "rev-parse", "main")).toBe(sha); // main moved before the tag failed: a resume finishes the tag
+      const ok = run("release-2026-01-01");
+      expect(ok.status).toBe(0);
+      expect(ok.stdout).toContain("TAG: release-2026-01-01");
+      expect(git(owner, "rev-parse", "release-2026-01-01^{commit}")).toBe(sha);
+    } finally {
+      restore();
+    }
   });
 });
 

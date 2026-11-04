@@ -282,6 +282,85 @@ describe("the pages", () => {
   });
 });
 
+describe("Make this version final (a local project)", () => {
+  const LOCAL = "local:demo-0123abcd";
+  const local = [{ id: "r3", url: "/home/me/demo", method: "local", localName: LOCAL }];
+  const message = "Make this version final?\nThese finished changes go to main:\n- #1 Build me\n- #2 Fix the colours of the page";
+  const finalRun = (over: any = {}) => ({
+    runId: "f1", flow: "release-daily", task: "daily", status: "waiting", startedAt: iso(5), vars: { github_repo: LOCAL }, history: [],
+    waiting: { stepId: "make_final", message, since: iso(5) },
+    next: nextStep("approval", { runId: "f1", repo: LOCAL, title: "Make this version final" } as any, { message, final: true }), ...over,
+  });
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  it("matches a local project's run by its local name and builds the card", () => {
+    const m = model.projectsModel(local, [finalRun()], [])[0];
+    expect(m.todo).toHaveLength(1);
+    const c = m.todo[0];
+    expect(c).toMatchObject({ todo: "Make this version final", decide: "f1", items: ["Build me", "Fix the colours of the page"] });
+    expect(c.items.join(" ")).not.toMatch(/#/);
+    expect(c.link).toBeUndefined();
+    expect(m.next).toEqual({ label: "Make this version final", href: "#/repos/r3", external: false });
+    // another project's runs do not show here
+    expect(model.projectsModel([{ id: "r9", url: "/x/other", method: "local", localName: "local:other-aaaaaaaa" }], [finalRun()], [])[0].todo).toEqual([]);
+  });
+
+  it("draws the button, a Not yet box with an optional reason, and answers through onDecide", async () => {
+    const calls: any[] = [];
+    const onDecide = vi.fn(async (...a: any[]) => { calls.push(a); return true; });
+    const page = box(view.projectView(model.projectsModel(local, [finalRun()], [])[0], { onDecide }));
+    expect(page.textContent).toContain("A new version of your project is ready.");
+    expect(page.textContent).toContain("Build me");
+    const buttons = page.all("button");
+    const yes = buttons.find((b) => b.textContent === "Make this version final")!;
+    expect(page.all("details")[0]!.all("summary")[0]!.textContent).toBe("Not yet");
+    const area = page.all("textarea")[0]!;
+    const keep = buttons.find((b) => b.textContent === "Keep it as it is")!;
+    yes.click();
+    await tick();
+    expect(calls[0]).toEqual(["f1", true, ""]);
+    expect(page.textContent).toContain("Thank you. The Foundry goes on by itself.");
+    (area as any).value = "Wait for the logo";
+    keep.click();
+    await tick();
+    expect(calls[1]).toEqual(["f1", false, "Wait for the logo"]);
+  });
+
+  it("says so when the answer did not work", async () => {
+    const page = box(view.projectView(model.projectsModel(local, [finalRun()], [])[0], { onDecide: async () => false }));
+    page.all("button").find((b) => b.textContent === "Make this version final")!.click();
+    await tick();
+    expect(page.textContent).toContain("That did not work. Try again.");
+  });
+
+  it("keeps the typed reason and the open Not yet box when the page is drawn again", async () => {
+    const onDecide = vi.fn(async () => true);
+    const model0 = model.projectsModel(local, [finalRun()], [])[0];
+    const first = box(view.projectView(model0, { onDecide }));
+    const area = first.all("textarea")[0]!;
+    (area as any).value = "Wait for the logo";
+    area.fire("input", { target: area });
+    first.all("details")[0]!.fire("toggle", { target: { open: true } });
+    // the poll draws the same project again (the data changed somewhere else)
+    const again = box(view.projectView(model.projectsModel(local, [finalRun()], [])[0], { onDecide }));
+    expect(again.all("textarea")[0]!.value).toBe("Wait for the logo");
+    expect(again.all("details")[0]!.attrs.open).toBe("");
+    // the answer goes through and the draft is gone
+    again.all("button").find((b) => b.textContent === "Make this version final")!.click();
+    await tick();
+    expect(onDecide).toHaveBeenCalledWith("f1", true, "");
+    const later = box(view.projectView(model.projectsModel(local, [finalRun()], [])[0], { onDecide }));
+    expect(later.all("textarea")[0]!.value).toBe("");
+    expect(later.all("details")[0]!.attrs.open).toBeUndefined();
+  });
+
+  it("uses only words of the list", () => {
+    for (const v of Object.values<string>(words.FINAL)) expect(words.forbiddenIn(v), v).toEqual([]);
+    const page = box(view.projectView(model.projectsModel(local, [finalRun()], [])[0], { onDecide: async () => true }));
+    expect(words.forbiddenIn(texts(page).join("\n"))).toEqual([]);
+  });
+});
+
 describe("the Help page", () => {
   const page = (contact?: string) => box(view.helpView(contact));
   const heads = (p: FakeElement, tag: string) => p.all(tag).map((e) => e.textContent);

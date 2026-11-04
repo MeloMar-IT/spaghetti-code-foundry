@@ -1,18 +1,33 @@
 #!/usr/bin/env node
 // Writes to the owner's own folder of a local project (a repository connected as "Local (no GitHub)").
 // Usage (run it with node, in the run's workspace):
-//   local-branch update <branch>   bring the workspace's branch into the owner's folder (never a push into a checked-out branch)
-//   local-branch push <branch>     plain `git push` of the branch from the owner's folder to its remote
-// update: exit 0 prints `UPDATED: <branch> <short>` and `SYNCED: yes|no`; exit 3 prints `MOVED: …` (the owner's branch moved);
-//   exit 4 prints `PAUSED: <reason>` (uncommitted work in the way); exit 1 writes `local-branch: <reason>` to stderr.
+//   local-branch update <branch>            bring the workspace's branch into the owner's folder (never a push into a checked-out branch)
+//   local-branch release <branch> <tag>     the final step of the daily release: bring the protected branch and the tag into the owner's folder
+//   local-branch push <branch> [--tag <t>]  plain `git push` of the branch (and the tag) from the owner's folder to its remote
+// update and release: exit 0 prints `UPDATED: <branch> <short>` and `SYNCED: yes|no` (release also `TAG: <tag>`); exit 3 prints `MOVED: …`
+//   (the owner's branch moved); exit 4 prints `PAUSED: <reason>` (uncommitted work in the way); exit 1 writes `local-branch: <reason>` to stderr
+//   (release: `TAG_FAILED: <reason>` on stdout when the tag could not be placed).
+// release works only with the engine's one-time grant (FACTORY_PUSH_ALLOW) for that branch, which only the final_merge step of the
+// unchanged daily release gets. Nothing is forced.
 // push: exit 0 prints `REMOTE: pushed <branch> to <remote>`; exit 2 prints `REMOTE: none`; exit 1 prints `REMOTE_FAILED: <reason>`.
 // Env: FACTORY_LOCAL_REPO_DIR, FACTORY_RUN_ID, FACTORY_PROTECTED_BRANCHES (space separated). The logic is dist/repos/local-branch.js (build first).
 function fail(msg) {
   process.stderr.write(`local-branch: ${msg}\n`);
   process.exit(1);
 }
+const usage = "usage: local-branch update <branch> | release <branch> <tag> | push <branch> [--tag <tag>]";
 const [sub, branch, ...rest] = process.argv.slice(2);
-if ((sub !== "update" && sub !== "push") || !branch || rest.length) fail("usage: local-branch update|push <branch>");
+if (!["update", "release", "push"].includes(sub) || !branch) fail(usage);
+let tag;
+if (sub === "update" && rest.length) fail(usage);
+if (sub === "release") {
+  if (rest.length !== 1) fail(usage);
+  tag = rest[0];
+}
+if (sub === "push") {
+  if (rest.length === 2 && rest[0] === "--tag") tag = rest[1];
+  else if (rest.length) fail(usage);
+}
 const dir = process.env.FACTORY_LOCAL_REPO_DIR ?? "";
 if (!dir) fail("the folder of this local project is not known to the Foundry");
 let lib;
@@ -26,17 +41,28 @@ try {
 const problem = paths.localPathProblem(dir);
 if (problem) fail(`the folder of this local project ${problem}`);
 
-if (sub === "update") {
+if (sub === "update" || sub === "release") {
+  const release = sub === "release";
+  if (release && lib.grantedBranch(process.env) !== branch) fail(`only the final step of the daily release may move ${branch}`);
   const r = lib.updateOwnerBranch({
     workspace: process.cwd(),
     ownerDir: dir,
     branch,
     runId: process.env.FACTORY_RUN_ID ?? "",
     protectedPatterns: (process.env.FACTORY_PROTECTED_BRANCHES ?? "").split(/\s+/).filter(Boolean),
+    allowProtected: release,
   });
   if (r.kind === "updated") {
     console.log(`UPDATED: ${r.branch} ${r.sha.slice(0, 7)}`);
     console.log(`SYNCED: ${r.synced ? "yes" : "no"}`);
+    if (release) {
+      const t = lib.pushTagToOwner({ workspace: process.cwd(), ownerDir: dir, tag });
+      if (t.kind === "tagged") console.log(`TAG: ${tag}`);
+      else {
+        console.log(`TAG_FAILED: ${t.reason}`);
+        process.exit(1);
+      }
+    }
   } else if (r.kind === "moved") {
     console.log(`MOVED: ${r.detail}`);
     process.exit(3);
@@ -45,8 +71,8 @@ if (sub === "update") {
     process.exit(4);
   } else fail(r.reason);
 } else {
-  const r = lib.pushOwnerBranch({ ownerDir: dir, branch });
-  if (r.kind === "pushed") console.log(`REMOTE: pushed ${branch} to ${r.remote}`);
+  const r = lib.pushOwnerBranch({ ownerDir: dir, branch, tags: tag ? [tag] : [] });
+  if (r.kind === "pushed") console.log(`REMOTE: pushed ${branch}${tag ? ` and ${tag}` : ""} to ${r.remote}`);
   else if (r.kind === "none") {
     console.log("REMOTE: none");
     process.exit(2);

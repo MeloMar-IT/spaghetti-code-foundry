@@ -3,7 +3,7 @@ import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { projectsModel } from "./simple-model.js";
-import { HELP, TERM_MEANINGS, WORDS, termWords } from "./simple-words.js";
+import { FINAL, HELP, TERM_MEANINGS, WORDS, termWords } from "./simple-words.js";
 
 // The Simple view: My projects (#/home) and the project page (#/repos/<id>). All text comes from the word list.
 
@@ -50,17 +50,58 @@ function groupView(key, title, cards, { doneOpen, onToggle }) {
 }
 
 /**
+ * The card of a version that waits for the owner's OK: the finished changes in plain words, the big button, and "Not yet" with an
+ * optional reason. `onDecide(runId, approved, note)` answers true when it worked; the answer is told in a polite status line.
+ */
+/**
+ * What the person typed in a "Not yet" box and whether the box is open, by run id. The page is drawn again every few seconds,
+ * so the draft lives here, not in the element; it goes when the answer is sent and worked.
+ */
+const drafts = new Map();
+
+function decideCard(c, onDecide) {
+  const draft = drafts.get(c.decide) ?? { note: "", open: false };
+  drafts.set(c.decide, draft);
+  const status = h("p", { class: "muted", "aria-live": "polite" });
+  const note = h("textarea", {
+    rows: 3, maxlength: 500, "aria-label": FINAL.why, placeholder: FINAL.why, "data-focus": `simple-why-${c.id}`, value: draft.note,
+    onInput: (e) => { draft.note = String(e?.target?.value ?? note.value ?? ""); },
+  });
+  const send = async (approved, text) => {
+    status.textContent = "";
+    let ok = false;
+    try {
+      ok = (await onDecide?.(c.decide, approved, text)) === true;
+    } catch {
+      ok = false;
+    }
+    if (ok) drafts.delete(c.decide);
+    status.textContent = ok ? FINAL.sent : FINAL.failed;
+  };
+  return h("li", { class: "simple-card" },
+    h("strong", {}, c.title),
+    c.line ? h("p", { class: "muted" }, c.line) : null,
+    c.items?.length ? h("div", {}, h("p", {}, FINAL.what), h("ul", {}, c.items.map((t) => h("li", {}, t)))) : null,
+    h("button", { type: "button", class: "btn primary simple-big", "data-focus": `simple-todo-${c.id}`, onClick: () => send(true, "") }, FINAL.yes),
+    h("details", { open: draft.open ? true : undefined, onToggle: (e) => { draft.open = e?.target?.open === true || e?.target?.hasAttribute?.("open") === true; } },
+      h("summary", { "data-focus": `simple-notyet-${c.id}` }, FINAL.notYet),
+      note,
+      h("button", { type: "button", "data-focus": `simple-keep-${c.id}`, onClick: () => send(false, String(note.value ?? draft.note ?? "").trim()) }, FINAL.keep)),
+    status);
+}
+
+/**
  * The project page. `actions`: the action row, [{ id: "change" | "tryIt" | "final", href?, onClick? }]; nothing is drawn
  * without actions. `doneOpen` and `onToggle` keep the "Show all done" box open across a refresh.
  */
-export function projectView(model, { actions = [], doneOpen = false, onToggle } = {}) {
+export function projectView(model, { actions = [], doneOpen = false, onToggle, onDecide } = {}) {
   return [
     h("a", { class: "simple-back", href: "#/home", "data-focus": "simple-back" }, WORDS.back),
     h("h1", {}, model.name),
     h("section", { class: "simple-todo" },
       h("h2", {}, WORDS.todo),
       model.todo.length
-        ? h("ul", { class: "simple-list" }, model.todo.map((c) => h("li", { class: "simple-card" },
+        ? h("ul", { class: "simple-list" }, model.todo.map((c) => c.decide ? decideCard(c, onDecide) : h("li", { class: "simple-card" },
           h("strong", {}, c.title),
           c.line ? h("p", { class: "muted" }, c.line) : null,
           c.link ? linkNode({ ...c.link, label: c.todo }, "btn primary simple-big", `simple-todo-${c.id}`) : null)))
@@ -95,7 +136,7 @@ async function live(main, { a, draw }) {
       return { repos, runs: await withActive(a, runs, queue), pending: queue?.pending };
     },
     draw: ({ repos, runs, pending }) => {
-      const nodes = draw(projectsModel(repos, runs, pending));
+      const nodes = draw(projectsModel(repos, runs, pending), () => poll.refresh());
       keepScroll(box, () => mount(box, ...nodes, states.alert, states.note));
     },
     every: REFRESH_MS,
@@ -142,11 +183,21 @@ export function renderSimpleProject(main, { id, a = api, onName, actions = [] } 
   let doneOpen = false;
   return live(main, {
     a,
-    draw: (projects) => {
+    draw: (projects, refresh) => {
       const p = projects.find((x) => String(x.id) === String(id));
       if (!p) return [h("a", { class: "simple-back", href: "#/home" }, WORDS.back), h("p", {}, WORDS.notFound)];
       onName?.(p.name);
-      return projectView(p, { actions, doneOpen, onToggle: (open) => { doneOpen = open; } });
+      // The answer goes to the run's own approve / reject call; the page is read again after it worked.
+      const onDecide = async (runId, approved, note) => {
+        try {
+          await (approved ? a.approveRun(runId, note) : a.rejectRun(runId, note));
+        } catch {
+          return false;
+        }
+        refresh?.();
+        return true;
+      };
+      return projectView(p, { actions, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide });
     },
   });
 }

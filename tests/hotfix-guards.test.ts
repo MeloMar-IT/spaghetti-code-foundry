@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
-import { grantPush, hotfixState, isShippedFlow, protectedBranchEnv, pushAllowEnv, selfBuild, selfContains, skillPublishState } from "../src/engine/guards.js";
+import { grantedBranch } from "../src/repos/local-branch.js";
+import { finalReleaseState, grantPush, hotfixState, isShippedFlow, protectedBranchEnv, pushAllowEnv, selfBuild, selfContains, skillPublishState } from "../src/engine/guards.js";
 import { runFlow, SKILL_WRITE_REFUSED, skillLibraryRun, skillWriteRefused } from "../src/engine/runner.js";
 import { parseFlow } from "../src/flow/load.js";
 import type { Flow } from "../src/flow/schema.js";
@@ -313,5 +314,60 @@ describe("the skill-write push exception", () => {
     expect(skillLibraryRun("o/other", undefined, () => lib)).toBe(false);
     expect(skillLibraryRun(undefined, undefined, () => lib)).toBe(false);
     expect(skillLibraryRun("o/skills", undefined, () => { throw new Error("broken"); })).toBe(false);
+  });
+});
+
+describe("the final-release grant with every guard off", () => {
+  it("the hook folder is in the environment when the run observes pushes, so the grant is recognised", () => {
+    const prev = process.env.FACTORY_HOME;
+    process.env.FACTORY_HOME = join(tmp, "home");
+    try {
+      // no protected branch, no secret scan, no policy that observes pushes: the hook folder must still be there for a final release
+      expect(protectedBranchEnv([], false, false)).toEqual({});
+      const observed = protectedBranchEnv([], false, true);
+      const grant = grantPush("main");
+      expect(grantedBranch({ ...observed, ...grant.env })).toBe("main");
+      grant.revoke();
+    } finally {
+      if (prev === undefined) delete process.env.FACTORY_HOME;
+      else process.env.FACTORY_HOME = prev;
+    }
+  });
+});
+
+describe("the final-release push exception (release-daily, local project)", () => {
+  const daily = (): Flow => parseFlow(readFileSync("flows/release-daily.yaml", "utf8"), "flows/release-daily.yaml");
+  const local = "local:demo-0123abcd";
+  const vars = { main_branch: "main" };
+
+  it("finalReleaseState is on only for the shipped release-daily and a local name", () => {
+    expect(finalReleaseState(daily(), local)).toBe("on");
+    expect(finalReleaseState(JSON.parse(JSON.stringify(daily())) as Flow, local)).toBe("on");
+    expect(finalReleaseState(daily(), "owner/repo")).toBe("other");
+    expect(finalReleaseState(daily(), undefined)).toBe("other");
+    expect(finalReleaseState(shipped(), local)).toBe("other");
+    const changed = daily();
+    (changed.steps.find((s) => s.id === "final_merge") as { run: string }).run += "\necho more";
+    expect(finalReleaseState(changed, local)).toBe("other");
+    const renamed = daily();
+    renamed.name = "release-daily-2";
+    expect(finalReleaseState(renamed, local)).toBe("other");
+  });
+
+  it("pushAllowEnv grants final_merge at the top level only", () => {
+    expect(pushAllowEnv({ id: "final_merge" }, 0, vars, "off", "other", "on")).toEqual({ FACTORY_PUSH_ALLOW: "main" });
+    expect(pushAllowEnv({ id: "final_merge" }, 1, vars, "off", "other", "on")).toEqual({});
+    expect(pushAllowEnv({ id: "final_merge" }, 0, vars, "off", "other", "other")).toEqual({});
+    expect(pushAllowEnv({ id: "final_merge" }, 0, vars, "off")).toEqual({});
+    expect(pushAllowEnv({ id: "final_close" }, 0, vars, "off", "other", "on")).toEqual({});
+    expect(pushAllowEnv({ id: "final_merge" }, 0, { main_branch: "ma*" }, "off", "other", "on")).toEqual({});
+  });
+
+  it("the local path of release-daily never calls gh or a pull request command", () => {
+    for (const id of ["final_ask", "make_final", "final_merge", "final_close", "final_files", "final_report", "final_rejected"]) {
+      const s = daily().steps.find((x) => x.id === id) as { run?: string } | undefined;
+      expect(s, id).toBeDefined();
+      expect(s?.run ?? "").not.toMatch(/\bgh\b|pr-(open|list|edit|comment|ready|merge)/);
+    }
   });
 });
