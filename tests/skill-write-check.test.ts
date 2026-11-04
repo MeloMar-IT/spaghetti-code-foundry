@@ -219,3 +219,15 @@ describe("formatProblems", () => {
     expect(formatProblems("demo-skill", [])).toEqual(["SKILL.md is missing"]);
   });
 });
+
+describe("the version of a change (#777)", () => {
+  it("refuses a version that is not higher than the base", () => {
+    expect(check({ baseVersion: "1.0.0" }).problems.join("\n")).toContain("the version must be higher than 1.0.0 for a change");
+    expect(check({ baseVersion: "1.2.0" }).problems.join("\n")).toContain("the version must be higher than 1.2.0");
+  });
+  it("accepts a higher version, and has no version rule for a new skill", () => {
+    writeFileSync(join(dir, "SKILL.md"), readFileSync(join(dir, "SKILL.md"), "utf8").replace(/^version: .*$/m, "version: 1.1.0"));
+    expect(check({ baseVersion: "1.0.0" }).problems).toEqual([]);
+    expect(check().problems).toEqual([]);
+  });
+});

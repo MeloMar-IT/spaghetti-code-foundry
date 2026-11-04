@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -20,7 +20,7 @@ const stoppedRun = (id = "r1"): any => ({
   skillPlan: { action: "stop", reason: "skills not resolved: rust-async is unknown", unresolved: [{ id: "rust-async", code: "unknown", mandatory: false }] },
 });
 
-function setup(o: { authoring?: any; repos?: any[]; runs?: any[]; busy?: boolean; issues?: any[] } = {}) {
+function setup(o: { authoring?: any; repos?: any[]; runs?: any[]; busy?: boolean; issues?: any[]; skills?: any[]; effects?: any; library?: any } = {}) {
   const logs: string[] = [];
   const created: any[] = [];
   const saved: any[] = [];
@@ -34,7 +34,9 @@ function setup(o: { authoring?: any; repos?: any[]; runs?: any[]; busy?: boolean
   const sweeper = skillGapSweeper({
     config: () => cfg(o.authoring ?? { repository: "lib/skills" }) as any,
     runs: () => runs,
-    skills: () => [],
+    skills: () => o.skills ?? [],
+    ...(o.effects ? { effects: o.effects } : {}),
+    libraryNames: () => o.library ?? { names: [], digests: new Map(), qualify: (n: string) => n },
     repos: () => o.repos ?? [record()],
     signIn: async () => { signIns++; return { run: (fn) => fn(), dispose() {} }; },
     store: () => store,
@@ -45,8 +47,41 @@ function setup(o: { authoring?: any; repos?: any[]; runs?: any[]; busy?: boolean
     now: () => NOW,
     ledgerFile: join(tmp, `ledger-${++seq}.json`),
   });
-  return { sweeper, logs, created, saved, signIns: () => signIns };
+  return { sweeper, logs, created, saved, signIns: () => signIns, ledger: join(tmp, `ledger-${seq}.json`), store };
 }
+
+describe("improve issues (#777)", () => {
+  const installed = { key: "src-demo-1@1.0.0", id: "src-demo-1", version: "1.0.0", digest: "sha256:aa", active: true, pkg: {}, trust: "approved" };
+  const harms = { state: "ok", file: "x", record: { verdict: { verdict: "no-measurable-effect", with: { passed: 4, runs: 12 }, without: { passed: 4, runs: 12 } } } };
+  const library = { names: ["demo"], digests: new Map(), qualify: (n: string) => `src-${n}-1` };
+  it("opens one 'Improve skill' issue for a library skill without a verdict of help, and not again", async () => {
+    const s = setup({ runs: [], skills: [installed], effects: () => harms, library });
+    await s.sweeper.tick();
+    expect(s.created).toHaveLength(1);
+    expect(s.created[0].title).toBe("Improve skill demo");
+    expect(s.created[0].labels).toEqual(["Factory_go"]);
+    expect(s.created[0].body).toContain("`src-demo-1@1.0.0`");
+    expect(s.created[0].body.trimEnd().split("\n").at(-1)).toBe("<!-- scf skill-improve=demo -->");
+  });
+  it("does not open a second issue while one is open", async () => {
+    const open = { number: 9, state: "open", title: "t", html_url: "https://github.com/lib/skills/issues/9", created_at: new Date(NOW - 5 * DAY).toISOString(), labels: [], body: "<!-- scf skill-improve=demo -->" };
+    const s = setup({ runs: [], skills: [installed], effects: () => harms, library, issues: [open] });
+    await s.sweeper.tick();
+    expect(s.created).toEqual([]);
+  });
+  it("opens nothing for a skill outside the library", async () => {
+    const s = setup({ runs: [], skills: [{ ...installed, id: "other", key: "other@1.0.0" }], effects: () => harms, library });
+    await s.sweeper.tick();
+    expect(s.created).toEqual([]);
+  });
+  it("knows a skill published by skill-write from the ledger even without a selection, and keeps the name in the ledger file", async () => {
+    const published = { runId: "w1", flow: "skill-write", status: "succeeded", startedAt: new Date(NOW - DAY).toISOString(), vars: { github_repo: "lib/skills" }, history: [{ id: "pick", output: "SKILL_NAME: demo" }, { id: "publish", output: "PUBLISHED: abcdef1234567" }] };
+    const s = setup({ runs: [published], skills: [{ ...installed, id: "demo", key: "demo@1.0.0" }], effects: () => harms });
+    await s.sweeper.tick();
+    expect(s.created.map((c: any) => c.title)).toEqual(["Improve skill demo"]);
+    expect(Object.keys(JSON.parse(readFileSync(s.ledger, "utf8")).library)).toEqual(["demo"]);
+  });
+});
 
 describe("skill gap sweeper", () => {
   it("makes no call when off", async () => {

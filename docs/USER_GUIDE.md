@@ -5296,8 +5296,8 @@ The Foundry can ask for a missing skill itself. Set `skills.authoring.repository
 |---|---|---|
 | `repository` | empty (off) | The repository where the issues are opened. |
 | `label` | `Factory_go` | The label of a new issue. The `skill-write` watcher of that repository picks it up. |
-| `max_open` | 5 | No new issue while this many gap issues are open (1 to 50). |
-| `max_per_day` | 3 | The most new gap issues in 24 hours (0 to 20). |
+| `max_open` | 5 | No new issue while this many skill issues (gap and improve) are open (1 to 50). |
+| `max_per_day` | 3 | The most new skill issues (gap and improve) in 24 hours (0 to 20). |
 
 A signal opens an issue when it finds:
 
@@ -5309,12 +5309,32 @@ A signal opens an issue when it finds:
 Rules that always hold:
 
 - One issue per skill topic. A topic is named like `kafka` or `kafka-testing`. The issue has the marker `<!-- scf skill-gap=<topic> -->`: while it is open, no new issue for that topic is opened, and a closed one is not reopened for 30 days.
-- The limits count the open gap issues and the issues made in the last 24 hours, over all the marked issues in the repository.
+- The limits count the open gap and improve issues and the issues made in the last 24 hours, over all the marked issues in the repository.
 - The title is `Skill gap: <topic>`. The body says what to teach, the evidence (run ids, finding kinds, technology and version, the repository), and three sample tasks. It never holds file content, paths, review text, issue text or secrets.
 - If the repository's issue list is too long to check, nothing is opened, and the log says so.
 - The label is created in the repository if it is missing.
 
 A run that stopped because of an `unknown` skill gets `Skill gap issue: <url>` in its stop reason. When every unknown skill of that run is in the catalogue, the watcher resumes the run by itself. The sweep runs once an hour and when a run stops for skills. Its log lines start with `skill-gaps:`. It needs an administrator's GitHub sign-in for the repository (a repository record with its own token or app); without one, it logs why and opens nothing. The ledger of the issues is `skill-gaps.json` in the data folder.
+
+#### Skill improvement
+
+A skill of the library that does not help, or keeps being overruled, gets an issue to improve it. The same settings (`skills.authoring`) turn it on. A signal opens one issue per library skill, titled `Improve skill <name>`, when it finds:
+
+- **No measurable effect or harm.** The newest `scf skills effect` result of an installed version of the skill is `no-measurable-effect` or `harms`.
+- **Repeated review finding.** The same kind of `[high]` or `[medium]` review finding in 3 or more runs within 14 days, where a coder had that exact version of the skill loaded.
+- **Quarantined.** An installed version of the skill is quarantined.
+
+The issue has the marker `<!-- scf skill-improve=<name> -->`. It lists the installed versions, the signals, the evidence (run ids, finding kinds, the effect counts or the state) and never file content or review text. The duplicate rules and the limits of the gap issues apply to it too.
+
+The `skill-write` flow handles an improve issue as a change to the existing skill (the issue must name the same skill, and the new `version` must be higher than the one in the repository):
+
+1. It writes the new version and checks it as usual.
+2. It measures the new version with and without the skill, and measures the old version on the same scenarios.
+3. It publishes only when the new version helps, and scores at least as well as the old one (the same number of runs with the skill). Otherwise the new version is not published, and the issue says why. The scores are in the comment.
+
+A skill that fails to improve twice is set to `deprecated`, with the reason `did not improve in 2 tries (issue #<n>)`. Only an `active` skill is deprecated; a quarantined, retired or revoked one keeps its state, and the owner decides. The issue then gets the label `Factory_needs_info`. A failed try counts only when it is a Foundry comment on that issue, so a reply that resumes the same run does not count twice.
+
+Not yet in the Foundry: an improve signal for a gate that blocks an automatic update of a library skill. It waits for the automatic update part of the skill library (#775).
 
 #### Write a skill
 

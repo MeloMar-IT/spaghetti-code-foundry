@@ -1,0 +1,33 @@
+#!/usr/bin/env node
+// Helpers of the `skill-write` flow for improving an existing skill. The rules are in dist/skills/improve.js (build first).
+//   skill-improve compare "<new EFFECT line>" "<old EFFECT line>"   prints "COMPARE: better" or "COMPARE: not-better (<why>)"
+//   skill-improve target                                             (stdin: the issue body) prints "IMPROVE: <name> <id>@<version>" or "IMPROVE: none"
+//   skill-improve failures <run id>                                  (stdin: `story comments-labels` JSON) prints "FAILURES: <n>"
+//   skill-improve state                                              (stdin: the text of `scf skills lifecycle <key>`) prints "STATE: <state>"
+// Exit 0 normally; exit 2 when the tool itself breaks. Nothing from the input is printed except validated tokens and fixed words.
+import { readFileSync } from "node:fs";
+
+const [cmd, ...rest] = process.argv.slice(2);
+const stdin = () => readFileSync(0, "utf8");
+
+try {
+  const m = await import(new URL("../dist/skills/improve.js", import.meta.url).href);
+  if (cmd === "compare" && rest.length === 2) {
+    const d = m.improveDecision(m.parseEffectSummary(rest[0]), m.parseEffectSummary(rest[1]));
+    console.log(d.publish ? "COMPARE: better" : `COMPARE: not-better (${d.why})`);
+  } else if (cmd === "target" && rest.length === 0) {
+    const t = m.improveTarget(stdin());
+    console.log(t ? `IMPROVE: ${t.name} ${t.installed}` : "IMPROVE: none");
+  } else if (cmd === "failures" && rest.length === 1 && /^[A-Za-z0-9-]{1,80}$/.test(rest[0])) {
+    const { isFoundryComment } = await import(new URL("../dist/github.js", import.meta.url).href);
+    console.log(`FAILURES: ${m.improveFailures(stdin(), rest[0], isFoundryComment)}`);
+  } else if (cmd === "state" && rest.length === 0) {
+    console.log(`STATE: ${m.improveStateOf(stdin())}`);
+  } else {
+    console.error("usage: skill-improve compare <new line> <old line> | target | failures <run id> | state");
+    process.exit(2);
+  }
+} catch (e) {
+  console.error(`skill-improve: ${e instanceof Error ? e.message.split("\n")[0] : "failed"}`);
+  process.exit(2);
+}

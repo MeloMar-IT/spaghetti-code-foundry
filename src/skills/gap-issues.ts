@@ -5,6 +5,7 @@ import type { Config } from "../config.js";
 import type { RunSummary } from "../engine/state.js";
 import { FACTORY_HOME } from "../flow/load.js";
 import type { GapSignal } from "./gap-signals.js";
+import { IMPROVE_MARKER_RE, improveKey, improveMarker, type ImproveSignal } from "./improve.js";
 import { discoverSkills, findSkill } from "./registry.js";
 import { SKILL_ID_RE } from "./schema.js";
 
@@ -18,6 +19,7 @@ export const GAP_LABEL_COLOR = "5319e7";
 export const GAP_LABEL_TEXT = "A skill the Foundry found missing";
 export const gapMarker = (topic: string): string => `<!-- scf skill-gap=${topic} -->`;
 export const GAP_MARKER_RE = /<!-- scf skill-gap=([a-z0-9]+(?:-[a-z0-9]+)*) -->/;
+export { IMPROVE_MARKER_RE, improveMarker } from "./improve.js";
 
 /** The fields of a GitHub issue this module reads (a RestIssue fits). */
 export interface GapRestIssue { number: number; state: string; body?: string | null; html_url: string; created_at: string; closed_at?: string | null; pull_request?: unknown }
@@ -28,7 +30,8 @@ export interface GapStore {
   createLabelIfMissing(name: string, color: string, description: string, timeoutMs?: number): Promise<void>;
 }
 
-export interface GapIssue { topic: string; number: number; url: string; open: boolean; createdAt: number; closedAt?: number }
+/** `topic` is the duplicate key: the topic of a gap issue, `improve:<name>` for an improve issue. */
+export interface GapIssue { topic: string; kind: "gap" | "improve"; number: number; url: string; open: boolean; createdAt: number; closedAt?: number }
 
 /** The marked issues of a list (pull requests are ignored). `byTopic`: an open issue wins (the lowest number), else the newest closed one. `all`: every distinct marked issue. */
 export function gapIssuesOf(issues: readonly GapRestIssue[]): { byTopic: Map<string, GapIssue>; all: GapIssue[] } {
@@ -36,12 +39,15 @@ export function gapIssuesOf(issues: readonly GapRestIssue[]): { byTopic: Map<str
   const seen = new Set<number>();
   for (const i of issues) {
     if (i.pull_request || seen.has(i.number)) continue;
-    const m = GAP_MARKER_RE.exec(i.body ?? "");
+    const text = i.body ?? "";
+    const g = GAP_MARKER_RE.exec(text);
+    const im = g ? null : IMPROVE_MARKER_RE.exec(text);
+    const m = g ?? im;
     if (!m || !SKILL_ID_RE.test(m[1]!)) continue;
     seen.add(i.number);
     const closedAt = i.closed_at ? Date.parse(i.closed_at) : NaN;
     all.push({
-      topic: m[1]!, number: i.number, url: i.html_url, open: String(i.state).toLowerCase() !== "closed",
+      topic: im ? improveKey(m[1]!) : m[1]!, kind: im ? "improve" : "gap", number: i.number, url: i.html_url, open: String(i.state).toLowerCase() !== "closed",
       createdAt: Date.parse(i.created_at) || 0, ...(Number.isNaN(closedAt) ? {} : { closedAt }),
     });
   }
@@ -60,13 +66,13 @@ export const openGapCount = (all: readonly GapIssue[]): number => all.filter((g)
 export const newGapCount = (all: readonly GapIssue[], now: number): number => all.filter((g) => now - g.createdAt < DAY).length;
 
 export type GapSkip = "open" | "closed-recently" | "max-open" | "max-per-day";
-export interface GapPlan { open: GapSignal[]; skipped: { topic: string; reason: GapSkip }[] }
+export interface GapPlan<T extends { topic: string } = GapSignal> { open: T[]; skipped: { topic: string; reason: GapSkip }[] }
 
 /** Which signals get a new issue. Never more than `maxOpen` open and `maxPerDay` new ones, counted over all marked issues. Pure. */
-export function planGapIssues(signals: readonly GapSignal[], existing: { byTopic: Map<string, GapIssue>; all: readonly GapIssue[] }, o: { now: number; maxOpen: number; maxPerDay: number }): GapPlan {
+export function planGapIssues<T extends { topic: string }>(signals: readonly T[], existing: { byTopic: Map<string, GapIssue>; all: readonly GapIssue[] }, o: { now: number; maxOpen: number; maxPerDay: number }): GapPlan<T> {
   let open = openGapCount(existing.all);
   let fresh = newGapCount(existing.all, o.now);
-  const plan: GapPlan = { open: [], skipped: [] };
+  const plan: GapPlan<T> = { open: [], skipped: [] };
   const seen = new Set<string>();
   for (const s of signals) {
     if (seen.has(s.topic)) continue;
@@ -114,15 +120,36 @@ export function gapIssueText(s: GapSignal): { title: string; body: string } {
   return { title: `Skill gap: ${s.topic}`, body };
 }
 
+/** The title and body of an improve issue. Validated tokens only (names, keys, run ids, kinds); the marker is last. */
+export function improveIssueText(s: ImproveSignal): { title: string; body: string } {
+  const q = (list: readonly string[]) => list.map((x) => `\`${x}\``).join(", ");
+  const ev = ["### Evidence", "", `- Installed: ${q(s.installed)}`, `- Signals: ${q(s.kinds)}`];
+  const e = s.evidence.effect;
+  if (e) ev.push(`- Effect: \`${e.verdict}\`, with the skill ${e.with.passed}/${e.with.runs}, without ${e.without.passed}/${e.without.runs}`);
+  if (s.evidence.state) ev.push(`- State: \`${s.evidence.state}\``);
+  if (s.evidence.runs.length) ev.push(`- Runs: ${q(s.evidence.runs)}`);
+  if (s.evidence.findingKinds.length) ev.push(`- Finding kinds: ${q(s.evidence.findingKinds)}`);
+  const body = [
+    "### What to do", "",
+    `Improve the skill \`${s.skill}\`: write a new, higher version of \`skills/${s.skill}\`. It is published only when it helps and scores at least as well as the old version.`, "",
+    ...ev, "",
+    "Opened by the Foundry. It lists skill keys, run ids and kinds only.", "",
+    improveMarker(s.skill),
+  ].join("\n");
+  return { title: `Improve skill ${s.skill}`, body };
+}
+
 // ---- the ledger
 
 export interface GapLedgerEntry { issue: number; url: string; state: "open" | "closed"; closedAt?: string }
-export interface GapLedger { version: 1; repository: string; at: string; topics: Record<string, GapLedgerEntry> }
+/** `library`: names of library skills `skill-write` published (name → ISO date first seen). Absent in old ledgers. */
+export interface GapLedger { version: 1; repository: string; at: string; topics: Record<string, GapLedgerEntry>; library?: Record<string, string> }
 export const gapLedgerFile = (): string => join(process.env.FACTORY_HOME ?? FACTORY_HOME, "skill-gaps.json");
 const URL_RE = /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d{1,10}$/;
 const MAX_LEDGER = 200;
+const MAX_LIBRARY = 500;
 
-const emptyLedger = (repository: string): GapLedger => ({ version: 1, repository, at: "", topics: {} });
+const emptyLedger = (repository: string): GapLedger => ({ version: 1, repository, at: "", topics: {}, library: {} });
 
 /** The ledger of `repository` (any case). A missing or broken file, or a ledger of another repository, reads as empty. Never throws. */
 export function readGapLedger(file: string = gapLedgerFile(), repository = ""): GapLedger {
@@ -136,7 +163,11 @@ export function readGapLedger(file: string = gapLedgerFile(), repository = ""): 
       if (!SKILL_ID_RE.test(k) || !v || !Number.isInteger(v.issue) || typeof v.url !== "string" || !URL_RE.test(v.url)) continue;
       topics[k] = { issue: v.issue, url: v.url, state: v.state === "closed" ? "closed" : "open", ...(typeof v.closedAt === "string" ? { closedAt: v.closedAt } : {}) };
     }
-    return { version: 1, repository: j.repository.toLowerCase(), at: typeof j.at === "string" ? j.at : "", topics };
+    const library: Record<string, string> = {};
+    if (j.library && typeof j.library === "object" && !Array.isArray(j.library)) {
+      for (const [k, v] of Object.entries(j.library).slice(0, MAX_LIBRARY)) if (SKILL_ID_RE.test(k) && typeof v === "string" && !Number.isNaN(Date.parse(v))) library[k] = v;
+    }
+    return { version: 1, repository: j.repository.toLowerCase(), at: typeof j.at === "string" ? j.at : "", topics, library };
   } catch {
     return emptyLedger(want);
   }
@@ -155,14 +186,14 @@ export function writeGapLedger(ledger: GapLedger, file: string = gapLedgerFile()
 }
 
 /** The ledger of the marked issues, with the newest MAX_LEDGER topics. */
-export function buildGapLedger(repository: string, byTopic: ReadonlyMap<string, GapIssue>, now: number): GapLedger {
+export function buildGapLedger(repository: string, byTopic: ReadonlyMap<string, GapIssue>, now: number, library: Record<string, string> = {}): GapLedger {
   const topics: Record<string, GapLedgerEntry> = {};
-  const list = [...byTopic.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_LEDGER);
+  const list = [...byTopic.values()].filter((g) => g.kind !== "improve").sort((a, b) => b.createdAt - a.createdAt).slice(0, MAX_LEDGER);
   for (const g of list) {
     if (!URL_RE.test(g.url)) continue;
     topics[g.topic] = { issue: g.number, url: g.url, state: g.open ? "open" : "closed", ...(g.closedAt ? { closedAt: new Date(g.closedAt).toISOString() } : {}) };
   }
-  return { version: 1, repository: repository.toLowerCase(), at: new Date(now).toISOString(), topics };
+  return { version: 1, repository: repository.toLowerCase(), at: new Date(now).toISOString(), topics, library };
 }
 
 // ---- runs that stopped for a missing skill
@@ -223,7 +254,7 @@ export interface OpenGapResult {
 /** Lists first; a cut list opens nothing. Creates the label if missing, then the issues. A failing list throws. */
 export async function openGapIssues(o: {
   store: GapStore;
-  signals: readonly GapSignal[];
+  signals: readonly (GapSignal | ImproveSignal)[];
   label: string;
   maxOpen: number;
   maxPerDay: number;
@@ -244,10 +275,10 @@ export async function openGapIssues(o: {
   }
   for (const s of plan.open) {
     try {
-      const t = gapIssueText(s);
+      const t = "installed" in s ? improveIssueText(s) : gapIssueText(s);
       const made = await o.store.create({ title: t.title, body: t.body, labels: [o.label] }, 30_000);
       out.made.push({ topic: s.topic, number: made.number, url: made.html_url });
-      out.byTopic.set(s.topic, { topic: s.topic, number: made.number, url: made.html_url, open: true, createdAt: o.now });
+      out.byTopic.set(s.topic, { topic: s.topic, kind: "installed" in s ? "improve" : "gap", number: made.number, url: made.html_url, open: true, createdAt: o.now });
     } catch {
       out.failed = true;
       break;

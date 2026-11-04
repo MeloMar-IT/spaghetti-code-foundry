@@ -5,8 +5,9 @@
 # 
 # clone → read issue → plan ─┬─ NEEDS_INFO ──────────────────────┐
 #                            └─ READY → pick → write ⟲ check (3 retries)
-#   → measure (scf skills effect, with and without the skill) ─┬─ no help ──┤
-#                                                              └─ helps → review ─┬─ CHANGES ──┤
+#   → measure (scf skills effect, with and without the skill; a change also against the old version)
+#       ├─ no help / not better than the old version ──┤  (an improve issue: the 2nd failure deprecates the skill)
+#       └─ helps → review ─┬─ CHANGES ──┤
 #                                                                                 └─ APPROVE → publish (push main) → report
 #   ask_for_info: comments, then stops; a reply on the issue resumes the run at clone
 # ────────────────────────────────────────────────────────────────────────
@@ -76,6 +77,7 @@ steps:
       Otherwise answer with these parts, in this order:
       SKILL_NAME: <lower-case slug of at most 64 characters; the name of the folder skills/<name>>
       SKILL_CHANGE: new   or   SKILL_CHANGE: change
+      An issue with the marker `scf skill-improve=<name>` asks for a new, higher version of skills/<name>: answer with that name and SKILL_CHANGE: change.
       ## What it must teach
       A short list of the rules and facts the skill must carry, and what it must leave out.
       ## Sample tasks
@@ -99,7 +101,8 @@ steps:
     on_success: pick
   - id: pick
     type: shell
-    description: Take the name and the kind of change from the plan and check them against the repository
+    repo_access: true
+    description: Take the name and the kind of change from the plan and check them against the repository; an improve issue must name the same skill and be a change
     run: |-
       name=$(printf '%s\n' "$FACTORY_OUT_PLAN" | sed -n 's/^SKILL_NAME: *\([a-z0-9-]*\) *$/\1/p' | head -n 1)
       change=$(printf '%s\n' "$FACTORY_OUT_PLAN" | sed -n 's/^SKILL_CHANGE: *\([a-z]*\) *$/\1/p' | head -n 1)
@@ -109,7 +112,18 @@ steps:
         change) [ -f "skills/$name/SKILL.md" ] || { echo "skills/$name/SKILL.md does not exist; the plan must say new"; exit 1; } ;;
         *) echo "the plan has no valid SKILL_CHANGE"; exit 1 ;;
       esac
+      case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the issue variable to an issue number"; exit 1;; esac
+      body=$(node "$FACTORY_TOOLS/story" body) || { echo "could not read the issue"; exit 1; }
+      imp=$(printf '%s\n' "$body" | node "$FACTORY_TOOLS/skill-improve" target) || { echo "could not read the issue"; exit 1; }
+      iname=$(printf '%s\n' "$imp" | sed -n 's/^IMPROVE: \([a-z0-9-]*\) .*$/\1/p' | head -n 1)
+      ikey=$(printf '%s\n' "$imp" | sed -n 's/^IMPROVE: [a-z0-9-]* \(.*\)$/\1/p' | head -n 1)
+      if [ -n "$iname" ]; then
+        printf '%s\n' "$ikey" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*@[0-9][0-9A-Za-z.+-]*$' || { echo "the issue has no valid installed skill key"; exit 1; }
+        [ "$iname" = "$name" ] || { echo "the issue asks to improve a different skill than the plan"; exit 1; }
+        [ "$change" = change ] || { echo "an improve issue must be planned as a change"; exit 1; }
+      fi
       echo "SKILL_NAME: $name"; echo "SKILL_CHANGE: $change"
+      [ -z "$iname" ] || echo "IMPROVE_KEY: $ikey"
   - id: write
     type: claude
     max_visits: 4
@@ -168,6 +182,7 @@ steps:
             check: >-
               node --input-type=module -e 'process.exitCode = 0'   # one line; exit 0 only when the work is right
 
+      For a change (SKILL_CHANGE: change) raise `version` in the frontmatter of SKILL.md above the current one; a check refuses an equal or lower version.
       Teach what the plan says and no more. Keep SKILL.md short and exact; put detail in references/.
       When you are done, say in one line what you wrote.
     on_success: check
@@ -190,10 +205,10 @@ steps:
       node "$FACTORY_TOOLS/skill-check" "$name" "$base"
   - id: measure
     type: shell
-    timeout_sec: 14400
-    description: Run the sample tasks with and without the skill (scf skills effect) and record the tree that was measured
+    timeout_sec: 28800
+    description: Run the sample tasks with and without the skill (scf skills effect), for a change also the old version, and record the tree that was measured
     routes:
-      - if: "^MEASURE: no-help\\s*$"
+      - if: "^MEASURE: (no-help|not-better)\\s*$"
         goto: ask_for_info
     run: |-
       name=$(printf '%s\n' "$FACTORY_OUT_PICK" | sed -n 's/^SKILL_NAME: *//p' | head -n 1)
@@ -214,7 +229,22 @@ steps:
       verdict=$(printf '%s\n' "$out" | sed -n 's/^EFFECT [^ ]* \([^ ]*\) .*/\1/p' | tail -n 1)
       [ -n "$verdict" ] || { echo "measure failed: no verdict"; exit 1; }
       echo "SKILL_TREE: $tree"
-      if [ "$verdict" = helps ]; then echo "MEASURE: helps"; else echo "MEASURE: no-help"; fi
+      result=no-help; [ "$verdict" = helps ] && result=helps
+      if [ "$change" = change ] && [ "$result" = helps ]; then
+        old=$(mktemp -d) || { echo "could not make a temporary folder"; exit 1; }
+        trap 'rm -rf "$old"' EXIT
+        git archive "$base" "skills/$name" | tar -x -C "$old" || { echo "could not read the old version"; exit 1; }
+        if [ -n "$FACTORY_CLI_BIN" ]; then oout=$("$FACTORY_CLI_BIN" skills effect "$old/skills/$name" "skills/$name/evals/suite.yaml" 2>&1); ocode=$?
+        else oout=$(node "$FACTORY_TOOLS/../dist/cli.js" skills effect "$old/skills/$name" "skills/$name/evals/suite.yaml" 2>&1); ocode=$?; fi
+        printf '%s\n' "$oout" | sed 's/^/OLD /'
+        [ "$ocode" -eq 0 ] || { echo "measure of the old version failed"; exit 1; }
+        newline=$(printf '%s\n' "$out" | grep '^EFFECT ' | tail -n 1)
+        oldline=$(printf '%s\n' "$oout" | grep '^EFFECT ' | tail -n 1)
+        cmp=$(node "$FACTORY_TOOLS/skill-improve" compare "$newline" "$oldline") || { echo "the comparison failed"; exit 1; }
+        printf '%s\n' "$cmp"
+        case "$cmp" in "COMPARE: better") ;; *) result=not-better ;; esac
+      fi
+      echo "MEASURE: $result"
     on_success: review
   - id: review
     type: claude
@@ -311,6 +341,7 @@ steps:
         echo "🤖 **Spaghetti Code Foundry** wrote the skill \`$name\` and published it on \`$main\` ($sha)."; echo
         git show --stat --format= HEAD; echo
         printf '%s\n' "$FACTORY_OUT_MEASURE" | grep '^EFFECT ' | tail -n 1; echo
+        cmpl=$(printf '%s\n' "$FACTORY_OUT_MEASURE" | grep '^COMPARE:' | tail -n 1); [ -z "$cmpl" ] || { echo "$cmpl"; echo; }
         printf '%s\n' "$FACTORY_OUT_REVIEW" | grep '^VERDICT:' | tail -n 1; echo
         echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } | node "$FACTORY_TOOLS/story" comment >/dev/null || exit 1
       node "$FACTORY_TOOLS/story" close --reason completed || exit 1
@@ -324,8 +355,49 @@ steps:
     run: |-
       if printf '%s\n' "$FACTORY_OUT_PLAN" | grep -q '^PLAN_STATUS: NEEDS_INFO'; then
         say="needs more information before it can write this skill:"; body=$(printf '%s\n' "$FACTORY_OUT_PLAN" | sed -E '/^(PLAN_STATUS|SKILL_NAME|SKILL_CHANGE):/d')
-      elif printf '%s\n' "$FACTORY_OUT_MEASURE" | grep -q '^MEASURE: no-help'; then
-        say="wrote the skill, but it does not measurably help, so it was not published. The scores:"; body=$(printf '%s\n' "$FACTORY_OUT_MEASURE" | grep -E '^(EFFECT|RUN|SKIPPED|NOTE) ')
+      elif printf '%s\n' "$FACTORY_OUT_MEASURE" | grep -Eq '^MEASURE: (no-help|not-better)'; then
+        if printf '%s\n' "$FACTORY_OUT_MEASURE" | grep -q '^MEASURE: not-better'; then
+          say="wrote a new version of the skill, but it does not score as well as the old version, or the two runs cannot be compared, so it was not published. The scores:"
+        else
+          say="wrote the skill, but it does not measurably help, so it was not published. The scores:"
+        fi
+        body=$(printf '%s\n' "$FACTORY_OUT_MEASURE" | grep -E '^((OLD )?(EFFECT|RUN|SKIPPED|NOTE) |COMPARE:)')
+        ikey=$(printf '%s\n' "$FACTORY_OUT_PICK" | sed -n 's/^IMPROVE_KEY: *//p' | head -n 1)
+        if [ -n "$ikey" ]; then
+          printf '%s\n' "$ikey" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*@[0-9][0-9A-Za-z.+-]*$' || { echo "the installed skill key is not valid"; exit 1; }
+          attempt="$FACTORY_RUN_ID-$(date +%s)"
+          printf '%s\n' "$attempt" | grep -Eq '^[A-Za-z0-9-]{1,80}$' || { echo "the run id is not valid"; exit 1; }
+          case "$FACTORY_VAR_ISSUE" in ''|*[!0-9]*) echo "set the issue variable to an issue number"; exit 1;; esac
+          cj=$(node "$FACTORY_TOOLS/story" comments-labels) || cj="{}"
+          tries=$(printf '%s\n' "$cj" | node "$FACTORY_TOOLS/skill-improve" failures "$attempt" | sed -n 's/^FAILURES: \([0-9]*\)$/\1/p')
+          [ -n "$tries" ] || tries=1
+          failmark="<!-- scf skill-improve-failed run=$attempt -->"
+          if [ "$tries" -ge 2 ]; then
+            reason="did not improve in 2 tries (issue #$FACTORY_VAR_ISSUE)"
+            if [ -n "$FACTORY_CLI_BIN" ]; then hout=$("$FACTORY_CLI_BIN" skills lifecycle "$ikey" 2>&1); else hout=$(node "$FACTORY_TOOLS/../dist/cli.js" skills lifecycle "$ikey" 2>&1); fi
+            ist=$(printf '%s\n' "$hout" | node "$FACTORY_TOOLS/skill-improve" state | sed -n 's/^STATE: //p' | head -n 1)
+            case "${ist:-unknown}" in
+              active)
+                if [ -n "$FACTORY_CLI_BIN" ]; then lout=$("$FACTORY_CLI_BIN" skills lifecycle "$ikey" deprecated --reason "$reason" 2>&1); lcode=$?
+                else lout=$(node "$FACTORY_TOOLS/../dist/cli.js" skills lifecycle "$ikey" deprecated --reason "$reason" 2>&1); lcode=$?; fi
+                if [ "$lcode" -eq 0 ] && printf '%s\n' "$lout" | grep -q '^OK'; then
+                  extra="This is the second try that did not improve the skill, so \`$ikey\` is now **deprecated** (the reason is recorded)."
+                else
+                  extra="This is the second try that did not improve the skill, but \`$ikey\` could **not** be set to deprecated here. The owner must run: \`scf skills lifecycle $ikey deprecated --reason \"$reason\"\`."
+                fi
+                ;;
+              deprecated)
+                extra="This is the second try that did not improve the skill, and \`$ikey\` is already deprecated."
+                ;;
+              *)
+                extra="This is the second try that did not improve the skill. \`$ikey\` was not set to deprecated: its state is ${ist:-unknown}, and the owner decides."
+                ;;
+            esac
+            node "$FACTORY_TOOLS/story" label --add Factory_needs_info >/dev/null || echo "could not add the label Factory_needs_info"
+          else
+            extra="This is the first try that did not improve the skill. After a second one it is set to deprecated."
+          fi
+        fi
       elif printf '%s\n' "$FACTORY_OUT_REVIEW" | grep -q '^VERDICT: CHANGES'; then
         say="wrote the skill, but the review asks for changes, so it was not published:"; body=$(printf '%s\n' "$FACTORY_OUT_REVIEW" | sed '/^VERDICT:/d')
       else
@@ -334,7 +406,9 @@ steps:
       { echo "$FACTORY_FIRST_PLANNER_QUESTIONS"; echo
         echo "🤖 **Spaghetti Code Foundry** $say"; echo
         printf '%s\n' "$body"
+        [ -z "$extra" ] || { echo; echo "$extra"; }
         echo; echo "_${FACTORY_NEXT_PLANNER_QUESTIONS}_"
+        [ -z "$failmark" ] || { echo; echo "$failmark"; }
         echo; echo "<!-- claude-factory run=$FACTORY_RUN_ID -->"; } | node "$FACTORY_TOOLS/story" comment >/dev/null || exit 1
       printf '%s\n' "$body"
     on_success: stop

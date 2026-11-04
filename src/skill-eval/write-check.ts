@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { credentialHits, riskyFileName } from "../skills/credential-scan.js";
 import { readEvaluationSuite } from "../skills/evaluation-suite.js";
 import { splitFrontmatter } from "../skills/package.js";
-import { SKILL_ID_RE } from "../skills/schema.js";
+import { compareSkillVersions, SKILL_ID_RE } from "../skills/schema.js";
 import { effectEntry, scenarioOffers } from "./effect.js";
 import { loadLocalSkill } from "./package.js";
 
@@ -118,6 +118,8 @@ export interface SkillCheckInput {
   changelogs?: readonly string[];
   /** Files in the folder that git ignores. */
   ignored?: readonly string[];
+  /** The version of the skill at the base commit; set for a change. The new version must be higher. */
+  baseVersion?: string;
 }
 
 /** All checks for the folder `dir` (the skill folder on disk). Problems fail the check, notes do not. */
@@ -130,6 +132,11 @@ export function checkSkillFolder(dir: string, name: string, input: SkillCheckInp
   if (!existsSync(join(dir, "SKILL.md"))) return { problems: [...problems, "SKILL.md is missing"], notes: loaded.notes };
   problems.push(...formatProblems(name, loaded.files), ...credentialProblems(loaded.files), ...endpointProblems(loaded.files));
   problems.push(...loaded.problems.filter((p) => p.startsWith("normalize: ")));
+  if (input.baseVersion !== undefined && loaded.skill) {
+    try {
+      if (compareSkillVersions(loaded.skill.package.version, input.baseVersion) <= 0) problems.push(`the version must be higher than ${input.baseVersion.slice(0, 40)} for a change`);
+    } catch { /* an unreadable base version cannot be compared */ }
+  }
   const suite = readEvaluationSuite(join(dir, "evals", "suite.yaml"));
   if (suite.state === "none") problems.push("evals/suite.yaml is missing");
   else if (suite.state === "invalid") for (const p of suite.problems) problems.push(`evals/suite.yaml ${p.where}: ${p.message}`.slice(0, 200));
