@@ -885,6 +885,49 @@ been removed, or you may not have access." with **Clear filters**; the text is t
 the repository exists for another account or not. Refreshes keep the filter. The server gets no
 new parameter.
 
+### Try it: preview
+
+A preview starts your project's own app on the server, so you can open it in a browser before you merge. The app is started from the repository, with the command the project names in `.factory/preview.yaml`:
+
+```yaml
+command: npm run start      # required: the command that starts the app
+port: auto                  # "auto", or a whole number from 1024 to 65535
+ready: /                    # the path that answers when the app is ready (starts with /)
+env:                        # optional: extra variables for the app
+  NODE_ENV: development
+version: develop            # default version; the routes below take their own
+```
+
+- `command` is required; at most 4096 characters, no control characters.
+- `port` is `auto` by default. The Foundry sets `PORT` and `HOST` for the app; `HOST` is always `127.0.0.1`, so the app is reached only from the server. Values you set in `env` for these two names are replaced.
+- `env` names use A-Z, 0-9 and `_`, at most 50 entries. The prefixes `FACTORY_`, `SCF_`, `GH_`, `GITHUB_`, `ANTHROPIC_` and `OPENAI_` are reserved.
+- The app gets only a short environment (no secrets of the Foundry) plus your `env`, at low priority, in its own process group.
+
+There are two versions:
+
+- **`develop`**: the branch `develop` of the repository. A GitHub repository is cloned with your sign-in; the clone is shallow and runs no git hooks.
+- **`checking`**: the branch of a run that waits for your check. The Foundry reads it from the run's own workspace first, so a branch that is not pushed yet can be seen; if the workspace is gone, it tries the remote. Only a run that waits for your check can be used.
+
+Start a preview with `POST /api/repos/:id/preview` (body `{ "version": "develop" }`, or `{ "version": "checking", "runId": "…" }`), read it with `GET`, and stop it with `DELETE`. Each repository has one preview. A new start replaces a running one, and the folder is `<data folder>/previews/<repository id>/`. The routes are described in the API table. A preview stops after 30 minutes without use, when it is replaced, when you stop it, and when the server shuts down. The app must answer within 120 seconds.
+
+The state is `starting`, `ready`, `stopped` or `failed`. When it is not ready, the reason says why, in plain words:
+
+| Reason | Meaning |
+|---|---|
+| `no-config` | the branch has no `.factory/preview.yaml` |
+| `bad-config` | the file is not valid; the message names the field |
+| `no-access` | the Foundry cannot sign in to the repository; the detail says how to fix it |
+| `no-branch` | the branch is not in the repository (or the run's workspace) |
+| `checkout-failed` | the branch could not be copied; the reason is not shown |
+| `not-ready` | the app did not answer in time |
+| `port-busy` | the port is in use |
+| `exited` | the app stopped by itself |
+| `idle` | stopped after 30 minutes without use |
+| `replaced` | a new start replaced it |
+| `stopped` | you stopped it, or the server shut down |
+
+Only an owner of the repository and an admin can use the preview routes. `GET` also returns the app's output: at most 64 KiB, with the known secrets of the Foundry removed. A user who is not allowed gets "not found" on all three routes, and no output.
+
 ### Repository context
 
 The switcher sits at the start of the top bar, on both displays. It shows your current repository
@@ -5268,6 +5311,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
 | `GET /api/repos/:id/epics` | yes | yes | the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository) |
 | `GET /api/repos/:id/epics/:issue` | yes | yes | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
+| `POST /api/repos/:id/preview` | yes | yes | start the develop version, or the version of a run that waits for your check (`version`, `runId`), of your repository (an admin: any repository) in a folder of its own; replaces a running one; answers 202 |
+| `GET /api/repos/:id/preview` | yes | yes | the state, URL, reason, version and redacted output of the preview of your repository (an admin: any repository) |
+| `DELETE /api/repos/:id/preview` | yes | yes | stop the preview of your repository and remove its folder |
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings and autonomy level |

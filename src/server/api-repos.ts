@@ -24,9 +24,11 @@ import { DEFAULT_FLOWS } from "../queue/watcher.js";
 import { watcherState } from "../words.js";
 import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
+import { previewRoutes } from "./api-preview.js";
 import { checkRepoMethod } from "./permissions.js";
 import type { ApiContext, Route } from "./server.js";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INTERNAL = "the repository list is not working; see the server log";
 const STATUS = { "bad-name": 400, "bad-url": 400, "bad-auth": 400, duplicate: 409, taken: 409, limit: 400, "not-found": 404, "no-owner": 404, "bad-settings": 400, "bad-owner": 400, blocked: 409, "no-credential": 409, "bad-ready": 400 } as const;
 
@@ -414,6 +416,7 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
     if (!rec || (rec.owner !== user.id && user.role !== "admin")) throw new HttpError(404, "no such repository");
     return send(res, 200, readyView(rec.definitionOfReady)), true;
   }
+  if (seg.length === 3 && seg[2] === "preview" && UUID_RE.test(seg[1]!)) return previewRoutes(ctx, req, res, seg[1]!, method, user);
   if (seg.length === 2 && method === "DELETE") {
     removeAndTell(ctx, user.id, () => removeRepo(user.id, seg[1]!));
     return send(res, 200, { ok: true }), true;

@@ -238,6 +238,9 @@ const EXAMPLES: Record<string, Example> = {
   "GET repos/:id/ready": { path: `repos/${UNKNOWN}/ready`, user: 404, admin: 404 },
   "GET repos/:id/epics": { path: `repos/${UNKNOWN}/epics`, user: 404, admin: 404 },
   "GET repos/:id/epics/:issue": { path: `repos/${UNKNOWN}/epics/1`, user: 404, admin: 404 },
+  "POST repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, body: { version: "develop" }, user: 404, admin: 404 },
+  "GET repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, user: 404, admin: 404 },
+  "DELETE repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET help/conversations": { path: "help/conversations", user: 200, admin: 200 },
   // Ask SCF is off by default: a question is refused before it is looked at
@@ -319,6 +322,8 @@ describe("the table", () => {
   it("finds a rule only for the exact method and number of segments", () => {
     expect(findRule("GET", ["info"])?.path).toBe("info");
     expect(findRule("GET", ["info", "extra"])).toBeUndefined();
+    expect(findRule("DELETE", ["repos", UNKNOWN, "preview"])?.path).toBe("repos/:id/preview");
+    expect(findRule("DELETE", ["repos", "nope", "nope"])?.path).toBe("repos/:owner/:name");
     expect(findRule("PUT", ["users", "limits"])?.path).toBe("users/limits");
     expect(findRule("POST", ["admin", "repos", UNKNOWN, "watchers"])?.path).toBe("admin/repos/:id/watchers");
     expect(findRule("DELETE", ["admin", "repos", UNKNOWN, "watchers", "w"])?.path).toBe("admin/repos/:id/watchers/:wid");

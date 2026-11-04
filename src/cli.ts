@@ -15,6 +15,7 @@ import { listBlocks } from "./flow/blocks.js";
 import { pinBuiltinSkillsAtStart } from "./skills/registry.js";
 import { FACTORY_HOME, listFlows, loadFlow, resolveFlowPath } from "./flow/load.js";
 import { startServer } from "./server/server.js";
+import { previewsOf } from "./server/api-preview.js";
 import { settingsRestartFor, type SettingsRestart } from "./server/api-restart.js";
 import { loadConfig, WatcherSchema } from "./config.js";
 import { cleanRuns } from "./clean.js";
@@ -529,10 +530,11 @@ async function main(argv: string[]): Promise<number> {
       const beforeExit = () => {
         updater.stop();
         ctx.watchers.stopAll();
+        void previewsOf(ctx).stopAll();
       };
       // a step of the updater runs in its own process group: it must not outlive the server
       // (the groups of shell steps are killed by the exit hook in steps/process.ts)
-      for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); void exitAfterTelemetry(code); });
+      for (const [sig, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) process.on(sig, () => { updater.stop(); void previewsOf(ctx).stopAll().finally(() => exitAfterTelemetry(code)); });
       // other restarts wait while the updater builds
       const idle = () => queueIdle() && !updater.busy();
       restartOnNewBuild({

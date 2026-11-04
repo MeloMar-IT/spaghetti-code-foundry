@@ -63,6 +63,7 @@ import { settleFinished } from "../refinement/architect.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
 import { refinementBacklogRoutes } from "./api-refinement-backlog.js";
 import { HELP_SWEEP_MS, helpRoutes, helpSweeper, helpTurnsOf } from "./api-help.js";
+import { previewsOf } from "./api-preview.js";
 import { refinementPublishRoutes } from "./api-refinement-publish.js";
 import { auditRoutes } from "./api-audit.js";
 import { promotionRoutes } from "./api-promotions.js";
@@ -510,6 +511,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       clearInterval(refinementTimer);
       clearInterval(helpTimer);
       helpTurnsOf(ctx).stopAll();
+      void previewsOf(ctx).stopAll();
       clearInterval(auditTimer);
       clearInterval(skillTimer);
       clearInterval(gapTimer);
