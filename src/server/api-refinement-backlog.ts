@@ -5,7 +5,8 @@ import { dependencyRefs, quickChecks, type BacklogIssue } from "../refinement/ba
 import type { PullKind } from "../refinement/issue-building.js";
 import { cleanTitle } from "../refinement/issue-import.js";
 import { issueUrl } from "../refinement/publish.js";
-import { RefinementError, openSessionsOfRepo } from "../refinement/store.js";
+import { LOCAL_ISSUE_REFUSAL, RefinementError, openSessionsOfRepo } from "../refinement/store.js";
+import { isLocalRepoName } from "../auth/local-name.js";
 import { guardedAsync } from "./api-refinement.js";
 import { GH_TIMEOUT_MS, labelsOf, whatHappened, whyBuilding } from "./api-refinement-import.js";
 import { sessionUser } from "./api-auth.js";
@@ -26,6 +27,7 @@ export const refinementBacklogRoutes: Route = async (ctx, req, res, seg, method)
     // The signed-in account, not the one an admin views as: the list is read with the owner's GitHub sign-in.
     const user = sessionUser(ctx, req);
     const given = new URL(req.url ?? "/", "http://x").searchParams.get("repo");
+    if (given !== null && isLocalRepoName(given)) throw new RefinementError("bad-repo", LOCAL_ISSUE_REFUSAL);
     if (given === null || !validGithubName(given)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
     const rec = findOwnedRepo(user.id, given);
     const name = rec ? githubNameOf(rec.url) : undefined;

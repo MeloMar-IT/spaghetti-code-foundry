@@ -9,7 +9,8 @@ import { buildLabelOf } from "../refinement/build-limits.js";
 import { buildingReason, pullsToRead, type PullKind } from "../refinement/issue-building.js";
 import { cleanTitle, ideaOf, parseStory } from "../refinement/issue-import.js";
 import { issueUrl } from "../refinement/publish.js";
-import { IDEA_MAX, RefinementError, SESSION_TITLE_MAX, SOURCE_BODY_MAX, clearSourceBuildLabel, createSessionFromIssue, getSession, openSessionOfIssue, type Session } from "../refinement/store.js";
+import { isLocalRepoName } from "../auth/local-name.js";
+import { IDEA_MAX, LOCAL_ISSUE_REFUSAL, RefinementError, SESSION_TITLE_MAX, SOURCE_BODY_MAX, clearSourceBuildLabel, createSessionFromIssue, getSession, openSessionOfIssue, type Session } from "../refinement/store.js";
 import { HttpError } from "./http.js";
 import { sessionUser } from "./api-auth.js";
 import { asOwnedRepo } from "./repo-sign-in.js";
@@ -70,6 +71,7 @@ export const labelsOf = (issue: RestIssue): string[] => (Array.isArray(issue.lab
  */
 export async function importIssue(ctx: ApiContext, req: IncomingMessage, body: Record<string, unknown>): Promise<Session> {
   const user = sessionUser(ctx, req);
+  if (typeof body.repo === "string" && isLocalRepoName(body.repo)) throw new RefinementError("bad-repo", LOCAL_ISSUE_REFUSAL);
   if (typeof body.repo !== "string" || !validGithubName(body.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
   const n = body.issue;
   if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 2_147_483_647) throw bad("give the issue number as a whole number from 1");

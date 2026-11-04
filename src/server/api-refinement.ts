@@ -1,7 +1,8 @@
 import { basename } from "node:path";
 import { loadFlow } from "../flow/load.js";
 import { buildLimitsOf, type BuildLimits, type LoadFlowVars } from "../refinement/build-limits.js";
-import { findOwnedRepo, listRepos, ownsRepo } from "../auth/repos.js";
+import { findOwnedProject, listRepos, ownsProject } from "../auth/repos.js";
+import { localRepoName } from "../auth/local-name.js";
 import { githubNameOf } from "../auth/repo-url.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
@@ -128,7 +129,17 @@ export function githubNames(userId: string): string[] {
   return out;
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** The names a new idea session takes: the GitHub repositories and the local projects of an account, in the order they were added. */
+export function sessionRepoNames(userId: string): string[] {
+  const out: string[] = [];
+  for (const r of listRepos(userId)) {
+    const name = r.method === "local" ? localRepoName(r) : githubNameOf(r.url);
+    if (name !== undefined) out.push(name);
+  }
+  return out;
+}
+
+const UUID =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** `fromHelp` of a new session: kept only for one of the caller's own Ask SCF conversations that is not deleted; otherwise left out. */
 function helpOrigin(owner: string, v: unknown): string | undefined {
@@ -188,12 +199,12 @@ const draftView = (s: Session, limits: BuildLimits, list: readonly ReadyItem[]) 
 
 /** A session as the caller sees it. The log says who by name; to the owner an administrator is "an administrator". */
 function view(ctx: ApiContext, s: Session, viewer: User, viewing = false) {
-  const repoAvailable = ownsRepo(s.owner, s.repo);
+  const repoAvailable = ownsProject(s.owner, s.repo);
   // The talk holds details of the repository, read with the owner's token: it is not shown while the repository is not theirs.
   const talkHidden = !repoAvailable && s.talk !== undefined;
   const draftsHidden = !repoAvailable && s.drafts.length > 0;
   const limits = !draftsHidden && s.drafts.some((d) => d.impact) ? limitsOf(ctx, s) : {};
-  const list = readyListOf(findOwnedRepo(s.owner, s.repo)?.definitionOfReady);
+  const list = readyListOf(findOwnedProject(s.owner, s.repo)?.definitionOfReady);
   const mine = s.owner === viewer.id;
   const admin = viewer.role === "admin";
   const who = (by: string) => {
@@ -293,7 +304,7 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
         if (!names.has(id)) names.set(id, getUser(id)?.name ?? "a removed account");
         return names.get(id)!;
       };
-      return { sessions: listSessions(admin ? undefined : user.id).map((s) => summary(s, user, ownerName)), repos: githubNames(user.id) };
+      return { sessions: listSessions(admin ? undefined : user.id).map((s) => summary(s, user, ownerName)), repos: sessionRepoNames(user.id) };
     });
     return send(res, 200, body), true;
   }

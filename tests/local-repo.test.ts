@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LOCAL_NAME_RE, checkLocalPath, isLocalRepoName, localHasRemote, localPathProblem, localRepoName } from "../src/auth/local-repo.js";
-import { RepoError, REPO_METHODS, addRepo, listAllRepos, reposPath, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../src/auth/repos.js";
+import { RepoError, REPO_METHODS, addRepo, findOwnedProject, listAllRepos, ownsProject, removeRepo, reposPath, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
 import { tryParseRepoUrl, validGithubName } from "../src/auth/repo-url.js";
 import { listCredentials } from "../src/credentials/store.js";
@@ -184,6 +184,20 @@ describe("changing", () => {
     const before = readFileSync(reposPath(), "utf8");
     expect(code(() => setRepoAuth(ANN, l.id, { method: "none" }, OK))).toBe("bad-auth");
     expect(readFileSync(reposPath(), "utf8")).toBe(before);
+  });
+
+  it("finds an owned project by its local or GitHub name", () => {
+    const l = addRepo(ANN, { url: repo, method: "local" }, OK);
+    const g = addRepo(ANN, { url: "https://github.com/acme/app" }, OK);
+    const name = localRepoName(l);
+    expect(findOwnedProject(ANN, name)?.id).toBe(l.id);
+    expect(findOwnedProject(BOB, name)).toBeUndefined();
+    expect(findOwnedProject(ANN, "local:x-00000000")).toBeUndefined();
+    expect(findOwnedProject(ANN, "local:Bad Name")).toBeUndefined();
+    expect(findOwnedProject(ANN, "ACME/App.git")?.id).toBe(g.id);
+    expect(ownsProject(ANN, name)).toBe(true);
+    removeRepo(ANN, l.id);
+    expect(ownsProject(ANN, name)).toBe(false);
   });
 
   it("saves a connection status without a credential", () => {
