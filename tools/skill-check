@@ -4,6 +4,8 @@
 // It compares the working tree and HEAD with the base commit, so a change the writer committed counts too. No text of a file is printed.
 // The rules are in dist/skill-eval/write-check.js (build first).
 import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const [name, base] = process.argv.slice(2);
@@ -30,7 +32,23 @@ try {
       return false;
     }
   });
-  const { problems, notes } = checkSkillFolder(join(process.cwd(), "skills", name), name, { changed: [...changed].sort(), changelogs, ignored });
+  // a change: the version at the base commit, so the new version must be higher (the old folder is unpacked outside the clone)
+  let baseVersion;
+  try {
+    git("cat-file", "-e", `${base}:skills/${name}/SKILL.md`);
+    const { loadLocalSkill } = await import(new URL("../dist/skill-eval/package.js", import.meta.url).href);
+    const tmp = mkdtempSync(join(tmpdir(), "skill-base-"));
+    try {
+      const packed = execFileSync("git", ["archive", base, `skills/${name}`], { maxBuffer: 256 * 1024 * 1024 });
+      execFileSync("tar", ["-x", "-C", tmp], { input: packed, stdio: ["pipe", "ignore", "pipe"] });
+      baseVersion = loadLocalSkill(join(tmp, "skills", name)).skill?.package.version;
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  } catch {
+    baseVersion = undefined; // a new skill: no version rule
+  }
+  const { problems, notes } = checkSkillFolder(join(process.cwd(), "skills", name), name, { changed: [...changed].sort(), changelogs, ignored, ...(baseVersion ? { baseVersion } : {}) });
   for (const p of problems) console.log(`PROBLEM ${p.replace(/\s+/g, " ")}`);
   for (const n of notes) console.log(`NOTE ${n.replace(/\s+/g, " ")}`);
   console.log(problems.length ? "CHECK: failed" : "CHECK: ok");

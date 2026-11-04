@@ -249,7 +249,8 @@ describe("scf skills scan is offline and read-only", () => {
   it("only the CLI and the pure evaluation import selections.js, so no run reads the file", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const users = walk("src").filter((f) => modulesOf(readFileSync(f, "utf8")).some((m) => /(?:^|\/)selections\.js$/.test(m)));
-    expect(users.sort()).toEqual([join("src", "skills", "cli.ts"), join("src", "skills", "selections-evaluate-cli.ts"), join("src", "skills", "source-skill-evaluation.ts"), join("src", "skills", "staged-import.ts")]);
+    // the gap sweeper (a server job, no run) reads the owner's selections only to name the skills of the library; it grants nothing
+    expect(users.sort()).toEqual([join("src", "server", "skill-gap-sweep.ts"), join("src", "skills", "cli.ts"), join("src", "skills", "selections-evaluate-cli.ts"), join("src", "skills", "source-skill-evaluation.ts"), join("src", "skills", "staged-import.ts")]);
   });
   it("only src/skills/cli.ts imports selections-evaluate-cli.js", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));

@@ -4,10 +4,11 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { ConfigSchema } from "../src/config.js";
 import {
-  blockersClearable, buildGapLedger, gapIssueText, gapIssuesOf, gapLinkSentence, gapLinksFor, gapMarker, isSkillGapStop, newGapCount, openGapCount,
+  blockersClearable, buildGapLedger, gapIssueText, improveIssueText, gapIssuesOf, gapLinkSentence, gapLinksFor, gapMarker, isSkillGapStop, newGapCount, openGapCount,
   openGapIssues, planGapIssues, readGapLedger, skillGapReady, unknownTopicIds, writeGapLedger, GAP_MARKER_RE,
 } from "../src/skills/gap-issues.js";
 import type { GapSignal } from "../src/skills/gap-signals.js";
+import { improveKey, improveMarker, type ImproveSignal } from "../src/skills/improve.js";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const NOW = Date.parse("2026-11-04T12:00:00Z");
@@ -161,5 +162,61 @@ describe("stopped runs", () => {
     expect(skillGapReady(run, skills, found(["a"]) as any)).toBe(false);
     expect(skillGapReady(run, skills, found(["a", "b"]) as any)).toBe(true);
     expect(skillGapReady(run, skills, (() => { throw new Error("x"); }) as any)).toBe(false);
+  });
+});
+
+describe("improve issues (#777)", () => {
+  const imp = (name: string, o: Parameters<typeof issue>[1] = {}) => issue(name, { ...o, body: `text\n${improveMarker(name)}` });
+  const isig = (name: string, o: Partial<ImproveSignal> = {}): ImproveSignal => ({
+    topic: improveKey(name), skill: name, installed: [`src-${name}@1.0.0`], kinds: ["effect"], at: NOW,
+    evidence: { runs: [], findingKinds: [], effect: { verdict: "no-measurable-effect", with: { passed: 4, runs: 12 }, without: { passed: 4, runs: 12 } } }, ...o,
+  });
+  it("reads both markers into separate keys", () => {
+    const g = gapIssuesOf([issue("foo", { number: 1 }), imp("foo", { number: 2 })]);
+    expect([...g.byTopic.keys()].sort()).toEqual(["foo", "improve:foo"]);
+    expect(g.byTopic.get("improve:foo")).toMatchObject({ kind: "improve", number: 2 });
+    expect(g.byTopic.get("foo")).toMatchObject({ kind: "gap", number: 1 });
+  });
+  it("a gap issue and an improve issue of one name do not block each other", () => {
+    expect(planGapIssues([isig("foo")], gapIssuesOf([issue("foo")]), O).open).toHaveLength(1);
+    expect(plan([sig("foo")], [imp("foo")]).open).toHaveLength(1);
+  });
+  it("an open or recently closed improve issue blocks a new one", () => {
+    expect(planGapIssues([isig("foo")], gapIssuesOf([imp("foo")]), O).skipped).toEqual([{ topic: "improve:foo", reason: "open" }]);
+    expect(planGapIssues([isig("foo")], gapIssuesOf([imp("foo", { state: "closed", closedDaysAgo: 3 })]), O).skipped[0]!.reason).toBe("closed-recently");
+    expect(planGapIssues([isig("foo")], gapIssuesOf([imp("foo", { state: "closed", closedDaysAgo: 40 })]), O).open).toHaveLength(1);
+  });
+  it("gap and improve issues share max_open and max_per_day", () => {
+    const five = ["a", "b", "c", "d", "e"].map((x) => imp(x));
+    expect(plan([sig("z")], five).skipped).toEqual([{ topic: "z", reason: "max-open" }]);
+    const fresh = ["a", "b", "c"].map((x) => imp(x, { ageDays: 0.1, state: "closed", closedDaysAgo: 0.05 }));
+    expect(planGapIssues([isig("z")], gapIssuesOf(fresh), O).skipped[0]!.reason).toBe("max-per-day");
+  });
+  it("has the title, the installed keys and the marker last, and no free text", () => {
+    const t = improveIssueText(isig("foo", { kinds: ["effect", "review"], evidence: { runs: ["r1"], findingKinds: ["security"] } }));
+    expect(t.title).toBe("Improve skill foo");
+    expect(t.body).toContain("`src-foo@1.0.0`");
+    expect(t.body).toContain("Finding kinds: `security`");
+    expect(t.body.trimEnd().split("\n").at(-1)).toBe(improveMarker("foo"));
+  });
+  it("creates the issue with the label through openGapIssues", async () => {
+    const created: any[] = [];
+    const store: any = { listAll: async () => ({ issues: [], cut: false }), createLabelIfMissing: async () => {}, create: async (o: any) => { created.push(o); return { number: 5, html_url: "https://github.com/lib/skills/issues/5" }; } };
+    const r = await openGapIssues({ store, signals: [isig("foo")], label: "Factory_go", maxOpen: 5, maxPerDay: 3, now: NOW });
+    expect(created[0]).toMatchObject({ title: "Improve skill foo", labels: ["Factory_go"] });
+    expect(r.byTopic.get("improve:foo")).toMatchObject({ kind: "improve", open: true });
+  });
+  it("the ledger round-trips library, reads an old ledger without it as empty, and has no improve entries in topics", () => {
+    const f = join(tmp, "lib.json");
+    const byTopic = gapIssuesOf([issue("a", { number: 4 }), imp("foo", { number: 5 })]).byTopic;
+    writeGapLedger(buildGapLedger("lib/skills", byTopic, NOW, { demo: iso(NOW) }), f);
+    const l = readGapLedger(f, "lib/skills");
+    expect(l.library).toEqual({ demo: iso(NOW) });
+    expect(Object.keys(l.topics)).toEqual(["a"]);
+    const old = join(tmp, "old.json");
+    writeFileSync(old, JSON.stringify({ version: 1, repository: "lib/skills", at: "", topics: {} }));
+    expect(readGapLedger(old, "lib/skills").library).toEqual({});
+    writeFileSync(old, JSON.stringify({ version: 1, repository: "lib/skills", at: "", topics: {}, library: { "Bad Name": iso(NOW), ok: "nope", fine: iso(NOW) } }));
+    expect(readGapLedger(old, "lib/skills").library).toEqual({ fine: iso(NOW) });
   });
 });

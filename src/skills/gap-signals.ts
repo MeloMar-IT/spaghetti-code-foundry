@@ -63,15 +63,15 @@ const repoOf = (r: RunSummary): string | undefined => {
   const v = r.vars?.github_repo?.trim().toLowerCase();
   return v && REPO_RE.test(v) ? v : undefined;
 };
-const timeOf = (r: RunSummary): number => {
+export const timeOf = (r: RunSummary): number => {
   const t = Date.parse(r.finishedAt ?? r.startedAt);
   return Number.isNaN(t) ? 0 : t;
 };
-const within = (r: RunSummary, now: number, days: number) => {
+export const within = (r: RunSummary, now: number, days: number) => {
   const t = timeOf(r);
   return t > 0 && now - t <= days * DAY && t <= now + DAY;
 };
-const history = (r: RunSummary): StepRecord[] => (Array.isArray(r.history) ? r.history : []);
+export const history = (r: RunSummary): StepRecord[] => (Array.isArray(r.history) ? r.history : []);
 
 type Tech = { name: string; confidence: string; version?: string };
 /** The technologies of the newest step record that has them. */
@@ -100,7 +100,20 @@ export function reviewKindOf(line: string): string | undefined {
   return REVIEW_KINDS.find(([, re]) => re.test(line))?.[0];
 }
 
-const runIds = (runs: Iterable<RunSummary>): string[] =>
+/** The review finding kinds a run's review steps raised. */
+export function reviewKindsOfRun(r: RunSummary): Set<string> {
+  const kinds = new Set<string>();
+  for (const h of history(r)) {
+    if (!isReview(h.id)) continue;
+    for (const line of String(h.output ?? "").split("\n")) {
+      const k = reviewKindOf(line);
+      if (k) kinds.add(k);
+    }
+  }
+  return kinds;
+}
+
+export const runIds = (runs: Iterable<RunSummary>): string[] =>
   [...new Set([...runs].map((r) => r.runId).filter((id) => RUN_ID_RE.test(id)))].sort(cmp).slice(0, GAP_LIMITS.runs);
 
 function make(topic: string, kind: GapKind, repo: string, runs: RunSummary[], extra: Partial<GapEvidence> = {}): GapSignal {
@@ -156,14 +169,7 @@ export function reviewRepeatGaps(i: GapInput): GapSignal[] {
   for (const r of i.runs) {
     const repo = repoOf(r);
     if (!repo || !within(r, i.now, GAP_WINDOWS.reviewDays)) continue;
-    const kinds = new Set<string>();
-    for (const h of history(r)) {
-      if (!isReview(h.id)) continue;
-      for (const line of String(h.output ?? "").split("\n")) {
-        const k = reviewKindOf(line);
-        if (k) kinds.add(k);
-      }
-    }
+    const kinds = reviewKindsOfRun(r);
     for (const k of kinds) {
       const m = by.get(repo) ?? new Map<string, RunSummary[]>();
       m.set(k, [...(m.get(k) ?? []), r]);

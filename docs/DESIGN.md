@@ -328,6 +328,17 @@ The Foundry asks for a missing skill by opening an issue in the skill library, a
 
 The tests run without GitHub: the signals and the limits are pure functions, and the sweeper takes fakes for the runs, the findings, the sign-in and the store.
 
+### Skill improvement (#777)
+
+A library skill that does not help gets an issue to improve it. It reuses the gap parts (#776): the sweeper, the marker check and the limits.
+
+- **Signals** (`src/skills/improve.ts`, pure). `improveSignals()` returns one signal per library name from three inputs: `effectImproveSignals()` (the newest effect record of each installed `id@version` is `no-measurable-effect` or `harms`), `reviewImproveSignals()` (the same review finding kind in 3 or more distinct runs of 14 days, counting only the exact installed versions the coder loaded) and `quarantineImproveSignals()`. The library names come from the authoring source's selections and from the names the ledger keeps (`library` in `skill-gaps.json`, written when `skill-write` publishes, see `publishedLibrarySkills()`).
+- **Issues** (`src/skills/gap-issues.ts`). `gapIssuesOf()` reads both markers and sets `kind` (`gap` or `improve`). The topic of an improve issue is `improve:<name>`, so the duplicate and reopen rules are the same. `planGapIssues()` is generic over the signal type and counts both kinds for `max_open` and `max_per_day`. `improveIssueText()` builds the title `Improve skill <name>`.
+- **Publish rule** (`improveDecision()`). The new version must have verdict `helps` with runs. An old version with no runs on the scenarios lets the new one stand alone; otherwise both must have the same number of runs with the skill and the new one must pass at least as many. Anything unreadable does not publish.
+- **Flow** (`tools/skill-improve`, `scripts/build-flows.mjs`). The `skill-write` flow reads the target from the issue (`improveTarget()`), measures the old version from `git archive` of the base, compares the two `EFFECT` lines with `skill-improve compare`, and counts the failed tries with `improveFailures()` (Foundry comments with a `skill-improve-failed` marker, plus the current run). The second failure runs `scf skills lifecycle <key> deprecated` only when `improveStateOf()` reads the version as `active`, and adds `Factory_needs_info`.
+
+The tests run without GitHub or a model: `tests/skill-improve.test.ts` calls the pure functions, and the flow tests use the fake `scf`.
+
 ### Evidence formats
 
 `src/evidence/` defines two formats for what a run did (#134). The engine writes the events (#135,
