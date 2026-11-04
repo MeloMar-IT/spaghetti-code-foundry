@@ -407,6 +407,93 @@ describe("LocalStore refusals", () => {
   });
 });
 
+describe("LocalStore go state", () => {
+  const stateOf = (d: string, n: number): string => /^state: (\w+)$/m.exec(read(d, nameOf(d, n)))![1]!;
+  const labelsOf = (d: string, n: number): string[] => {
+    const r = parseStoryFile(read(d, nameOf(d, n)), nameOf(d, n));
+    return r.ok ? r.story.labels : [];
+  };
+
+  it("shows a go story as open with the label go", async () => {
+    const d = proj();
+    put(d, story(1, { state: "go", labels: ["bug"] }));
+    put(d, story(2));
+    const s = store(d);
+    const got = await s.listOpenWithLabel("go", { limit: 10 });
+    expect(got.map((i) => i.number)).toEqual([1]);
+    expect(got[0]!.state).toBe("OPEN");
+    expect(got[0]!.labels.map((l) => l.name).sort()).toEqual(["bug", "go"]);
+    expect((await s.listOpen({ pages: 1 })).issues.map((i) => i.number).sort()).toEqual([1, 2]);
+    expect((await s.listOpenByLabelPages("go", { fromPage: 1, pages: 1 })).pages.get(1)!.map((i) => i.number)).toEqual([1]);
+    expect((await s.listOpenWithAnyLabel("go", ["bug"], { limit: 5 })).map((i) => i.number)).toEqual([1]);
+    expect((await s.stateAndLabels(1)).state).toBe("OPEN");
+    expect((await s.states([1, 2])).get(1)).toBe("open");
+    expect(await s.state(1)).toBe("open");
+    expect(await s.labels()).toContain("go");
+  });
+
+  it("adds and removes go as the state, and keeps other labels", async () => {
+    const d = proj();
+    put(d, story(1));
+    const s = store(d);
+    await s.setLabels(1, "go", []);
+    expect(stateOf(d, 1)).toBe("go");
+    expect(labelsOf(d, 1)).toEqual([]);
+    await s.setLabels(1, "factory:working", []);
+    expect(stateOf(d, 1)).toBe("go");
+    expect(labelsOf(d, 1)).toEqual(["factory:working"]);
+    await s.setLabels(1, undefined, ["Go"]);
+    expect(stateOf(d, 1)).toBe("open");
+    expect(labelsOf(d, 1)).toEqual(["factory:working"]);
+  });
+
+  it("keeps a closed story closed when go is added, and closing a go story closes it", async () => {
+    const d = proj();
+    put(d, story(1, { state: "closed" }));
+    put(d, story(2, { state: "go" }));
+    const s = store(d);
+    await s.setLabels(1, "go", []);
+    expect(stateOf(d, 1)).toBe("closed");
+    expect(await s.listOpenWithLabel("go", { limit: 10 })).toEqual([2].map(() => expect.objectContaining({ number: 2 })));
+    await s.close(2, "completed");
+    expect(stateOf(d, 2)).toBe("closed");
+    expect(await s.listOpen({ pages: 1 })).toEqual({ issues: [], cut: false });
+    expect(await s.listClosedWithAnyLabel(["go"], { limit: 5 })).toEqual([]);
+    await s.reopen(2);
+    expect(stateOf(d, 2)).toBe("open");
+  });
+
+  it("creates a go story from the label go", async () => {
+    const d = proj();
+    const s = store(d);
+    const made = await s.create({ title: "T", body: "b", labels: ["go", "bug"] });
+    expect(stateOf(d, made.number)).toBe("go");
+    expect(labelsOf(d, made.number)).toEqual(["bug"]);
+    expect((await s.get(made.number))!.labels).toEqual([{ name: "bug" }, { name: "go" }]);
+  });
+
+  it("keeps a literal go label of an old open or closed file after every write", async () => {
+    const d = proj();
+    put(d, story(1, { labels: ["go", "bug"] }));
+    put(d, story(2, { state: "closed", labels: ["go", "bug"] }));
+    const s = store(d);
+    expect(await s.listOpenWithLabel("go", { limit: 10 })).toEqual([]);
+    expect((await s.stateAndLabels(1)).labels).toEqual([{ name: "bug" }]);
+    await s.setLabels(1, "factory:working", ["bug"]);
+    await s.setLabels(2, "other", []);
+    await s.comment(1, "hi");
+    await s.close(1, "completed");
+    await s.reopen(1);
+    await s.reopen(2);
+    expect(labelsOf(d, 1)).toEqual(["go", "factory:working"]);
+    expect(labelsOf(d, 2)).toEqual(["go", "bug", "other"]);
+    expect(stateOf(d, 1)).toBe("open");
+    // go removed and added through the store never touches the file's own entry
+    await s.setLabels(1, undefined, ["go"]);
+    expect(labelsOf(d, 1)).toEqual(["go", "factory:working"]);
+  });
+});
+
 describe("LocalStore source", () => {
   it("runs no gh and no process", () => {
     for (const f of ["src/stories/local-store.ts", "src/stories/local-map.ts", "src/stories/story-lock.ts"]) {

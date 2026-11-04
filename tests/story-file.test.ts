@@ -107,9 +107,19 @@ describe("carriage returns and the marker escape", () => {
 
 describe("broken files", () => {
   it("names a mapping or list in a reason instead of printing it", () => {
-    expect(reason(fm("number: 12\ntitle: T\nstate: {toString: 1}"))).toBe("state is unknown: a mapping (use open or closed)");
+    expect(reason(fm("number: 12\ntitle: T\nstate: {toString: 1}"))).toBe("state is unknown: a mapping (use open, go or closed)");
     expect(reason(fm("number: 12\ntitle: T\nstate: open\nkind: {toString: 1}"))).toBe("kind is unknown: a mapping (use story or epic)");
-    expect(reason(fm("number: 12\ntitle: T\nstate: [a]"))).toBe("state is unknown: a list (use open or closed)");
+    expect(reason(fm("number: 12\ntitle: T\nstate: [a]"))).toBe("state is unknown: a list (use open, go or closed)");
+  });
+  it("reads and writes the go state; open and closed files read as before", () => {
+    const go = roundTrip(story({ state: "go" }));
+    expect(go.ok && go.story.state).toBe("go");
+    expect(formatStoryFile(story({ state: "go" }))).toContain("state: go\n");
+    for (const s of ["open", "closed"] as const) {
+      const r = parse(fm(`number: 12\ntitle: T\nstate: ${s}`));
+      expect(r.ok && r.story.state).toBe(s);
+    }
+    expect(reason(fm("number: 12\ntitle: T\nstate: started"))).toBe("state is unknown: started (use open, go or closed)");
   });
   it("each gets its own reason", () => {
     const reasons = new Set([

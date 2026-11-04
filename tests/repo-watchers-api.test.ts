@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -366,6 +367,29 @@ describe("watchers of a repository: the routes", () => {
     expect(readFileSync(repoWatchersPath(), "utf8")).toBe("not json");
     expect(logs).toContain("repos: repo-watchers.json not-json");
     writeFileSync(repoWatchersPath(), good);
+  });
+
+  it("refuses the options that need GitHub on a local repository, with a sentence", async () => {
+    const dir = join(tmp, "local-app");
+    mkdirSync(dir, { recursive: true });
+    for (const a of [["init", "-q", "-b", "main"], ["config", "user.email", "t@example.com"], ["config", "user.name", "T"], ["commit", "-q", "--allow-empty", "-m", "first"]]) execFileSync("git", a, { cwd: dir, stdio: "ignore" });
+    const local = await add(admin, { url: dir, method: "local" });
+    const bad: [Record<string, unknown>, RegExp][] = [
+      [{ id: "l1", source: "pr-feedback" }, /^source: .*review comments/],
+      [{ id: "l2", source: "ci-failures" }, /^source: .*no GitHub CI/],
+      [{ id: "l3", source: "schedule", task: "t", release_build: true }, /^release_build: /],
+      [{ id: "l4", pause_while_pr_open: "factory/" }, /^pause_while_pr_open: /],
+    ];
+    for (const [body, sentence] of bad) {
+      const r = await call(admin, "POST", path(local.id), body);
+      expect([r.status, r.error()]).toEqual([400, expect.stringMatching(sentence)]);
+    }
+    const ok = await call(admin, "POST", path(local.id), { id: "l-issues" });
+    expect(ok.status).toBe(201);
+    expect(ok.json()).toMatchObject({ github_repo: expect.stringMatching(/^local:/), label: "go" });
+    const put = await call(admin, "PUT", path(local.id, "l-issues"), { source: "ci-failures" });
+    expect([put.status, put.error()]).toEqual([400, expect.stringMatching(/^source: /)]);
+    await call(admin, "DELETE", path(local.id, "l-issues"));
   });
 
   it("never shows the token", () => {

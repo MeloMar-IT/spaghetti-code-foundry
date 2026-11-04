@@ -3,9 +3,9 @@ import { join } from "node:path";
 import { writeAtomic } from "../engine/policy-store.js";
 import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../github.js";
 import { isStatusComment, sameBody, STATUS_MARKER } from "../github.js";
-import { checkDirs, type Entry, hasLabel, MAX_BYTES, scan, STORIES_DIR, type StoryView, storyNames, toComments, toIssue, toRest, toView, UNREADABLE_TITLE, updatedMs } from "./local-map.js";
+import { checkDirs, type Entry, GO_LABEL, hasLabel, isOpenState, MAX_BYTES, scan, shownLabels, STORIES_DIR, type StoryView, storyNames, toComments, toIssue, toRest, toView, UNREADABLE_TITLE, updatedMs, withLabels } from "./local-map.js";
 import { checkFields, commentLines, foundryIds, jsonText, pickFields, plainText, ticketText } from "./local-text.js";
-import { type FileStory, formatStoryFile, highestCommentId, nextCommentId, storyFileName, withCommentIds } from "./story-file.js";
+import { type FileStory, type FileStoryState, formatStoryFile, GO_STATE, highestCommentId, nextCommentId, storyFileName, withCommentIds } from "./story-file.js";
 import { commitStory, type StoryChange } from "./story-commit.js";
 import { pidAlive, type StoryLockOptions, withStoryLock, withStoryLockSync } from "./story-lock.js";
 import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
@@ -50,11 +50,8 @@ const desc = (a: Entry, b: Entry): number => b.n - a.n;
 const noCheck = (): void => {};
 type Change<T> = (s: FileStory, now: string) => { story?: FileStory; out: T };
 
-/** The labels after removals (an added label of the same name stays) and the addition. */
-function labelsAfter(labels: string[], add: string | undefined, remove: string[]): string[] {
-  const kept = labels.filter((l) => !remove.some((r) => same(r, l) && !(add && same(add, r))));
-  return add && !kept.some((l) => same(l, add)) ? [...kept, add] : kept;
-}
+/** The store shows `go` as open. */
+const plain = (s: FileStoryState): StoryState => (s === "closed" ? "closed" : "open");
 const reasonOf = (reason: unknown): "completed" | "not_planned" => {
   if (reason !== "completed" && reason !== "not planned") throw new Error("not a close reason");
   return reason === "completed" ? "completed" : "not_planned";
@@ -80,7 +77,7 @@ export class LocalStore implements StoryStore {
 
   private get folder(): string { return join(this.dir, STORIES_DIR); }
   private all(): Entry[] { return scan(this.dir); }
-  private open(): Entry[] { return this.all().filter((e) => !e.ok || e.story.state === "open"); }
+  private open(): Entry[] { return this.all().filter((e) => !e.ok || isOpenState(e.story.state)); }
 
   /** A readable story; rejects when it is missing or broken. */
   private need(entries: Entry[], n: number): Entry & { ok: true } {
@@ -115,7 +112,7 @@ export class LocalStore implements StoryStore {
   }
   async stateAndLabels(issue: number): Promise<{ state: string; labels: { name: string }[] }> {
     const e = this.need(this.all(), num(issue));
-    return { state: e.story.state.toUpperCase(), labels: e.story.labels.map((name) => ({ name })) };
+    return { state: plain(e.story.state).toUpperCase(), labels: shownLabels(e.story).map((name) => ({ name })) };
   }
   async searchOverrules(o: { since: string; limit: number }): Promise<{ number: number; updatedAt?: string }[]> {
     const limit = listSize(o.limit);
@@ -162,15 +159,15 @@ export class LocalStore implements StoryStore {
     o?.before?.();
     const entries = this.all();
     const out = new Map<number, StoryState>();
-    for (const n of new Set(numbers.filter((x) => whole(x)))) out.set(n, this.need(entries, n).story.state);
+    for (const n of new Set(numbers.filter((x) => whole(x)))) out.set(n, plain(this.need(entries, n).story.state));
     return out;
   }
   async state(issue: number): Promise<StoryState> {
-    return this.need(this.all(), num(issue)).story.state;
+    return plain(this.need(this.all(), num(issue)).story.state);
   }
   async labels(): Promise<string[]> {
     const names = new Set<string>();
-    for (const e of this.all()) if (e.ok) e.story.labels.forEach((l) => names.add(l));
+    for (const e of this.all()) if (e.ok) shownLabels(e.story).forEach((l) => names.add(l));
     return [...names].sort();
   }
   async ensureLabel(_name: string, _color: string, _description: string): Promise<void> {}
@@ -258,11 +255,12 @@ export class LocalStore implements StoryStore {
   }
   /** The body of `create`, under the lock. */
   private makeStory(o: { title: string; body: string; labels: string[] }, held: () => boolean, timeoutMs?: number): RestIssue {
-    const labels = o.labels.filter((l, i) => o.labels.findIndex((x) => same(x, l)) === i);
+    const unique = o.labels.filter((l, i) => o.labels.findIndex((x) => same(x, l)) === i);
+    const labels = unique.filter((l) => !same(l, GO_LABEL));
     const names = storyNames(this.folder);
     const n = Math.max(this.nextNumber() ?? 0, Math.max(0, ...names.keys()) + 1, 1);
     const now = this.now().toISOString();
-    const story: FileStory = { number: n, title: o.title, state: "open", kind: "story", labels, dependsOn: [], createdAt: now, updatedAt: now, body: o.body, comments: [] };
+    const story: FileStory = { number: n, title: o.title, state: labels.length < unique.length ? GO_STATE : "open", kind: "story", labels, dependsOn: [], createdAt: now, updatedAt: now, body: o.body, comments: [] };
     const text = this.checked(formatStoryFile(story));
     const file = storyFileName(n, o.title);
     if (!held()) throw new Error("the lock was lost; try again");
@@ -277,7 +275,7 @@ export class LocalStore implements StoryStore {
     return toRest(r.entry);
   }
   async setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number): Promise<void> {
-    await this.write(issue, "labels", { timeoutMs }, (s) => ({ story: { ...s, labels: labelsAfter(s.labels, add, remove) }, out: undefined }));
+    await this.write(issue, "labels", { timeoutMs }, (s) => ({ story: withLabels(s, add, remove), out: undefined }));
   }
   async comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined> {
     const r = await this.write(issue, "comment", { timeoutMs }, (s, now) => this.addComment(s, now, body));
@@ -407,7 +405,7 @@ export class LocalStore implements StoryStore {
         const { out: id } = this.writeNow(n, "comment", (s, now) => this.addComment(s, now, body));
         return `${this.need(this.all(), n).rel}#issuecomment-${id}\n`;
       },
-      setLabels: (n, add, remove) => { this.writeNow(n, "labels", (s) => ({ story: { ...s, labels: labelsAfter(s.labels, add, remove) }, out: undefined })); },
+      setLabels: (n, add, remove) => { this.writeNow(n, "labels", (s) => ({ story: withLabels(s, add, remove), out: undefined })); },
       close: (n, reason) => {
         reasonOf(reason);
         num(n);
