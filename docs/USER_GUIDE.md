@@ -666,7 +666,7 @@ A file has three parts:
 1. **Front matter**, between two lines `---`, in YAML:
    - `number` (required): the story number, a whole number. It must match the number in the file name.
    - `title` (required): the title.
-   - `state` (required): `open` or `closed`.
+   - `state` (required): `open`, `go` or `closed`. `go` is an open story that is ready to build: it is what "Yes, build this" sets, and a watcher on a local repository starts the stories in this state. A `go` story counts as open everywhere else. Files with `open` or `closed` read unchanged.
    - `kind`: `story` (the default) or `epic`.
    - `labels`: a list of words.
    - `epic`: the number of the epic this story belongs to.
@@ -4873,6 +4873,8 @@ GitHub App" under its attention state; choose another authentication. **Remove**
 - the folder exists, and it is the top folder of a git repository (not a folder inside one);
 - the folder and its `.scf/stories/` folder can be written;
 - a branch is checked out (HEAD is not detached).
+
+A watcher on a local repository works the same way without GitHub: it starts the stories set to `go` and reads the folder itself. Watchers that need GitHub (review comments, CI failures, release files) are refused for it, and the watcher form says why.
 
 It does not call GitHub, and it asks for no token, user name or key. The repository keeps its stories in `.scf/stories/` (see "Stories as files") and its story commits on `scf/stories`. The path must not contain control characters, must not be inside the Foundry's data folder, and cannot be changed later: to use another folder, remove the repository and add it again.
 With **SSH deploy key** you type the SSH address of the repository (`git@host:path` or `ssh://…`) and no

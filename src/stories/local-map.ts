@@ -1,7 +1,35 @@
 import { lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Comment, Issue, RestIssue } from "../github.js";
-import { type FileStory, parseStoryFile, withCommentIds } from "./story-file.js";
+import { type FileStory, type FileStoryState, GO_STATE, parseStoryFile, withCommentIds } from "./story-file.js";
+
+/** The label that shows (and sets) the `go` state of a story. */
+export const GO_LABEL = GO_STATE;
+const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
+export const isOpenState = (s: FileStoryState): boolean => s !== "closed";
+
+/** The labels the store shows: the file's labels without a literal `go` (it is kept in the file, never used), plus `go` when the state is `go`. */
+export function shownLabels(s: FileStory): string[] {
+  const rest = s.labels.filter((l) => !same(l, GO_LABEL));
+  return s.state === GO_STATE ? [...rest, GO_LABEL] : rest;
+}
+
+/**
+ * The story after labels are removed and one is added (an added label of the same name stays). `go` is the state, not a label of the file:
+ * adding it makes an open story `go`, removing it makes a `go` story `open`, a closed story stays closed. Literal `go` entries stay in `labels`.
+ */
+export function withLabels(s: FileStory, add: string | undefined, remove: string[]): FileStory {
+  const addGo = add !== undefined && same(add, GO_LABEL);
+  const removeGo = remove.some((r) => same(r, GO_LABEL));
+  const addFile = add !== undefined && !addGo ? add : undefined;
+  const files = remove.filter((r) => !same(r, GO_LABEL));
+  const kept = s.labels.filter((l) => !files.some((r) => same(r, l) && !(addFile && same(addFile, r))));
+  const labels = addFile && !kept.some((l) => same(l, addFile)) ? [...kept, addFile] : kept;
+  let state = s.state;
+  if (state === "open" && addGo) state = GO_STATE;
+  else if (state === GO_STATE && removeGo && !addGo) state = "open";
+  return { ...s, labels, state };
+}
 
 export const STORIES_DIR = ".scf/stories";
 export const UNREADABLE_TITLE = "cannot be read";
@@ -80,7 +108,7 @@ export function toRest(e: Entry): RestIssue {
   }
   const s = e.story;
   return {
-    number: e.n, state: s.state, state_reason: null, title: s.title, body: s.body, labels: s.labels.map((name) => ({ name })), html_url: e.rel,
+    number: e.n, state: s.state === "closed" ? "closed" : "open", state_reason: null, title: s.title, body: s.body, labels: shownLabels(s).map((name) => ({ name })), html_url: e.rel,
     created_at: timeOr(s.createdAt, e.mtimeMs), updated_at: timeOr(s.updatedAt, e.mtimeMs), closed_at: s.closedAt ?? null,
   };
 }
@@ -120,5 +148,5 @@ export function toView(e: Entry, author: string): StoryView {
   };
 }
 
-export const hasLabel = (e: Entry, label: string): boolean => e.ok && e.story.labels.some((l) => l.toLowerCase() === label.toLowerCase());
+export const hasLabel = (e: Entry, label: string): boolean => e.ok && shownLabels(e.story).some((l) => same(l, label));
 export const updatedMs = (e: Entry): number => Date.parse(toRest(e).updated_at ?? "") || e.mtimeMs;

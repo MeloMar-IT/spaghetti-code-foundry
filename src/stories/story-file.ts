@@ -1,16 +1,18 @@
 import { parse, stringify } from "yaml";
 import { isStatusComment, STATUS_MARKER } from "../github.js";
-import type { StoryState } from "./store.js";
 
 /**
  * A story as a file: `.scf/stories/<number>-<slug>.md`. Front matter (YAML), then the Markdown body,
  * then an optional final `## Comments` section. Pure functions only: no file, process or clock access.
  */
 export type StoryKind = "story" | "epic";
+/** `go` is an open story that is ready to build ("Yes, build this"). */
+export const GO_STATE = "go";
+export type FileStoryState = "open" | "go" | "closed";
 /** `id` is the stable number of the comment (the one in `#issuecomment-<id>`); a file written by hand may have none. */
 export interface StoryComment { id?: number; author: string; createdAt: string; body: string }
 export interface FileStory {
-  number: number; title: string; state: StoryState; kind: StoryKind;
+  number: number; title: string; state: FileStoryState; kind: StoryKind;
   labels: string[]; epic?: number; dependsOn: number[];
   createdAt?: string; updatedAt?: string; closedAt?: string;
   /** The highest comment id the story has ever used (`comment_top`). A removed comment never gives its id back. */
@@ -157,7 +159,7 @@ export function parseStoryFile(text: string, fileName: string): ParsedStoryFile 
   if (format !== 1 && format !== 2) return fail(`format is unknown: ${show(format)} (use 1 or 2)`);
   const syn = SYNTAX[format as number]!;
   const state = has("state") ? f.state : undefined;
-  if (state !== "open" && state !== "closed") return fail(`state is unknown: ${state === undefined ? "(none)" : show(state)} (use open or closed)`);
+  if (state !== "open" && state !== GO_STATE && state !== "closed") return fail(`state is unknown: ${state === undefined ? "(none)" : show(state)} (use open, go or closed)`);
   const kind = has("kind") ? f.kind : "story";
   if (kind !== "story" && kind !== "epic") return fail(`kind is unknown: ${show(kind)} (use story or epic)`);
   const labels = has("labels") ? f.labels : [];

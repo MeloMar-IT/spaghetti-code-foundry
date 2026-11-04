@@ -11,7 +11,9 @@ import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
 import { isSkillGapStop } from "../skills/gap-issues.js";
 import { commentReads, extraWaitingIssues, EXTRA_READS_PER_CHECK, EXTRA_READ_MEMO_MS, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs, type CommentReads } from "./waiting-issues.js";
-import { canWrite, commentsAfter, gh, ghActsAsApp, ghJson, isBot, isOverruleReply, isStatusComment, mayWrite, repoPermission, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
+import { localWatcherProblem } from "../repos/watchers.js";
+import { localWatcherConfig, watcherRepoAccess, type WatcherRepoAccess } from "./watcher-local.js";
+import { commentsAfter, ghActsAsApp, ghJson, isBot, isOverruleReply, isStatusComment, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
 import { storeFor, type StoryStore } from "../stories/store.js";
 import { knownIssueState, markIssueCheckFailed, noteIssueState, saveIssueStates } from "../issue-states.js";
 import { failedIndex, failureSummary } from "../failure.js";
@@ -32,7 +34,7 @@ import type { Scheduler } from "./scheduler.js";
 import { StatusComments } from "./status-comment.js";
 import { notCodeStop, parkedComment, wantsPark } from "./park.js";
 import { ackedNotPlanned, acceptedComment, codeMerged, findOverrules, FOLLOWUP_SEARCH_LIMIT, followUpComment, followUpSince, hasPlanStep, noteComment, overruleAction, parseOverrule, PLANNED_LINE, plannedKeys, type Overrule } from "./overrule.js";
-import { contentsPath, filesToCheck, openOwnerActions, OWNER_FILE_MARK, type OwnerAsk } from "./owner-action.js";
+import { filesToCheck, openOwnerActions, OWNER_FILE_MARK, type OwnerAsk } from "./owner-action.js";
 import { validBranchName } from "../auth/repo-settings.js";
 
 /** Status labels the watcher puts on issues. Remove one to have the issue picked up again. */
@@ -206,16 +208,6 @@ const APPROVE_RE = /^\s*\/(approve|reject)\b[ \t]*(.*)$/im;
 const AUTO_DEFAULTS_MARK = "<!-- spaghetti-code-foundry auto-defaults -->";
 const AUTO_DEFAULTS_MAX = 2;
 
-/** A contents answer that is one file (not a directory's list). */
-function isFileBody(body: string): boolean {
-  try {
-    const v: unknown = JSON.parse(body);
-    return !!v && typeof v === "object" && !Array.isArray(v) && (v as { type?: unknown }).type === "file";
-  } catch {
-    return false;
-  }
-}
-
 /** owner_action questions that wait for a file: how often a found file resumes one issue, and the limits of the file checks per check. */
 const OWNER_FILE_MAX = 2;
 const FILE_CHECKS_PER_TICK = 20;
@@ -334,7 +326,11 @@ export class Watcher {
   private allStatus: string[];
   private statusComments: StatusComments;
 
+  private access: WatcherRepoAccess;
+
   constructor(public cfg: WatcherConfig, private d: WatcherDeps) {
+    this.cfg = cfg = localWatcherConfig(cfg);
+    this.access = watcherRepoAccess(cfg.github_repo);
     this.status = { id: cfg.id, lastActions: [] };
     this.L = labelNames(cfg);
     this.allStatus = Object.values(this.L);
@@ -395,9 +391,7 @@ export class Watcher {
 
   private async setup() {
     if (this.setupDone) return;
-    await gh(["repo", "view", this.repo, "--json", "nameWithOwner"]).catch((e: Error) => {
-      throw new Error(`cannot access ${this.repo} with gh: ${errorLine(e.message)}`);
-    });
+    await this.access.check();
     if (this.cfg.source === "issues") {
       const review = this.cfg.vars.review_plan_label ?? "";
       const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase(); // GitHub label names ignore case
@@ -474,6 +468,8 @@ export class Watcher {
   /** One check; throws when it fails. */
   private async check(token: number, checkStartedAt: number) {
     parseInterval(this.cfg.every);
+    const needsGitHub = this.access.local ? localWatcherProblem(this.cfg) : undefined;
+    if (needsGitHub) throw new Error(needsGitHub);
     await this.setup();
     if (this.cfg.source === "issues") await this.tickIssues(token, checkStartedAt);
     else if (this.cfg.source === "pr-feedback") await this.tickPrs();
@@ -510,6 +506,7 @@ export class Watcher {
    * real hotfix. Undefined when the flow has no baseline step or no valid base branch (then a red base branch is not watched).
    */
   private redFlow(): { branch: string; hotfix: string[] } | undefined {
+    if (this.access.local) return undefined; // the red-base check reads GitHub
     try {
       const flow = loadFlow(this.flowName(), this.d.repo).flow;
       if (!flow.steps.some((s) => s.id === "baseline_tests")) return undefined;
@@ -563,6 +560,7 @@ export class Watcher {
 
   /** Files an owner_action question waits for are looked for here: the develop branch with gitflow, else the default branch. */
   private fileRef(): { ref?: string; where: string } | undefined {
+    if (this.access.local) return { where: "the project folder" };
     let branch = "";
     try {
       const flow = loadFlow(this.flowName(), this.d.repo).flow;
@@ -582,14 +580,12 @@ export class Watcher {
       const left = until - Date.now();
       if (left <= 0) return false;
       try {
-        const body = await gh(["api", contentsPath(this.repo, f, ref)], undefined, left);
+        const there = await this.access.hasFile(f, ref, left);
         alive();
-        // A directory answers with a list, a file with one object: only a file counts.
-        if (!isFileBody(body)) return false;
+        if (!there) return false;
       } catch (e) {
         alive();
-        const msg = errorLine((e as Error).message);
-        if (!/\b404\b|Not Found/i.test(msg)) this.d.log(`[${this.cfg.id}] ! looking for ${f}: ${msg}`);
+        this.d.log(`[${this.cfg.id}] ! looking for ${f}: ${errorLine((e as Error).message)}`);
         return false;
       }
     }
@@ -986,9 +982,9 @@ export class Watcher {
       if (!perm) {
         if (o.comment.viewerDidAuthor === true && ghActsAsApp()) perm = "ok";
         else {
-          const level = await repoPermission(this.repo, login, OVERRULE_GH_MS);
+          const allowed = await this.access.writer(login, OVERRULE_GH_MS);
           alive();
-          perm = mayWrite(level) ? "ok" : "denied";
+          perm = allowed ? "ok" : "denied";
         }
         this.overrulePerm.set(o.key, perm);
         if (this.overrulePerm.size > 5000) this.overrulePerm.delete(this.overrulePerm.keys().next().value!);
@@ -2130,7 +2126,7 @@ export class Watcher {
 
   /** May this comment's author decide (approve, reject, park)? An app has no user: its own comment (gh says so) counts as written with write access. */
   private async mayDecide(c: Comment): Promise<boolean> {
-    return (c.viewerDidAuthor === true && ghActsAsApp()) || (await canWrite(this.repo, c.author.login));
+    return (c.viewerDidAuthor === true && ghActsAsApp()) || (await this.access.writer(c.author.login).catch(() => false));
   }
 
   /** Work of this issue that is queued or running (also a queued job that has no run file yet). */

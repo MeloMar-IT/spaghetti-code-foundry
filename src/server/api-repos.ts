@@ -255,15 +255,15 @@ async function adminWatchers(ctx: ApiContext, req: IncomingMessage, res: ServerR
     const rec = known();
     const problem = guardedRepos(ctx, () => watcherRepoProblem(rec, getUser(rec.owner)));
     if (problem) throw new HttpError(400, problem);
-    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id), describe: describeVars(ctx) }));
+    const w = guardedWatchers(ctx, () => addRepoWatcher(repoId, body, { taken: ctx.fileConfig().watchers.map((x) => x.id), describe: describeVars(ctx), local: rec.method === "local" }));
     audit(`watcher ${w.id}: added`);
     ctx.watchers.sync();
     return send(res, 201, rowOf(w.id, w)), true;
   }
   if (seg.length === 5 && method === "PUT") {
     const body = await readJson(req);
-    known();
-    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body, { describe: describeVars(ctx) }));
+    const rec = known();
+    const r = guardedWatchers(ctx, () => updateRepoWatcher(repoId, wid!, body, { describe: describeVars(ctx), local: rec.method === "local" }));
     if (r.changed.length) {
       auditActions(ctx.diagLog, by, "repo-change", repoId, watcherChanges(r.before, r.after).map((c) => changeDetail(c, `watcher ${wid}: `)));
       ctx.watchers.sync();
