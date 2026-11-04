@@ -58,7 +58,7 @@ export function tabProgress() {
  * start. Returns { open, close, send, stop, … , state }.
  */
 export function createAsk(role, {
-  slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], paused = false, store = tabStore(), progress = tabProgress(), now = () => Date.now(),
+  slot, api = realApi, host = document.body, hash = () => globalThis.location?.hash ?? "", win = globalThis, list = [], paused = false, simple = false, store = tabStore(), progress = tabProgress(), now = () => Date.now(),
   go = (to) => { if (win.location) win.location.hash = to; },
   confirmer = confirmDialog, previewer = handoffDialog, review = reviewDialog, wish = sendWish, setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (t) => clearTimeout(t),
 } = {}) {
@@ -117,7 +117,8 @@ export function createAsk(role, {
     const view = {
       now: now(),
       onOffer: (id, i) => void runOffer(id, i),
-      onHandoff: (id) => void handOff(id),
+      // the Simple view has no hand-off: its records can lead to Advanced pages
+      ...(simple ? {} : { onHandoff: (id) => void handOff(id) }),
       onReview: (id, i) => void reviewAction(id, i),
       onNavigate: () => close({ back: false }),
       onToggle: (id, i) => toggleStep(id, i),
@@ -128,14 +129,14 @@ export function createAsk(role, {
       onDraft: (message, reasons) => st.drafts.set(message, reasons),
     };
     // `mount` keeps the focus on the control with the same name, so voting by keyboard works across a redraw
-    mount(ui.thread, threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id), outcomes: (id) => st.outcomes.get(id) ?? [] }).flatMap((entry) => [entryNode({ ...entry, handoffs: recordsOf(st.conversation, entry.id, role) }, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
+    mount(ui.thread, threadOf(st.conversation, { elapsedMs: elapsed(), role, planDone: (id) => progress.get(id), outcomes: (id) => st.outcomes.get(id) ?? [], simple }).flatMap((entry) => [entryNode({ ...entry, handoffs: simple ? [] : recordsOf(st.conversation, entry.id, role) }, view), ...(entry.rateable ? rateNodes(entry, view) : [])]));
     ui.thread.hidden = !st.conversation;
     const controls = { ...controlsFor(st.conversation, { busy: st.busy, paused: st.paused }), solved: solveOffered(st.conversation, { busy: st.busy }) };
     mount(ui.actions, actionNodes(controls, CONSEQUENCES, { stop: () => void stopAnswer(), retry: () => void retry(), solved: () => void solve(), archive: () => void archive(), restore: () => void restore(), remove: () => void remove() }));
     // suggestions are for a start: a conversation that runs has its own questions
     ui.suggestBox.hidden = !!st.conversation;
     if (!st.conversation) {
-      mount(ui.suggest, suggestionNodes(suggestionsFor(where()), (text) => {
+      mount(ui.suggest, suggestionNodes(suggestionsFor(where(), { simple }), (text) => {
         ui.question.value = text;
         ui.error.textContent = "";
         ui.question.focus();

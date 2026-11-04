@@ -3,6 +3,9 @@ import { writeAudit } from "../auth/audit.js";
 import { effectiveLimits } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
 import { getUser, type User } from "../auth/users.js";
+import { listRepos } from "../auth/repos.js";
+import { viewOf } from "../auth/views.js";
+import type { SimpleProject } from "../help/simple.js";
 import { checkSources } from "../help/actions.js";
 import { CONTEXT_MAX, CONTEXT_PRIORITY, ENTITY_LIMIT, FILTER_LIMIT, SELECTION_MAX, contextSize, type EntityResolver } from "../help/context.js";
 import { forRole } from "../help/contract.js";
@@ -105,6 +108,15 @@ function auditHelp(ctx: ApiContext, by: string, action: "help-ask" | "help-delet
 const ID_SHAPE = /^[A-Za-z0-9_-]{1,64}$/;
 const targetOf = (id: string | undefined) => (id !== undefined && ID_SHAPE.test(id) ? `conversation ${id}` : "conversation");
 
+/** The last part of a repository address or path, without ".git": the name a Simple asker knows the project by. */
+const shortName = (url: string): string => url.split(/[/\\:]/).filter(Boolean).pop()?.replace(/\.git$/, "") ?? "";
+
+/** The projects of an account, for the links of a Simple turn: none when the account is gone. */
+export function helpProjects(owner: string): SimpleProject[] {
+  if (!currentAccount({ id: owner, role: "user" })) return [];
+  return listRepos(owner).map((r) => ({ id: r.id, name: shortName(r.url) }));
+}
+
 const services = new WeakMap<ApiContext, HelpTurns>();
 /** The help turns of this server: what runs and what waits. */
 export function helpTurnsOf(ctx: ApiContext): HelpTurns {
@@ -118,6 +130,7 @@ export function helpTurnsOf(ctx: ApiContext): HelpTurns {
       log: ctx.diagLog,
       resolve: helpResolver(ctx),
       allow: (asker) => helpAllowed(ctx, asker),
+      projects: helpProjects,
       evidence: (input) => {
         const guard = { patterns: ctx.config().help.sensitive_patterns ?? [] };
         const who = currentAccount({ id: input.owner, role: input.role });
@@ -295,7 +308,8 @@ export const helpRoutes: Route = async (ctx, req, res, seg, method, user) => {
     send(res, 200, guardedHelp(ctx, () => usageView(ctx)));
     return true;
   }
-  const asker: Asker = { id: user.id, role: user.role === "admin" ? "admin" : "user" };
+  // the view of the account at the time of the question: Simple narrows what Ask SCF uses and says, it never widens it
+  const asker: Asker = { id: user.id, role: user.role === "admin" ? "admin" : "user", ...(viewOf(user) === "simple" ? { simple: true } : {}) };
   const turns = helpTurnsOf(ctx);
   // What a page context is worth, before it is sent with a question: nothing is stored and no model is called.
   if (seg.length === 2 && seg[1] === "context" && method === "POST") {

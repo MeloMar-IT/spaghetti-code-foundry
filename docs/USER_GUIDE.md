@@ -8646,6 +8646,18 @@ Your rating stays with that answer in your conversation, and you can change it. 
 
 **To report a bad answer:** rate it **Not helpful** and tick the reason. For a wrong answer about the product, also tell an administrator of this Foundry, with the question, so the documentation or the setting can be fixed. The quality numbers show how many answers were rated, but not which one.
 
+### Ask SCF in the Simple view
+
+In the Simple view, Ask SCF answers in plain words, for someone who does not know the Foundry:
+
+- **Words.** The same word list as the rest of Simple is used (for example "change" for a story, "work" for a run, "got stuck" for a failed run). A sentence that still needs a word of the Advanced view is left out.
+- **Only your own work.** It explains only your own projects and runs. Another account's work is not used.
+- **Links.** A reply links only to **My projects**, **Help** and your own project pages. Any other link is dropped.
+- **No changes.** A Simple reply offers no actions, no offers and no drafts. Earlier questions of the conversation are not sent with a new one.
+- **Where links go.** Links open in place; the reply does not offer a hand-off to an Advanced page.
+
+The panel shows the Simple suggestions instead of the Advanced ones. If a reply has nothing left in plain words, the panel says so and asks you to switch to the Advanced view to read it.
+
 ### What you can ask
 
 | You ask | What it is |
