@@ -291,3 +291,28 @@ describe("comment ids", () => {
     expect(() => withCommentIds([c(MAX_COMMENT_ID), c(undefined)])).toThrow("no comment id is left");
   });
 });
+
+describe("github_issue, github_repo and github_done", () => {
+  const moved = { githubIssue: 7, githubRepo: "acme/app", githubDone: true as const };
+  it("round trips and writes the keys", () => {
+    const s = story(moved);
+    expect(roundTrip(s)).toEqual({ ok: true, story: s });
+    const text = formatStoryFile(s);
+    expect(text).toMatch(/^github_issue: 7$/m);
+    expect(text).toMatch(/^github_repo: acme\/app$/m);
+    expect(text).toMatch(/^github_done: true$/m);
+  });
+  it("a file without them has no keys, no lines and the same story as before", () => {
+    const s = story();
+    expect(formatStoryFile(s)).not.toMatch(/github_/);
+    const r = roundTrip(s);
+    expect(r.ok && Object.keys(r.story)).not.toContain("githubIssue");
+    expect(r.ok && r.story).toEqual(s);
+  });
+  it("refuses a bad number, a bad repository and a done that is not true", () => {
+    for (const v of ["0", "-1", '"x"', "[1]", "1.5"]) expect(reason(fm(`${OK}\ngithub_issue: ${v}`))).toBe("github_issue must be an issue number");
+    for (const v of ["acme", "a/b/c", "''", "5", "[a]"]) expect(reason(fm(`${OK}\ngithub_repo: ${v}`))).toMatch(/^github_repo must be a repository name/);
+    expect(reason(fm(`${OK}\ngithub_done: false`))).toBe("github_done must be true");
+    expect(parse(fm(`${OK}\ngithub_issue: 3\ngithub_repo: acme/app`)).ok).toBe(true);
+  });
+});

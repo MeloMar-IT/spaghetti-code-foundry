@@ -494,6 +494,33 @@ describe("LocalStore go state", () => {
   });
 });
 
+describe("LocalStore setGithubIssue and markGithubDone", () => {
+  it("saves the fields, keeps them through a later write, and refuses a different number or repository", async () => {
+    const d = proj();
+    put(d, story(3));
+    const s = store(d);
+    await s.setGithubIssue(3, 41, "acme/app");
+    const text = read(d, nameOf(d, 3));
+    expect(text).toMatch(/^github_issue: 41$/m);
+    expect(text).toMatch(/^github_repo: acme\/app$/m);
+    await s.setGithubIssue(3, 41, "acme/app");
+    await s.comment(3, "hello");
+    await s.markGithubDone(3);
+    await s.edit(3, { body: "new" });
+    const back = parseStoryFile(read(d, nameOf(d, 3)), nameOf(d, 3));
+    expect(back.ok && back.story).toMatchObject({ githubIssue: 41, githubRepo: "acme/app", githubDone: true });
+    await expect(s.setGithubIssue(3, 42, "acme/app")).rejects.toThrow("story #3 was already moved to acme/app#41");
+    await expect(s.setGithubIssue(3, 41, "acme/other")).rejects.toThrow("already moved");
+    await expect(s.setGithubIssue(3, 0, "acme/app")).rejects.toThrow("not an issue number");
+    await expect(s.setGithubIssue(3, 5, "nope")).rejects.toThrow("not a repository name");
+  });
+  it("markGithubDone needs a saved issue", async () => {
+    const d = proj();
+    put(d, story(3));
+    await expect(store(d).markGithubDone(3)).rejects.toThrow("has no GitHub issue yet");
+  });
+});
+
 describe("LocalStore source", () => {
   it("runs no gh and no process", () => {
     for (const f of ["src/stories/local-store.ts", "src/stories/local-map.ts", "src/stories/story-lock.ts"]) {

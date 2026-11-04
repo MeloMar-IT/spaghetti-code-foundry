@@ -10,7 +10,7 @@ import { join } from "node:path";
 // The story text never reaches an argument: the message holds only the number and a fixed word.
 // The user's own git settings (identity, excludes, attributes) stay on; only hooks and fsmonitor are switched off.
 
-export type StoryChange = "created" | "edited" | "labels" | "comment" | "status" | "closed" | "reopened";
+export type StoryChange = "created" | "edited" | "labels" | "comment" | "status" | "closed" | "reopened" | "moved";
 
 export const storyCommitMessage = (story: number, change: StoryChange): string => `scf: story #${story} ${change}`;
 

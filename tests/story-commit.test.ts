@@ -221,3 +221,25 @@ describe("story commits on their own branch", () => {
     expect(git(d, "branch", "--list", "scf/stories")).toBe("");
   });
 });
+
+describe("the moved commit", () => {
+  it("commits once per change, adds none for the same values, and commits a file whose first commit failed", async () => {
+    const d = repo();
+    const s = new LocalStore(d, "local/x", { lockPollMs: 5, branch: "scf/stories" });
+    await s.create({ title: "Hello", body: "b", labels: [] });
+    const commits = (): string[] => lines(git(d, "log", "--format=%s", "scf/stories"));
+    await s.setGithubIssue(1, 9, "acme/app");
+    expect(commits()[0]).toBe("scf: story #1 moved");
+    const n = commits().length;
+    await s.setGithubIssue(1, 9, "acme/app");
+    expect(commits()).toHaveLength(n);
+    await s.markGithubDone(1);
+    expect(commits()).toHaveLength(n + 1);
+    // the file is saved but its commit is missing (the first commit failed): the same call again commits it
+    const file = join(d, stories, "1-hello.md");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/updated: .*/, "updated: 2030-01-01T00:00:00.000Z"));
+    await s.setGithubIssue(1, 9, "acme/app");
+    expect(commits()).toHaveLength(n + 2);
+    expect(git(d, "show", "scf/stories:.scf/stories/1-hello.md")).toContain("updated: 2030-01-01T00:00:00.000Z");
+  });
+});

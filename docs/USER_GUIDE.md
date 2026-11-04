@@ -675,6 +675,7 @@ A file has three parts:
    - `depends_on`: a list of the story numbers this story waits for.
    - `created`, `updated`, `closed`: times.
    - `comment_top` (optional): the highest comment id the story has ever used. The Foundry writes it; a comment that is removed never gives its id back. A file written by hand may leave it out.
+   - `github_issue`, `github_repo`, `github_done` (optional): set by the move to GitHub (see "Move a local project to GitHub"). `github_issue` is the issue number, `github_repo` the repository (`owner/name`), and `github_done` is `true` once the move has finished that issue. Older Foundry versions ignore them.
 2. **The body**: the Markdown text of the story, after the front matter.
 3. **Comments** (optional): a final `## Comments` heading, then one block per comment. A block starts with a heading `### Comment <id> by <author> on <time>` and holds the comment text. The id is the comment's number, the one in its link (`#issuecomment-<id>`). A heading without an id, `### Comment by <author> on <time>`, is also read; the Foundry gives such a comment the next free id when it next writes the file.
 
@@ -762,6 +763,31 @@ When the Foundry writes a story file in a local project, it also makes one git c
 - A write that changes nothing makes no commit.
 - The Foundry does not commit your hand edits. A story you edit by hand is still read the next time, and it is committed only when the Foundry writes that same story.
 - The file is saved before the commit. If the commit fails, the story keeps the change, and the Foundry reports the story number, the file, the branch (when known) and the reason. Typical reasons: the folder is not a git repository, git is not installed, or git took longer than the time limit.
+
+### Move a local project to GitHub
+
+The open stories of a local project can become issues in a GitHub repository. The target must already be connected under **My repositories** by the same owner. The text of each story is kept: its title, body, labels, comments, epic and dependencies.
+
+Start with a dry run. It lists each story and what the move would do with it, and it changes nothing: no issue is created and no file is written. Only the sign-in of the target repository is prepared.
+
+- **create**: the story becomes a new issue. Stories set to `open` or `go` are listed. Closed stories are listed only when you ask to move them too.
+- **already moved**: the story has a `github_issue` number and is not moved again.
+- **unreadable**: the story file cannot be read. It is listed with the reason and is not moved.
+- **too large**: its comments would be longer than GitHub allows in one comment. It is not moved.
+
+When you run the move, it works in two passes:
+
+1. **Create.** The stories are moved one at a time, the lowest number first. Each story gets one issue with its title, body and labels. A story that is `go` gets the build label of the target repository's issue watcher, or the label `go` when there is none. All its comments go into one GitHub comment, each with its author and time. The Foundry's status comment marker is removed from that text, so no watcher reads it as its own status. Right after each issue is created, its number and the repository are written into the story file (`github_issue` and `github_repo`), and the change is committed on `scf/stories` (see "Commits for story changes", message `scf: story #<n> moved`).
+2. **Map and finish.** When all issues exist, each moved issue's body is written again from your local text. A number in "Depends on" and an epic link now point to the new GitHub numbers. A dependency on a story that was not moved (closed, or unreadable) is written as `local story N, not moved`, so it never points at the wrong issue. Then the issue gets its build label, a closed story is closed on GitHub, and the combined comment is posted. The story file gets `github_done: true` when this is finished.
+
+Running the move again creates no new issue. It only repeats the number mapping and finishes what is not yet done. If a run stops halfway, the next run goes on from where it stopped. Only one move of the same folder runs at a time.
+
+The move refuses to start, and changes nothing, when:
+
+- the project was already moved to another repository, or a story file has `github_issue` but no `github_repo`;
+- the target repository is not connected by you, or has no usable GitHub sign-in. The message is "connect this repository to GitHub first". The Foundry never asks for a token; it uses the sign-in of the target repository (see the sign-in of the repository under My repositories).
+
+**Known limit.** If the Foundry stops after GitHub has created an issue but before the story file records its number, the next run creates that story's issue again. Check the target repository for a duplicate and close the extra one before you run the move again.
 
 ### Work page (redesign, off by default)
 
