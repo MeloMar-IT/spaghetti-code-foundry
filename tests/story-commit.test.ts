@@ -190,3 +190,34 @@ describe("story commits", () => {
     await expect(new LocalStore(d, "local/x", { commit: false }).create({ title: "Hello", body: "b", labels: [] })).resolves.toBeTruthy();
   });
 });
+
+describe("story commits on their own branch", () => {
+  it("commits on scf/stories and leaves the checked-out branch, HEAD and index unchanged", async () => {
+    const d = repo();
+    git(d, "checkout", "-q", "-b", "work");
+    writeFileSync(join(d, "c.txt"), "staged, not committed\n");
+    git(d, "add", "c.txt");
+    const headBefore = git(d, "rev-parse", "HEAD");
+    const indexBefore = git(d, "ls-files", "-s");
+    const s = new LocalStore(d, "local/x", { lockPollMs: 5, branch: "scf/stories" });
+    const first = await s.create({ title: "One", body: "b", labels: [] });
+    const second = await s.create({ title: "Two", body: "b", labels: [] });
+    expect(git(d, "rev-parse", "--abbrev-ref", "HEAD")).toBe("work");
+    expect(git(d, "rev-parse", "HEAD")).toBe(headBefore);
+    expect(git(d, "ls-files", "-s")).toBe(indexBefore);
+    expect(git(d, "diff", "--cached", "--name-only")).toBe("c.txt");
+    expect(log(d)).toEqual(["init"]);
+    expect(git(d, "log", "-1", "--format=%s", "scf/stories")).toMatch(/^scf: story #2 created$/);
+    expect(lines(git(d, "show", "--name-only", "--format=", "scf/stories")).some((f) => f.startsWith(`${stories}/${second.number}-`))).toBe(true);
+    expect(lines(git(d, "ls-tree", "--name-only", "-r", "scf/stories")).some((f) => f.startsWith(`${stories}/${first.number}-`))).toBe(true);
+    expect(lines(git(d, "ls-tree", "--name-only", "-r", "scf/stories"))).toContain(`${stories}/next-number`);
+    expect(lines(git(d, "ls-tree", "--name-only", "-r", "HEAD"))).not.toContain(`${stories}/next-number`);
+  });
+
+  it("does nothing for unchanged files, and leaves no branch when the commit fails", () => {
+    const d = repo();
+    expect(() => commitStory(d, 9, [`${stories}/missing`], "edited", { branch: "scf/stories" })).not.toThrow();
+    expect(() => commitStory(join(d, "nope"), 9, ["x"], "edited", { branch: "scf/stories" })).toThrow(StoryCommitError);
+    expect(git(d, "branch", "--list", "scf/stories")).toBe("");
+  });
+});

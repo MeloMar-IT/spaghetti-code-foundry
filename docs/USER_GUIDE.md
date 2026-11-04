@@ -649,7 +649,7 @@ It cannot know when a usage limit stops work or when a person will answer. It al
 
 A story can be a file, so people and other tools can read and write it without the Foundry. Files go in `.scf/stories/` in the repository, one file per story or epic, named `<number>-<slug>.md`. The number is the story number and the slug is the title in lowercase ASCII, at most 50 characters (`story` when nothing is left, for example for a title in other letters only).
 
-The format status: the format is defined, and the store for a local project reads and writes these files. No repository uses that store yet, so the Foundry does not use these files for its stories until the local project is set up (epic #594). The commits that the store makes are described below.
+The format status: the format is defined, and the store for a local project reads and writes these files. A repository connected as **Local (no GitHub)** keeps its stories here (see "Local (no GitHub)" under My repositories). GitHub repositories are unchanged. The commits that the store makes are described below.
 
 A file has three parts:
 
@@ -727,11 +727,11 @@ Dates must be written as text in quotes, so YAML does not change them.
 When the Foundry writes a story file in a local project, it also makes one git commit for that change, so every change to your stories is in the history:
 
 - The message is `scf: story #<n> <what>`, where `<what>` is one of `created`, `edited`, `labels`, `comment`, `status`, `closed` or `reopened`. Examples: `scf: story #12 created`, `scf: story #12 comment`, `scf: story #12 closed`.
-- The commit goes on the branch that is checked out. The Foundry does not switch branches. The branch name is shown in an error message.
-- The commit holds only the story files that the write changed. A new story also adds `.scf/stories/next-number`. Other staged or unstaged changes in the repository stay as they were.
+- The commit goes on the branch `scf/stories`, which the Foundry creates on first use. Your checked-out branch, its staged and unstaged changes and its working files are not touched. A repository connected as Local (no GitHub) keeps its story history this way, so story commits never appear on your main line. To bring them into your branch, merge or cherry-pick `scf/stories` yourself. The branch name is shown in an error message.
+- The commit holds only the story files that the write changed. A new story also adds `.scf/stories/next-number`.
 - A write that changes nothing makes no commit.
 - The Foundry does not commit your hand edits. A story you edit by hand is still read the next time, and it is committed only when the Foundry writes that same story.
-- The file is saved before the commit. If the commit fails, the story keeps the change, and the Foundry reports the story number, the file, the branch (when known) and the reason. Typical reasons: the folder is not a git repository, HEAD is detached (check out a branch first), git is not installed, or git took longer than the time limit.
+- The file is saved before the commit. If the commit fails, the story keeps the change, and the Foundry reports the story number, the file, the branch (when known) and the reason. Typical reasons: the folder is not a git repository, git is not installed, or git took longer than the time limit.
 
 ### Work page (redesign, off by default)
 
@@ -4856,6 +4856,13 @@ there, it says so (409) and nothing is saved. The row keeps the link, to install
 change which ones it may use. If the administrator removes the app, the row says "The administrator removed the
 GitHub App" under its attention state; choose another authentication. **Remove** does not uninstall the app on GitHub.
 
+**Local (no GitHub).** An admin can connect a git repository on the server's machine instead. Choose **Local (no GitHub)** and type its absolute path (starting with `/`), for example `/Users/me/projects/shop`. Only an admin may add it; a user who is not an admin does not see the choice, and the server refuses it with 403. The Foundry checks the folder when you test the connection:
+
+- the folder exists, and it is the top folder of a git repository (not a folder inside one);
+- the folder and its `.scf/stories/` folder can be written;
+- a branch is checked out (HEAD is not detached).
+
+It does not call GitHub, and it asks for no token, user name or key. The repository keeps its stories in `.scf/stories/` (see "Stories as files") and its story commits on `scf/stories`. The path must not contain control characters, must not be inside the Foundry's data folder, and cannot be changed later: to use another folder, remove the repository and add it again.
 With **SSH deploy key** you type the SSH address of the repository (`git@host:path` or `ssh://…`) and no
 secret. The Foundry makes a key pair, keeps the private key and shows the **public key** in the
 Authentication column, with **Copy** (it needs HTTPS or localhost; otherwise select the key and copy it
@@ -5163,8 +5170,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories, each with its autonomy level |
-| `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose, and the link to install the GitHub App |
-| `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it) |
+| `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App |
+| `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
 | `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |

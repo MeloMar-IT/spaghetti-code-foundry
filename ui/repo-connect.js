@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { reposChanged } from "./context.js";
 import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
-import { METHODS, appAvailable, connectionLines, installLink, isSshUrl, keyBlock, methodLabel, methodOf, methodsFor, plainError, repoBody, repoProblemAt } from "./repos.js";
+import { METHODS, appAvailable, connectionLines, installLink, isLocalPath, isSshUrl, keyBlock, methodLabel, methodOf, methodsFor, plainError, repoBody, repoProblemAt } from "./repos.js";
 
 export const TOKEN_STORED = "A token is stored. It is never shown again.";
 export const NONE_REASON = "The server's own access is not tested here. Use Test connection on the repository page.";
@@ -9,13 +9,17 @@ export const NONE_REASON = "The server's own access is not tested here. Use Test
 // Which control a server sentence is about (src/auth/repo-url.ts, src/server/api-repos.ts). The URL entry covers address errors and a duplicate, not quota ("at most N repositories").
 const REPO_PAIRS = [
   [/GitHub App|may choose|authentication|method/i, "method"],
-  [/address|host name|\bport\b|\bpath\b|transport|ssh form|you have that repository|^the repository (?:must|is empty)|repository is written/i, "url"],
+  [/address|host name|\bport\b|\bpath\b|\bfolder\b|transport|ssh form|you have that repository|^the repository (?:must|is empty)|repository is written/i, "url"],
   [/user name/i, "username"],
   [/token/i, "token"],
 ];
 
 const HTTPS_EXAMPLE = "https://github.com/owner/name";
 const SSH_EXAMPLE = "git@github.com:owner/name.git";
+const PATH_EXAMPLE = "/path/to/repository";
+const formOf = (url) => (isSshUrl(url) ? "ssh" : isLocalPath(url) ? "path" : "https");
+const EXAMPLES = { ssh: SSH_EXAMPLE, path: PATH_EXAMPLE, https: HTTPS_EXAMPLE };
+const FORM_LABELS = { ssh: "SSH address", path: "Folder (absolute path)", https: "HTTPS address" };
 
 /** True when the method keeps a secret (a field with `secret`). */
 export const storesToken = (method, methods = METHODS) => methodOf(methods, method).fields.some((f) => f.secret);
@@ -114,20 +118,26 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
   const failAddress = (m) => showError(addrErr, m, { fields: [urlInput], field: urlInput });
   const baseUrl = () => (current?.url ?? urlInput.value).trim();
   // when the stored record could not be read, its address is not known: ask for the address of the chosen method
-  const otherForm = (m) => (unread ? (m.ssh ? "ssh" : m.https ? "https" : "") : m.ssh && !isSshUrl(baseUrl()) ? "ssh" : m.https && isSshUrl(baseUrl()) ? "https" : "");
+  const otherForm = (m) => {
+    if (unread) return m.ssh ? "ssh" : m.https ? "https" : m.local ? "path" : "";
+    const base = baseUrl();
+    if (m.local) return isLocalPath(base) ? "" : "path";
+    if (m.ssh) return isSshUrl(base) ? "" : "ssh";
+    return m.https && (isSshUrl(base) || isLocalPath(base)) ? "https" : "";
+  };
 
   const draw = () => {
     const m = methodOf(methods, select.value);
     els = {};
-    urlInput.setAttribute("placeholder", m.ssh ? SSH_EXAMPLE : HTTPS_EXAMPLE);
+    urlInput.setAttribute("placeholder", m.ssh ? SSH_EXAMPLE : m.local ? PATH_EXAMPLE : HTTPS_EXAMPLE);
     // a method whose address form differs from the stored one needs the other form of the address
     drawnOther = otherForm(m);
     if (drawnOther) {
-      els.url = h("input", { name: "url", class: "mono", placeholder: drawnOther === "ssh" ? SSH_EXAMPLE : HTTPS_EXAMPLE, autocomplete: "off", value: values.url && isSshUrl(values.url) === (drawnOther === "ssh") ? values.url : "" });
+      els.url = h("input", { name: "url", class: "mono", placeholder: EXAMPLES[drawnOther], autocomplete: "off", value: values.url && formOf(values.url) === drawnOther ? values.url : "" });
     }
     mount(area,
       h("div", { class: "field" }, (m.help ?? []).map((t) => h("small", {}, t)), m.app ? installLink(options) : null),
-      els.url ? h("label", { class: "field" }, h("span", {}, drawnOther === "ssh" ? "SSH address" : "HTTPS address"), els.url) : null,
+      els.url ? h("label", { class: "field" }, h("span", {}, FORM_LABELS[drawnOther]), els.url) : null,
       m.fields.map((f) => {
         const attrs = { name: f.key, autocomplete: f.secret ? "new-password" : "off" };
         els[f.key] = f.multiline
@@ -171,6 +181,7 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
       h("h3", {}, "1. Address"),
       h("label", { class: "field" }, h("span", {}, "Repository URL"), urlInput),
       h("small", {}, "An https address, or an SSH address (git@host:path) for a deploy key."),
+      methods.some((m) => m.local) ? h("small", {}, "Or the absolute path of a git repository on this machine, for Local (no GitHub).") : null,
       addrErr,
       row(h("button", { class: "primary", onClick: next }, "Next")));
     failAddress(message);
@@ -201,7 +212,9 @@ export function repoDialog({ admin = false, options, methods = methodsFor(admin,
     if (firstNext) {
       firstNext = false;
       const ssh = isSshUrl(urlInput.value) ? methods.find((m) => m.ssh) : null;
-      if (ssh) select.value = ssh.id;
+      const local = isLocalPath(urlInput.value) ? methods.find((m) => m.local) : null;
+      const pick = ssh ?? local;
+      if (pick) select.value = pick.id;
       draw();
     } else if (otherForm(methodOf(methods, select.value)) !== drawnOther) draw();
     signInView();

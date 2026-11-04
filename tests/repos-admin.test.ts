@@ -506,7 +506,8 @@ describe("what a transfer does to a sign-in", () => {
     // a failed record write, and a missing credential refused with "no-credential" (see "a deploy key moves with its repository").
     // an app record has no credential of its own: it moves with its installation id (see the transfer tests)
     expect(REPO_BOUND_METHODS).toEqual(["ssh-deploy-key", "github-app"]);
-    expect([...PERSONAL_METHODS, ...REPO_BOUND_METHODS, "none"].sort()).toEqual([...REPO_METHODS].sort());
+    // "local" is a folder on this machine: no secret, only the owner changes (see tests/local-repo.test.ts)
+    expect([...PERSONAL_METHODS, ...REPO_BOUND_METHODS, "none", "local"].sort()).toEqual([...REPO_METHODS].sort());
   });
 
   it("takes no option that changes what happens to a credential", () => {

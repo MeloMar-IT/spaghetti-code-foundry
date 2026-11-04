@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, mkdirSync, realpathSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CheckResult, ConnectionResult } from "../auth/repo-connection.js";
@@ -26,7 +26,7 @@ export class ConnectError extends Error {
 export const CODES = [
   "ok", "skipped", "deploy-key", "bad-token", "bad-key", "no-sign-in", "not-found", "read-only", "empty", "unreachable",
   "host-key-changed", "host-key-unknown", "timeout", "failed", "no-issues", "no-pulls", "no-issues-pulls", "rate-limit", "no-gh",
-  "app-not-set-up", "app-not-installed", "app-broken",
+  "app-not-set-up", "app-not-installed", "app-broken", "local", "no-folder", "not-git", "not-writable", "detached",
 ] as const;
 export type Code = (typeof CODES)[number];
 export type CheckName = CheckResult["check"];
@@ -47,7 +47,9 @@ export function messageFor(code: Code, method: RepoMethod, check: CheckName = "c
       return check === "clone"
         ? "The repository can be read."
         : check === "push"
-          ? "Write access works. Nothing was pushed."
+          ? method === "local"
+            ? "The folder can be written and a branch is checked out."
+            : "Write access works. Nothing was pushed."
           : "The repository, its issues and its pull requests can be read.";
     case "skipped":
       return "Not checked, because the check before it failed.";
@@ -107,6 +109,16 @@ export function messageFor(code: Code, method: RepoMethod, check: CheckName = "c
       return "The GitHub App is not installed on this repository. Install it with the link on this page, then test again.";
     case "app-broken":
       return "The GitHub App of this server is not working. Ask the administrator to check the GitHub App settings.";
+    case "local":
+      return "A local project: the Foundry keeps its stories in .scf/stories/ and does not call GitHub.";
+    case "no-folder":
+      return "There is no folder at this path on the server. Check the path, or remove the repository and add it again.";
+    case "not-git":
+      return "The folder is not the top folder of a git repository. Run git init there, or connect the top folder.";
+    case "not-writable":
+      return "The Foundry cannot write to this folder. Give the account that runs the Foundry write access.";
+    case "detached":
+      return "No branch is checked out in this folder, so story changes cannot be committed. Check out a branch.";
   }
 }
 
@@ -302,6 +314,60 @@ function run(git: string, args: string[], env: NodeJS.ProcessEnv, cwd: string, t
   });
 }
 
+/** The checks of a local repository: the folder, without gh, a clone or a temporary folder. Nothing is written. */
+async function localChecks(path: string, git: string, left: () => number): Promise<CheckResult[]> {
+  const m = "local";
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) if (!k.startsWith("GIT_")) env[k] = v;
+  env.LC_ALL = "C";
+  env.GIT_TERMINAL_PROMPT = "0";
+  const api = result("github-api", "local", m, { ok: true, skipped: true });
+  const readFailed = (code: Code): CheckResult[] => [result("clone", code, m), result("push", "skipped", m, { ok: false, skipped: true }), api];
+  let isDir = false;
+  try {
+    isDir = statSync(path).isDirectory();
+  } catch {
+    isDir = false;
+  }
+  if (!isDir) return readFailed("no-folder");
+  const top = await run(git, ["-c", "core.fsmonitor=false", "rev-parse", "--show-toplevel"], env, path, left());
+  if (top.timedOut) return readFailed("timeout");
+  let same = false;
+  if (top.code === 0) {
+    try {
+      same = realpathSync(top.stdout.trim()) === realpathSync(path);
+    } catch {
+      same = false;
+    }
+  }
+  if (!same) return readFailed("not-git");
+  const writeFailed = (code: Code): CheckResult[] => [result("clone", "ok", m), result("push", code, m), api];
+  const writable = (p: string) => {
+    try {
+      accessSync(p, constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!writable(path)) return writeFailed("not-writable");
+  let at = path;
+  for (const part of [".scf", "stories"]) {
+    at = join(at, part);
+    let st;
+    try {
+      st = statSync(at);
+    } catch {
+      break; // not there yet: the folder before it was checked
+    }
+    if (!st.isDirectory() || !writable(at)) return writeFailed("not-writable");
+  }
+  const branch = await run(git, ["symbolic-ref", "--quiet", "--short", "HEAD"], env, path, left());
+  if (branch.timedOut) return writeFailed("timeout");
+  if (branch.code !== 0) return writeFailed("detached");
+  return [result("clone", "ok", m), result("push", "ok", m), api];
+}
+
 async function gitChecks(url: string, input: ConnectInput, auth: GitAuth, dir: string, git: string, left: () => number): Promise<CheckResult[]> {
   const remote = localRemote();
   const address = remote ? `file://${remote}` : url;
@@ -376,6 +442,10 @@ export async function testConnection(input: ConnectInput, opts: ConnectOpts = {}
   sweepConnectFolders();
   const deadline = Date.now() + (opts.timeoutMs ?? TEST_TIMEOUT_MS);
   const left = () => Math.max(1, deadline - Date.now());
+  if (input.method === "local") {
+    const checks = await localChecks(input.url, opts.git ?? "git", left);
+    return { at: new Date().toISOString(), ok: checks.every((c) => c.ok), checks };
+  }
   let dir: string;
   try {
     dir = mkdtempSync(join(tmpdir(), FOLDER_PREFIX));
