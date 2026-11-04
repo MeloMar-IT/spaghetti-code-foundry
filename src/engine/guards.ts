@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isLocalRepoName } from "../auth/local-name.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { appJwt, installationToken } from "../github-app.js";
 import type { Config } from "../config.js";
@@ -71,6 +72,11 @@ done
 exit 0
 `;
 
+/** The engine's own hooks folder (core.hooksPath of every run, and where grantPush writes its tokens). */
+export function engineHooksDir(): string {
+  return join(process.env.FACTORY_HOME ?? FACTORY_HOME, "hooks");
+}
+
 /**
  * Env that makes every git command in the run use our pre-push hook, which refuses
  * pushes to protected branches and (with secretScan) pushes whose new commits contain
@@ -81,7 +87,7 @@ export function protectedBranchEnv(patterns: string[], secretScan = false, obser
   // `observe`: file policy packs are configured, so the hook is there (even with both guards off) to tell the engine about each push (see FACTORY_PUSH_LOG)
   // `noPush`: the run's autonomy level is below delivery-handoff, so the hook refuses every push (FACTORY_NO_PUSH holds the level)
   if (!patterns.length && !secretScan && !observe && !noPush) return {};
-  const dir = join(process.env.FACTORY_HOME ?? FACTORY_HOME, "hooks");
+  const dir = engineHooksDir();
   mkdirSync(dir, { recursive: true });
   const hook = join(dir, "pre-push");
   writeFileSync(hook, PRE_PUSH);
@@ -156,15 +162,29 @@ export function skillPublishState(flow: Flow, skillLibrary: boolean): "on" | "ot
   }
 }
 
+/** The third exception: the final_merge step of the unchanged shipped release-daily moves main of a connected local project. */
+export const RELEASE_DAILY_FLOW = "release-daily";
+export const FINAL_MERGE_STEP = "final_merge";
+
+/** "on" only for the shipped release-daily and a local repository name; anything else is "other". Fails closed. */
+export function finalReleaseState(flow: Flow, githubRepo: string | undefined): "on" | "other" {
+  try {
+    return flow.name === RELEASE_DAILY_FLOW && isShippedFlow(flow) && isLocalRepoName(githubRepo ?? "") ? "on" : "other";
+  } catch {
+    return "other";
+  }
+}
+
 /**
  * FACTORY_PUSH_ALLOW for a step: set only for push_main of the unchanged shipped issue-gitflow, or for publish of the
  * unchanged shipped skill-write flow in a skill library (top level both).
  */
-export function pushAllowEnv(step: Pick<Step, "id">, depth: number, vars: Record<string, string>, state: "on" | "off" | "other", skillPublish: "on" | "other" = "other"): Record<string, string> {
+export function pushAllowEnv(step: Pick<Step, "id">, depth: number, vars: Record<string, string>, state: "on" | "off" | "other", skillPublish: "on" | "other" = "other", finalRelease: "on" | "other" = "other"): Record<string, string> {
   const branch = vars.main_branch ?? "";
   if (depth !== 0 || !PUSH_ALLOW_OK.test(branch)) return {};
   if (step.id === HOTFIX_PUSH_STEP && state === "on") return { FACTORY_PUSH_ALLOW: branch };
   if (step.id === SKILL_PUBLISH_STEP && skillPublish === "on") return { FACTORY_PUSH_ALLOW: branch };
+  if (step.id === FINAL_MERGE_STEP && finalRelease === "on") return { FACTORY_PUSH_ALLOW: branch };
   return {};
 }
 
@@ -173,7 +193,7 @@ export function pushAllowEnv(step: Pick<Step, "id">, depth: number, vars: Record
  * FACTORY_PUSH_ALLOW value for that step. Call revoke() when the step ends.
  */
 export function grantPush(branch: string): { env: Record<string, string>; revoke: () => void } {
-  const dir = join(process.env.FACTORY_HOME ?? FACTORY_HOME, "hooks", "allow");
+  const dir = join(engineHooksDir(), "allow");
   mkdirSync(dir, { recursive: true });
   const token = randomBytes(16).toString("hex");
   const file = join(dir, token);

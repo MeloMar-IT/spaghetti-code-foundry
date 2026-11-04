@@ -2408,6 +2408,12 @@ const CHECK_BUILD_LINE =
 const CHECK_TIMED_LINE =
   'if [ -n "$timed" ]; then if [ "$timed" = tests ]; then what="the tests"; else what="the build"; fi; echo "⏱ **Checks did not finish in time** — the time limit of $(fmt "$limit") (verify_timeout_min) ran out before $what finished, so they were stopped. The wait for a test slot does not count. Marked as draft; see the run log."; elif [ "$ok" != yes ]; then echo "⚠ **Checks failed** — marked as draft until they pass. See the run log for details."; fi';
 
+// One release-build run per repository at a time (area @release-build). A resume starts at the saved step, and area-lock drops the lock
+// of a run that is not running, so every step that does work takes the lock again (the same run id: harmless).
+// (Declared here: the final_files step of release-daily uses it too.)
+const RB_LOCK =
+  '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @release-build --wait-sec 3000 >/dev/null || { echo "another release-build run of this repository holds the lock — resume this run when it is done"; exit 1; }\n';
+
 // ── release-daily: develop → main once a day (gitflow) ──
 write("release-daily", {
   title: "Daily release pull request develop → main (gitflow)",
@@ -2420,6 +2426,9 @@ write("release-daily", {
     "                                   → open / update the PR develop → main",
     "                                   (lists and closes the merged issues; draft while red or not finished in time) → comment the checks",
     "                                   → handoff (check the contract, then ready or draft)",
+    "                                   A local project (github_repo local:…) has no pull request: green checks → list the stories → wait for the owner's OK",
+    "                                   (Make this version final) → merge the tested develop into main (--no-ff) in the owner's folder, tag release-<date>,",
+    "                                   close the stories, keep the release files (when .factory/release-build.yaml exists) → report; not yet → a note on the stories",
   ],
 }, {
   description: "Once a day: full tests and build on develop, then one pull request develop → main that closes the merged issues",
@@ -2494,7 +2503,10 @@ write("release-daily", {
       type: "shell",
       repo_access: true,
       description: "Open or update the pull request develop → main, comment the checks, draft while red",
+      routes: [{ if: "^LOCAL\\s*$", goto: "final_ask" }],
       run: [
+        // A local project has no pull request: its release asks the owner instead (final_ask …).
+        'case "$FACTORY_VAR_GITHUB_REPO" in local:*) echo "LOCAL"; exit 0;; esac',
         'dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"; day=$(date +%Y-%m-%d)',
         'nums=$(git log --format="%s" "origin/$main..origin/$dev" | sed -nE "s/^(Merge|Resolve) #([0-9]+).*/\\2/p" | sort -un)',
         '{ echo "Everything merged into \\`$dev\\` since the last release. Merge this to bring it to \\`$main\\`."; echo; echo "### Issues"',
@@ -2543,14 +2555,178 @@ write("release-daily", {
         'else echo "checks passed — PR #$pr could not be marked ready"; exit 1; fi',
       ].join("\n"),
     },
+    // ── A local project (github_repo "local:…"): no pull request. Green checks → ask the owner → merge into main in the owner's folder. ──
+    // Every step below only runs through release_pr's LOCAL route and the jumps; none of them calls gh or a story pr-* command.
+    {
+      id: "final_ask",
+      type: "shell",
+      repo_access: true,
+      jump_only: true,
+      description: "Local project: stop when the checks failed, else list the finished stories that would go into main",
+      run: [
+        'dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"',
+        'if printf \'%s\\n\' "$FACTORY_OUT_VERIFY" | grep -q "^CHECKS: no"; then echo "The checks on $dev did not pass, so nothing is asked. Make $dev green first; the next daily check looks again."; exit 1; fi',
+        'sha=$(git rev-parse HEAD) || exit 1',
+        '[ "$sha" = "$(git rev-parse "origin/$dev")" ] || { echo "$dev changed while it was tested; the next daily check looks again"; exit 1; }',
+        'printf \'%s\\n\' "$sha" > "{{run.dir}}/final-sha"',
+        'nums=$(git log --format="%s" "origin/$main..$sha" | sed -nE "s/^(Merge|Resolve) #([0-9]+).*/\\2/p" | sort -un)',
+        ': > "{{run.dir}}/final-stories"; for n in $nums; do echo "$n" >> "{{run.dir}}/final-stories"; done',
+        'echo "These finished changes go to $main:"',
+        'if [ -z "$nums" ]; then echo "- other changes ($(git rev-list --count "origin/$main..$sha") commits)"; fi',
+        'for n in $nums; do',
+        '  t=$(FACTORY_VAR_ISSUE=$n node "$FACTORY_TOOLS/story" title 2>/dev/null | head -n 1)',
+        '  [ -n "$t" ] || t=$(git log --format=%s "origin/$main..$sha" | grep -m1 -E "^(Merge|Resolve) #$n:" | sed "s/^[^:]*: *//")',
+        '  printf \'%s\\n\' "- #$n $t"',
+        'done',
+      ].join("\n"),
+      on_success: "make_final",
+    },
+    {
+      id: "make_final",
+      type: "approval",
+      jump_only: true,
+      message: "Make this version final?\n{{steps.final_ask.output}}",
+      on_success: "final_merge",
+      on_failure: "final_rejected",
+    },
+    {
+      id: "final_merge",
+      type: "shell",
+      repo_access: true,
+      jump_only: true,
+      max_visits: 3,
+      timeout_sec: 1800,
+      description: "Local project: merge the tested develop into main (--no-ff), tag it, and bring both into the owner's folder",
+      routes: [{ if: "^MOVED\\s*$", goto: "final_merge" }],
+      run: [
+        'loc=no; case "$FACTORY_VAR_GITHUB_REPO" in local:*) loc=yes; [ -n "$FACTORY_LOCAL_REPO_DIR" ] || { echo "the folder of this local project is not known to the Foundry"; exit 1; } ;; esac',
+        '[ "$loc" = yes ] || { echo "this step is only for a local project"; exit 1; }',
+        'dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"; day=$(date +%Y-%m-%d); rd="{{run.dir}}"',
+        'sha=$(cat "$rd/final-sha" 2>/dev/null); case "$sha" in ""|*[!0-9a-f]*) echo "the tested commit is not known; the next daily check asks again"; exit 1 ;; esac',
+        // The tag name of an earlier visit is kept in final-tag and never cleared. Its local copy goes first; the fetch brings back the owner's tags.
+        'old=$(cat "$rd/final-tag" 2>/dev/null); case "$old" in release-*) git tag -d "$old" >/dev/null 2>&1 ;; *) old="" ;; esac',
+        'git reset -q --hard && git clean -qfd',
+        'git fetch -q --force --tags origin || { echo "could not read your folder (git fetch failed)"; exit 1; }',
+        'pick() { t="release-$day"; i=2; while git rev-parse -q --verify "refs/tags/$t" >/dev/null 2>&1; do t="release-$day-$i"; i=$((i + 1)); done; echo "$t"; }',
+        'git checkout -q -B "$main" "refs/remotes/origin/$main" || { echo "could not check out $main"; exit 1; }',
+        'if git merge-base --is-ancestor "$sha" "refs/remotes/origin/$main"; then',
+        // main already holds the tested commit (an earlier visit, or a run that stopped after main moved): never merge twice, finish the tag.
+        '  mc=$(git rev-list --first-parent --parents "refs/remotes/origin/$main" | awk -v s="$sha" \'$3 == s { print $1; exit }\')',
+        '  [ -n "$mc" ] || mc="$sha"',
+        '  tag="$old"',
+        '  if [ -n "$tag" ] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1 && [ "$(git rev-parse "refs/tags/$tag^{commit}")" != "$mc" ]; then tag=""; fi',
+        '  [ -n "$tag" ] || tag=$(pick)',
+        '  printf \'%s\\n\' "$tag" > "$rd/final-tag"',
+        '  git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1 || git tag -a "$tag" -m "Release $tag" "$mc" || { echo "could not make the tag $tag"; exit 1; }',
+        '  echo "$main already holds the tested $dev commit; making sure the tag $tag is in your folder"',
+        'else',
+        '  tag=$(pick)',
+        '  printf \'%s\\n\' "$tag" > "$rd/final-tag"',
+        '  if ! git merge --no-ff --no-edit -m "Release $tag: $dev into $main" "$sha" >/dev/null 2>&1; then',
+        '    git merge --abort >/dev/null 2>&1; echo "$dev cannot be merged into $main without a conflict, so nothing was changed. Bring $main into $dev and fix it there; the next daily check asks again."; exit 1',
+        '  fi',
+        '  git tag -a "$tag" -m "Release $tag" || { echo "could not make the tag $tag"; exit 1; }',
+        'fi',
+        'out=$(node "$FACTORY_TOOLS/local-branch" release "$main" "$tag" 2>&1); code=$?; printf \'%s\\n\' "$out"',
+        'case "$code" in',
+        '  0) rm -f "$rd/final-remote"',
+        '     echo "FINAL: $main now holds the tested $dev ($(git rev-parse --short "$sha")) and is tagged $tag"',
+        // "Also push to the remote": plain git push of main and the tag from the owner's folder; a failure is reported, the release stays.
+        '     if [ "$FACTORY_LOCAL_PUSH" = yes ]; then node "$FACTORY_TOOLS/local-branch" push "$main" --tag "$tag" 2>&1 | head -n 1 > "$rd/final-remote"; cat "$rd/final-remote"; fi',
+        '     exit 0 ;;',
+        '  3) echo "$main in your folder moved meanwhile — merging again"; echo "MOVED"; exit 0 ;;',
+        '  4) echo "$main is checked out in your folder and has changes that are not committed. Commit or stash them, then resume this run; $main was not changed."; exit 1 ;;',
+        '  *) if printf \'%s\\n\' "$out" | grep -qE "^TAG_FAILED:.*(another object|already exists|rejected|fetch first)"; then git tag -d "$tag" >/dev/null 2>&1; echo "the tag $tag is taken — trying the next name"; echo "MOVED"; exit 0; fi',
+        '     echo "the final version could not be completed (see above); resume this run to try again"; exit 1 ;;',
+        'esac',
+      ].join("\n"),
+      on_success: "final_close",
+    },
+    {
+      id: "final_close",
+      type: "shell",
+      repo_access: true,
+      jump_only: true,
+      description: "Local project: close the stories that went in and note the tag on each (a resume does the rest)",
+      run: [
+        'tag=$(cat "{{run.dir}}/final-tag" 2>/dev/null); [ -n "$tag" ] || { echo "the tag is not known"; exit 1; }',
+        'msg="This is in the final version \\`$tag\\`."',
+        'closed=""; failed=""',
+        'for n in $(cat "{{run.dir}}/final-stories" 2>/dev/null); do',
+        '  case "$n" in ""|*[!0-9]*) continue ;; esac',
+        '  export FACTORY_VAR_ISSUE=$n',
+        '  if ! node "$FACTORY_TOOLS/story" close --reason completed >/dev/null 2>&1; then failed="$failed #$n"; continue; fi',
+        '  have=$(node "$FACTORY_TOOLS/story" comments 2>/dev/null) || { failed="$failed #$n"; continue; }',
+        '  if ! printf \'%s\\n\' "$have" | grep -qF -- "$msg"; then',
+        '    { echo "$FACTORY_FIRST_INFO"; echo; printf \'%s\\n\' "$msg"; } \\',
+        '      | node "$FACTORY_TOOLS/story" comment >/dev/null 2>&1 || { failed="$failed #$n"; continue; }',
+        '  fi',
+        '  closed="$closed #$n"',
+        'done',
+        'echo "CLOSED:${closed:- none}"',
+        'if [ -n "$failed" ]; then echo "could not close or comment:$failed — resume this run to do the rest"; exit 1; fi',
+      ].join("\n"),
+      on_success: "final_files",
+    },
+    {
+      id: "final_files",
+      type: "shell",
+      repo_access: true,
+      jump_only: true,
+      timeout_sec: 86400,
+      description: "Local project: build the release files when the project has a recipe, and keep them in the data folder",
+      run: [
+        'tag=$(cat "{{run.dir}}/final-tag" 2>/dev/null)',
+        '[ -n "$tag" ] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1 || { echo "NO_FILES: the tag is not known"; exit 0; }',
+        'git cat-file -e "$tag:.factory/release-build.yaml" 2>/dev/null || { echo "NO_FILES: this project has no release recipe (.factory/release-build.yaml)"; exit 0; }',
+        RB_LOCK.trimEnd(),
+        'bad() { "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" @release-build >/dev/null 2>&1; echo "$1 — main is final and tagged; the release files could not be made. Resume this run to try again."; exit 1; }',
+        'export FACTORY_VAR_REF="$tag"',
+        'node "$FACTORY_TOOLS/release-build" resolve "{{run.dir}}" || bad "the release recipe could not be read"',
+        'node "$FACTORY_TOOLS/release-build" build "{{run.dir}}" "{{run.dir}}/../../test-slots" || bad "the build failed"',
+        'node "$FACTORY_TOOLS/release-upload" "{{run.dir}}" --local-tag "$tag" || bad "the files could not be kept"',
+        '"$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" @release-build >/dev/null 2>&1; exit 0',
+      ].join("\n"),
+      on_success: "final_report",
+    },
+    {
+      id: "final_report",
+      type: "shell",
+      jump_only: true,
+      description: "Local project: one summary of the final version",
+      run: [
+        'main="$FACTORY_VAR_MAIN_BRANCH"; tag=$(cat "{{run.dir}}/final-tag" 2>/dev/null); sha=$(cat "{{run.dir}}/final-sha" 2>/dev/null)',
+        'echo "Final version $tag is on $main (tested commit $(printf \'%.7s\' "$sha"))."',
+        'printf \'%s\\n\' "$FACTORY_OUT_FINAL_CLOSE" | sed -n "s/^CLOSED:/Stories closed:/p"',
+        'if printf \'%s\\n\' "$FACTORY_OUT_FINAL_FILES" | grep -q "^NO_FILES"; then echo "Release files: no release files"',
+        'else printf \'%s\\n\' "$FACTORY_OUT_FINAL_FILES" | sed -n "s/^KEPT[^:]*: [0-9]* files in /Release files: /p"; fi',
+        'if [ -s "{{run.dir}}/final-remote" ]; then echo "Remote: $(head -n 1 "{{run.dir}}/final-remote")"; fi',
+      ].join("\n"),
+      on_success: "end",
+    },
+    {
+      id: "final_rejected",
+      type: "shell",
+      repo_access: true,
+      jump_only: true,
+      description: "Local project: the owner said not yet — nothing changes in main or develop; a note goes on the stories",
+      run: [
+        'dev="$FACTORY_VAR_DEVELOP_BRANCH"',
+        'note=$(printf \'%s\\n\' "$FACTORY_OUT_MAKE_FINAL" | sed \'1s/^rejected by [^:]*\\(: \\)\\{0,1\\}//\' | head -c 1000)',
+        'for n in $(cat "{{run.dir}}/final-stories" 2>/dev/null); do',
+        '  case "$n" in ""|*[!0-9]*) continue ;; esac',
+        '  export FACTORY_VAR_ISSUE=$n',
+        '  { echo "$FACTORY_FIRST_INFO"; echo; if [ -n "$note" ]; then printf \'Not made final yet: %s. \' "$note"; else printf \'Not made final yet. \'; fi; echo "It stays on \\`$dev\\`; the next daily check asks again."; } \\',
+        '    | node "$FACTORY_TOOLS/story" comment >/dev/null 2>&1 || echo "could not note it on #$n"',
+        'done',
+        'echo "Kept on $dev: nothing was merged. ${note:+Reason: $note}"',
+      ].join("\n"),
+      on_success: "end",
+    },
   ],
 });
 
 // ── release-build: build the release files a repository describes in .factory/release-build.yaml ──
-// One release-build run per repository at a time (area @release-build). A resume starts at the saved step, and area-lock drops the lock
-// of a run that is not running, so every step that does work takes the lock again (the same run id: harmless).
-const RB_LOCK =
-  '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @release-build --wait-sec 3000 >/dev/null || { echo "another release-build run of this repository holds the lock — resume this run when it is done"; exit 1; }\n';
 write("release-build", {
   title: "Build release files on this machine from the repository's release recipe and upload them to a draft GitHub release",
   lines: [

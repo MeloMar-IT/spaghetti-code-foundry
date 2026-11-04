@@ -1,3 +1,4 @@
+import { isLocalRepoName } from "./auth/local-name.js";
 import type { WatcherConfig } from "./config.js";
 import { explainError } from "./errors.js";
 import { isStoppedCancel, isTimeLimitStop, isUserBudgetStop, type RunSummary } from "./engine/state.js";
@@ -66,7 +67,15 @@ export interface NextStep {
   retired?: true;
   /** `cancelled`: the run was cancelled while it was stopped, so nothing continues it. */
   ended?: true;
+  /** `approval`: the daily release of a local project waits for "Make this version final" (the run's own approval, not a comment). */
+  final?: true;
 }
+
+/** The approval step of the daily release of a local project, and the title its record gets. */
+export const FINAL_STEP = "make_final";
+export const FINAL_TITLE = "Make this version final";
+/** The step of release-daily that moves main (a run that has it done released something; the same name as FINAL_MERGE_STEP in engine/guards.ts). */
+const FINAL_MERGE_STEP = "final_merge";
 
 /** How far a run is and how long it may take. Estimates come from earlier runs; see estimate.ts. */
 export interface RunTiming {
@@ -108,6 +117,8 @@ export interface NextData {
   answerHere?: boolean;
   /** Text of the approval request or the failure reason. */
   message?: string;
+  /** `approval`: this is "Make this version final" of a local project. */
+  final?: boolean;
   reason?: string;
   blockers?: BlockerInfo[];
   /** `red_base`: the base branch has failing tests. `line` names them (already redacted); `problem` is a fixed sentence when a person must act. */
@@ -396,6 +407,12 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       action = !d.watched || !issueWhere ? "Approve or reject it on the run page" : "Reply /approve or /reject";
       say = action.charAt(0).toLowerCase() + action.slice(1);
       if (!d.watched) w = runWhere ?? where;
+      if (d.final) {
+        why = "A new version is ready and waits for your OK";
+        action = "Make this version final or reject it on the run page";
+        say = action.charAt(0).toLowerCase() + action.slice(1);
+        w = runWhere ?? where;
+      }
       break;
     }
     case "dependency": {
@@ -705,6 +722,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     ...(d.cause ? { cause: d.cause } : {}),
     ...(d.retired ? { retired: true as const } : {}),
     ...(kind === "cancelled" && d.ended ? { ended: true as const } : {}),
+    ...(kind === "approval" && d.final ? { final: true as const } : {}),
     ...(kind === "failed" && d.failure ? { failure: d.failure } : {}),
     ...(kind === "monitor_needs_you" && d.evidence?.length ? { evidence: d.evidence } : {}),
     ...(kind === "monitor_needs_you" && d.stories?.length ? { stories: d.stories } : {}),
@@ -834,6 +852,7 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
     }
     case "waiting": {
       const id = run.waiting?.stepId;
+      if (run.flow === "release-daily" && id === FINAL_STEP) return nextStep("approval", { ...base, title: FINAL_TITLE }, { ...d, message: run.waiting?.message, final: true });
       const k: NextKind = id === "approve_plan" ? "approve_plan" : id === "approve_split" ? "approve_split" : "approval";
       return make(k, { message: run.waiting?.message });
     }
@@ -893,7 +912,9 @@ export function releaseAtFor(watchers: WatcherConfig[], run: RunSummary, runs: R
     if (!p.needs.every((id) => steps.has(id))) continue;
     const w = watchers.find((x) => x.enabled && x.source === "schedule" && x.flow === p.flow && x.at && x.github_repo === repo);
     if (!w) continue;
-    const released = runs.some((r) => r.flow === p.flow && r.status === "succeeded" && r.vars?.github_repo === repo && r.startedAt > (run.finishedAt ?? run.startedAt)); // a release that began before the work was pushed missed it
+    // A local project has no pull request: a daily release that was rejected ("Not yet") also ends succeeded, but it released nothing.
+    const local = isLocalRepoName(repo ?? "");
+    const released = runs.some((r) => r.flow === p.flow && r.status === "succeeded" && r.vars?.github_repo === repo && (!local || (r.history ?? []).some((h) => h.id === FINAL_MERGE_STEP && h.ok)) && r.startedAt > (run.finishedAt ?? run.startedAt)); // a release that began before the work was pushed missed it
     if (!released) return w.at;
   }
   return undefined;

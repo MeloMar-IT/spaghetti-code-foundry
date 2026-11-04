@@ -57,6 +57,18 @@ export const WORDS = {
   actions: { change: "Ask for a change", tryIt: "Try it", final: "Make this version final" },
 };
 
+/** The card of a finished version that waits for the owner's OK (the daily release of a local project). */
+export const FINAL = {
+  line: "A new version of your project is ready.",
+  what: "What goes in:",
+  yes: WORDS.actions.final,
+  notYet: "Not yet",
+  why: "Why not yet? (optional)",
+  keep: "Keep it as it is",
+  sent: "Thank you. The Foundry goes on by itself.",
+  failed: "That did not work. Try again.",
+};
+
 const NEEDS_YOU = { todo: "Take a look", line: "It needs you." };
 
 /** Per kind of next step: `todo` is the button label (kinds a person can act on), `line` the card sentence ("" for kinds Simple hides). */

@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { releaseMarker, tagPattern } from "../src/release/recipe.js";
-import { assetName, formatSize, pickPrune, stageFiles, uploadRelease, UploadError, type GhRelease, type GhRunner } from "../src/release/upload.js";
+import { assetName, formatSize, keepReleaseFiles, pickPrune, stageFiles, uploadRelease, UploadError, type GhRelease, type GhRunner, type KeepInput } from "../src/release/upload.js";
 
 const RECIPE = { version: "{commit_datetime}", tag: "v{version}" };
 const MARKER = releaseMarker(RECIPE);
@@ -361,6 +361,72 @@ describe("assetName and stageFiles", () => {
     rmSync(out(), { recursive: true });
     mkdirSync(out());
     expect(() => stageFiles(out(), stage())).toThrow(/no release files/);
+  });
+});
+
+describe("keepReleaseFiles (a local project)", () => {
+  let dir: string;
+  const NAME = "local:demo-0123abcd";
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "scf-keep-"));
+    mkdirSync(join(dir, "out", "a"), { recursive: true });
+    writeFileSync(join(dir, "out", "a", "a.txt"), "hello");
+    writeFileSync(join(dir, "out", "SHA256SUMS"), "sums\n");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const input = (o: Partial<KeepInput> = {}): KeepInput => ({ repo: NAME, tag: "release-2026-11-04", outDir: join(dir, "out"), releasesDir: join(dir, "releases"), runId: "run1", ...o });
+
+  it("copies the tree, lists the sizes and leaves no part folder", () => {
+    const r = keepReleaseFiles(input());
+    expect(r.dir).toBe(join(dir, "releases", "demo-0123abcd", "release-2026-11-04"));
+    expect(r.reused).toBe(false);
+    expect(r.files).toEqual([{ name: "SHA256SUMS", size: 5 }, { name: "a/a.txt", size: 5 }]);
+    expect(readFileSync(join(r.dir, "a", "a.txt"), "utf8")).toBe("hello");
+    expect(readdirSync(join(dir, "releases", "demo-0123abcd"))).toEqual(["release-2026-11-04"]);
+  });
+
+  it("reuses the same release and never overwrites another one", () => {
+    const first = keepReleaseFiles(input());
+    expect(keepReleaseFiles(input({ runId: "run2" })).reused).toBe(true);
+    writeFileSync(join(dir, "out", "a", "a.txt"), "changed!");
+    expect(() => keepReleaseFiles(input({ runId: "run3" }))).toThrow(/already exists; nothing was overwritten/);
+    expect(readFileSync(join(first.dir, "a", "a.txt"), "utf8")).toBe("hello");
+    expect(readdirSync(join(dir, "releases", "demo-0123abcd"))).toEqual(["release-2026-11-04"]);
+  });
+
+  it("does not reuse a kept release whose files were deleted or changed at the same size", () => {
+    const first = keepReleaseFiles(input());
+    // a file deleted from the kept folder
+    rmSync(join(first.dir, "SHA256SUMS"));
+    expect(() => keepReleaseFiles(input({ runId: "run2" }))).toThrow(/already exists; nothing was overwritten/);
+    writeFileSync(join(first.dir, "SHA256SUMS"), "sums\n");
+    expect(keepReleaseFiles(input({ runId: "run3" })).reused).toBe(true);
+    // the kept file changed, with the same size
+    writeFileSync(join(first.dir, "a", "a.txt"), "HELLO");
+    expect(() => keepReleaseFiles(input({ runId: "run4" }))).toThrow(/already exists; nothing was overwritten/);
+  });
+
+  it("refuses a new build with the same file sizes but other content", () => {
+    const first = keepReleaseFiles(input());
+    writeFileSync(join(dir, "out", "a", "a.txt"), "HELLO"); // same size as "hello", other bytes
+    expect(() => keepReleaseFiles(input({ runId: "run2" }))).toThrow(/already exists; nothing was overwritten/);
+    expect(readFileSync(join(first.dir, "a", "a.txt"), "utf8")).toBe("hello");
+  });
+
+  it("refuses a GitHub name, a bad tag and empty output", () => {
+    expect(() => keepReleaseFiles(input({ repo: "owner/repo" }))).toThrow(UploadError);
+    for (const tag of ["../x", "-x", "a b", ""]) expect(() => keepReleaseFiles(input({ tag }))).toThrow(UploadError);
+    rmSync(join(dir, "out"), { recursive: true });
+    mkdirSync(join(dir, "out"));
+    expect(() => keepReleaseFiles(input())).toThrow(/no release files/);
+  });
+
+  it("removes its part folder when the copy fails", () => {
+    // the folder of the project is a file, so nothing can be made below it
+    mkdirSync(join(dir, "releases"), { recursive: true });
+    writeFileSync(join(dir, "releases", "demo-0123abcd"), "");
+    expect(() => keepReleaseFiles(input())).toThrow(UploadError);
+    expect(readdirSync(join(dir, "releases"))).toEqual(["demo-0123abcd"]);
   });
 });
 

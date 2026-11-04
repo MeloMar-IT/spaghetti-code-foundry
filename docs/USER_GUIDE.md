@@ -747,7 +747,12 @@ When a story is set to `go`, the gitflow flow (`issue-gitflow`) does this:
 2. **Test and review.** The review reads the local changes: `git diff develop...feature`, which includes the commits already on the feature branch, and the changes not yet committed. A local project has no pull request, so the `pr-*` commands of `tools/story` are refused for it.
 3. **Merge into develop.** After the tests and the review pass, the feature is merged into `develop` in your folder. The Foundry never pushes into a branch that is checked out in your folder. It moves `develop` only when `develop` has not moved since the run cloned it; if it has, the run merges again with the newer `develop`. If `develop` is the branch you have checked out, the files are updated only when your folder is clean.
 4. **Paused by your work.** If `develop` is checked out with uncommitted changes, or with files the update would replace, the run waits without holding a slot, and it merges again by itself when the way is clear. Commit, stash or move the changes, or switch branch. Your uncommitted work is never overwritten.
-5. **Release.** A feature does not touch `main`. To release, merge `develop` into `main` yourself.
+5. **Release.** A feature does not touch `main`. A local project has no release pull request. The daily release check (`release-daily`, 17:00) runs the tests and the build on `develop`. When they pass, it waits under **Needs you** (Simple: **What you need to do**) with **Make this version final**. The card lists the finished stories in plain words.
+   - **Make this version final** merges the tested `develop` into `main` in your folder (no fast-forward), adds the tag `release-<date>` (`-2`, `-3` when the name is taken), and closes the stories that went in. Each story gets a comment with the tag.
+   - If the project has a release recipe (`.factory/release-build.yaml`), the release files are kept in `<data folder>/releases/<name>/<tag>/`. No GitHub release is made.
+   - **Not yet** keeps everything on `develop`. A reason is optional; it is posted on each story. The next daily check asks again.
+   - If the checks fail, nothing is asked. A run that stopped midway finishes the tag, the story closing or the release files when you resume it; it never merges twice.
+   - With **Also push to the remote**, `main` and the tag are pushed too.
 
 A hotfix label does not apply to a local project: the story is built as a feature, and the report says so.
 

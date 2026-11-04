@@ -33,7 +33,7 @@ import { CODEX_LOGIN_NOT_RETURNED, returnCodexLogin } from "../agents/codex-logi
 import { codexLoginReturnLine } from "../agents/codex-home.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
-import { hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
+import { finalReleaseState, hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { localRepoEnv, removeSignInDir } from "./repo-access.js";
@@ -431,7 +431,8 @@ async function drive(
       ...localRepoEnv(summary.vars.github_repo),
       ...nextStepEnv(),
       // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
-      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes, autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
+      // A final release (see finalReleaseState) needs the hook folder in the environment, or its grant is never recognised: observe it.
+      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes || finalReleaseState(summary.flowDef, summary.vars.github_repo) === "on", autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
       ...selfEnv(),
       ...(opts.pathPrefix?.length ? { PATH: [...opts.pathPrefix, process.env.PATH ?? ""].join(delimiter) } : {}),
     };
@@ -461,6 +462,7 @@ async function drive(
     baseEnv,
     botEnv,
     hotfix: hotfixState(summary.flowDef, config),
+    finalRelease: finalReleaseState(summary.flowDef, summary.vars.github_repo),
     skillPublish: skillPublishState(summary.flowDef, skillLibraryRun(summary.vars.github_repo, summary.owner)),
     logsDir: join(summary.runDir, "logs"),
     claudeBin: opts.claudeBin,

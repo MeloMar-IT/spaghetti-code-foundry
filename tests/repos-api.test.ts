@@ -1,4 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { addRepo } from "../src/auth/repos.js";
+import { localRepoName } from "../src/auth/local-name.js";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -60,6 +63,24 @@ const creds = async (who: TestSession) => (await call(who, "GET", "/api/credenti
 let rec: { id: string; credentialId: string };
 
 describe("repositories API", () => {
+  it("gives a local record its local name (the name of its runs), and GitHub rows none", async () => {
+    const dir = mkdtempSync(join(tmp, "local-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
+    const made = addRepo(ann.user.id, { url: dir, method: "local" }, { ownerOk: () => true });
+    try {
+      const gh = await call(ann, "POST", "/api/repos", { url: "https://github.com/Acme/Named", method: "github-token", token: TOKEN });
+      const rows = await list(ann);
+      const mine = rows.find((r) => r.id === made.id) as { localName?: string };
+      expect(mine.localName).toBe(localRepoName({ id: made.id, url: made.url }));
+      expect(rows.find((r) => r.id === gh.json().id)).not.toHaveProperty("localName");
+      const all = (await (await call(admin, "GET", "/api/admin/repos")).json()) as { id: string; localName?: string }[];
+      expect(all.find((r) => r.id === made.id)?.localName).toBe(mine.localName);
+      await call(ann, "DELETE", `/api/repos/${gh.json().id}`);
+    } finally {
+      await call(ann, "DELETE", `/api/repos/${made.id}`);
+    }
+  });
+
   it("adds a repository with a token and shows only public fields", async () => {
     const r = await call(ann, "POST", "/api/repos", { url: "https://github.com/Acme/App", method: "github-token", token: TOKEN });
     expect(r.status).toBe(201);

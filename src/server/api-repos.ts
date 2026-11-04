@@ -4,7 +4,7 @@ import { auditAction, auditActions } from "../auth/audit.js";
 import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
 import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { checkRepoSettings } from "../auth/repo-settings.js";
-import { localHasRemote } from "../auth/local-repo.js";
+import { localHasRemote, localRepoName } from "../auth/local-repo.js";
 import { RecipeError, parseRecipe } from "../release/recipe.js";
 import { readyView } from "../refinement/ready-list.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
@@ -132,9 +132,11 @@ async function lookupInstallation(ctx: ApiContext, app: RepoApp, github: string 
 const BLOCKED: Record<InstallProblem, Code> = { "not-installed": "app-not-installed", "app-broken": "app-broken", "rate-limit": "rate-limit", unreachable: "unreachable", failed: "failed" };
 
 /** A record as its owner sees it: with `github` ("owner/name") when it is a GitHub repository. */
-const shown = <T extends { url: string }>(r: T): T & { github?: string } => {
+const shown = <T extends { url: string; id?: string; method?: string }>(r: T): T & { github?: string; localName?: string } => {
   const github = githubNameOf(r.url);
-  return github === undefined ? r : { ...r, github };
+  // A local record has no GitHub name; its runs are known by this name (vars.github_repo), so the pages can match them to the project.
+  const localName = r.method === "local" && typeof r.id === "string" ? localRepoName({ id: r.id, url: r.url }) : undefined;
+  return github === undefined && localName === undefined ? r : { ...r, ...(github !== undefined ? { github } : {}), ...(localName !== undefined ? { localName } : {}) };
 };
 
 /** The autonomy level of a repository id. A file that cannot be read gives `observe` for all, as a run start treats it. */
@@ -158,7 +160,7 @@ function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string
   const name = githubNameOf(rec.url);
   const problem = watcherRepoProblem(rec, u ?? undefined);
   const { definitionOfReady, ...rest } = rec;
-  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}), ...(rec.method === "local" ? { hasRemote: hasRemote === true } : {}) };
+  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}), ...(rec.method === "local" ? { hasRemote: hasRemote === true, localName: localRepoName(rec) } : {}) };
 }
 
 /** Does the folder of each local record have a git remote? Asynchronous, at most 4 checks at a time (see `localHasRemote`). */
