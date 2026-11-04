@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { localRepoName } from "../src/auth/local-name.js";
 import { addRepo, removeRepo } from "../src/auth/repos.js";
 import { StoreError, authLockHeld, withAuthLock } from "../src/auth/store.js";
 import { createUser, deleteUser, hashPassword, type User } from "../src/auth/users.js";
@@ -14,6 +16,7 @@ import {
   RefinementError,
   checkRefinements,
   createSession,
+  createSessionFromIssue,
   dropSession,
   endArchitectRun,
   noteArchitectResumed,
@@ -149,6 +152,38 @@ describe("default checks", () => {
     addRepo(bob.id, "bob/own");
     deleteUser(bob.id);
     expect(code(() => createSession(bob.id, { repo: "bob/own", idea: "x" }))).toBe("no-owner");
+  });
+});
+
+describe("local projects", () => {
+  let ann: User;
+  let bob: User;
+  let kc: FakeKeychain;
+  beforeAll(async () => void (await hashPassword("test-password-12345")));
+  beforeEach(async () => {
+    kc = fakeKeychain();
+    ann = await createUser({ name: "Ann", email: "ann@example.com", password: "test-password-12345", role: "admin" });
+    bob = await createUser({ name: "Bob", email: "bob@example.com", password: "test-password-12345" });
+  });
+  afterEach(() => kc.remove());
+
+  it("creates a session on the owner's local project only", () => {
+    const dir = mkdtempSync(join(tmpdir(), "refinement-local-"));
+    execFileSync("git", ["init", "-q", dir]);
+    try {
+      const rec = addRepo(ann.id, { url: dir, method: "local" });
+      const name = localRepoName(rec);
+      expect(createSession(ann.id, { repo: name, idea: "x" }).repo).toBe(name);
+      expect(code(() => createSession(bob.id, { repo: name, idea: "x" }))).toBe("not-yours");
+      expect(code(() => createSession(ann.id, { repo: "local:x-00000000", idea: "x" }))).toBe("not-yours");
+      expect(code(() => createSession(ann.id, { repo: "local:Bad Name", idea: "x" }))).toBe("bad-repo");
+      expect(code(() => createSession(ann.id, { repo: "local:", idea: "x" }))).toBe("bad-repo");
+      expect(code(() => createSessionFromIssue(ann.id, { repo: name, title: "t", idea: "x", source: { issue: 1 } as never }))).toBe("bad-repo");
+      removeRepo(ann.id, rec.id);
+      expect(code(() => createSession(ann.id, { repo: name, idea: "x" }))).toBe("not-yours");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

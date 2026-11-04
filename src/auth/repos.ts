@@ -186,6 +186,18 @@ export function findOwnedRepo(userId: string, name: string): RepoRecord | undefi
   return r ? { ...r } : undefined;
 }
 
+/** The account's record of a GitHub repository (as findOwnedRepo) or of a connected local project (`local:<slug>-<id8>`). Throws like read(). */
+export function findOwnedProject(userId: string, name: string): RepoRecord | undefined {
+  if (isLocalRepoName(name)) {
+    const rec = findLocalRepo(name);
+    return rec && rec.owner === userId ? rec : undefined;
+  }
+  return findOwnedRepo(userId, name);
+}
+
+/** True when the account has this GitHub repository or local project. */
+export const ownsProject = (userId: string, name: string): boolean => findOwnedProject(userId, name) !== undefined;
+
 /** The ids of every record of a GitHub repository, across all accounts (any case, with or without ".git", https or ssh). Throws like read(). */
 export function repoIdsOf(name: string): string[] {
   if (!validGithubName(name)) return [];

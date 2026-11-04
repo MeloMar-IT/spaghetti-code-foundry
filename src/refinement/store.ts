@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
-import { findOwnedRepo, listRepos, ownsRepo } from "../auth/repos.js";
+import { findLocalRepo, findOwnedProject, listRepos, ownsProject } from "../auth/repos.js";
+import { isLocalRepoName } from "../auth/local-name.js";
 import { githubKey, tryParseRepoUrl, validGithubName } from "../auth/repo-url.js";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
@@ -25,7 +26,11 @@ export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
 export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review", "impact", "ready", "split"] as const;
 export type ArchitectKind = (typeof ARCHITECT_KINDS)[number];
 
-export const refinementsPath = () => join(dataHome(), "refinements.json");
+const validSessionRepo = (n: string): boolean => validGithubName(n) || isLocalRepoName(n);
+
+export const LOCAL_ISSUE_REFUSAL = "a session from an existing issue needs a GitHub repository; on a local project, start a session from an idea";
+
+export const refinementsPath =() => join(dataHome(), "refinements.json");
 
 /** At most this many sessions per account; dropped sessions count until they are removed. */
 export const SESSION_LIMIT = 200;
@@ -103,7 +108,7 @@ const SessionSchema = z
   .object({
     id: z.uuid(),
     owner: z.uuid(),
-    repo: z.string().refine(validGithubName),
+    repo: z.string().refine(validSessionRepo),
     title: z.string().min(1).max(SESSION_TITLE_MAX),
     idea: z.string().min(1).max(IDEA_MAX),
     /** The Ask SCF conversation (of the owner) this session was started from. Shown to the owner only. */
@@ -197,6 +202,7 @@ const defaultOwnerOk = (id: string) => getUser(id) !== undefined;
 
 /** The name of the account's GitHub repository (from its record), or undefined when the account has no such one. */
 function defaultRepoName(owner: string, name: string): string | undefined {
+  if (isLocalRepoName(name)) return findLocalRepo(name)?.owner === owner ? name : undefined;
   const key = githubKey(name);
   for (const r of listRepos(owner)) {
     const p = tryParseRepoUrl(r.url);
@@ -245,7 +251,7 @@ export function checkRefinements(): void {
 export function createSession(owner: string, input: NewSession, opts: CreateOptions = {}): Session {
   const idea = checkIdea(input.idea);
   const title = input.title === undefined || input.title === null || (typeof input.title === "string" && !input.title.trim()) ? undefined : checkTitle(input.title);
-  if (typeof input.repo !== "string" || !validGithubName(input.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
+  if (typeof input.repo !== "string" || !validSessionRepo(input.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name, or one of your local projects");
   return insertSession(owner, input.repo, opts, (repo, at) => ({
     id: randomUUID(),
     owner,
@@ -321,6 +327,7 @@ export function createSessionFromIssue(owner: string, input: NewIssueSession, op
   const idea = checkIdea(input.idea);
   const title = input.title.trim();
   if (!title || title.length > SESSION_TITLE_MAX || CONTROL.test(title)) throw new RefinementError("bad-title", "the title of the issue cannot be used");
+  if (typeof input.repo === "string" && isLocalRepoName(input.repo)) throw new RefinementError("bad-repo", LOCAL_ISSUE_REFUSAL);
   if (typeof input.repo !== "string" || !validGithubName(input.repo)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
   return insertSession(owner, input.repo, opts, (repo, at, kept) => {
     const dup = kept.find((s) => openOfIssue(s, owner, repo, input.source.issue));
@@ -678,7 +685,7 @@ export interface TalkOptions extends StoreOptions {
 }
 
 const defaultReadyList = (owner: string, repo: string): readonly ReadyItem[] | undefined => {
-  const r = findOwnedRepo(owner, repo);
+  const r = findOwnedProject(owner, repo);
   return r ? readyListOf(r.definitionOfReady) : undefined;
 };
 
@@ -699,7 +706,7 @@ function withTalk(s: Session, c: { talk: Talk; lines: LogLine[] }, at: string, b
 /** The talk and the drafts change only in a session that is not dropped and whose repository is in My repositories. */
 function mustBeOpen(s: Session, opts: TalkOptions): void {
   if (s.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be changed; restore it first");
-  if (!(opts.repoOk ?? ownsRepo)(s.owner, s.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
+  if (!(opts.repoOk ?? ownsProject)(s.owner, s.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
 }
 
 function changeTalk(actor: Actor, id: string, opts: TalkOptions, fn: (talk: Talk, at: string) => TalkChange | undefined): Session {
