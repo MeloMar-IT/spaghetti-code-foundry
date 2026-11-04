@@ -12,7 +12,7 @@ import { runOrigin } from "./your-turn.js";
 export function runMessage(config: Config, s: RunSummary): string {
   const what = s.vars.issue ? `${s.vars.github_repo}#${s.vars.issue}` : s.task.split("\n")[0] || s.flow;
   const w = trackingWatcher(config.watchers, s);
-  const next = runNextStep(s, { watched: !!w, failedLabel: w && labelNames(w).failed, releaseAt: releaseAtFor(config.watchers, s) });
+  const next = runNextStep(s, { watched: !!w, autoDefaults: w?.auto_defaults, failedLabel: w && labelNames(w).failed, releaseAt: releaseAtFor(config.watchers, s) });
   return fit(what, next);
 }
 

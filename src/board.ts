@@ -114,6 +114,7 @@ export function columnOf(next: NextStep, phase?: Phase): ColumnId | undefined {
     case "done": return "done";
     case "superseded": case "issue_closed": case "parked": case "epic": return undefined;
     case "release": return needsUser(next) ? "your_turn" : "merging";
+    case "questions": case "planner_questions": return next.who === "You" ? "your_turn" : "waiting";
     case "interrupted": case "cancelled": return next.ended ? undefined : next.who === "You" ? "your_turn" : "queued";
     default: return "your_turn";
   }

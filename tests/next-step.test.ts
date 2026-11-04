@@ -8,6 +8,7 @@ import { STOPPED_CANCEL_REASON, USER_BUDGET_REASON, type RunSummary } from "../s
 import { statusName } from "../src/words.js";
 import type { RunNextOptions } from "../src/next-step.js";
 import { briefFailure, COMMENT_KINDS, REPORT_KINDS, reportFirst, commentFirst, commentText, firstLine, countQuestions, nextStep, nextStepEnv, releaseAtFor, releaseWatchersFor, runClosedIssue, runNextStep, trackingWatcher, type NextKind, type NextStep } from "../src/next-step.js";
+import { needsUser } from "../src/your-turn.js";
 
 const run = (over: Partial<RunSummary> = {}) =>
   ({
@@ -27,9 +28,9 @@ describe("comment sentences", () => {
     const env = nextStepEnv();
     expect(Object.keys(env).sort()).toEqual([
       "FACTORY_FIRST_APPROVAL", "FACTORY_FIRST_APPROVE_PLAN", "FACTORY_FIRST_APPROVE_SPLIT", "FACTORY_FIRST_DECIDED", "FACTORY_FIRST_DRAFT", "FACTORY_FIRST_FIXED", "FACTORY_FIRST_INFO", "FACTORY_FIRST_LOOK", "FACTORY_FIRST_MERGE_BACK",
-      "FACTORY_FIRST_MERGE_PR", "FACTORY_FIRST_MERGE_RELEASE", "FACTORY_FIRST_NOTHING", "FACTORY_FIRST_OPEN_PR", "FACTORY_FIRST_PLANNER_QUESTIONS", "FACTORY_FIRST_QUESTIONS",
+      "FACTORY_FIRST_MERGE_PR", "FACTORY_FIRST_MERGE_RELEASE", "FACTORY_FIRST_NOTHING", "FACTORY_FIRST_OPEN_PR", "FACTORY_FIRST_PLANNER_QUESTIONS", "FACTORY_FIRST_PLANNER_QUESTIONS_PERSON", "FACTORY_FIRST_QUESTIONS",
       "FACTORY_FIRST_SHIPS", "FACTORY_FIRST_START_CODING", "FACTORY_FIRST_START_PARTS",
-      "FACTORY_NEXT_APPROVAL", "FACTORY_NEXT_APPROVE_PLAN", "FACTORY_NEXT_APPROVE_SPLIT", "FACTORY_NEXT_PLANNER_QUESTIONS", "FACTORY_NEXT_QUESTIONS",
+      "FACTORY_NEXT_APPROVAL", "FACTORY_NEXT_APPROVE_PLAN", "FACTORY_NEXT_APPROVE_SPLIT", "FACTORY_NEXT_PLANNER_QUESTIONS", "FACTORY_NEXT_PLANNER_QUESTIONS_PERSON", "FACTORY_NEXT_QUESTIONS",
       "FACTORY_PARK_HINT",
     ]);
     expect(env.FACTORY_PARK_HINT).toContain("/park");
@@ -47,6 +48,29 @@ describe("comment sentences", () => {
       expect(v).toMatch(/^[^\n]*\.$/);
       expect(v).not.toMatch(/[\\`$"_*]/);
     }
+  });
+
+  it("auto_defaults: the question comments say that nothing is needed, and the record is the Foundry's", () => {
+    const env = nextStepEnv({ autoDefaults: true });
+    expect(env.FACTORY_FIRST_QUESTIONS).toBe("**Nothing needed from you** — it has questions, and the Foundry takes its own recommendations.");
+    expect(env.FACTORY_FIRST_PLANNER_QUESTIONS).toBe("**Nothing needed from you** — the planner has questions, and the Foundry takes its own recommendations.");
+    expect(env.FACTORY_NEXT_QUESTIONS).toContain("answer on the issue to choose otherwise");
+    expect(env.FACTORY_NEXT_PLANNER_QUESTIONS).toBe(commentText("planner_questions", { autoDefaults: true }));
+    for (const k of ["FACTORY_NEXT_QUESTIONS", "FACTORY_NEXT_PLANNER_QUESTIONS"]) expect(env[k]).toMatch(/^[^\n]*\.$/);
+    for (const [k, v] of Object.entries(env)) if (k.startsWith("FACTORY_FIRST_")) expect(v).toMatch(/^\*\*[^\n\\`$"]*(?:\.|\*\*)$/);
+    for (const k of ["FACTORY_NEXT_QUESTIONS", "FACTORY_NEXT_PLANNER_QUESTIONS"]) expect(env[k]).not.toMatch(/[\\`$"_*]/);
+    // Approvals and "not a coding task" (the _PERSON lines) still ask the person.
+    expect(env.FACTORY_FIRST_APPROVE_PLAN).toBe(nextStepEnv().FACTORY_FIRST_APPROVE_PLAN);
+    expect(env.FACTORY_FIRST_PLANNER_QUESTIONS_PERSON).toBe("**What you need to do:** Answer the questions.");
+    expect(env.FACTORY_NEXT_PLANNER_QUESTIONS_PERSON).toBe(nextStepEnv().FACTORY_NEXT_PLANNER_QUESTIONS);
+    for (const k of ["questions", "planner_questions"] as const) {
+      const r = nextStep(k, base, { ...data, autoDefaults: true });
+      expect(r.who).toBe("Foundry");
+      expect(needsUser(r)).toBe(false);
+      expect(nextStep(k, base, data).who).toBe("You");
+    }
+    // An answer typed on the run page has no watcher to answer it: the person is asked.
+    expect(nextStep("planner_questions", base, { ...data, autoDefaults: true, answerHere: true }).who).toBe("You");
   });
 
   it("words the first line", () => {

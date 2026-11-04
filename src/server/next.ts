@@ -187,6 +187,7 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
       superseded: superseded && !answerHere,
       answerHere,
       watched: !!w,
+      autoDefaults: w?.auto_defaults,
       failedLabel: w && labelNames(w).failed,
       releaseAt: run.status === "succeeded" ? releaseAtFor(cfg.watchers, run, load()) : undefined,
       title,

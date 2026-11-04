@@ -429,7 +429,8 @@ async function drive(
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...localRepoEnv(summary.vars.github_repo),
-      ...nextStepEnv(),
+      // the run's watcher answers questions itself (auto_defaults): question comments say that nothing is needed
+      ...nextStepEnv({ autoDefaults: summary.vars.auto_defaults === "true" }),
       // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
       ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes, autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
       ...selfEnv(),

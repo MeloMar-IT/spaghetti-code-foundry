@@ -148,7 +148,12 @@ describe("comment wording comes from the next-step module", () => {
   it("uses the right variable in the right step", () => {
     expect(stepRun("blocks/plan.yaml", "ask_for_info")).toContain("${FACTORY_NEXT_PLANNER_QUESTIONS}");
     expect(stepRun("blocks/request-approval.yaml", "request_approval")).toContain("${FACTORY_NEXT_APPROVAL}");
-    for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) expect(stepRun(flowPath(f), "send_back")).toContain("${FACTORY_NEXT_PLANNER_QUESTIONS}");
+    for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) {
+      const run = stepRun(flowPath(f), "send_back");
+      expect(run).toContain('next="$FACTORY_NEXT_PLANNER_QUESTIONS"');
+      // "Not a coding task" always asks the person, also when the watcher answers other questions itself (auto_defaults).
+      expect(run).toContain('if [ "$status" = NOT_CODE ]; then first="$FACTORY_FIRST_PLANNER_QUESTIONS_PERSON"; next="$FACTORY_NEXT_PLANNER_QUESTIONS_PERSON"; fi');
+    }
     for (const f of ["issue-deliver", "issue-gitflow"]) {
       expect(stepRun(flowPath(f), "risk_gate")).toContain("${FACTORY_NEXT_APPROVE_PLAN}");
       expect(stepRun(flowPath(f), "split_gate")).toContain("${FACTORY_NEXT_APPROVE_SPLIT}");
@@ -173,7 +178,7 @@ describe("comment wording comes from the next-step module", () => {
     before(stepRun("blocks/request-approval.yaml", "request_approval"), 'echo "$FACTORY_FIRST_APPROVAL"', "request-approval");
     for (const f of ["github-issue", "github-pr", "github-auto"]) before(stepRun(flowPath(f), "ask_for_info"), 'echo "$FACTORY_FIRST_PLANNER_QUESTIONS"', f);
     before(stepRun(flowPath("github-pr"), "request_approval"), 'echo "$FACTORY_FIRST_APPROVAL"', "github-pr/request_approval");
-    for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) before(stepRun(flowPath(f), "send_back"), 'echo "$FACTORY_FIRST_PLANNER_QUESTIONS"', `${f}/send_back`);
+    for (const f of ["issue-plan", "issue-deliver", "issue-gitflow"]) before(stepRun(flowPath(f), "send_back"), 'echo "$first"', `${f}/send_back`);
     for (const f of ["issue-deliver", "issue-gitflow"]) {
       before(stepRun(flowPath(f), "split_gate"), 'echo "$FACTORY_FIRST_APPROVE_SPLIT"', `${f}/split_gate`);
       const gate = stepRun(flowPath(f), "risk_gate");
