@@ -27,6 +27,8 @@ export interface LocalStoreOptions {
   onStale?: StoryLockOptions["onStale"];
   /** Commit each change with git (default true). */
   commit?: boolean;
+  /** Commit on this branch instead of the checked-out one, leaving the checkout alone (a connected repository uses `scf/stories`). */
+  branch?: string;
 }
 
 const whole = (n: unknown, max = Number.MAX_SAFE_INTEGER): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 1 && n <= max;
@@ -65,9 +67,11 @@ export class LocalStore implements StoryStore {
   private readonly now: () => Date;
   private readonly author: string;
   private readonly commit: boolean;
+  private readonly branch: string | undefined;
 
   constructor(private readonly dir: string, readonly repo: string, o: LocalStoreOptions = {}) {
     this.commit = o.commit ?? true;
+    this.branch = o.branch;
     this.lockWaitMs = o.lockWaitMs ?? 10_000;
     this.lock = { pollMs: o.lockPollMs ?? 50, alive: o.alive ?? pidAlive, onStale: o.onStale };
     this.now = o.now ?? (() => new Date());
@@ -221,7 +225,7 @@ export class LocalStore implements StoryStore {
 
   /** One commit of the files just written, under the lock. `budgetMs` is the time left for git. */
   private commitFiles(n: number, files: string[], what: StoryChange, budgetMs?: number): void {
-    if (this.commit) commitStory(this.dir, n, files, what, { budgetMs });
+    if (this.commit) commitStory(this.dir, n, files, what, { budgetMs, branch: this.branch });
   }
 
   private checked(text: string): string {

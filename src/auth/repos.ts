@@ -10,6 +10,7 @@ import { DETAIL_MAX, changedKeys } from "./audit.js";
 import { ConnectionSchema, type ConnectionResult, readRepoSecret, repoSecretName } from "./repo-connection.js";
 import { ReadyListSchema, checkReadyList, readyListOf } from "../refinement/ready-list.js";
 import { RepoSettingsSchema, checkRepoSettings } from "./repo-settings.js";
+import { checkLocalPath, isLocalRepoName, localPathProblem, localRepoName } from "./local-repo.js";
 import { type ParsedRepoUrl, RepoError, type RepoErrorCode, githubKey, parseRepoUrl, tryParseRepoUrl, validGithubName } from "./repo-url.js";
 import { StoreError, authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 import { type User, UserError, checkEmail, findUserByEmail, getUser } from "./users.js";
@@ -31,7 +32,7 @@ export const reposPath = () => join(dataHome(), "repos.json");
 /** At most this many repositories per account. */
 export const REPO_LIMIT = 50;
 
-export const REPO_METHODS = ["none", "github-token", "https-token", "ssh-deploy-key", "github-app"] as const;
+export const REPO_METHODS = ["none", "github-token", "https-token", "ssh-deploy-key", "github-app", "local"] as const;
 export type RepoMethod = (typeof REPO_METHODS)[number];
 
 const USERNAME_RE = /^[A-Za-z0-9._@+-]{1,100}$/;
@@ -63,6 +64,14 @@ const RecordSchema = z
   .strict()
   .superRefine((r, ctx) => {
     const issue = (path: string) => ctx.addIssue({ code: "custom", message: "invalid", path: [path] });
+    if (r.method === "local") {
+      if (localPathProblem(r.url) !== undefined) issue("url");
+      if (r.credentialId !== undefined) issue("credentialId");
+      if (r.username !== undefined) issue("username");
+      if (r.publicKey !== undefined) issue("publicKey");
+      if (r.installationId !== undefined) issue("installationId");
+      return;
+    }
     const p = tryParseRepoUrl(r.url);
     if (!p || (p.url !== r.url && !legacyUrl(r.url))) issue("url");
     if (r.method !== "ssh-deploy-key" && r.publicKey !== undefined) issue("publicKey");
@@ -358,19 +367,24 @@ export interface NewRepo {
   token?: unknown;
 }
 
-/** The address and the method of a new repository, checked without any file. */
-function addPlan(input: NewRepo): { url: ParsedRepoUrl; auth: Checked } {
+/** The address and the method of a new repository, checked without any file (a local path is checked on disk). */
+function addPlan(input: NewRepo): { url: string; key: string; auth: Checked } {
+  if (input.method === "local") {
+    if (input.username !== undefined || input.token !== undefined) throw badAuth('"local" has no user name and no token; it is a folder on this machine');
+    const path = checkLocalPath(input.url);
+    return { url: path, key: path, auth: { method: "local" } };
+  }
   const url = parseRepoUrl(input.url);
   const auth = checkAuth(url, { method: input.method ?? "none", username: input.username, token: input.token }, input.method !== undefined && input.method !== "none" && input.method !== "github-app");
-  return { url, auth };
+  return { url: url.url, key: url.key, auth };
 }
 
 /** The checks that need the file (inside the lock): the account, a duplicate, another account's repository and the limit. Returns the file. */
-function addChecks(userId: string, url: ParsedRepoUrl, opts: { ownerOk?: (userId: string) => boolean }): RepoFile {
+function addChecks(userId: string, key: string, opts: { ownerOk?: (userId: string) => boolean }): RepoFile {
   ownerExists(opts, userId);
   const file = read();
-  if (file.repos.some((r) => r.owner === userId && keyOfRecord(r) === url.key)) throw new RepoError("duplicate", "you have that repository already");
-  if (file.repos.some((r) => keyOfRecord(r) === url.key)) throw new RepoError("taken", "that repository belongs to another account");
+  if (file.repos.some((r) => r.owner === userId && keyOfRecord(r) === key)) throw new RepoError("duplicate", "you have that repository already");
+  if (file.repos.some((r) => keyOfRecord(r) === key)) throw new RepoError("taken", "that repository belongs to another account");
   if (file.repos.filter((r) => r.owner === userId).length >= REPO_LIMIT) throw new RepoError("limit", `at most ${REPO_LIMIT} repositories`);
   return file;
 }
@@ -385,8 +399,8 @@ function checkInstallationId(id: unknown): asserts id is string {
  */
 export function checkNewRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean } = {}): void {
   const input: NewRepo = typeof given === "string" ? { url: given } : given;
-  const { url } = addPlan(input);
-  withAuthLock(() => void addChecks(userId, url, opts));
+  const { key } = addPlan(input);
+  withAuthLock(() => void addChecks(userId, key, opts));
 }
 
 /**
@@ -396,19 +410,20 @@ export function checkNewRepo(userId: string, given: NewRepo | string, opts: { ow
  */
 export function addRepo(userId: string, given: NewRepo | string, opts: { ownerOk?: (userId: string) => boolean; installationId?: string; authorize?: () => void; beforeSave?: (id: string) => void } = {}): PublicRepo {
   const input: NewRepo = typeof given === "string" ? { url: given } : given;
-  const { url, auth } = addPlan(input);
+  const { url, key, auth } = addPlan(input);
   return withAuthLock(() => {
     opts.authorize?.(); // asked again under the lock: what was allowed before the lookup may be taken back since
-    const file = addChecks(userId, url, opts);
+    const file = addChecks(userId, key, opts);
     if (auth.method === "github-app") checkInstallationId(opts.installationId);
     // a failed key leaves both files as they were
     const secret: Secret | undefined = auth.method === "ssh-deploy-key" ? newKeySecret() : auth.token ? { type: "token", value: auth.token } : undefined;
-    const id = randomUUID();
+    let id = randomUUID();
+    if (auth.method === "local") while (file.repos.some((r) => r.method === "local" && localRepoName(r) === localRepoName({ id, url }))) id = randomUUID();
     const credentialId = secret ? randomUUID() : undefined;
     const record: RepoRecord = {
       id,
       owner: userId,
-      url: url.url,
+      url,
       method: auth.method,
       ...(credentialId ? { credentialId } : {}),
       ...(secret?.publicKey ? { publicKey: secret.publicKey } : {}),
@@ -451,6 +466,7 @@ function authPlan(file: RepoFile, userId: string, id: string, input: AuthChange,
   ownerExists(opts, userId);
   const rec = file.repos.find((r) => r.id === id && r.owner === userId);
   if (!rec) throw new RepoError("not-found", "no such repository");
+  if (rec.method === "local" || input.method === "local") throw badAuth("a local repository keeps its method and folder; remove it and add it again");
   let url = parseRepoUrl(rec.url);
   if (input.url !== undefined) {
     const given = parseRepoUrl(input.url);
@@ -617,7 +633,7 @@ export function setRepoConnection(rec: RepoRecord, result: ConnectionResult, ins
     const now = file.repos.find((r) => r.id === rec.id);
     if (!now) return "gone";
     // a sign-in deleted during the test: a result for it must not be saved (the app has no stored sign-in)
-    if (now.method !== "none" && now.method !== "github-app") {
+    if (now.method !== "none" && now.method !== "github-app" && now.method !== "local") {
       const type = now.method === "ssh-deploy-key" ? "ssh-key" : "token";
       if (!listCredentials(now.owner).some((c) => c.id === now.credentialId && c.name === secretName(now) && c.type === type)) return "changed";
     }
@@ -629,6 +645,13 @@ export function setRepoConnection(rec: RepoRecord, result: ConnectionResult, ins
     save(file.repos.map((r) => (r === now ? { ...now, ...id, connection } : r)));
     return "saved";
   });
+}
+
+/** The connected local repository with this `local:…` name, or undefined. Throws like `read()`. */
+export function findLocalRepo(name: string): RepoRecord | undefined {
+  if (!isLocalRepoName(name)) return undefined;
+  const rec = read().repos.find((r) => r.method === "local" && localRepoName(r) === name);
+  return rec ? { ...rec } : undefined;
 }
 
 /**
@@ -714,8 +737,8 @@ export function transferRepo(id: string, emailInput: unknown, opts: TransferOpti
     if (file.repos.filter((r) => r.owner === owner.id).length >= REPO_LIMIT) throw new RepoError("limit", `that account has ${REPO_LIMIT} repositories already`);
     let next: RepoRecord = { ...bare(rec), owner: owner.id };
     let oldKeysLeft = 0;
-    if (rec.method === "github-app") {
-      // the installation belongs to the repository and there is no stored secret: only the owner changes
+    if (rec.method === "github-app" || rec.method === "local") {
+      // a folder on this machine has no secret; the installation belongs to the repository and there is no stored secret: only the owner changes
     } else if (REPO_BOUND_METHODS.includes(rec.method)) {
       if (!rec.credentialId || moveCredentialLocked(rec.owner, owner.id, rec.credentialId, secretName(rec)) === "missing") {
         throw new RepoError("no-credential", "the sign-in of this repository is missing; set it again before the transfer");

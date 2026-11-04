@@ -128,8 +128,8 @@ export const RULES: Rule[] = [
   r("GET", "audit", "no", "read the audit log, newest first, with filters"),
   r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),
   r("GET", "repos", "yes", "your repositories, each with its autonomy level"),
-  r("GET", "repos/methods", "yes", "the sign-in methods you may choose, and the link to install the GitHub App"),
-  r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it)"),
+  r("GET", "repos/methods", "yes", "the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App"),
+  r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`)"),
   r("PUT", "repos/:id/auth", "yes", "change the method, user name, token or address of your repository, or make a new deploy key"),
   r("POST", "repos/:id/test", "yes", "test the connection of your repository (an admin: any repository); the result is saved as its connection status"),
   r("GET", "repos/:id/ready", "yes", "the Definition of Ready of your repository (an admin: any repository)"),
@@ -237,6 +237,13 @@ export function publishedFlows(repo: string): FlowListing[] {
 /** True for the release-build flow, or any flow with a shell step that runs the release-build tool. */
 export function isReleaseBuildFlow(flow: Flow): boolean {
   return flow.name === "release-build" || flow.steps.some((s) => s.type === "shell" && s.run.includes("$FACTORY_TOOLS/release-build"));
+}
+
+/** Only an admin may choose the method "none" (the server's own access) or "local" (a folder on this machine). Throws 403. */
+export function checkRepoMethod(user: Pick<User, "role">, method: unknown): void {
+  if (user.role === "admin") return;
+  if (method === "none") throw new HttpError(403, 'only an admin may choose "none" (the server\'s own access)');
+  if (method === "local") throw new HttpError(403, 'only an admin may choose "local" (a folder on this machine)');
 }
 
 /**

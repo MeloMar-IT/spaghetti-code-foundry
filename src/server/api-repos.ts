@@ -23,6 +23,7 @@ import { DEFAULT_FLOWS } from "../queue/watcher.js";
 import { watcherState } from "../words.js";
 import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
+import { checkRepoMethod } from "./permissions.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the repository list is not working; see the server log";
@@ -307,7 +308,7 @@ export async function testRepo(ctx: ApiContext, user: User, id: string): Promise
         if (!found.ok) blocked = blockedResult(BLOCKED[found.problem], rec.method);
         else ({ installationId, token: secret } = found);
       }
-    } else if (rec.method !== "none") {
+    } else if (rec.method !== "none" && rec.method !== "local") {
       secret = guardedRepos(ctx, () => readRepoSecret(rec));
     }
     let result;
@@ -334,9 +335,6 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg[0] === "admin") return adminRepos(ctx, req, res, seg, method, caller.id);
   if (seg[0] !== "repos") return false;
   const user = caller;
-  const noServerAccess = (m: unknown) => {
-    if (m === "none" && user.role !== "admin") throw new HttpError(403, 'only an admin may choose "none" (the server\'s own access)');
-  };
   if (seg.length === 1 && method === "GET") {
     const level = repoLevels();
     const repos = guardedRepos(ctx, () => listRepos(user.id)).map((r) => ({ ...shown(r), autonomy: level(r.id) }));
@@ -344,12 +342,12 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
   if (seg.length === 2 && seg[1] === "methods" && method === "GET") {
     const app = repoApp(ctx.config());
-    const methods = REPO_METHODS.filter((m) => (m !== "none" || user.role === "admin") && (m !== "github-app" || app));
+    const methods = REPO_METHODS.filter((m) => ((m !== "none" && m !== "local") || user.role === "admin") && (m !== "github-app" || app));
     return send(res, 200, { methods, githubApp: app ? { available: true, installUrl: installUrl(app.slug) } : { available: false } }), true;
   }
   if (seg.length === 1 && method === "POST") {
     const body = await readJson(req);
-    noServerAccess(body.method);
+    checkRepoMethod(user, body.method);
     const input = { url: given(body, "url") ?? given(body, "name"), method: given(body, "method"), username: given(body, "username"), token: given(body, "token") };
     let installationId: string | undefined;
     let authorize: (() => void) | undefined;
@@ -369,7 +367,7 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
   if (seg.length === 3 && seg[2] === "auth" && method === "PUT") {
     const body = await readJson(req);
-    noServerAccess(body.method);
+    checkRepoMethod(user, body.method);
     const change = { method: given(body, "method"), username: given(body, "username"), token: given(body, "token"), url: given(body, "url"), newKey: given(body, "newKey") };
     let installationId: string | undefined;
     let authorize: (() => void) | undefined;
