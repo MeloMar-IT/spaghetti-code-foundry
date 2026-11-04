@@ -51,6 +51,17 @@ function tool(name: string, o: { args?: string[]; input?: string; env?: Record<s
   return { status: r.status, out: r.stdout, err: r.stderr, lines: r.stdout.trim().split("\n") };
 }
 
+describe("story pr-* commands", () => {
+  it("are refused for a local project before anything is called", () => {
+    for (const args of [["pr-find", "x"], ["pr-merge", "x"], ["pr-open", "--head", "x", "--title", "t"], ["pr-checks", "x"]]) {
+      const r = tool("story", { args });
+      expect(r.status, args.join(" ")).toBe(1);
+      expect(r.err).toContain("Pull requests are not available for a local project");
+      expect(r.out).toBe("");
+    }
+  });
+});
+
 describe("waits-for", () => {
   it("records the wait in a local story and parks", async () => {
     await seed(7);

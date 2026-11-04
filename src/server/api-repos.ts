@@ -4,6 +4,7 @@ import { auditAction, auditActions } from "../auth/audit.js";
 import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
 import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { checkRepoSettings } from "../auth/repo-settings.js";
+import { localHasRemote } from "../auth/local-repo.js";
 import { RecipeError, parseRecipe } from "../release/recipe.js";
 import { readyView } from "../refinement/ready-list.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
@@ -150,14 +151,26 @@ function repoLevels(): (id: string) => AutonomyLevel {
 const publicKeys = (repos: Pick<RepoRecord, "publicKey">[]) => repos.flatMap((r) => (r.publicKey ? [r.publicKey] : []));
 
 /** A record for the admin page: with `github` ("owner/name") when it is a GitHub repository, its settings (`{}` when none) and the owner's name, e-mail, role and status (null when the account is gone). */
-function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string, string[]>) {
+function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string, string[]>, hasRemote?: boolean) {
   const u = users ? users.get(rec.owner) : getUser(rec.owner);
   const github = rec.method === "github-app" ? tryParseRepoUrl(rec.url)?.github : undefined;
   const offList = github !== undefined && u?.role === "user" && !onAppList(lists ? (lists.get(rec.owner) ?? []) : getAppRepos(rec.owner), github);
   const name = githubNameOf(rec.url);
   const problem = watcherRepoProblem(rec, u ?? undefined);
   const { definitionOfReady, ...rest } = rec;
-  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}) };
+  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}), ...(rec.method === "local" ? { hasRemote: hasRemote === true } : {}) };
+}
+
+/** Does the folder of each local record have a git remote? Asynchronous, at most 4 checks at a time (see `localHasRemote`). */
+async function remoteFlags(recs: readonly RepoRecord[]): Promise<Map<string, boolean>> {
+  const local = recs.filter((r) => r.method === "local");
+  const out = new Map<string, boolean>();
+  let next = 0;
+  const worker = async () => {
+    for (let r = local[next++]; r; r = local[next++]) out.set(r.id, await localHasRemote(r.url));
+  };
+  await Promise.all(Array.from({ length: Math.min(4, local.length) }, worker));
+  return out;
 }
 
 /** Checks a `releaseRecipe` in the settings body with the recipe schema (here, not in checkRepoSettings: that would be an import cycle). */
@@ -177,11 +190,13 @@ function checkReleaseRecipe(body: unknown): void {
 async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, by: string): Promise<boolean> {
   if (seg[1] !== "repos") return false;
   if (seg.length === 2 && method === "GET") {
+    const all = guardedRepos(ctx, () => listAllRepos());
+    const remotes = await remoteFlags(all);
     const rows = guardedRepos(ctx, () => {
       const users = new Map(listUsers().map((u) => [u.id, u]));
       const lists = allAppRepos();
       const level = repoLevels();
-      return listAllRepos().map((r) => ({ ...adminRow(r, users, lists), autonomy: level(r.id) }));
+      return all.map((r) => ({ ...adminRow(r, users, lists, remotes.get(r.id)), autonomy: level(r.id) }));
     });
     return send(res, 200, rows, publicKeys(rows)), true;
   }
@@ -192,7 +207,7 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
       return setRepoSettings(seg[2]!, body);
     });
     if (r.changed.length) auditAction(ctx.diagLog, by, "repo-change", r.repo.id, `settings: ${r.changed.join(", ")}`);
-    const row = adminRow(r.repo);
+    const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
     return send(res, 200, row, publicKeys([row])), true;
   }
   if (seg.length === 4 && seg[3] === "ready" && method === "PUT") {
@@ -202,7 +217,7 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
       const detail = r.repo.definitionOfReady ? `definition of ready: ${r.repo.definitionOfReady.length} items` : "definition of ready: back to the default";
       auditAction(ctx.diagLog, by, "repo-change", r.repo.id, detail);
     }
-    const row = adminRow(r.repo);
+    const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
     return send(res, 200, row, publicKeys([row])), true;
   }
   if (seg.length === 4 && seg[3] === "transfer" && method === "POST") {
@@ -213,7 +228,7 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
       ctx.watchers.sync(); // the new owner gets the runs
     }
     oldKeys(ctx, r.oldKeysLeft, "the repository was transferred");
-    const row = adminRow(r.repo);
+    const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
     return send(res, 200, row, publicKeys([row])), true;
   }
   if (seg[3] === "watchers" && seg.length <= 5) return adminWatchers(ctx, req, res, seg, method, by);

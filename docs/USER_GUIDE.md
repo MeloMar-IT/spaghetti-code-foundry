@@ -734,6 +734,24 @@ A file that cannot be read is reported with the reason. Common reasons:
 
 Dates must be written as text in quotes, so YAML does not change them.
 
+### Local projects
+
+A local project is a git repository on this machine, connected as **Local (no GitHub)** (see "Local (no GitHub)" under My repositories). The Foundry plans, builds, tests, reviews and merges its stories without GitHub and without the `gh` command. Nothing leaves the machine unless you turn on **Also push to the remote**.
+
+When a story is set to `go`, the gitflow flow (`issue-gitflow`) does this:
+
+1. **Clone.** The run copies your folder with plain git. Its feature branch (`feature/<number>-…`) lives in the run's own workspace, never in your folder.
+2. **Test and review.** The review reads the local changes: `git diff develop...feature`, which includes the commits already on the feature branch, and the changes not yet committed. A local project has no pull request, so the `pr-*` commands of `tools/story` are refused for it.
+3. **Merge into develop.** After the tests and the review pass, the feature is merged into `develop` in your folder. The Foundry never pushes into a branch that is checked out in your folder. It moves `develop` only when `develop` has not moved since the run cloned it; if it has, the run merges again with the newer `develop`. If `develop` is the branch you have checked out, the files are updated only when your folder is clean.
+4. **Paused by your work.** If `develop` is checked out with uncommitted changes, or with files the update would replace, the run waits without holding a slot, and it merges again by itself when the way is clear. Commit, stash or move the changes, or switch branch. Your uncommitted work is never overwritten.
+5. **Release.** A feature does not touch `main`. To release, merge `develop` into `main` yourself.
+
+A hotfix label does not apply to a local project: the story is built as a feature, and the report says so.
+
+The report of a finished story names the commit (its short hash) and says that it is in `develop` in your folder.
+
+**Also push to the remote** (a setting, off by default). It is shown only when your folder has a git remote. When it is on, the Foundry runs a plain `git push` of `develop` from your folder after each merge. No GitHub API is used. If the push fails, the report says why, with any sign-in removed from the text, and the merge in your folder stays.
+
 ### Commits for story changes
 
 When the Foundry writes a story file in a local project, it also makes one git commit for that change, so every change to your stories is in the history:
@@ -4917,11 +4935,12 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
   on by default, so a repository that has no such setting, including one registered before this change, counts as
   on. Off: the Foundry asks you every question on the issue. Runs get it as `$FACTORY_DECIDE_TECHNICAL` (`1` or `0`), read when a run starts or resumes. See [Questions the Foundry decides itself](#questions-the-foundry-decides-itself).
   If a run's repository is registered under two accounts and one of them is off, the run is treated as off.
-- **The settings are only stored and shown, with two exceptions.** Runs do not use the other settings yet: the test command still
+- **Also push to the remote** (a checkbox in the Run settings dialog, field `pushRemote`, for a local project with a git remote only): off by default; off removes the field. When on, the Foundry pushes `develop` from your folder after each merge (see "Local projects"). Runs get it as `$FACTORY_LOCAL_PUSH` (`yes`).
+- **The settings are only stored and shown, with three exceptions.** Runs do not use the other settings yet: the test command still
   comes from the flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. The
   release-build recipe is read by the flow `release-build` when the commit has no `.factory/release-build.yaml`
   (see "Build release files on this machine"). The "decide technical questions" switch is read by the engine when a run starts
-  or resumes (see above). The settings are never in `GET /api/repos` and never shown on
+  or resumes (see above). The "also push to the remote" switch is read by the engine for each run of a local project (see "Local projects"). The settings are never in `GET /api/repos` and never shown on
   **My repositories**.
 - **Definition of Ready** per repository: a short ordered list of checks a story must meet before it may go to
   the backlog. Each item has an `id` and a `text`. With nothing stored, a repository has the default list of

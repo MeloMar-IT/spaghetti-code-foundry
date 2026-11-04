@@ -1,5 +1,5 @@
 import { realpathSync, statSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { isAbsolute, resolve, sep } from "node:path";
 import { RepoError } from "./repo-url.js";
 import { dataHome } from "./store.js";
@@ -78,4 +78,27 @@ export function checkLocalPath(input: unknown, o: { home?: string; git?: string 
   const problem = localPathProblem(p);
   if (problem) throw bad("the path " + problem);
   return p;
+}
+
+const remoteCache = new Map<string, { at: number; value: boolean }>();
+const REMOTE_CACHE_MS = 10_000;
+
+/** Does the git repository at `path` have a remote? Asynchronous (the event loop is not blocked), 2 s limit, false on any error. Cached for about 10 s. */
+export function localHasRemote(path: string, git = "git"): Promise<boolean> {
+  const hit = git === "git" ? remoteCache.get(path) : undefined;
+  if (hit && Date.now() - hit.at < REMOTE_CACHE_MS) return Promise.resolve(hit.value);
+  return new Promise((done) => {
+    const finish = (value: boolean) => {
+      if (git === "git") remoteCache.set(path, { at: Date.now(), value });
+      if (remoteCache.size > 200) remoteCache.delete(remoteCache.keys().next().value as string);
+      done(value);
+    };
+    try {
+      execFile(git, ["-c", "core.fsmonitor=false", "-C", path, "remote"], { env: cleanEnv(), timeout: 2_000, killSignal: "SIGKILL", encoding: "utf8" }, (err, stdout) => {
+        finish(!err && String(stdout).trim() !== "");
+      });
+    } catch {
+      finish(false);
+    }
+  });
 }

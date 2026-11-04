@@ -38,7 +38,7 @@ steps:
     description: Clone, check out the newest main and record its commit
     run: |-
       printf '%s\n' "$FACTORY_VAR_MAIN_BRANCH" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$' || { echo "main_branch is not a plain branch name"; exit 1; }
-      if [ -d .git ]; then git fetch -q origin || { echo "could not fetch origin"; exit 1; }; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git fetch -q origin || { echo "could not fetch origin"; exit 1; }; elif [ -n "$FACTORY_LOCAL_REPO_DIR" ]; then git clone -q -- "$FACTORY_LOCAL_REPO_DIR" .; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       git log --oneline -1
       git checkout -q -f --detach "origin/$FACTORY_VAR_MAIN_BRANCH" || { echo "could not check out $FACTORY_VAR_MAIN_BRANCH"; exit 1; }
       git clean -fdxq

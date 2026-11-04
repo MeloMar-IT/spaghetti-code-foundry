@@ -676,6 +676,7 @@ export function setRepoSettings(id: string, input: unknown): { repo: RepoRecord;
     const file = read();
     const rec = file.repos.find((r) => r.id === id);
     if (!rec) throw new RepoError("not-found", "no such repository");
+    if (settings.pushRemote && rec.method !== "local") throw new RepoError("bad-settings", "pushRemote is only for a local repository");
     const { settings: _old, ...rest } = rec;
     const next: RepoRecord = Object.keys(settings).length ? { ...rest, settings } : rest;
     if (JSON.stringify(next) !== JSON.stringify(rec)) save(file.repos.map((r) => (r === rec ? next : r)));

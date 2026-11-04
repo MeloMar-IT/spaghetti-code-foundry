@@ -107,6 +107,12 @@ describe("localRepoEnv", () => {
     expect(localRepoEnv(undefined, find)).toEqual({});
     expect(localRepoEnv(NAME, () => { throw new Error("registry"); })).toEqual({});
   });
+
+  it("adds FACTORY_LOCAL_PUSH only when the repository has pushRemote on", () => {
+    const on = () => ({ url: "/work/shop", settings: { pushRemote: true } });
+    expect(localRepoEnv(NAME, on)).toEqual({ FACTORY_LOCAL_REPO_DIR: "/work/shop", FACTORY_LOCAL_PUSH: "yes" });
+    expect(localRepoEnv(NAME, () => ({ url: "/work/shop", settings: {} }))).toEqual({ FACTORY_LOCAL_REPO_DIR: "/work/shop" });
+  });
 });
 
 describe("repoPermission for a local repository", () => {

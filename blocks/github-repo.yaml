@@ -1,6 +1,6 @@
 name: Define GitHub repo
 category: GitHub
-description: Sets which GitHub repo the flow works on (var github_repo) and checks that you have access.
+description: Sets which GitHub repo the flow works on (var github_repo) and checks that you have access. A local project is only named.
 vars:
   github_repo: owner/repo
 steps:
@@ -9,5 +9,12 @@ steps:
     repo_access: true
     description: Verify the repo exists and show your permission
     run: |
+      case "$FACTORY_VAR_GITHUB_REPO" in
+      local:*)
+        [ -n "$FACTORY_LOCAL_REPO_DIR" ] || { echo "the folder of this local project is not known to the Foundry"; exit 1; }
+        echo "repo: $FACTORY_VAR_GITHUB_REPO (local project, no GitHub)"
+        echo "current branch: $(git -C "$FACTORY_LOCAL_REPO_DIR" branch --show-current 2>/dev/null)"
+        exit 0 ;;
+      esac
       gh repo view "$FACTORY_VAR_GITHUB_REPO" --json nameWithOwner,defaultBranchRef,viewerPermission \
         --jq '"repo: \(.nameWithOwner)\ndefault branch: \(.defaultBranchRef.name)\nyour permission: \(.viewerPermission)"'
