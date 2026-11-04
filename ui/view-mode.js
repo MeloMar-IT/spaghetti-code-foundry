@@ -7,9 +7,11 @@ import { resolve, splitHash } from "./ia.js";
 
 export const VIEW_LABELS = { simple: "Simple", advanced: "Advanced", admin: "Admin" };
 /** The pages of the Simple view (the first part of the hash path): My projects, the project page and the setup check. Later parts of the Easy epic may change this. */
-export const SIMPLE_SECTIONS = ["home", "setup", "repos"];
+export const SIMPLE_SECTIONS = ["home", "setup", "repos", "help"];
 /** The navigation links Simple keeps (`data-nav` names), in the menu and the top bar. */
-export const SIMPLE_NAV = ["home"];
+export const SIMPLE_NAV = ["home", "help"];
+/** Links only Simple shows; the other views hide them. */
+export const SIMPLE_ONLY_NAV = ["help"];
 
 export const UNSAVED_TEXT = "You have unsaved changes. Save them first, then switch view.";
 export const UNSENT_TEXT = "You have text that is not sent. It is kept only on this page and is lost when you switch view.";
@@ -300,7 +302,10 @@ export function offerCard(box, offer, view, opts = {}) {
     h("p", { class: "muted" }, "This switches your view. You can switch back with View in the top bar or the menu.")));
 }
 
-/** Simple hides every navigation link (menu and top bar) except those in SIMPLE_NAV. Other views hide none. */
+/** Simple hides every navigation link (menu and top bar) except those in SIMPLE_NAV. Other views hide only SIMPLE_ONLY_NAV. */
 export function showViewNav(view, root = document) {
-  for (const a of root?.querySelectorAll?.("a[data-nav]") ?? []) a.hidden = view === "simple" && !SIMPLE_NAV.includes(a.getAttribute("data-nav"));
+  for (const a of root?.querySelectorAll?.("a[data-nav]") ?? []) {
+    const n = a.getAttribute("data-nav");
+    a.hidden = view === "simple" ? !SIMPLE_NAV.includes(n) : SIMPLE_ONLY_NAV.includes(n);
+  }
 }

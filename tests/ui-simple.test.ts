@@ -281,3 +281,71 @@ describe("the pages", () => {
     expect(main4.textContent).toContain("could not be loaded");
   });
 });
+
+describe("the Help page", () => {
+  const page = (contact?: string) => box(view.helpView(contact));
+  const heads = (p: FakeElement, tag: string) => p.all(tag).map((e) => e.textContent);
+
+  it("has a meaning for every Simple word, and no forbidden term in its own text", () => {
+    expect(words.termWords()).toEqual([...new Set(Object.values(words.TERMS))]);
+    for (const w of words.termWords()) expect(words.TERM_MEANINGS[w], w).toMatch(/\S/);
+    const all = [words.HELP.title, words.HELP.wordsTitle, words.HELP.wordsIntro, words.HELP.howTitle, words.HELP.contactTitle,
+      ...words.HELP.howtos.flatMap((t: any) => [t.q, t.a]), ...Object.values<string>(words.TERM_MEANINGS), ...words.termWords()];
+    for (const t of all) expect(words.forbiddenIn(t), t).toEqual([]);
+  });
+
+  it("lists the words and both how-tos, and no Foundry term that is forbidden", () => {
+    const p = page();
+    expect(heads(p, "dt")).toEqual(words.termWords());
+    expect(heads(p, "h3")).toEqual(["How do I change the colours?", "How do I make it public?"]);
+    expect(heads(p, "h1")).toEqual(["Help"]);
+    for (const k of Object.keys(words.TERMS)) if (words.forbiddenIn(k).length) expect(heads(p, "dt")).not.toContain(k);
+  });
+
+  it("does not promise a fixed way to make a project public", () => {
+    const a = words.HELP.howtos[1].a as string;
+    expect(a).toContain("depends on how it was set up");
+    expect(a).not.toContain("Check the result");
+  });
+
+  it("leaves out the contact line when the text is empty or only spaces", () => {
+    for (const c of [undefined, "", "   ", null]) {
+      const p = page(c as any);
+      expect(p.textContent, String(c)).not.toContain("Who to ask");
+      expect(p.all("section").some((s) => s.classList?.contains?.("simple-help-contact") || s.attrs.class?.includes("simple-help-contact"))).toBe(false);
+    }
+  });
+
+  it("shows the contact line as text, never as HTML", () => {
+    const p = page("  Ann Lee, ann@example.com ");
+    expect(heads(p, "h2")).toContain("Who to ask");
+    expect(p.textContent).toContain("Ann Lee, ann@example.com");
+    const q = page("<b>Ann</b>");
+    expect(q.all("b")).toHaveLength(0);
+    expect(q.all("p").map((e) => e.textContent)).toContain("<b>Ann</b>");
+  });
+
+  it("shows no forbidden term, passes the audit and steps its headings by one", () => {
+    const p = page("Ask Ann");
+    expect(words.forbiddenIn(texts(p).join("\n")), texts(p).join("|")).toEqual([]);
+    expect(audit(p)).toEqual([]);
+    const levels = walk(p).filter((e) => /^h\d$/.test(e.tag)).map((e) => Number(e.tag[1]));
+    levels.forEach((l, i) => { if (i) expect(l - levels[i - 1]!).toBeLessThanOrEqual(1); });
+  });
+
+  it("renderSimpleHelp reads the contact from the view answer, and never rejects", async () => {
+    const draw = async (myView: () => Promise<unknown>) => {
+      const main = new FakeElement("div");
+      const stop = await view.renderSimpleHelp(main, { a: { myView } });
+      expect(typeof stop).toBe("function");
+      stop();
+      return main;
+    };
+    expect((await draw(async () => ({ helpContact: "Ask Ann" }))).textContent).toContain("Ask Ann");
+    for (const bad of [async () => { throw new Error("boom"); }, async () => ({ helpContact: 5 }), async () => null]) {
+      const main = await draw(bad);
+      expect(main.textContent).toContain("Help");
+      expect(main.textContent).not.toContain("Who to ask");
+    }
+  });
+});

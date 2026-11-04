@@ -82,7 +82,8 @@ const sectionText = (text: string, heading: string) => {
   const next = rest.search(/\n## /);
   return next < 0 ? rest : rest.slice(0, next);
 };
-const navLinks = (html: string) => [...html.matchAll(/<a [^>]*data-nav="([\w-]+)"[^>]*>([^<]+)</g)].map((m) => ({ name: m[1]!, text: m[2]!.trim() }));
+// A link with the hidden attribute (Help) is shown by the Simple view only; it is a page, not a destination.
+const navLinks = (html: string) => [...html.matchAll(/<a [^>]*data-nav="([\w-]+)"[^>]*>([^<]+)</g)].filter((m) => !/ hidden[ >]/.test(m[0])).map((m) => ({ name: m[1]!, text: m[2]!.trim() }));
 
 /** What is wrong with the rows of a results table; [] when nothing is. */
 function responsiveProblems(rows: string[][], names: readonly string[], columns: number): string[] {
