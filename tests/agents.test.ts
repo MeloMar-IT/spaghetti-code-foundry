@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { claudeIsolated, codexSandbox, sessionToResume } from "../src/agents/run.js";
-import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, toTarget } from "../src/agents/targets.js";
+import { analystSet, claudeIsolated, codexSandbox, sessionToResume } from "../src/agents/run.js";
+import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, stepRoute, toTarget } from "../src/agents/targets.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
 import { liveLogFile } from "../src/engine/state.js";
@@ -83,6 +83,32 @@ steps:
     expect(resolveTarget(step("review"), flow, c, 1).label).toBe("codex:openai:gpt-5");
     expect(resolveTarget(step("fix"), flow, c, 1).label).toBe("claude:anthropic:sonnet");
     expect(resolveTarget(step("fix"), flow, c, 2).label).toBe("claude:ollama:qwen3-coder:30b");
+  });
+
+  it("a rule with `agent` matches only steps whose own target runs on that agent", () => {
+    const toClaude = cfg({ router: { rules: [{ agent: "codex", model: "sonnet" }] } });
+    expect(resolveTarget(step("cross"), flow, toClaude, 1).label).toBe("claude:anthropic:sonnet");
+    expect(resolveTarget(step("review"), flow, toClaude, 1).label).toBe("claude:anthropic:opus");
+    expect(resolveTarget(step("fix"), flow, toClaude, 1).label).toBe("claude:anthropic:sonnet");
+    const toCodex = cfg({ router: { rules: [{ agent: "claude", model: "codex" }] } });
+    expect(resolveTarget(step("review"), flow, toCodex, 1).label).toBe("codex:openai");
+    expect(resolveTarget(step("fix"), flow, toCodex, 1).label).toBe("codex:openai");
+    expect(resolveTarget(step("cross"), flow, toCodex, 1).label).toBe("codex:openai");
+    expect(stepRoute(step("cross"), flow, toClaude, 1)).toBe("sonnet");
+    expect(stepRoute(step("fix"), flow, toClaude, 1)).toBeUndefined();
+  });
+
+  it("a rule with `agent` leaves a step with a broken own target to report its own error", () => {
+    const f = parseFlow("name: f\nsteps:\n  - {id: bad, type: claude, provider: nowhere, prompt: x}\n");
+    const bad = f.steps[0] as ClaudeStep;
+    const c = cfg({ router: { rules: [{ agent: "claude", model: "codex" }] } });
+    expect(stepRoute(bad, f, c, 1)).toBeUndefined();
+    expect(() => resolveTarget(bad, f, c, 1)).toThrow(/unknown provider/);
+  });
+
+  it("the analyst does not touch a step that an `agent` rule routes", () => {
+    const c = cfg({ router: { rules: [{ agent: "claude", model: "codex" }] } });
+    expect(analystSet(step("fix"), flow, c, 1)).toEqual({});
   });
 
   it("maps permissions onto Codex sandboxes", () => {

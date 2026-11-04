@@ -175,6 +175,8 @@ for no password or key and never shows the tool's output; it answers in plain wo
 with the same body makes one tiny call (no tools, a fixed prompt) and answers `ok`, `missing`, `signed-out` or
 `failed`. Use it after you sign in to check that the tool works. The page has no buttons for these routes yet.
 
+**Answers about Claude and Codex (API).** Admins can also answer which tools they use (`have`: `claude`, `codex`, `both` or `none`), which plan each tool has (`plans`), how the work is shared between them when both are used (`share`: `auto`, `claude`, `codex` or `even`) and how busy the computer may be (`busy`). `GET /api/onboarding/agents` returns the answers, the six settings they give, the values in effect, the settings an admin set by hand, and a summary in plain words. `PUT /api/onboarding/agents` with `{ "answers": { … }, "replace": [] }` saves the answers and writes the settings they give to `config.yaml`: `concurrency` (runs at the same time), `governor.usage_percent` and `governor.priority` (the usage threshold and the priority of runs), `default_model`, `router.fallback` and `router.rules` (the routing). A setting an admin set by hand is kept and listed in `kept`; it changes only when its name is in `replace`. The same answers sent again change nothing. Bad answers answer 400 with the path of the bad field and no value. Send the `X-Config-Version` header from the last GET to refuse a save over a newer `config.yaml` (409). The answers are stored in `onboarding/agents.json` in the Foundry data folder; the save waits for the Foundry's account lock (up to 2 seconds, then it answers that the store is locked), and if the answers cannot be written, the Foundry puts the old `config.yaml` back (best effort: if that also fails, the next save sees the new values as set by hand and keeps them). The usage threshold lowers the runs at the same time only while slowing down is on (`scf limits auto on`) and the Foundry has a usage reading (`scf limits set`). The page has no form for these answers yet.
+
 ### Old and new interface
 
 **How to switch.** There is nothing to switch. After the update every account sees the new interface. A setting to go back is not built.
@@ -2802,7 +2804,7 @@ often fail to call tools. Use **Try a model** to check one works before you rely
 
 **Rules** decide which model runs which step. The first matching rule wins — even over models
 written in flows and blocks. A rule matches on a step id pattern, a flow name pattern and/or a
-visit number (`From visit 2` = only retries). The presets add common rules:
+visit number (`From visit 2` = only retries). The **Agent** column narrows a rule to the steps of one tool: *Claude Code steps* or *Codex steps* match only the steps whose own target (before the router) runs on that tool; *any agent* (the default) matches every step. The rule's model then picks the model, and a Codex model moves the step to Codex. The presets add common rules:
 
 - **Retries on Opus** — fix steps use Opus from their second attempt.
 - **Codex reviews Claude's code** — review steps run on Codex.
@@ -5109,6 +5111,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
 | `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
+| `GET /api/onboarding/agents` | yes | no | the answers about Claude Code and Codex (which tools, which plan, how to share, how busy), the settings they give, the current values of those six settings, the ones kept because an admin set them by hand, and a summary in plain words; admins only |
+| `PUT /api/onboarding/agents` | yes | no | save the answers (`answers`) and write the settings they give to `config.yaml` (`concurrency`, `governor.usage_percent`, `governor.priority`, `default_model`, `router.fallback`, `router.rules`); a setting an admin set by hand is kept and listed in `kept` unless `replace` names it; the same answers again change nothing; bad answers answer 400; with an `X-Config-Version` header a stale version is refused with 409; admins only |
 | `POST /api/onboarding/test-call` | yes | no | one tiny call through Claude Code (`haiku`) or Codex (its default model, low effort) (`tool`): no tools, no personal hooks or setup, a fixed prompt; answers `ok`, `missing`, `signed-out` or `failed` with a plain explanation, never the tool's output; admins only |
 | `GET /api/setup-check` | yes | no | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
 | `POST /api/providers/test` | yes | no | test a provider |
