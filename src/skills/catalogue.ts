@@ -257,6 +257,58 @@ export function buildSkillCatalogue(registry: Pick<SkillRegistry, "skills">, opt
   return SkillCatalogueSchema.parse(cat);
 }
 
+/** Languages that are markup or data, not a technology a skill teaches. */
+const NOT_TECHNOLOGY = new Set(["markdown", "yaml", "json", "toml", "html", "css", "scss", "shell", "sql", "terraform"]);
+
+/** A version as a plain token (`>=20.1.0` gives `20.1.0`); undefined for anything else. */
+export function versionToken(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const v = raw.trim().replace(/^[><=^~v ]+/, "");
+  return /^\d[0-9A-Za-z.+-]{0,30}$/.test(v) ? v : undefined;
+}
+
+export interface ProfileTechnology { name: string; confidence: string; score: number; version?: string }
+
+/**
+ * The technologies a repository profile shows, for the skill gap check: the skill and integration candidates of `detect`, the
+ * languages (not markup or data) and the Node.js runtime of `engines.node`. Highest score per name, then score, then name. Never throws.
+ */
+export function profileTechnologies(profile: RepoProfile | undefined): ProfileTechnology[] {
+  if (!profile) return [];
+  const best = new Map<string, ProfileTechnology>();
+  const put = (t: ProfileTechnology) => {
+    if (!SKILL_ID_RE.test(t.name)) return;
+    const old = best.get(t.name);
+    if (!old) best.set(t.name, t);
+    else if (t.score > old.score) best.set(t.name, { ...t, ...(t.version === undefined && old.version !== undefined ? { version: old.version } : {}) });
+    else if (old.version === undefined && t.version !== undefined) old.version = t.version;
+  };
+  try {
+    for (const d of detect(profile, undefined)) put({ name: d.name, confidence: d.confidence, score: d.score });
+  } catch {
+    // the candidates are extra: the languages below still count
+  }
+  try {
+    const counts = new Map<string, number>();
+    for (const f of profile.findings) {
+      if (f.kind === "language" && !NOT_TECHNOLOGY.has(f.name)) counts.set(f.name, (counts.get(f.name) ?? 0) + (f.count ?? 1));
+      if (f.kind === "dependency" && f.name === "node" && f.reason.includes("engines")) {
+        const version = versionToken(f.value);
+        put({ name: "nodejs", confidence: "high", score: 80, ...(version ? { version } : {}) });
+      }
+    }
+    for (const [name, n] of counts) put({ name, confidence: n >= 5 ? "high" : n >= 2 ? "medium" : "low", score: Math.min(70, 10 + n * 5) });
+  } catch {
+    return [];
+  }
+  return [...best.values()].sort((a, b) => b.score - a.score || cmp(a.name, b.name));
+}
+
+/** Does an active skill that is not unapproved have this id or capability as its own? */
+export function skillCoversTechnology(skills: readonly (Pick<RegisteredSkill, "id" | "active" | "pkg"> & { trust?: string })[], name: string): boolean {
+  return skills.some((s) => s.active && s.trust !== "unapproved" && (s.id === name || s.pkg.capabilities.includes(name)));
+}
+
 /** include, exclude and limits from the config key skills.catalogue. */
 export function catalogueOptionsFrom(skills: SkillsConfig): Pick<CatalogueOptions, "include" | "exclude" | "limits"> {
   const c = skills.catalogue;

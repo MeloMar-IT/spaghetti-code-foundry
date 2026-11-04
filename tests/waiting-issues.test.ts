@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Comment } from "../src/github.js";
 import type { RunSummary } from "../src/engine/state.js";
-import { commentReads, extraWaitingIssues, openQuestion, waitingLabelOf, waitsAs } from "../src/queue/waiting-issues.js";
+import { commentReads, extraWaitingIssues, isPaused, openQuestion, waitingLabelOf, waitsAs } from "../src/queue/waiting-issues.js";
 
 const L = { needsInfo: "factory:needs-info", waiting: "factory:waiting-approval" };
 
@@ -170,5 +170,18 @@ describe("extraWaitingIssues", () => {
   it("leaves out listed, closed and excluded issues", () => {
     const all = [issue(1, [L.needsInfo]), issue(2, [L.needsInfo], "closed"), issue(3, [L.needsInfo], "CLOSED"), issue(4, [L.needsInfo, "skip"]), issue(5, [L.needsInfo], "OPEN"), issue(6, [L.needsInfo], null)];
     expect(extraWaitingIssues(all, new Set([1]), L, new Set(["skip"])).map((i) => i.number)).toEqual([5, 6]);
+  });
+});
+
+describe("isPaused for a skill gap stop (#776)", () => {
+  const stopped = (over: Record<string, unknown> = {}) => ({
+    runId: "r1", status: "stopped", reason: "skills not resolved: x is unknown",
+    skillPlan: { action: "stop", unresolved: [{ id: "x", code: "unknown", mandatory: false }] }, history: [], ...over,
+  }) as unknown as RunSummary;
+  it("is paused with a gap link, and not without one", () => {
+    const link = [{ topic: "x", issue: 1, url: "https://github.com/lib/skills/issues/1" }];
+    expect(isPaused(stopped({ skillGap: link }))).toBe(true);
+    expect(isPaused(stopped())).toBe(false);
+    expect(isPaused(stopped({ skillGap: link, skillPlan: { action: "stop", unresolved: [{ id: "x", code: "untrusted" }] } }))).toBe(false);
   });
 });

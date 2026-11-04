@@ -371,6 +371,7 @@ describe("cache and config", () => {
       },
       tools: { shell: true, network: false, filesystem: "write", missing: "stop" },
       update_check: { every: "1h" },
+      authoring: { repository: "", label: "Factory_go", max_open: 5, max_per_day: 3 },
     });
     expect(ConfigSchema.safeParse({ skills: { nope: 1 } }).success).toBe(false);
   });

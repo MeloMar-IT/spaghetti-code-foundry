@@ -8,6 +8,7 @@ import { liveLogFile, loadRun, saveRun, type RunSummary } from "../src/engine/st
 import { parseFlow } from "../src/flow/load.js";
 import { readPlanRecords } from "../src/skills/plan-record.js";
 import { discoverSkills, pinSkill } from "../src/skills/registry.js";
+import { writeGapLedger } from "../src/skills/gap-issues.js";
 import { planHashOf } from "../src/skills/run-lock.js";
 import { flowSkillSource, planRunSkills, recheckRunSkills, startRunSkills } from "../src/skills/run-plan.js";
 
@@ -413,5 +414,31 @@ describe("a run that posts a plan record", () => {
     const r = await start([], cfg(), { github_repo: "owner/repo/x", issue: issueOf() });
     expect(r.status).toBe("succeeded");
     expect(readFileSync(liveLogFile(r.runDir), "utf8")).toContain("⚠ plan record not written: ");
+  });
+});
+
+describe("skill gap link in the stop reason (#776)", () => {
+  const steps = [{ id: "risk_gate", type: "shell", run: "echo # $FACTORY_TOOLS/skill-request" }, { id: "impl", type: "claude", prompt: "x" }];
+  const gapCfg = (repository: string): Config =>
+    ConfigSchema.parse({ protected_branches: [], skills: { builtin: false, roots: [root], authoring: { repository } } });
+  const mkRun = (id: string): RunSummary =>
+    ({ flowDef: { steps, skills: { mode: "explicit", ids: [id] } }, repo, workdir: repo, history: [] }) as unknown as RunSummary;
+  const ledger = (repository: string, topic: string) =>
+    writeGapLedger({ version: 1, repository, at: "", topics: { [topic]: { issue: 9, url: "https://github.com/lib/skills/issues/9", state: "open" } } });
+
+  it("adds the link for an entry of the configured repository and for no other", () => {
+    const id = uid("gap");
+    ledger("lib/skills", id);
+    const run = mkRun(id);
+    const reason = startRunSkills(run, gapCfg("lib/skills"), () => {});
+    expect(reason).toMatch(/Skill gap issue: https:\/\/github\.com\/lib\/skills\/issues\/9$/);
+    expect(run.skillGap).toEqual([{ topic: id, issue: 9, url: "https://github.com/lib/skills/issues/9" }]);
+    expect(run.skillPlan!.reason).toBe(reason);
+
+    const other = mkRun(id);
+    expect(startRunSkills(other, gapCfg("elsewhere/skills"), () => {})).not.toContain("Skill gap issue");
+    expect(other.skillGap).toBeUndefined();
+    const off = mkRun(id);
+    expect(startRunSkills(off, gapCfg(""), () => {})).not.toContain("Skill gap issue");
   });
 });

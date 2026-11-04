@@ -15,6 +15,7 @@ import { buildLabelFor, Reporter } from "../monitor/report.js";
 import type { BuiltinSteps } from "../monitor/story.js";
 import type { RunSummary } from "../engine/state.js";
 import { type RepoGhIdentity, repoGhIdentity } from "./gh-identity.js";
+import { skillGapReady } from "../skills/gap-issues.js";
 import type { Scheduler } from "./scheduler.js";
 import { StatusComments, statusFile } from "./status-comment.js";
 import { Watcher, type WatcherStatus } from "./watcher.js";
@@ -140,6 +141,7 @@ export class WatcherManager {
         peers: () => this.tracked(),
         afterCheck: () => this.noteRateLimit(),
         gh: this.identityOf(cfg),
+        skillReady: (run) => skillGapReady(run, this.o.config().skills),
       });
       this.running.set(id, { watcher, key: JSON.stringify(cfg), board });
       watcher.start();

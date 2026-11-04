@@ -5,6 +5,10 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, updateEveryMs, type Config } from "../config.js";
 import { SKILL_UPDATE_TICK_MS, skillUpdateSweeper } from "./skill-update-sweep.js";
+import { GAP_RUN_LIMIT, GAP_TICK_MS, skillGapSweeper, type SkillGapSweeper } from "./skill-gap-sweep.js";
+import { discoverSkills } from "../skills/registry.js";
+import { readFindings } from "../monitor/findings.js";
+import { loadRun, type RunSummary } from "../engine/state.js";
 import { hideKeyVars, redactText } from "../credentials/redact.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { TOKEN_MIN } from "../credentials/store.js";
@@ -211,6 +215,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   if (swept.failed > 0) log(`! ${swept.failed} leftover sign-in folder(s) could not be removed; delete the folder "sign-in" in those run folders`);
   // a crash leaves markers and code-area locks of runs that no longer run: free them before anything can wait for them
   const startSweep = sweepStaleRunning(opts.runsDir, () => false, { atStart: true });
+  let gapSweep: SkillGapSweeper | undefined;
   const scheduler = new Scheduler({
     runsDir: opts.runsDir,
     claudeBin: opts.claudeBin,
@@ -221,6 +226,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     onFinished: (s) => {
       // A new succeeded run is a new sample: the next estimate must see it.
       if (s.status === "succeeded") forgetHistory(ctx);
+      // A run that stopped for a missing skill may be the reason for a skill gap issue.
+      if (s.status === "stopped" && s.skillPlan?.action === "stop") gapSweep?.kick();
       // The architect's read for a refinement session: the session takes in the end; no watcher has anything to do with it.
       if (isRefinementRun(s.source)) return void settleFinished({ scheduler, repo: opts.repo, log: sink }, s);
       // When a run ends, the watchers of its repository check at once instead of at the next interval.
@@ -312,6 +319,28 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     },
     log,
     findingsIdle: (fn) => watchers.monitorIdle(fn),
+  });
+  // Skill gap issues (skills.authoring): empty repository means off. Reads at most the 500 newest recent runs once an hour.
+  gapSweep = skillGapSweeper({
+    config: () => ctx.config(),
+    runs: () => {
+      const since = Date.now() - 30 * 86_400_000;
+      const out: RunSummary[] = [];
+      for (const b of scheduler.briefs()) {
+        if (out.length >= GAP_RUN_LIMIT) break;
+        if (b.status === "running" || !(Date.parse(b.updatedAt) >= since)) continue;
+        try {
+          const r = scheduler.get(b.runId);
+          if (r) out.push(r);
+        } catch { /* an unreadable run is left out */ }
+      }
+      return out;
+    },
+    findings: () => readFindings().findings,
+    skills: () => discoverSkills(ctx.config().skills).skills,
+    isBusy: (id) => scheduler.isQueued(id) || scheduler.isActive(id),
+    load: (id) => loadRun(opts.runsDir, id),
+    log,
   });
 
   async function api(req: IncomingMessage, res: ServerResponse, path: string) {
@@ -418,6 +447,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
   auditTimer.unref();
   const skillTimer = setInterval(() => void skillSweep.tick(), opts.skillUpdateTickMs ?? SKILL_UPDATE_TICK_MS);
   skillTimer.unref();
+  const gapTimer = setInterval(() => void gapSweep?.tick(), GAP_TICK_MS);
+  gapTimer.unref();
   const breakGlassTick = breakGlassWatch(log);
   breakGlassTick();
   const breakGlassTimer = setInterval(breakGlassTick, BREAK_GLASS_WATCH_MS);
@@ -463,6 +494,8 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       helpTurnsOf(ctx).stopAll();
       clearInterval(auditTimer);
       clearInterval(skillTimer);
+      clearInterval(gapTimer);
+      gapSweep?.stop();
       clearInterval(breakGlassTimer);
       clearInterval(staleTimer);
       clearInterval(busyTimer);

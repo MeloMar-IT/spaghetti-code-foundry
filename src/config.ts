@@ -284,6 +284,9 @@ export const STEP_ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*(_\*)?$/;
 export const STEP_ENV_REFUSED = /^(FACTORY_|SCF_|GH_|GITHUB_|GIT_|SSH_)/;
 const stepEnvName = z.string().refine((n) => STEP_ENV_NAME.test(n) && !STEP_ENV_REFUSED.test(n), "not a variable name the steps of a user's run may get");
 
+/** A GitHub repository as "owner/name" (skills.authoring.repository). */
+const AUTHORING_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/;
+
 /** The interval of `skills.update_check.every` in ms: `<n>m` or `<n>h` from 5m to 24h; undefined for anything else. */
 export function updateEveryMs(text: unknown): number | undefined {
   if (typeof text !== "string") return undefined;
@@ -719,6 +722,16 @@ export const ConfigSchema = z
               .refine((p) => !p.split(/[\\/]/).some((s) => /^\.(?:claude|codex)$/i.test(s)), "personal agent folders (.claude, .codex) cannot be used")
               .optional(),
             every: z.string().default("1h").refine((s) => updateEveryMs(s) !== undefined, "an interval like 30m or 6h, from 5m to 24h"),
+          })
+          .strict()
+          .prefault({}),
+        /** The Foundry opens skill-gap issues in this skill-library repository (#776). Empty repository: off. */
+        authoring: z
+          .object({
+            repository: z.string().trim().default("").refine((s) => s === "" || AUTHORING_REPO_RE.test(s), 'must be "owner/name", or empty for off'),
+            label: z.string().trim().min(1).max(50).regex(/^[^\u0000-\u001f\u007f,]+$/).default("Factory_go"),
+            max_open: z.number().int().min(1).max(50).default(5),
+            max_per_day: z.number().int().min(0).max(20).default(3),
           })
           .strict()
           .prefault({}),
