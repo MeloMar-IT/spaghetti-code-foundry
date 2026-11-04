@@ -58,6 +58,8 @@ import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR, type RunRecorder } fr
 import { snapshotToolProfile } from "../tool-profile/session.js";
 import { configureTelemetry } from "../telemetry/telemetry.js";
 import { emitRunMeasured } from "../monitor/measures.js";
+import { runEndEvents, runStartedEvent } from "../usage/events.js";
+import { emitUsage } from "../usage/hub.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
 
@@ -216,6 +218,11 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     mkdirSync(join(runDir, "logs"), { recursive: true });
     saveRun(summary);
   });
+  try {
+    emitUsage(runStartedEvent(summary));
+  } catch {
+    /* usage is best effort */
+  }
   opts.onUpdate?.(summary);
   const evidence = runRecorder(summary);
   evidence.queued(opts.queuedAt);
@@ -548,6 +555,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
   emitRunMeasured(s);
+  emitRunEnd(s);
   appendLiveLog(s.runDir, "■ cancelled while waiting for approval");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -565,6 +573,7 @@ export function cancelStoppedRun(runsDir: string, runId: string, config: Config 
   runRecorder(s).ended(s, { cancelledBy: by });
   finalizeRunEvidence(s);
   emitRunMeasured(s);
+  emitRunEnd(s);
   appendLiveLog(s.runDir, "■ cancelled while stopped");
   void notifyRun(config, s).catch(() => {});
   return s;
@@ -591,6 +600,15 @@ export function saveAnswer(runsDir: string, runId: string, text: string, by: str
   s.answers = [...(Array.isArray(s.answers) ? s.answers : []), { at: new Date().toISOString(), text: clean, by }];
   saveRun(s);
   return { run: s, undo: () => writeFileSync(runFile(s.runDir), before) };
+}
+
+/** The usage events of a run that ended (nothing for a run that is only stopped or waiting). Never throws. */
+function emitRunEnd(run: RunSummary): void {
+  try {
+    emitUsage(runEndEvents(run));
+  } catch {
+    /* usage is best effort */
+  }
 }
 
 async function finish(summary: RunSummary, opts: CommonOptions, config: Config, r: LoopResult): Promise<RunSummary> {
@@ -622,6 +640,7 @@ async function finish(summary: RunSummary, opts: CommonOptions, config: Config, 
     }
   }
   emitRunMeasured(summary); // after the evidence is final and the last cost is added; nothing for a run that is only stopped or waiting
+  emitRunEnd(summary);
   await notifyRun(config, summary).catch(() => {});
   if (summary.status === "stopped") {
     // Cancelled while the notification ran: the saved cancel stands, and the caller must see it.

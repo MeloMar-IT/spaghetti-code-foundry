@@ -803,6 +803,19 @@ export const ConfigSchema = z
     telemetry: TelemetrySchema.prefault({}),
     /** What a run is given as context: the limits and the privacy of its sources (read from #696 part 2 on). */
     context: ContextSettingsSchema.prefault({}),
+    /** Prices (USD per million tokens) by model name, for the usage events and the cost of Codex steps. They win over the built-in table. */
+    usage: z
+      .object({
+        prices: z
+          .record(
+            z.string().min(1).max(200),
+            z.object({ input_per_mtok: z.number().nonnegative(), cached_input_per_mtok: z.number().nonnegative(), output_per_mtok: z.number().nonnegative() }).strict(),
+          )
+          .refine((r) => Object.keys(r).length <= 200, "at most 200 prices")
+          .default({}),
+      })
+      .strict()
+      .prefault({}),
     /** Plugins: code loaded once when the server starts, in this order. Set in config.yaml only; applies after a restart. */
     plugins: z
       .array(PluginEntrySchema)

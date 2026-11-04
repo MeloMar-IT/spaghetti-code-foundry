@@ -1,6 +1,8 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { Config } from "../config.js";
+import { stepFinishedEvent } from "../usage/events.js";
+import { emitUsage } from "../usage/hub.js";
 import { deliveryAfterStep, deliveryKeyEnv } from "../delivery/write.js";
 import { FACTORY_HOME } from "../home.js";
 import { loadFlow } from "../flow/load.js";
@@ -182,6 +184,7 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     ...(scope.prefix ? { parent: scope.prefix.slice(0, -1) } : {}),
   };
   engine.summary.history.push(rec);
+  const historyIndex = engine.summary.history.length - 1;
   engine.summary.totalCostUsd += res.costUsd ?? 0;
   scope.ctx.steps[step.id] = {
     ok: res.ok,
@@ -270,6 +273,12 @@ export function recordStep(step: Step, scope: Scope, engine: Engine, res: StepRe
     });
   }
   if (res.slotWaitMs) engine.log(`    · ${waitedLine(res.slotWaitMs)}`);
+  // the usage event of the step (once per history record; it never throws into the run)
+  try {
+    emitUsage(stepFinishedEvent(engine.summary, rec, historyIndex, engine.config));
+  } catch {
+    /* usage is best effort */
+  }
   const secs =(rec.durationMs / 1000).toFixed(1);
   const tok = res.tokens ? `, ${Math.round((res.tokens.input + res.tokens.output) / 1000)}k tok` : "";
   engine.log(`${rec.ok ? "✔" : "✘"} ${rec.id} (${secs}s${res.costUsd ? `, $${res.costUsd.toFixed(4)}` : ""}${tok})${rec.error ? ` — ${rec.error}` : ""}`);

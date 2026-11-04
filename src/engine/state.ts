@@ -32,7 +32,9 @@ export interface StepRecord {
   agent?: string;
   /** The effort the agent step ran with, when one was set (by the flow or by the analyst). Absent on older runs. */
   effort?: string;
-  tokens?: { input: number; output: number };
+  tokens?: { input: number; output: number; cached?: number };
+  /** The cost (USD) of earlier tries of this step (paid retries and fallbacks); it is already in the run's total. Absent when there were none. */
+  earlierCostUsd?: number;
   /** Tool calls of this agent step and the time they took (whole ms), added up over all tries. Claude steps only; absent on Codex, shell and older runs. */
   tools?: { calls: number; totalMs: number; maxMs: number };
   /** The largest input of one model turn (input + cache read + cache creation tokens), the largest over all tries. Claude steps only; absent on Codex, shell and older runs. */

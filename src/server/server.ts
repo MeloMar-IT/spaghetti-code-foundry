@@ -77,6 +77,7 @@ import { USER_ERROR, movedText } from "./user-view.js";
 import { turnActionRoutes } from "./turn-actions.js";
 import { READ_ONLY, asParam, viewAsRoutes, viewRunning, viewedUser } from "./view-as.js";
 import { closeTelemetry, configureTelemetry } from "../telemetry/telemetry.js";
+import { usageIdle } from "../usage/hub.js";
 
 const UI_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../ui");
 const YAML_BROWSER_DIR = join(dirname(createRequire(import.meta.url).resolve("yaml/package.json")), "browser");
@@ -151,7 +152,20 @@ export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse,
 
 const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes];
 
-export async function startServer(given: ServerOptions): Promise<{ url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier }> {
+type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
+
+export async function startServer(given: ServerOptions): Promise<StartedServer> {
+  const loaded: { plugins?: PluginRegistry } = {};
+  try {
+    return await start(given, loaded);
+  } catch (e) {
+    // a start that fails after the plugins loaded (a bind error, for example) never reaches close(): their handlers go now
+    loaded.plugins?.dispose?.();
+    throw e;
+  }
+}
+
+async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry }): Promise<StartedServer> {
   // every free-form server, watcher and notifier log line passes the redaction (fail closed)
   const sink = given.log ?? (() => {});
   const ring = logRing(); // the newest redacted lines, for the monitor
@@ -202,6 +216,7 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
     log((e as Error).message);
     throw e;
   }
+  loaded.plugins = plugins;
   // Busy mode set by hand outlasts a restart: its cap is put back before the scheduler can pump, and renewed every minute (a cap always has an end).
   const renewBusy = (busyRuns: number) => {
     try {
@@ -509,6 +524,9 @@ export async function startServer(given: ServerOptions): Promise<{ url: string; 
       watchers.stopAll();
       stopSignIns();
       void closeTelemetry();
+      // no plugin handler gets another event; queued ones are dropped
+      plugins.dispose?.();
+      void usageIdle(2000);
       server.close();
     },
   };

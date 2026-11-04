@@ -180,3 +180,90 @@ describe("problems and the view", () => {
     expect(readFilePlugins(path)).toBeUndefined();
   });
 });
+
+describe("api.onUsage", () => {
+  const event = (id: string) => ({ id, time: "2026-11-04T10:00:00.000Z", runId: "r", workspace: "", name: "run.started" }) as never;
+  const load = (registers: ((api: any) => unknown)[], extra: Partial<Parameters<typeof loadPlugins>[1]> = {}) =>
+    loadPlugins(registers.map((_, i) => entry(`/abs/p${i}.mjs`)), {
+      blockedDirs: [],
+      resolve: (s) => s,
+      importModule: async (url) => ({ register: registers[Number(/p(\d+)\.mjs/.exec(url)![1])] }),
+      ...extra,
+    });
+
+  it("reports version 0.2 and lists the handlers in `registered`", async () => {
+    expect(PLUGIN_API_VERSION).toBe("0.2");
+    const reg = await load([(api) => (api.onUsage(() => {}), api.onUsage(() => {}))]);
+    expect(reg.plugins[0]!.registered).toEqual([{ point: "usage", name: "onUsage" }, { point: "usage", name: "onUsage" }]);
+    reg.dispose!();
+  });
+  it("refuses a handler that is not a function, more than 10, and a call after register(api)", async () => {
+    const err = await failure(load([(api) => api.onUsage("nope")]));
+    expect(err.message).toMatch(/handler must be a function/);
+    expect((await failure(load([(api) => Array.from({ length: 11 }, () => api.onUsage(() => {}))]))).message).toMatch(/at most 10/);
+    let kept: any;
+    const reg = await load([(api) => void (kept = api)]);
+    expect(() => kept.onUsage(() => {})).toThrow(/only be called while register/);
+    reg.dispose!();
+  });
+  it("delivers events to the handler, and not after dispose()", async () => {
+    const { emitUsage, usageIdle } = await import("../src/usage/hub.js");
+    const ids: string[] = [];
+    const reg = await load([(api) => api.onUsage((e: { id: string }) => void ids.push(e.id))]);
+    emitUsage(event("pl:1"));
+    await usageIdle();
+    reg.dispose!();
+    emitUsage(event("pl:2"));
+    await usageIdle();
+    expect(ids).toEqual(["pl:1"]);
+  });
+  it("delivers only to the handlers of its own registry", async () => {
+    const { emitUsage, usageIdle } = await import("../src/usage/hub.js");
+    const a: string[] = [];
+    const b: string[] = [];
+    const first = await load([(api) => api.onUsage((e: { id: string }) => void a.push(e.id))]);
+    first.dispose!();
+    const second = await load([(api) => api.onUsage((e: { id: string }) => void b.push(e.id))]);
+    emitUsage(event("own:1"));
+    await usageIdle();
+    expect([a, b]).toEqual([[], ["own:1"]]);
+    second.dispose!();
+  });
+  it("removes the handlers of earlier plugins when a later one fails to load", async () => {
+    const { emitUsage, usageIdle } = await import("../src/usage/hub.js");
+    const ids: string[] = [];
+    const err = await failure(
+      load([
+        (api) => api.onUsage((e: { id: string }) => void ids.push(e.id)),
+        () => {
+          throw new Error("no thanks");
+        },
+      ]),
+    );
+    expect(err.message).toMatch(/register\(api\) failed: no thanks/);
+    emitUsage(event("fail:1"));
+    await usageIdle();
+    expect(ids).toEqual([]);
+  });
+  it("records a throwing handler in the problem list and the log, once", async () => {
+    const { emitUsage, usageIdle } = await import("../src/usage/hub.js");
+    const log: string[] = [];
+    const reg = await load(
+      [
+        (api) =>
+          api.onUsage(() => {
+            throw new Error("TOP-SECRET detail");
+          }),
+      ],
+      { log: (m) => void log.push(m) },
+    );
+    emitUsage([event("prob:1"), event("prob:2")]);
+    await usageIdle();
+    expect(reg.problems).toEqual([{ plugin: "p0.mjs", reason: "a usage handler threw an error" }]);
+    expect(log.filter((m) => m.includes("threw"))).toHaveLength(1);
+    const view = pluginsView(reg, reg.entries);
+    expect(view.problems).toEqual(reg.problems);
+    expect(JSON.stringify(view)).not.toContain("TOP-SECRET");
+    reg.dispose!();
+  });
+});

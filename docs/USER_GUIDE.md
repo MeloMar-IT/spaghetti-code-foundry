@@ -7169,7 +7169,7 @@ plugins:
   finish `register` within 30 seconds stops the start. The message names the plugin. Nothing runs
   half-started. A change needs a restart.
 - **What `register` gets.** `register(api)` (sync or async) receives `api.version` (the plugin API
-  version, `0.1`) and `api.options`. A plugin that does not support this version can throw with a
+  version, `0.2`) and `api.options`. A plugin can also get the usage events with `api.onUsage`. A plugin that does not support this version can throw with a
   message; that stops the start like any other failure. See [PLUGIN_API.md](PLUGIN_API.md).
 - **What is refused.** A relative path, a URL, a built-in Node module, and a module inside a runs
   folder or a repository the Foundry works on. At most 20 plugins; no name twice.
@@ -7219,11 +7219,13 @@ them depends on how the agents are logged in:
   toward your plan's limits.
 - Claude Code with an **API key** (`ANTHROPIC_API_KEY`): billed per token — the amounts are
   real.
-- Codex with your **ChatGPT login**: included in your ChatGPT plan; recorded as $0 with the
-  token count. With `CODEX_API_KEY` you can set a price per token for the provider.
+- Codex with your **ChatGPT login**: included in your ChatGPT plan. The Foundry prices a Codex step from
+  its model's price (see [Usage events and prices](#usage-events-and-prices)), so the amount is an estimate.
+  Set a price in `usage.prices` to match what you pay, or to 0 to record $0.
 - **Local models**: free, recorded as $0.
 
-Budgets use these amounts either way, so they also protect your subscription limits.
+Budgets use these amounts either way, so they also protect your subscription limits. Codex costs count
+toward a run's `max_cost_usd` and the daily budget, as Claude Code's do.
 
 **The failure summary call.** When a run fails with what looks like a code problem, the Foundry
 makes one short call to a small model (default `haiku`) that reads the end of the failing output
@@ -7242,6 +7244,35 @@ turn it off for one process, set `SCF_NO_FAILURE_MODEL=1`.
 Costs are still recorded and shown everywhere, but nothing is ever stopped because of money — no
 run limit, no step limit, no daily budget. The usage limits that Claude and Codex report
 themselves still pause runs; they continue by themselves when the limit resets.
+
+### Usage events and prices
+
+Each run writes its usage facts to `<data folder>/usage/usage-YYYY-MM.jsonl`, one JSON line per event, in
+the month of the event. The events are `run.started`, `step.finished` (one for each step, with its tokens,
+cost and duration), `run.finished` (status, a fixed reason word, duration and the run's cost), and for a
+story run `issue.done`, `issue.split` (with the parent and the parts) or `issue.failed`. A line holds only
+ids, numbers and fixed words, never task text, step output, error text or secrets. Plugins get the same
+events through `api.onUsage`; see [PLUGIN_API.md](PLUGIN_API.md#usage-events).
+
+Each event is written once, on a best-effort basis. If the Foundry stops just after a run is saved and
+before an event is written, that event is lost; nothing is written again later.
+
+**Prices of Codex models.** Prices are US dollars per million tokens: input, cached input and output.
+The price of a model is taken from `usage.prices` in `config.yaml`; without one, from the provider's own
+`price`; without that, from the built-in table. The built-in table has the GPT-5 family: `gpt-5`,
+`gpt-5-codex`, `gpt-5.1` and `gpt-5.1-codex` at 1.25 / 0.125 / 10, and `gpt-5-mini` and
+`gpt-5.1-codex-mini` at 0.25 / 0.025 / 2. These are list prices and go out of date; set your own when they
+differ. A model with no price has no cost in its events and adds nothing to the run's total. Local models
+cost 0.
+
+```yaml
+usage:
+  prices:
+    gpt-5: {input_per_mtok: 1.25, cached_input_per_mtok: 0.125, output_per_mtok: 10}
+    gpt-5-mini: {input_per_mtok: 0, cached_input_per_mtok: 0, output_per_mtok: 0}   # 0 records $0
+```
+
+The default is `usage.prices: {}` (no entries; the built-in table applies). Up to 200 models.
 
 ### Operations overview
 
