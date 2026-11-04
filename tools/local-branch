@@ -1,0 +1,57 @@
+#!/usr/bin/env node
+// Writes to the owner's own folder of a local project (a repository connected as "Local (no GitHub)").
+// Usage (run it with node, in the run's workspace):
+//   local-branch update <branch>   bring the workspace's branch into the owner's folder (never a push into a checked-out branch)
+//   local-branch push <branch>     plain `git push` of the branch from the owner's folder to its remote
+// update: exit 0 prints `UPDATED: <branch> <short>` and `SYNCED: yes|no`; exit 3 prints `MOVED: …` (the owner's branch moved);
+//   exit 4 prints `PAUSED: <reason>` (uncommitted work in the way); exit 1 writes `local-branch: <reason>` to stderr.
+// push: exit 0 prints `REMOTE: pushed <branch> to <remote>`; exit 2 prints `REMOTE: none`; exit 1 prints `REMOTE_FAILED: <reason>`.
+// Env: FACTORY_LOCAL_REPO_DIR, FACTORY_RUN_ID, FACTORY_PROTECTED_BRANCHES (space separated). The logic is dist/repos/local-branch.js (build first).
+function fail(msg) {
+  process.stderr.write(`local-branch: ${msg}\n`);
+  process.exit(1);
+}
+const [sub, branch, ...rest] = process.argv.slice(2);
+if ((sub !== "update" && sub !== "push") || !branch || rest.length) fail("usage: local-branch update|push <branch>");
+const dir = process.env.FACTORY_LOCAL_REPO_DIR ?? "";
+if (!dir) fail("the folder of this local project is not known to the Foundry");
+let lib;
+let paths;
+try {
+  lib = await import(new URL("../dist/repos/local-branch.js", import.meta.url).href);
+  paths = await import(new URL("../dist/auth/local-repo.js", import.meta.url).href);
+} catch (e) {
+  fail(`could not load the tool: ${String(e?.message || e).split("\n")[0]}`);
+}
+const problem = paths.localPathProblem(dir);
+if (problem) fail(`the folder of this local project ${problem}`);
+
+if (sub === "update") {
+  const r = lib.updateOwnerBranch({
+    workspace: process.cwd(),
+    ownerDir: dir,
+    branch,
+    runId: process.env.FACTORY_RUN_ID ?? "",
+    protectedPatterns: (process.env.FACTORY_PROTECTED_BRANCHES ?? "").split(/\s+/).filter(Boolean),
+  });
+  if (r.kind === "updated") {
+    console.log(`UPDATED: ${r.branch} ${r.sha.slice(0, 7)}`);
+    console.log(`SYNCED: ${r.synced ? "yes" : "no"}`);
+  } else if (r.kind === "moved") {
+    console.log(`MOVED: ${r.detail}`);
+    process.exit(3);
+  } else if (r.kind === "paused") {
+    console.log(`PAUSED: ${r.reason}`);
+    process.exit(4);
+  } else fail(r.reason);
+} else {
+  const r = lib.pushOwnerBranch({ ownerDir: dir, branch });
+  if (r.kind === "pushed") console.log(`REMOTE: pushed ${branch} to ${r.remote}`);
+  else if (r.kind === "none") {
+    console.log("REMOTE: none");
+    process.exit(2);
+  } else {
+    console.log(`REMOTE_FAILED: ${r.reason}`);
+    process.exit(1);
+  }
+}

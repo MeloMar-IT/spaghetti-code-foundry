@@ -370,7 +370,8 @@ const RUN_HINT = "You may run the build and the tests yourself (e.g. `./gradlew 
 // ── Label-driven pipeline: issue-plan → issue-code-daily → daily-pr ──
 // Watchers move issues through labels (e.g. Factory_ready → Factory_planned → Factory_code → Factory_done).
 // Clone with plain git from $FACTORY_REPO_URL when the engine sets it (nothing does yet), else with gh as before.
-const CLONE_ELSE = 'elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi';
+// A local project ($FACTORY_LOCAL_REPO_DIR is set by the engine only for a known local name) is cloned from its folder, never with gh.
+const CLONE_ELSE = 'elif [ -n "$FACTORY_LOCAL_REPO_DIR" ]; then git clone -q -- "$FACTORY_LOCAL_REPO_DIR" .; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi';
 const clone = {
   id: "clone",
   type: "shell",
@@ -1477,18 +1478,24 @@ write("issue-plan", {
     steps: [...s, dailyForceSplit, planPhase("risk_gate").find((x) => x.id === "send_back"), ...splitSteps.map((x) => (x.id === "approve_split" ? { ...x, on_failure: "stop" } : x))],
   });
 
+  // A local project (github_repo "local:…"): the run clones the owner's folder, keeps feature branches in its own workspace, and
+  // brings develop into the owner's folder with tools/local-branch. LOCAL_YES sets loc=yes for it; LOCAL_GUARD also needs the folder.
+  const LOCAL_YES = 'loc=no; case "$FACTORY_VAR_GITHUB_REPO" in local:*) loc=yes ;; esac';
+  const LOCAL_GUARD = 'loc=no; case "$FACTORY_VAR_GITHUB_REPO" in local:*) loc=yes; [ -n "$FACTORY_LOCAL_REPO_DIR" ] || { echo "the folder of this local project is not known to the Foundry"; exit 1; } ;; esac';
   const featureBranch = {
     id: "feature_branch",
     type: "shell",
     repo_access: true,
     description: "Clone, make sure develop exists, and start (or continue) this issue's feature branch from develop",
     run: [
+      LOCAL_GUARD,
       'if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; ' + CLONE_ELSE,
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"; main="$FACTORY_VAR_MAIN_BRANCH"',
       'if ! git ls-remote --exit-code --heads origin "$dev" >/dev/null 2>&1; then',
       '  # From main — or, when switching over from the rolling pull request, from its unmerged branch.',
-      '  from=$("$FACTORY_TOOLS/daily-branch" latest 2>/dev/null || echo NONE); [ "$from" = NONE ] && from="$main"',
-      '  git push -q origin "refs/remotes/origin/$from:refs/heads/$dev" 2>/dev/null && echo "created $dev from $from"',
+      '  if [ "$loc" = yes ]; then from="$main"; else from=$("$FACTORY_TOOLS/daily-branch" latest 2>/dev/null || echo NONE); [ "$from" = NONE ] && from="$main"; fi',
+      '  if [ "$loc" = yes ]; then git branch -q -f "$dev" "refs/remotes/origin/$from" && node "$FACTORY_TOOLS/local-branch" update "$dev" >/dev/null && echo "created $dev from $from"',
+      '  else git push -q origin "refs/remotes/origin/$from:refs/heads/$dev" 2>/dev/null && echo "created $dev from $from"; fi',
       'fi',
       '# (another run may have created it at the same moment — either way it must exist now)',
       'git fetch -q origin && git rev-parse -q --verify "origin/$dev" >/dev/null || { echo "there is no $dev branch and it could not be created"; exit 1; }',
@@ -1503,9 +1510,11 @@ write("issue-plan", {
       '  elif [ "$FACTORY_HOTFIX" = on ]; then echo "could not read the labels of issue #$FACTORY_VAR_ISSUE, so it is not clear whether this is a hotfix — not starting"; exit 1; fi',
       'fi',
       'if [ -n "$match" ]; then',
+      '  [ "$loc" = yes ] && FACTORY_HOTFIX=local',
       '  case "$FACTORY_HOTFIX" in',
       '    on) for f in $FACTORY_VAR_UNION_MERGE_FILES; do echo "$f merge=union" >> .git/info/attributes; done',
       '        touch "{{run.dir}}/hotfix"; echo "HOTFIX: yes (label $match)"; exit 0 ;;',
+      '    local) printf \'%s\\n\' "ℹ This issue has the \\`$match\\` label, but a local project has no hotfixes to \\`$main\\`, so it was built as a feature." > "{{run.dir}}/hotfix-note" ;;',
       '    off) printf \'%s\\n\' "ℹ This issue has the \\`$match\\` label, but hotfixes to \\`$main\\` are switched off (Settings → Safety), so it was built as a feature." > "{{run.dir}}/hotfix-note" ;;',
       '    *) printf \'%s\\n\' "ℹ This issue has the \\`$match\\` label, but the flow is a changed copy of issue-gitflow, and only the unchanged one may push to \\`$main\\`, so it was built as a feature." > "{{run.dir}}/hotfix-note" ;;',
       '  esac',
@@ -1516,7 +1525,9 @@ write("issue-plan", {
       'if [ "$(git rev-list --count "origin/$dev..origin/$main")" -gt 0 ]; then',
       '  if "$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @develop --wait-sec "${FACTORY_DEVELOP_SYNC_WAIT_SEC:-300}" >/dev/null; then',
       '    git fetch -q origin && git checkout -q -B "$dev" "origin/$dev"',
-      '    if git merge -q --no-edit -m "Merge $main into $dev" "origin/$main" >/dev/null 2>&1 && git push -q origin "$dev"; then echo "brought $dev up to date with $main"',
+      '    publish() { if [ "$loc" = yes ]; then node "$FACTORY_TOOLS/local-branch" update "$dev" >/dev/null; else git push -q origin "$dev"; fi; }',
+      '    if git merge -q --no-edit -m "Merge $main into $dev" "origin/$main" >/dev/null 2>&1 && publish; then echo "brought $dev up to date with $main"',
+      '    elif [ "$loc" = yes ]; then git merge --abort >/dev/null 2>&1; echo "note: could not bring $dev up to date with $main in your folder; a later run tries again"',
       '    else git merge --abort >/dev/null 2>&1; echo "note: could not merge $main into $dev automatically — do it by hand"; fi',
       '    "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null; git fetch -q origin',
       '  else echo "note: $dev is busy (another run is merging into it), so $main is merged into $dev by a later run"; fi',
@@ -1526,8 +1537,11 @@ write("issue-plan", {
       'title=$(node "$FACTORY_TOOLS/story" title 2>/dev/null)',
       'slug=$(printf \'%s\' "$title" | tr \'[:upper:]\' \'[:lower:]\' | sed \'s/[^a-z0-9]\\{1,\\}/-/g; s/^-//; s/-$//\' | cut -c1-40 | sed \'s/-$//\')',
       'b="$FACTORY_VAR_FEATURE_PREFIX$FACTORY_VAR_ISSUE${slug:+-$slug}"',
-      'if git ls-remote --exit-code --heads origin "$b" >/dev/null 2>&1; then',
-      '  git checkout -q -B "$b" "origin/$b" || { echo "cannot check out $b"; exit 1; }',
+      '# A local project keeps its feature branches in the run\'s own folder: an earlier try of this run may have left one.',
+      'if [ "$loc" = yes ] && git rev-parse -q --verify "refs/heads/$b" >/dev/null; then have=yes',
+      'elif [ "$loc" != yes ] && git ls-remote --exit-code --heads origin "$b" >/dev/null 2>&1; then have=yes; else have=no; fi',
+      'if [ "$have" = yes ]; then',
+      '  if [ "$loc" = yes ]; then git checkout -q -f "$b"; else git checkout -q -B "$b" "origin/$b"; fi || { echo "cannot check out $b"; exit 1; }',
       '  # An earlier run finished this story (its "Resolve" commit is on the branch) but did not get it into $dev:',
       '  # nothing is planned or coded again, it goes straight to the merge, where conflicts are resolved.',
       '  if git log "origin/$dev..HEAD" --format=%s | grep -q "^Resolve #$FACTORY_VAR_ISSUE:"; then',
@@ -1834,7 +1848,9 @@ write("issue-plan", {
       'else',
       '  case "$b" in "$FACTORY_VAR_FEATURE_PREFIX"*) ;; *) echo "refusing to push $b: not a feature branch"; exit 1;; esac',
       'fi',
-      'git push -q -u origin HEAD && echo "pushed $b" || exit 1',
+      LOCAL_YES,
+      'if [ "$loc" = yes ]; then echo "kept $b in the run\'s folder (a local project has no remote for it)"',
+      'else git push -q -u origin HEAD && echo "pushed $b" || exit 1; fi',
       '[ -f "{{run.dir}}/hotfix" ] && echo "HOTFIX: yes"; exit 0',
     ].join("\n"),
     // A hotfix goes on to main; a feature (no HOTFIX line) to develop.
@@ -1849,13 +1865,15 @@ write("issue-plan", {
     timeout_sec: 28800,
     description: "Merge the feature branch into develop (one merge at a time); conflicts go to an agent",
     run: [
+      LOCAL_YES,
       '"$FACTORY_TOOLS/area-lock" acquire "$FACTORY_RUN_ID" "{{run.dir}}" @develop --wait-sec 28000 >/dev/null || { echo "develop stayed locked for 8 hours — another run holds the merge turn and does not finish; look at that run"; exit 1; }',
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"; f=$(git rev-parse --abbrev-ref HEAD); [ "$f" = "$dev" ] && f=$(cat "{{run.dir}}/feature-branch")',
       'echo "$f" > "{{run.dir}}/feature-branch"',
       'git merge --abort >/dev/null 2>&1 || true',
       '# Work left uncommitted on the feature branch (e.g. after an interruption) is committed, never dropped.',
       'if [ "$(git rev-parse --abbrev-ref HEAD)" = "$f" ] && [ -n "$(git status --porcelain)" ]; then',
-      '  git add -A && git commit -q -m "Resolve #$FACTORY_VAR_ISSUE: remaining changes" && git push -q origin "$f" && echo "committed and pushed changes left on $f"',
+      '  if [ "$loc" = yes ]; then git add -A && git commit -q -m "Resolve #$FACTORY_VAR_ISSUE: remaining changes" && echo "committed changes left on $f"',
+      '  else git add -A && git commit -q -m "Resolve #$FACTORY_VAR_ISSUE: remaining changes" && git push -q origin "$f" && echo "committed and pushed changes left on $f"; fi',
       'fi',
       'git fetch -q origin "$dev" || { echo "cannot fetch $dev"; exit 2; }',
       'git checkout -q -B "$dev" "origin/$dev" || { echo "cannot switch to $dev (see above)"; exit 2; }',
@@ -2008,7 +2026,8 @@ write("issue-plan", {
       '  c=$(git commit-tree "HEAD^{tree}" -p "$tip" -p "$before" -m "Merge $dev into $f") && git checkout -q -f -B "$f" "$c" || { echo "cannot move the merge result onto $f (see above)"; exit 1; }',
       'fi',
       '# 3. Keep it on the remote, then give up develop (the code areas of the run stay locked).',
-      'git push -q origin "$f" || { echo "the merge result could not be pushed to $f (see above); develop was not changed"; exit 1; }',
+      LOCAL_YES,
+      'if [ "$loc" != yes ]; then git push -q origin "$f" || { echo "the merge result could not be pushed to $f (see above); develop was not changed"; exit 1; }; fi',
       'giveup; echo "gave up $dev: other runs can merge while this run goes on"',
       'case "$next" in',
       '  retest) echo "the tests on the merge with $dev did not finish — merging with the newest $dev and testing again, without an agent turn (test again $n of 2)"; echo "RETEST"; exit 0;;',
@@ -2054,6 +2073,8 @@ write("issue-plan", {
       'git add -A',
       'if git diff --cached --quiet; then echo "the fix changed nothing — merging with the newest develop and testing again"',
       'else git commit -q -m "Fix #$FACTORY_VAR_ISSUE after merging into develop" && git log --oneline -1 || exit 1; fi',
+      LOCAL_YES,
+      'if [ "$loc" = yes ]; then echo "kept $f in the run\'s folder"; exit 0; fi',
       'git push -q origin "$f" && echo "pushed $f" || { echo "the fix is committed on $f but could not be pushed (see above)"; exit 1; }',
     ].join("\n"),
     on_success: "merge_develop",
@@ -2097,6 +2118,20 @@ write("issue-plan", {
     description: "Push develop; if it moved meanwhile, merge again",
     run: [
       'dev="$FACTORY_VAR_DEVELOP_BRANCH"',
+      LOCAL_YES,
+      '# A local project: develop moves in the owner\'s folder (never by a push into a checked-out branch); see tools/local-branch.',
+      'if [ "$loc" = yes ]; then',
+      '  out=$(node "$FACTORY_TOOLS/local-branch" update "$dev" 2>&1); code=$?; printf \'%s\\n\' "$out"',
+      '  case "$code" in',
+      '    0) "$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" >/dev/null; echo "COMMIT: $(git rev-parse HEAD)"; rm -f "{{run.dir}}/remote-push"',
+      '       # "Also push to the remote": plain git push of develop from the owner\'s folder; a failure is reported, the merge stays.',
+      '       if [ "$FACTORY_LOCAL_PUSH" = yes ]; then node "$FACTORY_TOOLS/local-branch" push "$dev" 2>&1 | head -1 > "{{run.dir}}/remote-push"; cat "{{run.dir}}/remote-push"; fi',
+      '       exit 0 ;;',
+      '    3) echo "$dev in your folder moved meanwhile — merging again"; echo "MOVED"; exit 0 ;;',
+      '    4) echo "LOCAL_BUSY"; exit 0 ;;',
+      '    *) echo "bringing $dev into your folder failed (see above)"; exit 1 ;;',
+      '  esac',
+      'fi',
       '# A problem on the side of GitHub (a server error, a dropped connection) passes: try again, twice, before failing.',
       'tries=0; pushed=no',
       'while :; do',
@@ -2123,7 +2158,19 @@ write("issue-plan", {
       'echo "pushing $dev failed (see above)"; exit 1',
     ].join("\n"),
     // Only a develop that moved meanwhile means "merge again"; any other push error stops the run.
-    routes: [{ if: "^MOVED\\s*$", goto: "merge_develop" }],
+    routes: [{ if: "^MOVED\\s*$", goto: "merge_develop" }, { if: "^LOCAL_BUSY\\s*$", goto: "wait_local_tree" }],
+  };
+  // The owner's develop is checked out with uncommitted work (or files the update would replace): stop without holding a slot.
+  // A watcher resumes the run (a name that starts with wait_ counts as paused) and it takes its turn at develop again.
+  const waitLocalTree = {
+    id: "wait_local_tree",
+    type: "shell",
+    jump_only: true,
+    description: "Your folder has uncommitted work on develop: stop without holding a slot; resumed by itself and merged again",
+    resume_from: "merge_develop",
+    max_visits: 1000,
+    run: '"$FACTORY_TOOLS/area-lock" release "$FACTORY_RUN_ID" @develop >/dev/null 2>&1; printf \'%s\\n\' "$FACTORY_OUT_PUSH_DEVELOP" | grep "^PAUSED:" | tail -1',
+    on_success: "stop",
   };
   // The report of a feature (merged into develop) or of a hotfix (on main, and in develop or not yet).
   const commitUrl = "https://github.com/$FACTORY_VAR_GITHUB_REPO/commit/$sha";
@@ -2138,6 +2185,17 @@ write("issue-plan", {
       '  first="$FACTORY_FIRST_SHIPS"',
       `  did="implemented this on \\\`$branch\\\` and merged it into \\\`$dev\\\` (commit ${commitUrl})."`,
       '  last="It goes to \\`$main\\` with the daily release pull request."',
+      '  # A local project: no link to GitHub; the commit is in the owner\'s folder, and releasing is the owner\'s own merge.',
+      '  case "$FACTORY_VAR_GITHUB_REPO" in local:*)',
+      '    did="implemented this on \\`$branch\\` and merged it into \\`$dev\\` in your folder (commit \\`$(git rev-parse --short "$sha")\\`)."',
+      '    last="It is in \\`$dev\\` in your folder. Merge \\`$dev\\` into \\`$main\\` when you want to release it."',
+      '    rp=$(cat "{{run.dir}}/remote-push" 2>/dev/null)',
+      '    case "$rp" in',
+      '      "REMOTE: pushed"*) did="$did It was also pushed to the remote." ;;',
+      '      REMOTE_FAILED:*) warn="⚠ \\`$dev\\` could not be pushed to the remote: ${rp#REMOTE_FAILED: }. The merge in your folder stays." ;;',
+      '      "REMOTE: none") warn="⚠ \\"Also push to the remote\\" is on, but your folder has no remote to push to. The merge in your folder stays." ;;',
+      '    esac ;;',
+      '  esac',
       '  # Gitflow: "done" means merged into develop — close the issue now (GitHub only closes issues by',
       '  # itself when work reaches the default branch). Closed before the comment, so a close that fails is',
       '  # said in it; it never fails the run: the work is merged, and the Factory_done label frees the dependants.',
@@ -2255,6 +2313,7 @@ write("issue-plan", {
     fixDevelop,
     commitDevelopFix,
     pushDevelop,
+    waitLocalTree,
     mergeMain, testMain, redMain, pushMain,
     mergeBack, resolveBack, finishBack, testBack, redBack, fixBack, commitBackFix, pushBack, hotfixDone,
     gitflowReport,
@@ -2266,6 +2325,13 @@ write("issue-plan", {
   for (const id of ["plan", "revise_plan"]) gitflowSteps.find((x) => x.id === id).max_budget_usd = 8;
   for (const x of gitflowSteps) if (["merge_develop", "resolve_conflicts", "finish_merge", "test_develop", "red_develop", "fix_develop", "commit_develop_fix"].includes(x.id)) x.jump_only = true;
   gitflowSteps.splice(gitflowSteps.findIndex((x) => x.id === "review_2"), 0, reviewGate);
+  // A local project has no pull request: the review reads the commits already on the feature branch as well as the pending changes.
+  for (const x of gitflowSteps) {
+    if (x.id !== "review_1" && x.id !== "review_2") continue;
+    x.prompt = swap(x.prompt, "(run `git status` and `git diff HEAD`).", "(run `git status` and `git diff HEAD`).\n" +
+      "If the repository name below starts with `local:` (here: {{vars.github_repo}}), it is a local project, and the feature branch may also hold earlier\n" +
+      "commits of this change: read them with `git diff origin/{{vars.develop_branch}}...HEAD` too.");
+  }
   gitflowSteps.find((x) => x.id === "push_feature").on_success = "pretest_merge";
   gitflowSteps.find((x) => x.id === "push_develop").on_success = "report";
   write("issue-gitflow", {

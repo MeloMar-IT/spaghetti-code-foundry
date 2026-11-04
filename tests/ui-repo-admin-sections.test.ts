@@ -274,6 +274,29 @@ describe("Branches and Run settings", () => {
     expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, mainBranch: "trunk", questions: { decide_technical: false } });
   });
 
+  it("shows 'Also push to the remote' only for a local repository with a remote, and saves it", async () => {
+    for (const over of [{}, { method: "local", url: "/work/a" }, { method: "local", url: "/work/a", hasRemote: false }]) {
+      await show(rec(over));
+      expect(section("run-settings").textContent).not.toContain("Also push to the remote");
+      press(action("run-settings"));
+      await flush();
+      expect(field(root(), "pushRemote")).toBeUndefined();
+      press(button(root(), "Save"));
+      await settle();
+      expect(sent.find((s) => s.method === "PUT")!.body).not.toHaveProperty("pushRemote");
+      sent.length = 0;
+    }
+    await show(rec({ method: "local", url: "/work/a", hasRemote: true, settings: { ...S, pushRemote: true } }));
+    expect(section("run-settings").textContent).toContain("Also push to the remote");
+    press(action("run-settings"));
+    await flush();
+    expect(field(root(), "pushRemote")!.checked).toBe(true);
+    field(root(), "pushRemote")!.checked = false;
+    press(button(root(), "Save"));
+    await settle();
+    expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, ...ON });
+  });
+
   it("[R1] after a saved Branches edit with a failed reload, Run settings still sends the new branches", async () => {
     const r = rec();
     await show(r);

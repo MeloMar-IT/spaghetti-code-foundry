@@ -87,7 +87,7 @@ steps:
     repo_access: true
     description: Clone, then check out the branch of the open factory PR (or a new one from main)
     run: |-
-      if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git reset -q --hard && git clean -qfd && git fetch -q origin; elif [ -n "$FACTORY_LOCAL_REPO_DIR" ]; then git clone -q -- "$FACTORY_LOCAL_REPO_DIR" .; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       "$FACTORY_TOOLS/daily-branch" prepare
   - id: baseline_tests
     type: shell

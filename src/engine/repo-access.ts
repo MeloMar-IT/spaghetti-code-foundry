@@ -336,11 +336,11 @@ export function sweepSignInDirs(runsDir: string): { removed: number; failed: num
 }
 
 /** The folder of a connected local repository for the tools of a step (`FACTORY_LOCAL_REPO_DIR`); nothing for any other repository. */
-export function localRepoEnv(githubRepo: string | undefined, find: (name: string) => { url: string } | undefined = findLocalRepo): Record<string, string> {
+export function localRepoEnv(githubRepo: string | undefined, find: (name: string) => { url: string; settings?: { pushRemote?: boolean } } | undefined = findLocalRepo): Record<string, string> {
   if (!githubRepo || !isLocalRepoName(githubRepo)) return {};
   try {
     const rec = find(githubRepo);
-    return rec ? { FACTORY_LOCAL_REPO_DIR: rec.url } : {};
+    return rec ? { FACTORY_LOCAL_REPO_DIR: rec.url, ...(rec.settings?.pushRemote === true ? { FACTORY_LOCAL_PUSH: "yes" } : {}) } : {};
   } catch {
     return {};
   }

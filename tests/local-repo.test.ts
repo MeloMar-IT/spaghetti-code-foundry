@@ -3,8 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { LOCAL_NAME_RE, checkLocalPath, isLocalRepoName, localPathProblem, localRepoName } from "../src/auth/local-repo.js";
-import { RepoError, REPO_METHODS, addRepo, listAllRepos, reposPath, setRepoAuth, setRepoConnection, transferRepo } from "../src/auth/repos.js";
+import { LOCAL_NAME_RE, checkLocalPath, isLocalRepoName, localHasRemote, localPathProblem, localRepoName } from "../src/auth/local-repo.js";
+import { RepoError, REPO_METHODS, addRepo, listAllRepos, reposPath, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
 import { tryParseRepoUrl, validGithubName } from "../src/auth/repo-url.js";
 import { listCredentials } from "../src/credentials/store.js";
@@ -293,6 +293,28 @@ describe("connection test of a local repository", () => {
       expect(messageFor(c, "local").length).toBeGreaterThan(10);
     }
     expect(messageFor("ok", "local", "push")).toMatch(/branch/);
+  });
+});
+
+describe("pushRemote and localHasRemote", () => {
+  it("is stored for a local repository, cleared by false, and refused for a GitHub one or a non-boolean", () => {
+    const r = addRepo(ANN, { url: repo, method: "local" }, OK);
+    expect(setRepoSettings(r.id, { pushRemote: true }).repo.settings).toEqual({ pushRemote: true });
+    expect(setRepoSettings(r.id, { pushRemote: false }).repo.settings).toBeUndefined();
+    expect(() => setRepoSettings(r.id, { pushRemote: "yes" })).toThrow(/pushRemote must be true or false/);
+    const gh = addRepo(ANN, { url: "acme/app", method: "github-token", token: ["github", "pat", ""].join("_") + "Zx9".repeat(12) }, OK);
+    expect(code(() => setRepoSettings(gh.id, { pushRemote: true }))).toBe("bad-settings");
+    expect(code(() => setRepoSettings(gh.id, { pushRemote: false }))).toBe("none");
+  });
+
+  it("localHasRemote is true with a remote, false without one, for a missing path and for a failing git", async () => {
+    const dir = makeRepo("with-remote");
+    const without = makeRepo("without-remote");
+    git(dir, "remote", "add", "origin", join(base, "nowhere.git"));
+    expect(await localHasRemote(without)).toBe(false);
+    expect(await localHasRemote(dir)).toBe(true);
+    expect(await localHasRemote(join(base, "missing"))).toBe(false);
+    expect(await localHasRemote(dir, "/nonexistent/git")).toBe(false);
   });
 });
 

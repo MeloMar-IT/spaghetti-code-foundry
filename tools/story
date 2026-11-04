@@ -141,6 +141,8 @@ try {
 }
 const repo = process.env.FACTORY_VAR_GITHUB_REPO ?? "";
 if (lib ? !lib.isStoryRepoName(repo) : !/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
+// A local project has no pull requests: refuse before the store is loaded or anything is called.
+if (sub.startsWith("pr-") && (lib ? lib.isLocalRepoName(repo) : repo.startsWith("local:"))) fail("Pull requests are not available for a local project");
 const issueText = process.env.FACTORY_VAR_ISSUE ?? "";
 if (spec.issue && !/^[1-9]\d{0,8}$/.test(issueText)) fail("set var issue to the issue number");
 const issue = Number(issueText);

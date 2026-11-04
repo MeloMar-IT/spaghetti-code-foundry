@@ -3,7 +3,7 @@ import { githubNameOf, RepoError } from "./repo-url.js";
 
 /**
  * Per-repository settings an admin sets. They are stored and shown, and runs do not use them yet. The exceptions are
- * `questions` (the engine passes `questions.decide_technical` to every step as `$FACTORY_DECIDE_TECHNICAL`) and
+ * `pushRemote` (a local repository only: the engine passes it to steps as `$FACTORY_LOCAL_PUSH`), `questions` (the engine passes `questions.decide_technical` to every step as `$FACTORY_DECIDE_TECHNICAL`) and
  * `releaseRecipe`: `tools/release-build` reads it through `findReleaseRecipe` in `src/release/recipe.ts` when the commit has
  * no `.factory/release-build.yaml`. `kind: "skill-library"` marks a repository the skill-write flow may publish to: `skillLibraryFor`
  * decides it for a run (src/engine/runner.ts), and it allows the second push to a protected branch (see guards.ts). Nothing under `auth/` may import `release/recipe.ts` (it imports `auth/repos.ts`: a cycle).
@@ -51,6 +51,7 @@ export const RepoSettingsSchema = z
     releaseRecipe: z.string().min(1).max(MAX_RECIPE_TEXT).refine((t) => t.trim() !== "" && !RECIPE_CONTROL.test(t)),
     questions: z.object({ decide_technical: z.boolean() }).strict(),
     kind: z.literal("skill-library"),
+    pushRemote: z.literal(true),
   })
   .partial()
   .strict()
@@ -59,7 +60,7 @@ export const RepoSettingsSchema = z
 export type RepoSettings = z.infer<typeof RepoSettingsSchema>;
 
 const bad = (message: string) => new RepoError("bad-settings", message);
-const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe", "questions", "kind"];
+const KEYS = ["testCommand", "docs", "protectedBranches", "mainBranch", "developBranch", "releaseRecipe", "questions", "kind", "pushRemote"];
 const PATTERN_HELP = '"*" matches any text, "?" one character';
 const shown = (t: string) => JSON.stringify(t.replace(CONTROL_G, "?").slice(0, 80));
 const CONTROL_G = /[\u0000-\u001f\u007f-\u009f]/g;
@@ -123,6 +124,11 @@ export function checkRepoSettings(input: unknown): RepoSettings {
     const d = (q as Record<string, unknown>).decide_technical;
     if (d !== undefined && d !== null && typeof d !== "boolean") throw bad("questions.decide_technical must be true or false");
     if (d === false) out.questions = { decide_technical: false };
+  }
+  const push = o.pushRemote;
+  if (push !== undefined && push !== null) {
+    if (typeof push !== "boolean") throw bad("pushRemote must be true or false");
+    if (push) out.pushRemote = true;
   }
   const kind = o.kind;
   if (kind !== undefined && kind !== null) {

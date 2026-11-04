@@ -39,7 +39,7 @@ steps:
     type: shell
     repo_access: true
     run: |-
-      if [ -d .git ]; then git fetch -q origin || { echo "could not fetch origin"; exit 1; }; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
+      if [ -d .git ]; then git fetch -q origin || { echo "could not fetch origin"; exit 1; }; elif [ -n "$FACTORY_LOCAL_REPO_DIR" ]; then git clone -q -- "$FACTORY_LOCAL_REPO_DIR" .; elif [ -n "$FACTORY_REPO_URL" ]; then git clone -q -- "$FACTORY_REPO_URL" .; else gh repo clone "$FACTORY_VAR_GITHUB_REPO" . -- -q; fi
       git log --oneline -1
       if [ -n "$FACTORY_VAR_DEVELOP_BRANCH" ] && git rev-parse -q --verify "origin/$FACTORY_VAR_DEVELOP_BRANCH" >/dev/null; then git checkout -q --detach "origin/$FACTORY_VAR_DEVELOP_BRANCH" || { echo "could not check out $FACTORY_VAR_DEVELOP_BRANCH"; exit 1; }; echo "Code: $FACTORY_VAR_DEVELOP_BRANCH"; exit 0; fi
       b=$("$FACTORY_TOOLS/daily-branch" latest) || { echo "could not find the newest daily branch (see above)"; exit 1; }

@@ -65,6 +65,7 @@ function runSettings(ctx) {
   const { repo, readOnly } = ctx;
   const s = repo.settings;
   const ready = repo.ready;
+  const pushable = repo.method === "local" && repo.hasRemote === true;
   return [
     s
       ? [
@@ -73,9 +74,10 @@ function runSettings(ctx) {
           { label: "Test command", value: text(s.testCommand) },
           { label: "Docs to update", value: list(s.docs) },
           { label: "Decides technical questions", value: s.questions?.decide_technical === false ? "No — asks every question" : "Yes" },
+          ...(pushable ? [{ label: "Also push to the remote", value: s.pushRemote === true ? "Yes" : "No" }] : []),
         ] }),
         readOnly ? null : h("div", { class: "row" },
-          h("button", { "data-action": "run-settings", onClick: editSettings(ctx, "run-settings", ["kind", "testCommand", "docs", "decideTechnical"], "Run settings") }, "Edit")),
+          h("button", { "data-action": "run-settings", onClick: editSettings(ctx, "run-settings", ["kind", "testCommand", "docs", "decideTechnical", ...(pushable ? ["pushRemote"] : [])], "Run settings") }, "Edit")),
       ]
       : unavailable("The settings"),
     h("div", { class: "field mt-6" },
