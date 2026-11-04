@@ -221,6 +221,14 @@ export const api = {
   unmuteMonitor: (id) => req("DELETE", `/api/monitor/mutes/${enc(id)}`),
   tickWatcher:(id) => req("POST", `/api/watchers/${enc(id)}/tick`, {}),
   providers: () => req("GET", "/api/providers"),
+  onboardingAgents: () => req("GET", "/api/onboarding/agents"),
+  // `from`: the last answer of the server; its config version goes with the save, so a stale save is refused (409).
+  saveOnboardingAgents: (answers, replace = [], from) => {
+    const v = from ? configVersions.get(from) : undefined;
+    return req("PUT", "/api/onboarding/agents", { answers, replace }, false, false, v ? { "x-config-version": v } : undefined);
+  },
+  onboardingSignIn: (tool) => req("POST", "/api/onboarding/sign-in", { tool }),
+  onboardingTestCall: (tool) => req("POST", "/api/onboarding/test-call", { tool }),
   setupCheck: (needs = []) => req("GET", "/api/setup-check" + (needs.length ? "?need=" + encodeURIComponent(needs.join(",")) : "")),
   testModel: (spec) => req("POST", "/api/providers/test", { spec }),
   next: () => req("GET", "/api/next"),

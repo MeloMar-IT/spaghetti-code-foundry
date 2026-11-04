@@ -369,6 +369,7 @@ describe("the Help page", () => {
     expect(words.termWords()).toEqual([...new Set(Object.values(words.TERMS))]);
     for (const w of words.termWords()) expect(words.TERM_MEANINGS[w], w).toMatch(/\S/);
     const all = [words.HELP.title, words.HELP.wordsTitle, words.HELP.wordsIntro, words.HELP.howTitle, words.HELP.contactTitle,
+      words.HELP.agentsTitle, words.HELP.agentsText, words.HELP.agentsLink,
       ...words.HELP.howtos.flatMap((t: any) => [t.q, t.a]), ...Object.values<string>(words.TERM_MEANINGS), ...words.termWords()];
     for (const t of all) expect(words.forbiddenIn(t), t).toEqual([]);
   });
@@ -379,6 +380,11 @@ describe("the Help page", () => {
     expect(heads(p, "h3")).toEqual(["How do I change the colours?", "How do I make it public?"]);
     expect(heads(p, "h1")).toEqual(["Help"]);
     for (const k of Object.keys(words.TERMS)) if (words.forbiddenIn(k).length) expect(heads(p, "dt")).not.toContain(k);
+  });
+
+  it("links to the Claude and Codex page", () => {
+    const links = page().all("a").filter((l) => l.getAttribute("href") === "#/agents");
+    expect(links.map((l) => l.textContent)).toEqual([words.HELP.agentsLink]);
   });
 
   it("does not promise a fixed way to make a project public", () => {

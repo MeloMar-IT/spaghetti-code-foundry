@@ -35,6 +35,16 @@ const draw = async (o: any = {}, report: any = REPORT) => {
 };
 const button = (box: FakeElement, label: string) => box.all("button").filter((b) => b.textContent === label);
 
+describe("the Next link", () => {
+  it("leads an admin to Claude and Codex, and the ask-admin card has no link", async () => {
+    const { box } = await draw();
+    const next = box.all("a").find((l) => l.textContent === "Next: Claude and Codex");
+    expect(next?.getAttribute("href")).toBe("#/agents");
+    const { box: other } = await draw({ admin: false });
+    expect(other.all("a")).toHaveLength(0);
+  });
+});
+
 describe("the rows", () => {
   it("shows a tick, a cross and a question mark, with command, Copy and link", async () => {
     const { box } = await draw();

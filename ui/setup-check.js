@@ -12,7 +12,23 @@ async function copyText(clipboard, value) {
     return false;
   }
 }
-const pageClipboard = () => (typeof navigator === "undefined" ? undefined : navigator.clipboard);
+export const pageClipboard = () => (typeof navigator === "undefined" ? undefined : navigator.clipboard);
+
+/** One row of the report (from `setupRows`) as a list item. `again(id, label)` makes a Check again button; without it the row has none. `text` maps the server's words. */
+export function setupRowNode(r, { clipboard, notify = toast, alive = () => true, again = null, text = (s) => s } = {}) {
+  const explain = r.explain ? text(r.explain) : "";
+  return h("li", { class: `setup-row ${r.tone}` },
+    h("div", { class: "setup-name" }, h("span", { "aria-hidden": "true" }, r.mark), " ", h("strong", {}, r.name), r.optional ? " (optional)" : ""),
+    explain && h("p", {}, explain),
+    r.command && h("p", {},
+      h("code", {}, r.command), " ",
+      h("button", { type: "button", onClick: async () => {
+        const ok = await copyText(clipboard, r.command);
+        if (alive()) notify(ok ? "Copied" : "Select the command and copy it", ok ? "info" : "error");
+      } }, "Copy")),
+    r.link && h("p", {}, h("a", { href: r.link.url, target: "_blank", rel: "noopener noreferrer" }, r.link.label)),
+    r.tone !== "ok" && again && h("p", {}, again(r.id, "Check again")));
+}
 
 // Setup check: is what the Foundry needs on this computer, in plain words. The words come from the server (src/setup-check.ts).
 // The page has no input: it never asks for a password, key or token. Sign-in happens in the agent's own window.
@@ -62,23 +78,13 @@ export async function renderSetupCheck(box, { a = api, admin = false, readOnly =
       buttons.set(id, b);
       return b;
     };
-    const rows = setupRows(report).map((r) =>
-      h("li", { class: `setup-row ${r.tone}` },
-        h("div", { class: "setup-name" }, h("span", { "aria-hidden": "true" }, r.mark), " ", h("strong", {}, r.name), r.optional ? " (optional)" : ""),
-        r.explain && h("p", {}, r.explain),
-        r.command && h("p", {},
-          h("code", {}, r.command), " ",
-          h("button", { type: "button", onClick: async () => {
-            const ok = await copyText(clipboard, r.command);
-            if (!gone) notify(ok ? "Copied" : "Select the command and copy it", ok ? "info" : "error");
-          } }, "Copy")),
-        r.link && h("p", {}, h("a", { href: r.link.url, target: "_blank", rel: "noopener noreferrer" }, r.link.label)),
-        r.tone !== "ok" && h("p", {}, again(r.id, "Check again"))));
+    const rows = setupRows(report).map((r) => setupRowNode(r, { clipboard, notify, alive: () => !gone, again }));
     mount(body,
       h("h1", {}, "Setup check"),
       h("p", { role: "status" }, summaryText(report)),
       h("p", {}, again("top", "Check again")),
-      h("ul", { class: "setup-rows" }, rows));
+      h("ul", { class: "setup-rows" }, rows),
+      h("p", {}, h("a", { href: "#/agents", class: "btn primary" }, "Next: Claude and Codex")));
     if (focusId) buttons.get(focusId)?.focus?.();
   };
 

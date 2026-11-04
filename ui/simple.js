@@ -158,6 +158,10 @@ export function helpView(contact = "") {
     h("section", { class: "simple-group" },
       h("h2", {}, HELP.howTitle),
       HELP.howtos.flatMap((t) => [h("h3", {}, t.q), h("p", {}, t.a)])),
+    h("section", { class: "simple-group" },
+      h("h2", {}, HELP.agentsTitle),
+      h("p", {}, HELP.agentsText),
+      h("p", {}, h("a", { href: "#/agents" }, HELP.agentsLink))),
     who ? h("section", { class: "simple-group simple-help-contact" }, h("h2", {}, HELP.contactTitle), h("p", {}, who)) : null,
   ];
 }
