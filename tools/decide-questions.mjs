@@ -15,10 +15,11 @@ import { createHash, randomBytes } from "node:crypto";
 
 // The story store (dist/stories/store.js) is used by postPlan only. The question functions stay usable when it is not built:
 // postPlan then returns code 1 with this message.
-let storeFor;
+let storeForTool;
+let isStoryRepoName;
 let storeProblem = "";
 try {
-  ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+  ({ storeForTool, isStoryRepoName } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
 } catch (e) {
   storeProblem = String(e?.message || e).split("\n")[0];
 }
@@ -382,7 +383,7 @@ export function postPlan(runDir, text, env = process.env, gh = defaultGh(env)) {
   const run = env.FACTORY_RUN_ID ?? "";
   let problem;
   if (!/^[1-9]\d*$/.test(issue)) problem = "FACTORY_VAR_ISSUE is not an issue number";
-  else if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) problem = "FACTORY_VAR_GITHUB_REPO is not owner/repo";
+  else if (!(isStoryRepoName ?? ((r) => /^[\w.-]+\/[\w.-]+$/.test(r)))(repo)) problem = "FACTORY_VAR_GITHUB_REPO is not owner/repo";
   else if (!/^[\w-]+$/.test(run)) problem = "FACTORY_RUN_ID is not a run ID";
   else {
     try {
@@ -394,8 +395,8 @@ export function postPlan(runDir, text, env = process.env, gh = defaultGh(env)) {
   if (problem) return { code: 2, out: `post-plan: ${problem}\n` };
 
   try {
-    if (!storeFor) throw new Error(`the story store could not be loaded: ${storeProblem}`);
-    const stories = storeFor(repo).sync(gh);
+    if (!storeForTool) throw new Error(`the story store could not be loaded: ${storeProblem}`);
+    const stories = storeForTool(repo, env).sync(gh);
     const n = Number(issue);
     const body = text.replace(/\n+$/, "");
     const post = (comment) => stories.comment(n, comment);

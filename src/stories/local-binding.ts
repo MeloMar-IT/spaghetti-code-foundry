@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+import { localPathProblem } from "../auth/local-repo.js";
 import { findLocalRepo } from "../auth/repos.js";
 import { LocalStore } from "./local-store.js";
 import { STORIES_BRANCH } from "./story-commit.js";
@@ -11,4 +13,14 @@ export function localStoreFor(repo: string): StoryStore {
   const rec = findLocalRepo(repo);
   if (!rec) throw new Error("no local repository is connected as " + repo);
   return new LocalStore(rec.url, repo, { branch: STORIES_BRANCH });
+}
+
+/** The store of a local repository in this folder (a tool process gets the folder from FACTORY_LOCAL_REPO_DIR). */
+export function localStoreAt(dir: string, repo: string): StoryStore {
+  const problem = localPathProblem(dir);
+  if (problem) throw new Error("FACTORY_LOCAL_REPO_DIR " + problem);
+  let isDir = false;
+  try { isDir = statSync(dir).isDirectory(); } catch { /* reported below */ }
+  if (!isDir) throw new Error("FACTORY_LOCAL_REPO_DIR is not a folder");
+  return new LocalStore(dir, repo, { branch: STORIES_BRANCH });
 }

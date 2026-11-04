@@ -29,7 +29,6 @@ import { readFileSync, statSync } from "node:fs";
 import { checkRound, commitPending, decideQuestions, decideRound, readRecord, roundId } from "./decide-questions.mjs";
 
 const repo = process.env.FACTORY_VAR_GITHUB_REPO;
-if (!repo || !/^[\w.-]+\/[\w.-]+$/.test(repo)) fail("set var github_repo to owner/repo");
 const next = process.env.FACTORY_NEXT_QUESTIONS;
 const first = process.env.FACTORY_FIRST_QUESTIONS;
 const decidedFirst = process.env.FACTORY_FIRST_DECIDED;
@@ -43,13 +42,20 @@ function fail(msg) {
 }
 
 // Every story call goes through the story store (dist/stories/store.js), on the runner above.
-let storeFor;
+let storeForTool;
+let isStoryRepoName;
 try {
-  ({ storeFor } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
+  ({ storeForTool, isStoryRepoName } = await import(new URL("../dist/stories/store.js", import.meta.url).href));
 } catch (e) {
   fail(`could not load the story store: ${String(e?.message || e).split("\n")[0]}`);
 }
-const stories = storeFor(repo).sync(gh);
+if (!repo || !isStoryRepoName(repo)) fail("set var github_repo to owner/repo");
+let stories;
+try {
+  stories = storeForTool(repo).sync(gh);
+} catch (e) {
+  fail(String(e?.message || e).split("\n")[0]);
+}
 
 if (process.argv.length > 3) fail("usage: post-questions [<run-dir>]");
 const runDir = process.argv[2];
