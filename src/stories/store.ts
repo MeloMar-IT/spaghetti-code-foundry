@@ -1,10 +1,7 @@
 import type { CheckRun } from "../delivery/handoff.js";
 import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../github.js";
-import { findLocalRepo } from "../auth/repos.js";
-import { isLocalRepoName } from "../auth/local-repo.js";
+import { isLocalRepoName } from "../auth/local-name.js";
 import { GitHubStore } from "./github-store.js";
-import { LocalStore } from "./local-store.js";
-import { STORIES_BRANCH } from "./story-commit.js";
 
 export type StoryState = "open" | "closed";
 export type ChangeState = "open" | "merged" | "closed" | "gone" | "unknown";
@@ -143,6 +140,17 @@ export interface StoryStore {
 
 const stores = new Map<string, StoryStore>();
 
+// The local store needs packages (zod, yaml) and the repository registry. It is loaded once, here, and only used for a `local:`
+// name: a process that has no node_modules (the story tool in a container) still serves every GitHub repository, and says why
+// when it is asked for a local one.
+let local: typeof import("./local-binding.js") | undefined;
+let localProblem = "";
+try {
+  local = await import("./local-binding.js");
+} catch (e) {
+  localProblem = e instanceof Error ? e.message : String(e);
+}
+
 /**
  * The store of a repository. A `local:<slug>-<id8>` string is a connected local repository (a `LocalStore` on its folder);
  * every other string is a GitHub repository. One instance per repository string; a failed lookup caches nothing.
@@ -151,9 +159,8 @@ export function storeFor(repo: string): StoryStore {
   let s = stores.get(repo);
   if (!s) {
     if (isLocalRepoName(repo)) {
-      const rec = findLocalRepo(repo);
-      if (!rec) throw new Error("no local repository is connected as " + repo);
-      s = new LocalStore(rec.url, repo, { branch: STORIES_BRANCH });
+      if (!local) throw new Error(`local repositories are not available in this process: ${localProblem}`);
+      s = local.localStoreFor(repo);
     } else {
       s = new GitHubStore(repo);
     }

@@ -1,26 +1,13 @@
 import { realpathSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { basename, isAbsolute, resolve, sep } from "node:path";
+import { isAbsolute, resolve, sep } from "node:path";
 import { RepoError } from "./repo-url.js";
 import { dataHome } from "./store.js";
 
-/** A local repository is known by this string, never by a GitHub `owner/name`. */
-export const LOCAL_NAME_RE = /^local:[a-z0-9][a-z0-9._-]{0,39}-[0-9a-f]{8}$/;
-export const isLocalRepoName = (name: string): boolean => typeof name === "string" && LOCAL_NAME_RE.test(name);
+export { LOCAL_NAME_RE, isLocalRepoName, localRepoName } from "./local-name.js";
 
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const PATH_MAX = 1000;
-
-/** `local:<slug>-<first 8 hex of the record id>`. */
-export function localRepoName(rec: { id: string; url: string }): string {
-  let slug = basename(rec.url)
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^[^a-z0-9]+/, "")
-    .slice(0, 40);
-  if (!slug) slug = "repo";
-  return "local:" + slug + "-" + rec.id.slice(0, 8).toLowerCase();
-}
 
 /** The pure rules for a stored path (no filesystem, so a record still reads when its folder is gone). */
 export function localPathProblem(url: string): string | undefined {
