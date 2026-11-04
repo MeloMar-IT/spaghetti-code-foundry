@@ -80,6 +80,23 @@ describe("update_check", () => {
   });
 });
 
+describe("skill gaps (#776)", () => {
+  const texts = (a: unknown, b: unknown) => m.riskyChanges(a, b).map((r: any) => r.text);
+  const at = (repository: string) => ({ ...skills(), authoring: { ...skills().authoring, repository } });
+  const keys = ["repository", "label", "max_open", "max_per_day"];
+  it("has a group with four controls", () => {
+    for (const k of keys) expect(m.groupOf(`skills.authoring.${k}`)).toBe("Skill gaps");
+    const s = m.skillsSection(descriptions(), skills());
+    for (const k of keys) expect(control(s.el, descriptions().find((d) => d.key === `skills.authoring.${k}`)!.label)).toBeTruthy();
+  });
+  it("asks first for a new or changed repository only", () => {
+    expect(texts(at(""), at("lib/skills"))).toHaveLength(1);
+    expect(texts(at("lib/skills"), at("lib/other"))).toHaveLength(1);
+    expect(texts(at("lib/skills"), at("lib/skills"))).toEqual([]);
+    expect(texts(at("lib/skills"), at(""))).toEqual([]);
+  });
+});
+
 describe("riskyChanges", () => {
   const texts = (a: unknown, b: unknown) => m.riskyChanges(a, b).map((r: any) => r.text);
   it("repository turned on only", () => {

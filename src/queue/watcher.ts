@@ -9,6 +9,7 @@ import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
 import { emitLiveTelemetry } from "../telemetry/telemetry.js";
 import { loadFlow } from "../flow/load.js";
+import { isSkillGapStop } from "../skills/gap-issues.js";
 import { commentReads, extraWaitingIssues, EXTRA_READS_PER_CHECK, EXTRA_READ_MEMO_MS, isPaused, openQuestion, steppedAsideFor, waitingLabelOf, waitsAs, type CommentReads } from "./waiting-issues.js";
 import { canWrite, commentsAfter, gh, ghActsAsApp, ghJson, isBot, isOverruleReply, isStatusComment, mayWrite, repoPermission, withGhEnv, type Comment, type Issue, type RestIssue } from "../github.js";
 import { storeFor, type StoryStore } from "../stories/store.js";
@@ -127,6 +128,8 @@ export interface WatcherDeps {
   afterCheck?: () => Promise<void> | void;
   /** The sign-in of the watcher's repository (stored watchers); without it the watcher uses the host's `gh` login. */
   gh?: RepoGhIdentity;
+  /** Is every unknown skill of a skill-gap stop in the catalogue now? Without it, such a run is never resumed here. */
+  skillReady?: (run: RunSummary) => boolean;
 }
 
 export interface WatcherStatus {
@@ -1746,7 +1749,8 @@ export class Watcher {
           (run.status === "stopped" && /daily budget/.test(run.reason ?? "") && budgetLeft) ||
           (run.status === "stopped" && isUserBudgetStop(run.reason) && budgetLeft && this.budgetLeftFor(run.owner)) ||
           (run.status === "stopped" && /usage limit reached|signed out —/.test(run.reason ?? "") && retryLimitAfter(run)) ||
-          (run.status === "stopped" && isPaused(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run) &&
+          (run.status === "stopped" && isSkillGapStop(run) && !paused && this.areaMayBeFree(run) && this.d.skillReady?.(run) === true) ||
+          (run.status === "stopped" && isPaused(run) && !isSkillGapStop(run) && !isUserBudgetStop(run.reason) && !/daily budget|usage limit reached|signed out —/.test(run.reason ?? "") && !paused && this.areaMayBeFree(run) &&
             // a retry after a time limit waits for the budget like any run that starts again (it would stop at its first step)
             (!isTimeLimitStop(run.reason) || (budgetLeft && this.budgetLeftFor(run.owner))));
         const asks = !resumable && run.status === "stopped" && labelFor(run, this.L) === this.L.needsInfo;
@@ -1767,7 +1771,7 @@ export class Watcher {
           // A bug story waits for the same code area: it gets the area first.
           holds.push(this.held("bug_first", issue, { runId: run.runId }));
         } else if (resumable && !overLimit(isFirst)) {
-          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : isTimeLimitStop(run.reason) ? "trying again after it ran out of time" : "can continue now"), undefined, false, first, undefined, isTimeLimitStop(run.reason));
+          this.resume(n, run.runId, why(n, run.status !== "stopped" ? "was interrupted" : /daily budget/.test(run.reason ?? "") ? "budget available again" : isUserBudgetStop(run.reason) ? "the owner's limit allows it again" : /usage limit/.test(run.reason ?? "") ? "trying again after the usage limit" : isTimeLimitStop(run.reason) ? "trying again after it ran out of time" : isSkillGapStop(run) ? "the missing skill is in the catalogue now" : "can continue now"), undefined, false, first, undefined, isTimeLimitStop(run.reason));
           this.labelWhenDone(n, run.runId);
           started++;
           if (isFirst) firstStarted++;

@@ -5276,6 +5276,7 @@ skills:
   catalogue: { max_candidates: 20, max_tokens: 2000, include: [], exclude: [] }
   selection: { max_skills: 6, max_skill_tokens: 5000, max_tokens: 15000, include: [], exclude: [], exclusive: [] }
   review: { max_tokens: 3000, max_skill_tokens: 1000 }
+  authoring: { repository: "", label: Factory_go, max_open: 5, max_per_day: 3 }
   unresolved:
     unknown: stop
     missing: stop
@@ -5286,6 +5287,34 @@ skills:
 ```
 
 `skills.tools` is read but no run uses it yet.
+
+#### Skill gaps
+
+The Foundry can ask for a missing skill itself. Set `skills.authoring.repository` to a skill-library repository (`owner/name`, marked as a skill library in its Run settings). Empty means off. The **Skill gaps** group of the Skills card changes the four settings:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `repository` | empty (off) | The repository where the issues are opened. |
+| `label` | `Factory_go` | The label of a new issue. The `skill-write` watcher of that repository picks it up. |
+| `max_open` | 5 | No new issue while this many gap issues are open (1 to 50). |
+| `max_per_day` | 3 | The most new gap issues in 24 hours (0 to 20). |
+
+A signal opens an issue when it finds:
+
+- **Unknown skill.** A plan asked for a skill id that is not in the catalogue. Seen in runs of the last 30 days.
+- **Uncovered technology.** The repository profile found a technology (with high or medium confidence) that no skill in the catalogue covers. Seen in runs of the last 30 days.
+- **Repeated review finding.** The same kind of `[high]` or `[medium]` review finding (security, error handling, test coverage, and so on) in 3 or more runs of one repository within 14 days.
+- **Repeated failure.** A run failed at a test step, or went through the same fix step 3 or more times, in a repository whose technology is known. Three such runs in 14 days, or one run that repaired 3 times, is enough. An open monitor finding for the same step or a red develop also counts.
+
+Rules that always hold:
+
+- One issue per skill topic. A topic is named like `kafka` or `kafka-testing`. The issue has the marker `<!-- scf skill-gap=<topic> -->`: while it is open, no new issue for that topic is opened, and a closed one is not reopened for 30 days.
+- The limits count the open gap issues and the issues made in the last 24 hours, over all the marked issues in the repository.
+- The title is `Skill gap: <topic>`. The body says what to teach, the evidence (run ids, finding kinds, technology and version, the repository), and three sample tasks. It never holds file content, paths, review text, issue text or secrets.
+- If the repository's issue list is too long to check, nothing is opened, and the log says so.
+- The label is created in the repository if it is missing.
+
+A run that stopped because of an `unknown` skill gets `Skill gap issue: <url>` in its stop reason. When every unknown skill of that run is in the catalogue, the watcher resumes the run by itself. The sweep runs once an hour and when a run stops for skills. Its log lines start with `skill-gaps:`. It needs an administrator's GitHub sign-in for the repository (a repository record with its own token or app); without one, it logs why and opens nothing. The ledger of the issues is `skill-gaps.json` in the data folder.
 
 #### Write a skill
 

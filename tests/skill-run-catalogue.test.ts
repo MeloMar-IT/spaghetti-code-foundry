@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
@@ -421,5 +421,23 @@ describe("runSkillCatalogue with owner choices", () => {
     );
     expect(r.record?.choices).toHaveLength(100);
     expect(r.record?.choicesOmitted).toBe(1);
+  });
+});
+
+describe("technologies in the record (#776)", () => {
+  it("records the observed technologies with a version, never coverage", () => {
+    const dir = mkdtempSync(join(tmpdir(), "run-catalogue-tech-"));
+    try {
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", engines: { node: ">=20.1.0" } }));
+      for (let i = 0; i < 6; i++) writeFileSync(join(dir, `m${i}.py`), "x = 1\n");
+      const r = runSkillCatalogue({ workdir: dir, config: cfg(), task: "" }, { discover: () => reg(sk("alpha")), profile: () => buildRepoProfile(dir) });
+      const t = r.record?.technologies ?? [];
+      expect(t.find((x) => x.name === "nodejs")).toMatchObject({ version: "20.1.0", confidence: "high" });
+      expect(t.find((x) => x.name === "python")).toMatchObject({ confidence: "high" });
+      expect(JSON.stringify(t)).not.toContain("covered");
+      expect(JSON.stringify(r.record)).not.toContain(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
