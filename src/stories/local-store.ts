@@ -5,7 +5,7 @@ import type { Comment, Issue, RestIssue, UpsertOptions, UpsertResult } from "../
 import { isStatusComment, sameBody, STATUS_MARKER } from "../github.js";
 import { checkDirs, type Entry, GO_LABEL, hasLabel, isOpenState, MAX_BYTES, scan, shownLabels, STORIES_DIR, type StoryView, storyNames, toComments, toIssue, toRest, toView, UNREADABLE_TITLE, updatedMs, withLabels } from "./local-map.js";
 import { checkFields, commentLines, foundryIds, jsonText, pickFields, plainText, ticketText } from "./local-text.js";
-import { type FileStory, type FileStoryState, formatStoryFile, GO_STATE, highestCommentId, nextCommentId, storyFileName, withCommentIds } from "./story-file.js";
+import { type FileStory, type FileStoryState, formatStoryFile, GITHUB_REPO_RE, GO_STATE, highestCommentId, nextCommentId, storyFileName, withCommentIds } from "./story-file.js";
 import { commitStory, type StoryChange } from "./story-commit.js";
 import { pidAlive, type StoryLockOptions, withStoryLock, withStoryLockSync } from "./story-lock.js";
 import type { ChangeActivity, ChangeId, ChangeRef, ChangeState, GhCall, GhRunner, MergedChange, OpenChange, ReviewComment, StoryState, StoryStore, SyncStories, SyncStory } from "./store.js";
@@ -48,7 +48,8 @@ const notYet = (name: string): never => { throw new Error(`${name} is not yet av
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 const desc = (a: Entry, b: Entry): number => b.n - a.n;
 const noCheck = (): void => {};
-type Change<T> = (s: FileStory, now: string) => { story?: FileStory; out: T };
+/** `recommit`: nothing changes in the file, but commit it again (an earlier write saved it and then failed to commit). */
+type Change<T> = (s: FileStory, now: string) => { story?: FileStory; out: T; recommit?: boolean };
 
 /** The store shows `go` as open. */
 const plain = (s: FileStoryState): StoryState => (s === "closed" ? "closed" : "open");
@@ -209,7 +210,10 @@ export class LocalStore implements StoryStore {
     before.comments = withCommentIds(before.comments, before.commentTop);
     before.commentTop = highestCommentId(before);
     const r = change(before, now);
-    if (!r.story) return { entry: e, out: r.out };
+    if (!r.story) {
+      if (r.recommit) this.commitFiles(n, [e.rel], what, budget?.());
+      return { entry: e, out: r.out };
+    }
     // The high-water mark survives a removed comment: an id that was used is never given out again.
     const comments = withCommentIds(r.story.comments, r.story.commentTop);
     const story = { ...r.story, comments, commentTop: highestCommentId({ comments, commentTop: r.story.commentTop }), updatedAt: now };
@@ -284,6 +288,30 @@ export class LocalStore implements StoryStore {
   private addComment(s: FileStory, now: string, body: string): { story: FileStory; out: string } {
     const id = nextCommentId(s.comments, s.commentTop);
     return { story: { ...s, comments: [...s.comments, { id, author: this.author, createdAt: now, body }] }, out: String(id) };
+  }
+  /**
+   * Records that the story is GitHub issue `gh` of `repo`. The same pair again writes nothing, but commits the file if it is not
+   * committed yet (the file is saved before git is called, so a failed commit would stay missing). A different number or
+   * repository is refused: a saved mapping is never overwritten.
+   */
+  async setGithubIssue(issue: number, gh: number, repo: string, timeoutMs?: number): Promise<void> {
+    if (!whole(gh)) throw new Error("not an issue number");
+    if (!GITHUB_REPO_RE.test(repo)) throw new Error("not a repository name");
+    await this.write(issue, "moved", { timeoutMs }, (s) => {
+      if (s.githubIssue !== undefined || s.githubRepo !== undefined) {
+        if (s.githubIssue === gh && s.githubRepo === repo) return { out: undefined, recommit: true };
+        throw new Error(`story #${issue} was already moved to ${s.githubRepo ?? "another repository"}#${s.githubIssue ?? "?"}`);
+      }
+      return { story: { ...s, githubIssue: gh, githubRepo: repo }, out: undefined };
+    });
+  }
+  /** Records that the move finished everything for the story's issue. Needs `setGithubIssue` first. */
+  async markGithubDone(issue: number, timeoutMs?: number): Promise<void> {
+    await this.write(issue, "moved", { timeoutMs }, (s) => {
+      if (s.githubIssue === undefined) throw new Error(`story #${issue} has no GitHub issue yet`);
+      if (s.githubDone) return { out: undefined, recommit: true };
+      return { story: { ...s, githubDone: true }, out: undefined };
+    });
   }
   async upsertStatusComment(issue: number, body: string, o: UpsertOptions): Promise<UpsertResult> {
     if (o.on === "pr") noChanges();
