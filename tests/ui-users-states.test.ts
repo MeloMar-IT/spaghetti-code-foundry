@@ -115,7 +115,7 @@ describe("empty and partial", () => {
   it("when the limits fail, the column says not available and the list is drawn", async () => {
     limitsFail = true;
     await show();
-    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("not available");
+    expect(rowOf("Ann").all("td")[7]!.textContent).toBe("not available");
     expect(rows()).toHaveLength(2);
   });
 });

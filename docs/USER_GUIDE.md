@@ -1315,7 +1315,7 @@ For a code failure the *why* is one sentence written by a small model that read 
 failing output (see "The failure summary call" in Costs). The comment and the card then say so.
 If the model says the cause is the environment, the failure counts as a Foundry failure.
 
-**A daily cap per project.** Each repository can have its own daily cap in USD, set by an administrator (`PUT /api/admin/repos/:id/budget`, a number above 0, or null to clear it; every change writes an audit line). Without its own cap, a project whose owner uses the Simple view gets the default `simple_project_daily_budget_usd` (5 to start; 0 means no default). The runs that started today and belong to the project count: by GitHub repository for a GitHub project, by repository id for a local one. When the cap is reached, no new run or resume of the project starts, and a running run stops before its next step. The watcher continues it the next day. The cap holds only while `cost_limits` is on. People see no amount: Simple reads "The Foundry has done enough for today; it continues tomorrow."
+**A daily cap per project.** Each repository can have its own daily cap in USD, set by an administrator (`PUT /api/admin/repos/:id/budget`, a number above 0, or null to clear it; every change writes an audit line). Without its own cap, a project whose owner uses the Simple view gets the default `simple_project_daily_budget_usd` (5 to start; 0 means no default). The runs that started today and belong to the project count: by GitHub repository for a GitHub project, by repository id for a local one. When the cap is reached, no new run or resume of the project starts, and a running run stops before its next step. The watcher continues it the next day. The cap holds only while `cost_limits` is on. An admin sees and changes these caps on the Users page (see "Simple accounts and their caps"). People see no amount: Simple reads "The Foundry has done enough for today; it continues tomorrow."
 
 A usage limit, the daily budget, a sign-out and an unreachable AI service do not fail a run: they
 pause it, and it continues by itself (a sign-out needs you to sign in again first).
@@ -4671,6 +4671,8 @@ Limits, App repositories, New link, View as user), **Security** (Reset password,
 Unblock) and **Danger** (Delete). The buttons below are on that page. An address for an account
 that does not exist shows "This account does not exist." with a link back to Users.
 
+**Simple accounts and their caps.** The Users page has a **View** column: an account that uses the Simple view shows a "Simple" mark. Tick **Only Simple accounts** to show only those accounts (the address becomes `#/users?view=simple`). Under the filtered list, each Simple account lists its projects, with today's spend, the daily cap in effect (its own cap, or the default `simple_project_daily_budget_usd` when it has none) and a field with a **Save** button. Type a number above 0 to set the cap, or leave the field empty and save to clear it and use the default. A value that is not a number above 0 is refused before anything is sent. If the server refuses a value, the message shows on that project's row. Read-only pages show the values without the field. The "Cost limits are off in Settings" note appears when `cost_limits` is off, because the caps are then not enforced.
+
 - **Add user** asks for name, e-mail and role. Then the dialog shows the set-password link once. The
   link works once, for 24 hours, and you must send it to the user yourself. **Copy** needs HTTPS or
   localhost; otherwise select the link in the field and copy it. Close the dialog too early and
@@ -4708,7 +4710,7 @@ not change. An error from Block or Delete can come after the change was made; cl
 see the list again. Blocking or deleting your own account signs you out, and the page reloads.
 
 **Managing accounts over the API.** Admins only (a user gets `403`). `GET /api/users` lists the
-accounts (`id`, `name`, `email`, `role`, `status`, `created`, `lastSignIn`, `runs`, `hasPassword`, `lockedUntil`: an ISO time while the account is locked, else `null`; a blocked account can have both).
+accounts (`id`, `name`, `email`, `role`, `view` (`simple`, `advanced` or `admin`), `status`, `created`, `lastSignIn`, `runs`, `hasPassword`, `lockedUntil`: an ISO time while the account is locked, else `null`; a blocked account can have both).
 `POST /api/users {"name": …, "email": …, "role": "admin"|"user"}` adds an account without a password
 and answers 201 with the account and its one-time token (400 for bad input, 409 for a taken e-mail).
 The token is shown once; the link is `<address>/#/set-password/<token>`.

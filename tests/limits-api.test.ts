@@ -141,9 +141,9 @@ describe("limits API", () => {
     expect(r.text).toContain("limits-change");
   });
 
-  it("keeps the account view at ten keys", async () => {
+  it("keeps the account view at eleven keys", async () => {
     const r = await call(admin, "GET", "/api/users");
-    for (const u of r.json()) expect(Object.keys(u)).toHaveLength(10);
+    for (const u of r.json()) expect(Object.keys(u)).toHaveLength(11);
   });
 
   it("a broken limits.json gives a plain 500 and the account list still works", async () => {
