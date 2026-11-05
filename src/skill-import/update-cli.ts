@@ -1,4 +1,6 @@
 import { resolve } from "node:path";
+import type { Config } from "../config.js";
+import type { EvaluateCliOptions } from "../skills/evaluate-cli.js";
 import { SOURCE_CONNECTORS, connectorSource } from "../skills/connectors.js";
 import { reviewLines } from "../skills/import-review.js";
 import { readStagedImport } from "../skills/import-stage.js";
@@ -33,6 +35,7 @@ import {
   type CatalogueContext,
 } from "./catalogue-git.js";
 import { stageSource, type SkillImportOptions } from "./cli.js";
+import { autoSource, autoUpdate } from "./update-auto.js";
 import { LsRemoteError, resolveHead, resolveTrack, type TrackResult } from "./ls-remote.js";
 import type { GitCredential } from "./git-tree.js";
 import { ACCESS_CHANGED, sameDestination, sourceCredential } from "./source-access.js";
@@ -48,6 +51,12 @@ export interface SkillUpdateOptions extends Omit<SkillImportOptions, "cwd"> {
   cwd?: string;
   /** Tests: reads the upstream commit of a branch or tag (no track: HEAD). */
   resolve?: (repository: string, track: string | undefined, o: { signal: AbortSignal; remote?: string; env?: NodeJS.ProcessEnv; credential?: GitCredential }) => Promise<TrackResult>;
+  /** The skill settings of the automatic update (approval keys, roots). Default: the configuration file. */
+  skills?: Config["skills"];
+  /** The audit actor of the automatic update: "cli" (default) or "monitor". */
+  auditBy?: string;
+  /** Tests and the entry point: runs the agent scenarios of the evaluation suite (default: the sandboxed runner of `score --agent`). */
+  agentScore?: (id: string, suiteFile: string | undefined, out: (line: string) => void, opts: EvaluateCliOptions & { signal?: AbortSignal }) => Promise<number>;
 }
 
 const syntax = (why: string) => new Error(`${why}\n${UPDATE_USAGE}`);
@@ -107,6 +116,9 @@ export async function updateSource(
   due?: DueInput,
 ): Promise<UpdateCheckOutcome> {
   try {
+    // A due run of an `update.auto` first-party source publishes and approves a release itself; every other run opens a pull request.
+    const auto = due ? autoSource(due.sources, id) : undefined;
+    if (auto && due) return await autoUpdate(auto, out, opts, signal, { resolve: opts.resolve ?? defaultResolve, sources: due.sources });
     return await run(id, given, out, opts, signal, due);
   } catch (e) {
     if (e instanceof Interrupted) {

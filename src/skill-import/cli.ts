@@ -72,7 +72,7 @@ export async function stageSource(
   commit: string,
   out: (line: string) => void,
   opts: Omit<SkillImportOptions, "cwd"> & { signal: AbortSignal },
-): Promise<{ code: number; done?: StageDone }> {
+): Promise<{ code: number; done?: StageDone; rejected?: readonly RejectedSkill[] }> {
   let prep: PreparedImport | undefined;
   let failed: unknown;
   let credential = opts.credential;
@@ -124,7 +124,8 @@ export async function stageSource(
     if (e instanceof SkillImportError) {
       if (e.code === "nothing-staged") rejectedLines(out, e.rejected);
       out(`PROBLEM ${e.message}`);
-      return { code: 1 };
+      // `rejected`: the import worked and refused every skill; this is not a fetch failure.
+      return e.code === "nothing-staged" ? { code: 1, rejected: e.rejected } : { code: 1 };
     }
     throw e;
   }

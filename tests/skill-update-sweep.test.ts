@@ -189,6 +189,21 @@ describe("the sweeper", () => {
     expect(lines).toEqual(["skill-sources: NOTE hello", "skill-sources: CHECKED 0 sources"]);
   });
 
+  it("turns the PROBLEM of an automatic update into the same finding, and OK or UNCHANGED clears it", async () => {
+    let outcome: "PROBLEM" | "UNCHANGED" = "PROBLEM";
+    const s = make(async ({ out, onChecked }) => {
+      out(outcome === "PROBLEM" ? "ver: PROBLEM no skill of ver@0123456789ab passed the gates; nothing was released" : "ver: UNCHANGED ver is at 0123456789ab (approved in the data folder); nothing to release");
+      onChecked("ver", outcome);
+      return outcome === "PROBLEM" ? 1 : 0;
+    });
+    await s.tick();
+    expect(open().map((f) => [f.detector, f.summary])).toEqual([[SKILL_SOURCE_DETECTOR, "Skill source ver: no skill of ver@0123456789ab passed the gates; nothing was released"]]);
+    outcome = "UNCHANGED";
+    now = new Date(now.getTime() + 2000);
+    await s.tick();
+    expect(open()).toEqual([]);
+  });
+
   it("opens a finding for PROBLEM and clears it when the source is OK", async () => {
     let ok = false;
     const s = make(async (a) => (ok ? (a.onChecked("lib", "OK"), 0) : problem("lib", "it broke")(a)));

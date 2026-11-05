@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { UPDATE_DUE_USAGE } from "../src/skill-import/update-cli.js";
+import { dataHome } from "../src/auth/store.js";
 import { recordApprovedRef } from "../src/skills/approvals.js";
 import { LsRemoteError } from "../src/skill-import/ls-remote.js";
 import { branches, branchOf, catalogueYaml, ghCalls, git, NOW, sigCounts, snapshot, update, useWorlds, W, world, type World } from "./helpers/skill-update-world.js";
@@ -29,6 +30,10 @@ const record = (w: World) => JSON.parse(readFileSync(join(w.home, "skill-update-
 const c12 = (c: string) => c.slice(0, 12);
 const reviewersFile = (w: World) => (existsSync(`${w.log}.reviewers.json`) ? JSON.parse(readFileSync(`${w.log}.reviewers.json`, "utf8")) : {});
 const URL99 = "https://github.com/owner/repo/pull/99";
+/** Removes what a test left in the shared test data folder. */
+const cleanData = (home: string) => {
+  for (const f of ["skill-approvals.json", "skill-update-checks.json", "skill-auto-updates.json", "skill-releases", "skill-quarantine", "skill-evaluations", "audit.jsonl"]) rmSync(join(home, f), { recursive: true, force: true });
+};
 
 describe("the syntax", () => {
   it("is refused before any git or gh call", async () => {
@@ -231,11 +236,33 @@ describe("an auto source with a ref in the data folder", () => {
       .replace("trust: verified", "trust: first-party")
       .replace(/update: \{cadence: weekly\}/, "update: {cadence: weekly, auto: true}");
     const w = world(yaml);
-    recordApprovedRef("ver", "github.com/example/verified", W.c2, { home: w.home });
+    // The automatic path works in the data folder only, so the stored ref and the check record live there.
+    const home = dataHome();
+    cleanData(home);
+    try {
+      recordApprovedRef("ver", "github.com/example/verified", W.c2, { home });
+      const r = await run(w, {}, { home });
+      expect(r.rc).toBe(0);
+      expect(r.text).not.toContain("changed on origin");
+      expect(r.lines).toContain(`ver: UNCHANGED ver is at ${c12(W.c2)} (approved in the data folder); nothing to release`);
+      expect(ghCalls(w).filter((c) => c.includes("pr create") && c.includes("ver"))).toEqual([]);
+    } finally {
+      cleanData(home);
+    }
+  });
+
+  it("is refused when the home option is not the data folder, and nothing is written", async () => {
+    const yaml = dueYaml({ lib: "manual", ver: "weekly", verAt: W.c1 })
+      .replace("trust: verified", "trust: first-party")
+      .replace(/update: \{cadence: weekly\}/, "update: {cadence: weekly, auto: true}");
+    const w = world(yaml);
+    cleanData(dataHome());
     const r = await run(w);
-    expect(r.rc).toBe(0);
-    expect(r.text).not.toContain("changed on origin");
-    expect(r.lines).toContain(`ver: UNCHANGED ver is at ${c12(W.c2)} (ref.approved); nothing to propose`);
+    expect(r.rc).toBe(1);
+    expect(r.lines).toContain("ver: PROBLEM the automatic update works in the data folder only; nothing was released");
+    expect(existsSync(join(dataHome(), "skill-releases"))).toBe(false);
+    expect(existsSync(join(dataHome(), "skill-auto-updates.json"))).toBe(false);
+    expect(existsSync(join(w.home, "skill-approvals.json"))).toBe(false);
   });
 });
 
