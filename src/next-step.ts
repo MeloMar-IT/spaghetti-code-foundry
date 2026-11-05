@@ -131,7 +131,7 @@ export interface NextData {
   choreName?: "release" | "schedule run";
   choreWait?: ChoreWait;
   /** `user_limit`: which per-user limit holds the job. */
-  userLimit?: "concurrent" | "per_day" | "budget" | "project";
+  userLimit?: "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget";
   /** `user_limit` budget: the amount, for an administrator only. */
   budgetUsd?: number;
   /** The pull request the release waits for. */
@@ -646,7 +646,14 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       who = "A time limit";
       const perDay = d.userLimit === "per_day";
       if (perDay) until = "tomorrow";
-      if (d.userLimit === "budget") {
+      if (d.userLimit === "workspace_budget") {
+        until = "next month";
+        say = "nothing to do, it goes on next month";
+        why = d.forUser ? "Your workspace's limit for this month is reached" : "The workspace's budget for this month is used up";
+      } else if (d.userLimit === "workspace") {
+        why = d.forUser ? "Your workspace's limit of runs at the same time is reached" : "The workspace's limit of runs at the same time is reached";
+        say = "nothing to do, it starts when one of the workspace's runs ends";
+      } else if (d.userLimit === "budget") {
         until = "tomorrow";
         say = "nothing to do, it goes on tomorrow";
         why = d.forUser ? "Your limit for today is reached" : `The owner's daily budget${d.budgetUsd !== undefined ? ` of $${d.budgetUsd}` : ""} is used up`;
@@ -727,7 +734,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && (d.userLimit === "budget" || d.userLimit === "workspace_budget"), workspace: kind === "user_limit" && /^workspace/.test(d.userLimit ?? ""),signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,
@@ -846,7 +853,7 @@ function stoppedStep(reason: string | undefined): string | undefined {
 
 export interface RunNextOptions extends NextData {
   /** Pending-job info from Scheduler.queue(). */
-  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" | "budget" | "project" };
+  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget" };
   title?: string;
 }
 

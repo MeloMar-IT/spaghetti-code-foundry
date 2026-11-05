@@ -1447,6 +1447,10 @@ Every status in the app has a **?** that shows the two sentences from this table
 | waiting — the owner's limit of runs per day | The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page. |
 | waiting — the owner's daily budget | The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page. |
 | waiting — the owner's limit of runs at the same time | As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page. |
+| waiting — your workspace's limit for this month is reached | Your workspace used as much this month as the administrator allows. Nothing to do — it goes on by itself next month. |
+| waiting — your workspace's limit of runs at the same time is reached | As many runs of your workspace are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of them ends. |
+| waiting — the workspace's monthly budget | The workspace's budget for this month is used up. Nothing to do — it goes on next month, or sooner when the limit is raised. |
+| waiting — the workspace's limit of runs at the same time | As many runs of the workspace are working at the same time as its limit allows. Nothing to do — it starts when one of them ends, or sooner when the limit is raised. |
 | waiting for develop | Another run is merging into `develop` and testing it, and only one run does that at a time. It shows who holds the turn and since when. Nothing to do — it goes on when that run has pushed `develop` or given up its turn. |
 | waiting for another run in the same code | Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished. |
 | waiting — a bug story goes first | A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that. |
@@ -7415,12 +7419,18 @@ workspaces:
     name: API team
     members:                     # account ids
       - "6f1c2a3e-0000-4000-8000-000000000001"
-    limits:                      # all optional; stored only in this part, enforced later
+    limits:                      # all optional
       max_concurrent: 2
       test_slots: 1
       monthly_budget_usd: 150
 ```
 
+- **Limits.** Each limit holds for the workspace only:
+  - `max_concurrent`: no new job of the workspace starts while it has that many running. The account limits still apply on top.
+  - `monthly_budget_usd`: no new run of the workspace starts once the cost of its runs this calendar month (UTC) reaches the limit. The run waits with "waiting — the workspace's monthly budget" and starts again in the next month. This limit is not checked when `cost_limits` is off.
+  - `test_slots`: the test runs of the workspace never use more test slots at once than this. The machine-wide total still applies.
+  - A workspace without limits, and the `default` workspace, work as before.
+- **Fair turns.** When two or more workspaces have stories waiting, a free slot goes to the workspace that started a story least recently. Inside a workspace the order is unchanged: bugs first, then priority, then account fairness.
 - An account that is in no workspace is in `default`. An account may be in several workspaces.
 - An admin sets the workspace of a repository with `PUT /api/admin/repos/:id/workspace` (`{ "workspace": "team-api" }`,
   or `null` for `default`). A transfer to another account keeps it. A repository without one is in `default`.
@@ -7428,7 +7438,7 @@ workspaces:
   Usage events carry the workspace.
 - An invalid entry, or a second entry with the same id, stops the config from being read. A plugin can supply
   the list instead (`api.workspaces`, see [PLUGIN_API.md](PLUGIN_API.md#workspaces)).
-- The Settings page does not show the list yet; edit it in `config.yaml`. The limits take effect in a later part.
+- The Settings page does not show the list yet; edit it in `config.yaml`.
 
 ### Plugins
 

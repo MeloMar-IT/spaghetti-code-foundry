@@ -99,3 +99,17 @@ export function workspaceForJob(input: { githubRepo?: string; owner?: string }):
     return DEFAULT_WORKSPACE;
   }
 }
+
+/**
+ * The two variables that tell tools/test-slot which workspace a run belongs to and how many test slots it may hold
+ * (#819). The id is the run's valid workspace id or "default"; the limit is "" when the workspace has none. Never throws.
+ */
+export function workspaceSlotEnv(workspace: string | undefined): { FACTORY_WORKSPACE: string; FACTORY_WORKSPACE_TEST_SLOTS: string } {
+  try {
+    const id = validWorkspaceId(workspace) ? workspace : DEFAULT_WORKSPACE;
+    const n = limitsOf(id).test_slots;
+    return { FACTORY_WORKSPACE: id, FACTORY_WORKSPACE_TEST_SLOTS: typeof n === "number" && Number.isInteger(n) && n >= 1 ? String(n) : "" };
+  } catch {
+    return { FACTORY_WORKSPACE: DEFAULT_WORKSPACE, FACTORY_WORKSPACE_TEST_SLOTS: "" };
+  }
+}

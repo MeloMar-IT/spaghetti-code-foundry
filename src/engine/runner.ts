@@ -60,7 +60,7 @@ import { configureTelemetry } from "../telemetry/telemetry.js";
 import { emitRunMeasured } from "../monitor/measures.js";
 import { runEndEvents, runStartedEvent } from "../usage/events.js";
 import { emitUsage } from "../usage/hub.js";
-import { workspaceForJob } from "../workspaces/index.js";
+import { workspaceForJob, workspaceSlotEnv } from "../workspaces/index.js";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
@@ -431,6 +431,7 @@ async function drive(
     baseEnv = {
       FACTORY_TASK: task,
       FACTORY_RUN_ID: summary.runId,
+      ...workspaceSlotEnv(summary.workspace),
       FACTORY_WORKDIR: summary.workdir!,
       FACTORY_BRANCH: summary.branch ?? "",
       FACTORY_LEARNINGS_FILE: lf,

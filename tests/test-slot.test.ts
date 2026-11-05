@@ -442,3 +442,111 @@ describe("workers from the governor", () => {
     }
   });
 });
+
+describe("tools/test-slot: workspace slots (#819)", () => {
+  const ws = (id: string, n: string, extra: Record<string, string> = {}) => env({ FACTORY_WORKSPACE: id, FACTORY_WORKSPACE_TEST_SLOTS: n, ...extra });
+  /** Runs `name` (start, 0.5 s, end) through test-slot; resolves with the exit code. */
+  const timed = (d: string, log: string, name: string, e: NodeJS.ProcessEnv) =>
+    new Promise<number>((done) => {
+      const c = spawn(tool, [d, "sh", "-c", `echo ${name}-start >> "${log}"; sleep 0.5; echo ${name}-end >> "${log}"`], { env: e });
+      c.on("exit", (code) => done(code ?? 1));
+    });
+  const lines = (log: string) => readFileSync(log, "utf8").trim().split("\n");
+  const logFile = () => join(dir(), "order.txt");
+
+  it("two commands of one workspace with a limit of 1 run one after the other, although the machine has room", async () => {
+    const d = dir();
+    const log = logFile();
+    const e = ws("team-a", "1", { FACTORY_VAR_TEST_SLOTS: "2" });
+    const codes = await Promise.all([timed(d, log, "a", e), new Promise<number>((r) => setTimeout(() => timed(d, log, "b", e).then(r), 150))]);
+    expect(codes).toEqual([0, 0]);
+    expect(lines(log)).toEqual(["a-start", "a-end", "b-start", "b-end"]);
+    expect(readdirSync(join(d, "workspaces", "team-a"))).toEqual([]);
+  });
+
+  it("commands of two workspaces run at the same time", async () => {
+    const d = dir();
+    const log = logFile();
+    const codes = await Promise.all([
+      timed(d, log, "a", ws("team-a", "1", { FACTORY_VAR_TEST_SLOTS: "2" })),
+      timed(d, log, "b", ws("team-b", "1", { FACTORY_VAR_TEST_SLOTS: "2" })),
+    ]);
+    expect(codes).toEqual([0, 0]);
+    expect(lines(log).slice(0, 2).sort()).toEqual(["a-start", "b-start"]);
+  });
+
+  it("the machine total still applies: one machine slot runs two workspaces one after the other", async () => {
+    const d = dir();
+    const log = logFile();
+    const codes = await Promise.all([
+      timed(d, log, "a", ws("team-a", "2", { FACTORY_VAR_TEST_SLOTS: "1" })),
+      new Promise<number>((r) => setTimeout(() => timed(d, log, "b", ws("team-b", "2", { FACTORY_VAR_TEST_SLOTS: "1" })).then(r), 150)),
+    ]);
+    expect(codes).toEqual([0, 0]);
+    expect(lines(log)).toEqual(["a-start", "a-end", "b-start", "b-end"]);
+    expect(readdirSync(d).filter((n) => n.startsWith("slot-"))).toEqual([]);
+  });
+
+  it("an id that is not a workspace id is ignored: no folder is made and the command runs", () => {
+    const d = dir();
+    const r = spawnSync(tool, [d, "sh", "-c", "echo ran"], { env: ws("../x", "1", { FACTORY_VAR_TEST_SLOTS: "1" }), encoding: "utf8" });
+    expect(r.stdout).toBe("ran\n");
+    expect(existsSync(join(d, "workspaces"))).toBe(false);
+    expect(existsSync(join(d, "..", "x"))).toBe(false);
+    const none = spawnSync(tool, [d, "sh", "-c", "echo ran"], { env: ws("team-a", "", { FACTORY_VAR_TEST_SLOTS: "1" }), encoding: "utf8" });
+    expect(none.stdout).toBe("ran\n");
+    expect(existsSync(join(d, "workspaces"))).toBe(false);
+  });
+
+  it("a workspace slot is held when the machine has no slots (FACTORY_VAR_TEST_SLOTS=0), and it is freed at the end", () => {
+    const d = dir();
+    const r = spawnSync(tool, [d, "sh", "-c", `ls "${d}/workspaces/team-a"`], { env: ws("team-a", "1", { FACTORY_VAR_TEST_SLOTS: "0" }), encoding: "utf8" });
+    expect(r.stdout).toContain("slot-1");
+    expect(readdirSync(d)).toEqual(["workspaces"]);
+    expect(readdirSync(join(d, "workspaces", "team-a"))).toEqual([]);
+  });
+
+  it("never runs without the workspace slot: a slot held by a live process ends the wait with exit code 75, with or without STRICT", () => {
+    const d = dir();
+    mkdirSync(join(d, "workspaces", "team-a", "slot-1"), { recursive: true });
+    writeFileSync(join(d, "workspaces", "team-a", "slot-1", "pid"), String(process.pid));
+    for (const extra of [{}, { FACTORY_TEST_SLOT_STRICT: "1" }]) {
+      for (const machine of ["2", "0"]) {
+        const r = spawnSync(tool, [d, "sh", "-c", "echo ran"], { env: ws("team-a", "1", { FACTORY_VAR_TEST_SLOTS: machine, FACTORY_TEST_SLOT_WAIT_SEC: "0", ...extra }), encoding: "utf8" });
+        expect(r.status).toBe(75);
+        expect(r.stdout).not.toContain("ran");
+      }
+    }
+    expect(existsSync(join(d, "workspaces", "team-a", "slot-1"))).toBe(true); // the holder keeps it
+    expect(readdirSync(d).filter((n) => n.startsWith("slot-"))).toEqual([]); // no machine slot is left behind
+  });
+
+  it("a workspace slot that is free but a machine slot held by a live process: exit 75 and the workspace slot is released", () => {
+    const d = dir();
+    mkdirSync(join(d, "slot-1"));
+    writeFileSync(join(d, "slot-1", "pid"), String(process.pid)); // the machine's only slot is held
+    for (const extra of [{}, { FACTORY_TEST_SLOT_STRICT: "1" }]) {
+      const r = spawnSync(tool, [d, "sh", "-c", "echo ran"], { env: ws("team-a", "1", { FACTORY_VAR_TEST_SLOTS: "1", FACTORY_TEST_SLOT_WAIT_SEC: "0", ...extra }), encoding: "utf8" });
+      expect(r.status).toBe(75);
+      expect(r.stdout).not.toContain("ran");
+      expect(readdirSync(join(d, "workspaces", "team-a"))).toEqual([]); // the workspace slot went back
+    }
+    expect(existsSync(join(d, "slot-1"))).toBe(true); // the machine holder keeps its slot
+  });
+
+  it("takes over the workspace slot of a holder that is gone", () => {
+    const d = dir();
+    mkdirSync(join(d, "workspaces", "team-a", "slot-1"), { recursive: true });
+    writeFileSync(join(d, "workspaces", "team-a", "slot-1", "pid"), "999999");
+    const r = spawnSync(tool, [d, "sh", "-c", "echo ran"], { env: ws("team-a", "1", { FACTORY_VAR_TEST_SLOTS: "1" }), encoding: "utf8" });
+    expect(r.stdout).toBe("ran\n");
+  });
+
+  it("does not run when the workspace folder cannot be made", () => {
+    const blocker = join(dir(), "file");
+    writeFileSync(blocker, "x");
+    const r = spawnSync(tool, [join(blocker, "slots"), "sh", "-c", "echo ran"], { env: ws("team-a", "1", { FACTORY_VAR_TEST_SLOTS: "1" }), encoding: "utf8" });
+    expect(r.status).toBe(75);
+    expect(r.stdout).not.toContain("ran");
+  });
+});

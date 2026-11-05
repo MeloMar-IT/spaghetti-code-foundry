@@ -228,11 +228,37 @@ read as before. The flow's own `workspace` setting (`empty`, `repository`, …) 
 plays no part here. Usage events take the run's workspace (`common()` in `usage/events.ts`), and the schema
 refuses an empty value.
 
-The limits (`max_concurrent`, `test_slots`, `monthly_budget_usd`) are stored and read only. Part 4 of #784 enforces
-them; the Settings page has no control for the list yet (`workspaces.*` are in `settings/exceptions.ts`).
+The Settings page has no control for the list yet (`workspaces.*` are in `settings/exceptions.ts`).
 `setRepoWorkspace()` in `auth/repos.ts` is the only writer of the record field, behind the admin route
 `PUT /api/admin/repos/:id/workspace`. `authPlan()` and `transferRepo()` keep the field, so a change of sign-in
 or an owner change does not move a repository.
+
+#### Workspace limits and fair share (#819)
+
+The limits are enforced by the scheduler (`src/queue/scheduler.ts`), not by a second picker. `default` and evals
+(`localTest`) have no workspace limits, and the scheduler never asks for them.
+
+- **Holds in `limitOf()`.** After the account limits, `wsHold()` returns `workspace` when the workspace has
+  `max_concurrent` active jobs (chores count too), or `workspace_budget` when its monthly spend is at
+  `monthly_budget_usd`. The budget counts only when `cost_limits` is on. A held job gets the same `limit` marking
+  as an account hold, so the status text comes from `words.ts` (`user_limit` with `workspace: true`).
+- **Spend.** `spentThisMonthByWorkspace()` in `src/engine/state.ts` sums the cost of the runs of the workspace whose
+  `startedAt` is in the current UTC month. It reads every run file (no early exit at an older run) and caches each
+  file's value by mtime and size, so a run that is still writing is read again.
+- **Month rollover.** A held budget has no event that ends it, because nothing runs while it holds. A timer
+  (`monthTimer`) re-runs `pump()` at the next UTC month start (at most every 12 hours). It is stopped when no
+  budget holds a job, and in `close()` and `drain()`.
+- **Round robin.** Story starts pick the workspace with the oldest `lastStartOfWorkspace` entry, using the same
+  `startSeq` counter as owner fairness. Inside that workspace the order is unchanged: the priority block first,
+  then the group with fewest active runs, then queue order. `behindPriority` only counts priority jobs of the same
+  workspace. With one workspace the turn never changes the order.
+- **Test slots.** The scheduler does not count test slots. `workspaceSlotEnv()` (`src/workspaces/index.ts`) gives
+  shell and agent steps `FACTORY_WORKSPACE` and `FACTORY_WORKSPACE_TEST_SLOTS` (empty when the workspace has no
+  limit); `src/release/host.ts` forwards the same two variables to release builds. `tools/test-slot` takes a
+  slot in `<slots-dir>/workspaces/<id>/slot-N` before the machine slot, and the order (workspace, then machine) is
+  fixed so two waiters cannot each hold one and wait for the other. The id is checked against
+  `^[a-z0-9][a-z0-9-]{0,39}$` before it is used in a path. A workspace limit is never skipped: when the slot does
+  not come free, the command is not run and the tool exits 75.
 
 ---
 
