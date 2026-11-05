@@ -121,6 +121,8 @@ export const api = {
   addRepo: (body) => req("POST", "/api/repos", body),
   setRepoAuth: (id, body) => req("PUT", `/api/repos/${enc(id)}/auth`, body),
   testRepo: (id) => req("POST", `/api/repos/${enc(id)}/test`, {}),
+  moveToGithub: (id, body) => req("POST", `/api/repos/${enc(id)}/move-to-github`, body),
+  publishRemote: (id, body) => req("POST", `/api/repos/${enc(id)}/publish-remote`, body),
   repoReady: (id) => req("GET", `/api/repos/${enc(id)}/ready`),
   removeRepo: (id) => req("DELETE", `/api/repos/${enc(id)}`),
   users:() => req("GET", "/api/users"),
@@ -151,6 +153,8 @@ export const api = {
   allRepos: () => req("GET", "/api/admin/repos"),
   setRepoSettings: (id, body) => req("PUT", `/api/admin/repos/${enc(id)}/settings`, body),
   setRepoReady: (id, body) => req("PUT", `/api/admin/repos/${enc(id)}/ready`, body),
+  repoBudget: (id) => req("GET", `/api/admin/repos/${enc(id)}/budget`),
+  setRepoBudget: (id, usd) => req("PUT", `/api/admin/repos/${enc(id)}/budget`, { dailyBudgetUsd: usd }),
   transferRepo: (id, email) => req("POST", `/api/admin/repos/${enc(id)}/transfer`, { email }),
   addRepoWatcher: (repoId, body) => req("POST", `/api/admin/repos/${enc(repoId)}/watchers`, body),
   saveRepoWatcher: (repoId, id, body) => req("PUT", `/api/admin/repos/${enc(repoId)}/watchers/${enc(id)}`, body),
@@ -221,6 +225,14 @@ export const api = {
   unmuteMonitor: (id) => req("DELETE", `/api/monitor/mutes/${enc(id)}`),
   tickWatcher:(id) => req("POST", `/api/watchers/${enc(id)}/tick`, {}),
   providers: () => req("GET", "/api/providers"),
+  onboardingAgents: () => req("GET", "/api/onboarding/agents"),
+  // `from`: the last answer of the server; its config version goes with the save, so a stale save is refused (409).
+  saveOnboardingAgents: (answers, replace = [], from) => {
+    const v = from ? configVersions.get(from) : undefined;
+    return req("PUT", "/api/onboarding/agents", { answers, replace }, false, false, v ? { "x-config-version": v } : undefined);
+  },
+  onboardingSignIn: (tool) => req("POST", "/api/onboarding/sign-in", { tool }),
+  onboardingTestCall: (tool) => req("POST", "/api/onboarding/test-call", { tool }),
   setupCheck: (needs = []) => req("GET", "/api/setup-check" + (needs.length ? "?need=" + encodeURIComponent(needs.join(",")) : "")),
   testModel: (spec) => req("POST", "/api/providers/test", { spec }),
   next: () => req("GET", "/api/next"),
@@ -244,6 +256,9 @@ export const api = {
       .map((k) => `${k}=${enc(String(p[k]))}`).join("&");
     return req("GET", text ? `/api/outcomes?${text}` : "/api/outcomes");
   },
+  preview: (id) => req("GET", `/api/repos/${enc(id)}/preview`),
+  startPreview: (id, version, runId) => req("POST", `/api/repos/${enc(id)}/preview`, runId ? { version, runId } : { version }),
+  stopPreview: (id) => req("DELETE", `/api/repos/${enc(id)}/preview`),
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
   // Ask SCF. `stay`: a typed question must survive a session that ended.

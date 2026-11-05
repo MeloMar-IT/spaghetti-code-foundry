@@ -152,6 +152,10 @@ const EXAMPLES: Record<string, Example> = {
   "GET setup-check": no("setup-check", 200),
   "POST onboarding/sign-in": no("onboarding/sign-in", 400, {}),
   "POST onboarding/test-call": no("onboarding/test-call", 400, {}),
+  "GET onboarding/agents": no("onboarding/agents", 200),
+  "PUT onboarding/agents": no("onboarding/agents", 400, {}),
+  "GET starters": no("starters", 200),
+  "POST starters/:id/project": no("starters/website/project", 400, {}),
   "POST providers/test": no("providers/test", 400, {}),
   "GET evals": no("evals", 200),
   "GET stats": no("stats", 200),
@@ -232,10 +236,15 @@ const EXAMPLES: Record<string, Example> = {
   "GET repos/methods": { path: "repos/methods", user: 200, admin: 200 },
   "POST repos": { path: "repos", body: {}, user: 400, admin: 400 },
   "PUT repos/:id/auth": { path: `repos/${UNKNOWN}/auth`, body: {}, user: 400, admin: 400 },
+  "POST repos/:id/move-to-github": no(`repos/${UNKNOWN}/move-to-github`, 404, {}),
+  "POST repos/:id/publish-remote": no(`repos/${UNKNOWN}/publish-remote`, 404, {}),
   "POST repos/:id/test": { path: `repos/${UNKNOWN}/test`, body: {}, user: 404, admin: 404 },
   "GET repos/:id/ready": { path: `repos/${UNKNOWN}/ready`, user: 404, admin: 404 },
   "GET repos/:id/epics": { path: `repos/${UNKNOWN}/epics`, user: 404, admin: 404 },
   "GET repos/:id/epics/:issue": { path: `repos/${UNKNOWN}/epics/1`, user: 404, admin: 404 },
+  "POST repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, body: { version: "develop" }, user: 404, admin: 404 },
+  "GET repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, user: 404, admin: 404 },
+  "DELETE repos/:id/preview": { path: `repos/${UNKNOWN}/preview`, user: 404, admin: 404 },
   "DELETE repos/:id": { path: `repos/${UNKNOWN}`, user: 404, admin: 404 },
   "GET help/conversations": { path: "help/conversations", user: 200, admin: 200 },
   // Ask SCF is off by default: a question is refused before it is looked at
@@ -299,6 +308,9 @@ const EXAMPLES: Record<string, Example> = {
   "GET admin/credentials": no("admin/credentials", 200),
   "GET admin/components": no("admin/components", 200),
   "PUT admin/repos/:id/ready": no(`admin/repos/${UNKNOWN}/ready`, 404, {}),
+  "GET admin/repos/:id/budget": no(`admin/repos/${UNKNOWN}/budget`, 404),
+  "PUT admin/repos/:id/budget": no(`admin/repos/${UNKNOWN}/budget`, 404, { dailyBudgetUsd: 5 }),
+  "PUT admin/repos/:id/workspace": no(`admin/repos/${UNKNOWN}/workspace`, 404, { workspace: null }),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
   "GET admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404),
   "POST admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404, {}),
@@ -317,6 +329,8 @@ describe("the table", () => {
   it("finds a rule only for the exact method and number of segments", () => {
     expect(findRule("GET", ["info"])?.path).toBe("info");
     expect(findRule("GET", ["info", "extra"])).toBeUndefined();
+    expect(findRule("DELETE", ["repos", UNKNOWN, "preview"])?.path).toBe("repos/:id/preview");
+    expect(findRule("DELETE", ["repos", "nope", "nope"])?.path).toBe("repos/:owner/:name");
     expect(findRule("PUT", ["users", "limits"])?.path).toBe("users/limits");
     expect(findRule("POST", ["admin", "repos", UNKNOWN, "watchers"])?.path).toBe("admin/repos/:id/watchers");
     expect(findRule("DELETE", ["admin", "repos", UNKNOWN, "watchers", "w"])?.path).toBe("admin/repos/:id/watchers/:wid");

@@ -89,7 +89,7 @@ export function readUpdateChecks(opts: { home?: string } = {}): UpdateChecksRead
   return { state: "ok", checks: parsed.data.sources };
 }
 
-function writeAtomic(file: string, text: string): void {
+export function writeAtomic(file: string, text: string): void {
   const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   let fd: number | undefined;
   try {
@@ -108,31 +108,36 @@ function writeAtomic(file: string, text: string): void {
   }
 }
 
-function withLock(home: string, fn: () => void): void {
-  const waitMs = updateChecksSettings.waitMs;
-  const lock = join(home, LOCK_NAME);
+/** Runs `fn` under the mkdir lock `lockName` in the data folder. `claimed`: the caller already holds the home write claim. */
+export function withDataFileLock(home: string, lockName: string, waitMs: number, fn: () => void, opts: { claimed?: boolean } = {}): void {
+  const lock = join(home, lockName);
   const until = Date.now() + waitMs;
+  const run = (): void => {
+    try {
+      mkdirSync(home, { recursive: true, mode: 0o700 });
+    } catch (e) {
+      throw new StoreError("cannot-write", home, `cannot be created (${(e as NodeJS.ErrnoException).code ?? "error"})`);
+    }
+    let got: boolean;
+    try {
+      got = acquireLock(lock, Math.max(0, until - Date.now()));
+    } catch (e) {
+      throw new StoreError("cannot-write", lock, `cannot be locked (${(e as NodeJS.ErrnoException).code ?? "error"})`);
+    }
+    if (!got) throw new StoreError("locked", lock, "is held by another scf process; try again, or delete this folder if no scf is running");
+    try {
+      fn();
+    } finally {
+      releaseLock(lock);
+    }
+  };
+  if (opts.claimed) {
+    run();
+    return;
+  }
   claimHomeWrite(
     lock,
-    () => {
-      try {
-        mkdirSync(home, { recursive: true, mode: 0o700 });
-      } catch (e) {
-        throw new StoreError("cannot-write", home, `cannot be created (${(e as NodeJS.ErrnoException).code ?? "error"})`);
-      }
-      let got: boolean;
-      try {
-        got = acquireLock(lock, Math.max(0, until - Date.now()));
-      } catch (e) {
-        throw new StoreError("cannot-write", lock, `cannot be locked (${(e as NodeJS.ErrnoException).code ?? "error"})`);
-      }
-      if (!got) throw new StoreError("locked", lock, "is held by another scf process; try again, or delete this folder if no scf is running");
-      try {
-        fn();
-      } finally {
-        releaseLock(lock);
-      }
-    },
+    run,
     waitMs,
     (kind, detail) =>
       kind === "busy"
@@ -147,7 +152,7 @@ function withLock(home: string, fn: () => void): void {
  */
 export function recordUpdateCheck(id: string, outcome: UpdateCheckOutcome, at: Date, opts: { home?: string; keep?: ReadonlySet<string> } = {}): void {
   const home = opts.home ?? dataHome();
-  withLock(home, () => {
+  withDataFileLock(home, LOCK_NAME, updateChecksSettings.waitMs, () => {
     const read = readUpdateChecks({ home });
     const checks: Record<string, UpdateCheck> = read.state === "ok" ? { ...read.checks } : {};
     checks[id] = nextCheck(checks[id], outcome, at);

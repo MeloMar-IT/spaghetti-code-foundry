@@ -9,7 +9,7 @@ const EXPLAIN = "how risky it is to create the smaller issues without you lookin
 
 describe("glossary", () => {
   it("has 35 distinct kinds", () => {
-    expect(new Set(KINDS).size).toBe(35);
+    expect(new Set(KINDS).size).toBe(36);
   });
 
   const rows: [NextKind, WordFacts, string][] = [
@@ -91,7 +91,7 @@ describe("user guide", () => {
     expect(guide).toContain("Words the Foundry uses");
     expect(guide).toContain(EXPLAIN);
     for (const k of KINDS) {
-      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }, { budget: true }] : k === "cancelled" ? [{}, { ended: true }] : [{ blockers: [88] }];
+      const all: WordFacts[] = k === "release" ? [{}, { releaseAt: "17:00" }] : k === "failed" ? [{}, { factory: true }] : k === "user_limit" ? [{}, { perDay: true }, { user: true }, { user: true, perDay: true }, { budget: true }, { workspace: true }, { workspace: true, budget: true }, { workspace: true, user: true }, { workspace: true, budget: true, user: true }] : k === "cancelled" ? [{}, { ended: true }] : [{ blockers: [88] }];
       for (const f of all) {
         expect(guide, statusName(k, f)).toContain(`| ${statusName(k, f)} |`);
         expect(guide, statusHelp(k, f)).toContain(statusHelp(k, f));
@@ -174,6 +174,8 @@ describe("words for a user", () => {
   const facts: [NextKind, WordFacts, string][] = [
     ["daily_budget", { user: true }, "paused — the administrator's limit was reached"],
     ["user_limit", { user: true, budget: true }, "waiting — your limit for today is reached"],
+    ["user_limit", { user: true, workspace: true, budget: true }, "waiting — your workspace's limit for this month is reached"],
+    ["user_limit", { user: true, workspace: true }, "waiting — your workspace's limit of runs at the same time is reached"],
     ["failed", { user: true, limit: true }, "stopped — the administrator's limit was reached"],
     ["failed", { user: true }, "failed"],
     ["failed", { user: true, factory: true }, "failed"],

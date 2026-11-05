@@ -82,6 +82,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const skills = skillsSection(described, c.skills, { disabled: readOnly });
   let version = configVersion(c);
   const budget = input(c.daily_budget_usd ?? "", { type: "number", step: "0.5", placeholder: "no limit" });
+  const projectBudget = input(c.simple_project_daily_budget_usd ? String(c.simple_project_daily_budget_usd) : "", { type: "number", step: "0.5", min: 0, placeholder: "no default" });
   const limits = check(c.cost_limits !== false, "Enforce cost limits (run, step and daily budgets)");
   const conc = input(String(c.concurrency), { type: "number", min: 1 });
   const protectedB = input(c.protected_branches.join(", "), { class: "mono" });
@@ -140,7 +141,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
   const saveBtn = h("button", { class: "primary", onClick: () => save() }, "Save");
   // the controls a server sentence can name, by the key of the setting
   const fields = {
-    allowed_hosts: hostsIn, listen: listenSel, daily_budget_usd: budget, concurrency: conc, protected_branches: protectedB, retention_days: auditDays,
+    allowed_hosts: hostsIn, listen: listenSel, daily_budget_usd: budget, simple_project_daily_budget_usd: projectBudget, concurrency: conc, protected_branches: protectedB, retention_days: auditDays,
     slack_webhook: slack, command: cmd, throttle_minutes: throttle, quiet_hours: quietFrom, daily_summary_at: summaryAt, gh_token_env: botToken,
     app_id: appId, slug: appSlug, installation_id: instId, private_key_path: keyPath, docker_image: sbxImage, repo: selfRepo, name: botName, email: botEmail,
   };
@@ -183,6 +184,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       audit: { ...c.audit, retention_days: auditDays.value.trim() === "" ? 180 : Number(auditDays.value) },
       server: serverFrom({ listen: listenSel.value, hosts: hostsIn.value, insecure: insecure.el.checked }),
       daily_budget_usd: num(budget),
+      simple_project_daily_budget_usd: num(projectBudget) ?? 0,
       cost_limits: limits.el.checked,
       concurrency: Number(conc.value) || 1,
       protected_branches: protectedB.value.split(",").map((s) => s.trim()).filter(Boolean),
@@ -282,6 +284,7 @@ export async function renderSettings(main, { readOnly = false } = {}) {
       hinted(limits.row, limits.el, hint("cost_limits", "Claude's and Codex's own usage limits still pause runs.")),
       h("div", { class: "grid" },
         f("Daily budget ($)", budget, hint("daily_budget_usd", `Spent today: $${info.spentToday.toFixed(2)}.`)),
+        f("Daily cap per Simple project ($)", projectBudget, hint("simple_project_daily_budget_usd")),
         f("Runs at the same time", conc, hint("concurrency")))),
     ...(governorCard.card ? [governorCard.card] : []),
     section("Redesign",

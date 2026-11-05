@@ -239,7 +239,7 @@ export async function ensureSignedIn(a = api, reload = () => location.reload(), 
 /** True for an account with the role admin. */
 export const isAdmin = (user) => user?.role === "admin";
 
-const USER_HASH = /^#\/(home|setup|help|start|epics(\/[\w-]+)?|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos(\/[\w-]+)?|plugins\/[a-z0-9-]+\/[a-z0-9-]+)$/;
+const USER_HASH = /^#\/(home|setup|agents|help|start|epics(\/[\w-]+)?|runs(\/[\w-]+)?|refinement(\/[\w-]+)?|repos(\/[\w-]+)?|plugins\/[a-z0-9-]+\/[a-z0-9-]+)$/;
 // Only these pages take a query (filters, or the tools Setup check is asked about) in their address.
 const USER_QUERY = /^#\/(runs|refinement|repos|setup|epics(\/[\w-]+)?)$/;
 

@@ -204,7 +204,7 @@ function routingCard(cfg, specs, localSpec, form) {
   const onRate = h("input", { type: "checkbox", class: "fit", checked: cfg.router.fallback_on.includes("rate_limit") });
   const onBudget = h("input", { type: "checkbox", class: "fit", checked: cfg.router.fallback_on.includes("budget") });
 
-  const COLUMN = { step: "Step", flow: "Flow", min_visit: "From visit", model: "Model" };
+  const COLUMN = { step: "Step", flow: "Flow", min_visit: "From visit", agent: "Agent", model: "Model" };
   // the inputs of each rule by key, filled by `cell` on every draw
   let ruleInputs = [];
   const cell = (r, key, attrs, i) => {
@@ -216,16 +216,25 @@ function routingCard(cfg, specs, localSpec, form) {
     ruleInputs[i][key] = el;
     return h("td", {}, el);
   };
+  // Only steps whose own target runs on this agent (before the router).
+  const agentCell = (r, i) => {
+    const sel = h("select", { "aria-label": `${COLUMN.agent} of rule ${i + 1}`, onChange: (e) => { r.agent = e.target.value || undefined; } },
+      [["", "any agent"], ["claude", "Claude Code steps"], ["codex", "Codex steps"]].map(([v, t]) => h("option", { value: v }, t)));
+    sel.value = r.agent ?? "";
+    ruleInputs[i].agent = sel;
+    return h("td", {}, sel);
+  };
   const draw = () => {
     ruleInputs = rules.map(() => ({}));
     mount(body, rules.length ? rules.map((r, i) => h("tr", {},
       cell(r, "step", { placeholder: "any step (regex)" }, i),
       cell(r, "flow", { placeholder: "any flow (regex)" }, i),
       cell(r, "min_visit", { type: "number", min: 1, class: "mono w-70", placeholder: "1" }, i),
+      agentCell(r, i),
       cell(r, "model", { list: "models", placeholder: "model spec" }, i),
       h("td", {}, h("button", { class: "small", title: "Move up", "aria-label": `Move rule ${i + 1} up`, disabled: i === 0, onClick: () => { rules.splice(i - 1, 0, rules.splice(i, 1)[0]); draw(); } }, "↑"),
         h("button", { class: "small danger", title: "Remove rule", "aria-label": `Remove rule ${i + 1}`, onClick: () => { rules.splice(i, 1); draw(); } }, glyph("✕"))))) :
-      h("tr", {}, h("td", { colspan: 5, class: "muted" }, "No rules: steps use their own model, then the flow's, then the default.")));
+      h("tr", {}, h("td", { colspan: 6, class: "muted" }, "No rules: steps use their own model, then the flow's, then the default.")));
   };
   draw();
   const everyInput = () => [defModel, fallback, ...ruleInputs.flatMap((x) => Object.values(x))];
@@ -270,7 +279,7 @@ function routingCard(cfg, specs, localSpec, form) {
     h("div", {}, h("div", { class: "row mb-6" }, h("b", {}, "Rules"), h("span", { class: "spacer" }),
       ...PRESETS(localSpec).map((p) => h("button", { class: "small", onClick: () => { rules.push(...p.rules.map((r) => ({ ...r }))); draw(); } }, `+ ${p.label}`)),
       h("button", { class: "small", onClick: () => { rules.push({ model: "" }); draw(); } }, "+ Rule")),
-      tableBox(h("table", { class: "table compact", "aria-label": "Routing rules" }, h("thead", {}, h("tr", {}, ["Step", "Flow", "From visit", "Model", h("span", { class: "sr-only" }, "Actions")].map((x) => h("th", { scope: "col" }, x)))), body))),
+      tableBox(h("table", { class: "table compact", "aria-label": "Routing rules" }, h("thead", {}, h("tr", {}, ["Step", "Flow", "From visit", "Agent", "Model", h("span", { class: "sr-only" }, "Actions")].map((x) => h("th", { scope: "col" }, x)))), body))),
     f("Fallback models", fallback, "Comma-separated, tried in order."),
     h("div", { class: "row" },
       h("label", { class: "row tight" }, onRate, h("span", {}, "Use them when a model hits a rate or usage limit")),
@@ -327,7 +336,7 @@ function routingUse(cfg, name, names) {
   const out = [];
   if (uses(cfg.default_model)) out.push(`Default model: ${cfg.default_model}`);
   cfg.router.rules.forEach((r, i) => {
-    if (uses(r.model)) out.push(`Rule ${i + 1}: ${r.step ?? "any step"} · ${r.flow ?? "any flow"}${r.min_visit ? ` · from visit ${r.min_visit}` : ""} → ${r.model}`);
+    if (uses(r.model)) out.push(`Rule ${i + 1}: ${r.step ?? "any step"} · ${r.flow ?? "any flow"}${r.min_visit ? ` · from visit ${r.min_visit}` : ""}${r.agent ? ` · ${r.agent} steps` : ""} → ${r.model}`);
   });
   cfg.router.fallback.forEach((spec, i) => {
     if (uses(spec)) out.push(`Fallback ${i + 1}: ${spec}`);

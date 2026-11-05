@@ -24,6 +24,7 @@ const adminPage = (id, title, section) => ({ id, path: `#/${id}`, title, area: "
 export const PAGES = [
   { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home", user: "Home" }, roles: AU },
   { id: "setup", path: "#/setup", title: "Setup check", area: "home", dest: "home", parent: null, nav: "secondary", label: { admin: "Setup check", user: "Setup check" }, roles: AU },
+  { id: "agents", path: "#/agents", title: "Claude and Codex", area: "home", dest: null, parent: null, nav: "secondary", label: { admin: "Claude and Codex", user: "Claude and Codex" }, roles: AU },
   { id: "help", path: "#/help", title: "Help", area: "home", dest: null, parent: null, nav: "secondary", label: { user: "Help" }, roles: ["user"] },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },
@@ -165,6 +166,7 @@ function describe(role, page, arg, hash, reason) {
 const REPO_OK = /^[\w.-]+\/[\w.-]+$/;
 const OWNER_OK = /^[\w-]+$/;
 const VALID = { repo: (v) => v === ALL_REPOS || (v.length <= 200 && REPO_OK.test(v)), owner: (v) => v.length <= 64 && OWNER_OK.test(v),
+  view: (v) => v === "simple",
   method: (v) => ["none", "github-token", "https-token", "ssh-deploy-key", "github-app"].includes(v) };
 
 /** Splits an address into its path and the text after the first "?" ("" when there is none). */
@@ -174,7 +176,7 @@ export function splitHash(hash) {
   return i < 0 ? { path: text, query: "" } : { path: text.slice(0, i), query: text.slice(i + 1) };
 }
 
-/** The known filters of a query text (`repo` is "owner/name" or "all";"?repo=…&owner=…", with or without the "?"): { repo?, owner?, method? }. Anything else is dropped. */
+/** The known filters of a query text (`repo` is "owner/name" or "all";"?repo=…&owner=…", with or without the "?"): { repo?, owner?, method?, view? }. Anything else is dropped. */
 export function parseQuery(text) {
   const out = {};
   const raw = typeof text === "string" ? text.replace(/^\?/, "") : "";

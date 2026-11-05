@@ -637,6 +637,31 @@ describe("runNextStep", () => {
     expect(k("approve_split")).toBe("approve_split");
     expect(k("gate")).toBe("approval");
   });
+  describe("Make this version final (release-daily of a local project)", () => {
+    const LOCAL = "local:demo-0123abcd";
+    const finalRun = (stepId = "make_final", flow = "release-daily") =>
+      run({ flow, status: "waiting", vars: { github_repo: LOCAL }, task: "daily", waiting: { stepId, message: "Make this version final?\nThese finished changes go to main:\n- #1 Build me", since: "x" } });
+    it("is an approval with its own title, reason and the run page", () => {
+      const n = runNextStep(finalRun());
+      expect(n).toMatchObject({ kind: "approval", final: true, title: "Make this version final", who: "You", why: "A new version is ready and waits for your OK", action: "Make this version final or reject it on the run page" });
+      expect(n.where.url).toBe("#/runs/r1");
+    });
+    it("is not used by an ordinary approval or another step of release-daily", () => {
+      expect("final" in runNextStep(run({ status: "waiting", waiting: { stepId: "gate", message: "ok", since: "x" } }))).toBe(false);
+      const other = runNextStep(finalRun("gate"));
+      expect(other.kind).toBe("approval");
+      expect("final" in other).toBe(false);
+      expect(other.title).not.toBe("Make this version final");
+      expect("final" in runNextStep(finalRun("make_final", "github-issue"))).toBe(false);
+    });
+    it("a rejected release of a local project does not count as released", () => {
+      const w = { ...WatcherSchema.parse({ id: "rel", github_repo: "acme/app", task: "t", source: "schedule", flow: "release-daily", at: "17:00" }), github_repo: LOCAL };
+      const work = run({ vars: { github_repo: LOCAL, issue: "1" }, history: [{ id: "push_develop", ok: true }] as unknown as RunSummary["history"] });
+      const daily = (ids: string[]) => run({ runId: "rel1", flow: "release-daily", startedAt: "2026-10-01T17:00:00Z", vars: { github_repo: LOCAL }, history: ids.map((id) => ({ id, ok: true })) as unknown as RunSummary["history"] });
+      expect(releaseAtFor([w], work, [daily(["verify", "final_ask", "make_final", "final_rejected"])])).toBe("17:00");
+      expect(releaseAtFor([w], work, [daily(["verify", "final_ask", "make_final", "final_merge", "final_close"])])).toBeUndefined();
+    });
+  });
   it("links the run page for runs that are not watched", () => {
     const n = runNextStep(run({ status: "waiting", waiting: { stepId: "gate", message: "ok", since: "x" } }));
     expect(n.where.url).toBe("#/runs/r1");

@@ -1,6 +1,7 @@
+import { isLocalRepoName } from "./auth/local-name.js";
 import type { WatcherConfig } from "./config.js";
 import { explainError } from "./errors.js";
-import { isStoppedCancel, isTimeLimitStop, isUserBudgetStop, type RunSummary } from "./engine/state.js";
+import { isProjectBudgetStop, isStoppedCancel, isTimeLimitStop, isUserBudgetStop, type RunSummary } from "./engine/state.js";
 import { classifyFailure, failureSummary, type FailureCause, type FailureSummary } from "./failure.js";
 import { parseWaitsFor } from "./queue/waits-for.js";
 import { statusHelp, statusName } from "./words.js";
@@ -11,7 +12,7 @@ export type NextKind =
   | "dependency" | "one_at_a_time" | "area_lock" | "usage_limit" | "daily_budget" | "release"
   | "failed" | "restart" | "watcher_error" | "monitor_stopped" | "monitor_needs_you" | "watcher_stale" | "closed_elsewhere"
   | "running" | "queued" | "checking" | "starting" | "interrupted" | "cancelled" | "stopped" | "done"
-  | "red_base" | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "parked" | "epic" | "owner_action" | "chore_late";
+  | "red_base" | "superseded" | "bug_first" | "issue_closed" | "user_limit" | "project_limit" | "parked" | "epic" | "owner_action" | "chore_late";
 
 /** A run waits for a lock: the run that holds it, the areas (`@develop` is the merge turn), and for develop the holder's issue and lock time. */
 export interface AreaWait { runId: string; areas: string; issue?: number; since?: string }
@@ -66,7 +67,15 @@ export interface NextStep {
   retired?: true;
   /** `cancelled`: the run was cancelled while it was stopped, so nothing continues it. */
   ended?: true;
+  /** `approval`: the daily release of a local project waits for "Make this version final" (the run's own approval, not a comment). */
+  final?: true;
 }
+
+/** The approval step of the daily release of a local project, and the title its record gets. */
+export const FINAL_STEP = "make_final";
+export const FINAL_TITLE = "Make this version final";
+/** The step of release-daily that moves main (a run that has it done released something; the same name as FINAL_MERGE_STEP in engine/guards.ts). */
+const FINAL_MERGE_STEP = "final_merge";
 
 /** How far a run is and how long it may take. Estimates come from earlier runs; see estimate.ts. */
 export interface RunTiming {
@@ -110,6 +119,8 @@ export interface NextData {
   answerHere?: boolean;
   /** Text of the approval request or the failure reason. */
   message?: string;
+  /** `approval`: this is "Make this version final" of a local project. */
+  final?: boolean;
   reason?: string;
   blockers?: BlockerInfo[];
   /** `red_base`: the base branch has failing tests. `line` names them (already redacted); `problem` is a fixed sentence when a person must act. */
@@ -120,7 +131,7 @@ export interface NextData {
   choreName?: "release" | "schedule run";
   choreWait?: ChoreWait;
   /** `user_limit`: which per-user limit holds the job. */
-  userLimit?: "concurrent" | "per_day" | "budget";
+  userLimit?: "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget";
   /** `user_limit` budget: the amount, for an administrator only. */
   budgetUsd?: number;
   /** The pull request the release waits for. */
@@ -267,7 +278,7 @@ function blockerClause(b: BlockerInfo): string {
     case "queued": case "one_at_a_time": case "starting": case "checking": return "which is queued";
     case "area_lock": return "which waits for a code area";
     case "bug_first": return "which waits for a bug story";
-    case "usage_limit": case "daily_budget": case "user_limit": return "which is paused by a limit";
+    case "usage_limit": case "daily_budget": case "user_limit": case "project_limit": return "which is paused by a limit";
     case "release": return n.until ? `which waits for the ${n.until}` : "which waits for the release pull request";
     case "issue_closed": return "which is closed";
     case "parked": return "which is parked";
@@ -343,6 +354,8 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
   let limit = false;
   let until: string | undefined;
   const q = d.questions;
+  // a queued job held by the cap of its project gets its own kind (#792)
+  if (kind === "user_limit" && d.userLimit === "project") kind = "project_limit";
 
   switch (kind) {
     case "questions": case "planner_questions": {
@@ -404,6 +417,12 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       action = !d.watched || !issueWhere ? "Approve or reject it on the run page" : "Reply /approve or /reject";
       say = action.charAt(0).toLowerCase() + action.slice(1);
       if (!d.watched) w = runWhere ?? where;
+      if (d.final) {
+        why = "A new version is ready and waits for your OK";
+        action = "Make this version final or reject it on the run page";
+        say = action.charAt(0).toLowerCase() + action.slice(1);
+        w = runWhere ?? where;
+      }
       break;
     }
     case "dependency": {
@@ -627,7 +646,14 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       who = "A time limit";
       const perDay = d.userLimit === "per_day";
       if (perDay) until = "tomorrow";
-      if (d.userLimit === "budget") {
+      if (d.userLimit === "workspace_budget") {
+        until = "next month";
+        say = "nothing to do, it goes on next month";
+        why = d.forUser ? "Your workspace's limit for this month is reached" : "The workspace's budget for this month is used up";
+      } else if (d.userLimit === "workspace") {
+        why = d.forUser ? "Your workspace's limit of runs at the same time is reached" : "The workspace's limit of runs at the same time is reached";
+        say = "nothing to do, it starts when one of the workspace's runs ends";
+      } else if (d.userLimit === "budget") {
         until = "tomorrow";
         say = "nothing to do, it goes on tomorrow";
         why = d.forUser ? "Your limit for today is reached" : `The owner's daily budget${d.budgetUsd !== undefined ? ` of $${d.budgetUsd}` : ""} is used up`;
@@ -640,6 +666,12 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       }
       break;
     }
+    case "project_limit":
+      who = "A time limit";
+      until = "tomorrow";
+      why = "The project's limit for today is reached";
+      say = "nothing to do, it goes on tomorrow";
+      break;
     case "bug_first":
       who = "Another story";
       why = "It waits: a bug story goes first"; say = "nothing to do, it continues by itself";
@@ -702,7 +734,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
       break;
   }
 
-  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && d.userLimit === "budget",signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
+  const facts = { releaseAt: kind === "release" && !d.pr ? d.releaseAt : undefined, blockers: (d.blockers ?? []).map((b) => b.issue), factory: kind === "failed" && d.cause === "factory", user: d.forUser, redProblem: kind === "red_base" && !issue, ended: kind === "cancelled" && !!d.ended, limit, perDay: kind === "user_limit" && d.userLimit === "per_day", budget: kind === "user_limit" && (d.userLimit === "budget" || d.userLimit === "workspace_budget"), workspace: kind === "user_limit" && /^workspace/.test(d.userLimit ?? ""),signedOut: kind === "usage_limit" && !d.unreachable && /signed out/.test(d.reason ?? ""), unreachable: kind === "usage_limit" && d.unreachable, develop: kind === "area_lock" && d.areaWait?.areas === "@develop" };
   return {
     kind, status: statusName(kind, facts), help: statusHelp(kind, facts), who, why, action, where: w, until,
     repo: base.repo ?? "", user: "", issue, title: base.title ?? "", runId: base.runId,
@@ -713,6 +745,7 @@ export function nextStep(kind: NextKind, base: NextBase = {}, d: NextData = {}):
     ...(d.cause ? { cause: d.cause } : {}),
     ...(d.retired ? { retired: true as const } : {}),
     ...(kind === "cancelled" && d.ended ? { ended: true as const } : {}),
+    ...(kind === "approval" && d.final ? { final: true as const } : {}),
     ...(kind === "failed" && d.failure ? { failure: d.failure } : {}),
     ...(kind === "monitor_needs_you" && d.evidence?.length ? { evidence: d.evidence } : {}),
     ...(kind === "monitor_needs_you" && d.stories?.length ? { stories: d.stories } : {}),
@@ -820,7 +853,7 @@ function stoppedStep(reason: string | undefined): string | undefined {
 
 export interface RunNextOptions extends NextData {
   /** Pending-job info from Scheduler.queue(). */
-  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" | "budget" };
+  queued?: { waitingFor?: string; behindPriority?: boolean; limit?: "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget" };
   title?: string;
 }
 
@@ -848,6 +881,7 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
     }
     case "waiting": {
       const id = run.waiting?.stepId;
+      if (run.flow === "release-daily" && id === FINAL_STEP) return nextStep("approval", { ...base, title: FINAL_TITLE }, { ...d, message: run.waiting?.message, final: true });
       const k: NextKind = id === "approve_plan" ? "approve_plan" : id === "approve_split" ? "approve_split" : "approval";
       return make(k, { message: run.waiting?.message });
     }
@@ -859,6 +893,7 @@ export function runNextStep(run: RunSummary, o: RunNextOptions = {}): NextStep {
       if (d.retired && !/interrupted/.test(reason)) return make("stopped");
       // a step ran out of time and the Foundry tries again by itself
       if (isTimeLimitStop(reason)) return !o.watched ? make("stopped") : o.pr ? make("release") : make("queued");
+      if (isProjectBudgetStop(reason)) return make("project_limit");
       if (isUserBudgetStop(reason)) return make("user_limit", { userLimit: "budget" });
       if (/daily budget/.test(reason)) return make("daily_budget");
       if (/usage limit reached|signed out —/.test(reason)) return make("usage_limit", { unreachable: !/signed out —/.test(reason) && !!run.history?.at(-1)?.unreachable });
@@ -907,7 +942,9 @@ export function releaseAtFor(watchers: WatcherConfig[], run: RunSummary, runs: R
     if (!p.needs.every((id) => steps.has(id))) continue;
     const w = watchers.find((x) => x.enabled && x.source === "schedule" && x.flow === p.flow && x.at && x.github_repo === repo);
     if (!w) continue;
-    const released = runs.some((r) => r.flow === p.flow && r.status === "succeeded" && r.vars?.github_repo === repo && r.startedAt > (run.finishedAt ?? run.startedAt)); // a release that began before the work was pushed missed it
+    // A local project has no pull request: a daily release that was rejected ("Not yet") also ends succeeded, but it released nothing.
+    const local = isLocalRepoName(repo ?? "");
+    const released = runs.some((r) => r.flow === p.flow && r.status === "succeeded" && r.vars?.github_repo === repo && (!local || (r.history ?? []).some((h) => h.id === FINAL_MERGE_STEP && h.ok)) && r.startedAt > (run.finishedAt ?? run.startedAt)); // a release that began before the work was pushed missed it
     if (!released) return w.at;
   }
   return undefined;

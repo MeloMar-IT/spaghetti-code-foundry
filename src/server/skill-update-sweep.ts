@@ -1,6 +1,8 @@
 import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { MONITOR_ACTOR } from "../auth/audit.js";
+import type { Config } from "../config.js";
 import { redactText } from "../credentials/redact.js";
 import { findingsFile, readFindings, saveFindings } from "../monitor/findings.js";
 import { CATALOGUE_KEY, applySourceChecks, clearSourceChecks } from "../monitor/skill-source-findings.js";
@@ -14,8 +16,9 @@ import type { UpdateCheckOutcome } from "../skills/update-schedule.js";
 // output line and turns PROBLEM outcomes into monitor findings (detector `skill-source-check`).
 //
 // The git and gh calls of catalogue-git.ts are `spawnSync` (up to 120 s each). They block the event loop during a check. That
-// is accepted because the check runs in-process, as asked. The sweeper never merges or approves: `updateSource` only opens or
-// edits pull requests. A cleared or changed folder aborts a running check at the next tick. No folder path is put into a sentence, a summary or a log line: findings may reach bug stories.
+// is accepted because the check runs in-process, as asked. The sweeper never merges a pull request. For a source with review it only
+// opens or edits pull requests. For an enabled first-party source with `update.auto` it publishes a catalogue release in the data
+// folder and approves it there (actor `monitor`, one `skill-auto-update` audit line per step). A cleared or changed folder aborts a running check at the next tick. No folder path is put into a sentence, a summary or a log line: findings may reach bug stories.
 
 export const SKILL_UPDATE_TICK_MS = 60_000;
 export const SWEEP_LOG = "skill-sources: ";
@@ -37,6 +40,8 @@ export interface SkillUpdateSweeperDeps {
   findingsIdle: <T>(fn: () => T) => Promise<T>;
   run?: SweepRun;
   updateOptions?: Omit<SkillUpdateOptions, "cwd">;
+  /** The live skill settings (approval keys) the automatic update of `update.auto` sources uses. */
+  skills?: () => Config["skills"];
   /** The findings file. Default: the monitor's. */
   file?: string;
   now?: () => Date;
@@ -87,7 +92,9 @@ export function skillUpdateSweeper(deps: SkillUpdateSweeperDeps): SkillUpdateSwe
   const now = deps.now ?? (() => new Date());
   const userHome = deps.userHome;
   const run: SweepRun =
-    deps.run ?? (({ folder, out, onChecked, signal }) => updateDue({ all: false, onChecked }, out, { ...deps.updateOptions, cwd: folder }, signal, updateSource));
+    deps.run ??
+    (({ folder, out, onChecked, signal }) =>
+      updateDue({ all: false, onChecked }, out, { ...deps.updateOptions, cwd: folder, auditBy: MONITOR_ACTOR, ...(deps.skills ? { skills: deps.skills() } : {}) }, signal, updateSource));
   let stopped = false;
   let inFlight: Promise<void> | undefined;
   let controller: AbortController | undefined;

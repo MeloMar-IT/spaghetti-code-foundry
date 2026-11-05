@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const SKILLS = "src/skills";
 const BUILTIN = new Set(["crypto", "fs", "path", "os", "url", "module"]);
 const PACKAGES = new Set(["zod", "yaml"]);
-const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js", "../flow/load.js"]);
+const OUTSIDE = new Set(["../config.js", "../auth/store.js", "../auth/audit.js", "../auth/repo-url.js", "../engine/state.js", "../flow/schema.js", "../home.js", "../home-migrate.js", "../engine/local-git.js", "../flow/load.js"]);
 
 const codeLines = (text: string) => text.split("\n").filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
 
@@ -366,7 +366,7 @@ describe("the connector modules run nothing", () => {
     const walk = (d: string): string[] => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : e.name.endsWith(".ts") ? [join(d, e.name)] : []));
     const files = walk("src");
     expect(files.filter((f) => codeLines(readFileSync(f, "utf8")).some((l) => /publishRelease\(/.test(l))).sort()).toEqual(
-      [join(SKILLS, "release-cli.ts"), join(SKILLS, "release-publish.ts"), join(SKILLS, "release-store.ts")].sort(),
+      [join(SKILLS, "release-cli.ts"), join(SKILLS, "release-publish.ts"), join(SKILLS, "release-store.ts"), join("src", "skill-import", "update-auto.ts")].sort(),
     );
     for (const f of [...files.filter((x) => x.startsWith(join("src", "engine"))), join(SKILLS, "registry.ts"), join(SKILLS, "run-lock.ts")]) {
       expect(modulesOf(readFileSync(f, "utf8")).filter((m) => /release-(?:cli|publish)\.js$/.test(m)), f).toEqual([]);

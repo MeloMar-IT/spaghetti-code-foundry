@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { resolve } from "node:path";
 import { localGit } from "../engine/local-git.js";
+import { withApprovedRefs } from "./approvals.js";
 import { CHOICE_LIMITS } from "./choice-rules.js";
 import { credentialProblem } from "./credential-scan.js";
 import { CATALOGUE_DESCRIPTION_FROM, catalogueDescriptionOf } from "./catalogue-description.js";
@@ -13,6 +14,7 @@ import { evaluateLicence, type LicenceEvidence } from "./licence.js";
 import { reviewImport } from "./licence-review.js";
 import { normalizeImport, type NormalizedSkill } from "./normalize.js";
 import { foundryPackageFiles, parseSkillPackage, readRegular, skillDigest } from "./package.js";
+import type { SkillPackage } from "./schema.js";
 import { NO_EVIDENCE_TIME, promoteImport, type PackageProvenance } from "./promotion.js";
 import type { GitRun } from "./project-pins.js";
 import { ReleaseManifestSchema, releaseDigest, releaseText, type ReleaseFileEntry, type ReleaseManifestV2, type ReleaseSkillV2 } from "./release.js";
@@ -152,7 +154,7 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
   const headCommit = committed.commit;
 
   // 4. The same bytes, parsed. From here on no step reads either file again.
-  const srcRead = sourcesFromBytes(srcIn.bytes, opts.today);
+  const srcRead = withApprovedRefs(sourcesFromBytes(srcIn.bytes, opts.today), { home: opts.home });
   if (srcRead.state === "none") return stop("the skill source file does not exist");
   if (srcRead.state === "invalid") return stop(...srcRead.problems.map((p) => `${p.where}: ${p.message}`));
   const sources: SourcesManifest = srcRead.manifest;
@@ -167,14 +169,49 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
     if (!r) return stop();
     reviewed = r;
   }
-  // The selections were read once (above); the evaluation uses this snapshot and does not read the file again.
-  const snap: ReleasePublishOptions = { ...opts, sources, selections: reviewed.selections };
+  // 6. The gates, per source group and skill.
+  const gated = gateReleaseSkills({ skills: entry.skills, sources, reviewed, revoked: revokedOf, evaluation: "required" }, out, opts);
+  if (gated.refused.length > 0) return stop();
 
-  // 6. Per source group, then per skill.
-  let problems = 0;
-  const skillProblem = (source: string, id: string, reason: string) => {
+  // 9. The manifest.
+  return finishRelease(target, { createdAt: `${review.on}T00:00:00Z`, source: { repository: requests.repository, commit: headCommit } }, gated, stop);
+}
+
+export const RELEASE_GATES = ["normalize", "licence", "scan", "profile", "evaluation", "package", "version", "source"] as const;
+export type ReleaseGate = (typeof RELEASE_GATES)[number];
+export interface GateInput {
+  skills: readonly { source: string; id: string }[];
+  sources: SourcesManifest;
+  reviewed: NonNullable<ReturnType<typeof reviewedFiles>>;
+  revoked?: (id: string) => { version: string; on: string; reason: string } | undefined;
+  /** "required": every skill needs a passing evaluation record. "not-run": no suite; the release says so. */
+  evaluation: "required" | "not-run";
+  /** Called once the other gates passed. The version the Foundry package gets; undefined refuses the skill (gate "version"). */
+  versionOf?: (id: string, pkg: SkillPackage) => string | undefined;
+}
+export interface GatedSkills {
+  built: ReleaseSkillV2[];
+  packages: Map<string, ReleaseFile[]>;
+  attributions: Map<string, ReleaseFile[]>;
+  lines: { id: string; line: string }[];
+  /** One entry per refusal (a skill can have several). Empty: every skill passed. */
+  refused: { source: string; id: string; gate: ReleaseGate }[];
+}
+
+/**
+ * The gates of a release for the given skills: prints a PROBLEM line for every refusal and returns the built skills and the refusals.
+ * It does not read skill-releases.yaml or skill-sources.yaml; the caller passes the parsed sources and the reviewed files.
+ */
+export function gateReleaseSkills(input: GateInput, out: Out, opts: ReleasePublishOptions): GatedSkills {
+  const { sources, reviewed } = input;
+  const revokedOf = input.revoked ?? (() => undefined);
+  const required = input.evaluation === "required";
+  // The selections were read once (by the caller); the evaluation uses this snapshot and does not read the file again.
+  const snap: ReleasePublishOptions = { ...opts, sources, selections: reviewed.selections };
+  const refused: GatedSkills["refused"] = [];
+  const skillProblem = (source: string, id: string, gate: ReleaseGate, reason: string) => {
     out(`PROBLEM ${source}/${id}: ${reason}`);
-    problems++;
+    refused.push({ source, id, gate });
   };
   const home = opts.home;
   const built: ReleaseSkillV2[] = [];
@@ -184,11 +221,11 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
   const decoder = new TextDecoder();
 
   const groups = new Map<string, string[]>();
-  for (const s of entry.skills) groups.set(s.source, [...(groups.get(s.source) ?? []), s.id]);
+  for (const s of input.skills) groups.set(s.source, [...(groups.get(s.source) ?? []), s.id]);
 
   for (const [sourceId, ids] of groups) {
     const source: SkillLibrarySource | undefined = sources.sources.find((s) => s.id === sourceId);
-    const failAll = (reason: string) => ids.forEach((id) => skillProblem(sourceId, id, reason));
+    const failAll = (reason: string) => ids.forEach((id) => skillProblem(sourceId, id, "source", reason));
     if (!source) {
       failAll("unknown source");
       continue;
@@ -209,8 +246,8 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
       printed = true;
       for (const l of buf) out(l);
     };
-    const p: Prepared | undefined = prepareEvaluation(sourceId, undefined, (l) => buf.push(l), snap, "nothing was published");
-    if (!p && gatedIds.length > 0) flush();
+    const p: Prepared | undefined = required ? prepareEvaluation(sourceId, undefined, (l) => buf.push(l), snap, "nothing was published") : undefined;
+    if (!p && required && gatedIds.length > 0) flush();
     let staged = p?.staged;
     if (!staged) {
       const buf2: string[] = [];
@@ -219,7 +256,7 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
       if (!staged && gatedIds.length === 0) for (const l of buf2) out(l);
     }
     if (!staged) {
-      for (const id of ids) skillProblem(sourceId, id, `the staged import of ${sourceId} cannot be used (see the lines above)`);
+      for (const id of ids) skillProblem(sourceId, id, "source", `the staged import of ${sourceId} cannot be used (see the lines above)`);
       continue;
     }
     const { record, files, commit } = staged;
@@ -250,19 +287,19 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
     for (const id of ids) {
       const skill = normalized.find((s) => s.package.id === id);
       if (!skill) {
-        skillProblem(sourceId, id, `not staged at ${commit.slice(0, 12)} or not normalized`);
+        skillProblem(sourceId, id, "normalize", `not staged at ${commit.slice(0, 12)} or not normalized`);
         continue;
       }
       const pkg = skill.package;
       const rev = revokedOf(id);
       if (rev && rev.version !== pkg.version) {
-        skillProblem(sourceId, id, `revoked names version ${rev.version}, but the built skill is ${pkg.version}`);
+        skillProblem(sourceId, id, "version", `revoked names version ${rev.version}, but the built skill is ${pkg.version}`);
         continue;
       }
       const mine = judged.find((j) => j.item.id === id);
       let reasons = 0;
-      const bad = (reason: string) => {
-        skillProblem(sourceId, id, reason);
+      const bad = (gate: ReleaseGate, reason: string) => {
+        skillProblem(sourceId, id, gate, reason);
         reasons++;
       };
       let licences: string[] = [];
@@ -272,19 +309,19 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
 
       if (!rev) {
         // The checks of `promote check`.
-        if (reviewProblem || !importReview) bad(reviewProblem ?? "not promotable");
+        if (reviewProblem || !importReview) bad("licence", reviewProblem ?? "not promotable");
         else {
           let promoted: ReturnType<typeof promoteImport> | undefined;
           try {
             promoted = promoteImport({ source, record, skills: [skill], evidence: importReview.evidence, retrievedAt, review: importReview });
           } catch (e) {
             if (!(e instanceof SkillImportError)) throw e;
-            bad(`not promotable (${hidden(e.message)})`);
+            bad("licence", `not promotable (${hidden(e.message)})`);
           }
           const pp = promoted?.promoted[0];
           if (promoted && !pp) {
             const r = promoted.manifest.refused[0];
-            bad(`not promotable (${r ? `${r.status}: ${r.reasons.map(hidden).join("; ")}` : "refused"})`);
+            bad("licence", `not promotable (${r ? `${r.status}: ${r.reasons.map(hidden).join("; ")}` : "refused"})`);
           }
           if (pp) {
             provenance = pp.provenance;
@@ -294,35 +331,37 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
         }
         const root = skill.provenance.root;
         const mineFiles = filesOf(root, files);
-        if (!exceptions) bad("the scan exceptions file cannot be used");
+        if (!exceptions) bad("scan", "the scan exceptions file cannot be used");
         else {
           const n = promotionBlockers(applyExceptions(id, scanSkill({ root, files: mineFiles }), exceptions, opts.today)).length;
-          if (n > 0) bad(`blocked (${plural(n, "high finding")})`);
+          if (n > 0) bad("scan", `blocked (${plural(n, "high finding")})`);
         }
         const texts = mineFiles.filter((f) => f.path.endsWith(".md")).map((f) => ({ path: `${root}/${f.path}`, text: decoder.decode(f.content) }));
         const refusal = suiteRefusal(suiteVerdicts({ source, skill, selections: reviewed.selections, records: reviewed.records, texts }));
-        if (refusal !== undefined) bad(`evaluation suites (${refusal})`);
-        if (!mine) {
+        if (refusal !== undefined) bad("profile", `evaluation suites (${refusal})`);
+        if (!required) {
+          evaluation = { suite: RELEASE_EVALUATION_SUITE, record: NO_EVALUATION_RECORD, verdict: "not-run" };
+        } else if (!mine) {
           flush();
-          bad(`not judged by the evaluation gate; run "scf skills gate ${sourceId}"`);
+          bad("evaluation", `not judged by the evaluation gate; run "scf skills gate ${sourceId}"`);
         } else if (!mine.passed) {
-          bad(`evaluation failed: ${mine.codes.join(", ") || "record-invalid"}${mine.notes.length ? ` (${mine.notes.map(hidden).join("; ")})` : ""}`);
+          bad("evaluation", `evaluation failed: ${mine.codes.join(", ") || "record-invalid"}${mine.notes.length ? ` (${mine.notes.map(hidden).join("; ")})` : ""}`);
         } else if (mine.record.state !== "ok") {
-          bad("evaluation failed: record-invalid");
+          bad("evaluation", "evaluation failed: record-invalid");
         } else {
           const parsed = parseEvaluationRecord(mine.record.raw);
           if ("record" in parsed) evaluation = { suite: RELEASE_EVALUATION_SUITE, record: parsed.digest, verdict: "passed" };
-          else bad(`evaluation failed: ${hidden(parsed.problem)}`);
+          else bad("evaluation", `evaluation failed: ${hidden(parsed.problem)}`);
         }
       } else {
         // Q1 (b): a revoked skill needs a package that loads, an identified licence and a readable record; no other gate.
         try {
           const lic = evaluateLicence({ root: skill.provenance.root, ...(pkg.license === undefined ? {} : { declared: pkg.license }), allow: source.licence.allow, evidence });
-          if (lic.licences.length === 0) bad("revoked, but no licence is identified (the release needs one)");
+          if (lic.licences.length === 0) bad("licence", "revoked, but no licence is identified (the release needs one)");
           licences = lic.licences;
           attribution = lic.attribution;
         } catch {
-          bad("revoked, but its licence cannot be read");
+          bad("licence", "revoked, but its licence cannot be read");
         }
         const rec = readNewestRecord(sourceId, commit, id, { home });
         if (rec.state === "none") evaluation = { suite: RELEASE_EVALUATION_SUITE, record: NO_EVALUATION_RECORD, verdict: "not-run" };
@@ -331,19 +370,26 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
           if (parsed && "record" in parsed) {
             evaluation = { suite: RELEASE_EVALUATION_SUITE, record: parsed.digest, verdict: mine ? (mine.passed ? "passed" : "failed") : "not-run" };
           } else {
-            bad(`revoked, but its newest evaluation record cannot be read (${hidden(rec.state === "invalid" ? rec.problem : parsed && "problem" in parsed ? parsed.problem : "invalid")})`);
+            bad("evaluation", `revoked, but its newest evaluation record cannot be read (${hidden(rec.state === "invalid" ? rec.problem : parsed && "problem" in parsed ? parsed.problem : "invalid")})`);
           }
         }
       }
 
+      // The version the package gets: its own, or the one the caller chooses after the other gates passed.
+      let version = pkg.version;
+      if (reasons === 0 && input.versionOf) {
+        const chosen = input.versionOf(id, pkg);
+        if (chosen === undefined) bad("version", "no version can be given to the skill");
+        else version = chosen;
+      }
       // The package in Foundry format, loaded again from memory.
-      const pkgFiles = foundryPackageFiles(pkg);
+      const pkgFiles = foundryPackageFiles(version === pkg.version ? pkg : { ...pkg, version });
       const digest = skillDigest(pkgFiles);
       try {
         const loaded = parseSkillPackage(pkgFiles.map((f) => ({ path: f.path, kind: "file" as const, content: f.content })), id, id);
-        if (loaded.id !== id || loaded.version !== pkg.version || loaded.digest !== digest) bad("the Foundry package does not load again with the same id and version");
+        if (loaded.id !== id || loaded.version !== version || loaded.digest !== digest) bad("package", "the Foundry package does not load again with the same id and version");
       } catch {
-        bad("the Foundry package does not load again with the same id and version");
+        bad("package", "the Foundry package does not load again with the same id and version");
       }
       if (reasons > 0 || !evaluation) continue;
 
@@ -358,7 +404,7 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
       };
       built.push({
         id,
-        version: pkg.version,
+        version,
         digest,
         files: pkgFiles.map(entryOf),
         provenance: prov,
@@ -370,26 +416,34 @@ export function buildRelease(target: ReleaseTarget, out: Out, opts: ReleasePubli
       });
       packages.set(id, pkgFiles.map((f) => ({ path: f.path, content: f.content })));
       if (attribution.length > 0) attributions.set(id, attribution.map((a) => ({ path: a.path, content: a.content })));
-      lines.push({ id, line: `SKILL ${id}@${pkg.version} ${digest} from ${sourceId} evaluation ${evaluation.verdict}${rev ? ` revoked ${rev.on}` : ""}${desc !== undefined ? " description skill-selections" : ""}` });
+      lines.push({ id, line: `SKILL ${id}@${version} ${digest} from ${sourceId} evaluation ${evaluation.verdict}${rev ? ` revoked ${rev.on}` : ""}${desc !== undefined ? " description skill-selections" : ""}` });
     }
   }
-  if (problems > 0) return stop();
+  return { built, packages, attributions, lines, refused };
+}
 
-  // 9. The manifest.
+/** Builds the manifest of a release from skills that passed the gates. Calls `stop` with a problem line and returns undefined when it cannot. */
+export function finishRelease(
+  target: ReleaseTarget,
+  head: { createdAt: string; source: { repository: string; commit: string } },
+  r: Pick<GatedSkills, "built" | "packages" | "attributions" | "lines">,
+  stop: (...lines: string[]) => undefined,
+): BuiltRelease | undefined {
+  const label = `${target.catalogue}@${target.version}`;
   const manifest: ReleaseManifestV2 = {
     schema: 2,
     catalogue: target.catalogue,
     version: target.version,
-    createdAt: `${review.on}T00:00:00Z`,
-    source: { repository: requests.repository, commit: headCommit },
-    skills: built.sort((a, b) => byteCmp(a.id, b.id)),
+    createdAt: head.createdAt,
+    source: head.source,
+    skills: [...r.built].sort((a, b) => byteCmp(a.id, b.id)),
   };
   if (!ReleaseManifestSchema.safeParse(manifest).success) return stop(`${label}: the release manifest has the wrong format`);
   const cred = credentialProblem(releaseText(manifest));
   if (cred) return stop(`${label}: the release manifest holds what looks like a credential (${cred})`);
   return {
-    content: { manifest, packages, attribution: attributions },
-    lines: lines.sort((a, b) => byteCmp(a.id, b.id)).map((l) => l.line),
+    content: { manifest, packages: r.packages, attribution: r.attributions },
+    lines: [...r.lines].sort((a, b) => byteCmp(a.id, b.id)).map((l) => l.line),
     digest: releaseDigest(manifest),
   };
 }

@@ -138,6 +138,7 @@ describe("columnOf", () => {
     ["bug story goes first", rec("bug_first"), "waiting"],
     ["queued", rec("queued"), "queued"],
     ["user limit", rec("user_limit", { userLimit: "per_day" }), "queued"],
+    ["project limit", rec("project_limit"), "queued"],
     ["starting", rec("starting"), "queued"],
     ["checking", rec("checking"), "queued"],
     ["usage limit", rec("usage_limit"), "queued"],

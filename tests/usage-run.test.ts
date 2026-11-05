@@ -96,4 +96,17 @@ steps:
     expect(got.filter((e) => e.runId === bad.runId).map((e) => e.name)).toContain("issue.failed");
     expect(existsSync(usageDir())).toBe(true);
   });
+
+  it("carries the run's workspace: in run.json and every event; default is not written", async () => {
+    const flow = parseFlow(`name: ws\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: "true"}\n`);
+    const team = await runFlow(flow, { task: "t", repo, runsDir, claudeBin, config, workspace: "team-a" });
+    const plain = await runFlow(flow, { task: "t", repo, runsDir, claudeBin, config });
+    await usageIdle();
+    expect(JSON.parse(readFileSync(join(runsDir, team.runId, "run.json"), "utf8")).workspace).toBe("team-a");
+    expect("workspace" in JSON.parse(readFileSync(join(runsDir, plain.runId, "run.json"), "utf8"))).toBe(false);
+    const of = (id: string) => got.filter((e) => e.runId === id);
+    expect(of(team.runId).map((e) => e.workspace)).toEqual(of(team.runId).map(() => "team-a"));
+    expect(of(team.runId).map((e) => e.name)).toEqual(expect.arrayContaining(["run.started", "run.finished"]));
+    expect(of(plain.runId).every((e) => e.workspace === "default")).toBe(true);
+  });
 });

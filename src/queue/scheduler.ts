@@ -4,13 +4,17 @@ import { dirname, join, resolve } from "node:path";
 import { flowFileId } from "../promotion/flow-id.js";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
-import { cancelStoppedRun, cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
+import { workspaceRefused } from "../engine/isolation.js";
+import { limitsOf as workspaceLimitsOf, workspaceForJob } from "../workspaces/index.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId, type WorkspaceLimits } from "../workspaces/list.js";
+import { cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, clearRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, projectOfVars, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, clearRunParked, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
 import { isRefinementRun } from "../auth/run-owner.js";
+import { projectDailyBudget as storedProjectBudget } from "../auth/repos.js";
 
 /**
  * A schedule chore of a watcher (the daily release, the daily report): `watcher <id> schedule`. Chores have their own lane:
@@ -57,9 +61,14 @@ export interface QueuedJob {
   flowId?: string;
   /** A resume that is a retry after a time limit (auto_retry.timeouts): it waits for a helper's cap like a new run, it is not a run of the day, and a cancel ends the run. */
   asNewRun?: boolean;
+  /** The workspace (#816), decided when the job was queued. Absent: "default". */
+  workspace?: string;
 }
 
-export interface JobMeta { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string; asNewRun?: boolean }
+/** The workspace of a queued job; "default" when it has none (also older entries). */
+export const queuedWorkspace = (q: Pick<QueuedJob, "workspace">): string => (validWorkspaceId(q.workspace) ? q.workspace : DEFAULT_WORKSPACE);
+
+export interface JobMeta { workspace?: string; lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string; asNewRun?: boolean }
 
 /** The time a priority job is ordered by: the issue's creation time, else when it was queued. */
 const storyTime = (q: QueuedJob): number => {
@@ -87,7 +96,7 @@ interface Active {
 }
 
 /** Which per-user limit holds a job back. */
-export type UserLimit = "concurrent" | "per_day" | "budget";
+export type UserLimit = "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget";
 
 export interface SchedulerOptions {
   runsDir: string;
@@ -107,8 +116,20 @@ export interface SchedulerOptions {
   accountActive?: (accountId: string) => boolean;
   /** The limits of an account. Without it, nobody is limited (CLI, evals). Runs already working are never stopped by a lower limit. */
   userLimits?: (accountId: string) => { maxConcurrent?: number; maxRunsPerDay?: number; dailyBudgetUsd?: number };
+  /** The daily cap in USD of a project (#792). Without it, the cap is read from the repository records when `userLimits` is set (the server), else there is none. Test hook / override. */
+  projectDailyBudget?: (project: ProjectRef, owner?: string) => number | undefined;
+  /** Spend of the runs of a project that started today. Default: read from the run files. Test hook. */
+  spentTodayByProject?: (project: ProjectRef) => number;
   /** Spend of an account's runs that started today. Default: read from the run files. */
   spentTodayBy?: (accountId: string) => number;
+  /** The limits of a workspace (#819). Default: the workspace list. Never asked for "default" or in evals. Test hook. */
+  workspaceLimits?: (workspaceId: string) => Readonly<WorkspaceLimits>;
+  /** Spend of the runs of a workspace that started this UTC month. Default: read from the run files. Test hook. */
+  spentThisMonthByWorkspace?: (workspaceId: string) => number;
+  /** Test hook: the clock for the month rollover timer. */
+  now?: () => Date;
+  /** Test hook: milliseconds until the scheduler looks again while a workspace's monthly budget holds jobs back (default: the start of the next UTC month, at most 12 hours). */
+  monthRecheckMs?: number;
   /** New runs of an account that started today. Default: counted from the run files. */
   startedToday?: (accountId: string) => number;
   onFinished?: (summary: RunSummary, job: QueuedJob) => void;
@@ -159,6 +180,8 @@ export class Scheduler {
   /** When a group last got a slot (a sequence number, so two starts in one millisecond do not tie). Memory only. */
   private lastStartOf = new Map<string, number>();
   private startSeq = 0;
+  /** When a workspace last got a story slot (shares startSeq). The workspace with the oldest start goes first. Memory only. */
+  private lastStartOfWorkspace = new Map<string, number>();
   /** New runs this scheduler started that are still active: they count before and after their run.json exists. */
   private started = new Map<string, { account: string; day: string }>();
 
@@ -234,12 +257,41 @@ export class Scheduler {
     return runId;
   }
 
+  /**
+   * A run's variables are read once, when it is queued (#816): the repository the workspace was chosen for is the one the run
+   * uses, even when the repository's settings change while the job waits. A refused run keeps the runner's own path, which
+   * reads no folder settings. Never throws.
+   */
+  private freezeRunVars(job: Job, owner: string | undefined): Job {
+    if (job.kind !== "run" || job.frozenVars) return job;
+    try {
+      if (workspaceRefused(job.flow.workspace, owner) ?? skillWriteRefused(job.flow.name, owner)) return job;
+      return { ...job, vars: effectiveVars(job.flow, job.repo, job.vars), frozenVars: true };
+    } catch {
+      return job;
+    }
+  }
+
+  /** The workspace of a job (#816), decided once at queue time from its frozen variables. Never throws. */
+  private workspaceFor(job: Job, given: string | undefined, owner: string | undefined): string {
+    try {
+      if (job.kind === "resume") return queuedWorkspace({ workspace: loadRun(this.o.runsDir, job.runId)?.workspace });
+      if (validWorkspaceId(given)) return given;
+      const vars = job.kind === "run" && job.frozenVars ? job.vars : effectiveVars(job.flow, job.repo, job.vars);
+      return workspaceForJob({ githubRepo: vars.github_repo, owner });
+    } catch {
+      return DEFAULT_WORKSPACE;
+    }
+  }
+
   /** Checks a job, puts it into the queue and writes the queue file. Starts nothing. */
-  private put(job: Job, meta: JobMeta): string {
+  private put(input: Job, meta: JobMeta): string {
+    const job = this.freezeRunVars(input, meta.owner);
     const runId = job.kind === "run" ? this.freeId() : job.runId;
     if (job.kind === "resume" && (this.isActive(runId) || this.isQueued(runId))) throw new Error(`run ${runId} is already queued or running`);
     const repoLock = this.repoLockFor(job);
-    const { priority, storyAt, ...rest } = meta;
+    const { priority, storyAt, workspace: givenWorkspace, ...rest } = meta;
+    const workspace = this.workspaceFor(job, givenWorkspace, meta.owner);
     // the id is looked up here, once, and never taken from the caller: a file edited while the job waits keeps its id
     const flowId = job.kind === "run" && !this.o.localTest ? flowFileId(job.flow, job.repo) : undefined;
     const q: QueuedJob = {
@@ -248,6 +300,7 @@ export class Scheduler {
       ...rest,
       ...(repoLock ? { repoLock } : {}),
       ...(flowId ? { flowId } : {}),
+      ...(workspace !== DEFAULT_WORKSPACE ? { workspace } : {}),
       enqueuedAt: new Date().toISOString(),
       ...(priority ? { priority: true, ...(storyAt ? { storyAt } : {}) } : {}),
     };
@@ -535,7 +588,8 @@ export class Scheduler {
   /** Does a priority job in front of job `i` get the next free slot? One that waits for a busy lock does not hold anyone back. */
   private priorityAhead(i: number): boolean {
     const active = [...this.active.values()].map((a) => a.queued);
-    return this.pending.slice(0, i).some((p) => p.priority && !this.limited.has(p.runId) && !((p.lockKey && active.some((a) => a.lockKey === p.lockKey)) || (p.repoLock && active.some((a) => a.repoLock === p.repoLock))));
+    const ws = queuedWorkspace(this.pending[i]!);
+    return this.pending.slice(0, i).some((p) => p.priority && queuedWorkspace(p) === ws && !this.limited.has(p.runId) && !((p.lockKey && active.some((a) => a.lockKey === p.lockKey)) || (p.repoLock && active.some((a) => a.repoLock === p.repoLock))));
   }
 
   /** Wait for a run to finish (resolves immediately if it is not queued or running). */
@@ -650,6 +704,7 @@ export class Scheduler {
   /** Set by close(): the scheduler starts nothing and holds no timer any more. */
   private closed = false;
   private capTimer?: NodeJS.Timeout;
+  private monthTimer?: NodeJS.Timeout;
 
   /** The server shuts down: nothing starts from now on, and no timer is left. Active jobs and the queue file are not touched. */
   close(): void {
@@ -660,6 +715,12 @@ export class Scheduler {
   private stopCapTimer(): void {
     if (this.capTimer) clearTimeout(this.capTimer);
     this.capTimer = undefined;
+    this.stopMonthTimer();
+  }
+
+  private stopMonthTimer(): void {
+    if (this.monthTimer) clearTimeout(this.monthTimer);
+    this.monthTimer = undefined;
   }
 
   /** Ends a drain: queued jobs start again (a cancelled restart). */
@@ -761,15 +822,101 @@ export class Scheduler {
       for (const [id, s] of this.started) if (s.account === acc && s.day === now.toDateString()) ids.add(id);
       return ids.size;
     };
+    // The project of a job and its owner: a new run's vars, a resume's run file. Cached per pump.
+    const projects = new Map<string, { ref: ProjectRef; owner?: string } | undefined>();
+    const projectOf = (q: QueuedJob) => {
+      if (!projects.has(q.runId)) {
+        let v: { ref: ProjectRef; owner?: string } | undefined;
+        try {
+          if (q.job.kind === "run") {
+            const ref = projectOfVars(q.job.vars);
+            v = ref ? { ref, owner: q.owner } : undefined;
+          } else {
+            const run = loadRun(this.o.runsDir, q.runId);
+            const ref = projectOfVars(run?.vars);
+            v = ref ? { ref, owner: run?.owner ?? q.owner } : undefined;
+          }
+        } catch {
+          v = undefined;
+        }
+        projects.set(q.runId, v);
+      }
+      return projects.get(q.runId);
+    };
+    const projectSpends = new Map<string, number>();
+    const projectOver = (q: QueuedJob): boolean => {
+      const p = projectOf(q);
+      if (!p) return false;
+      const cap = this.projectDailyBudget(p.ref, p.owner);
+      if (cap === undefined) return false;
+      const key = JSON.stringify(p.ref);
+      let v = projectSpends.get(key);
+      if (v === undefined) {
+        try {
+          v = this.o.spentTodayByProject?.(p.ref) ?? spentTodayByProject(this.o.runsDir, p.ref);
+        } catch {
+          v = 0;
+        }
+        if (!Number.isFinite(v)) v = 0;
+        projectSpends.set(key, v);
+      }
+      return v >= cap;
+    };
+    // Workspace limits (#819). "default" and evals have none; nothing is asked for them. Cached per pump.
+    const wsLimitCache = new Map<string, Readonly<WorkspaceLimits>>();
+    const wsLimits = (ws: string): Readonly<WorkspaceLimits> => {
+      if (ws === DEFAULT_WORKSPACE || this.o.localTest) return {};
+      let l = wsLimitCache.get(ws);
+      if (!l) {
+        try {
+          l = (this.o.workspaceLimits ?? workspaceLimitsOf)(ws) ?? {};
+        } catch {
+          l = {};
+        }
+        wsLimitCache.set(ws, l);
+      }
+      return l;
+    };
+    const wsActive = (ws: string) => [...this.active.values()].filter((a) => queuedWorkspace(a.queued) === ws).length;
+    const wsSpends = new Map<string, number>();
+    const wsBudgetOver = (ws: string): boolean => {
+      const cap = wsLimits(ws).monthly_budget_usd;
+      if (typeof cap !== "number" || !Number.isFinite(cap) || cap <= 0) return false;
+      try {
+        if (!this.o.config().cost_limits) return false;
+      } catch {
+        return false;
+      }
+      let v = wsSpends.get(ws);
+      if (v === undefined) {
+        try {
+          v = this.o.spentThisMonthByWorkspace?.(ws) ?? spentThisMonthByWorkspace(this.o.runsDir, ws);
+        } catch {
+          v = 0;
+        }
+        if (!Number.isFinite(v)) v = 0;
+        wsSpends.set(ws, v);
+      }
+      return v >= cap;
+    };
+    /** The workspace limit that holds a job, if any. Chores are held by it too (they count as active jobs of the workspace). */
+    const wsHold = (q: QueuedJob): "workspace" | "workspace_budget" | undefined => {
+      const ws = queuedWorkspace(q);
+      if (ws === DEFAULT_WORKSPACE || this.o.localTest) return undefined;
+      const max = wsLimits(ws).max_concurrent;
+      if (valid(max) && wsActive(ws) >= max) return "workspace";
+      return wsBudgetOver(ws) ? "workspace_budget" : undefined;
+    };
     const limitOf = (q: QueuedJob): UserLimit | undefined => {
       const acc = accountOf(q);
-      if (!acc || !this.o.userLimits) return undefined;
-      const l = limitsOf(acc);
-      if (valid(l.maxConcurrent) && activeOf(acc) >= l.maxConcurrent) return "concurrent";
-      if (countable(q) && valid(l.maxRunsPerDay) && todayCount(acc) >= l.maxRunsPerDay) return "per_day";
-      const cap = this.userDailyBudget(acc);
-      if (cap !== undefined && spent(acc) >= cap) return "budget";
-      return undefined;
+      if (acc && this.o.userLimits) {
+        const l = limitsOf(acc);
+        if (valid(l.maxConcurrent) && activeOf(acc) >= l.maxConcurrent) return "concurrent";
+        if (countable(q) && valid(l.maxRunsPerDay) && todayCount(acc) >= l.maxRunsPerDay) return "per_day";
+        const cap = this.userDailyBudget(acc);
+        if (cap !== undefined && spent(acc) >= cap) return "budget";
+      }
+      return wsHold(q) ?? (projectOver(q) ? "project" : undefined);
     };
     const locked = (q: QueuedJob) => {
       const active = [...this.active.values()].map((a) => a.queued);
@@ -795,7 +942,7 @@ export class Scheduler {
     // takes no story slot and does not wait for stories or a helper's cap; only its lock, the account's state and the
     // account's daily budget hold it. A concurrency of 0 (nothing starts) holds it too, and so does a cap of 0 for a new one.
     if (limit >= 1 && ![...this.active.values()].some((a) => isChoreRun(a.queued.source))) {
-      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && limitOf(p) !== "budget");
+      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && limitOf(p) !== "budget" && !wsHold(p) && !projectOver(p));
       if (q) {
         const account = accountOf(q);
         this.pending.splice(this.pending.indexOf(q), 1);
@@ -808,8 +955,12 @@ export class Scheduler {
       const full = this.slotsInUse() >= capped;
       const ready = this.pending.filter((q) => !ownLane(q.source) && !locked(q) && !held(q) && !limitOf(q) && !(full && (q.job.kind === "run" || q.asNewRun)));
       if (!ready.length) break;
-      // priority block first, then the group with the fewest active runs, then the oldest last start, then queue order
-      const pool = ready.some((q) => q.priority) ? ready.filter((q) => q.priority) : ready;
+      // The workspace whose last start is oldest has the turn (one that never started: 0; a tie goes to the earlier entry).
+      // Inside it: priority block first, then the group with the fewest active runs, then the oldest last start, then queue order.
+      let turn = queuedWorkspace(ready[0]!);
+      for (const q of ready) if ((this.lastStartOfWorkspace.get(queuedWorkspace(q)) ?? 0) < (this.lastStartOfWorkspace.get(turn) ?? 0)) turn = queuedWorkspace(q);
+      const mine = ready.filter((q) => queuedWorkspace(q) === turn);
+      const pool = mine.some((q) => q.priority) ? mine.filter((q) => q.priority) : mine;
       let best = pool[0]!;
       let bestKey = keyOf(best);
       for (const q of pool.slice(1)) {
@@ -823,6 +974,7 @@ export class Scheduler {
       const group = account ?? "";
       this.pending.splice(this.pending.indexOf(best), 1);
       this.lastStartOf.set(group, ++this.startSeq);
+      this.lastStartOfWorkspace.set(turn, this.startSeq);
       this.start(best, account, group);
       if (countable(best)) {
         // A run nobody owned falls to the first admin inside runFlow: it counts for that account but keeps its own group.
@@ -843,7 +995,7 @@ export class Scheduler {
       }
     }
     this.limited = new Map();
-    if (this.o.userLimits) {
+    if (this.o.userLimits || this.o.projectDailyBudget || this.o.workspaceLimits || this.pending.some((q) => queuedWorkspace(q) !== DEFAULT_WORKSPACE)) {
       for (const q of this.pending) {
         if (held(q)) continue;
         const l = limitOf(q);
@@ -864,7 +1016,27 @@ export class Scheduler {
         }, this.o.capRecheckMs ?? CAP_RECHECK_MS);
         this.capTimer.unref();
       }
-    } else this.stopCapTimer();
+    } else if (this.capTimer) {
+      clearTimeout(this.capTimer);
+      this.capTimer = undefined;
+    }
+    // A monthly budget ends without an event: with nothing active no run ends, so nothing calls pump() when the month changes.
+    if ([...this.limited.values()].includes("workspace_budget")) {
+      if (!this.monthTimer) {
+        const now = this.o.now?.() ?? new Date();
+        const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+        const ms = this.o.monthRecheckMs ?? Math.min(12 * 3_600_000, Math.max(1000, next - now.getTime() + 1000));
+        this.monthTimer = setTimeout(() => {
+          this.monthTimer = undefined;
+          try {
+            this.pump();
+          } catch {
+            // the next queue change writes the file again
+          }
+        }, ms);
+        this.monthTimer.unref();
+      }
+    } else this.stopMonthTimer();
     this.persist();
   }
 
@@ -873,6 +1045,23 @@ export class Scheduler {
     try {
       if (!this.o.userLimits || !this.o.config().cost_limits) return undefined;
       const cap = this.o.userLimits(accountId)?.dailyBudgetUsd;
+      return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The daily cap in USD of a project (#792), or undefined: cost limits off, no source (CLI, evals) or no valid value. Never throws.
+   * The override option wins; else the repository records give it, but only when the server set a `userLimits` source.
+   */
+  projectDailyBudget(project: ProjectRef, owner?: string): number | undefined {
+    try {
+      const cfg = this.o.config();
+      if (!cfg.cost_limits) return undefined;
+      let cap: number | undefined;
+      if (this.o.projectDailyBudget) cap = this.o.projectDailyBudget(project, owner);
+      else if (this.o.userLimits) cap = storedProjectBudget(project, owner, cfg.simple_project_daily_budget_usd || undefined);
       return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap : undefined;
     } catch {
       return undefined;
@@ -932,6 +1121,7 @@ export class Scheduler {
         emit({ type: "update", summary: a.summary });
       },
       // a job without an account falls to the first admin inside runFlow: it stays under the global budget only
+      projectDailyBudget: this.o.projectDailyBudget || this.o.userLimits ? (p: ProjectRef, o?: string) => this.projectDailyBudget(p, o) : undefined,
       userDailyBudget: this.o.userLimits && account ? (o: string) => this.userDailyBudget(o) : undefined,
       // evidence only: who asked, when it was queued, and who cancelled it
       actor: actorOf(q.source, queuerOf(q)),
@@ -958,6 +1148,7 @@ export class Scheduler {
             repo: j.repo,
             vars: j.vars,
             frozenVars: j.frozenVars,
+            workspace: queuedWorkspace(q),
             source: q.source,
             owner: q.owner,
             ...(this.o.localTest ? { localTest: true } : { flowId: q.flowId ?? flowFileId(j.flow, j.repo) }),

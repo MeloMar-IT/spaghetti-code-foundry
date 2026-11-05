@@ -447,6 +447,22 @@ describe("LocalStore go state", () => {
     expect(labelsOf(d, 1)).toEqual(["factory:working"]);
   });
 
+  it("closing a closed story changes nothing: closedAt stays and the file is not written", async () => {
+    const d = proj();
+    const name = put(d, story(1, { state: "closed", closedAt: "2025-05-05T00:00:00Z" }));
+    const before = read(d, name);
+    const s = store(d);
+    await s.close(1, "completed");
+    expect(read(d, name)).toBe(before);
+    expect(read(d, name)).toContain("2025-05-05");
+    put(d, story(2));
+    await s.close(2, "completed");
+    const once = read(d, nameOf(d, 2));
+    expect(once).toContain("closed");
+    await s.close(2, "completed");
+    expect(read(d, nameOf(d, 2))).toBe(once);
+  });
+
   it("keeps a closed story closed when go is added, and closing a go story closes it", async () => {
     const d = proj();
     put(d, story(1, { state: "closed" }));

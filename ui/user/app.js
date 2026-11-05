@@ -4,6 +4,7 @@ import { enterDisplay, isAdmin, isNoHash, linkToken, userPage } from "/auth.js";
 import { h, mount } from "/dom.js";
 import { resolve, splitHash } from "/ia.js";
 import { needsOf, renderSetupCheck } from "/setup-check.js";
+import { renderOnboardingAgents } from "/onboarding-agents.js";
 import { parseFilter } from "/runs-filter.js";
 import { renderEpic } from "/epic-page.js";
 import { renderEpics } from "/epics.js";
@@ -90,10 +91,11 @@ async function route() {
     // Decided by the resolved page, not by the address: an unknown plugin address was resolved to the fallback above.
     if (to.page.nav === "plugin") done = await renderPluginPage(box, to.page, { user: me, readOnly });
     else if (simple && page.section === "home") done = await renderSimpleHome(box);
-    else if (simple && page.section === "repos") done = await renderSimpleProject(box, { id: page.id, onName: (n) => { if (mine === generation) namePage(n); } });
+    else if (simple && page.section === "repos") done = await renderSimpleProject(box, { id: page.id, admin: ownAdmin, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "help") done = await renderSimpleHelp(box);
     else if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });
     else if (page.section === "setup") done = await renderSetupCheck(box, { admin: ownAdmin, readOnly, needs: needsOf(splitHash(page.hash).query) });
+    else if (page.section === "agents") done = await renderOnboardingAgents(box, { admin: ownAdmin, readOnly, simple, credentialsHref: "/#/credentials" });
     else if (page.section === "start") done = await renderStart(box, { readOnly, admin: ownAdmin });
     else if (page.section === "epics" && page.id) done = await renderEpic(box, { id: page.id, admin: false, me, query: to.query, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "epics") done = await renderEpics(box, { admin: false, me, readOnly, query: to.query, go });

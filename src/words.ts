@@ -22,6 +22,8 @@ export interface WordFacts {
   perDay?: boolean;
   /** `user_limit`: the daily budget. */
   budget?: boolean;
+  /** `user_limit`: a limit of the workspace (with `budget`: its monthly budget; else its limit of runs at the same time). */
+  workspace?: boolean;
   /** `cancelled`: cancelled while stopped, so nothing continues the run. */
   ended?: boolean;
   /** `area_lock`: the run waits for the develop branch (its merge turn), not for a code area. */
@@ -83,11 +85,27 @@ const GLOSSARY: Record<NextKind, Words> = {
     status: (f) => (f.user ? "paused — the administrator's limit was reached" : "paused — daily budget"),
     help: (f) => (f.user ? "The administrator's limit for today is reached. Nothing to do — it goes on tomorrow." : "Today's budget is used up. Nothing to do — it goes on tomorrow."),
   },
+  project_limit: {
+    status: "paused — the project's limit for today is reached",
+    help: "This project did as much work today as its daily limit allows. Nothing to do — it goes on by itself tomorrow.",
+  },
   user_limit: {
-    status: (f) => (f.user
+    status: (f) => (f.workspace
+      ? (f.user
+        ? (f.budget ? "waiting — your workspace's limit for this month is reached" : "waiting — your workspace's limit of runs at the same time is reached")
+        : (f.budget ? "waiting — the workspace's monthly budget" : "waiting — the workspace's limit of runs at the same time"))
+      : f.user
       ? (f.budget || f.perDay ? "waiting — your limit for today is reached" : "waiting — your limit of runs at the same time is reached")
       : (f.budget ? "waiting — the owner's daily budget" : f.perDay ? "waiting — the owner's limit of runs per day" : "waiting — the owner's limit of runs at the same time")),
-    help: (f) => (f.budget
+    help: (f) => (f.workspace
+      ? (f.budget
+        ? (f.user
+          ? "Your workspace used as much this month as the administrator allows. Nothing to do — it goes on by itself next month."
+          : "The workspace's budget for this month is used up. Nothing to do — it goes on next month, or sooner when the limit is raised.")
+        : (f.user
+          ? "As many runs of your workspace are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of them ends."
+          : "As many runs of the workspace are working at the same time as its limit allows. Nothing to do — it starts when one of them ends, or sooner when the limit is raised."))
+      : f.budget
       ? (f.user
         ? "The administrator's limit for today is reached. Nothing to do — it goes on by itself tomorrow."
         : "The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page.")

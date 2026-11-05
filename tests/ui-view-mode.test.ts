@@ -48,6 +48,10 @@ describe("the rules", () => {
     expect(vm.inView("simple", "#/setup?need=node")).toBe(true);
   });
 
+  it("has the Claude and Codex page in the Simple view", () => {
+    expect(vm.inView("simple", "#/agents")).toBe(true);
+  });
+
   it("has the Help page in Simple and in Advanced", () => {
     expect(vm.inView("simple", "#/help")).toBe(true);
     expect(vm.inView("advanced", "#/help")).toBe(true);

@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync, realpathSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { validBranchName } from "../auth/repo-settings.js";
+import { engineHooksDir } from "../engine/guards.js";
 
 // Writes to the owner's own folder of a local project: bringing a branch of the run's workspace into it, and the optional
 // plain `git push` of that branch to the folder's remote. Synchronous, argument arrays only (no shell), time limits with SIGKILL.
@@ -22,6 +23,8 @@ export interface LocalUpdateOptions {
   protectedPatterns: readonly string[];
   git?: string;
   timeoutMs?: number;
+  /** Lets a protected branch move. Only the final step of the daily release sets it, after grantedBranch() agreed. */
+  allowProtected?: boolean;
 }
 
 export type RemotePush = { kind: "pushed"; remote: string } | { kind: "none" } | { kind: "failed"; remote: string; reason: string };
@@ -30,9 +33,32 @@ const ZERO = "0".repeat(40);
 const OWNER_OPTIONS = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"];
 const RUN_ID = /^[\w.-]{1,100}$/;
 const SHA = /^[0-9a-f]{40}$/;
+export const TAG_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 
 export const PAUSED_REASON = (b: string): string =>
   `${b} is checked out in your folder and has changes that are not committed, or files that the update would replace. Commit, stash or move them, or switch to another branch; the Foundry goes on by itself.`;
+
+/**
+ * The branch the engine let this step move (FACTORY_PUSH_ALLOW = "<branch>:<hex token>"), or undefined. The token file must be in the
+ * engine's own hooks folder (core.hooksPath of the step, absolute) and hold exactly that branch. Never throws.
+ */
+export function grantedBranch(env: NodeJS.ProcessEnv): string | undefined {
+  try {
+    const allow = env.FACTORY_PUSH_ALLOW ?? "";
+    const at = allow.indexOf(":");
+    if (at < 1) return undefined;
+    const branch = allow.slice(0, at);
+    const token = allow.slice(at + 1);
+    if (!/^[0-9a-f]{16,64}$/.test(token) || !validBranchName(branch)) return undefined;
+    const count = /^\d+$/.test(env.GIT_CONFIG_COUNT ?? "") ? Number.parseInt(env.GIT_CONFIG_COUNT ?? "0", 10) : 0;
+    let hooks: string | undefined;
+    for (let i = 0; i < count; i++) if (env["GIT_CONFIG_KEY_" + i] === "core.hooksPath") hooks = env["GIT_CONFIG_VALUE_" + i];
+    if (!hooks || !isAbsolute(hooks) || hooks !== engineHooksDir()) return undefined;
+    return readFileSync(join(hooks, "allow", token), "utf8") === branch ? branch : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** "*" matches any text, "?" one character; anchored. */
 export function isProtectedBranch(branch: string, patterns: readonly string[]): boolean {
@@ -105,7 +131,7 @@ export function updateOwnerBranch(o: LocalUpdateOptions): LocalUpdate {
   const b = o.branch;
   if (!validBranchName(b)) return refuse("not a valid branch name");
   if (!RUN_ID.test(o.runId)) return refuse("the run id is not usable");
-  if (isProtectedBranch(b, o.protectedPatterns)) return refuse(`${b} is a protected branch`);
+  if (!o.allowProtected && isProtectedBranch(b, o.protectedPatterns)) return refuse(`${b} is a protected branch`);
   const owner = real(o.ownerDir);
   if (!owner) return refuse("the folder of the local project is not reachable");
   const ws = (args: string[]) => run(git, o.workspace, args, { ms });
@@ -131,6 +157,8 @@ export function updateOwnerBranch(o: LocalUpdateOptions): LocalUpdate {
 
     const cur = ow(["rev-parse", "-q", "--verify", `refs/heads/${b}`]);
     const current = cur.ok && SHA.test(cur.out.trim()) ? cur.out.trim() : ZERO;
+    // The final release: a resume finds main already at the new commit; that counts as done, so the tag can still be placed.
+    if (o.allowProtected && current === nw) return { kind: "updated", branch: b, sha: nw, synced: true };
     if (current !== expected) return { kind: "moved", detail: `${b} in your folder moved since the clone` };
     if (expected !== ZERO && !ow(["merge-base", "--is-ancestor", expected, nw]).ok) return { kind: "moved", detail: `${b} in your folder is not an ancestor of the new commit` };
 
@@ -200,13 +228,58 @@ export function ownerRemote(ownerDir: string, branch: string, git = "git"): stri
   return names.length === 1 ? names[0] : undefined;
 }
 
+/**
+ * Where "Also push" would send `branch`: the remote (chosen like ownerRemote), every push address git pushes to (`git push`
+ * uses all of them, not only the first), and those addresses with any sign-in part replaced by `***` (the only form that may be
+ * shown). Undefined when there is no remote or no address.
+ */
+export function ownerPushTarget(ownerDir: string, branch: string, git = "git"): { remote: string; urls: string[]; shown: string[] } | undefined {
+  const remote = ownerRemote(ownerDir, branch, git);
+  if (!remote) return undefined;
+  const r = run(git, ownerDir, ["remote", "get-url", "--push", "--all", remote], { owner: true, ms: 10_000 });
+  const urls = r.ok ? r.out.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+  if (!urls.length) return undefined;
+  const shown = urls.map((url) => url.replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@]*@/g, "$1***@"));
+  return { remote, urls, shown };
+}
+
 /** A plain `git push` of `branch` from the owner's folder. Inherits the step's environment (the Foundry's pre-push hook). */
-export function pushOwnerBranch(o: { ownerDir: string; branch: string; git?: string; timeoutMs?: number }): RemotePush {
+export function pushOwnerBranch(o: { ownerDir: string; branch: string; tags?: string[]; git?: string; timeoutMs?: number }): RemotePush {
   const git = o.git ?? "git";
   if (!validBranchName(o.branch)) return { kind: "failed", remote: "", reason: "not a valid branch name" };
+  const tags = o.tags ?? [];
+  if (tags.some((t) => !TAG_NAME.test(t))) return { kind: "failed", remote: "", reason: "not a valid tag name" };
   const remote = ownerRemote(o.ownerDir, o.branch, git);
   if (!remote) return { kind: "none" };
-  const r = run(git, o.ownerDir, ["push", "-q", remote, `refs/heads/${o.branch}:refs/heads/${o.branch}`], { ms: o.timeoutMs ?? 120_000 });
+  const specs = [`refs/heads/${o.branch}:refs/heads/${o.branch}`, ...tags.map((t) => `refs/tags/${t}:refs/tags/${t}`)];
+  const r = run(git, o.ownerDir, ["push", "-q", remote, ...specs], { ms: o.timeoutMs ?? 120_000 });
   if (r.ok) return { kind: "pushed", remote };
   return { kind: "failed", remote, reason: scrubCredentials(r.err) || "git push failed" };
+}
+
+/**
+ * Brings a tag of the workspace into the owner's folder with a plain, non-force push (create only). The same tag on the same
+ * object counts as done; a tag of that name on another object is refused. Never throws.
+ */
+export function pushTagToOwner(o: { workspace: string; ownerDir: string; tag: string; git?: string; timeoutMs?: number }): { kind: "tagged" } | { kind: "refused"; reason: string } {
+  const git = o.git ?? "git";
+  const ms = o.timeoutMs ?? 60_000;
+  const refuse = (reason: string) => ({ kind: "refused" as const, reason });
+  if (!TAG_NAME.test(o.tag)) return refuse("not a valid tag name");
+  const owner = real(o.ownerDir);
+  if (!owner) return refuse("the folder of the local project is not reachable");
+  const ws = (args: string[]) => run(git, o.workspace, args, { ms });
+  for (const args of [["remote", "get-url", "origin"], ["remote", "get-url", "--push", "origin"]]) {
+    const r = ws(args);
+    if (!r.ok || real(r.out.trim()) !== owner) return refuse("the origin of the workspace is not the folder of the local project");
+  }
+  const ref = `refs/tags/${o.tag}`;
+  const mine = ws(["rev-parse", "-q", "--verify", ref]).out.trim();
+  if (!SHA.test(mine)) return refuse(`the workspace has no tag ${o.tag}`);
+  const there = run(git, owner, ["rev-parse", "-q", "--verify", ref], { owner: true, ms });
+  if (there.ok && there.out.trim() === mine) return { kind: "tagged" };
+  if (there.ok) return refuse(`the tag ${o.tag} already exists in your folder on another object`);
+  const push = ws(["push", "-q", owner, `${ref}:${ref}`]);
+  if (!push.ok) return refuse(`the tag could not be placed: ${scrubCredentials(push.err)}`);
+  return { kind: "tagged" };
 }

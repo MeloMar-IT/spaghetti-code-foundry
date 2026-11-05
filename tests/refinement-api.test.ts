@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { addRepo, listRepos, removeRepo } from "../src/auth/repos.js";
+import { localRepoName } from "../src/auth/local-name.js";
+import { addRepo, listRepos, removeRepo, transferRepo } from "../src/auth/repos.js";
 import { refinementSweeper } from "../src/server/api-refinement.js";
 import type { ServerOptions } from "../src/server/server.js";
 import { DROP_KEEP_MS, refinementsPath } from "../src/refinement/store.js";
@@ -268,5 +270,61 @@ describe("no agent, no GitHub", () => {
     expect(started!.ctx.scheduler.briefs()).toEqual([]);
     const runs = join(tmp, "runs");
     expect(existsSync(runs) ? readdirSync(runs) : []).toEqual([]);
+  });
+});
+
+describe("local projects", () => {
+  let name: string;
+  let id: string;
+  beforeEach(() => {
+    const dir = join(tmp, "my-app");
+    execFileSync("git", ["init", "-q", "-b", "main", dir]);
+    const rec = addRepo(ann.user.id, { url: dir, method: "local" });
+    id = rec.id;
+    name = localRepoName(rec);
+  });
+
+  it("lists the local project after the GitHub names", async () => {
+    expect((await call(ann, "GET", "/api/refinement")).json().repos).toEqual(["acme/app", name]);
+    expect((await call(bob, "GET", "/api/refinement")).json().repos).toEqual(["other/thing"]);
+  });
+
+  it("creates and shows a session on it", async () => {
+    const r = await call(ann, "POST", "/api/refinement", { repo: name, idea: "An idea" });
+    expect(r.status).toBe(201);
+    const s = r.json();
+    expect(s).toMatchObject({ repo: name, repoAvailable: true });
+    const got = (await call(ann, "GET", `/api/refinement/${s.id}`)).json();
+    expect(got).toMatchObject({ repo: name, repoAvailable: true });
+    expect(got.readyList).toBeDefined();
+  });
+
+  it("refuses another account's, an unknown and a malformed name", async () => {
+    const status = async (repo: string) => (await call(bob, "POST", "/api/refinement", { repo, idea: "x" })).status;
+    expect(await status(name)).toBe(403);
+    expect(await status("local:x-00000000")).toBe(403);
+    expect(await status("local:Bad Name")).toBe(400);
+    expect(await status("local:app")).toBe(400);
+    expect(existsSync(refinementsPath())).toBe(false);
+  });
+
+  it("is not available after the project is moved or removed", async () => {
+    const s = await make(ann, { repo: name });
+    transferRepo(id, "bob@example.com", { findOwner: () => ({ id: bob.user.id, status: "active" }) });
+    const got = (await call(ann, "GET", `/api/refinement/${s.id}`)).json();
+    expect(got.repoAvailable).toBe(false);
+    expect(got.readyList).toBeUndefined();
+    const s2 = await make(bob, { repo: name });
+    removeRepo(bob.user.id, id);
+    expect((await call(bob, "GET", `/api/refinement/${s2.id}`)).json().repoAvailable).toBe(false);
+  });
+
+  it("keeps sessions from an issue and the backlog on GitHub", async () => {
+    const issue = await call(ann, "POST", "/api/refinement", { repo: name, issue: 1 });
+    expect(issue.status).toBe(400);
+    expect(issue.error()).toContain("existing issue needs a GitHub repository");
+    const backlog = await call(ann, "GET", `/api/refinement/backlog?repo=${encodeURIComponent(name)}`);
+    expect(backlog.status).toBe(400);
+    expect(backlog.error()).toContain("existing issue needs a GitHub repository");
   });
 });

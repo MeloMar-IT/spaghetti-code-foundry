@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunAutonomy } from "../governance/autonomy.js";
@@ -93,6 +94,8 @@ export interface TimeLimitEvent { at: string; step: string; attempt: number; of:
 
 export interface RunSummary {
   runId: string;
+  /** The workspace (#816). Absent: "default" (also older runs). */
+  workspace?: string;
   flow: string;
   /** The flow definition the run started with, so resumes behave the same. */
   flowDef: Flow;
@@ -477,7 +480,84 @@ export function spentToday(runsDir: string, now = new Date()): number {
 
 /** The stop reason of a run that reached its owner's daily budget. It carries no amount: it reaches users. */
 export const USER_BUDGET_REASON = "your daily limit is reached — resume tomorrow";
-export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "");
+/** The stop reason of a run whose project reached its daily cap (#792). It carries no amount. */
+export const PROJECT_BUDGET_REASON = "the project's daily limit is reached — resume tomorrow";
+export const isProjectBudgetStop = (reason?: string): boolean => /^the project's daily limit is reached/.test(reason ?? "");
+/** A stop by a daily spending limit, the owner's or (#792) the project's; paused work that goes on by itself. */
+export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "") || isProjectBudgetStop(reason);
+
+/** A project: a GitHub repository (`vars.github_repo`) or a local one (`vars.repo_id`). */
+export interface ProjectRef {
+  githubRepo?: string;
+  repoId?: string;
+}
+
+export function projectOfVars(vars?: Record<string, string>): ProjectRef | undefined {
+  if (vars?.github_repo) return { githubRepo: vars.github_repo };
+  if (vars?.repo_id) return { repoId: vars.repo_id };
+  return undefined;
+}
+
+/**
+ * Total spend of the runs of one project that started today. Unlike spentTodayBy there is no 500-run window:
+ * a cap must not release a project because newer runs of others pushed today's runs out of the window.
+ */
+export function spentTodayByProject(runsDir: string, project: ProjectRef, now = new Date()): number {
+  const day = now.toDateString();
+  const want = project.githubRepo?.toLowerCase();
+  let total = 0;
+  for (const id of listRunIds(runsDir)) {
+    let s: RunSummary | undefined;
+    try {
+      s = loadRun(runsDir, id);
+    } catch {
+      continue;
+    }
+    if (!s) continue;
+    const at = new Date(s.startedAt);
+    if (at.toDateString() === day) {
+      const p = projectOfVars(s.vars);
+      const mine = want !== undefined ? p?.githubRepo?.toLowerCase() === want : project.repoId !== undefined && p?.repoId === project.repoId && !p.githubRepo;
+      if (mine && Number.isFinite(s.totalCostUsd)) total += s.totalCostUsd;
+    } else if (at < new Date(now.getTime() - 2 * 86_400_000)) break; // sorted newest first
+  }
+  return total;
+}
+const monthCache = new Map<string, { mtimeMs: number; size: number; startedAt: string; workspace: string; cost: number }>();
+
+/**
+ * Total spend of the runs of one workspace that started in the current UTC calendar month (#819). A run without a
+ * `workspace` counts for "default". Costs that are not finite and files that cannot be read are skipped. Never throws.
+ * Every run is looked at: run ids are made when a job is queued, not when it starts, so the list order says nothing
+ * about start times. A small cache keyed by the file's mtime and size keeps a look to one stat per run.
+ */
+export function spentThisMonthByWorkspace(runsDir: string, workspace: string, now = new Date()): number {
+  try {
+    const from = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const to = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+    let total = 0;
+    for (const id of listRunIds(runsDir)) {
+      try {
+        const file = runFile(join(runsDir, id));
+        const st = statSync(file);
+        let e = monthCache.get(file);
+        if (!e || e.mtimeMs !== st.mtimeMs || e.size !== st.size) {
+          const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
+          e = { mtimeMs: st.mtimeMs, size: st.size, startedAt: String(s.startedAt), workspace: validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE, cost: s.totalCostUsd };
+          monthCache.set(file, e);
+        }
+        const at = Date.parse(e.startedAt);
+        if (e.workspace === workspace && at >= from && at < to && Number.isFinite(e.cost)) total += e.cost;
+      } catch {
+        continue;
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
 /** A stop that the Foundry answers with a retry after a step ran out of time (see engine/auto-retry.ts). */
 export const isTimeLimitStop = (reason?: string): boolean => /^ran out of time in /.test(reason ?? "");
 

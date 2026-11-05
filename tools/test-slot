@@ -20,6 +20,13 @@
 //        at least every 5 s while it lasts and renamed to .done when it ends, so the step's time limit can leave the wait out;
 //        a folder that cannot be written changes nothing),
 //      FACTORY_TEST_SLOT_TRACK_MS (how often the processes are noted while a limit or a track file is set; default 2000).
+// Workspace limit (#819): FACTORY_WORKSPACE (a workspace id, checked against ^[a-z0-9][a-z0-9-]{0,39}$ before it is used in a
+// path; anything else is ignored) and FACTORY_WORKSPACE_TEST_SLOTS (1 or more) limit the test runs of one workspace: the
+// command first takes a slot in <slots-dir>/workspaces/<id>/slot-N, then a machine slot, always in that order. The machine
+// total still applies. A workspace limit is never skipped: when no workspace slot comes free in time, or its folder cannot be
+// made, or when the machine slot does not come free in time, the command is not run and test-slot exits with 75 (every slot it
+// holds is released) — also with FACTORY_VAR_TEST_SLOTS=0 (no machine slots) and without FACTORY_TEST_SLOT_STRICT.
+// Without the two variables nothing changes.
 // <slots-dir>/workers (one number W, written by the load governor at every check while the machine is busy, ignored after
 // 4 minutes like the cap) limits the workers of the tests: the command gets WORKERS_VAR=W and Gradle's
 // org.gradle.workers.max=W (appended to GRADLE_OPTS and JDK_JAVA_OPTIONS — the second one is read by a java that a Gradle
@@ -122,9 +129,17 @@ const alive = (pid) => {
     return e.code === "EPERM";
   }
 };
-/** Take slot number `i` if it is free, or if its holder is gone. Returns its folder, or undefined. */
+// The workspace limit (see the header). Only a valid id with a limit of 1 or more counts.
+const wsId = process.env.FACTORY_WORKSPACE ?? "";
+const wsLimit = /^\d+$/.test(process.env.FACTORY_WORKSPACE_TEST_SLOTS ?? "") ? Number(process.env.FACTORY_WORKSPACE_TEST_SLOTS) : 0;
+const wsWanted = /^[a-z0-9][a-z0-9-]{0,39}$/.test(wsId) && wsLimit >= 1;
+const wsDir = join(dir, "workspaces", wsId);
+/** Take slot number `i` in `parent` if it is free, or if its holder is gone. Returns its folder, or undefined. */
 function takeSlot(i) {
-  const slot = join(dir, `slot-${i}`);
+  return takeSlotIn(dir, i);
+}
+function takeSlotIn(parent, i) {
+  const slot = join(parent, `slot-${i}`);
   try {
     mkdirSync(slot);
   } catch {
@@ -152,9 +167,26 @@ function take() {
   }
   return undefined;
 }
+/** Take a free slot of the workspace, or the slot of a holder that is gone. */
+function takeWorkspace() {
+  for (let i = 1; i <= wsLimit; i++) {
+    const s = takeSlotIn(wsDir, i);
+    if (s) return s;
+  }
+  return undefined;
+}
 
 let slot;
+let wsSlot;
 let usable = true;
+if (wsWanted) {
+  try {
+    mkdirSync(wsDir, { recursive: true });
+  } catch (e) {
+    console.error(`test-slot: the folder of the workspace ${wsId} cannot be used (${e.code ?? "error"}) — not running`);
+    process.exit(75);
+  }
+}
 if (slots > 0) {
   try {
     mkdirSync(dir, { recursive: true });
@@ -168,33 +200,61 @@ if (slots > 0) {
     console.log(`test-slot: the slots folder cannot be used (${e.code ?? "error"}) — running without a slot`);
   }
 }
-if (slots > 0 && usable) {
+if ((slots > 0 && usable) || wsWanted) {
   const start = Date.now();
   let said = false;
-  while (!(slot = take())) {
+  // The workspace slot first, the machine slot second, always in this order: two waiters cannot hold one each and wait for the other's.
+  const tryTake = () => {
+    if (wsWanted && !wsSlot) wsSlot = takeWorkspace();
+    if (wsWanted && !wsSlot) return false;
+    if (slots > 0 && usable && !slot) slot = take();
+    return !(slots > 0 && usable) || !!slot;
+  };
+  while (!tryTake()) {
     if (Date.now() - start >= waitMs) {
-      if (strict) {
+      const secs = Math.round(waitMs / 1000);
+      // A workspace-limited command never runs without both its workspace slot and a machine slot: release what it holds, exit 75.
+      if (wsWanted) {
         endWait();
-        console.error(`test-slot: no free slot after ${Math.round(waitMs / 1000)} s and FACTORY_TEST_SLOT_STRICT is set — not running`);
+        releaseAll();
+        console.error(`test-slot: no free ${wsSlot ? "machine" : `workspace ${wsId}`} slot after ${secs} s — not running`);
         process.exit(75);
       }
-      console.log(`test-slot: no free slot after ${Math.round(waitMs / 1000)} s — running anyway`);
+      if (strict) {
+        endWait();
+        releaseAll();
+        console.error(`test-slot: no free slot after ${secs} s and FACTORY_TEST_SLOT_STRICT is set — not running`);
+        process.exit(75);
+      }
+      console.log(`test-slot: no free slot after ${secs} s — running anyway`);
       break;
     }
-    if (!said) console.log(`test-slot: ${slots} test run(s) are already working on this machine — waiting for a free slot`);
-    if (!said) beginWait(start);
+    if (!said) {
+      console.log(wsWanted && !wsSlot
+        ? `test-slot: the workspace ${wsId} already has ${wsLimit} test run(s) working — waiting for a free slot`
+        : `test-slot: ${slots} test run(s) are already working on this machine — waiting for a free slot`);
+      beginWait(start);
+    }
     said = true;
     await new Promise((r) => setTimeout(r, waitDir ? Math.min(pollMs, 5000) : pollMs));
     beatWait();
     slots = slotsNow(); // the cap may have come, gone or grown old while this run waited
   }
   endWait();
-  if (said && slot) console.log(`test-slot: got a slot after ${Math.round((Date.now() - start) / 1000)} s`);
+  if (said && (slot || wsSlot)) console.log(`test-slot: got a slot after ${Math.round((Date.now() - start) / 1000)} s`);
 }
-const release = () => {
+/** Frees the machine slot only (the pause swaps it). */
+function releaseMachine() {
   if (slot) rmSync(slot, { recursive: true, force: true });
   slot = undefined;
-};
+}
+/** Frees every slot this process holds. */
+function releaseAll() {
+  releaseMachine();
+  if (wsSlot) rmSync(wsSlot, { recursive: true, force: true });
+  wsSlot = undefined;
+}
+const release = releaseAll;
 const nice = num(process.env.FACTORY_TEST_NICE, 10);
 const env = { ...process.env, FACTORY_IN_TEST_SLOT: "1" };
 
@@ -367,7 +427,7 @@ function checkPause() {
     try {
       const got = takeSlot(1);
       if (got) {
-        release();
+        releaseMachine();
         slot = got;
       }
     } catch { /* stays as it is */ }

@@ -78,7 +78,7 @@ describe("cleanId", () => {
 describe("the events", () => {
   it("builds a valid run.started with ids only", () => {
     const e = runStartedEvent(run());
-    expect(UsageEventSchema.parse(e)).toMatchObject({ name: "run.started", repository: "acme/widgets", issue: 42, workspace: "" });
+    expect(UsageEventSchema.parse(e)).toMatchObject({ name: "run.started", repository: "acme/widgets", issue: 42, workspace: "default" });
     expect(JSON.stringify(e)).not.toContain("flow");
   });
   it("takes the issue only when it is a plain number", () => {

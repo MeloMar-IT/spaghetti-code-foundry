@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WORKSPACE_ID_RE } from "../workspaces/list.js";
 
 /**
  * The shape of a usage event. Kept apart from the builders in events.ts: this file imports nothing from the engine, so the
@@ -18,8 +19,8 @@ const base = {
   runId: ID,
   repository: z.string().regex(/^[\w.-]{1,100}\/[\w.-]{1,100}$/).optional(),
   issue: ISSUE.optional(),
-  /** Always "" until workspaces exist (#779 part 5). */
-  workspace: z.literal(""),
+  /** The workspace id of the run (#816); "default" when it has none. */
+  workspace: z.string().regex(WORKSPACE_ID_RE),
 };
 
 export const UsageEventSchema = z.discriminatedUnion("name", [

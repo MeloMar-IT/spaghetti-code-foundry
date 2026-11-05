@@ -342,7 +342,8 @@ export class LocalStore implements StoryStore {
     return r.out;
   }
   async close(issue: number, reason: "completed" | "not_planned", timeoutMs?: number): Promise<RestIssue> {
-    const r = await this.write(issue, "closed", { timeoutMs }, (s, now) => ({ story: { ...s, state: "closed", closedAt: now }, out: undefined }));
+    // Closing a closed story changes nothing: no write, no commit, closedAt stays.
+    const r = await this.write(issue, "closed", { timeoutMs }, (s, now) => (s.state === "closed" ? { out: undefined } : { story: { ...s, state: "closed", closedAt: now }, out: undefined }));
     return { ...toRest(r.entry), state_reason: reason };
   }
   async reopen(issue: number, timeoutMs?: number): Promise<RestIssue> {
@@ -437,7 +438,7 @@ export class LocalStore implements StoryStore {
       close: (n, reason) => {
         reasonOf(reason);
         num(n);
-        this.writeNow(n, "closed", (s, now) => ({ story: { ...s, state: "closed", closedAt: now }, out: undefined }));
+        this.writeNow(n, "closed", (s, now) => (s.state === "closed" ? { out: undefined } : { story: { ...s, state: "closed", closedAt: now }, out: undefined }));
       },
       viewer: () => `${this.author}\n`,
       listChanges: () => noChanges(),

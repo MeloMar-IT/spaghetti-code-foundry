@@ -7,10 +7,11 @@ import { parse } from "yaml";
 import { FACTORY_HOME } from "../flow/load.js";
 import { disposeUsage, subscribeUsage } from "../usage/hub.js";
 import type { UsageHandler } from "../usage/schema.js";
+import { disposeWorkspaces, supplyWorkspaces, suppliedWorkspaces, type WorkspaceStore } from "../workspaces/list.js";
 import { checkUiSpec, pluginUiName, registrationsOf, settingsValues, type PluginUiEntry, type PluginUiHandle } from "./ui.js";
 
 /** The version of the plugin API: what `register(api)` gets as `api.version`. */
-export const PLUGIN_API_VERSION = "0.2";
+export const PLUGIN_API_VERSION = "0.3";
 export const REGISTER_TIMEOUT_MS = 30_000;
 export const MAX_PLUGINS = 20;
 export const MAX_USAGE_HANDLERS = 10;
@@ -31,6 +32,11 @@ export interface PluginApi {
    * register(api) runs. A handler that throws or takes longer than 5 s is reported in the problem list.
    */
   readonly onUsage: (handler: UsageHandler) => void;
+  /**
+   * Supplies the workspaces (#816): `store.list()` returns the whole list at once (not a promise); it replaces `workspaces` in
+   * config.yaml. One plugin only, once, and only while register(api) runs.
+   */
+  readonly workspaces: (store: WorkspaceStore) => void;
 }
 export interface Registration {
   point: string;
@@ -168,6 +174,7 @@ export async function loadPlugins(entries: readonly PluginEntry[], deps: LoadDep
   } catch (e) {
     // what the plugins before the failing one subscribed to must not outlive the failed start
     disposeUsage(owner);
+    disposeWorkspaces(owner);
     throw e;
   }
 }
@@ -206,6 +213,7 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
     let ui: PluginUiEntry | undefined;
     let open = true;
     const usage: Registration[] = [];
+    let suppliesWorkspaces = false;
     const api: PluginApi = Object.freeze({
       version: PLUGIN_API_VERSION,
       options: Object.freeze(structuredClone(entry.options)),
@@ -233,6 +241,26 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
         });
         usage.push({ point: "usage", name: "onUsage" });
       },
+      workspaces: (store: WorkspaceStore): void => {
+        if (!open) throw new Error("workspaces(store) can only be called while register(api) runs");
+        if (!store || typeof store !== "object" || typeof store.list !== "function") throw new TypeError("workspaces(store): the store needs a list() function");
+        if (suppliesWorkspaces) throw new Error("workspaces(store) can only be called once");
+        suppliesWorkspaces = true;
+        const r = supplyWorkspaces({
+          owner,
+          plugin: label,
+          store,
+          report: (reason) => {
+            problems.push({ plugin: label, reason });
+            deps.log?.(`plugin ${label}: ${reason}`);
+          },
+        });
+        if (r !== "ok") {
+          problems.push({ plugin: label, reason: `workspaces(store): plugin "${r.taken}" supplies the workspaces already; this list is not used` });
+          return;
+        }
+        usage.push({ point: "workspaces", name: "workspaces" });
+      },
     });
     try {
       await withDeadline(spec, "register(api)", timeoutMs, () => (register as (a: PluginApi) => unknown)(api));
@@ -245,9 +273,19 @@ async function loadAll(entries: readonly PluginEntry[], deps: LoadDeps, owner: s
     const loaded: LoadedPlugin = { label, module: spec, version: versionOf(mod, def, path), registered: [...(ui ? registrationsOf(ui) : []), ...usage] };
     if (ui) uiEntries.push(ui);
     plugins.push(loaded);
+    if (suppliesWorkspaces) suppliedWorkspaces(); // a bad list shows in the problem list at start
     deps.log?.(`plugin ${loaded.label} ${loaded.version} loaded`);
   }
-  return { entries: structuredClone(entries), plugins, problems, ui: uiEntries, dispose: () => disposeUsage(owner) };
+  return {
+    entries: structuredClone(entries),
+    plugins,
+    problems,
+    ui: uiEntries,
+    dispose: () => {
+      disposeUsage(owner);
+      disposeWorkspaces(owner);
+    },
+  };
 }
 
 /** The plugins in config.yaml as it is on disk now; undefined when it cannot be read or is not valid. */

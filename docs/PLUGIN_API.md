@@ -17,11 +17,11 @@ The package has one entry point, `@melomar-it/scf-core`. Nothing else is importa
 `exports` map in `package.json` lists only that entry. A deep import such as
 `@melomar-it/scf-core/dist/config.js` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
 
-The public names are (plugin API `0.2`):
+The public names are (plugin API `0.3`):
 
 | Name | Kind | What it is |
 |---|---|---|
-| `PLUGIN_API_VERSION` | string | The plugin API version of this release (`"0.2"`) |
+| `PLUGIN_API_VERSION` | string | The plugin API version of this release (`"0.3"`) |
 | `startServer(options)` | function | Starts the Foundry HTTP server; resolves to its URL, port, `close()` and context |
 | `ServerOptions` | type | Options of `startServer` |
 | `ConfigSchema` | object | The zod schema of the configuration |
@@ -43,7 +43,8 @@ The public names are (plugin API `0.2`):
 | `UsageEvent`, `UsageHandler` | types | A usage event, and the function `api.onUsage` takes |
 
 Plugin points are added to this list and this file when they ship, and the plugin API version rises
-with them. Version `0.2` added `api.onUsage` (see [Usage events](#usage-events)).
+with them. Version `0.2` added `api.onUsage` (see [Usage events](#usage-events)). Version `0.3` added
+`api.workspaces(store)` (see [Workspaces](#workspaces)).
 
 The arguments and results of these names are the types in the package's `.d.ts` files. The
 exported names and their kinds are kept in `tests/public-api.snapshot.json`; a test fails when
@@ -67,17 +68,18 @@ before the queue and the watchers start.
 ```js
 // plugin.mjs
 export function register(api) {
-  if (api.version !== "0.2") throw new Error("needs plugin API 0.2");
+  if (api.version !== "0.3") throw new Error("needs plugin API 0.3");
   console.log("audit plugin", api.options.level);
 }
 ```
 
-- `api.version` is the plugin API version (`PLUGIN_API_VERSION`, `"0.2"` in this release). A
+- `api.version` is the plugin API version (`PLUGIN_API_VERSION`, `"0.3"` in this release). A
   plugin that cannot work with it throws; the start stops with a message that names the plugin.
 - `api.options` is a frozen copy of the `options` map of the entry.
 - `api.ui(spec)` adds pages, menu items and a settings section to the web interface. See
   [The ui point](#the-ui-point).
 - `api.onUsage(handler)` gets the usage events of the runs. See [Usage events](#usage-events).
+- `api.workspaces(store)` supplies the list of workspaces. See [Workspaces](#workspaces).
 - A plugin fails the start when it cannot be found or imported, has no `register`, throws, or does
   not finish `register` within 30 seconds. The server then does not start at all.
 - Refused: a relative path, a URL, a built-in Node module, and a module inside a runs folder or a
@@ -137,7 +139,7 @@ the defaults filled in. The settings page shows one card per section; a save goe
 `PUT /api/config`, which checks each key against the fields of the loaded plugin.
 
 The public package names do not change with this point: `ui` is a member of the plugin `api` object, and
-its types are not exported from `@melomar-it/scf-core`. `PLUGIN_API_VERSION` is `"0.2"` in this release.
+its types are not exported from `@melomar-it/scf-core`. `PLUGIN_API_VERSION` is `"0.3"` in this release.
 
 ## Usage events
 
@@ -153,8 +155,8 @@ export function register(api) {
 ```
 
 The events are the type `UsageEvent`, told apart by `name`. Each has `id`, `time` (ISO 8601), `runId`
-and `workspace` (always `""` for now). When known, it also has `repository` (`owner/name`) and `issue`
-(a number).
+and `workspace` (the id of the run's workspace, `default` when it has none). When known, it also has
+`repository` (`owner/name`) and `issue` (a number).
 
 | Name | When | Fields besides the common ones |
 |---|---|---|
@@ -204,6 +206,31 @@ not a plain file, and a named pipe are refused.
 removes the handlers, so no later event reaches a plugin; events still queued are dropped. When a
 plugin fails to start, the handlers of the plugins loaded before it are removed too. Two servers in
 one process deliver events only to their own plugins.
+
+## Workspaces
+
+`api.workspaces(store)` supplies the list of workspaces: teams with members and limits, each repository,
+watcher and run in exactly one of them. `store.list()` returns the whole list at once, not a promise, in the
+shape of the `workspaces` list of `config.yaml`: each entry has `id`, `name`, `members` (account ids) and `limits`.
+When a plugin supplies the list, it replaces the `workspaces` of `config.yaml`, and it is checked the same way.
+
+```js
+export function register(api) {
+  api.workspaces({
+    list: () => [
+      { id: "team-api", name: "API team", members: ["6f1c2a3e-0000-4000-8000-000000000001"], limits: { max_concurrent: 2 } },
+    ],
+  });
+}
+```
+
+- It may be called once per plugin, and only while `register(api)` runs. A later call, or a `store` without
+  a `list` function, throws.
+- Only one plugin may supply the list. A second plugin that calls it gets a line in the problem list
+  (`scf plugins`, `GET /api/plugins`) and its list is not used; the first one stays.
+- A `list()` that throws, returns a promise or returns a list that is not valid puts every account in
+  `default`. The reason is reported once, in the problem list.
+- A plugin that does not supply the list leaves `config.yaml` in charge.
 
 ## Semantic versioning
 

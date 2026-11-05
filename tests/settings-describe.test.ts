@@ -136,7 +136,7 @@ describe("what is described", () => {
     expect(isCovered("simple.help_contact")).toBe(true);
     expect(described.find((d) => d.key === "simple.help_contact")).toMatchObject({ kind: "text", optional: true, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "simple.help_contact")?.default).toBeUndefined();
-    expect(described).toHaveLength(149);
+    expect(described).toHaveLength(152);
   });
 
   it("describes governance.auto_demote as a generated boolean that defaults to true", () => {
@@ -273,7 +273,7 @@ describe("the advertised ranges are the schema's", () => {
   const TABLE = new Set([
     "step_env.pass", "step_env.agent_pass", "sandbox.user_read", "skills.roots", "skills.releases.approved", "skills.releases.keys",
     "skills.catalogue.include", "skills.selection.include", "skills.catalogue.exclude", "skills.selection.exclude", "skills.selection.exclusive", "skills.unresolved.high_risk",
-    "delivery.required_checks", "delivery.artifacts", "governor.busy_apps",
+    "delivery.required_checks", "delivery.artifacts", "governor.busy_apps", "simple.hidden_starters",
   ]);
 
   it("list limits: exactly maxItems are accepted, one more is not", () => {

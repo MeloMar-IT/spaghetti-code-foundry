@@ -121,17 +121,17 @@ describe("Settings → Ask SCF", () => {
     expect(t.indexOf("Notifications")).toBe(t.indexOf("Delivery") + 1);
   });
 
-  it("has a Simple view card with one text input for the help contact", async () => {
+  it("has a Simple view card whose first text input is the help contact (the starters settings follow it)", async () => {
     const { main, puts } = await render({});
     const card = cardOf(main, "Simple view");
     const inputs = card.all("input");
-    expect(inputs).toHaveLength(1);
+    expect(inputs).toHaveLength(2); // the help contact and the projects folder; the hidden starters are a list control
     const contact = inputs[0] as any;
     contact.value = "Ask Ann";
     contact.fire("change", { target: contact });
     main.all("button").find((b) => b.textContent === "Save")!.click();
     await flush();
-    expect(puts[0].simple).toEqual({ help_contact: "Ask Ann" });
+    expect(puts[0].simple).toEqual({ help_contact: "Ask Ann", hidden_starters: [] });
     expect(ConfigSchema.safeParse(JSON.parse(JSON.stringify(puts[0]))).success).toBe(true);
   });
 

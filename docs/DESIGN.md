@@ -205,6 +205,61 @@ loaded ones, or cannot be read, the health line shows it. `PUT /api/config` refu
 (400), and a save without the key keeps the stored list (`withStoredPlugins`), so the settings page
 cannot change it. The settings inventory lists `plugins.*` as exceptions: the file is the only place to set them.
 
+### Workspaces (#816)
+
+A workspace is a team. Each repository record, each watcher's runs and each queue entry belongs to exactly one
+workspace; a run without a repository is in `default`. `src/workspaces/list.ts` holds the schema of the list
+(`WorkspaceListSchema`, used by `ConfigSchema` as `workspaces`, so a bad entry stops the config from being read),
+the id rule (`WORKSPACE_ID_RE`, `default` reserved) and the one supplier slot that `api.workspaces(store)` takes
+(`supplyWorkspaces()`). The file imports only zod, so `config.ts`, `usage/schema.ts` and `plugins/load.ts` can
+use it without an import cycle.
+
+`src/workspaces/index.ts` answers the lookups and never throws: `workspacesOf(userId)` (an account may be in
+several workspaces; none gives `default`), `workspaceOfRepo(id)`, `workspaceOfRun(runId)`, `limitsOf(id)` and
+`knownWorkspace(id)`. `currentWorkspaces()` reads the plugin's list when one supplies it (a list that fails the
+check, or a `list()` that throws or returns a promise, is empty and is reported once), else the list of
+`config.yaml`. `workspaceForJob()` looks the repository up by its name, and by the owner when several accounts
+have a record of it.
+
+The workspace is decided once, when the scheduler queues a job (`Scheduler.workspaceFor()`), from the variables
+the run will use (`freezeRunVars()` freezes them at the same time). It is stored on `QueuedJob` and passed to
+`runFlow` as `workspace`, and `run.json` keeps it only when it is not `default`, so older runs and installs
+read as before. The flow's own `workspace` setting (`empty`, `repository`, …) says where a run checks out code and
+plays no part here. Usage events take the run's workspace (`common()` in `usage/events.ts`), and the schema
+refuses an empty value.
+
+The Settings page has no control for the list yet (`workspaces.*` are in `settings/exceptions.ts`).
+`setRepoWorkspace()` in `auth/repos.ts` is the only writer of the record field, behind the admin route
+`PUT /api/admin/repos/:id/workspace`. `authPlan()` and `transferRepo()` keep the field, so a change of sign-in
+or an owner change does not move a repository.
+
+#### Workspace limits and fair share (#819)
+
+The limits are enforced by the scheduler (`src/queue/scheduler.ts`), not by a second picker. `default` and evals
+(`localTest`) have no workspace limits, and the scheduler never asks for them.
+
+- **Holds in `limitOf()`.** After the account limits, `wsHold()` returns `workspace` when the workspace has
+  `max_concurrent` active jobs (chores count too), or `workspace_budget` when its monthly spend is at
+  `monthly_budget_usd`. The budget counts only when `cost_limits` is on. A held job gets the same `limit` marking
+  as an account hold, so the status text comes from `words.ts` (`user_limit` with `workspace: true`).
+- **Spend.** `spentThisMonthByWorkspace()` in `src/engine/state.ts` sums the cost of the runs of the workspace whose
+  `startedAt` is in the current UTC month. It reads every run file (no early exit at an older run) and caches each
+  file's value by mtime and size, so a run that is still writing is read again.
+- **Month rollover.** A held budget has no event that ends it, because nothing runs while it holds. A timer
+  (`monthTimer`) re-runs `pump()` at the next UTC month start (at most every 12 hours). It is stopped when no
+  budget holds a job, and in `close()` and `drain()`.
+- **Round robin.** Story starts pick the workspace with the oldest `lastStartOfWorkspace` entry, using the same
+  `startSeq` counter as owner fairness. Inside that workspace the order is unchanged: the priority block first,
+  then the group with fewest active runs, then queue order. `behindPriority` only counts priority jobs of the same
+  workspace. With one workspace the turn never changes the order.
+- **Test slots.** The scheduler does not count test slots. `workspaceSlotEnv()` (`src/workspaces/index.ts`) gives
+  shell and agent steps `FACTORY_WORKSPACE` and `FACTORY_WORKSPACE_TEST_SLOTS` (empty when the workspace has no
+  limit); `src/release/host.ts` forwards the same two variables to release builds. `tools/test-slot` takes a
+  slot in `<slots-dir>/workspaces/<id>/slot-N` before the machine slot, and the order (workspace, then machine) is
+  fixed so two waiters cannot each hold one and wait for the other. The id is checked against
+  `^[a-z0-9][a-z0-9-]{0,39}$` before it is used in a path. A workspace limit is never skipped: when the slot does
+  not come free, the command is not run and the tool exits 75.
+
 ---
 
 ## 4. Flows and the engine
@@ -272,6 +327,31 @@ Design rules:
 - Messages are built from validated fields, never from request text.
 
 ![The flow editor with a built-in flow](images/flows.png)
+
+#### Approvals in the data folder (#798)
+
+Part 2a of #775 lets the server record approvals itself, in `skill-approvals.json` in the data folder (`src/skills/approvals.ts`):
+
+- **Store.** Schema 1, per source id: the repository key, an optional approved commit (`ref`) and the releases (catalogue, version, digest, and optional `key` and `signature`). The file is at most 256 KiB and at most 200 sources and 100 releases per source. It is written atomically with mode 0600, under the `skill-approvals.lock` file. A read never throws: a missing file is `none`; a link, a special file, a bad schema or an over-size file is `unreadable`. A write over the size limit is refused (`too-large`) and keeps the old bytes.
+- **Merge point.** `approvedReleases(rel)` is the only place where the config list and the stored list meet. The same digest in both is one entry (the config entry wins). Two different digests for one catalogue and version drop both and report a conflict. The registry, `release list`/`verify` and the approval code all call it, so they see one list.
+- **Refusal.** A root whose release is in conflict is refused (`root-refused`) before the `allow_unreleased` check, for store and administrator roots alike. An unreadable store is a problem; the config entries still load.
+- **Ref overlay.** `readSources` replaces `ref.approved` with the stored commit for an enabled `update.auto` source of the same repository key (`withApprovedRefs`). The default reads the data folder; `{ approvals: false }` returns the raw file. `update --due` and release publish overlay the entries they use. `update-cli` edits the raw file, so its "changed on origin" check compares the raw entry (`existingRaw`), and a stored commit is never a false change.
+- **Automatic approval.** `approveAutoRelease` (`src/skills/auto-approve.ts`) is the entry point for part 2b. It checks the source (first-party, enabled, `update.auto`), the stored release and its verification, and that every package comes from the source's repository with first-party trust. It refuses a conflict with config or store. When `skills.releases.keys` is set it signs with `skills.releases.auto_key` (the key must match `keys[id]`). Its order is fixed: the audit line is prepared under the audit lock first (a failure refuses and changes nothing); then the store entry is written; then the audit line is appended. If the append fails after the write, the result is `approved` with a note, and the store entry is the durable record. A rollback is not done, because it would be riskier than the note.
+- **Not in this part.** The automatic update chain (#799, below) is the first production caller of `approveAutoRelease` and `recordApprovedRef`. Retention of automatic releases (removing old folders under a lock, with run-lock checks) is a later part and is not here; no release is deleted by this change.
+
+#### Automatic update (#799)
+
+Part 2b of #775 turns a due update of a first-party source with `update.auto` into a release and an approval, with no pull request. The chain is `autoUpdate()` in `src/skill-import/update-auto.ts`, called by `updateSource` (`update-cli.ts`) for a due run of such a source. Every other run keeps the review pull request.
+
+- **Order.** Fetch the commit of `ref.track`; stage it (`stageSource`, quarantine only); run the gates per skill and the evaluation suite of the catalogue, when it has one; publish the release; approve it with `approveAutoRelease`; record the commit with `recordApprovedRef`. Each step writes one `skill-auto-update` audit line. Nothing waits for the network after the publish.
+- **Gates without review files.** `src/skills/release-publish.ts` splits the old `buildRelease` loop into `gateReleaseSkills()` (per skill, returns the passed skills and the failures with a gate name) and `finishRelease()` (builds the manifest and the release). `buildRelease` keeps its committed-review path and its results; the automatic path needs no `skill-releases.yaml` or `skill-sources.yaml` review file. The chain builds its gate input in `src/skills/auto-release.ts` (`buildAutoRelease()`), which reads the approved releases of the data folder.
+- **Partial release.** A skill that fails a gate is left out. The release holds the others, and the failures are recorded, so one bad skill never stops the source. A source where every skill fails releases nothing (`blocked`).
+- **Versions.** `autoSkillVersion()` in `src/skills/auto-version.ts` is pure: no approved base gives `1.0.0` (or a higher declared version); the same digest as the base keeps the version; a higher declared version wins; a changed file list is a minor bump, changed text a patch bump. `bumpMinor` and `bumpPatch` drop a prerelease part. The base is the newest approved release that holds the skill. A pinned version is never edited; a change gets a new version.
+- **Catalogue.** The catalogue id is the source id; the version is `1.0.<n>`, one above the highest `1.0.<k>` in the release store or in the approvals (`nextAutoVersion`, `AUTO_VERSION_RE`). A stored release with the same id, version and different bytes refuses the publish.
+- **Record.** `src/skills/auto-updates.ts` writes `skill-auto-updates.json` (schema 1, mode 0600, atomic, under a lock). Per source: `at`, `commit`, `result` (`released`, `unchanged`, `blocked` or `failed`), an optional `release` and the failed skills. A failed skill has `skill`, `gate` and `message`, where `message` must equal the fixed sentence of its gate (`GATE_MESSAGES`). The record holds no upstream text. Read never throws; an unreadable file is `unreadable`.
+- **Concurrency.** One chain per source at a time: `autoUpdate()` takes `skill-auto-update-<id>.lock` in the data folder without waiting. `recordApprovedRef` takes the stored commit it expects; a commit changed meanwhile gives `stale` and the run stops with a `PROBLEM`, though the release stays approved.
+- **Failures.** A fetch failure writes an audit line and a `PROBLEM`, no release and no record. The sweeper (`src/server/skill-update-sweep.ts`, actor `monitor`) turns the `PROBLEM` into a monitor finding, as for review sources.
+- **Not here.** The route and the Skills card for the record are part 3 (2c). The record is the input for those issues.
 
 #### Evaluation gate
 

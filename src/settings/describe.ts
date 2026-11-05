@@ -142,8 +142,8 @@ export function unsupportedSettings(): string[] {
 /** Whether the key is one of the described settings. The prefixes end in a dot: `monitoring` is not covered. */
 export function isCovered(key: string): boolean {
   // No generated control can edit these safely: src/settings/exceptions.ts says why.
-  if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns" || key === "governance.owner") return false;
-  if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce", "promotion.enforce"].includes(key)) return true;
+  if (key === "help.disabled_accounts" || key === "help.pilot_accounts" || key === "help.sensitive_patterns" || key === "governance.owner" || key.startsWith("skills.releases.auto_key.")) return false;
+  if (["ui.redesign", "default_model", "router.fallback", "router.fallback_on", "isolate_agents", "cost_limits", "daily_budget_usd", "simple_project_daily_budget_usd", "concurrency", "protected_branches", "hotfix_to_main", "secret_scan", "delivery.signing_key_path", "delivery.required_checks", "delivery.artifacts", "delivery.provenance", "policy.enforce", "promotion.enforce"].includes(key)) return true;
   return ["monitor.", "step_env.", "skills.", "sandbox.", "server.", "audit.", "notify.", "bot.", "github_app.", "self_update.", "failure_summary.", "help.", "governor.", "governance.", "auto_retry.", "simple."].some((p) => key.startsWith(p));
 }
 
@@ -181,6 +181,8 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "auto_retry.timeouts": N("Retries after a time limit", "How often a story of a watcher is tried again by itself when a step ran out of time, counted per story over all its runs, where 0 turns it off and a time limit then goes to Needs you as before, and a run you start yourself is never retried."),
   "promotion.enforce": N("Use only promoted versions", "Whether a new run checks that its flow, sub-flows, policy packs, model routes and tool profile are promoted (scf promote): off does not check, warn logs what is not promoted, on refuses the run, and scf run --local-test is always allowed."),
   "simple.help_contact": G("Help contact", "Who people in the Simple view can ask, shown as plain text on their Help page, for example a name and an e-mail address; empty hides the line."),
+  "simple.hidden_starters": G("Hidden starters", "Ids of built-in starters that are not offered for a new project, where an own starter of yours is always offered and an empty list offers all."),
+  "simple.projects_folder": G("Projects folder", "An absolute path outside the Foundry data folder where new projects from a starter are made; not set means scf-projects in the home folder of the person who runs the Foundry."),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
   "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
   "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),
@@ -278,6 +280,7 @@ export const SETTING_TEXTS: Record<string, Text> = {
   isolate_agents: A("Isolate agents", "Run agent steps without your personal setup: no MCP servers, plugins, skills, hooks or user settings.", "new-runs", "admin-sections.js"),
   cost_limits: A("Enforce cost limits", "Stop runs at the run, step and daily budgets; off still records costs but never stops a run because of money.", "new-runs"),
   daily_budget_usd: A("Daily budget ($)", "When today's spending reaches this, runs pause and resume the next day.", "new-runs"),
+  simple_project_daily_budget_usd: A("Daily cap per Simple project ($)", "A project whose owner uses the Simple view pauses for the day when its runs of today reach this; empty means no default cap.", "now"),
   concurrency: A("Runs at the same time", "The most runs that work at the same time, over all repositories.", "now"),
   "server.listen": A("Listen on", "The address the server answers on: 127.0.0.1 or ::1 for this computer only, 0.0.0.0 or :: for all networks.", "restart"),
   "server.allowed_hosts": A("Allowed host names", "Host names, besides localhost, that people may type to reach this page.", "now"),
@@ -347,7 +350,7 @@ export const ITEM_SETTINGS: Record<string, ItemSettingText> = {
     label: "Routing rules",
     help: "The first rule that matches a step picks its model.",
     effect: "new-runs",
-    fields: on("models.js", ["step", "flow", "min_visit", "model"]),
+    fields: on("models.js", ["step", "flow", "min_visit", "agent", "model"]),
   },
 };
 

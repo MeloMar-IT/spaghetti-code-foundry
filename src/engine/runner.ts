@@ -33,13 +33,13 @@ import { CODEX_LOGIN_NOT_RETURNED, returnCodexLogin } from "../agents/codex-logi
 import { codexLoginReturnLine } from "../agents/codex-home.js";
 import { fallbackTargets } from "../agents/targets.js";
 import { explainFailure } from "../failure-explain.js";
-import { hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
+import { finalReleaseState, hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPublishState, protectedBranchEnv, selfEnv, SIGN_IN_NOT_REMOVED, TOOLS_DIR } from "./guards.js";
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { localRepoEnv, removeSignInDir } from "./repo-access.js";
 import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
-import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, spentToday, spentTodayBy, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type RunStatus, type RunSummary } from "./state.js";
+import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
@@ -60,6 +60,8 @@ import { configureTelemetry } from "../telemetry/telemetry.js";
 import { emitRunMeasured } from "../monitor/measures.js";
 import { runEndEvents, runStartedEvent } from "../usage/events.js";
 import { emitUsage } from "../usage/hub.js";
+import { workspaceForJob, workspaceSlotEnv } from "../workspaces/index.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
 
@@ -81,6 +83,8 @@ interface CommonOptions {
   config?: Config;
   /** The daily budget of an account; without it only the global budget applies. */
   userDailyBudget?: (owner: string) => number | undefined;
+  /** The daily cap in USD of a project (#792); without it no project cap applies. */
+  projectDailyBudget?: (project: ProjectRef, owner?: string) => number | undefined;
   /** Evidence only: who asked for this start or resume. Without it a new run is read from `source`; a resume is the Foundry's. */
   actor?: Actor;
   /** Evidence only: when the job was put in the queue (absent for a run that was not queued). */
@@ -101,6 +105,8 @@ export interface RunOptions extends CommonOptions {
   vars?: Record<string, string>;
   /** `vars` is the final set: the folder's own settings are not read (they were applied when the run was queued). */
   frozenVars?: boolean;
+  /** The workspace the queue decided (#816). Absent: it is looked up from the repository in `vars`. */
+  workspace?: string;
   /** Pre-allocated run id (e.g. so a UI can subscribe before the run starts). */
   runId?: string;
   /** Who started the run; saved in run.json. */
@@ -191,6 +197,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
   const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
+  // the flow's own `workspace` setting plays no part: "empty" only means "no checkout" (#816)
+  const workspace = validWorkspaceId(opts.workspace) ? opts.workspace : workspaceForJob({ githubRepo: vars.github_repo, owner });
   const summary: RunSummary = {
     runId,
     autonomy: autonomy.autonomy,
@@ -213,6 +221,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     ...(opts.toolProfile !== undefined ? { toolProfile: snapshotToolProfile(opts.toolProfile) } : {}),
     ...(opts.localTest ? { localTest: true as const } : {}),
     ...(opts.flowId ? { flowId: opts.flowId } : {}),
+    ...(workspace !== DEFAULT_WORKSPACE ? { workspace } : {}),
   };
   claimRunStart(opts.runsDir, () => {
     mkdirSync(join(runDir, "logs"), { recursive: true });
@@ -422,6 +431,7 @@ async function drive(
     baseEnv = {
       FACTORY_TASK: task,
       FACTORY_RUN_ID: summary.runId,
+      ...workspaceSlotEnv(summary.workspace),
       FACTORY_WORKDIR: summary.workdir!,
       FACTORY_BRANCH: summary.branch ?? "",
       FACTORY_LEARNINGS_FILE: lf,
@@ -432,7 +442,8 @@ async function drive(
       // the run's watcher answers questions itself (auto_defaults): question comments say that nothing is needed
       ...nextStepEnv({ autoDefaults: summary.vars.auto_defaults === "true" }),
       // below delivery-handoff the hook refuses every push; the level is the one fixed at the run's start, so a resume keeps it
-      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes, autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
+      // A final release (see finalReleaseState) needs the hook folder in the environment, or its grant is never recognised: observe it.
+      ...protectedBranchEnv(config.protected_branches, config.secret_scan, policy.observesPushes || finalReleaseState(summary.flowDef, summary.vars.github_repo) === "on", autonomyRefuses(autonomyOfRun(summary), "push") ? autonomyOfRun(summary) : undefined),
       ...selfEnv(),
       ...(opts.pathPrefix?.length ? { PATH: [...opts.pathPrefix, process.env.PATH ?? ""].join(delimiter) } : {}),
     };
@@ -456,12 +467,25 @@ async function drive(
     }
     return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap - spentTodayBy(opts.runsDir, summary.owner) : undefined;
   };
+  // what the project of this run may still spend today (#792); undefined: no cap
+  const projectLeft = (): number | undefined => {
+    const ref = projectOfVars(summary.vars);
+    if (!config.cost_limits || !ref || !opts.projectDailyBudget) return undefined;
+    let cap: number | undefined;
+    try {
+      cap = opts.projectDailyBudget(ref, summary.owner);
+    } catch {
+      cap = undefined;
+    }
+    return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap - spentTodayByProject(opts.runsDir, ref) : undefined;
+  };
   const engine: Engine = {
     summary,
     config,
     baseEnv,
     botEnv,
     hotfix: hotfixState(summary.flowDef, config),
+    finalRelease: finalReleaseState(summary.flowDef, summary.vars.github_repo),
     skillPublish: skillPublishState(summary.flowDef, skillLibraryRun(summary.vars.github_repo, summary.owner)),
     logsDir: join(summary.runDir, "logs"),
     claudeBin: opts.claudeBin,
@@ -483,10 +507,11 @@ async function drive(
         runCap !== undefined ? runCap - summary.totalCostUsd : undefined,
         dailyCap !== undefined ? dailyCap - spentToday(opts.runsDir) : undefined,
         userLeft(),
+        projectLeft(),
       ].filter((n): n is number => n !== undefined);
       return left.length ? Math.min(...left) : undefined;
     },
-    runLoop: (scope, startAt) => loop(engine, scope, startAt, opts.runsDir, userLeft),
+    runLoop: (scope, startAt) => loop(engine, scope, startAt, opts.runsDir, userLeft, projectLeft),
   };
 
   const scope: Scope = {
@@ -523,7 +548,7 @@ async function drive(
   let result: LoopResult;
   if (!resume) engine.evidence?.started(summary);
   try {
-    result = await loop(engine, scope, resume?.startAt ?? null, opts.runsDir, userLeft);
+    result = await loop(engine, scope, resume?.startAt ?? null, opts.runsDir, userLeft, projectLeft);
   } catch (e) {
     result = { outcome: "failed", reason: `internal error: ${(e as Error).message}`, next: summary.state.next, lastOutput: "" };
   } finally {
@@ -661,7 +686,7 @@ function resumePoint(step: Step, scope: Scope, engine: Engine): string {
   return mine.at(-2)?.id.slice(scope.prefix.length) ?? step.id;
 }
 
-async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDir: string, userLeft: () => number | undefined): Promise<LoopResult> {
+async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDir: string, userLeft: () => number | undefined, projectLeft: () => number | undefined): Promise<LoopResult> {
   const { flow, ctx, visits } = scope;
   const { summary, config } = engine;
   const steps = flow.steps;
@@ -690,6 +715,14 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (stopNow) {
       engine.log(`■ stopped before "${step.id}": ${stopNow}`);
       return { outcome: "stopped", reason: stopNow, ...here() };
+    }
+
+    // The cap of the project (#792) stops the run at every step boundary, whatever the free fallback or the kind of step:
+    // it is the only budget a fallback does not lift, and the run goes on by itself the next day.
+    const pl = projectLeft();
+    if (pl !== undefined && pl <= 0) {
+      engine.log(`■ stopped before "${scope.prefix}${step.id}": the project's daily limit is reached`);
+      return { outcome: "stopped", reason: PROJECT_BUDGET_REASON, ...here() };
     }
 
     const runCap = config.cost_limits ? summary.flowDef.limits.max_cost_usd : undefined;

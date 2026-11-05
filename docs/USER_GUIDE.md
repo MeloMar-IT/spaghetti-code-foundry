@@ -173,7 +173,64 @@ with `{ "tool": "claude" }` or `{ "tool": "codex" }` starts the tool's own sign-
 `codex login`). The sign-in window opens on the computer that runs the Foundry, not in your browser. The Foundry asks
 for no password or key and never shows the tool's output; it answers in plain words. `POST /api/onboarding/test-call`
 with the same body makes one tiny call (no tools, a fixed prompt) and answers `ok`, `missing`, `signed-out` or
-`failed`. Use it after you sign in to check that the tool works. The page has no buttons for these routes yet.
+`failed`. Use it after you sign in to check that the tool works. The page "Claude and Codex in plain words" (below) has buttons for these routes.
+
+**Answers about Claude and Codex (API).** Admins can also answer which tools they use (`have`: `claude`, `codex`, `both` or `none`), which plan each tool has (`plans`), how the work is shared between them when both are used (`share`: `auto`, `claude`, `codex` or `even`) and how busy the computer may be (`busy`). `GET /api/onboarding/agents` returns the answers, the six settings they give, the values in effect, the settings an admin set by hand, and a summary in plain words. `PUT /api/onboarding/agents` with `{ "answers": { … }, "replace": [] }` saves the answers and writes the settings they give to `config.yaml`: `concurrency` (runs at the same time), `governor.usage_percent` and `governor.priority` (the usage threshold and the priority of runs), `default_model`, `router.fallback` and `router.rules` (the routing). A setting an admin set by hand is kept and listed in `kept`; it changes only when its name is in `replace`. The same answers sent again change nothing. Bad answers answer 400 with the path of the bad field and no value. Send the `X-Config-Version` header from the last GET to refuse a save over a newer `config.yaml` (409). The answers are stored in `onboarding/agents.json` in the Foundry data folder; the save waits for the Foundry's account lock (up to 2 seconds, then it answers that the store is locked), and if the answers cannot be written, the Foundry puts the old `config.yaml` back (best effort: if that also fails, the next save sees the new values as set by hand and keeps them). The usage threshold lowers the runs at the same time only while slowing down is on (`scf limits auto on`) and the Foundry has a usage reading (`scf limits set`). The page "Claude and Codex in plain words" (below) asks these questions and saves them.
+
+### Claude and Codex in plain words
+
+**Claude and Codex** (`#/agents`) is a guided page with six plain questions. It is the next step after the Setup check (its "Next: Claude and Codex" button), and you can open it at any time from the admin Home page, next to "Setup check". In the Simple view it is linked from **Help** under "Claude and Codex". The questions are:
+
+1. **Which do you have?** Claude Code (made by Anthropic; a Claude Pro or Max plan, or an API key), Codex (made by OpenAI; a ChatGPT Plus or Pro plan, or an API key), **Both**, or **Neither yet**. Each choice has a short note and, for the two tools, a link to the official plans page.
+2. **Which plan?** Asked for each tool you have. The plan is shown in the summary and helps choose the settings; choose **I don't know** when you are not sure.
+3. **Is it installed?** The same rows as the Setup check, with their copy buttons for the install commands.
+4. **Sign in and test.** **Sign in to Claude** or **Sign in to Codex** opens the tool's own sign-in window on the computer the Foundry lives on. **Test Claude** or **Test Codex** makes one tiny call to check that it works. The page never asks for a password, key or token.
+5. **How should they share the work?** Only when you have both. The default is **Let the Foundry decide (recommended)**. The other choices are: Claude Code does most of the work, Codex does most of the work, or they share (Claude Code writes, Codex checks).
+6. **How busy may the Foundry be?** **A little**, **Normal** (the default) or **As fast as it can**.
+
+If you choose an API key, the page does not ask for it. It points to the **Credentials** page, where the admin stores credentials.
+
+When you finish, a **summary** page says in plain words what is set up, for example "Claude Code, Max plan, signed in and tested, does most of the work; Codex, Plus plan, signed in, takes over when Claude Code reaches its limit." Each line has a **Change** button that asks only that question again (for a tool's plan, the install and sign-in questions follow). You can run the questions again at any time. The answers are saved once, when the last question is answered (or when a Change is finished).
+
+Settings an admin set by hand in `config.yaml` are not overwritten silently. The summary says which ones are kept (for example "how many things it does at the same time"). A confirmation asks before they are replaced, and only then do your answers replace them.
+
+On the Advanced and Admin views the page also shows the six settings your answers give (run count, when the Foundry slows down, priority, the default tool, the fallback and the routing rules), the value now in effect, and whether an admin kept it by hand. The Simple view does not show that table.
+
+The page is for admins, because the tools are set up on the computer that runs the Foundry. Other accounts see a short note, "Ask your admin", and nothing is changed. If two admins save at the same time, the second one sees the newer answers and must confirm again before anything is replaced.
+
+### Starters
+
+A **starter** is a ready project folder: it has its files, a README in plain words, a test command, a preview (**Try it**) and a release recipe, so the first result comes quickly and the agents build on a known base. The Foundry ships three starters, all with no npm dependencies, no network and `node --test` as the test command; each release is a `.tar.gz` made with `tar` on macOS and Linux:
+
+- **Website** — a one-page static site.
+- **Web app** — one page with a form and a small JSON API that stores the entries in a JSON file (`data/entries.json` by default, set with `DATA_FILE`). Its server reads `PORT` from the environment. Git ignores the `data/` folder.
+- **Tool** — a small command (`node tool.mjs`) that counts the words, lines and characters of a text. Its **Try it** page runs `node tool.mjs --serve`.
+
+Starters are for admins only for now; no page uses them yet, and the routes are below.
+
+**Where starters come from.**
+
+- **Built-in** starters are in the `starters/<id>/` folder of the Foundry package.
+- **Your own** starters are folders in `starters/<id>/` inside the Foundry data folder. An own starter with the same id as a built-in one replaces it.
+- A starter needs `starter.yaml` (`title`, `description` in plain words, `test` and `needs`, where `needs` may only be `node`), `README.md`, `.factory/preview.yaml` and `.factory/release-build.yaml`. It may hold at most 200 files and 2 MB, and no links or git data. Its id is lowercase letters, digits and `-` (1–40 characters, not starting with `-`).
+- An own starter that fails these checks is listed with a plain `problem` and cannot be used. The list never shows a folder path.
+- Hide a built-in starter with the setting `simple.hidden_starters` (a list of ids; empty offers all).
+
+**Making a project.** `POST /api/starters/<id>/project` with `{ "name": "…", "parent": "…" }` (optional `parent`):
+
+1. checks the name (1–60 characters, no control characters) and makes a lowercase folder name from it;
+2. creates the folder with a non-recursive `mkdir`; if it exists, the answer is 409 and nothing is overwritten;
+3. copies the starter without `starter.yaml`, and `gitignore` becomes `.gitignore`;
+4. runs `git init` with `main`, makes one commit "Start from the <title> starter" with the Foundry's identity, and creates `develop`, which is checked out;
+5. connects the folder as a **local** repository (see [Local projects](#local-projects)) with the starter's test command, and tests the connection.
+
+The answer is 201 with `repo` and `connection`. If any step fails, the folder is removed and nothing is left half done. The new project gets no watcher, as with any manually connected local repository. Git runs without the `GIT_*` variables of your environment, with its hooks off and a time limit.
+
+**Where projects go.** The setting `simple.projects_folder` is an absolute path outside the Foundry data folder; when it is not set, new projects go to `scf-projects` in the home folder of the person who runs the Foundry. A `parent` inside the data folder is refused.
+
+**Try it.** Every built-in starter has a `.factory/preview.yaml` with `port: auto`, so **Try it** works right away. The Foundry sets `PORT` and `HOST` for the app and waits for the `ready` path to answer. The Website starter listens on `HOST` when it is set and on `127.0.0.1` otherwise, so its preview is reachable only from the computer that runs the Foundry.
+
+**Checks.** The Foundry's tests run every built-in starter: the files and limits, a project made in a temporary folder, its test and release commands (the artifacts must exist), its preview file, and its preview on a free port. They need no network.
 
 ### Old and new interface
 
@@ -238,11 +295,17 @@ Simple shows your work per project, in plain words. Home is **My projects**; the
 
 1. **What you need to do**: the questions to answer and the results to check, each with its button. With nothing waiting it says "Nothing — the Foundry is working."
 2. **What is being made**: four groups, **Planned**, **Being built**, **Ready for you to check** and **Done**. A card shows the title, one sentence about the work and, for **Being built**, the step, e.g. "Step 2 of 4: testing". **Done** shows five cards; **Show all done** shows the rest and stays open while the page refreshes.
-3. The buttons **Ask for a change**, **Try it** and **Make this version final** come with later parts. The page does not show them yet.
+3. **Try it** starts your project so you can see it (see **Try it on the project page** below). The buttons **Ask for a change** and **Make this version final** come with later parts. The page does not show them yet.
+
+**Try it on the project page.** Press **Try it** to start your project's app. The page says "Starting…" and reads the state again every few seconds. When the app is ready, a big **Open it** link opens your project in a new tab, and **Stop** ends the preview. If the app does not start, the page says "It could not start. The Foundry will look into it." and **Try it** is shown again. Simple never shows the app's output or the reason; Advanced and Admin show them on the repository page. A new start replaces the running preview of the project, and the preview also stops on its own after 30 minutes without use (see **Try it: preview** below).
+
+When a change waits for your check, **Try it** first asks "Which version do you want to open?": **The current version** (the `develop` branch) or **The version being checked** (the change that waits for you; with more than one change waiting, its name follows). **Not now** goes back without starting anything. While a start or a stop runs, the buttons are off.
+
+**Try it** works only on the computer where the Foundry is installed, because the address it opens is on that computer (`http://127.0.0.1:<port>/`). When you open the page from another computer, the page says "Try it works on the computer where the Foundry is installed." and shows no button.
 
 Both pages refresh every 30 seconds and use the same lists as Home (repositories, runs and the queue), so Simple shows no data that Home does not. Work that is cancelled, superseded or parked, and epics, are not listed.
 
-Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". Local projects (without GitHub) show "Nothing yet" for now.
+Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". A local project (without GitHub) is listed and shown like the others. An admin sees one more box on its project page, **Put this project on GitHub**, which moves it in plain steps: choose a name (step 1 of 2), then check and put it on GitHub (step 2 of 2). The box is shown only to an admin. Without a GitHub sign-in on any repository, it says to connect GitHub first in the Advanced view, and it never has a token field. With a GitHub sign-in it makes a new place on GitHub or uses one with the chosen name, and it says what goes along (changes, saved versions). When the move works, the box says "Your project is on GitHub now." If it stops halfway, the box says that it may have stopped or worked, and asks you not to try again on this page; look at the list of projects in the Advanced view. The move itself is the one described under "Move a local project to GitHub" in the Work section.
 
 ### Simple: the Help page
 
@@ -745,13 +808,18 @@ When a story is set to `go`, the gitflow flow (`issue-gitflow`) does this:
 2. **Test and review.** The review reads the local changes: `git diff develop...feature`, which includes the commits already on the feature branch, and the changes not yet committed. A local project has no pull request, so the `pr-*` commands of `tools/story` are refused for it.
 3. **Merge into develop.** After the tests and the review pass, the feature is merged into `develop` in your folder. The Foundry never pushes into a branch that is checked out in your folder. It moves `develop` only when `develop` has not moved since the run cloned it; if it has, the run merges again with the newer `develop`. If `develop` is the branch you have checked out, the files are updated only when your folder is clean.
 4. **Paused by your work.** If `develop` is checked out with uncommitted changes, or with files the update would replace, the run waits without holding a slot, and it merges again by itself when the way is clear. Commit, stash or move the changes, or switch branch. Your uncommitted work is never overwritten.
-5. **Release.** A feature does not touch `main`. To release, merge `develop` into `main` yourself.
+5. **Release.** A feature does not touch `main`. A local project has no release pull request. The daily release check (`release-daily`, 17:00) runs the tests and the build on `develop`. When they pass, it waits under **Needs you** (Simple: **What you need to do**) with **Make this version final**. The card lists the finished stories in plain words.
+   - **Make this version final** merges the tested `develop` into `main` in your folder (no fast-forward), adds the tag `release-<date>` (`-2`, `-3` when the name is taken), and closes the stories that went in. Each story gets a comment with the tag.
+   - If the project has a release recipe (`.factory/release-build.yaml`), the release files are kept in `<data folder>/releases/<name>/<tag>/`. No GitHub release is made.
+   - **Not yet** keeps everything on `develop`. A reason is optional; it is posted on each story. The next daily check asks again.
+   - If the checks fail, nothing is asked. A run that stopped midway finishes the tag, the story closing or the release files when you resume it; it never merges twice.
+   - With **Also push to the remote**, `main` and the tag are pushed too.
 
 A hotfix label does not apply to a local project: the story is built as a feature, and the report says so.
 
 The report of a finished story names the commit (its short hash) and says that it is in `develop` in your folder.
 
-**Also push to the remote** (a setting, off by default). It is shown only when your folder has a git remote. When it is on, the Foundry runs a plain `git push` of `develop` from your folder after each merge. No GitHub API is used. If the push fails, the report says why, with any sign-in removed from the text, and the merge in your folder stays.
+**Also push to the remote** (a setting, off by default). It is shown only when your folder has a git remote. When it is on, the Foundry runs a plain `git push` of `develop` from your folder after each merge. No GitHub API is used. Nothing is pushed until you press **Yes, publish** (#796): the step shows the remote and its address (without any sign-in), the develop and main branches and the tags that go along, and it says that the push goes on by itself after each merge until you turn it off. **Cancel** leaves everything local and the setting off. The server checks the confirmation itself: the setting cannot be turned on by a plain settings change (409), and a confirmation is single-use, expires after 10 minutes and is refused when the remotes or the branch names changed since the check. Turning it off needs no confirmation. If the push fails, the report says why, with any sign-in removed from the text, and the merge in your folder stays.
 
 ### Commits for story changes
 
@@ -788,6 +856,19 @@ The move refuses to start, and changes nothing, when:
 - the target repository is not connected by you, or has no usable GitHub sign-in. The message is "connect this repository to GitHub first". The Foundry never asks for a token; it uses the sign-in of the target repository (see the sign-in of the repository under My repositories).
 
 **Known limit.** If the Foundry stops after GitHub has created an issue but before the story file records its number, the next run creates that story's issue again. Check the target repository for a duplicate and close the extra one before you run the move again.
+
+#### Move the whole project
+
+`POST /api/repos/:id/move-to-github` (admin only, like local repositories) moves the local project itself. Its body is `target` (either `{ "create": { "name": "name" or "owner/name", "private": true } }`, where `private` is true by default, or `{ "repoId": "..." }` for a GitHub repository you already have under **My repositories**), with optional `includeClosed` and `dryRun`. The steps, in order:
+
+1. **Target.** With `create`, the Foundry makes the repository with `gh repo create` and your GitHub token sign-in, then connects it under the same owner and sign-in method. If the repository already exists, it is used. With no GitHub sign-in at all, the answer is "connect GitHub first: add a GitHub repository with a token under My repositories, then move again".
+2. **Push.** Every branch and tag of the folder is pushed, including `scf/stories`. The push never forces: a ref that GitHub refuses stops the move with the reason, and nothing is switched.
+3. **Stories.** The stories move as described above. A story that cannot be read, or whose comments are too large, stops the move before the switch, so its watchers stay on the local project.
+4. **Switch.** The watchers of the local project move to the GitHub repository, the run settings are copied (the GitHub repository's own values win where both have one), and the local record is removed. The folder and its `.scf/stories/` files stay as history.
+
+A dry run returns whether the repository would be created, the branches and tags that would be pushed and the story plan. It changes nothing. A move that stopped at any step can be run again: an existing repository, refs that are already up to date and stories that are already moved are skipped.
+
+The **Move to GitHub** dialog under My repositories (see "Local (no GitHub)" there) and the **Put this project on GitHub** box on the Simple project page both call this route: first the dry run, then the move.
 
 ### Work page (redesign, off by default)
 
@@ -856,6 +937,51 @@ repository is not in the answer, the page says "This repository is not in your l
 been removed, or you may not have access." with **Clear filters**; the text is the same whether
 the repository exists for another account or not. Refreshes keep the filter. The server gets no
 new parameter.
+
+### Try it: preview
+
+A preview starts your project's own app on the server, so you can open it in a browser before you merge. The app is started from the repository, with the command the project names in `.factory/preview.yaml`:
+
+```yaml
+command: npm run start      # required: the command that starts the app
+port: auto                  # "auto", or a whole number from 1024 to 65535
+ready: /                    # the path that answers when the app is ready (starts with /)
+env:                        # optional: extra variables for the app
+  NODE_ENV: development
+version: develop            # default version; the routes below take their own
+```
+
+- `command` is required; at most 4096 characters, no control characters.
+- `port` is `auto` by default. The Foundry sets `PORT` and `HOST` for the app; `HOST` is always `127.0.0.1`, so the app is reached only from the server. Values you set in `env` for these two names are replaced.
+- `env` names use A-Z, 0-9 and `_`, at most 50 entries. The prefixes `FACTORY_`, `SCF_`, `GH_`, `GITHUB_`, `ANTHROPIC_` and `OPENAI_` are reserved.
+- The app gets only a short environment (no secrets of the Foundry) plus your `env`, at low priority, in its own process group.
+
+There are two versions:
+
+- **`develop`**: the branch `develop` of the repository. A GitHub repository is cloned with your sign-in; the clone is shallow and runs no git hooks.
+- **`checking`**: the branch of a run that waits for your check. The Foundry reads it from the run's own workspace first, so a branch that is not pushed yet can be seen; if the workspace is gone, it tries the remote. Only a run that waits for your check can be used.
+
+Start a preview with `POST /api/repos/:id/preview` (body `{ "version": "develop" }`, or `{ "version": "checking", "runId": "…" }`), read it with `GET`, and stop it with `DELETE`. Each repository has one preview. A new start replaces a running one, and the folder is `<data folder>/previews/<repository id>/`. The routes are described in the API table. A preview stops after 30 minutes without use, when it is replaced, when you stop it, and when the server shuts down. The app must answer within 120 seconds.
+
+The state is `starting`, `ready`, `stopped` or `failed`. When it is not ready, the reason says why, in plain words:
+
+| Reason | Meaning |
+|---|---|
+| `no-config` | the branch has no `.factory/preview.yaml` |
+| `bad-config` | the file is not valid; the message names the field |
+| `no-access` | the Foundry cannot sign in to the repository; the detail says how to fix it |
+| `no-branch` | the branch is not in the repository (or the run's workspace) |
+| `checkout-failed` | the branch could not be copied; the reason is not shown |
+| `not-ready` | the app did not answer in time |
+| `port-busy` | the port is in use |
+| `exited` | the app stopped by itself |
+| `idle` | stopped after 30 minutes without use |
+| `replaced` | a new start replaced it |
+| `stopped` | you stopped it, or the server shut down |
+
+Only an owner of the repository and an admin can use the preview routes. `GET` also returns the app's output: at most 64 KiB, with the known secrets of the Foundry removed. A user who is not allowed gets "not found" on all three routes, and no output.
+
+**Where you see it.** Simple's **Try it** button uses this preview (see [Simple: My projects and the project page](#simple-my-projects-and-the-project-page)). On the repository page, Advanced and Admin show a **Preview** section: the state, the version (with the run's id when it is a check), the address when the preview is ready, the start time, the reason, and the output as plain text, with **Read again**. The address is shown as a link only when it is `http://127.0.0.1:<port>/`.
 
 ### Repository context
 
@@ -1225,6 +1351,8 @@ For a code failure the *why* is one sentence written by a small model that read 
 failing output (see "The failure summary call" in Costs). The comment and the card then say so.
 If the model says the cause is the environment, the failure counts as a Foundry failure.
 
+**A daily cap per project.** Each repository can have its own daily cap in USD, set by an administrator (`PUT /api/admin/repos/:id/budget`, a number above 0, or null to clear it; every change writes an audit line). Without its own cap, a project whose owner uses the Simple view gets the default `simple_project_daily_budget_usd` (5 to start; 0 means no default). The runs that started today and belong to the project count: by GitHub repository for a GitHub project, by repository id for a local one. When the cap is reached, no new run or resume of the project starts, and a running run stops before its next step. The watcher continues it the next day. The cap holds only while `cost_limits` is on. An admin sees and changes these caps on the Users page (see "Simple accounts and their caps"). People see no amount: Simple reads "The Foundry has done enough for today; it continues tomorrow."
+
 A usage limit, the daily budget, a sign-out and an unreachable AI service do not fail a run: they
 pause it, and it continues by itself (a sign-out needs you to sign in again first).
 
@@ -1319,6 +1447,10 @@ Every status in the app has a **?** that shows the two sentences from this table
 | waiting — the owner's limit of runs per day | The owner started as many new runs today as their limit allows. Nothing to do — it starts tomorrow, or sooner when you raise the limit on the Users page. |
 | waiting — the owner's daily budget | The owner's daily budget is used up. Nothing to do — it goes on tomorrow, or sooner when you raise the budget on the Users page. |
 | waiting — the owner's limit of runs at the same time | As many runs of the owner are working at the same time as their limit allows. Nothing to do — it starts when one of them ends, or sooner when you raise the limit on the Users page. |
+| waiting — your workspace's limit for this month is reached | Your workspace used as much this month as the administrator allows. Nothing to do — it goes on by itself next month. |
+| waiting — your workspace's limit of runs at the same time is reached | As many runs of your workspace are working at the same time as the administrator allows. Nothing to do — it starts by itself when one of them ends. |
+| waiting — the workspace's monthly budget | The workspace's budget for this month is used up. Nothing to do — it goes on next month, or sooner when the limit is raised. |
+| waiting — the workspace's limit of runs at the same time | As many runs of the workspace are working at the same time as its limit allows. Nothing to do — it starts when one of them ends, or sooner when the limit is raised. |
 | waiting for develop | Another run is merging into `develop` and testing it, and only one run does that at a time. It shows who holds the turn and since when. Nothing to do — it goes on when that run has pushed `develop` or given up its turn. |
 | waiting for another run in the same code | Another run is changing the same part of the code. Nothing to do — it goes on when that run is finished. |
 | waiting — a bug story goes first | A story with a bug label is repaired before other work. Nothing to do — it goes on by itself after that. |
@@ -1327,6 +1459,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | paused — signed out | The Foundry is signed out of its AI account. Sign in again — the run then goes on by itself. |
 | paused — AI service not reachable | The AI service could not be reached. Nothing to do — the Foundry tries again later. |
 | paused — daily budget | Today's budget is used up. Nothing to do — it goes on tomorrow. |
+| paused — the project's limit for today is reached | This project did as much work today as its daily limit allows. Nothing to do — it goes on by itself tomorrow. |
 | checking for questions | The Foundry reads the new issues and looks for questions only you can answer. Nothing to do — an issue without questions starts after the check. |
 | starting soon | Nothing is in the way, it only waits for the watcher's next check. Nothing to do — it starts by itself. |
 | queued | It waits in the queue until a run finishes. Nothing to do — it starts by itself. |
@@ -2846,7 +2979,7 @@ often fail to call tools. Use **Try a model** to check one works before you rely
 
 **Rules** decide which model runs which step. The first matching rule wins — even over models
 written in flows and blocks. A rule matches on a step id pattern, a flow name pattern and/or a
-visit number (`From visit 2` = only retries). The presets add common rules:
+visit number (`From visit 2` = only retries). The **Agent** column narrows a rule to the steps of one tool: *Claude Code steps* or *Codex steps* match only the steps whose own target (before the router) runs on that tool; *any agent* (the default) matches every step. The rule's model then picks the model, and a Codex model moves the step to Codex. The presets add common rules:
 
 - **Retries on Opus** — fix steps use Opus from their second attempt.
 - **Codex reviews Claude's code** — review steps run on Codex.
@@ -4426,6 +4559,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 
 **Simple view (Help contact)** — `simple.help_contact` is the line under "Who to ask" on the Help page of the Simple view: a name and an e-mail address, for example. It is up to 300 characters, without line breaks or control characters, and shown as plain text. Empty (the default) hides the line. The control is the **Simple view** card on the Settings page, between Ask SCF and Delivery. Users read the text through `GET /api/me/view` (field `helpContact`); they cannot change it.
 
+**Starters (`simple.hidden_starters`, `simple.projects_folder`)** — `simple.hidden_starters` is a list of ids of built-in starters that are not offered for a new project (an own starter is always offered; empty offers all, at most 50 ids). `simple.projects_folder` is an absolute path outside the Foundry data folder where new projects from a starter go; not set means `scf-projects` in the home folder of the person who runs the Foundry. See [Starters](#starters) in section 1.
+
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
 
 **Slow down at this share of a weekly limit (load governor)** — `governor.usage_percent` is a whole number from 1 to 100. Once about this share of the Claude or Codex weekly limit is used (from the reading, see "Usage limits" under Helper processes), the limits helper keeps the runs at once at 1, or at `governor.floor` when that is set and higher, until the reset. It works only with `scf limits auto on` and a reading (`scf limits set`), and only while the threshold holds: below it, the forecast alone decides. The cap is global, so one tool at the threshold slows all runs, Codex runs included. The `scf limits` report says "at or above your threshold" for each tool at or above it. Not set, the setting does nothing and only the forecast slows down.
@@ -4578,6 +4713,8 @@ Limits, App repositories, New link, View as user), **Security** (Reset password,
 Unblock) and **Danger** (Delete). The buttons below are on that page. An address for an account
 that does not exist shows "This account does not exist." with a link back to Users.
 
+**Simple accounts and their caps.** The Users page has a **View** column: an account that uses the Simple view shows a "Simple" mark. Tick **Only Simple accounts** to show only those accounts (the address becomes `#/users?view=simple`). Under the filtered list, each Simple account lists its projects, with today's spend, the daily cap in effect (its own cap, or the default `simple_project_daily_budget_usd` when it has none) and a field with a **Save** button. Type a number above 0 to set the cap, or leave the field empty and save to clear it and use the default. A value that is not a number above 0 is refused before anything is sent. If the server refuses a value, the message shows on that project's row. Read-only pages show the values without the field. The "Cost limits are off in Settings" note appears when `cost_limits` is off, because the caps are then not enforced.
+
 - **Add user** asks for name, e-mail and role. Then the dialog shows the set-password link once. The
   link works once, for 24 hours, and you must send it to the user yourself. **Copy** needs HTTPS or
   localhost; otherwise select the link in the field and copy it. Close the dialog too early and
@@ -4615,7 +4752,7 @@ not change. An error from Block or Delete can come after the change was made; cl
 see the list again. Blocking or deleting your own account signs you out, and the page reloads.
 
 **Managing accounts over the API.** Admins only (a user gets `403`). `GET /api/users` lists the
-accounts (`id`, `name`, `email`, `role`, `status`, `created`, `lastSignIn`, `runs`, `hasPassword`, `lockedUntil`: an ISO time while the account is locked, else `null`; a blocked account can have both).
+accounts (`id`, `name`, `email`, `role`, `view` (`simple`, `advanced` or `admin`), `status`, `created`, `lastSignIn`, `runs`, `hasPassword`, `lockedUntil`: an ISO time while the account is locked, else `null`; a blocked account can have both).
 `POST /api/users {"name": …, "email": …, "role": "admin"|"user"}` adds an account without a password
 and answers 201 with the account and its one-time token (400 for bad input, 409 for a taken e-mail).
 The token is shown once; the link is `<address>/#/set-password/<token>`.
@@ -4920,6 +5057,13 @@ GitHub App" under its attention state; choose another authentication. **Remove**
 - the folder and its `.scf/stories/` folder can be written;
 - a branch is checked out (HEAD is not detached).
 
+**Move to GitHub.** On a local project you own, the row has a **Move to GitHub** button (not shown on a read-only view). The dialog asks where the project goes:
+
+- **Use one of my GitHub repositories**: pick one from the list. Only GitHub repositories you connected with a token or the GitHub App are listed.
+- **Create a new repository**: type a name (`name` or `owner/name`). **Private** is ticked by default.
+
+Tick **Also move closed stories** to move them too. Press **Check** first: the dialog shows the dry run, with the repository, the branches and tags that will be pushed, and each story as create or skip. Nothing changes yet. **Yes, publish** is on only after a check that has no blocked stories; press it to move the project. The server checks that confirmation itself: it is single-use, expires after 10 minutes, and a move is refused with "Nothing was published" (409) before anything is created or pushed when the branches, tags or stories changed since the check. **Cancel** leaves everything local (see "Move a local project to GitHub" in the Work section). Progress and errors use the server's fixed messages. **Cancel** is off while the move runs. When it has finished, the list reloads; after a move that worked, the local project is no longer in it.
+
 A watcher on a local repository works the same way without GitHub: it starts the stories set to `go` and reads the folder itself. Watchers that need GitHub (review comments, CI failures, release files) are refused for it, and the watcher form says why.
 
 It does not call GitHub, and it asks for no token, user name or key. The repository keeps its stories in `.scf/stories/` (see "Stories as files") and its story commits on `scf/stories`. The path must not contain control characters, must not be inside the Foundry's data folder, and cannot be changed later: to use another folder, remove the repository and add it again.
@@ -4961,7 +5105,7 @@ generate a new key; only the owner can. Three calls, all admin only: `GET /api/a
   on by default, so a repository that has no such setting, including one registered before this change, counts as
   on. Off: the Foundry asks you every question on the issue. Runs get it as `$FACTORY_DECIDE_TECHNICAL` (`1` or `0`), read when a run starts or resumes. See [Questions the Foundry decides itself](#questions-the-foundry-decides-itself).
   If a run's repository is registered under two accounts and one of them is off, the run is treated as off.
-- **Also push to the remote** (a checkbox in the Run settings dialog, field `pushRemote`, for a local project with a git remote only): off by default; off removes the field. When on, the Foundry pushes `develop` from your folder after each merge (see "Local projects"). Runs get it as `$FACTORY_LOCAL_PUSH` (`yes`).
+- **Also push to the remote** (a checkbox in the Run settings dialog, field `pushRemote`, for a local project with a git remote only): off by default; off removes the field. It can be turned on only through the owner's **Yes, publish** (`POST /api/repos/:id/publish-remote`, see the API table); a plain settings save that turns it on is refused (409). When on, the Foundry pushes `develop` from your folder after each merge (see "Local projects"). Runs get it as `$FACTORY_LOCAL_PUSH` (`yes`).
 - **The settings are only stored and shown, with three exceptions.** Runs do not use the other settings yet: the test command still
   comes from the flow var `test_cmd` and the protected branches from `protected_branches` in `config.yaml`. The
   release-build recipe is read by the flow `release-build` when the commit has no `.factory/release-build.yaml`
@@ -5154,6 +5298,10 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
 | `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
+| `GET /api/onboarding/agents` | yes | no | the answers about Claude Code and Codex (which tools, which plan, how to share, how busy), the settings they give, the current values of those six settings, the ones kept because an admin set them by hand, and a summary in plain words; admins only |
+| `PUT /api/onboarding/agents` | yes | no | save the answers (`answers`) and write the settings they give to `config.yaml` (`concurrency`, `governor.usage_percent`, `governor.priority`, `default_model`, `router.fallback`, `router.rules`); a setting an admin set by hand is kept and listed in `kept` unless `replace` names it; the same answers again change nothing; bad answers answer 400; with an `X-Config-Version` header a stale version is refused with 409; admins only |
+| `GET /api/starters` | yes | no | the starters you can make a project from (`id`, `title`, `description`, `needs`, `source`: `built-in` or `own`) and the broken own ones (`id`, `source`, `problem`); never a folder path; admins only |
+| `POST /api/starters/:id/project` | yes | no | make a new project from a starter (`name`, optional `parent`, an existing absolute folder outside the data folder): a git folder with `main` and `develop`, connected as a local repository with the starter's test command and tested; answers 201 with `repo` and `connection`; 409 when the folder exists or the starter is broken, 404 for an unknown or hidden starter; any failure removes what it made; writes the audit line `repo-add`; admins only |
 | `POST /api/onboarding/test-call` | yes | no | one tiny call through Claude Code (`haiku`) or Codex (its default model, low effort) (`tool`): no tools, no personal hooks or setup, a fixed prompt; answers `ok`, `missing`, `signed-out` or `failed` with a plain explanation, never the tool's output; admins only |
 | `GET /api/setup-check` | yes | no | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
 | `POST /api/providers/test` | yes | no | test a provider |
@@ -5234,14 +5382,22 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App |
 | `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
+| `POST /api/repos/:id/move-to-github` | yes | no | move your local project to GitHub: create a private repository with your GitHub token sign-in (or use one of your GitHub repositories), push all branches and tags (never forced), move the stories, then move the watchers and settings and remove the local record; `dryRun` changes nothing and answers a single-use `confirm` token (valid for 10 minutes, none when a story cannot go along); a real move needs that token and stops with 409 ("Nothing was published") when it is missing, used, expired, for another request, or when the branches, tags or stories changed since the check; safe to repeat |
+| `POST /api/repos/:id/publish-remote` | yes | no | Yes, publish for the plain push to the folder's remote (only the owner of the local project): `{ dryRun: true, settings? }` shows the remote of the develop and of the main branch (addresses without sign-in), the branches and the tags, and answers a single-use `confirm` token; `{ confirm, settings? }` then saves the settings and turns `pushRemote` on in one step; 409 when the token does not fit, the remotes or the settings changed since the check, or the folder has no remote; writes an audit line |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
 | `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
 | `GET /api/repos/:id/epics` | yes | yes | the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository) |
 | `GET /api/repos/:id/epics/:issue` | yes | yes | one epic of your repository: its stories in build order, chains and critical path, the series per day, the pace, the median story time and the forecast per day (an admin: any repository) |
+| `POST /api/repos/:id/preview` | yes | yes | start the develop version, or the version of a run that waits for your check (`version`, `runId`), of your repository (an admin: any repository) in a folder of its own; replaces a running one; answers 202 |
+| `GET /api/repos/:id/preview` | yes | yes | the state, URL, reason, version and redacted output of the preview of your repository (an admin: any repository) |
+| `DELETE /api/repos/:id/preview` | yes | yes | stop the preview of your repository and remove its folder |
 | `DELETE /api/repos/:id` | yes | yes | remove your repository and its stored token or key |
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings and autonomy level |
-| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line |
+| `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line. It cannot turn `pushRemote` on (409): that is the owner's Yes, publish (`POST repos/:id/publish-remote`); keeping it on and turning it off work |
+| `GET /api/admin/repos/:id/budget` | yes | no | the daily spending cap of a repository, the Simple default, the cap in effect and today's spend |
+| `PUT /api/admin/repos/:id/budget` | yes | no | set (a number above 0) or clear (null) the daily spending cap of a repository; writes an audit line |
+| `PUT /api/admin/repos/:id/workspace` | yes | no | set the workspace of a repository (`workspace`: an id from `workspaces` in config.yaml or from a plugin; `null` or `default` puts it back in the default workspace); writes an audit line |
 | `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |
@@ -5252,8 +5408,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/admin/view-as` | yes | no | end the view of a user's display |
 | `GET /api/admin/credentials` | yes | no | the stored credentials of all accounts, without any secret |
 | `GET /api/admin/components` | yes | no | the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths |
-| `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use (an admin: the sessions of all accounts, with the owner) |
-| `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories, from an idea or from an open issue of it (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it) |
+| `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use: your GitHub names, then your local projects (`local:<slug>-<id8>`) (an admin: the sessions of all accounts, with the owner) |
+| `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories or local projects, from an idea; from an open issue only on a GitHub repository (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it; 400 `bad-repo` for a local name with an issue; 403 `not-yours` for a local project that is not yours; 400 `bad-repo` for a malformed name) |
 | `GET /api/refinement/backlog` | yes | yes | the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, "Depends on" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403) |
 | `GET /api/refinement/:id` | yes | yes | read your refinement session, with the architect's brief and state and the talk (an admin: any session) |
 | `PUT /api/refinement/:id` | yes | yes | rename your refinement session |
@@ -5451,7 +5607,7 @@ Two installed skills with the same description and instructions are the same tex
 - **Releases.** A folder in the data folder or in `skills.roots` is a catalogue release: it holds `catalogue-release.json` (`schema: 1`, `catalogue`, `version`, `createdAt`, `source` with `repository` and a full `commit`, and `skills` with `id`, `version` and `digest`). It loads only if its catalogue, version and digest are listed in `skills.releases.approved`, and its packages match the manifest exactly. Otherwise the whole folder is refused (`root-refused`) and none of its packages load. `scf skills` shows a `RELEASE` line for each. Skills are never fetched from the network during a run or a resume.
 - **Retained releases.** Every release folder `skill-releases/<catalogue>/<version>/` that is listed in `skills.releases.approved` is loaded, as the source `release <catalogue>@<version>`. Within one catalogue the newest version is read first, so its packages are the active ones. An older approved version stays loaded for exact lookups: a run locked to `id@version` and digest still resumes after a newer version is published and approved, and `scf skills release verify` and the resolver find it. A retained package that a newer one shadows is never offered to a catalogue or chosen for a new plan. A folder in the store that is not approved is not loaded, and `scf skills` prints a `NOTE` for it (not a problem). Publish and discovery never delete a release, so every approved version is kept. A `skills.roots` entry that points inside `skill-releases/` is ignored with a `NOTE`; list the release in `skills.releases.approved` instead.
   - **Approval is the pin.** An approved, verified release lists the digest of each package, so its packages are selectable with those digests (source `catalogue`, trust `approved`, pin `pinned`). They need no entry in `skills.lock.json` and no `scf skills pin`. A hand pin for the same `id@version` with another digest is still a `mismatch`, and the stricter rule wins. Data folder and `skills.roots` packages still need their own pin. A run locked to an older approved release keeps its exact `id@version` and digest, so it still resumes after a newer release is approved. A run lock written before this change, with source `admin` for the same package, still verifies.
-  - **List.** `scf skills release list` reads only. It prints `RELEASE <catalogue>@<version> <digest> <state> <n> skills, locked by <k> runs` (or `not locked by any run`) for each stored release, where the state is `approved`, `unapproved`, `mismatch` or `invalid`. An approved release line ends with ` (source catalogue)`. It prints no `PIN` lines. It ends with `OK <n> releases` or `No releases are published`, and exits 1 when the store cannot be read in full.
+  - **List.** `scf skills release list` reads only. It prints `RELEASE <catalogue>@<version> <digest> <state> <n> skills, locked by <k> runs` (or `not locked by any run`) for each stored release, where the state is `approved`, `unapproved`, `mismatch` or `invalid`. An approved release line ends with ` (source catalogue)`. It prints no `PIN` lines. It ends with `OK <n> releases` or `No releases are published`, and exits 1 when the store cannot be read in full. It also prints a `PROBLEM` line for each approval conflict or an unreadable `skill-approvals.json`, and exits 1 then. `scf skills release verify` prints the same lines as `NOTE` and keeps its exit code.
 - **Release manifest 2.** `catalogue-release.json` may also say `schema: 2`. Each skill then lists every file of its package (`files`: `path`, `sha256`, `bytes`), its `provenance` (`source`, `repositoryKey`, `commit`, `path`, `trust` and an optional `review`), its `licences`, its `attribution` files (kept in `<folder>/.attribution/<id>/`), its `evaluation` (`suite`, `record`, and `verdict` `passed`, `failed` or `not-run`) and an optional `revoked` (`on`, `reason`). The release digest covers all of these fields. A schema-1 manifest works as before.
   - **Integrity.** Each discovery checks a schema-2 folder file by file: every listed file must be there with its size and SHA-256, every package digest must recompute, and no other file may be in a package or in `.attribution/` (only `catalogue-release.json` and `.DS_Store` are allowed besides). A link is refused. Any failure refuses the whole folder (`root-refused`), whatever `allow_unreleased` says.
   - **Revoked skills.** A skill with `revoked` in an approved schema-2 release is never loaded, from any root. A locked run that uses it stops with `skill integrity: … is revoked by release <catalogue>@<version>` and the plan-again hint; it no longer says "is missing". A revocation changes the release digest, so the owner approves the new digest in `skills.releases.approved`, and the old one stops matching. A revocation in a release always wins over a local lifecycle state (see "Skill lifecycle" below).
@@ -5461,6 +5617,8 @@ Two installed skills with the same description and instructions are the same tex
   - **Before you add keys**, sign every approved entry, including the entries that locked runs use. Once keys are set, an unsigned approved entry is refused, so a run locked to it cannot resume. Sign the old entries first, or finish those runs before you add keys.
   - **Sign.** The publisher runs `scf skills release sign <catalogue>@<version> --key <private-key-file>` on a stored release. The key file is a PEM Ed25519 private key. The command refuses a link, and a file that group or others can read (use `chmod 600`). It prints `APPROVE <catalogue> <version> <digest> key <id> signature <b64>`; paste the `key` and `signature` into the entry. It never prints key material. It signs only releases in the store, because the signature covers the catalogue, version and digest.
   - **Status.** Once keys are set, `scf skills release verify` and `scf skills release list` print `SIGNED <key>`, `UNSIGNED` or `BAD-SIGNATURE` for each release.
+- **Approvals in the data folder.** The server can also record an approval in `<data folder>/skill-approvals.json` (mode 0600, at most 256 KiB). Its entries are merged with `skills.releases.approved`, so a release approved in either place loads from `skill-releases/` in the same way. The merge rule: the same catalogue, version and digest in both places is one approval (the config entry is kept). The same catalogue and version with **different digests** is a conflict: neither digest loads, the root is refused (`root-refused`: "approved with different digests") whatever `allow_unreleased` says, and `scf skills release list` prints `PROBLEM …` (exit 1). An unreadable `skill-approvals.json` is a problem too; the config entries still load and its approvals are not used. An entry in the data folder is signed with `skills.releases.auto_key` when `skills.releases.keys` is set (see below). Nothing in this version writes that file, so it changes nothing yet.
+- **Automatic approval key (`skills.releases.auto_key`).** Set it in `config.yaml` only (the settings page does not show it). It has two fields: `id`, which must be an entry of `skills.releases.keys`, and `file`, an absolute path to the PEM Ed25519 private key of that entry. Use a PEM Ed25519 private key, the same kind that `scf skills release sign --key` reads, and put its raw public key (base64 of the 32 bytes) in `keys`. Run `chmod 600 <file>`: the server refuses a key file that group or others can read, and it never prints key material. A key that does not match `keys[id]` is refused.
 - **Adopt a release.** An administrator can name the local artifact of an approved release in `skills.releases.approved[].artifact`: an absolute path to a schema-2 release folder. A URL, a relative path, a network path, or a path inside `.claude` or `.codex` is refused when the config is read. `scf skills release adopt [<catalogue>@<version>]` copies each approved release that is missing from `skill-releases/` (or only the one you name). It checks the folder with the same rules as `verify`, requires a valid signature from `skills.releases.keys`, and requires the catalogue, version and digest to match the entry. Then it writes the release once. It prints one line per entry: `ADOPTED <catalogue>@<version> <digest>`, `PRESENT`, `REFUSED <catalogue>@<version>: <reason>` or `MISSING-ARTIFACT`. A refusal writes nothing, and the exit code is 1 on any refusal (or on a named entry with `MISSING-ARTIFACT`). The command opens no network connection.
   - **Missing release.** An approved release that is not in `skill-releases/` is a `scf skills` problem (`root-missing`) that says to run `scf skills release adopt`. A run never fetches it. A `skills.roots` folder that holds the exact approved release (same digest, state `approved`) does not trigger the problem.
 - **Local development.** To try an unpublished catalogue, set `skills.releases.allow_unreleased: true`. Folders without an approved release then load, and `scf skills` prints a `NOTE` for each. Keep it `false` (the default) in production. Existing folders are refused after an update until they are an approved release or this is set.
@@ -5642,6 +5800,22 @@ sources:
 - **Private first-party sources.** `access: { repo: owner/name }` lets a private repository of your own be a source. It is accepted only with `trust: first-party`, and only when `repo` is the same repository as `repository`. That repository must be registered under My repositories with the method GitHub App. The fetch then uses a new token that can read the contents of that one repository. The token comes from the Foundry's GitHub App, for `scf skills import`, `scf skills evaluate` and `scf skills update`. It is passed to git through a one-shot `GIT_ASKPASS` script that reads a file in a temporary folder (mode 0600); the file is removed after the fetch, also when it fails. The token is never on a command line, in an environment variable, in a log or in a message. A source without `access` is fetched as before. A deploy key or a token is not used for a skill source, so such a repository gives a `PROBLEM` naming `access`. `scf skills sources check` prints `PROBLEM … access: …` when the repository is not registered or does not use the GitHub App method.
 - **Excluded folders.** `exclude` is a list of 1 to 200 folders, each inside one of the `paths` (not the repository root, and not listed twice). The import skips them, so a template folder such as `skills/example-skill` is neither staged nor rejected. Promotion also refuses a skill in an excluded folder.
 - **Refs.** `ref.approved` is the release and must be a full commit id (40 or 64 hex digits). A branch or tag can move, so it is only allowed in `ref.track`, which names what to watch for updates. A cadence other than `manual` needs `ref.track`.
+- **Automatic approval (`update.auto`).** `update: { cadence, auto: true }` lets the server take the approved commit of an enabled source from the data folder (`skill-approvals.json`) instead of `ref.approved`. It is accepted only for `trust: first-party`; `verified` and `community` sources are refused with `update.auto: only a first-party source can approve its updates automatically`. A value that is not `true` or `false` is refused. Without `auto` nothing changes. `scf skills sources check` marks such a source with ` auto`, and a ref that comes from the data folder with ` (approved in the data folder)`. The config file itself is never changed by this.
+- **Automatic update of a first-party source.** A due update (`scf skills update --due`, and the server's skill-source sweep) of an enabled source with `update.auto: true` does not open a pull request. It does these steps in order, and stops at the first step that cannot go on:
+  1. Fetch `ref.track` and find its commit. A failed fetch (no such branch or tag, or the repository cannot be read) gives `PROBLEM`, writes no release and no record, and the server turns it into a finding on the monitor.
+  2. Stage the commit in `<data folder>/skill-quarantine/`.
+  3. Run the gates for each skill: licence, normalize, security scan and profile. Then run the evaluation suite of the catalogue, when it has one.
+  4. Publish a release of the catalogue, approve it, and record the commit in `skill-approvals.json`.
+
+  A skill that fails a gate is left out of that release, and the others go on. Each failed skill is written to `<data folder>/skill-auto-updates.json` with its id, the gate and a fixed sentence of the Foundry (for example "the security scan found a high finding"). No upstream text is written there. The record keeps the last result of each source (`released`, `unchanged`, `blocked` or `failed`) and its commit.
+
+  - **Catalogue and versions.** The catalogue has the source's id, and each automatic release is `1.0.<n>`, one higher than the last. A skill's version comes from its newest approved release: the same digest keeps the version; a file added or removed is a minor bump (`1.2.0` → `1.3.0`); changed text only is a patch bump (`1.2.0` → `1.2.1`); a higher version declared upstream is used as it is. A skill with no released version starts at `1.0.0`. A pinned version is never changed in place.
+  - **Nothing new.** When the commit is the one already approved, or the last run already released it, the run prints `UNCHANGED`, releases nothing and approves nothing.
+  - **Signing.** When `skills.releases.keys` is set, the approval is signed with `skills.releases.auto_key`, as described above.
+  - **Audit.** Each step writes a `skill-auto-update` line to the audit log, with the actor `monitor` when the server runs it.
+  - **Limits.** The update runs only in the data folder, and one run per source is allowed at a time; a second one is refused at once. A private source uses its GitHub App token, as the rest of `update` does. The route and the Skills card that show the last automatic update come later (part 3 of #775).
+
+  A source without `update.auto` still gets a review pull request, as before.
 - **Status.** `enabled`, `disabled`, `quarantined` or `retired`. Only `enabled` sources may be used. An enabled source needs `ref.approved` and has no `reason`; every other status needs a `reason`.
 - **Review of a community source.** `review` records who checked the maintainer and the licence, and when. It has four fields: `by` (a GitHub user or team, as `owner`), `on` (`YYYY-MM-DD`, not in the future), `commit` (the full commit id, equal to `ref.approved`) and `licence` (one of `licence.allow`). An enabled `trust: community` source is refused without `review`, and when `review.commit` is not `ref.approved`. A new commit needs a new review, so changing one word cannot raise the trust.
 - **Known community repositories.** The Foundry ships a list of community repositories (`src/skills/community-rules.ts`). `github.com/jiangxianze/spring-agent-skills` is on it, so a source with that repository must say `trust: community`; any other trust is refused and the message names `trust`.
@@ -7234,6 +7408,39 @@ the answer is hidden as before).
 
 Global settings are stored in `~/.spaghetti-code-foundry/config.yaml`; runs in `~/.spaghetti-code-foundry/runs/`.
 
+### Workspaces
+
+A workspace is a team. Each repository, each watcher's runs and each run is recorded as belonging to exactly
+one workspace. There is always a `default` workspace, so an install without any workspace works and stores
+its data as before. List the teams in `config.yaml`:
+
+```yaml
+workspaces:
+  - id: team-api                 # lowercase letters, digits and "-"; "default" is reserved
+    name: API team
+    members:                     # account ids
+      - "6f1c2a3e-0000-4000-8000-000000000001"
+    limits:                      # all optional
+      max_concurrent: 2
+      test_slots: 1
+      monthly_budget_usd: 150
+```
+
+- **Limits.** Each limit holds for the workspace only:
+  - `max_concurrent`: no new job of the workspace starts while it has that many running. The account limits still apply on top.
+  - `monthly_budget_usd`: no new run of the workspace starts once the cost of its runs this calendar month (UTC) reaches the limit. The run waits with "waiting — the workspace's monthly budget" and starts again in the next month. This limit is not checked when `cost_limits` is off.
+  - `test_slots`: the test runs of the workspace never use more test slots at once than this. The machine-wide total still applies.
+  - A workspace without limits, and the `default` workspace, work as before.
+- **Fair turns.** When two or more workspaces have stories waiting, a free slot goes to the workspace that started a story least recently. Inside a workspace the order is unchanged: bugs first, then priority, then account fairness.
+- An account that is in no workspace is in `default`. An account may be in several workspaces.
+- An admin sets the workspace of a repository with `PUT /api/admin/repos/:id/workspace` (`{ "workspace": "team-api" }`,
+  or `null` for `default`). A transfer to another account keeps it. A repository without one is in `default`.
+- A run takes the workspace of its repository; a run without a repository (a local run) is in `default`.
+  Usage events carry the workspace.
+- An invalid entry, or a second entry with the same id, stops the config from being read. A plugin can supply
+  the list instead (`api.workspaces`, see [PLUGIN_API.md](PLUGIN_API.md#workspaces)).
+- The Settings page does not show the list yet; edit it in `config.yaml`.
+
 ### Plugins
 
 A plugin adds behaviour to the Foundry without a change to its code. List them in `config.yaml`:
@@ -8062,7 +8269,7 @@ The folder of your clone can keep its name.
 
 **Refinement** is where a rough idea grows into a story before it goes to the backlog. The session keeps the idea, its state, a log, the architect's brief and the talk (questions, answers and a map of rules, examples and open questions). On the session page you can ask the architect to look at the code (see below).
 
-**Start a session.** Click **New session** (or choose **Refine an idea first** or **Refine an existing issue** on **Start work**). Choose the kind: **An idea** or **An existing issue**. For an idea, choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (optional, up to 120 characters). When the title is empty, the first line of the idea is used. For an existing issue, choose a repository and give the issue number (see below); a blank, zero or non-number issue is refused with "Give the issue number." and nothing is sent. Only GitHub repositories from **My repositories** are offered. If you have none, the dialog links to that page. If the server refuses, its sentence shows in the dialog. What you typed is kept in page memory when you close the dialog or the request fails, and is cleared after the session is made. Nothing is written to GitHub.
+**Start a session.** Click **New session** (or choose **Refine an idea first** or **Refine an existing issue** on **Start work**). Choose the kind: **An idea** or **An existing issue**. For an idea, choose a repository, write your idea in your own words (required, up to 10,000 characters) and, if you like, a title (optional, up to 120 characters). When the title is empty, the first line of the idea is used. For an existing issue, choose a repository and give the issue number (see below); a blank, zero or non-number issue is refused with "Give the issue number." and nothing is sent. The repositories offered are your GitHub repositories and your connected local projects from **My repositories** (a local project works for an idea only, not for an existing issue). If you have none, the dialog links to that page. For a local project the architect cannot read the folder yet, and its drafts cannot be published yet; both come in later steps. If the server refuses, its sentence shows in the dialog. What you typed is kept in page memory when you close the dialog or the request fails, and is cleared after the session is made. Nothing is written to GitHub.
 
 **Refine an existing issue.** Click **Refine an existing issue** next to **New session** (it opens the same dialog with the kind "An existing issue"). Under the kind the dialog says that a session from an issue cannot be published yet. Choose one of your repositories and give the issue number (for example `12` or `#12`). The issue is read from GitHub; nothing on GitHub changes. If the server refuses (the Foundry is building or has built the issue, it is closed, it does not exist, or you already have a session for it), the dialog shows the reason and stays open. The session page then says "From issue #N" with a link. If the issue has the build label, the page warns that the Foundry may start building it while you refine it, and offers **Remove the build label**. The label is removed only when you press that button, with the repository's GitHub sign-in, and only by the owner of the session. After that the warning is gone. The watcher is not held back: until the label is removed, the Foundry may start building the issue.
 

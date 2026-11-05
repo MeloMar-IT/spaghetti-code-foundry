@@ -80,6 +80,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/library` | admin | Flows (library as part of Flows) | yes | Not prototyped |
 | `#/start` | both | Start work panel, any page | yes | A panel, not a page |
 | `#/setup` | both | Setup check page | yes | |
+| `#/agents` | both | Claude and Codex page | yes | Not prototyped |
 | `#/runs` | both | Runs (`runs.html`) | yes | |
 | `#/runs/:id` | both | Run (`run.html`) | yes | |
 | `#/repos` | both | Repositories, scope Mine (`repositories.html`) | yes | |
@@ -102,6 +103,7 @@ Every address of the audit (`inventory.md`) still works. New places get new addr
 | `#/autonomy` | admin | Administration, Autonomy | yes | |
 | `/user/#/start` | user | Start work panel, any page | yes | |
 | `/user/#/setup` | user | Setup check page | yes | |
+| `/user/#/agents` | user | Claude and Codex page | yes | Not prototyped |
 | `/user/#/help` | user | Help page | yes | Not prototyped |
 | `/user/#/runs` | user | Runs | yes | |
 | `/user/#/runs/:id` | user | Run | yes | |

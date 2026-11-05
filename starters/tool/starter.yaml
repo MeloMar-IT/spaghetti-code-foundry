@@ -1,0 +1,5 @@
+title: Tool
+description: A small command that counts the words, lines and characters of a text, with a page to try it.
+test: node --test
+needs:
+  - node

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -12,6 +12,7 @@ import { BASELINE_POLICY_ID, BASELINE_RULE_IDS } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { ContextSettingsSchema } from "./context/settings.js";
 import { MAX_PLUGINS, pluginModuleProblem } from "./plugins/load.js";
+import { WorkspaceListSchema } from "./workspaces/list.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { CANONICAL_LIMITS } from "./skills/canonical-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
@@ -195,7 +196,7 @@ const ProviderSchema = z
   })
   .strict();
 
-const RouterRuleSchema = z
+export const RouterRuleSchema = z
   .object({
     /** Regex on the step id. */
     step: z.string().optional(),
@@ -203,6 +204,8 @@ const RouterRuleSchema = z
     flow: z.string().optional(),
     /** Only from this visit on (2 = retries / fix loops). */
     min_visit: z.number().int().positive().optional(),
+    /** Only steps whose own target (without the router) runs on this agent. */
+    agent: z.enum(["claude", "codex"]).optional(),
     /** Model spec, e.g. sonnet, codex, codex:gpt-5, ollama:qwen3-coder. */
     model: z.string().min(1),
   })
@@ -376,6 +379,9 @@ const PluginEntrySchema = z
   .strict();
 export type PluginConfig = z.infer<typeof PluginEntrySchema>;
 
+/** The id of a starter (the name of its folder). */
+export const STARTER_ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -395,6 +401,8 @@ export const ConfigSchema = z
     cost_limits: z.boolean().default(true),
     /** Stop starting new work once today's spend reaches this. */
     daily_budget_usd: z.number().positive().optional(),
+    /** Default daily cap in USD of a project whose owner uses the Simple view (#792); 0: no default. A project's own cap wins. */
+    simple_project_daily_budget_usd: z.number().min(0).default(5),
     /** Max runs executing at the same time (across all repos). */
     concurrency: z.number().int().positive().default(2),
     /** Pushes to these branches are refused (glob patterns). */
@@ -418,6 +426,17 @@ export const ConfigSchema = z
     simple: z.object({
       help_contact: z.string().trim().max(300, "at most 300 characters")
         .refine((s) => !/[\u0000-\u001f\u007f]/.test(s), "has a control character").optional(),
+      /** Ids of built-in starters that are not offered (an admin's own starter is always offered). */
+      hidden_starters: z.array(z.string().regex(STARTER_ID_RE, "a starter id uses a-z, 0-9 and - only (1–40 characters, not starting with -)")).max(50, "at most 50 ids").default([]),
+      /** Where new projects from a starter go: an absolute path outside the data folder; not set means ~/scf-projects. */
+      projects_folder: z.string().trim().min(1).max(1000, "at most 1000 characters")
+        .refine((s) => !/[\u0000-\u001f\u007f-\u009f]/.test(s), "has a control character")
+        .refine((s) => isAbsolute(s), "must be an absolute path")
+        .refine((s) => resolve(s) === s, "must be normalised (no .. or double slashes)")
+        .refine((s) => {
+          const home = resolve(process.env.FACTORY_HOME ?? FACTORY_HOME);
+          return s !== home && !s.startsWith(home.endsWith(sep) ? home : home + sep);
+        }, "must not be inside the Foundry data folder").optional(),
     }).strict().prefault({}),
     /**
      * Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy.
@@ -623,6 +642,11 @@ export const ConfigSchema = z
               .default([]),
             /** Trusted Ed25519 public keys. Once set, every approved release must be signed by one of them. */
             keys: z.array(z.object({ id: SkillIdSchema, ed25519: z.string() }).strict()).max(MAX_RELEASE_KEYS).default([]),
+            /** The private key file the server signs automatic approvals with (`update.auto` sources). Its id must be in `keys`. */
+            auto_key: z
+              .object({ id: SkillIdSchema, file: z.string().max(1024).refine((p) => isAbsolute(p), "must be an absolute path") })
+              .strict()
+              .optional(),
             /** The deployment repository `scf skills release propose` opens its pull request in, and the config file in it. */
             deployment: z
               .object({
@@ -646,6 +670,7 @@ export const ConfigSchema = z
               if (ids.has(k.id)) ctx.addIssue({ code: "custom", path: ["keys", i, "id"], message: `"${k.id}" is listed twice` });
               ids.add(k.id);
             });
+            if (r.auto_key && !ids.has(r.auto_key.id)) ctx.addIssue({ code: "custom", path: ["auto_key", "id"], message: `"${r.auto_key.id}" is not in skills.releases.keys` });
             r.approved.forEach((a, i) => {
               if ((a.key === undefined) !== (a.signature === undefined)) ctx.addIssue({ code: "custom", path: ["approved", i], message: "needs both key and signature" });
               else if (a.key !== undefined && !ids.has(a.key)) ctx.addIssue({ code: "custom", path: ["approved", i, "key"], message: `"${a.key}" is not in skills.releases.keys` });
@@ -821,6 +846,8 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /** Workspaces (#816): teams with members and limits. There is always an implicit "default". A plugin may supply the list instead. */
+    workspaces: WorkspaceListSchema.default([]),
     /** Plugins: code loaded once when the server starts, in this order. Set in config.yaml only; applies after a restart. */
     plugins: z
       .array(PluginEntrySchema)

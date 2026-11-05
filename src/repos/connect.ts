@@ -212,7 +212,7 @@ export interface GitAuth {
 }
 
 /** Tests only (like SCF_SECURITY_BIN): the path of a git repository that every test clones instead of the address. */
-const localRemote = () => process.env.SCF_CONNECT_REMOTE || undefined;
+export const localRemote = () => process.env.SCF_CONNECT_REMOTE || undefined;
 
 const script = (dir: string, name: string, body: string) => {
   const path = join(dir, name);

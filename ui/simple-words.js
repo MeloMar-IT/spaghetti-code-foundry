@@ -32,6 +32,9 @@ export const HELP = {
     { q: "How do I change the colours?", a: "Ask for a change and say which colours you want, for example: Make the buttons dark blue. Use Ask for a change on your project's page; if it has no such button yet, switch to the Advanced view with View at the top and use Start work." },
     { q: "How do I make it public?", a: "Whether and how a project becomes public depends on how it was set up. Some final versions go out by themselves; others need a step from you or from someone else. Ask the person who set up the Foundry for you for the public address and the steps." },
   ],
+  agentsTitle: "Claude and Codex",
+  agentsText: "Which AI helpers the Foundry uses, and how busy it may be.",
+  agentsLink: "Set up Claude and Codex",
   contactTitle: "Who to ask",
 };
 
@@ -54,7 +57,73 @@ export const WORDS = {
   newTab: " (opens in a new tab)",
   loading: "Loading your projects",
   loadFailed: "This page could not be loaded.",
-  actions: { change: "Ask for a change", tryIt: "Try it", final: "Make this version final" },
+  actions: { change: "Ask for a change", tryIt: "Try it", final: "Make this version final", github: "Put this project on GitHub" },
+};
+
+/**
+ * Put this project on GitHub (an admin's local project). Fixed texts only; the server's answer is never shown. The functions take
+ * the name on GitHub; a name with a forbidden word in it (for example "o/issues") is left out of the sentence.
+ */
+const named = (n) => (n && !FORBIDDEN.some((re) => re.test(String(n))) ? String(n) : "");
+export const GITHUB = {
+  connect: "First connect GitHub. Switch to the Advanced view with View at the top and add one of your GitHub projects there. Then come back to this page.",
+  connectApp: "To put this project on GitHub, switch to the Advanced view with View at the top and use Move to GitHub on this project's row in the list of projects. There you can choose a GitHub project you connected before.",
+  step1: "Step 1 of 2: choose a name",
+  nameLabel: "Name on GitHub",
+  nameProblem: "Use only letters, digits, -, _ and . in the name.",
+  private: "If it is a new place, only you and the people you invite can see it",
+  withDone: "Also take the changes that are done",
+  next: "Next",
+  notNow: "Not now",
+  checking: "Checking…",
+  step2: "Step 2 of 2: check and put it on GitHub",
+  willCreate: (n) => (named(n) ? `The Foundry makes a new place on GitHub called ${named(n)}.` : "The Foundry makes a new place on GitHub."),
+  willUse: (n) => (named(n) ? `The Foundry uses the place on GitHub called ${named(n)}, which is already there.` : "The Foundry uses the place on GitHub with this name, which is already there."),
+  keepsSeeing: "It keeps the setting it has on GitHub for who can see it.",
+  history: "All saved versions of your project go along.",
+  changes: (n) => (n === 1 ? "1 change goes along." : `${n} changes go along.`),
+  already: (n) => (n === 1 ? "1 change is on GitHub already." : `${n} changes are on GitHub already.`),
+  blocked: (n) => `${n === 1 ? "1 change" : `${n} changes`} cannot go along. Switch to the Advanced view with View at the top to see which.`,
+  publishTitle: "Where it goes and what goes along",
+  leaves: "Nothing leaves your computer until you press Yes, publish.",
+  go: "Yes, publish",
+  cancel: "Cancel",
+  stays: "Nothing was sent. Your project is still only on your computer.",
+  back: "Back",
+  moving: "Putting your project on GitHub… This can take a few minutes. Keep this page open.",
+  done: "Your project is on GitHub now. The Foundry goes on there by itself.",
+  openProject: "Open your project",
+  openGithub: "Open it on GitHub",
+  failed: "That did not work. Nothing was changed. You can try again. If it keeps happening, ask the person who set up the Foundry for you.",
+  again: "Try again",
+  stopped: "The move may have stopped half way, or it may have worked. Do not try again here. Switch to the Advanced view with View at the top and look at the list of projects there, or ask the person who set up the Foundry for you.",
+};
+
+/** Try it on the project page: the words of the choice, the states and the notes. */
+export const TRY = {
+  which: "Which version do you want to open?",
+  current: "The current version",
+  checking: "The version being checked",
+  checkingOf: (t) => `The version being checked: ${t}`,
+  notNow: "Not now",
+  starting: "Starting…",
+  open: "Open it",
+  stop: "Stop",
+  failed: "It could not start. The Foundry will look into it.",
+  didNotWork: "That did not work. Try again.",
+  elsewhere: "Try it works on the computer where the Foundry is installed.",
+};
+
+/** The card of a finished version that waits for the owner's OK (the daily release of a local project). */
+export const FINAL = {
+  line: "A new version of your project is ready.",
+  what: "What goes in:",
+  yes: WORDS.actions.final,
+  notYet: "Not yet",
+  why: "Why not yet? (optional)",
+  keep: "Keep it as it is",
+  sent: "Thank you. The Foundry goes on by itself.",
+  failed: "That did not work. Try again.",
 };
 
 const NEEDS_YOU = { todo: "Take a look", line: "It needs you." };
@@ -81,6 +150,7 @@ export const KIND_WORDS = {
   usage_limit: { line: "It is paused for now and goes on by itself." },
   daily_budget: { line: "It is paused for now and goes on by itself." },
   user_limit: { line: "It is paused for now and goes on by itself." },
+  project_limit: { line: "The Foundry has done enough for today; it continues tomorrow." },
   restart: { line: "It is paused for now and goes on by itself." },
   bug_first: { line: "A repair goes first." },
   interrupted: { line: "It was cut off and goes on later." },

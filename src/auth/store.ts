@@ -4,7 +4,7 @@ import type { ZodType } from "zod";
 import { FACTORY_HOME, claimHomeWrite } from "../home.js";
 import { acquireLock, releaseLock } from "../home-migrate.js";
 
-export type StoreErrorKind = "unreadable" | "not-json" | "wrong-format" | "locked" | "cannot-write";
+export type StoreErrorKind = "unreadable" | "not-json" | "wrong-format" | "locked" | "cannot-write" | "too-large";
 
 /** A problem with a store file. The message names the file and the kind of problem, never a value from the file. */
 export class StoreError extends Error {

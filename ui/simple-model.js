@@ -1,7 +1,7 @@
 import { sameRepo } from "./filters.js";
 import { needsUser, recordLink } from "./home.js";
 import { myRunsEntries } from "./runs-list.js";
-import { WORDS, kindWords, phaseOf, progressText, safeText, stateLine, summaryOf } from "./simple-words.js";
+import { FINAL, WORDS, kindWords, phaseOf, progressText, safeText, stateLine, summaryOf } from "./simple-words.js";
 
 // The Simple view as plain data: projects, the four groups of work and the cards. No DOM here.
 // Grouping uses the next-step record (`run.next` or `job.next`), never the run status, as Home does.
@@ -19,7 +19,11 @@ export const projectKey = (repo) => {
 const workOf = (e, key, repo) => {
   const n = recordOf(e);
   if (!n) return false;
-  if (key.startsWith("local:")) return String(e.run?.vars?.repo_id ?? e.job?.repoId ?? "") === String(repo.id);
+  if (key.startsWith("local:")) {
+    // A run of a local project carries its local name (vars.github_repo); GET /api/repos gives it as `localName`.
+    if (typeof repo.localName === "string" && repo.localName && sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo ?? n.repo, repo.localName)) return true;
+    return String(e.run?.vars?.repo_id ?? e.job?.repoId ?? "") === String(repo.id);
+  }
   return sameRepo(e.run?.vars?.github_repo ?? e.job?.githubRepo ?? n.repo, key);
 };
 
@@ -73,6 +77,19 @@ export function cardOf(entry) {
     card.todo = words.todo;
     const l = recordLink(n, "user", idOf(entry));
     if (l) card.link = { href: l.href, external: !!l.external };
+    // a real run that waits for a check can be opened with Try it ("the version being checked")
+    if (run && !n.final && idOf(entry)) card.tryRun = idOf(entry);
+    // "Make this version final": the card decides by itself (the run page is not a Simple page); the stories in plain words.
+    if (n.final && idOf(entry)) {
+      card.todo = FINAL.yes;
+      card.line = FINAL.line;
+      card.decide = idOf(entry);
+      card.items = String(run?.waiting?.message ?? "").split(/\r?\n/)
+        .map((l2) => /^- #\d+ (.+)$/.exec(l2.trim())?.[1])
+        .map((t) => (t ? safeText(t) : ""))
+        .filter(Boolean);
+      delete card.link;
+    }
   }
   return card;
 }
@@ -95,6 +112,7 @@ export function projectModel(repo, all, runs, pending) {
   return {
     id: repo.id,
     name: projectName(repo, all),
+    local: repo?.method === "local",
     todo: groups.check,
     groups,
     state: stateLine({ needs: groups.check.length, needsAnswer: answer, building: groups.building.length, planned: groups.planned.length, done: groups.done.length }),
@@ -106,9 +124,12 @@ export function projectsModel(repos, runs, pending) {
   const all = Array.isArray(repos) ? repos : [];
   return all.map((repo) => {
     const m = projectModel(repo, all, runs, pending);
-    const first = m.todo.find((c) => c.link);
+    const first = m.todo.find((c) => c.link || c.decide);
+    // A card that decides in place has no link: the big button goes to the project page, where the card is.
     const next = first
-      ? { label: first.todo, href: first.link.href, external: first.link.external }
+      ? first.decide
+        ? { label: first.todo, href: `#/repos/${encodeURIComponent(m.id)}`, external: false }
+        : { label: first.todo, href: first.link.href, external: first.link.external }
       : { label: WORDS.open, href: `#/repos/${encodeURIComponent(m.id)}`, external: false };
     return { ...m, next };
   });

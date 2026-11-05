@@ -229,7 +229,7 @@ describe("the options", () => {
     stops.pop()!();
     start({ role: "user" });
     press("/");
-    expect(labels()).toEqual(["Home", "Setup check", "Help", "Epics", "Refinement", "My runs", "My repositories", "Start work", "New refinement session"]);
+    expect(labels()).toEqual(["Home", "Setup check", "Claude and Codex", "Help", "Epics", "Refinement", "My runs", "My repositories", "Start work", "New refinement session"]);
     press("Escape");
     stops.pop()!();
     start({ role: "user", preview: true });
@@ -265,6 +265,7 @@ describe("the options", () => {
     press("/");
     press("ArrowDown");
     press("ArrowDown");
+    press("ArrowDown");
     press("Enter");
     expect(g.location.hash).toBe("#/board");
     expect(root().children).toHaveLength(0);
@@ -278,6 +279,7 @@ describe("the options", () => {
     page();
     const s = start();
     press("/");
+    press("ArrowDown");
     press("ArrowDown");
     press("ArrowDown");
     press("Enter", { ctrlKey: true });

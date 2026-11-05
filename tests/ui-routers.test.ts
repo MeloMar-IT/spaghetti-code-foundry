@@ -90,6 +90,7 @@ describe("user router", () => {
     "/context.js": contextStub(),
     "/home.js": never,
     "/setup-check.js": never,
+    "/onboarding-agents.js": { renderOnboardingAgents: vi.fn(async () => () => {}) },
     "/simple.js": { renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn(), renderSimpleHelp: vi.fn() },
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
@@ -425,7 +426,7 @@ describe("admin router", () => {
   const stub = (over: Record<string, any> = {}) => {
     const names = [
       "./editor.js", "./graph.js", "./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./models.js", "./dashboard.js", "./problems.js", "./flow-problems.js", "./runs.js",
-      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./audit.js", "./autonomy.js", "./board.js",
+      "./admin-repos.js", "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./onboarding-agents.js", "./audit.js", "./autonomy.js", "./board.js",
     ];
     return {
       "/vendor/yaml/index.js": { default: { parse: () => ({}) } },
@@ -649,7 +650,7 @@ describe("support levels", () => {
     "./since.js": { startSince: vi.fn() },
     "./turn.js": { renderYourTurn: vi.fn(), startBadge: async () => 0, startHash: () => null },
     ...Object.fromEntries(["./library.js", "./admin.js", "./watchers.js", "./maintenance.js", "./dashboard.js", "./problems.js", "./runs.js", "./admin-repos.js",
-      "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./audit.js", "./autonomy.js", "./board.js"].map((n) => [n, never])),
+      "./admin-credentials.js", "./operations.js", "./epic-page.js", "./epics.js", "./refinement.js", "./repos.js", "./repo-view.js", "./repo-admin-sections.js", "./users.js", "./user-detail.js", "./user/start.js", "./setup-check.js", "./onboarding-agents.js", "./audit.js", "./autonomy.js", "./board.js"].map((n) => [n, never])),
     "./models.js": { refreshModelLists: vi.fn(), renderModels: vi.fn(), renderModelDetail: vi.fn() },
     "./flow-page.js": { createFlowPage: () => ({ refreshFlows: async () => {}, renderSidebar: vi.fn(), renderFlowView: vi.fn(), openFlow: vi.fn(), openNew: vi.fn(), newBlank: vi.fn(), save: vi.fn(), generateDialog: vi.fn(), confirmDiscard: async () => true, dialogOpen: () => dialogs > 0 }) },
     ...over,

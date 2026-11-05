@@ -2,11 +2,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { claudeIsolated, codexSandbox, sessionToResume } from "../src/agents/run.js";
-import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, toTarget } from "../src/agents/targets.js";
+import { analystSet, claudeIsolated, codexSandbox, sessionToResume } from "../src/agents/run.js";
+import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, stepRoute, toTarget } from "../src/agents/targets.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
-import { liveLogFile } from "../src/engine/state.js";
+import { PROJECT_BUDGET_REASON, liveLogFile } from "../src/engine/state.js";
 import { readTranscript } from "../src/engine/transcript.js";
 import { withModel } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -83,6 +83,32 @@ steps:
     expect(resolveTarget(step("review"), flow, c, 1).label).toBe("codex:openai:gpt-5");
     expect(resolveTarget(step("fix"), flow, c, 1).label).toBe("claude:anthropic:sonnet");
     expect(resolveTarget(step("fix"), flow, c, 2).label).toBe("claude:ollama:qwen3-coder:30b");
+  });
+
+  it("a rule with `agent` matches only steps whose own target runs on that agent", () => {
+    const toClaude = cfg({ router: { rules: [{ agent: "codex", model: "sonnet" }] } });
+    expect(resolveTarget(step("cross"), flow, toClaude, 1).label).toBe("claude:anthropic:sonnet");
+    expect(resolveTarget(step("review"), flow, toClaude, 1).label).toBe("claude:anthropic:opus");
+    expect(resolveTarget(step("fix"), flow, toClaude, 1).label).toBe("claude:anthropic:sonnet");
+    const toCodex = cfg({ router: { rules: [{ agent: "claude", model: "codex" }] } });
+    expect(resolveTarget(step("review"), flow, toCodex, 1).label).toBe("codex:openai");
+    expect(resolveTarget(step("fix"), flow, toCodex, 1).label).toBe("codex:openai");
+    expect(resolveTarget(step("cross"), flow, toCodex, 1).label).toBe("codex:openai");
+    expect(stepRoute(step("cross"), flow, toClaude, 1)).toBe("sonnet");
+    expect(stepRoute(step("fix"), flow, toClaude, 1)).toBeUndefined();
+  });
+
+  it("a rule with `agent` leaves a step with a broken own target to report its own error", () => {
+    const f = parseFlow("name: f\nsteps:\n  - {id: bad, type: claude, provider: nowhere, prompt: x}\n");
+    const bad = f.steps[0] as ClaudeStep;
+    const c = cfg({ router: { rules: [{ agent: "claude", model: "codex" }] } });
+    expect(stepRoute(bad, f, c, 1)).toBeUndefined();
+    expect(() => resolveTarget(bad, f, c, 1)).toThrow(/unknown provider/);
+  });
+
+  it("the analyst does not touch a step that an `agent` rule routes", () => {
+    const c = cfg({ router: { rules: [{ agent: "claude", model: "codex" }] } });
+    expect(analystSet(step("fix"), flow, c, 1)).toEqual({});
   });
 
   it("maps permissions onto Codex sandboxes", () => {
@@ -502,6 +528,38 @@ steps:
     expect(s.status).toBe("succeeded");
     expect(s.history.map((h) => h.agent)).toEqual(["claude:anthropic", "codex:openai"]);
     expect(readFileSync(liveLogFile(s.runDir), "utf8")).toMatch(/the owner's daily budget reached — agent steps continue on/);
+  });
+
+  it("the daily cap of the project stops the run although a free fallback is configured or already active (#792)", async () => {
+    const flow = parseFlow(`
+name: t
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: "SAY paid"}
+  - {id: b, type: claude, prompt: "SAY free"}
+  - {id: c, type: claude, prompt: "SAY more"}
+`);
+    const run = (config: Config, cap: () => number | undefined) => runFlow(flow, {
+      task: "t", repo, runsDir, claudeBin, owner: "u1", vars: { github_repo: "acme/a" }, projectDailyBudget: cap, config,
+    });
+    const conf = (over: Record<string, unknown>) => cfg({ bot: { name: "Bot", email: "bot@example.com" }, ...over });
+    // a free fallback is configured: the owner budget would use it, the project cap does not
+    const s = await run(conf({ router: { fallback: ["codex"] } }), () => 0.005);
+    expect(s.status).toBe("stopped");
+    expect(s.reason).toBe(PROJECT_BUDGET_REASON);
+    expect(s.history).toHaveLength(1);
+    // the fallback is already active (the run budget switched to it): the cap of the project still stops the run
+    const t = await runFlow(parseFlow(`
+name: t
+workspace: empty
+limits: {max_cost_usd: 0.005}
+steps:
+  - {id: a, type: claude, prompt: "SAY paid"}
+  - {id: b, type: claude, prompt: "SAY free"}
+  - {id: c, type: claude, prompt: "SAY more"}
+`), { task: "t", repo, runsDir, claudeBin, owner: "u1", vars: { github_repo: "acme/a" }, projectDailyBudget: () => 0.007, config: conf({ router: { fallback: ["codex"] } }) });
+    expect(t.status).toBe("stopped");
+    expect(t.reason).toBe(PROJECT_BUDGET_REASON);
   });
 
   it("does not resume a session across agents", async () => {

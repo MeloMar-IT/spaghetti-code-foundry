@@ -27,7 +27,7 @@ import { GuardError } from "../help/guard.js";
 import { CODEX_PUSH_BLOCKED_LINE, codexHomeId, codexIsolationLine, codexIsolationMode, codexLoginReturnLine, codexResumeRefusal, personalCodexDir, prepareCleanCodex, type CleanCodex, type CodexIsolation } from "./codex-home.js";
 import { discoverJavaHome, javaStandIn } from "./java-gate.js";
 import { agentHomeEnv, agentKeyNames, codexKeyEnv, dropLoginVars, missingAgentKey, noAgentKey } from "./boxed.js";
-import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, routeModel, type Target } from "./targets.js";
+import { BUILTIN_PROVIDERS, claudeProviderEnv, fallbackTargets, formatSpec, isAuthError, isLimitError, isQuotaError, isTransientError, LOCAL_KINDS, providerKeyVars, resolveTarget, stepRoute, type Target } from "./targets.js";
 import { stepOverride, type Override } from "../analyst/overrides.js";
 import { modelOf } from "../analyst/reference.js";
 import type { Config } from "../config.js";
@@ -246,7 +246,7 @@ function catalogueRecord(o: WithOptions): Pick<StepResult, "skillCatalogue"> {
 export function analystSet(step: ClaudeStep, flow: Flow, config: Config, visit: number): { target?: Target; effort?: Override["effort"] } {
   const o = stepOverride(flow.name, step.id);
   if (!o.model && !o.effort) return {};
-  if (routeModel(config, flow.name, step.id, visit)) return {};
+  if (stepRoute(step, flow, config, visit)) return {};
   let own: Target;
   try {
     own = resolveTarget(step, flow, config, visit);

@@ -1,5 +1,6 @@
 // A small app for the preview runner tests. Listens on $HOST:$PORT. FAKE_PREVIEW_MODE: ok (default), 503, hang, exit, child.
 import { spawn } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import os from "node:os";
 
@@ -61,4 +62,12 @@ const server = createServer((req, res) => {
   res.end("hello");
 });
 server.listen(Number(process.env.PORT), process.env.HOST, () => console.log(`listening ${process.env.PORT}`));
-process.on("SIGTERM", () => process.exit(0));
+// FAKE_PREVIEW_EXIT_DELAY: wait this many ms after SIGTERM; FAKE_PREVIEW_EXIT_LOG: write whether the start folder was still there
+const startDir = process.cwd();
+process.on("SIGTERM", () => {
+  const delay = Number(process.env.FAKE_PREVIEW_EXIT_DELAY ?? 0);
+  setTimeout(() => {
+    if (process.env.FAKE_PREVIEW_EXIT_LOG) writeFileSync(process.env.FAKE_PREVIEW_EXIT_LOG, existsSync(startDir) ? "dir-present" : "dir-gone");
+    process.exit(0);
+  }, delay);
+});

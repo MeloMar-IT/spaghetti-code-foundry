@@ -2,15 +2,20 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
 import { auditAction, auditActions } from "../auth/audit.js";
 import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
-import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { spentTodayByProject, type ProjectRef } from "../engine/state.js";
+import { REPO_METHODS, type RepoRecord, RepoError, addRepo, allowRemotePush, checkNewRepo, checkRepoAuth, checkRepoBudget, getRepo, projectDailyBudget, setRepoBudget, setRepoWorkspace, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { checkRepoSettings } from "../auth/repo-settings.js";
-import { localHasRemote } from "../auth/local-repo.js";
+import { localHasRemote, localRepoName } from "../auth/local-repo.js";
 import { RecipeError, parseRecipe } from "../release/recipe.js";
 import { readyView } from "../refinement/ready-list.js";
 import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
 import { type InstallProblem, type RepoApp, installUrl, repoApp, repoInstallation } from "../github-app.js";
 import { type Code, ConnectError, TEST_TIMEOUT_MS, blockedResult, testConnection } from "../repos/connect.js";
 import { StoreError } from "../auth/store.js";
+import { ProjectMoveError, moveProjectToGithub, parseMoveBody } from "../repos/move-to-github.js";
+import { type PublishBinding, PUBLISH_WORDS, fingerprint, publishGrantsOf, refusalText } from "../repos/publish-grants.js";
+import { ownerPushTarget } from "../repos/local-branch.js";
+import { MoveError } from "../stories/move-to-github.js";
 import { allAppRepos, appRepoAllowed, getAppRepos, onAppList } from "../auth/app-repos.js";
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
@@ -22,13 +27,16 @@ import { readFileSync } from "node:fs";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
 import { DEFAULT_FLOWS } from "../queue/watcher.js";
 import { watcherState } from "../words.js";
+import { knownWorkspace } from "../workspaces/index.js";
 import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
+import { previewRoutes } from "./api-preview.js";
 import { checkRepoMethod } from "./permissions.js";
 import type { ApiContext, Route } from "./server.js";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INTERNAL = "the repository list is not working; see the server log";
-const STATUS = { "bad-name": 400, "bad-url": 400, "bad-auth": 400, duplicate: 409, taken: 409, limit: 400, "not-found": 404, "no-owner": 404, "bad-settings": 400, "bad-owner": 400, blocked: 409, "no-credential": 409, "bad-ready": 400 } as const;
+const STATUS = { "bad-name": 400, "bad-url": 400, "bad-auth": 400, duplicate: 409, taken: 409, limit: 400, "not-found": 404, "no-owner": 404, "bad-settings": 400, "bad-owner": 400, blocked: 409, "no-credential": 409, "bad-ready": 400, "needs-publish": 409 } as const;
 
 /**
  * Runs repository-list code. Input errors become 4xx; everything else is logged (the file name and the kind, never
@@ -132,9 +140,11 @@ async function lookupInstallation(ctx: ApiContext, app: RepoApp, github: string 
 const BLOCKED: Record<InstallProblem, Code> = { "not-installed": "app-not-installed", "app-broken": "app-broken", "rate-limit": "rate-limit", unreachable: "unreachable", failed: "failed" };
 
 /** A record as its owner sees it: with `github` ("owner/name") when it is a GitHub repository. */
-const shown = <T extends { url: string }>(r: T): T & { github?: string } => {
+const shown = <T extends { url: string; id?: string; method?: string }>(r: T): T & { github?: string; localName?: string } => {
   const github = githubNameOf(r.url);
-  return github === undefined ? r : { ...r, github };
+  // A local record has no GitHub name; its runs are known by this name (vars.github_repo), so the pages can match them to the project.
+  const localName = r.method === "local" && typeof r.id === "string" ? localRepoName({ id: r.id, url: r.url }) : undefined;
+  return github === undefined && localName === undefined ? r : { ...r, ...(github !== undefined ? { github } : {}), ...(localName !== undefined ? { localName } : {}) };
 };
 
 /** The autonomy level of a repository id. A file that cannot be read gives `observe` for all, as a run start treats it. */
@@ -158,7 +168,7 @@ function adminRow(rec: RepoRecord, users?: Map<string, User>, lists?: Map<string
   const name = githubNameOf(rec.url);
   const problem = watcherRepoProblem(rec, u ?? undefined);
   const { definitionOfReady, ...rest } = rec;
-  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}), ...(rec.method === "local" ? { hasRemote: hasRemote === true } : {}) };
+  return { ...rest, settings: rec.settings ?? {}, ready: readyView(definitionOfReady), account: u ? { name: u.name, email: u.email, role: u.role, status: u.status } : null, ...(name !== undefined ? { github: name } : {}), ...(problem ? { watcherProblem: problem } : {}), ...(offList ? { offAppList: true } : {}), ...(rec.method === "local" ? { hasRemote: hasRemote === true, localName: localRepoName(rec) } : {}) };
 }
 
 /** Does the folder of each local record have a git remote? Asynchronous, at most 4 checks at a time (see `localHasRemote`). */
@@ -187,6 +197,22 @@ function checkReleaseRecipe(body: unknown): void {
 }
 
 /** The admin calls (the permission table lets only an admin through): all repositories, their settings, and transfer. */
+/** The daily cap of a repository for an admin: its own, the Simple default, the cap in effect and today's spend (#792). */
+function budgetView(ctx: ApiContext, rec: RepoRecord) {
+  const defaultUsd = ctx.config().simple_project_daily_budget_usd || null;
+  const github = tryParseRepoUrl(rec.url)?.github;
+  const ref: ProjectRef = github ? { githubRepo: github } : { repoId: rec.id };
+  const effective = ctx.config().cost_limits ? projectDailyBudget(ref, rec.owner, defaultUsd ?? undefined) : undefined;
+  return {
+    id: rec.id,
+    dailyBudgetUsd: rec.dailyBudgetUsd ?? null,
+    defaultUsd,
+    effectiveUsd: effective ?? null,
+    spentTodayUsd: spentTodayByProject(ctx.opts.runsDir, ref),
+    enforced: !!ctx.config().cost_limits,
+  };
+}
+
 async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, by: string): Promise<boolean> {
   if (seg[1] !== "repos") return false;
   if (seg.length === 2 && method === "GET") {
@@ -217,6 +243,29 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
       const detail = r.repo.definitionOfReady ? `definition of ready: ${r.repo.definitionOfReady.length} items` : "definition of ready: back to the default";
       auditAction(ctx.diagLog, by, "repo-change", r.repo.id, detail);
     }
+    const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
+    return send(res, 200, row, publicKeys([row])), true;
+  }
+  if (seg.length === 4 && seg[3] === "budget" && (method === "GET" || method === "PUT")) {
+    let rec: RepoRecord | undefined;
+    if (method === "GET") {
+      rec = guardedRepos(ctx, () => getRepo(seg[2]!));
+      if (!rec) throw new HttpError(404, "no such repository");
+    } else {
+      const body = await readJson(req);
+      const r = guardedRepos(ctx, () => setRepoBudget(seg[2]!, checkRepoBudget(body)));
+      rec = r.repo;
+      if (r.changed) {
+        auditAction(ctx.diagLog, by, "repo-change", r.repo.id, r.repo.dailyBudgetUsd === undefined ? "daily budget: cleared" : `daily budget: $${r.repo.dailyBudgetUsd}`);
+        ctx.scheduler.recheck();
+      }
+    }
+    return send(res, 200, budgetView(ctx, rec)), true;
+  }
+  if (seg.length === 4 && seg[3] === "workspace" && method === "PUT") {
+    const body = await readJson(req);
+    const r = guardedRepos(ctx, () => setRepoWorkspace(seg[2]!, body, knownWorkspace));
+    if (r.changed) auditAction(ctx.diagLog, by, "repo-change", r.repo.id, `workspace: ${r.repo.workspace ?? "default"}`);
     const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
     return send(res, 200, row, publicKeys([row])), true;
   }
@@ -345,6 +394,95 @@ export async function testRepo(ctx: ApiContext, user: User, id: string): Promise
   }
 }
 
+const MOVE_STATUS = { "bad-input": 400, "not-found": 404 } as const;
+
+/**
+ * `POST /api/repos/<id>/move-to-github`: moves the caller's local project to GitHub (see repos/move-to-github.ts).
+ * A dry run answers a single-use `confirm` token; a real move needs it (Yes, publish, #796) and is refused with 409 before
+ * anything is created or pushed when it does not fit. The token is used up in every case.
+ */
+async function moveLocalProject(ctx: ApiContext, req: IncomingMessage, user: User, id: string) {
+  const rec = guardedRepos(ctx, () => getRepo(id));
+  if (!rec || rec.owner !== user.id || rec.method !== "local") throw new HttpError(404, "no such local project");
+  const body = await readJson(req);
+  const grants = publishGrantsOf(ctx);
+  try {
+    const parsed = parseMoveBody(body);
+    const bind: PublishBinding = { owner: user.id, repoId: rec.id, kind: "move", request: JSON.stringify({ target: parsed.target, includeClosed: parsed.includeClosed }) };
+    let expectWhat: string | undefined;
+    if (!parsed.dryRun) {
+      const t = grants.take(parsed.confirm, bind);
+      if (!t.ok) throw new HttpError(409, refusalText(t.reason));
+      expectWhat = t.grant.what;
+    }
+    const { what, ...r } = await moveProjectToGithub({
+      ...parsed, localId: rec.id, owner: user.id, config: ctx.config, beforeSave: connectLevel, expectWhat,
+      onAdded: (added) => auditAction(ctx.diagLog, user.id, "repo-add", added.id, added.url),
+    });
+    if (r.switched && r.repoId) {
+      auditAction(ctx.diagLog, user.id, "repo-change", r.repoId, `moved from local project ${basename(rec.url)}`);
+      auditAction(ctx.diagLog, user.id, "repo-remove", rec.id, rec.url);
+    }
+    // a check whose stories cannot all go along gets no token: there is nothing to confirm
+    const blocked = r.stories.plan.some((p) => p.status === "unreadable" || p.status === "too-large");
+    if (r.dryRun && what && !blocked) return { ...r, confirm: grants.issue(bind, what) };
+    return r;
+  } catch (e) {
+    if (e instanceof ProjectMoveError) throw new HttpError(e.code in MOVE_STATUS ? MOVE_STATUS[e.code as keyof typeof MOVE_STATUS] : 409, e.message);
+    if (e instanceof MoveError) throw new HttpError(409, e.message);
+    return guardedRepos(ctx, () => {
+      throw e;
+    });
+  } finally {
+    ctx.watchers.sync();
+  }
+}
+
+type PushTarget = NonNullable<ReturnType<typeof ownerPushTarget>>;
+
+/**
+ * `POST /api/repos/<id>/publish-remote`: Yes, publish for the plain push to the folder's remote (#796). The owner only.
+ * `{ dryRun: true, settings? }` shows where the develop and the main branch would go and answers a single-use token (none when the
+ * push is on already); `{ confirm, settings? }` checks the token, that the remotes and the proposed branch names are still the
+ * ones shown, then saves the settings and turns the push on in one step. The addresses are shown without sign-in and never logged.
+ */
+async function publishRemote(ctx: ApiContext, req: IncomingMessage, user: User, id: string) {
+  const rec = guardedRepos(ctx, () => getRepo(id));
+  if (!rec || rec.owner !== user.id || rec.method !== "local") throw new HttpError(404, "no such local project");
+  const body = await readJson(req);
+  const keys = Object.keys(body);
+  if (keys.some((k) => !["dryRun", "confirm", "settings"].includes(k))) throw new HttpError(400, "the body takes dryRun, confirm and settings only");
+  const dry = body.dryRun === true;
+  if (dry === (body.confirm !== undefined) || (body.dryRun !== undefined && typeof body.dryRun !== "boolean")) throw new HttpError(400, "send either { dryRun: true } or { confirm }");
+  const proposed = body.settings === undefined || body.settings === null ? undefined : guardedRepos(ctx, () => {
+    checkReleaseRecipe(body.settings);
+    return checkRepoSettings(body.settings);
+  });
+  const settings = proposed ?? rec.settings ?? {};
+  const branches = { develop: settings.developBranch ?? "develop", main: settings.mainBranch ?? "main" };
+  const target = (b: string): PushTarget | undefined => ownerPushTarget(rec.url, b);
+  const targets = { develop: target(branches.develop), main: target(branches.main) };
+  if (!targets.develop && !targets.main) throw new HttpError(409, PUBLISH_WORDS.noRemote);
+  const bind: PublishBinding = { owner: user.id, repoId: rec.id, kind: "push-remote", request: fingerprint(branches) };
+  // every push address of each remote is part of what is approved: a second destination added later changes the fingerprint
+  const what = fingerprint({ branches, develop: targets.develop ? [targets.develop.remote, targets.develop.urls] : null, main: targets.main ? [targets.main.remote, targets.main.urls] : null });
+  const grants = publishGrantsOf(ctx);
+  const on = rec.settings?.pushRemote === true;
+  if (dry) {
+    const view = (b: string, t: PushTarget | undefined) => (t ? { branch: b, remote: t.remote, addresses: t.shown } : null);
+    const out = { develop: view(branches.develop, targets.develop), main: view(branches.main, targets.main), tags: true, on };
+    return on ? out : { ...out, confirm: grants.issue(bind, what) };
+  }
+  if (typeof body.confirm !== "string") throw new HttpError(409, PUBLISH_WORDS.needed);
+  const t = grants.take(body.confirm, bind);
+  if (!t.ok) throw new HttpError(409, refusalText(t.reason));
+  if (t.grant.what !== what) throw new HttpError(409, PUBLISH_WORDS.changed);
+  const r = guardedRepos(ctx, () => allowRemotePush(rec.id, user.id, proposed));
+  auditAction(ctx.diagLog, user.id, "repo-change", r.repo.id, `Yes, publish: push to remote${r.changed.length ? ` (settings: ${r.changed.join(", ")})` : ""}`);
+  const row = adminRow(r.repo, undefined, undefined, await localHasRemote(r.repo.url));
+  return { ...row, on: true };
+}
+
 /** The caller's own repositories: list, add, change how to reach one, remove. A token is only ever accepted, a private key never leaves the server. */
 export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg[0] === "admin") return adminRepos(ctx, req, res, seg, method, caller.id);
@@ -407,11 +545,19 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg.length === 3 && seg[2] === "test" && method === "POST") {
     return send(res, 200, await testRepo(ctx, user, seg[1]!)), true;
   }
+  if (seg.length === 3 && seg[2] === "move-to-github" && method === "POST") {
+    return send(res, 200, await moveLocalProject(ctx, req, user, seg[1]!)), true;
+  }
+  if (seg.length === 3 && seg[2] === "publish-remote" && method === "POST") {
+    const out = await publishRemote(ctx, req, user, seg[1]!);
+    return send(res, 200, out, publicKeys([out as { publicKey?: string }])), true;
+  }
   if (seg.length === 3 && seg[2] === "ready" && method === "GET") {
     const rec = guardedRepos(ctx, () => getRepo(seg[1]!));
     if (!rec || (rec.owner !== user.id && user.role !== "admin")) throw new HttpError(404, "no such repository");
     return send(res, 200, readyView(rec.definitionOfReady)), true;
   }
+  if (seg.length === 3 && seg[2] === "preview" && UUID_RE.test(seg[1]!)) return previewRoutes(ctx, req, res, seg[1]!, method, user);
   if (seg.length === 2 && method === "DELETE") {
     removeAndTell(ctx, user.id, () => removeRepo(user.id, seg[1]!));
     return send(res, 200, { ok: true }), true;

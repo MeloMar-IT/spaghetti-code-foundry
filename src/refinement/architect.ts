@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { KEY_MISSING, KEY_UNREADABLE, NEEDS_TOKEN, NO_RUN_OWNER, TOKEN_MISSING, TOKEN_UNREADABLE, ownsRepo } from "../auth/repos.js";
+import { KEY_MISSING, KEY_UNREADABLE, NEEDS_TOKEN, NO_RUN_OWNER, TOKEN_MISSING, TOKEN_UNREADABLE, ownsProject } from "../auth/repos.js";
 import { REFINEMENT_SOURCE } from "../auth/run-owner.js";
 import { StoreError } from "../auth/store.js";
 import { SIGN_IN_SENTENCES, TOKEN_REFUSED_REASON } from "../engine/guards.js";
@@ -400,7 +400,7 @@ export function askArchitect(deps: ArchitectDeps, actor: Actor, id: string, ask:
   if (!found) throw new RefinementError("not-found", "no such refinement session");
   if (found.owner !== actor.id) throw actor.admin ? new RefinementError("not-owner", "only the owner can ask the architect") : new RefinementError("not-found", "no such refinement session");
   if (found.state === "dropped") throw new RefinementError("bad-state", "a dropped session cannot be read; restore it first");
-  if (!ownsRepo(found.owner, found.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
+  if (!ownsProject(found.owner, found.repo)) throw new RefinementError("no-repo", "the repository is not in My repositories any more");
   if (isPublishing(id)) throw busy("this session is being published; try again in a moment");
   const field = ask.field as SuggestField;
   if (kind === "suggest" && !(SUGGEST_FIELDS as readonly unknown[]).includes(ask.field)) throw new RefinementError("bad-draft", `the field is ${SUGGEST_FIELDS.join(", ")}`);

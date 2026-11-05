@@ -50,6 +50,8 @@ export interface MoveOptions {
   config: () => Config;
   dryRun?: boolean;
   includeClosed?: boolean;
+  /** The build label for `go` stories. Default: the label of the target's first issues watcher, else `go`. */
+  buildLabel?: string;
 }
 export interface MoveResult {
   target: string;
@@ -186,13 +188,13 @@ export function planFrom(entries: readonly Entry[], includeClosed = false): Plan
 // ---- lock --------------------------------------------------------------------------------------------------------------
 
 /** One move per local folder across processes: an exclusive lock file in the data folder, with the pid. A dead pid's file is taken over. */
-export function moveLockFile(dir: string): string {
+export function moveLockFile(dir: string, kind = "move"): string {
   let real: string;
   try { real = realpathSync(dir); } catch { throw new MoveError("the folder of the local project cannot be read"); }
-  return join(dataHome(), `move-${createHash("sha256").update(real).digest("hex").slice(0, 32)}.lock`);
+  return join(dataHome(), `${kind}-${createHash("sha256").update(real).digest("hex").slice(0, 32)}.lock`);
 }
-function takeLock(dir: string): () => void {
-  const file = moveLockFile(dir);
+export function takeMoveLock(dir: string, kind = "move"): () => void {
+  const file = moveLockFile(dir, kind);
   mkdirSync(dataHome(), { recursive: true });
   for (let tries = 0; tries < 3; tries++) {
     try {
@@ -216,6 +218,16 @@ function takeLock(dir: string): () => void {
 
 // ---- the move ----------------------------------------------------------------------------------------------------------
 
+/** Why the stories cannot be moved to `repo` (already moved elsewhere, or a number without its repository); undefined when they can. */
+export function moveRefusal(entries: readonly Entry[], repo: string): string | undefined {
+  const other = entries.find((e) => e.ok && e.story.githubRepo !== undefined && !same(e.story.githubRepo, repo));
+  if (other?.ok) return `this project was already moved to ${other.story.githubRepo}`;
+  // A number without its repository cannot be checked against the target, so it is refused before any GitHub write.
+  const numberOnly = entries.find((e) => e.ok && e.story.githubIssue !== undefined && e.story.githubRepo === undefined);
+  if (numberOnly?.ok) return `story #${numberOnly.n} has github_issue but no github_repo; add github_repo: ${repo} to its file if it was moved there, or remove github_issue`;
+  return undefined;
+}
+
 const errorText = (e: unknown): string => {
   const o = e as { stderr?: unknown; message?: unknown } | undefined;
   return `${typeof o?.stderr === "string" ? o.stderr : ""}\n${typeof o?.message === "string" ? o.message : ""}`;
@@ -238,21 +250,18 @@ export async function moveToGithub(o: MoveOptions): Promise<MoveResult> {
   const repo = rec ? githubNameOf(rec.url) : undefined;
   if (!rec || !repo) throw new MoveError(CONNECT_FIRST);
   const dir = local.url;
-  const release = takeLock(dir);
+  const release = takeMoveLock(dir);
   const id = repoGhIdentity(rec.id, { config: o.config });
   try {
     const entries = scan(dir);
-    const other = entries.find((e) => e.ok && e.story.githubRepo !== undefined && !same(e.story.githubRepo, repo));
-    if (other?.ok) throw new MoveError(`this project was already moved to ${other.story.githubRepo}`);
-    // A number without its repository cannot be checked against the target, so it is refused before any GitHub write.
-    const numberOnly = entries.find((e) => e.ok && e.story.githubIssue !== undefined && e.story.githubRepo === undefined);
-    if (numberOnly?.ok) throw new MoveError(`story #${numberOnly.n} has github_issue but no github_repo; add github_repo: ${repo} to its file if it was moved there, or remove github_issue`);
+    const refusal = moveRefusal(entries, repo);
+    if (refusal) throw new MoveError(refusal);
     const plan = planFrom(entries, o.includeClosed);
     const session = await signIn(id);
     const result: MoveResult = { target: repo, dryRun: o.dryRun === true, plan, created: [], done: [] };
     if (o.dryRun) return result;
     const watcher = listRepoWatchers().filter((w) => w.repoId === rec.id && w.source === "issues").sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
-    const build = watcher?.label ?? GO_LABEL;
+    const build = o.buildLabel ?? watcher?.label ?? GO_LABEL;
     await withGhEnv(session, () => run({ dir, name: o.local, repo, build, plan, result, includeClosed: o.includeClosed === true }));
     return result;
   } catch (e) {

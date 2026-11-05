@@ -218,3 +218,34 @@ describe("Config changes", () => {
     expect(saved[1].providers.extra).toBeDefined();
   });
 });
+
+describe("Models page: the Agent of a routing rule", () => {
+  const select = (label: string) => main().all("select").find((s) => s.getAttribute("aria-label") === label)!;
+  const choose = (label: string, value: string) => {
+    const s = select(label);
+    s.value = value;
+    s.fire("change", { target: s });
+  };
+  beforeEach(() => {
+    config.router.rules = [{ step: "^a$", model: "sonnet" }, { step: "^b$", model: "codex", agent: "claude" }];
+  });
+
+  it("shows a saved agent and keeps it when the rule is moved", async () => {
+    await show();
+    expect(select("Agent of rule 1").value).toBe("");
+    expect(select("Agent of rule 2").value).toBe("claude");
+    main().all("button").find((b) => b.getAttribute("aria-label") === "Move rule 2 up")!.click();
+    expect(select("Agent of rule 1").value).toBe("claude");
+    expect(select("Agent of rule 2").value).toBe("");
+  });
+
+  it("saves a changed agent and drops a cleared one", async () => {
+    await show();
+    choose("Agent of rule 2", "");
+    choose("Agent of rule 1", "codex");
+    button("Save routing").click();
+    await vi.waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0].router.rules[0].agent).toBe("codex");
+    expect("agent" in saved[0].router.rules[1]).toBe(false);
+  });
+});

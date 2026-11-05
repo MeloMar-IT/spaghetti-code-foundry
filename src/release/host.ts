@@ -71,6 +71,13 @@ export function buildEnv(source: NodeJS.ProcessEnv, r: ReleaseVars, denied: Set<
     const v = source[name];
     if (v !== undefined && /^\d+$/.test(v) && !denied.has(name)) env[name] = v;
   }
+  // The workspace and its test-slot limit (#819), checked: tools/test-slot takes the workspace's slot with them.
+  const ws = source.FACTORY_WORKSPACE;
+  const wsSlots = source.FACTORY_WORKSPACE_TEST_SLOTS;
+  if (ws !== undefined && /^[a-z0-9][a-z0-9-]*$/.test(ws) && ws.length <= 40 && wsSlots !== undefined && /^[0-9]{1,3}$/.test(wsSlots)) {
+    env.FACTORY_WORKSPACE = ws;
+    env.FACTORY_WORKSPACE_TEST_SLOTS = wsSlots;
+  }
   return {
     ...env,
     FACTORY_RELEASE_VERSION: r.version,

@@ -12,8 +12,11 @@ import { ReadyListSchema, checkReadyList, readyListOf } from "../refinement/read
 import { RepoSettingsSchema, checkRepoSettings } from "./repo-settings.js";
 import { checkLocalPath, isLocalRepoName, localPathProblem, localRepoName } from "./local-repo.js";
 import { type ParsedRepoUrl, RepoError, type RepoErrorCode, githubKey, parseRepoUrl, tryParseRepoUrl, validGithubName } from "./repo-url.js";
+import { DEFAULT_WORKSPACE, WORKSPACE_ID_RE, validWorkspaceId } from "../workspaces/list.js";
 import { StoreError, authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 import { type User, UserError, checkEmail, findUserByEmail, getUser } from "./users.js";
+import { viewOf } from "./views.js";
+import type { ProjectRef } from "../engine/state.js";
 
 export { RepoError };
 export { readRepoSecret } from "./repo-connection.js";
@@ -59,7 +62,11 @@ const RecordSchema = z
     settings: RepoSettingsSchema.optional(),
     /** The Definition of Ready; absent means the default list. */
     definitionOfReady: ReadyListSchema.optional(),
+    /** The project's daily spending cap in USD (#792); absent: the Simple default, or none. */
+    dailyBudgetUsd: z.number().positive().max(1_000_000).optional(),
     connection: ConnectionSchema.optional(),
+    /** The workspace (#816). Absent means "default"; "default" is never written. */
+    workspace: z.string().regex(WORKSPACE_ID_RE).optional(),
   })
   .strict()
   .superRefine((r, ctx) => {
@@ -130,8 +137,8 @@ const FileV1 = z
 export type RepoRecord = z.infer<typeof RecordSchema>;
 type RepoFile = z.infer<typeof FileV2>;
 /** What a user may see: the record without the admin's settings. */
-export type PublicRepo = Omit<RepoRecord, "settings" | "definitionOfReady">;
-const strip = ({ settings: _s, definitionOfReady: _d, ...rest }: RepoRecord): PublicRepo => ({ ...rest });
+export type PublicRepo = Omit<RepoRecord, "settings" | "definitionOfReady" | "dailyBudgetUsd">;
+const strip = ({ settings: _s, definitionOfReady: _d, dailyBudgetUsd: _b, ...rest }: RepoRecord): PublicRepo => ({ ...rest });
 
 /** The same id for the same old entry on every read, so a link to it keeps working until the file is rewritten. */
 function legacyId(owner: string, name: string): string {
@@ -185,6 +192,18 @@ export function findOwnedRepo(userId: string, name: string): RepoRecord | undefi
   const r = read().repos.find((x) => x.owner === userId && tryParseRepoUrl(x.url)?.github !== undefined && keyOfRecord(x) === key);
   return r ? { ...r } : undefined;
 }
+
+/** The account's record of a GitHub repository (as findOwnedRepo) or of a connected local project (`local:<slug>-<id8>`). Throws like read(). */
+export function findOwnedProject(userId: string, name: string): RepoRecord | undefined {
+  if (isLocalRepoName(name)) {
+    const rec = findLocalRepo(name);
+    return rec && rec.owner === userId ? rec : undefined;
+  }
+  return findOwnedRepo(userId, name);
+}
+
+/** True when the account has this GitHub repository or local project. */
+export const ownsProject = (userId: string, name: string): boolean => findOwnedProject(userId, name) !== undefined;
 
 /** The ids of every record of a GitHub repository, across all accounts (any case, with or without ".git", https or ssh). Throws like read(). */
 export function repoIdsOf(name: string): string[] {
@@ -505,6 +524,8 @@ function authPlan(file: RepoFile, userId: string, id: string, input: AuthChange,
     added: rec.added,
     ...(rec.settings ? { settings: rec.settings } : {}),
     ...(rec.definitionOfReady ? { definitionOfReady: rec.definitionOfReady } : {}),
+    ...(rec.dailyBudgetUsd !== undefined ? { dailyBudgetUsd: rec.dailyBudgetUsd } : {}),
+    ...(rec.workspace ? { workspace: rec.workspace } : {}),
   };
   // the status stays only for a call that changes nothing about how the repository is reached
   if (rec.connection && !secret && JSON.stringify(bare(next)) === JSON.stringify(bare(rec))) next.connection = rec.connection;
@@ -637,8 +658,8 @@ export function setRepoConnection(rec: RepoRecord, result: ConnectionResult, ins
       const type = now.method === "ssh-deploy-key" ? "ssh-key" : "token";
       if (!listCredentials(now.owner).some((c) => c.id === now.credentialId && c.name === secretName(now) && c.type === type)) return "changed";
     }
-    const { settings: _a, definitionOfReady: _c, ...was } = bare(rec);
-    const { settings: _b, definitionOfReady: _d, ...is } = bare(now);
+    const { settings: _a, definitionOfReady: _c, dailyBudgetUsd: _e, ...was } = bare(rec);
+    const { settings: _b, definitionOfReady: _d, dailyBudgetUsd: _f, ...is } = bare(now);
     if (JSON.stringify(was) !== JSON.stringify(is)) return "changed";
     // a new installation (the app was installed again) is kept with the status; it is never taken from a request
     const id = now.method === "github-app" && installationId ? { installationId } : {};
@@ -677,8 +698,29 @@ export function setRepoSettings(id: string, input: unknown): { repo: RepoRecord;
     const rec = file.repos.find((r) => r.id === id);
     if (!rec) throw new RepoError("not-found", "no such repository");
     if (settings.pushRemote && rec.method !== "local") throw new RepoError("bad-settings", "pushRemote is only for a local repository");
+    // turning the push on is a publication: only allowRemotePush (the owner's Yes, publish) may do it; keeping it on is fine
+    if (settings.pushRemote && rec.settings?.pushRemote !== true) throw new RepoError("needs-publish", "Nothing was published: the push to the remote is turned on by the owner of the project with Yes, publish, not here");
     const { settings: _old, ...rest } = rec;
     const next: RepoRecord = Object.keys(settings).length ? { ...rest, settings } : rest;
+    if (JSON.stringify(next) !== JSON.stringify(rec)) save(file.repos.map((r) => (r === rec ? next : r)));
+    return { repo: { ...next }, changed: changedKeys(rec.settings ?? {}, settings) };
+  });
+}
+
+/**
+ * Turns the plain push to the folder's remote on, with the proposed settings (when given, they replace the settings; they are
+ * checked first). The only way to turn it on. Under the lock it checks that the record still exists, is local and belongs to
+ * `owner`; if anything fails nothing changes.
+ */
+export function allowRemotePush(id: string, owner: string, input?: unknown): { repo: RepoRecord; changed: string[] } {
+  const proposed = input === undefined ? undefined : checkRepoSettings(input);
+  return withAuthLock(() => {
+    const file = read();
+    const rec = file.repos.find((r) => r.id === id);
+    if (!rec || rec.owner !== owner || rec.method !== "local") throw new RepoError("not-found", "no such local project");
+    const settings = { ...(proposed ?? rec.settings ?? {}), pushRemote: true as const };
+    const { settings: _old, ...rest } = rec;
+    const next: RepoRecord = { ...rest, settings };
     if (JSON.stringify(next) !== JSON.stringify(rec)) save(file.repos.map((r) => (r === rec ? next : r)));
     return { repo: { ...next }, changed: changedKeys(rec.settings ?? {}, settings) };
   });
@@ -714,7 +756,7 @@ const EMAIL_CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /**
  * Moves a repository to the account with the given e-mail. A personal token is wiped and the record reads "none"; a
  * repository-bound secret is re-encrypted for the new owner. The secret goes first and the record second, so a failure in
- * between leaves the record with the old owner, and repeating the transfer finishes it.
+ * between leaves the record with the old owner, and repeating the transfer finishes it. The workspace stays.
  */
 export function transferRepo(id: string, emailInput: unknown, opts: TransferOptions = {}): { repo: RepoRecord; oldKeysLeft: number; moved: boolean } {
   if (typeof emailInput !== "string" || !emailInput.trim()) throw new RepoError("bad-owner", "give the e-mail of the new owner");
@@ -737,6 +779,12 @@ export function transferRepo(id: string, emailInput: unknown, opts: TransferOpti
     if (file.repos.some((r) => r.owner === owner.id && keyOfRecord(r) === keyOfRecord(rec))) throw new RepoError("duplicate", "that account has that repository already");
     if (file.repos.filter((r) => r.owner === owner.id).length >= REPO_LIMIT) throw new RepoError("limit", `that account has ${REPO_LIMIT} repositories already`);
     let next: RepoRecord = { ...bare(rec), owner: owner.id };
+    // the new owner must say Yes, publish for the push to the remote
+    if (next.settings?.pushRemote) {
+      const { pushRemote: _p, ...others } = next.settings;
+      const { settings: _s, ...noSettings } = next;
+      next = Object.keys(others).length ? { ...noSettings, settings: others } : noSettings;
+    }
     let oldKeysLeft = 0;
     if (rec.method === "github-app" || rec.method === "local") {
       // a folder on this machine has no secret; the installation belongs to the repository and there is no stored secret: only the owner changes
@@ -752,4 +800,86 @@ export function transferRepo(id: string, emailInput: unknown, opts: TransferOpti
     save(file.repos.map((r) => (r === rec ? next : r)));
     return { repo: { ...next }, oldKeysLeft, moved: true };
   });
+}
+
+// ---- the daily spending cap of a project (#792) ----------------------------------------------------
+
+const BUDGET_MAX = 1_000_000;
+
+/** Checks the body of the budget route: only `dailyBudgetUsd`, a number above 0 (up to a million), or null. */
+export function checkRepoBudget(body: unknown): number | null {
+  const bad = () => new RepoError("bad-settings", "dailyBudgetUsd must be a number above 0, or null");
+  if (typeof body !== "object" || body === null || Array.isArray(body)) throw bad();
+  const keys = Object.keys(body);
+  if (keys.length !== 1 || keys[0] !== "dailyBudgetUsd") throw bad();
+  const v = (body as { dailyBudgetUsd: unknown }).dailyBudgetUsd;
+  if (v === null) return null;
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > BUDGET_MAX) throw bad();
+  return v;
+}
+
+/** Sets (a number above 0) or clears (null) the daily cap of any repository. Saves only on a change. */
+export function setRepoBudget(id: string, usd: number | null): { repo: RepoRecord; changed: boolean } {
+  return withAuthLock(() => {
+    const file = read();
+    const rec = file.repos.find((r) => r.id === id);
+    if (!rec) throw new RepoError("not-found", "no such repository");
+    const { dailyBudgetUsd: _old, ...rest } = rec;
+    const next: RepoRecord = usd === null ? rest : { ...rest, dailyBudgetUsd: usd };
+    const changed = rec.dailyBudgetUsd !== (usd ?? undefined);
+    if (changed) save(file.repos.map((r) => (r === rec ? next : r)));
+    return { repo: { ...next }, changed };
+  });
+}
+
+// ---- admin: workspace (#816) -----------------------------------------------------------------------
+
+/**
+ * Puts a repository in a workspace (`{ workspace: "<id>" }`) or back in the default one (`null` or "default": the field is
+ * removed). `known` says whether an id is in the current list. Transfers and authentication changes keep the value.
+ */
+export function setRepoWorkspace(id: string, input: unknown, known: (ws: string) => boolean): { repo: RepoRecord; changed: boolean } {
+  const give = () => new RepoError("bad-settings", "give the workspace: an id, or null for the default workspace");
+  if (!input || typeof input !== "object" || Array.isArray(input) || !("workspace" in input)) throw give();
+  const given = (input as { workspace: unknown }).workspace;
+  if (given !== null && typeof given !== "string") throw give();
+  let ws: string | undefined;
+  if (given !== null && given !== DEFAULT_WORKSPACE) {
+    if (!validWorkspaceId(given)) throw new RepoError("bad-settings", "that is not a workspace id");
+    if (!known(given)) throw new RepoError("bad-settings", `there is no workspace "${given}"`);
+    ws = given;
+  }
+  return withAuthLock(() => {
+    const file = read();
+    const rec = file.repos.find((r) => r.id === id);
+    if (!rec) throw new RepoError("not-found", "no such repository");
+    const { workspace: _old, ...rest } = rec;
+    const next: RepoRecord = ws ? { ...rest, workspace: ws } : rest;
+    const changed = rec.workspace !== ws;
+    if (changed) save(file.repos.map((r) => (r === rec ? next : r)));
+    return { repo: { ...next }, changed };
+  });
+}
+
+/** The record of a project: a local one by its id, a GitHub one by the run owner's record of the repository. */
+export function projectRecord(p: ProjectRef, owner?: string): RepoRecord | undefined {
+  if (p.githubRepo) return owner ? findOwnedRepo(owner, p.githubRepo) : undefined;
+  return p.repoId ? getRepo(p.repoId) : undefined;
+}
+
+/**
+ * The daily cap in USD of a project: its own, else the Simple default when the record owner uses the Simple view.
+ * Never throws: any error (a broken file, a bad name) means no cap, as for the account limits.
+ */
+export function projectDailyBudget(p: ProjectRef, owner: string | undefined, simpleDefault: number | undefined): number | undefined {
+  try {
+    const rec = projectRecord(p, owner);
+    if (!rec) return undefined;
+    if (rec.dailyBudgetUsd !== undefined) return rec.dailyBudgetUsd;
+    if (simpleDefault === undefined || !(simpleDefault > 0)) return undefined;
+    const u = getUser(rec.owner);
+    return u && viewOf(u) === "simple" ? simpleDefault : undefined;
+  } catch {
+    return undefined;
+  }
 }
