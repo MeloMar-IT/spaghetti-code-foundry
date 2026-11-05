@@ -13,7 +13,7 @@ vi.mock("../src/github.js", async (orig) => {
   return { ...real, gh: never("gh"), ghJson: never("ghJson"), canWrite: never("canWrite"), repoPermission: never("repoPermission"), readRateLimit: never("readRateLimit") };
 });
 
-import { addRepo, setRepoSettings } from "../src/auth/repos.js";
+import { addRepo, allowRemotePush, setRepoSettings } from "../src/auth/repos.js";
 import { localRepoName } from "../src/auth/local-name.js";
 import { ConfigSchema, type WatcherConfig } from "../src/config.js";
 import { Scheduler } from "../src/queue/scheduler.js";
@@ -125,7 +125,7 @@ describe("issue-gitflow on a local project", { timeout: 240_000 }, () => {
     const remote = join(base, "remote.git");
     git(base, "init", "-q", "--bare", remote);
     git(dir, "remote", "add", "origin", remote);
-    setRepoSettings(repoId, { pushRemote: true });
+    allowRemotePush(repoId, ADMIN);
     const mainBefore = git(dir, "rev-parse", "main");
     const r = await run();
     expect(r.status, r.reason).toBe("succeeded");
@@ -156,7 +156,7 @@ describe("issue-gitflow on a local project", { timeout: 240_000 }, () => {
     git(base, "init", "-q", "--bare", remote);
     writeFileSync(join(remote, "hooks", "pre-receive"), "#!/bin/sh\necho 'no pushes today' >&2\nexit 1\n", { mode: 0o755 });
     git(dir, "remote", "add", "origin", remote);
-    setRepoSettings(repoId, { pushRemote: true });
+    allowRemotePush(repoId, ADMIN);
     const developBefore = git(dir, "rev-parse", "develop");
 
     const cfg = ConfigSchema.parse({

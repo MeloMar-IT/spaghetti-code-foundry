@@ -23,6 +23,7 @@ let sent: { method: string; url: string; body: any }[];
 let gets: string[];
 let answers: Answer[]; // the next non-GET calls fail with these
 let authAnswer: any;
+let publishConfirmFail: Answer | undefined; // the confirm call of publish-remote fails with this
 const realFetch = globalThis.fetch;
 const ME = "me";
 let n = 1;
@@ -48,6 +49,7 @@ beforeEach(() => {
   gets = [];
   answers = [];
   authAnswer = undefined;
+  publishConfirmFail = undefined;
   delete (globalThis as any).location;
   (document as any).getElementById("modal-root").replaceChildren();
   (document as any).listeners.keydown = [];
@@ -69,6 +71,18 @@ beforeEach(() => {
     }
     const body = init.body ? JSON.parse(init.body) : undefined;
     sent.push({ method: init.method, url, body });
+    if (init.method === "POST" && url.endsWith("/publish-remote")) {
+      if (body.dryRun) {
+        return reply({
+          develop: { branch: "develop", remote: "origin", addresses: ["/bare/dev.git"] }, main: { branch: "main", remote: "release", addresses: ["https://***@example.com/main.git"] },
+          tags: true, on: false, confirm: { token: "T".repeat(43), expiresAt: 1 },
+        });
+      }
+      if (publishConfirmFail) return reply({ error: publishConfirmFail.error }, publishConfirmFail.status);
+      const pr = rowOf(url);
+      pr.settings = { ...body.settings, pushRemote: true };
+      return reply(JSON.parse(JSON.stringify(pr)));
+    }
     const answer = answers.shift();
     if (answer) return reply({ error: answer.error }, answer.status);
     const r = rowOf(url);
@@ -303,6 +317,79 @@ describe("Branches and Run settings", () => {
     press(button(root(), "Save"));
     await settle();
     expect(sent.find((s) => s.method === "PUT")!.body).toEqual({ ...S, ...ON });
+  });
+
+  describe("turning on 'Also push to the remote' is a Yes, publish step inside the dialog (#796)", () => {
+    const local = () => rec({ method: "local", url: "/work/a", hasRemote: true });
+    const open = async (r: any = local()) => {
+      await show(r);
+      press(action("run-settings"));
+      await flush();
+      field(root(), "pushRemote")!.checked = true;
+      press(button(root(), "Save"));
+      await settle();
+      return r;
+    };
+    const escape = () => (document as any).listeners.keydown.forEach((fn: any) => fn({ key: "Escape", shiftKey: false, preventDefault: () => {} }));
+
+    it("checks first, shows both destinations, and sends confirm with the settings, with no separate save", async () => {
+      const r = await open();
+      expect(sent.map((s) => `${s.method} ${s.url.split("/").pop()}`)).toEqual(["POST publish-remote"]);
+      expect(sent[0]!.body).toEqual({ dryRun: true, settings: { ...S, ...ON, pushRemote: true } });
+      expect(field(root(), "pushRemote")).toBeUndefined(); // the form is hidden while the step is shown
+      const t = root().textContent;
+      for (const part of ['"develop" goes to the remote "origin" (/bare/dev.git)', '"main" goes to the remote "release" (https://***@example.com/main.git)', "Tags", "without asking again"]) expect(t).toContain(part);
+      press(button(root(), "Yes, publish"));
+      await settle();
+      expect(sent.map((s) => `${s.method} ${s.url.split("/").pop()}`)).toEqual(["POST publish-remote", "POST publish-remote"]);
+      expect(sent[1]!.body).toEqual({ confirm: "T".repeat(43), settings: { ...S, ...ON, pushRemote: true } });
+      expect(sent.some((s) => s.method === "PUT")).toBe(false);
+      expect(toastText()).toBe("Settings saved");
+      expect(root().children.length).toBe(0);
+      expect(r.settings.pushRemote).toBe(true);
+    });
+
+    it("Cancel and Escape put the form back with the box ticked, and save nothing", async () => {
+      const r = await open();
+      press(button(root(), "Cancel"));
+      await settle();
+      expect(field(root(), "pushRemote")!.checked).toBe(true);
+      expect(button(root(), "Save")!.disabled).toBeFalsy();
+      expect(sent).toHaveLength(1);
+      expect(r.settings.pushRemote).toBeUndefined();
+      press(button(root(), "Save"));
+      await settle();
+      escape();
+      await settle();
+      expect(root().children.length).toBe(1); // the dialog is still open
+      expect(field(root(), "pushRemote")!.checked).toBe(true);
+      expect(sent.map((s) => s.body.confirm)).toEqual([undefined, undefined]); // two checks, no confirm
+      expect(sent.some((s) => s.method === "PUT")).toBe(false);
+      expect(errText(root())).toBe("");
+      expect(r.settings.pushRemote).toBeUndefined();
+    });
+
+    it("a failed confirm puts the form back with the server's sentence and saves nothing", async () => {
+      publishConfirmFail = { status: 409, error: "Nothing was published: the confirmation is used up or has expired; run the check again" };
+      const r = await open();
+      press(button(root(), "Yes, publish"));
+      await settle();
+      expect(field(root(), "pushRemote")!.checked).toBe(true);
+      expect(errText(root())).toContain("Nothing was published");
+      expect(sent.some((s) => s.method === "PUT")).toBe(false);
+      expect(r.settings.pushRemote).toBeUndefined();
+    });
+
+    it("with the push on already, only the normal save is sent", async () => {
+      const r = rec({ method: "local", url: "/work/a", hasRemote: true, settings: { ...S, pushRemote: true } });
+      await show(r);
+      press(action("run-settings"));
+      await flush();
+      field(root(), "decideTechnical")!.checked = false;
+      press(button(root(), "Save"));
+      await settle();
+      expect(sent.map((s) => `${s.method} ${s.url.split("/").pop()}`)).toEqual(["PUT settings"]);
+    });
   });
 
   it("[R1] after a saved Branches edit with a failed reload, Run settings still sends the new branches", async () => {

@@ -34,8 +34,9 @@ const plan = (over: any[] = []) => [{ number: 1, title: "First", state: "open", 
 const dry = (over: any = {}) => ({
   dryRun: true, github: "o/my-app", repository: "create",
   refs: [{ ref: "refs/heads/main", status: "push" }, { ref: "refs/heads/develop", status: "push" }, { ref: "refs/heads/scf/stories", status: "push" }, { ref: "refs/tags/v1", status: "push" }],
-  stories: { plan: plan(), created: [], done: [] }, ...over,
+  stories: { plan: plan(), created: [], done: [] }, confirm: { token: TOKEN, expiresAt: 1 }, ...over,
 });
+const TOKEN = "T".repeat(43);
 const real = { dryRun: false, github: "o/my-app", repoId: "g1", repository: "created", refs: [{ ref: "refs/heads/main", status: "pushed" }, { ref: "refs/heads/dev", status: "up-to-date" }], stories: { plan: plan(), created: [{ story: 1, issue: 5 }], done: [1] }, switched: { watchers: ["w1", "w2"], settings: "none", kept: [], removed: "l1" } };
 const gh = [
   { id: "g2", url: "https://github.com/o/b", method: "github-token", github: "o/b" },
@@ -114,7 +115,7 @@ describe("the dialog", () => {
     expect(walk(root()).find((e) => e.tag === "input" && e.value === "pick")!.disabled).toBe(true);
     expect(checkbox("Private").checked).toBe(true);
     expect(checkbox("Also move closed stories").checked).toBe(false);
-    expect(button("Move").disabled).toBe(true);
+    expect(button("Yes, publish").disabled).toBe(true);
     expect(audit(root())).toEqual([]);
     key("Escape");
     expect(await p).toEqual({ called: false });
@@ -139,32 +140,32 @@ describe("the dialog", () => {
     expect(a.moveToGithub).toHaveBeenCalledWith("l1", { target: { create: { name: "my-app", private: true } }, includeClosed: false, dryRun: true });
     expect(text()).toContain("o/my-app will be created (private)");
     for (const t of ["Branches (3)", "main", "develop", "scf/stories", "Tags (1)", "v1", "#1 First: will be created", "#2 Old: already moved (#8 on GitHub)"]) expect(text()).toContain(t);
-    expect(button("Move").disabled).toBeUndefined();
+    expect(button("Yes, publish").disabled).toBeUndefined();
     expect(audit(root())).toEqual([]);
     key("Escape");
     await p;
   });
 
   it("clears the result when an input changes, and moves with the checked body only", async () => {
-    const a = api(dry(), real);
+    const a = api(dry(), dry(), dry(), real);
     const p = open(a);
     await check();
     typeName("other");
-    expect(button("Move").disabled).toBe(true);
+    expect(button("Yes, publish").disabled).toBe(true);
     expect(text()).not.toContain("Branches");
     await check();
     expect(a.moveToGithub).toHaveBeenLastCalledWith("l1", { target: { create: { name: "other", private: true } }, includeClosed: false, dryRun: true });
     checkbox("Also move closed stories").checked = true;
     checkbox("Also move closed stories").fire("change");
-    expect(button("Move").disabled).toBe(true);
+    expect(button("Yes, publish").disabled).toBe(true);
     await check();
-    button("Move").click();
+    button("Yes, publish").click();
     await flush();
-    expect(a.moveToGithub).toHaveBeenLastCalledWith("l1", { target: { create: { name: "other", private: true } }, includeClosed: true, dryRun: false });
+    expect(a.moveToGithub).toHaveBeenLastCalledWith("l1", { target: { create: { name: "other", private: true } }, includeClosed: true, dryRun: false, confirm: TOKEN });
     expect(text()).toContain("Moved to o/my-app: 1 branch or tag pushed");
     expect((document as any).getElementById("toast").textContent).toContain("Moved to GitHub");
     expect(button("Close")).toBeDefined();
-    expect(button("Move").disabled).toBe(true);
+    expect(button("Yes, publish").disabled).toBe(true);
     key("Escape");
     expect(await p).toMatchObject({ called: true, result: real });
   });
@@ -174,8 +175,8 @@ describe("the dialog", () => {
     const a = { moveToGithub: vi.fn(async (_id: string, b: any) => (b.dryRun ? dry() : new Promise((r) => { release = r; }))) };
     const p = open(a);
     await check();
-    button("Move").click();
-    button("Move").click();
+    button("Yes, publish").click();
+    button("Yes, publish").click();
     await flush();
     expect(a.moveToGithub.mock.calls.filter((c) => !c[1].dryRun)).toHaveLength(1);
     expect(text()).toContain("Moving…");
@@ -193,10 +194,12 @@ describe("the dialog", () => {
     const a = api(dry(), Object.assign(new Error("the push was refused for refs/heads/main: rewrites"), { status: 409 }));
     const p = open(a);
     await check();
-    button("Move").click();
+    button("Yes, publish").click();
     await flush();
     expect(alertText()).toContain("the push was refused for refs/heads/main");
-    expect(button("Move").disabled).toBeUndefined();
+    // the token is used up: the check must be made again before another try
+    expect(button("Yes, publish").disabled).toBe(true);
+    expect(text()).toContain("Check again");
     expect(button("Cancel").disabled).toBeUndefined();
     key("Escape"); // the modal itself resolves undefined: the dialog still reports the call
     expect(await p).toEqual({ called: true });
@@ -217,7 +220,7 @@ describe("the dialog", () => {
     const p = open(api(new Error("create.name must be a text")));
     await check();
     expect(alertText()).toContain("create.name");
-    expect(button("Move").disabled).toBe(true);
+    expect(button("Yes, publish").disabled).toBe(true);
     key("Escape");
     expect(await p).toEqual({ called: false });
   });
@@ -233,11 +236,39 @@ describe("the dialog", () => {
     await p;
   });
 
+  it("keeps Yes, publish off without a token, and says nothing was sent after a 'Nothing was published' refusal; a new check makes it work again", async () => {
+    const noToken = dry();
+    delete noToken.confirm;
+    const refused = Object.assign(new Error("Nothing was published: the confirmation is used up or has expired; run the check again"), { status: 409 });
+    const a = api(noToken, dry(), refused, dry());
+    const p = open(a);
+    await check();
+    expect(button("Yes, publish").disabled).toBe(true);
+    await check();
+    expect(button("Yes, publish").disabled).toBeUndefined();
+    button("Yes, publish").click();
+    await flush();
+    expect(alertText()).toContain("Nothing was published");
+    expect(text()).toContain("Nothing was sent");
+    expect(button("Yes, publish").disabled).toBe(true);
+    await check();
+    expect(button("Yes, publish").disabled).toBeUndefined();
+    expect(text()).toContain("nothing leaves this computer until you press Yes, publish");
+    key("Escape");
+    await p;
+  });
+
+  it("moveBody carries the token of the check in a real move only", () => {
+    expect(mv.moveBody({ mode: "pick", repoId: "g1" }, false, TOKEN)).toEqual({ target: { repoId: "g1" }, includeClosed: false, dryRun: false, confirm: TOKEN });
+    expect(mv.moveBody({ mode: "pick", repoId: "g1" }, true, TOKEN)).not.toHaveProperty("confirm");
+    expect(mv.moveBody({ mode: "pick", repoId: "g1" }, false)).not.toHaveProperty("confirm");
+  });
+
   it("turns Move off when a story cannot be moved", async () => {
     const bad = dry({ stories: { plan: plan([{ number: 2, title: "?", state: "unknown", status: "unreadable", reason: "bad yaml" }]) } });
     const p = open(api(bad));
     await check();
-    expect(button("Move").disabled).toBe(true);
+    expect(button("Yes, publish").disabled).toBe(true);
     expect(text()).toContain("#2: cannot be read (bad yaml)");
     expect(text()).toContain("Fix or remove them, then check again");
     key("Escape");
@@ -290,7 +321,7 @@ describe("the button on My repositories", () => {
     await flush();
     button("Check").click();
     await flush();
-    button("Move").click();
+    button("Yes, publish").click();
     await flush();
     expect(calls.filter((c) => c === "POST /api/repos/l1/move-to-github")).toHaveLength(2);
     const before = calls.filter((c) => c === "GET /api/repos").length;

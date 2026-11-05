@@ -13,7 +13,7 @@ vi.mock("../src/github.js", async (orig) => {
   return { ...real, gh: never("gh"), ghJson: never("ghJson"), canWrite: never("canWrite"), repoPermission: never("repoPermission"), readRateLimit: never("readRateLimit") };
 });
 
-import { addRepo, setRepoSettings } from "../src/auth/repos.js";
+import { addRepo, allowRemotePush, setRepoSettings } from "../src/auth/repos.js";
 import { localRepoName } from "../src/auth/local-name.js";
 import { ConfigSchema } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
@@ -141,7 +141,7 @@ describe("release-daily on a local project", { timeout: 240_000 }, () => {
     const remote = join(base, "remote.git");
     git(base, "init", "-q", "--bare", remote);
     git(dir, "remote", "add", "origin", remote);
-    setRepoSettings(repoId, { pushRemote: true });
+    allowRemotePush(repoId, ADMIN);
     const mainBefore = git(dir, "rev-parse", "main");
     const developTip = git(dir, "rev-parse", "develop");
 

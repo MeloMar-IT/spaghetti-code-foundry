@@ -694,8 +694,29 @@ export function setRepoSettings(id: string, input: unknown): { repo: RepoRecord;
     const rec = file.repos.find((r) => r.id === id);
     if (!rec) throw new RepoError("not-found", "no such repository");
     if (settings.pushRemote && rec.method !== "local") throw new RepoError("bad-settings", "pushRemote is only for a local repository");
+    // turning the push on is a publication: only allowRemotePush (the owner's Yes, publish) may do it; keeping it on is fine
+    if (settings.pushRemote && rec.settings?.pushRemote !== true) throw new RepoError("needs-publish", "Nothing was published: the push to the remote is turned on by the owner of the project with Yes, publish, not here");
     const { settings: _old, ...rest } = rec;
     const next: RepoRecord = Object.keys(settings).length ? { ...rest, settings } : rest;
+    if (JSON.stringify(next) !== JSON.stringify(rec)) save(file.repos.map((r) => (r === rec ? next : r)));
+    return { repo: { ...next }, changed: changedKeys(rec.settings ?? {}, settings) };
+  });
+}
+
+/**
+ * Turns the plain push to the folder's remote on, with the proposed settings (when given, they replace the settings; they are
+ * checked first). The only way to turn it on. Under the lock it checks that the record still exists, is local and belongs to
+ * `owner`; if anything fails nothing changes.
+ */
+export function allowRemotePush(id: string, owner: string, input?: unknown): { repo: RepoRecord; changed: string[] } {
+  const proposed = input === undefined ? undefined : checkRepoSettings(input);
+  return withAuthLock(() => {
+    const file = read();
+    const rec = file.repos.find((r) => r.id === id);
+    if (!rec || rec.owner !== owner || rec.method !== "local") throw new RepoError("not-found", "no such local project");
+    const settings = { ...(proposed ?? rec.settings ?? {}), pushRemote: true as const };
+    const { settings: _old, ...rest } = rec;
+    const next: RepoRecord = { ...rest, settings };
     if (JSON.stringify(next) !== JSON.stringify(rec)) save(file.repos.map((r) => (r === rec ? next : r)));
     return { repo: { ...next }, changed: changedKeys(rec.settings ?? {}, settings) };
   });
@@ -754,6 +775,12 @@ export function transferRepo(id: string, emailInput: unknown, opts: TransferOpti
     if (file.repos.some((r) => r.owner === owner.id && keyOfRecord(r) === keyOfRecord(rec))) throw new RepoError("duplicate", "that account has that repository already");
     if (file.repos.filter((r) => r.owner === owner.id).length >= REPO_LIMIT) throw new RepoError("limit", `that account has ${REPO_LIMIT} repositories already`);
     let next: RepoRecord = { ...bare(rec), owner: owner.id };
+    // the new owner must say Yes, publish for the push to the remote
+    if (next.settings?.pushRemote) {
+      const { pushRemote: _p, ...others } = next.settings;
+      const { settings: _s, ...noSettings } = next;
+      next = Object.keys(others).length ? { ...noSettings, settings: others } : noSettings;
+    }
     let oldKeysLeft = 0;
     if (rec.method === "github-app" || rec.method === "local") {
       // a folder on this machine has no secret; the installation belongs to the repository and there is no stored secret: only the owner changes

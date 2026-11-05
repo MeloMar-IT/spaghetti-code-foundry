@@ -49,6 +49,11 @@ function sendFrom({ button, err, send, done, close, state, mark }) {
       state.result = await send();
     } catch (e) {
       state.busy = false;
+      if (e?.cancelled) {
+        // the person said no: nothing was saved, the form is as it was
+        button.disabled = false;
+        return;
+      }
       if (state.closed) return toast(plainError(e), "error");
       mark(plainError(e));
       button.disabled = false;
@@ -72,6 +77,7 @@ const CHECKS = new Set(["decideTechnical", "pushRemote"]);
 export function settingsDialog(repo, { only, title = "Repository settings", current } = {}) {
   const s = repo.settings ?? {};
   const state = { busy: false, closed: false, pending: null, result: undefined };
+  let confirming = false; // the Yes, publish step is shown: Escape, ✕ and the backdrop do not close the dialog, Cancel and Escape go back to the form
   const shown = modal(title, (close) => {
     const all = {
       kind: h("select", { name: "kind" }, h("option", { value: "" }, "Code"), h("option", { value: "skill-library" }, "Skill library")),
@@ -114,20 +120,88 @@ export function settingsDialog(repo, { only, title = "Repository settings", curr
     ];
     const mark = (m) => showError(err, m, { fields: Object.values(els), field: els[fieldFor(m, pairs)] });
     const typed = () => Object.fromEntries(Object.entries(els).map(([k, el]) => [k, CHECKS.has(k) ? el.checked === true : el.value]));
+    // The form and the Yes, publish step are two phases of this one dialog: the form is kept (never rebuilt) and put back as it was.
+    const wrap = h("div", {});
+    const showConfirm = (p) => new Promise((resolve) => {
+      let over = false;
+      const end = (answer) => {
+        if (over) return;
+        over = true;
+        document.removeEventListener("keydown", onKey);
+        resolve(answer);
+      };
+      const onKey = (e) => e?.key === "Escape" && end("cancel");
+      const yes = h("button", { class: "primary", onClick: () => { yes.disabled = true; no.disabled = true; end("yes"); } }, "Yes, publish");
+      const no = h("button", { onClick: () => end("cancel") }, "Cancel");
+      confirming = true;
+      document.addEventListener("keydown", onKey);
+      wrap.replaceChildren(h("div", { class: "stack", role: "group", "aria-label": "Yes, publish" },
+        h("p", { class: "mono" }, repo.url),
+        h("h3", {}, "Yes, publish?"),
+        publishRemoteText(p).map((t) => h("p", {}, t)),
+        h("div", { class: "row" }, h("span", { class: "spacer" }), no, yes)));
+      yes.focus?.();
+    });
+    const showForm = () => {
+      confirming = false;
+      wrap.replaceChildren(form);
+    };
+    // Turning the push on is a publication: check first, show where it goes, and only the owner's Yes, publish saves it.
+    const publish = async (body) => {
+      const p = await api.publishRemote(repo.id, { dryRun: true, settings: body });
+      if (p?.on) return api.setRepoSettings(repo.id, body);
+      const token = p?.confirm?.token;
+      if (typeof token !== "string" || !token) throw new Error("The check gave no confirmation. Try again.");
+      let answer = "cancel";
+      try {
+        answer = await showConfirm(p);
+        if (answer !== "yes") throw Object.assign(new Error("cancelled"), { cancelled: true });
+        return await api.publishRemote(repo.id, { confirm: token, settings: body });
+      } finally {
+        showForm();
+      }
+    };
     const send = async () => {
-      if (!only) return api.setRepoSettings(repo.id, settingsBody(typed()));
-      const base = formShape(current ? await current() : s);
-      return api.setRepoSettings(repo.id, settingsBody({ ...base, ...typed() }));
+      let body;
+      let was;
+      if (!only) {
+        body = settingsBody(typed());
+        was = s.pushRemote === true;
+      } else {
+        const base = formShape(current ? await current() : s);
+        body = settingsBody({ ...base, ...typed() });
+        was = base.pushRemote === true;
+      }
+      if (body.pushRemote === true && !was) return publish(body);
+      return api.setRepoSettings(repo.id, body);
     };
     const save = h("button", { class: "primary", onClick: () => sendFrom({ button: save, err, mark, close, state, done: "Settings saved", send }) }, "Save");
-    return h("div", { class: "stack" },
+    const form = h("div", { class: "stack" },
       h("p", { class: "mono" }, repo.url),
       Object.entries(els).map(([k, el]) => field(labels[k][0], el, labels[k][1])),
       only ? null : h("small", {}, 'Stored with the repository. Runs use the release-build recipe and "Decide technical questions itself"; the other settings not yet.'),
       err, h("div", { class: "row" }, h("span", { class: "spacer" }), save));
-  });
+    wrap.replaceChildren(form);
+    return wrap;
+  }, { busy: () => confirming });
   shown.then(() => { state.closed = true; });
   return shown.then(() => state.pending).then(() => state.result);
+}
+
+/**
+ * What the Yes, publish step says about the plain push (the answer of the check, POST /api/repos/:id/publish-remote): where the
+ * develop and the main branch go (the addresses come without sign-in), the tags, and that it goes on by itself afterwards.
+ */
+export function publishRemoteText(p) {
+  const dest = (name, d) => (d
+    ? `The ${name} branch "${d.branch}" goes to the remote "${d.remote}" (${(d.addresses ?? []).join(", ")}).`
+    : `The ${name} branch has no remote to go to; it is not pushed.`);
+  return [
+    dest("develop", p?.develop),
+    dest("main", p?.main),
+    "Tags that the Foundry makes go along.",
+    "Nothing is sent now. Once this is on, the Foundry pushes after each merge by itself, with plain git and without asking again, until you turn it off. It follows the folder's remote if you change its address.",
+  ];
 }
 
 /** The default Definition of Ready (the same ids and texts as the server's). */

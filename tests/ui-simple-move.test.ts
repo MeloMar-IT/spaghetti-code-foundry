@@ -37,7 +37,7 @@ const btn = (root: FakeElement, label: string) => {
 };
 const has = (root: FakeElement, label: string) => root.all("button").some((x) => x.textContent === label);
 
-const dry = (over: any = {}) => ({ dryRun: true, github: "o/app", repository: "create", refs: [], stories: { plan: [{ number: 1, title: "a", state: "open", status: "create" }, { number: 2, title: "b", state: "open", status: "create" }, { number: 3, title: "c", state: "open", status: "already-moved", githubIssue: 4 }], created: [], done: [] }, ...over });
+const dry = (over: any = {}) => ({ dryRun: true, github: "o/app", repository: "create", refs: [], stories: { plan: [{ number: 1, title: "a", state: "open", status: "create" }, { number: 2, title: "b", state: "open", status: "create" }, { number: 3, title: "c", state: "open", status: "already-moved", githubIssue: 4 }], created: [], done: [] }, confirm: { token: "T".repeat(43), expiresAt: 1 }, ...over });
 const real = { dryRun: false, github: "o/app", repoId: "new1", repository: "created", refs: [], stories: { plan: [], created: [], done: [] } };
 const ctl = (a: any, kind = "token", name = "app") => {
   const c = sm.moveController({ id: "l1", a });
@@ -133,11 +133,11 @@ describe("the controller", () => {
     expect(t).toContain(words.GITHUB.willCreate("o/app"));
     expect(t).toContain("2 changes go along.");
     expect(t).toContain("1 change is on GitHub already.");
-    btn(root(c), "Put it on GitHub").click();
-    btn(root(c), "Put it on GitHub").click();
+    btn(root(c), "Yes, publish").click();
+    btn(root(c), "Yes, publish").click();
     await until(() => root(c).textContent.includes(words.GITHUB.done));
     expect(a.moveToGithub.mock.calls.filter((x) => !x[1].dryRun)).toHaveLength(1);
-    expect(a.moveToGithub).toHaveBeenLastCalledWith("l1", { target: { create: { name: "my-app", private: true } }, includeClosed: false, dryRun: false });
+    expect(a.moveToGithub).toHaveBeenLastCalledWith("l1", { target: { create: { name: "my-app", private: true } }, includeClosed: false, dryRun: false, confirm: "T".repeat(43) });
     expect(root(c).all("a").map((x) => x.attrs.href)).toEqual(["#/repos/new1", "https://github.com/o/app"]);
     expect(c.isDone()).toBe(true);
   });
@@ -190,8 +190,53 @@ describe("the controller", () => {
     btn(root(d), words.WORDS.actions.github).click();
     btn(root(d), "Next").click();
     await until(() => root(d).textContent.includes("Step 2 of 2"));
-    expect(has(root(d), "Put it on GitHub")).toBe(false);
+    expect(has(root(d), "Yes, publish")).toBe(false);
     expect(root(d).textContent).toContain("1 change cannot go along");
+  });
+
+  it("step 2 says where and what, and offers Yes, publish, Back and Cancel", async () => {
+    const c = ctl({ moveToGithub: vi.fn(async () => dry()) });
+    btn(root(c), words.WORDS.actions.github).click();
+    btn(root(c), "Next").click();
+    await until(() => root(c).textContent.includes("Step 2 of 2"));
+    const t = root(c).textContent;
+    for (const s of [words.GITHUB.publishTitle, words.GITHUB.willCreate("o/app"), words.GITHUB.history, words.GITHUB.leaves]) expect(t).toContain(s);
+    expect(root(c).all("button").map((b) => b.textContent)).toEqual(["Yes, publish", "Back", "Cancel"]);
+    expect(audit(root(c))).toEqual([]);
+  });
+
+  it("Cancel makes no move call, drops the check and says nothing was sent", async () => {
+    const a = { moveToGithub: vi.fn(async () => dry()) };
+    const c = ctl(a);
+    btn(root(c), words.WORDS.actions.github).click();
+    btn(root(c), "Next").click();
+    await until(() => has(root(c), "Yes, publish"));
+    btn(root(c), "Cancel").click();
+    expect(a.moveToGithub.mock.calls.filter((x: any[]) => !x[1].dryRun)).toHaveLength(0);
+    expect(root(c).textContent).toContain(words.GITHUB.stays);
+    expect(has(root(c), "Yes, publish")).toBe(false);
+    expect(has(root(c), words.WORDS.actions.github)).toBe(true);
+    expect(words.forbiddenIn(words.GITHUB.stays)).toEqual([]);
+    btn(root(c), words.WORDS.actions.github).click(); // starting again clears the note
+    expect(root(c).textContent).not.toContain(words.GITHUB.stays);
+  });
+
+  it("a 'Nothing was published' refusal goes to the failed step; without a token there is nothing to confirm", async () => {
+    const a = { moveToGithub: vi.fn(async (_i: string, b: any) => { if (b.dryRun) return dry(); throw new Error("Nothing was published: the confirmation is used up"); }) };
+    const c = ctl(a);
+    btn(root(c), words.WORDS.actions.github).click();
+    btn(root(c), "Next").click();
+    await until(() => has(root(c), "Yes, publish"));
+    btn(root(c), "Yes, publish").click();
+    await until(() => root(c).textContent.includes(words.GITHUB.failed));
+    expect(root(c).textContent).not.toContain("Nothing was published");
+    expect(has(root(c), "Try again")).toBe(true);
+    const noToken = dry();
+    delete noToken.confirm;
+    const d = ctl({ moveToGithub: vi.fn(async () => noToken) });
+    btn(root(d), words.WORDS.actions.github).click();
+    btn(root(d), "Next").click();
+    await until(() => root(d).textContent.includes(words.GITHUB.failed));
   });
 
   it("sends 'connect GitHub first' to the connect text", async () => {
@@ -217,11 +262,11 @@ describe("the controller", () => {
     const c = ctl(a);
     btn(root(c), words.WORDS.actions.github).click();
     btn(root(c), "Next").click();
-    await until(() => has(root(c), "Put it on GitHub"));
-    btn(root(c), "Put it on GitHub").click();
+    await until(() => has(root(c), "Yes, publish"));
+    btn(root(c), "Yes, publish").click();
     await until(() => root(c).textContent.includes(words.GITHUB.stopped));
     expect(has(root(c), "Try again")).toBe(false);
-    expect(has(root(c), "Put it on GitHub")).toBe(false);
+    expect(has(root(c), "Yes, publish")).toBe(false);
     expect(root(c).textContent).not.toContain("#9");
     // stopped is kept on the page too, so the recovery text survives a poll that drops the local record
     expect(c.keepsPage()).toBe(true);
@@ -292,8 +337,8 @@ describe("the project page", () => {
     const p = await open();
     btn(p.main, "Put this project on GitHub").click();
     btn(p.main, "Next").click();
-    await until(() => has(p.main, "Put it on GitHub"));
-    btn(p.main, "Put it on GitHub").click();
+    await until(() => has(p.main, "Yes, publish"));
+    btn(p.main, "Yes, publish").click();
     await until(() => p.main.textContent.includes(words.GITHUB.done));
     p.set([{ id: "new1", url: "https://github.com/o/app", method: "github-token", github: "o/app" }, tokenRepo]);
     await p.poll();
@@ -308,8 +353,8 @@ describe("the project page", () => {
     const p = await open({ move });
     btn(p.main, "Put this project on GitHub").click();
     btn(p.main, "Next").click();
-    await until(() => has(p.main, "Put it on GitHub"));
-    btn(p.main, "Put it on GitHub").click();
+    await until(() => has(p.main, "Yes, publish"));
+    btn(p.main, "Yes, publish").click();
     await until(() => p.main.textContent.includes("Putting your project on GitHub…"));
     // the poll sees the removed record: the box (and its status) must stay on the page
     p.set([tokenRepo]);
@@ -326,8 +371,8 @@ describe("the project page", () => {
     const p = await open({ move });
     btn(p.main, "Put this project on GitHub").click();
     btn(p.main, "Next").click();
-    await until(() => has(p.main, "Put it on GitHub"));
-    btn(p.main, "Put it on GitHub").click();
+    await until(() => has(p.main, "Yes, publish"));
+    btn(p.main, "Yes, publish").click();
     await until(() => p.main.textContent.includes(words.GITHUB.stopped));
     // the server finished the move; the next poll no longer lists the local record
     p.set([tokenRepo]);

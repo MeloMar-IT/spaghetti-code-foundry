@@ -36,13 +36,18 @@ export function moveInputProblem({ mode, repoId, name }) {
 }
 
 /** The body of the call. */
-export function moveBody({ mode, repoId, name, private: priv, includeClosed }, dryRun) {
+export function moveBody({ mode, repoId, name, private: priv, includeClosed }, dryRun, confirm) {
   return {
     target: mode === "pick" ? { repoId } : { create: { name: String(name ?? "").trim(), private: priv !== false } },
     includeClosed: !!includeClosed,
     dryRun: !!dryRun,
+    // a real move carries the single-use token of the check (Yes, publish); the server refuses it without
+    ...(!dryRun && typeof confirm === "string" && confirm ? { confirm } : {}),
   };
 }
+
+/** The error of the server that says nothing was published (the token is used up: the check must be made again). */
+export const nothingPublished = (text) => /^Nothing was published/.test(String(text ?? ""));
 
 export function refGroups(refs) {
   const out = { branches: [], tags: [] };
@@ -114,7 +119,7 @@ export async function moveDialog(repo, { repos = [], a = api, errorText = (e) =>
   const priv = h("input", { type: "checkbox", checked: true, onChange: (e) => input({ private: e?.target?.checked ?? priv.checked }) });
   const closed = h("input", { type: "checkbox", checked: false, onChange: (e) => input({ includeClosed: e?.target?.checked ?? closed.checked }) });
   const checkBtn = h("button", { type: "button", "data-focus": "move-check", onClick: () => check() }, "Check");
-  const moveBtn = h("button", { type: "button", class: "primary", "data-focus": "move-go", disabled: true, onClick: () => move() }, "Move");
+  const moveBtn = h("button", { type: "button", class: "primary", "data-focus": "move-go", disabled: true, onClick: () => move() }, "Yes, publish");
   const cancelBtn = h("button", { type: "button", onClick: () => close?.(undefined) }, "Cancel");
 
   const sync = () => {
@@ -171,7 +176,9 @@ export async function moveDialog(repo, { repos = [], a = api, errorText = (e) =>
     try {
       const r = await a.moveToGithub(repo.id, body);
       const blocked = blockedStories(r).length > 0;
-      checked = { body: moveBody(f, false), blocked };
+      const token = r?.confirm?.token;
+      // no token (a story cannot go along, or the server sent none): nothing can be confirmed
+      checked = { body: moveBody(f, false, token), blocked: blocked || typeof token !== "string" || !token };
       showCheck(r);
       note.textContent = blocked ? "Some stories cannot be moved. Fix or remove them, then check again." : "";
     } catch (e) {
@@ -199,6 +206,10 @@ export async function moveDialog(repo, { repos = [], a = api, errorText = (e) =>
     } catch (e) {
       status.textContent = "";
       alertLine.textContent = errorText(e);
+      // the token is used up, whatever went wrong: the check must be made again before another try
+      checked = null;
+      area.replaceChildren();
+      note.textContent = nothingPublished(alertLine.textContent) ? "Nothing was sent. Check again to see what would go now." : "Check again before you try another time.";
     }
     busy = false;
     sync();
@@ -209,7 +220,7 @@ export async function moveDialog(repo, { repos = [], a = api, errorText = (e) =>
     close = c;
     sync();
     return h("div", { class: "stack" },
-      h("p", { class: "muted" }, `Moves ${repo.url} to GitHub: every branch, tag and story. Check first; nothing changes until you press Move.`),
+      h("p", { class: "muted" }, `Moves ${repo.url} to GitHub: every branch, tag and story. Check first; nothing leaves this computer until you press Yes, publish.`),
       h("fieldset", { class: "stack" }, h("legend", {}, "Where to?"),
         label(pickRadio, "Use one of my GitHub repositories"), select,
         label(createRadio, "Create a new repository"), nameField, label(priv, "Private")),

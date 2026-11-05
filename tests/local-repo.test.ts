@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { LOCAL_NAME_RE, checkLocalPath, isLocalRepoName, localHasRemote, localPathProblem, localRepoName } from "../src/auth/local-repo.js";
-import { RepoError, REPO_METHODS, addRepo, findOwnedProject, listAllRepos, ownsProject, removeRepo, reposPath, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../src/auth/repos.js";
+import { RepoError, REPO_METHODS, addRepo, allowRemotePush, findOwnedProject, getRepo, listAllRepos, ownsProject, removeRepo, reposPath, setRepoAuth, setRepoConnection, setRepoSettings, transferRepo } from "../src/auth/repos.js";
 import { StoreError } from "../src/auth/store.js";
 import { tryParseRepoUrl, validGithubName } from "../src/auth/repo-url.js";
 import { listCredentials } from "../src/credentials/store.js";
@@ -313,12 +313,43 @@ describe("connection test of a local repository", () => {
 describe("pushRemote and localHasRemote", () => {
   it("is stored for a local repository, cleared by false, and refused for a GitHub one or a non-boolean", () => {
     const r = addRepo(ANN, { url: repo, method: "local" }, OK);
-    expect(setRepoSettings(r.id, { pushRemote: true }).repo.settings).toEqual({ pushRemote: true });
+    expect(allowRemotePush(r.id, ANN).repo.settings).toEqual({ pushRemote: true });
+    expect(setRepoSettings(r.id, { pushRemote: true }).repo.settings).toEqual({ pushRemote: true }); // keeping it on is fine
     expect(setRepoSettings(r.id, { pushRemote: false }).repo.settings).toBeUndefined();
     expect(() => setRepoSettings(r.id, { pushRemote: "yes" })).toThrow(/pushRemote must be true or false/);
     const gh = addRepo(ANN, { url: "acme/app", method: "github-token", token: ["github", "pat", ""].join("_") + "Zx9".repeat(12) }, OK);
     expect(code(() => setRepoSettings(gh.id, { pushRemote: true }))).toBe("bad-settings");
     expect(code(() => setRepoSettings(gh.id, { pushRemote: false }))).toBe("none");
+  });
+
+  it("setRepoSettings does not turn the push on; the setting stays off (#796)", () => {
+    const r = addRepo(ANN, { url: repo, method: "local" }, OK);
+    expect(code(() => setRepoSettings(r.id, { pushRemote: true, testCommand: "npm test" }))).toBe("needs-publish");
+    expect(getRepo(r.id)!.settings).toBeUndefined();
+  });
+
+  it("allowRemotePush turns it on with the proposed settings in one step, and refuses a wrong owner, bad settings and a GitHub record", () => {
+    const r = addRepo(ANN, { url: repo, method: "local" }, OK);
+    expect(code(() => allowRemotePush(r.id, BOB))).toBe("not-found");
+    expect(code(() => allowRemotePush(r.id, ANN, { mainBranch: "bad branch" }))).toBe("bad-settings");
+    expect(getRepo(r.id)!.settings).toBeUndefined();
+    const on = allowRemotePush(r.id, ANN, { testCommand: "npm test", developBranch: "dev" });
+    expect(on.repo.settings).toEqual({ testCommand: "npm test", developBranch: "dev", pushRemote: true });
+    expect(on.changed).toContain("pushRemote");
+    const gh = addRepo(ANN, { url: "acme/app", method: "github-token", token: ["github", "pat", ""].join("_") + "Zx9".repeat(12) }, OK);
+    expect(code(() => allowRemotePush(gh.id, ANN))).toBe("not-found");
+    expect(getRepo(gh.id)!.settings).toBeUndefined();
+  });
+
+  it("transferRepo turns the push off, so the new owner must say Yes, publish", () => {
+    const l = addRepo(ANN, { url: repo, method: "local" }, OK);
+    allowRemotePush(l.id, ANN, { testCommand: "npm test" });
+    const r = transferRepo(l.id, "bob@example.com", { findOwner: () => ({ id: BOB, status: "active" }) });
+    expect(r.repo.owner).toBe(BOB);
+    expect(r.repo.settings).toEqual({ testCommand: "npm test" });
+    const only = addRepo(ANN, { url: makeRepo("only-push"), method: "local" }, OK);
+    allowRemotePush(only.id, ANN);
+    expect(transferRepo(only.id, "bob@example.com", { findOwner: () => ({ id: BOB, status: "active" }) }).repo.settings).toBeUndefined();
   });
 
   it("localHasRemote is true with a remote, false without one, for a missing path and for a failing git", async () => {
