@@ -6,6 +6,7 @@ import { configVersion, parseConfigText, STALE_CONFIG, type Config } from "../co
 import { parseTool, startSignIn, testCall, type OnboardingTool } from "../onboarding.js";
 import { agentsView, currentValues, parseAgentsRequest, type AgentSettingKey, type AgentsView } from "../onboarding/agents.js";
 import { AgentsConfigError, ConfigReadError, ConfigWriteError, readAgentAnswers, readConfigSafely, readLimitsStatus, saveAgentAnswers, StaleConfigError, type AgentsIo } from "../onboarding/agents-store.js";
+import { clearProgress, parseProgressRequest, ProgressError, readProgress, saveProgress } from "../onboarding/progress-store.js";
 import { storedConfigProblem } from "./config-view.js";
 import { HttpError, readJson, send } from "./http.js";
 import type { Route } from "./server.js";
@@ -89,9 +90,58 @@ export function putAgents(body: unknown, sentVersion: string | undefined, deps: 
   };
 }
 
+export interface ProgressReply {
+  step: string | null;
+  answers: Record<string, unknown>;
+  at?: string;
+}
+
+/** A progress problem as an HTTP error: 400, 413 or 404 for a request; 500 with the kind only for a store problem. */
+function progressProblem(e: unknown, what: string): unknown {
+  if (e instanceof ProgressError) return new HttpError(e.code === "too-large" ? 413 : e.code === "gone" ? 404 : 400, e.message);
+  if (e instanceof StoreError) return new HttpError(500, `your place in the guide could not be ${what} (${e.kind}); try again`);
+  return e;
+}
+
+/** `GET /api/onboarding/progress`: the place of this account in the Get started guide, or `{ step: null, answers: {} }`. */
+export function getProgress(userId: string): ProgressReply {
+  try {
+    const p = readProgress(userId);
+    return p ? { step: p.step, answers: p.answers, at: p.at } : { step: null, answers: {} };
+  } catch (e) {
+    throw progressProblem(e, "read");
+  }
+}
+
+/** `PUT /api/onboarding/progress`: save the place (`step`, optional `answers`). */
+export function putProgress(userId: string, body: unknown, now = new Date()): ProgressReply {
+  try {
+    const p = saveProgress(userId, parseProgressRequest(body), now);
+    return { step: p.step, answers: p.answers, at: p.at };
+  } catch (e) {
+    throw progressProblem(e, "saved");
+  }
+}
+
+/** `DELETE /api/onboarding/progress`: clear the place. Also fine when nothing is saved. */
+export function deleteProgress(userId: string): ProgressReply {
+  try {
+    clearProgress(userId);
+    return { step: null, answers: {} };
+  } catch (e) {
+    throw progressProblem(e, "cleared");
+  }
+}
+
 /** `/api/onboarding/…`: sign in to Claude Code or Codex and check it (POST sign-in, test-call); the answers about both tools (GET and PUT agents). */
 export const onboardingRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] !== "onboarding" || seg.length !== 2) return false;
+  if (seg[1] === "progress") {
+    if (method === "GET") return send(res, 200, getProgress(user.id)), true;
+    if (method === "PUT") return send(res, 200, putProgress(user.id, await readJson(req))), true;
+    if (method === "DELETE") return send(res, 200, deleteProgress(user.id)), true;
+    throw new HttpError(405, "method not allowed");
+  }
   if (seg[1] === "agents") {
     if (method === "GET") {
       const out = getAgents();

@@ -7,6 +7,7 @@ import { COMMON_PASSWORDS } from "./common-passwords.js";
 import { checkRefinements, removeRefinementsLocked } from "../refinement/store.js";
 import { checkHelp, removeHelpLocked } from "../help/store.js";
 import { checkAppReposFile, removeAppReposLocked } from "./app-repos.js";
+import { removeProgressLocked } from "../onboarding/progress-store.js";
 import { removeLimitsLocked } from "./limits.js";
 import { removeReposLocked, watchersRemovedDetail } from "./repos.js";
 import { addSessionLocked, removeSessionsLocked, sessionId } from "./sessions.js";
@@ -528,6 +529,7 @@ export function deleteUser(id: string, opts: ChangeOptions = {}): DeletedUser {
       // (a repos.json that cannot be read stops it too), then the refinement sessions.
       checkRefinements();
       checkHelp(); // a help.json that cannot be read stops the delete too
+      removeProgressLocked(id); // a progress file that cannot be read stops the delete here, before the rest
       removeLimitsLocked(id);
       checkAppReposFile(); // a broken app-repos.json stops the delete before anything changes
       removeReposLocked(id, (repoId, ids) => {

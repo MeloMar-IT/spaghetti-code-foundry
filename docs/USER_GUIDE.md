@@ -307,6 +307,19 @@ Both pages refresh every 30 seconds and use the same lists as Home (repositories
 
 Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". A local project (without GitHub) is listed and shown like the others. An admin sees one more box on its project page, **Put this project on GitHub**, which moves it in plain steps: choose a name (step 1 of 2), then check and put it on GitHub (step 2 of 2). The box is shown only to an admin. Without a GitHub sign-in on any repository, it says to connect GitHub first in the Advanced view, and it never has a token field. With a GitHub sign-in it makes a new place on GitHub or uses one with the chosen name, and it says what goes along (changes, saved versions). When the move works, the box says "Your project is on GitHub now." If it stops halfway, the box says that it may have stopped or worked, and asks you not to try again on this page; look at the list of projects in the Advanced view. The move itself is the one described under "Move a local project to GitHub" in the Work section.
 
+### Simple: Get started
+
+**Get started** (`#/start-guide`) is a step-by-step guide in Simple. It shows one step at a time, and each step has **Back**. **Continue** goes on to the next step.
+
+1. **Welcome.** Three sentences on what the Foundry does.
+2. **Your computer.** The Setup check rows. For an admin, **Continue** turns on only when every row is green, the optional ones too (Codex included). Check again after you fix a row. For any other account the page says "Ask your admin" and **Continue** is on.
+3. **Claude and Codex** (shown as step 2b). The six questions of [Claude and Codex in plain words](#claude-and-codex-in-plain-words), shown inside the guide. The "Ask your admin" note is shown here too for accounts that are not admins.
+4. Steps 3 to 7 are placeholders that say "This step is coming next". They are filled in by later parts.
+
+Your place and your answers are saved for your account on the Foundry, not on the computer. Leave the page and come back, on any computer, and the guide opens at the step where you stopped. **Start again** clears the saved place and answers and begins at the first step; it asks first.
+
+The guide starts by itself the first time you open **My projects** when you have no project. When you have a project, **My projects** shows a **Get started** link at the top instead, and does not open the guide. A message that the progress could not be saved or loaded does not stop you: you can go on.
+
 ### Simple: the Help page
 
 The **Help** link in the top bar, next to Home, opens `#/help`. It is written in plain words and has three parts:
@@ -5297,6 +5310,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/monitor/retry` | yes | no | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
+| `GET /api/onboarding/progress` | yes | yes | where this account is in the Get started guide: `{ step, answers, at }`, or `{ step: null, answers: {} }` when nothing is saved; only your own account |
+| `PUT /api/onboarding/progress` | yes | yes | save where this account is in the Get started guide (`step`: one of the guide's steps; optional `answers`: an object of at most 20 keys, each a lowercase name, at most 16384 bytes as JSON and nested at most 8 deep); a bad body answers 400, answers that are too large 413; replaces the saved entry; only your own account |
+| `DELETE /api/onboarding/progress` | yes | yes | clear where this account is in the Get started guide; answers 200 also when nothing is saved; only your own account |
 | `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
 | `GET /api/onboarding/agents` | yes | no | the answers about Claude Code and Codex (which tools, which plan, how to share, how busy), the settings they give, the current values of those six settings, the ones kept because an admin set them by hand, and a summary in plain words; admins only |
 | `PUT /api/onboarding/agents` | yes | no | save the answers (`answers`) and write the settings they give to `config.yaml` (`concurrency`, `governor.usage_percent`, `governor.priority`, `default_model`, `router.fallback`, `router.rules`); a setting an admin set by hand is kept and listed in `kept` unless `replace` names it; the same answers again change nothing; bad answers answer 400; with an `X-Config-Version` header a stale version is refused with 409; admins only |

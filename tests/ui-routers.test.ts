@@ -91,6 +91,7 @@ describe("user router", () => {
     "/home.js": never,
     "/setup-check.js": never,
     "/onboarding-agents.js": { renderOnboardingAgents: vi.fn(async () => () => {}) },
+    "/onboarding-guide.js": { renderOnboardingGuide: vi.fn(async () => () => {}) },
     "/simple.js": { renderSimpleHome: vi.fn(), renderSimpleProject: vi.fn(), renderSimpleHelp: vi.fn() },
     "/states.js": real.states,
     "/view-as.js": { beginView: () => ({ readOnly: false, ready: true }) },
@@ -130,6 +131,38 @@ describe("user router", () => {
       await loadRouter("user/app.js", deps({ ...as({ id: "u", role: "user", view: "advanced" }), "/simple.js": adv }));
       expect(adv.renderSimpleHelp).toHaveBeenCalled();
       expect(main().textContent).not.toContain("Open this in another view");
+    });
+
+    it("draws the Get started guide for #/start-guide in Simple, with the own credentials link, and keeps the address", async () => {
+      setup("#/start-guide");
+      const renderOnboardingGuide = vi.fn(async () => () => {});
+      const stub = simpleStub();
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": stub, "/onboarding-guide.js": { renderOnboardingGuide } }));
+      expect(renderOnboardingGuide).toHaveBeenCalledTimes(1);
+      expect((renderOnboardingGuide.mock.calls[0] as any[])[1]).toMatchObject({ credentialsHref: "/#/credentials" });
+      expect(stub.renderSimpleHome).not.toHaveBeenCalled();
+      expect(g.location.hash).toBe("#/start-guide");
+    });
+
+    it("opens the guide once, replacing the address, when My projects asks for it; not when the page was left", async () => {
+      setup("#/home");
+      let open: (() => void) | undefined;
+      let alive: (() => boolean) | undefined;
+      const renderSimpleHome = vi.fn(async (_box: unknown, o: any) => { open = o.openGuide; alive = o.alive; });
+      const renderOnboardingGuide = vi.fn(async () => () => {});
+      await loadRouter("user/app.js", deps({ ...simpleMe, "/simple.js": { ...simpleStub(), renderSimpleHome }, "/onboarding-guide.js": { renderOnboardingGuide } }));
+      expect(alive?.()).toBe(true);
+      open?.();
+      await tick();
+      expect(g.history.replaceState).toHaveBeenCalledWith(null, "", "#/start-guide");
+      expect(renderOnboardingGuide).toHaveBeenCalledTimes(1);
+      // the second ask in the same page load does nothing
+      g.history.replaceState.mockClear();
+      open?.();
+      await tick();
+      expect(g.history.replaceState).not.toHaveBeenCalled();
+      // the page that asked is no longer the one on screen
+      expect(alive?.()).toBe(false);
     });
 
     it("draws My projects for Simple #/home, and the project page for #/repos/<id>", async () => {

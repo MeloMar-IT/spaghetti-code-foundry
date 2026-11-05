@@ -5,6 +5,7 @@ import { h, mount } from "/dom.js";
 import { resolve, splitHash } from "/ia.js";
 import { needsOf, renderSetupCheck } from "/setup-check.js";
 import { renderOnboardingAgents } from "/onboarding-agents.js";
+import { renderOnboardingGuide } from "/onboarding-guide.js";
 import { parseFilter } from "/runs-filter.js";
 import { renderEpic } from "/epic-page.js";
 import { renderEpics } from "/epics.js";
@@ -25,6 +26,8 @@ import { SIMPLE_SECTIONS, offerCard, offerFor, showViewNav, viewOf } from "/view
 const main = document.getElementById("main");
 let cleanup = null;
 let generation = 0;
+// The Get started guide is offered by itself once per page load (Simple, My projects with no project yet).
+let guideOffered = false;
 // Set after sign-in: an admin who opened /user/?as=<id> sees a read-only preview of that user.
 let readOnly = false;
 // The view in effect (Simple or Advanced here; Admin is the display at /), and whether the account is an admin outside a preview.
@@ -90,7 +93,19 @@ async function route() {
   try {
     // Decided by the resolved page, not by the address: an unknown plugin address was resolved to the fallback above.
     if (to.page.nav === "plugin") done = await renderPluginPage(box, to.page, { user: me, readOnly });
-    else if (simple && page.section === "home") done = await renderSimpleHome(box);
+    else if (simple && page.section === "home") {
+      done = await renderSimpleHome(box, {
+        alive: () => mine === generation && !stopped,
+        openGuide: () => {
+          if (guideOffered) return;
+          guideOffered = true;
+          contextGo("#/start-guide", { replace: true });
+        },
+      });
+    } else if (page.section === "start-guide") {
+      guideOffered = true;
+      done = await renderOnboardingGuide(box, { admin: ownAdmin, readOnly, credentialsHref: "/#/credentials" });
+    }
     else if (simple && page.section === "repos") done = await renderSimpleProject(box, { id: page.id, admin: ownAdmin, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "help") done = await renderSimpleHelp(box);
     else if (page.section === "home") done = await renderHome(box, { readOnly, setup: ownAdmin });
