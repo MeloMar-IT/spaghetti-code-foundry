@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 let n = 0;
-const ev = (over: Partial<UsageEvent> = {}, time = "2026-11-04T10:00:00.000Z"): UsageEvent => ({ id: `r:step:${++n}`, time, runId: "r", workspace: "", name: "run.started", ...over }) as UsageEvent;
+const ev = (over: Partial<UsageEvent> = {}, time = "2026-11-04T10:00:00.000Z"): UsageEvent => ({ id: `r:step:${++n}`, time, runId: "r", workspace: "default", name: "run.started", ...over }) as UsageEvent;
 const lines = (file: string) => readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as UsageEvent);
 const monthFile = (m = "2026-11") => join(usageDir(), `usage-${m}.jsonl`);
 

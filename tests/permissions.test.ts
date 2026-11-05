@@ -301,6 +301,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET admin/credentials": no("admin/credentials", 200),
   "GET admin/components": no("admin/components", 200),
   "PUT admin/repos/:id/ready": no(`admin/repos/${UNKNOWN}/ready`, 404, {}),
+  "PUT admin/repos/:id/workspace": no(`admin/repos/${UNKNOWN}/workspace`, 404, { workspace: null }),
   "POST admin/repos/:id/transfer": no(`admin/repos/${UNKNOWN}/transfer`, 400, {}),
   "GET admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404),
   "POST admin/repos/:id/watchers": no(`admin/repos/${UNKNOWN}/watchers`, 404, {}),

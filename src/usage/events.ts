@@ -1,6 +1,7 @@
 import { REASON_KINDS, type UsageEvent } from "./schema.js";
 import type { Config } from "../config.js";
 import type { RunSummary, StepRecord } from "../engine/state.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import { isStoryRun } from "../engine/auto-retry.js";
 import { repositoryOf } from "../evidence/record.js";
 import { classifyFailure } from "../failure.js";
@@ -86,17 +87,17 @@ export function costOf(tokens: { input: number; cached?: number; output: number 
 
 const issueNumber = (vars: Record<string, string> | undefined): number | undefined => (/^[1-9]\d{0,9}$/.test(vars?.issue ?? "") ? Number(vars!.issue) : undefined);
 
-function common(run: Pick<RunSummary, "runId" | "vars">, id: string) {
+function common(run: Pick<RunSummary, "runId" | "vars" | "workspace">, id: string) {
   const repository = repositoryOf(run.vars);
   const issue = issueNumber(run.vars);
-  return { id, time: new Date().toISOString(), runId: run.runId, ...(repository ? { repository } : {}), ...(issue ? { issue } : {}), workspace: "" as const };
+  return { id, time: new Date().toISOString(), runId: run.runId, ...(repository ? { repository } : {}), ...(issue ? { issue } : {}), workspace: validWorkspaceId(run.workspace) ? run.workspace : DEFAULT_WORKSPACE };
 }
 
-export function runStartedEvent(run: Pick<RunSummary, "runId" | "vars">): UsageEvent {
+export function runStartedEvent(run: Pick<RunSummary, "runId" | "vars" | "workspace">): UsageEvent {
   return { ...common(run, `${run.runId}:started`), name: "run.started" };
 }
 
-export function stepFinishedEvent(run: Pick<RunSummary, "runId" | "vars">, rec: StepRecord, index: number, config: Config): UsageEvent {
+export function stepFinishedEvent(run: Pick<RunSummary, "runId" | "vars" | "workspace">, rec: StepRecord, index: number, config: Config): UsageEvent {
   const patterns = config.help?.sensitive_patterns ?? [];
   const t = rec.tokens;
   return {

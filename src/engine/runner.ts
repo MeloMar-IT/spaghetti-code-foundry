@@ -60,6 +60,8 @@ import { configureTelemetry } from "../telemetry/telemetry.js";
 import { emitRunMeasured } from "../monitor/measures.js";
 import { runEndEvents, runStartedEvent } from "../usage/events.js";
 import { emitUsage } from "../usage/hub.js";
+import { workspaceForJob } from "../workspaces/index.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
 
@@ -101,6 +103,8 @@ export interface RunOptions extends CommonOptions {
   vars?: Record<string, string>;
   /** `vars` is the final set: the folder's own settings are not read (they were applied when the run was queued). */
   frozenVars?: boolean;
+  /** The workspace the queue decided (#816). Absent: it is looked up from the repository in `vars`. */
+  workspace?: string;
   /** Pre-allocated run id (e.g. so a UI can subscribe before the run starts). */
   runId?: string;
   /** Who started the run; saved in run.json. */
@@ -191,6 +195,8 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   // a user's run never works in the server's folder or a branch of it: refused before the folder's settings are read or a worktree or a branch is made
   const vars = refused ? { ...flow.vars, ...opts.vars } : opts.frozenVars ? { ...opts.vars } : effectiveVars(flow, opts.repo, opts.vars, opts.log);
   const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
+  // the flow's own `workspace` setting plays no part: "empty" only means "no checkout" (#816)
+  const workspace = validWorkspaceId(opts.workspace) ? opts.workspace : workspaceForJob({ githubRepo: vars.github_repo, owner });
   const summary: RunSummary = {
     runId,
     autonomy: autonomy.autonomy,
@@ -213,6 +219,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     ...(opts.toolProfile !== undefined ? { toolProfile: snapshotToolProfile(opts.toolProfile) } : {}),
     ...(opts.localTest ? { localTest: true as const } : {}),
     ...(opts.flowId ? { flowId: opts.flowId } : {}),
+    ...(workspace !== DEFAULT_WORKSPACE ? { workspace } : {}),
   };
   claimRunStart(opts.runsDir, () => {
     mkdirSync(join(runDir, "logs"), { recursive: true });

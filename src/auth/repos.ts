@@ -12,6 +12,7 @@ import { ReadyListSchema, checkReadyList, readyListOf } from "../refinement/read
 import { RepoSettingsSchema, checkRepoSettings } from "./repo-settings.js";
 import { checkLocalPath, isLocalRepoName, localPathProblem, localRepoName } from "./local-repo.js";
 import { type ParsedRepoUrl, RepoError, type RepoErrorCode, githubKey, parseRepoUrl, tryParseRepoUrl, validGithubName } from "./repo-url.js";
+import { DEFAULT_WORKSPACE, WORKSPACE_ID_RE, validWorkspaceId } from "../workspaces/list.js";
 import { StoreError, authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 import { type User, UserError, checkEmail, findUserByEmail, getUser } from "./users.js";
 
@@ -60,6 +61,8 @@ const RecordSchema = z
     /** The Definition of Ready; absent means the default list. */
     definitionOfReady: ReadyListSchema.optional(),
     connection: ConnectionSchema.optional(),
+    /** The workspace (#816). Absent means "default"; "default" is never written. */
+    workspace: z.string().regex(WORKSPACE_ID_RE).optional(),
   })
   .strict()
   .superRefine((r, ctx) => {
@@ -517,6 +520,7 @@ function authPlan(file: RepoFile, userId: string, id: string, input: AuthChange,
     added: rec.added,
     ...(rec.settings ? { settings: rec.settings } : {}),
     ...(rec.definitionOfReady ? { definitionOfReady: rec.definitionOfReady } : {}),
+    ...(rec.workspace ? { workspace: rec.workspace } : {}),
   };
   // the status stays only for a call that changes nothing about how the repository is reached
   if (rec.connection && !secret && JSON.stringify(bare(next)) === JSON.stringify(bare(rec))) next.connection = rec.connection;
@@ -726,7 +730,7 @@ const EMAIL_CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 /**
  * Moves a repository to the account with the given e-mail. A personal token is wiped and the record reads "none"; a
  * repository-bound secret is re-encrypted for the new owner. The secret goes first and the record second, so a failure in
- * between leaves the record with the old owner, and repeating the transfer finishes it.
+ * between leaves the record with the old owner, and repeating the transfer finishes it. The workspace stays.
  */
 export function transferRepo(id: string, emailInput: unknown, opts: TransferOptions = {}): { repo: RepoRecord; oldKeysLeft: number; moved: boolean } {
   if (typeof emailInput !== "string" || !emailInput.trim()) throw new RepoError("bad-owner", "give the e-mail of the new owner");
@@ -763,5 +767,34 @@ export function transferRepo(id: string, emailInput: unknown, opts: TransferOpti
     }
     save(file.repos.map((r) => (r === rec ? next : r)));
     return { repo: { ...next }, oldKeysLeft, moved: true };
+  });
+}
+
+// ---- admin: workspace (#816) -----------------------------------------------------------------------
+
+/**
+ * Puts a repository in a workspace (`{ workspace: "<id>" }`) or back in the default one (`null` or "default": the field is
+ * removed). `known` says whether an id is in the current list. Transfers and authentication changes keep the value.
+ */
+export function setRepoWorkspace(id: string, input: unknown, known: (ws: string) => boolean): { repo: RepoRecord; changed: boolean } {
+  const give = () => new RepoError("bad-settings", "give the workspace: an id, or null for the default workspace");
+  if (!input || typeof input !== "object" || Array.isArray(input) || !("workspace" in input)) throw give();
+  const given = (input as { workspace: unknown }).workspace;
+  if (given !== null && typeof given !== "string") throw give();
+  let ws: string | undefined;
+  if (given !== null && given !== DEFAULT_WORKSPACE) {
+    if (!validWorkspaceId(given)) throw new RepoError("bad-settings", "that is not a workspace id");
+    if (!known(given)) throw new RepoError("bad-settings", `there is no workspace "${given}"`);
+    ws = given;
+  }
+  return withAuthLock(() => {
+    const file = read();
+    const rec = file.repos.find((r) => r.id === id);
+    if (!rec) throw new RepoError("not-found", "no such repository");
+    const { workspace: _old, ...rest } = rec;
+    const next: RepoRecord = ws ? { ...rest, workspace: ws } : rest;
+    const changed = rec.workspace !== ws;
+    if (changed) save(file.repos.map((r) => (r === rec ? next : r)));
+    return { repo: { ...next }, changed };
   });
 }

@@ -17,6 +17,7 @@ export const API_ONLY: Record<string, string> = {
   "GET onboarding/agents": "the onboarding answers about Claude Code and Codex (#769); there is no command for them yet",
   "PUT onboarding/agents": "saves the onboarding answers about Claude Code and Codex and writes the settings they give (#769); there is no command for them yet",
   "GET plugins/ui": "the pages and menu links plugins add to the web interface (#787); the command line has no pages",
+  "PUT admin/repos/:id/workspace": "puts a repository in a workspace (#816); only the API for now, a command is a follow-up with the other parts of #784",
   "GET me/view": "the view of the web interface (#595): it changes only what the interface shows; the command line has no views",
   "PUT me/view": "chooses that view; done with the switch in the top bar",
   "POST help/conversations/:id/actions": "a button of a reply in the Ask SCF drawer: it opens a page, runs a read-only check, or previews an action Ask SCF proposed (#568); the command line has none of these",

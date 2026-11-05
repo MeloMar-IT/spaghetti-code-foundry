@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
 import { auditAction, auditActions } from "../auth/audit.js";
 import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
-import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoWorkspace, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { checkRepoSettings } from "../auth/repo-settings.js";
 import { localHasRemote, localRepoName } from "../auth/local-repo.js";
 import { RecipeError, parseRecipe } from "../release/recipe.js";
@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
 import { DEFAULT_FLOWS } from "../queue/watcher.js";
 import { watcherState } from "../words.js";
+import { knownWorkspace } from "../workspaces/index.js";
 import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
 import { checkRepoMethod } from "./permissions.js";
@@ -219,6 +220,13 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
       const detail = r.repo.definitionOfReady ? `definition of ready: ${r.repo.definitionOfReady.length} items` : "definition of ready: back to the default";
       auditAction(ctx.diagLog, by, "repo-change", r.repo.id, detail);
     }
+    const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
+    return send(res, 200, row, publicKeys([row])), true;
+  }
+  if (seg.length === 4 && seg[3] === "workspace" && method === "PUT") {
+    const body = await readJson(req);
+    const r = guardedRepos(ctx, () => setRepoWorkspace(seg[2]!, body, knownWorkspace));
+    if (r.changed) auditAction(ctx.diagLog, by, "repo-change", r.repo.id, `workspace: ${r.repo.workspace ?? "default"}`);
     const row = adminRow(r.repo, undefined, undefined, r.repo.method === "local" ? await localHasRemote(r.repo.url) : undefined);
     return send(res, 200, row, publicKeys([row])), true;
   }

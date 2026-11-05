@@ -5251,6 +5251,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings and autonomy level |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line |
+| `PUT /api/admin/repos/:id/workspace` | yes | no | set the workspace of a repository (`workspace`: an id from `workspaces` in config.yaml or from a plugin; `null` or `default` puts it back in the default workspace); writes an audit line |
 | `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |
@@ -7245,6 +7246,33 @@ the answer is hidden as before).
   encryption protects copies of the data folder: backups, sync, another user.
 
 Global settings are stored in `~/.spaghetti-code-foundry/config.yaml`; runs in `~/.spaghetti-code-foundry/runs/`.
+
+### Workspaces
+
+A workspace is a team. Each repository, each watcher's runs and each run is recorded as belonging to exactly
+one workspace. There is always a `default` workspace, so an install without any workspace works and stores
+its data as before. List the teams in `config.yaml`:
+
+```yaml
+workspaces:
+  - id: team-api                 # lowercase letters, digits and "-"; "default" is reserved
+    name: API team
+    members:                     # account ids
+      - "6f1c2a3e-0000-4000-8000-000000000001"
+    limits:                      # all optional; stored only in this part, enforced later
+      max_concurrent: 2
+      test_slots: 1
+      monthly_budget_usd: 150
+```
+
+- An account that is in no workspace is in `default`. An account may be in several workspaces.
+- An admin sets the workspace of a repository with `PUT /api/admin/repos/:id/workspace` (`{ "workspace": "team-api" }`,
+  or `null` for `default`). A transfer to another account keeps it. A repository without one is in `default`.
+- A run takes the workspace of its repository; a run without a repository (a local run) is in `default`.
+  Usage events carry the workspace.
+- An invalid entry, or a second entry with the same id, stops the config from being read. A plugin can supply
+  the list instead (`api.workspaces`, see [PLUGIN_API.md](PLUGIN_API.md#workspaces)).
+- The Settings page does not show the list yet; edit it in `config.yaml`. The limits take effect in a later part.
 
 ### Plugins
 

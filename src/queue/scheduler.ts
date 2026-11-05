@@ -4,7 +4,10 @@ import { dirname, join, resolve } from "node:path";
 import { flowFileId } from "../promotion/flow-id.js";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
-import { cancelStoppedRun, cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
+import { workspaceRefused } from "../engine/isolation.js";
+import { workspaceForJob } from "../workspaces/index.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
+import { cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
 import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, clearRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
@@ -57,9 +60,14 @@ export interface QueuedJob {
   flowId?: string;
   /** A resume that is a retry after a time limit (auto_retry.timeouts): it waits for a helper's cap like a new run, it is not a run of the day, and a cancel ends the run. */
   asNewRun?: boolean;
+  /** The workspace (#816), decided when the job was queued. Absent: "default". */
+  workspace?: string;
 }
 
-export interface JobMeta { lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string; asNewRun?: boolean }
+/** The workspace of a queued job; "default" when it has none (also older entries). */
+export const queuedWorkspace = (q: Pick<QueuedJob, "workspace">): string => (validWorkspaceId(q.workspace) ? q.workspace : DEFAULT_WORKSPACE);
+
+export interface JobMeta { workspace?: string; lockKey?: string; source?: string; owner?: string; queuedBy?: string; priority?: boolean; storyAt?: string; asNewRun?: boolean }
 
 /** The time a priority job is ordered by: the issue's creation time, else when it was queued. */
 const storyTime = (q: QueuedJob): number => {
@@ -234,12 +242,41 @@ export class Scheduler {
     return runId;
   }
 
+  /**
+   * A run's variables are read once, when it is queued (#816): the repository the workspace was chosen for is the one the run
+   * uses, even when the repository's settings change while the job waits. A refused run keeps the runner's own path, which
+   * reads no folder settings. Never throws.
+   */
+  private freezeRunVars(job: Job, owner: string | undefined): Job {
+    if (job.kind !== "run" || job.frozenVars) return job;
+    try {
+      if (workspaceRefused(job.flow.workspace, owner) ?? skillWriteRefused(job.flow.name, owner)) return job;
+      return { ...job, vars: effectiveVars(job.flow, job.repo, job.vars), frozenVars: true };
+    } catch {
+      return job;
+    }
+  }
+
+  /** The workspace of a job (#816), decided once at queue time from its frozen variables. Never throws. */
+  private workspaceFor(job: Job, given: string | undefined, owner: string | undefined): string {
+    try {
+      if (job.kind === "resume") return queuedWorkspace({ workspace: loadRun(this.o.runsDir, job.runId)?.workspace });
+      if (validWorkspaceId(given)) return given;
+      const vars = job.kind === "run" && job.frozenVars ? job.vars : effectiveVars(job.flow, job.repo, job.vars);
+      return workspaceForJob({ githubRepo: vars.github_repo, owner });
+    } catch {
+      return DEFAULT_WORKSPACE;
+    }
+  }
+
   /** Checks a job, puts it into the queue and writes the queue file. Starts nothing. */
-  private put(job: Job, meta: JobMeta): string {
+  private put(input: Job, meta: JobMeta): string {
+    const job = this.freezeRunVars(input, meta.owner);
     const runId = job.kind === "run" ? this.freeId() : job.runId;
     if (job.kind === "resume" && (this.isActive(runId) || this.isQueued(runId))) throw new Error(`run ${runId} is already queued or running`);
     const repoLock = this.repoLockFor(job);
-    const { priority, storyAt, ...rest } = meta;
+    const { priority, storyAt, workspace: givenWorkspace, ...rest } = meta;
+    const workspace = this.workspaceFor(job, givenWorkspace, meta.owner);
     // the id is looked up here, once, and never taken from the caller: a file edited while the job waits keeps its id
     const flowId = job.kind === "run" && !this.o.localTest ? flowFileId(job.flow, job.repo) : undefined;
     const q: QueuedJob = {
@@ -248,6 +285,7 @@ export class Scheduler {
       ...rest,
       ...(repoLock ? { repoLock } : {}),
       ...(flowId ? { flowId } : {}),
+      ...(workspace !== DEFAULT_WORKSPACE ? { workspace } : {}),
       enqueuedAt: new Date().toISOString(),
       ...(priority ? { priority: true, ...(storyAt ? { storyAt } : {}) } : {}),
     };
@@ -958,6 +996,7 @@ export class Scheduler {
             repo: j.repo,
             vars: j.vars,
             frozenVars: j.frozenVars,
+            workspace: queuedWorkspace(q),
             source: q.source,
             owner: q.owner,
             ...(this.o.localTest ? { localTest: true } : { flowId: q.flowId ?? flowFileId(j.flow, j.repo) }),
