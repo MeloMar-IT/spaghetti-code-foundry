@@ -1,0 +1,7 @@
+builds:
+  - name: tool
+    on: [macos, linux]
+    requires: [tar]
+    run: mkdir -p out && tar -czf out/tool.tar.gz tool.mjs README.md
+    artifacts:
+      - out/tool.tar.gz

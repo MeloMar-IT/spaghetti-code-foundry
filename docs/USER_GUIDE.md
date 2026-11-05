@@ -200,7 +200,13 @@ The page is for admins, because the tools are set up on the computer that runs t
 
 ### Starters
 
-A **starter** is a ready project folder: it has its files, a README in plain words, a test command, a preview (**Try it**) and a release recipe, so the first result comes quickly and the agents build on a known base. Part 1 ships one starter, **Website** (a one-page static site with no npm dependencies; its test command is `node --test`; its release is a `.tar.gz` made with `tar` on macOS and Linux). Starters are for admins only for now; no page uses them yet, and the routes are below.
+A **starter** is a ready project folder: it has its files, a README in plain words, a test command, a preview (**Try it**) and a release recipe, so the first result comes quickly and the agents build on a known base. The Foundry ships three starters, all with no npm dependencies, no network and `node --test` as the test command; each release is a `.tar.gz` made with `tar` on macOS and Linux:
+
+- **Website** — a one-page static site.
+- **Web app** — one page with a form and a small JSON API that stores the entries in a JSON file (`data/entries.json` by default, set with `DATA_FILE`). Its server reads `PORT` from the environment. Git ignores the `data/` folder.
+- **Tool** — a small command (`node tool.mjs`) that counts the words, lines and characters of a text. Its **Try it** page runs `node tool.mjs --serve`.
+
+Starters are for admins only for now; no page uses them yet, and the routes are below.
 
 **Where starters come from.**
 

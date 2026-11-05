@@ -98,6 +98,15 @@ describe("every starter", () => {
   }, 120_000);
 });
 
+describe("the built-in starters", () => {
+  it("website, web-app and tool are there", () => {
+    const { starters, broken } = listStarters();
+    const builtIn = starters.filter((s) => s.source === "built-in").map((s) => s.id);
+    expect(builtIn).toEqual(expect.arrayContaining(["website", "web-app", "tool"]));
+    expect(broken.filter((b) => b.source === "built-in")).toEqual([]);
+  });
+});
+
 describe("the checks", () => {
   it("a built-in starter passes and the view holds no path", () => {
     const view = JSON.stringify({ starters: listStarters().starters.map(starterView) });
