@@ -121,7 +121,7 @@ describe("refine-round flow", { timeout: 60_000 }, () => {
   it("fails for an ask that is not round, question, suggest, review, impact, ready or split", async () => {
     const s = await run("talk", { ask: "both" });
     expect(s.status).toBe("failed");
-    expect(out(s, "check_round")).toBe("set the variable ask to round, question, suggest, review, impact, ready or split");
+    expect(out(s, "check_round")).toBe("set the variable ask to round, question, suggest, review, impact, ready, split or understand");
   });
 
   describe("ask=split", () => {
@@ -534,7 +534,7 @@ describe("refine-round definition", () => {
     expect(flow.one_per_repo).toBeUndefined();
     expect(flow.limits.max_cost_usd).toBe(3);
     expect(flow.defaults.timeout_sec).toBe(1800);
-    expect(flow.vars).toEqual({ github_repo: "owner/repo", ask: "round", field: "", items: "" });
+    expect(flow.vars).toEqual({ github_repo: "owner/repo", ask: "round", field: "", items: "", words: "" });
     for (const s of flow.steps) expect(s.description?.trim(), s.id).toBeTruthy();
   });
 
@@ -653,8 +653,8 @@ describe("refine-round definition", () => {
     expect(text).toContain("[--var ask=split]");
   });
 
-  it("holds exactly six placeholders, with the talk once between the markers", () => {
-    expect([...round.prompt.matchAll(/\{\{[^}]*\}\}/g)].map((m) => m[0]).sort()).toEqual(["{{steps.clone.output}}", "{{steps.list_issues.output}}", "{{task}}", "{{vars.ask}}", "{{vars.field}}", "{{vars.github_repo}}"]);
+  it("holds exactly seven placeholders, with the talk once between the markers", () => {
+    expect([...round.prompt.matchAll(/\{\{[^}]*\}\}/g)].map((m) => m[0]).sort()).toEqual(["{{steps.clone.output}}", "{{steps.list_issues.output}}", "{{task}}", "{{vars.ask}}", "{{vars.field}}", "{{vars.github_repo}}", "{{vars.words}}"]);
     const lines = round.prompt.split("\n");
     const at = lines.indexOf("{{task}}");
     expect(lines.filter((l) => l === "{{task}}")).toHaveLength(1);

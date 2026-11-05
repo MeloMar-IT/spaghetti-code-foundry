@@ -365,7 +365,11 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
     return send(res, 202, body), true;
   };
   if (seg.length === 3 && seg[2] === "architect" && method === "POST") return startRun({ kind: "brief" });
-  if (seg.length === 3 && seg[2] === "round" && method === "POST") return startRun({ kind: "round" });
+  if (seg.length === 3 && (seg[2] === "round" || seg[2] === "understand") && method === "POST") {
+    // The body is optional: `{ "words": "simple" }` asks for plain words. A body that is there must be JSON.
+    const body = await readOptionalJson(req);
+    return startRun({ kind: seg[2], words: body.words });
+  }
   if (seg.length === 3 && seg[2] === "ask" && method === "POST") {
     const body = await readJson(req);
     return startRun({ kind: "question", question: body.question });

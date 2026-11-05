@@ -67,7 +67,7 @@ describe("the refine commands", () => {
   it("are calls the server knows, and every refinement call has a command", () => {
     expect(specProblems(REFINE)).toEqual([]);
     const routes = RULES.filter((r) => r.path.startsWith("refinement"));
-    expect(routes).toHaveLength(36);
+    expect(routes).toHaveLength(37);
     expect(routes.filter((r) => !REFINE.some((c) => c.method === r.method && c.path === r.path)).map((r) => `${r.method} ${r.path}`)).toEqual([]);
     expect(REFINE.every((c) => c.area === "refine")).toBe(true);
     expect(areaHelp(REFINE, "refine")).toContain("scf refine draft-suggest <id> <did> <field>");

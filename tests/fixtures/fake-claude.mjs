@@ -14,6 +14,8 @@
 // For "What is asked of you now: review" it answers two remarks: C1 is uncheckable and the "what" says how to build.
 // For "What is asked of you now: ready" it answers every item under "## The items to judge" (lines "- <id>: …") as met, about the "what".
 // For "What is asked of you now: split" it answers two ways (`step` and `rule`) built from the lines `- C<n>: ` of the acceptance criteria of the talk.
+// For "What is asked of you now: understand" it answers one story draft whose summary starts with "This is what I understood: ".
+// For a round whose prompt has the line "The words: simple" it asks one plain question ("Who will use this change?").
 // For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
 // "REQUEST <json>" appends the line to $FACTORY_REPO_REQUESTS (a repository request for the broker; nothing when the variable is unset).
 // Probes for the OS sandbox tests: "READ <path>", "CHILD READ <path>", "CHILD WRITE <path> <text>" (see the lines above).
@@ -251,6 +253,16 @@ if (prompt.includes("You are Ask SCF, the help assistant")) {
     ? { field, suggestions }
     : prompt.includes("What is asked of you now: question")
     ? { answer: found }
+    : prompt.includes("What is asked of you now: understand")
+    ? { drafts: [{ title: "Export a report", who: "A team lead", what: "Download the report as a file.", why: "To share it with the team.", criteria: ["The export downloads a CSV file."], outOfScope: "", dependsOn: [], summary: "This is what I understood: a team lead wants to download the report as a file." }] }
+    : /^The words: simple$/m.test(prompt)
+    ? {
+        questions: [
+          { view: "need", text: "Who will use this change?", why: "It tells us what matters most.", options: [{ text: "Everyone", tradeoff: "Broad" }, { text: "Only admins", tradeoff: "Narrow" }], recommended: 1 },
+        ],
+        proposals: [],
+        done: "",
+      }
     : {
         questions: [
           { view: "need", text: "Who uses it?", why: "It sets the value.", options: [{ text: "Everyone", tradeoff: "Broad" }, { text: "Admins", tradeoff: "Narrow" }], recommended: 1 },
