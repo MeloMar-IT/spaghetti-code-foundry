@@ -271,7 +271,7 @@ When a change waits for your check, **Try it** first asks "Which version do you 
 
 Both pages refresh every 30 seconds and use the same lists as Home (repositories, runs and the queue), so Simple shows no data that Home does not. Work that is cancelled, superseded or parked, and epics, are not listed.
 
-Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". Local projects (without GitHub) show "Nothing yet" for now.
+Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". A local project (without GitHub) is listed and shown like the others. An admin sees one more box on its project page, **Put this project on GitHub**, which moves it in plain steps: choose a name (step 1 of 2), then check and put it on GitHub (step 2 of 2). The box is shown only to an admin. Without a GitHub sign-in on any repository, it says to connect GitHub first in the Advanced view, and it never has a token field. With a GitHub sign-in it makes a new place on GitHub or uses one with the chosen name, and it says what goes along (changes, saved versions). When the move works, the box says "Your project is on GitHub now." If it stops halfway, the box says that it may have stopped or worked, and asks you not to try again on this page; look at the list of projects in the Advanced view. The move itself is the one described under "Move a local project to GitHub" in the Work section.
 
 ### Simple: the Help page
 
@@ -833,6 +833,8 @@ The move refuses to start, and changes nothing, when:
 4. **Switch.** The watchers of the local project move to the GitHub repository, the run settings are copied (the GitHub repository's own values win where both have one), and the local record is removed. The folder and its `.scf/stories/` files stay as history.
 
 A dry run returns whether the repository would be created, the branches and tags that would be pushed and the story plan. It changes nothing. A move that stopped at any step can be run again: an existing repository, refs that are already up to date and stories that are already moved are skipped.
+
+The **Move to GitHub** dialog under My repositories (see "Local (no GitHub)" there) and the **Put this project on GitHub** box on the Simple project page both call this route: first the dry run, then the move.
 
 ### Work page (redesign, off by default)
 
@@ -5012,6 +5014,13 @@ GitHub App" under its attention state; choose another authentication. **Remove**
 - the folder exists, and it is the top folder of a git repository (not a folder inside one);
 - the folder and its `.scf/stories/` folder can be written;
 - a branch is checked out (HEAD is not detached).
+
+**Move to GitHub.** On a local project you own, the row has a **Move to GitHub** button (not shown on a read-only view). The dialog asks where the project goes:
+
+- **Use one of my GitHub repositories**: pick one from the list. Only GitHub repositories you connected with a token or the GitHub App are listed.
+- **Create a new repository**: type a name (`name` or `owner/name`). **Private** is ticked by default.
+
+Tick **Also move closed stories** to move them too. Press **Check** first: the dialog shows the dry run, with the repository, the branches and tags that will be pushed, and each story as create or skip. Nothing changes yet. **Move** is on only after a check that has no blocked stories; press it to move the project (see "Move a local project to GitHub" in the Work section). Progress and errors use the server's fixed messages. **Cancel** is off while the move runs. When it has finished, the list reloads; after a move that worked, the local project is no longer in it.
 
 A watcher on a local repository works the same way without GitHub: it starts the stories set to `go` and reads the folder itself. Watchers that need GitHub (review comments, CI failures, release files) are refused for it, and the watcher form says why.
 

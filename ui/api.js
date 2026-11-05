@@ -121,6 +121,7 @@ export const api = {
   addRepo: (body) => req("POST", "/api/repos", body),
   setRepoAuth: (id, body) => req("PUT", `/api/repos/${enc(id)}/auth`, body),
   testRepo: (id) => req("POST", `/api/repos/${enc(id)}/test`, {}),
+  moveToGithub: (id, body) => req("POST", `/api/repos/${enc(id)}/move-to-github`, body),
   repoReady: (id) => req("GET", `/api/repos/${enc(id)}/ready`),
   removeRepo: (id) => req("DELETE", `/api/repos/${enc(id)}`),
   users:() => req("GET", "/api/users"),

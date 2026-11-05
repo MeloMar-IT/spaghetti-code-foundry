@@ -57,7 +57,42 @@ export const WORDS = {
   newTab: " (opens in a new tab)",
   loading: "Loading your projects",
   loadFailed: "This page could not be loaded.",
-  actions: { change: "Ask for a change", tryIt: "Try it", final: "Make this version final" },
+  actions: { change: "Ask for a change", tryIt: "Try it", final: "Make this version final", github: "Put this project on GitHub" },
+};
+
+/**
+ * Put this project on GitHub (an admin's local project). Fixed texts only; the server's answer is never shown. The functions take
+ * the name on GitHub; a name with a forbidden word in it (for example "o/issues") is left out of the sentence.
+ */
+const named = (n) => (n && !FORBIDDEN.some((re) => re.test(String(n))) ? String(n) : "");
+export const GITHUB = {
+  connect: "First connect GitHub. Switch to the Advanced view with View at the top and add one of your GitHub projects there. Then come back to this page.",
+  connectApp: "To put this project on GitHub, switch to the Advanced view with View at the top and use Move to GitHub on this project's row in the list of projects. There you can choose a GitHub project you connected before.",
+  step1: "Step 1 of 2: choose a name",
+  nameLabel: "Name on GitHub",
+  nameProblem: "Use only letters, digits, -, _ and . in the name.",
+  private: "If it is a new place, only you and the people you invite can see it",
+  withDone: "Also take the changes that are done",
+  next: "Next",
+  notNow: "Not now",
+  checking: "Checking…",
+  step2: "Step 2 of 2: check and put it on GitHub",
+  willCreate: (n) => (named(n) ? `The Foundry makes a new place on GitHub called ${named(n)}.` : "The Foundry makes a new place on GitHub."),
+  willUse: (n) => (named(n) ? `The Foundry uses the place on GitHub called ${named(n)}, which is already there.` : "The Foundry uses the place on GitHub with this name, which is already there."),
+  keepsSeeing: "It keeps the setting it has on GitHub for who can see it.",
+  history: "All saved versions of your project go along.",
+  changes: (n) => (n === 1 ? "1 change goes along." : `${n} changes go along.`),
+  already: (n) => (n === 1 ? "1 change is on GitHub already." : `${n} changes are on GitHub already.`),
+  blocked: (n) => `${n === 1 ? "1 change" : `${n} changes`} cannot go along. Switch to the Advanced view with View at the top to see which.`,
+  go: "Put it on GitHub",
+  back: "Back",
+  moving: "Putting your project on GitHub… This can take a few minutes. Keep this page open.",
+  done: "Your project is on GitHub now. The Foundry goes on there by itself.",
+  openProject: "Open your project",
+  openGithub: "Open it on GitHub",
+  failed: "That did not work. Nothing was changed. You can try again. If it keeps happening, ask the person who set up the Foundry for you.",
+  again: "Try again",
+  stopped: "The move may have stopped half way, or it may have worked. Do not try again here. Switch to the Advanced view with View at the top and look at the list of projects there, or ask the person who set up the Foundry for you.",
 };
 
 /** Try it on the project page: the words of the choice, the states and the notes. */
