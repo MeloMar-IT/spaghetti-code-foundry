@@ -198,8 +198,8 @@ steps:
 
   it("never fails or changes a run when evidence cannot be written, and says so once", async () => {
     const runId = "20260131-120000-aaaa";
-    mkdirSync(join(runsDir, runId, "evidence.jsonl"), { recursive: true }); // a folder where the file should be
-    const s = await start(TWO, { runId });
+    // a folder where the file should be, made once the run has reserved its folder (a run folder that exists is refused)
+    const s = await start(TWO, { runId, afterClaim: () => mkdirSync(join(runsDir, runId, "evidence.jsonl")) });
     expect(s.status).toBe("succeeded");
     expect(s.history.map((h) => h.ok)).toEqual([true, true]);
     expect(readFileSync(join(s.runDir, "live.log"), "utf8").match(/! evidence:/g)).toHaveLength(1);

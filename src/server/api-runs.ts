@@ -13,7 +13,7 @@ import { findOwnedRepo, ownsRepo } from "../auth/repos.js";
 import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { isRefinementFlow } from "../flow/usage.js";
 import { AnswerRefused, effectiveVars } from "../engine/runner.js";
-import { ANSWER_MAX_CHARS, answerRoom, type RunSummary } from "../engine/state.js";
+import { ANSWER_MAX_CHARS, answerRoom, WORKSPACE_REMOVED, type RunSummary } from "../engine/state.js";
 import { parseFlow, resolveFlowPath } from "../flow/load.js";
 import { isPublished, userVars } from "../flow/publish.js";
 import { isVarName, type Flow } from "../flow/schema.js";
@@ -259,6 +259,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     const archived = action === "archive";
     const result = scheduler.setArchived(id, archived, user.id);
     if (result === "missing") throw new HttpError(404, "run not found");
+    if (result === "removed") throw new HttpError(409, WORKSPACE_REMOVED);
     if (result === "busy") throw new HttpError(409, "only a finished run can be archived; this run is running, waiting or queued");
     auditAction(ctx.diagLog, user.id, archived ? "run-archive" : "run-unarchive", id);
     return send(res, 200, { runId: id, archived }), true;

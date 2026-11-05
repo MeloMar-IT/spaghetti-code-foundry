@@ -37,9 +37,9 @@ import { finalReleaseState, hotfixState, identityEnv, SKILL_WRITE_FLOW, skillPub
 import { stepIsolated, userAccount, workspaceRefused } from "./isolation.js";
 import { readPlainFile, sandboxedRun } from "./os-sandbox.js";
 import { localRepoEnv, removeSignInDir } from "./repo-access.js";
-import { markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
+import { lockRoot, markRunning, RESTART_INTERRUPT, RESTART_INTERRUPTED, sweepRunning, unmarkRunning } from "./running.js";
 import { isStoryRun, markRetryStart, pendingRetry, retryEntry, splitAnswered, timeLimitAction, timeLimitHandover, timeLimitReason, timeLimitsUsed } from "./auto-retry.js";
-import { answerRoom, appendLiveLog, isStoppedCancel, listRunBriefs, loadRun, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
+import { answerRoom, appendLiveLog, claimRunDir, ensureWorkspaceTestSlots, isStoppedCancel, listRunBriefs, loadRun, RUN_ID_RE, WORKSPACE_REMOVED, workspaceRunsDir, LOCAL_TEST_LINE, PROMOTION_REFUSED, runFile, saveRun, PROJECT_BUDGET_REASON, projectOfVars, spentToday, spentTodayBy, spentTodayByProject, STOPPED_CANCEL_REASON, taskWithAnswers, USER_BUDGET_REASON, TASK_MAX_BYTES, type ProjectRef, type RunStatus, type RunSummary } from "./state.js";
 import { render } from "./template.js";
 import { isPersonActor, type OutputClassifier } from "./untrusted.js";
 import { carryRunSkills, markPlanCheckFailed } from "./plan-carry.js";
@@ -60,7 +60,7 @@ import { configureTelemetry } from "../telemetry/telemetry.js";
 import { emitRunMeasured } from "../monitor/measures.js";
 import { runEndEvents, runStartedEvent } from "../usage/events.js";
 import { emitUsage } from "../usage/hub.js";
-import { workspaceForJob } from "../workspaces/index.js";
+import { knownWorkspace, workspaceForJob } from "../workspaces/index.js";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 
 export type { RunSummary, StepRecord } from "./state.js";
@@ -107,6 +107,8 @@ export interface RunOptions extends CommonOptions {
   frozenVars?: boolean;
   /** The workspace the queue decided (#816). Absent: it is looked up from the repository in `vars`. */
   workspace?: string;
+  /** Tests only: called after the run folder is reserved, before the id is looked for in the other runs folders. */
+  afterClaim?: () => void;
   /** Pre-allocated run id (e.g. so a UI can subscribe before the run starts). */
   runId?: string;
   /** Who started the run; saved in run.json. */
@@ -189,7 +191,7 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const config = opts.config ?? loadConfig();
   configureTelemetry(config);
   const runId = opts.runId ?? newRunId();
-  const runDir = join(opts.runsDir, runId);
+  if (!RUN_ID_RE.test(runId)) throw new Error("invalid run id");
 
   // A run nobody asked for by name (CLI, evals) belongs to the first admin; a refinement run without an owner stays without one.
   const owner = opts.owner ?? (isRefinementRun(opts.source) ? undefined : defaultOwner());
@@ -199,6 +201,9 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const autonomy = runAutonomyAtStart({ githubRepo: vars.github_repo, flow: flow.name });
   // the flow's own `workspace` setting plays no part: "empty" only means "no checkout" (#816)
   const workspace = validWorkspaceId(opts.workspace) ? opts.workspace : workspaceForJob({ githubRepo: vars.github_repo, owner });
+  // a workspace that is not in the list is read-only: nothing is written for a new run
+  if (!knownWorkspace(workspace)) throw new Error(WORKSPACE_REMOVED);
+  const runDir = join(workspaceRunsDir(opts.runsDir, workspace), runId);
   const summary: RunSummary = {
     runId,
     autonomy: autonomy.autonomy,
@@ -224,7 +229,9 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
     ...(workspace !== DEFAULT_WORKSPACE ? { workspace } : {}),
   };
   claimRunStart(opts.runsDir, () => {
-    mkdirSync(join(runDir, "logs"), { recursive: true });
+    claimRunDir(opts.runsDir, summary, opts.afterClaim ? { afterClaim: opts.afterClaim } : undefined);
+    if (workspace !== DEFAULT_WORKSPACE) ensureWorkspaceTestSlots(opts.runsDir, workspace);
+    mkdirSync(join(runDir, "logs"));
     saveRun(summary);
   });
   try {
@@ -331,6 +338,7 @@ export async function resumeRun(opts: ResumeOptions): Promise<RunSummary> {
   configureTelemetry(config);
   const summary = loadRun(opts.runsDir, opts.runId);
   if (!summary) throw new Error(`run ${opts.runId} not found`);
+  if (!knownWorkspace(validWorkspaceId(summary.workspace) ? summary.workspace : DEFAULT_WORKSPACE)) throw new Error(WORKSPACE_REMOVED);
   if (!summary.flowDef || !summary.state) throw new Error("this run was created by an older version of Spaghetti Code Foundry and can't be resumed");
   if (opts.decision && summary.status !== "waiting") throw new Error(`run ${opts.runId} is not waiting for approval`);
   if (summary.status === "waiting" && !opts.decision && !opts.from) throw new Error("run is waiting for approval: approve or reject it");
@@ -435,6 +443,7 @@ async function drive(
       FACTORY_BRANCH: summary.branch ?? "",
       FACTORY_LEARNINGS_FILE: lf,
       FACTORY_TOOLS: TOOLS_DIR,
+      ...(validWorkspaceId(summary.workspace) && summary.workspace !== DEFAULT_WORKSPACE ? { FACTORY_LOCK_DIR: lockRoot(summary.workspace), SCF_LOCK_DIR: lockRoot(summary.workspace) } : {}),
       FACTORY_BASE_SHA: summary.baseSha ?? "",
       FACTORY_DECIDE_TECHNICAL: decideTechnicalEnv(summary.vars.github_repo),
       ...localRepoEnv(summary.vars.github_repo),
@@ -480,6 +489,7 @@ async function drive(
   };
   const engine: Engine = {
     summary,
+    runsDir: opts.runsDir,
     config,
     baseEnv,
     botEnv,
@@ -542,7 +552,7 @@ async function drive(
     return finish(summary, opts, config, { outcome: "stopped", reason: skillStop, next, lastOutput: "" });
   }
   sweepRunning(opts.runsDir);
-  const marker = markRunning(summary.runId);
+  const marker = markRunning(summary.runId, summary.workspace);
   if (!marker) log("! the running marker could not be written; area locks of this run follow its run.json");
   let result: LoopResult;
   if (!resume) engine.evidence?.started(summary);
@@ -551,7 +561,7 @@ async function drive(
   } catch (e) {
     result = { outcome: "failed", reason: `internal error: ${(e as Error).message}`, next: summary.state.next, lastOutput: "" };
   } finally {
-    unmarkRunning(summary.runId, marker);
+    unmarkRunning(summary.runId, marker, summary.workspace);
   }
   result = completeRun(policy, evidence, result, summary.totalCostUsd, log);
   return finish(summary, opts, config, result);
@@ -568,10 +578,13 @@ export function completeRun(policy: Pick<RunPolicy, "at"> | undefined, evidence:
   return { outcome: "failed", reason: `${reason} — ${RUN_COMPLETE_DENIED}`, next: null, lastOutput: result.lastOutput };
 }
 
-/** Cancel a run that waits for approval (no process runs for it). Returns the saved run; undefined when it is not waiting. */
+/** A run of a workspace that is no longer in the list is read-only: nothing is written for it (#824). */
+const readOnlyRun = (s: RunSummary): boolean => !knownWorkspace(validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE);
+
+/** Cancel a run that waits for approval (no process runs for it). Returns the saved run; undefined when it is not waiting, or its workspace is removed. */
 export function cancelWaitingRun(runsDir: string, runId: string, config: Config = loadConfig(), by?: Actor): RunSummary | undefined {
   const s = loadRun(runsDir, runId);
-  if (!s || s.status !== "waiting") return undefined;
+  if (!s || s.status !== "waiting" || readOnlyRun(s)) return undefined;
   s.status = "cancelled";
   s.reason = "cancelled by user";
   s.waiting = undefined;
@@ -590,7 +603,7 @@ export function cancelWaitingRun(runsDir: string, runId: string, config: Config 
 /** Cancel a run that stopped (no process runs for it). Returns the saved run; undefined when it is not stopped. */
 export function cancelStoppedRun(runsDir: string, runId: string, config: Config = loadConfig(), by?: Actor): RunSummary | undefined {
   const s = loadRun(runsDir, runId);
-  if (!s || s.status !== "stopped") return undefined;
+  if (!s || s.status !== "stopped" || readOnlyRun(s)) return undefined;
   s.status = "cancelled";
   s.reason = STOPPED_CANCEL_REASON;
   s.finishedAt = new Date().toISOString();

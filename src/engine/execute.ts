@@ -17,6 +17,7 @@ import { DEPLOY_KEY_NO_GH, KEY_NOT_READY, KEY_REFUSED_RUN, APP_REFUSED_RUN, APP_
 import { IDENTITY_VARS, isolationEnv, stepIsolation } from "./isolation.js";
 import { appTokenAccess, ghConfigDir, ghStandInCalled, prepareKeyStep, removeGhConfigDir, removeSignInDir, repoTokenEnv, stepRepoAccess, wantsRepoAccess } from "./repo-access.js";
 import { AUTONOMY_DENIED, AUTONOMY_POLICY, autonomyOfRun, autonomyRefusal, autonomyRefuses, type AutonomyAction } from "../governance/autonomy.js";
+import { lockRoot } from "./running.js";
 import { ownDir, sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths, wrapsStep } from "./os-sandbox.js";
 import { SLOT_WAITS_DIR, slotWaitLimitMs, waitedLine, type SlotWaitWatch } from "../steps/slot-waits.js";
 import { isTimedOut } from "../errors.js";
@@ -70,6 +71,8 @@ export interface LoopResult {
 
 export interface Engine {
   summary: RunSummary;
+  /** The runs folder the run was started from: the anchor of the workspace folders (#824). */
+  runsDir?: string;
   config: Config;
   baseEnv: Record<string, string>;
   /** The bot's name and token (asked once per run). Only for steps that keep the machine's login. Not fetched up front when a mandatory policy cannot be used. */
@@ -150,7 +153,7 @@ export function stepEnv(scope: Scope, engine: Engine, step?: Pick<Step, "id">, o
   // A story handed to the planner for timing out must reach a person with its questions: the Foundry does not decide them itself.
   if (scope.ctx.steps.implement?.too_big) env.FACTORY_DECIDE_TECHNICAL = "0";
   // A base branch known to be red: the baseline step stops at once (the sandbox hides the data folder, so the facts come by env).
-  if (step?.id === "baseline_tests" && engine.summary) Object.assign(env, redBaseEnv(dirname(engine.summary.runDir), scope.ctx.vars));
+  if (step?.id === "baseline_tests" && engine.summary) Object.assign(env, redBaseEnv(engine.runsDir ?? dirname(engine.summary.runDir), scope.ctx.vars));
   const scrubbed = boundEnv(env, { stepTypes: stepTypesOf(scope.flow), patterns: engine.config.help.sensitive_patterns });
   // The trusted public key comes only from the engine, never from the server's own environment: a missing value is blank.
   const keyEnv = { FACTORY_DELIVERY_PUBLIC_KEY: "", ...deliveryKeyEnv((engine.deliverySettings ?? (() => engine.config?.delivery))(), process.env.FACTORY_HOME ?? FACTORY_HOME) };
@@ -470,7 +473,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           // the learnings folder is made here: the step may write the file but not move or remove its folder
           if (env.FACTORY_LEARNINGS_FILE) mkdirSync(dirname(env.FACTORY_LEARNINGS_FILE), { recursive: true });
           sandboxProfileText = sandboxProfile(
-            stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: engine.config.sandbox.user_read }),
+            stepSandboxPaths({ runDir, learnings: env.FACTORY_LEARNINGS_FILE ?? "", ghDir, claudeBin: engine.claudeBin, codexBin: engine.codexBin, userRead: engine.config.sandbox.user_read, runsDir: engine.runsDir, lockDir: lockRoot(engine.summary.workspace) }),
           );
         }
         // the waits of test-slot are recorded for the time limit (a container does not see the folder)

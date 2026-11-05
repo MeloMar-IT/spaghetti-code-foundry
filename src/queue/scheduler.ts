@@ -5,11 +5,11 @@ import { flowFileId } from "../promotion/flow-id.js";
 import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { workspaceRefused } from "../engine/isolation.js";
-import { workspaceForJob } from "../workspaces/index.js";
+import { knownWorkspace, workspaceForJob } from "../workspaces/index.js";
 import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
-import { cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
+import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, projectOfVars, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, clearRunParked, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, projectOfVars, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -131,7 +131,7 @@ export interface SchedulerOptions {
 
 const ID_TRIES = 20;
 
-export type ArchiveResult = "done" | "same" | "busy" | "missing";
+export type ArchiveResult = "done" | "same" | "busy" | "missing" | "removed";
 
 export interface AccountInfo {
   id: string;
@@ -190,7 +190,7 @@ export class Scheduler {
   private freeId(): string {
     for (let i = 0; i < ID_TRIES; i++) {
       const id = (this.o.newId ?? newRunId)();
-      if (!this.isQueued(id) && !this.isActive(id) && !existsSync(join(this.o.runsDir, id))) return id;
+      if (!this.isQueued(id) && !this.isActive(id) && !runIdTaken(this.o.runsDir, id)) return id;
     }
     throw new Error("could not make a free run id; try again");
   }
@@ -223,6 +223,7 @@ export class Scheduler {
 
   /** Saves an answer with a stopped run and queues its resume, in one synchronous step. The text goes to run.json only. */
   answer(runId: string, text: string, by: string, meta: JobMeta = {}): void {
+    if (this.removedRun(runId)) throw new AnswerRefused("state", WORKSPACE_REMOVED);
     if (this.isActive(runId) || this.isQueued(runId)) throw new Error(`run ${runId} is already queued or running`);
     const { undo } = saveAnswer(this.o.runsDir, runId, text, by);
     try {
@@ -262,6 +263,15 @@ export class Scheduler {
     }
   }
 
+  /** True when the run belongs to a workspace that is not in the list any more: its saved run is read-only (#824). Never throws. */
+  private removedRun(runId: string): boolean {
+    try {
+      return !knownWorkspace(queuedWorkspace({ workspace: this.get(runId)?.workspace }));
+    } catch {
+      return false;
+    }
+  }
+
   /** The workspace of a job (#816), decided once at queue time from its frozen variables. Never throws. */
   private workspaceFor(job: Job, given: string | undefined, owner: string | undefined): string {
     try {
@@ -282,6 +292,8 @@ export class Scheduler {
     const repoLock = this.repoLockFor(job);
     const { priority, storyAt, workspace: givenWorkspace, ...rest } = meta;
     const workspace = this.workspaceFor(job, givenWorkspace, meta.owner);
+    // a workspace that is not in the list is read-only (#824)
+    if (!knownWorkspace(workspace)) throw new Error(WORKSPACE_REMOVED);
     // the id is looked up here, once, and never taken from the caller: a file edited while the job waits keeps its id
     const flowId = job.kind === "run" && !this.o.localTest ? flowFileId(job.flow, job.repo) : undefined;
     const q: QueuedJob = {
@@ -408,6 +420,7 @@ export class Scheduler {
 
   /** Sets or removes the archive mark of a finished run. Refuses a run that is queued, active, running or waiting. */
   setArchived(runId: string, archived: boolean, by: string): ArchiveResult {
+    if (this.removedRun(runId)) return "removed";
     if (this.isActive(runId) || this.isQueued(runId)) return "busy";
     let s: RunSummary | undefined;
     try {
@@ -418,7 +431,7 @@ export class Scheduler {
     if (!s) return "missing";
     if (!["succeeded", "failed", "cancelled", "stopped"].includes(s.status)) return "busy";
     if ((typeof s.archivedAt === "string") === archived) return "same";
-    if (!setRunArchived(join(this.o.runsDir, runId), archived ? new Date().toISOString() : null, by)) {
+    if (!setRunArchived(runDirOf(this.o.runsDir, runId) ?? join(this.o.runsDir, runId), archived ? new Date().toISOString() : null, by)) {
       // Not written: look again. The file may be gone, or someone else already made the wanted state.
       let now: RunSummary | undefined;
       try {
@@ -462,8 +475,8 @@ export class Scheduler {
 
   /** Sets the parked mark of a stopped or cancelled run. Refuses a run that is queued or active. */
   setParked(runId: string): boolean {
-    if (this.isActive(runId) || this.isQueued(runId)) return false;
-    if (!setRunParked(join(this.o.runsDir, runId), new Date().toISOString())) return false;
+    if (this.isActive(runId) || this.isQueued(runId) || this.removedRun(runId)) return false;
+    if (!setRunParked(runDirOf(this.o.runsDir, runId) ?? join(this.o.runsDir, runId), new Date().toISOString())) return false;
     const summary = this.get(runId);
     if (summary) for (const fn of [...(this.recent.get(runId)?.listeners ?? []), ...(this.pendingListeners.get(runId) ?? [])]) fn({ type: "update", summary });
     return true;
@@ -471,8 +484,8 @@ export class Scheduler {
 
   /** Takes the parked mark off again (a park that could not be finished on GitHub). Refuses a run that is queued or active. */
   clearParked(runId: string): boolean {
-    if (this.isActive(runId) || this.isQueued(runId)) return false;
-    return clearRunParked(join(this.o.runsDir, runId));
+    if (this.isActive(runId) || this.isQueued(runId) || this.removedRun(runId)) return false;
+    return clearRunParked(runDirOf(this.o.runsDir, runId) ?? join(this.o.runsDir, runId));
   }
 
   /**
@@ -603,9 +616,9 @@ export class Scheduler {
   }
 
   list(limit = 100): RunSummary[] {
-    return listRunIds(this.o.runsDir)
+    return listAllRunIds(this.o.runsDir)
       .slice(0, limit)
-      .map((id) => {
+      .map(({ id }) => {
         try {
           return this.get(id);
         } catch {

@@ -99,10 +99,19 @@ steps:
 
   it("carries the run's workspace: in run.json and every event; default is not written", async () => {
     const flow = parseFlow(`name: ws\nworkspace: inplace\nsteps:\n  - {id: a, type: shell, run: "true"}\n`);
-    const team = await runFlow(flow, { task: "t", repo, runsDir, claudeBin, config, workspace: "team-a" });
+    const configFile = join(process.env.FACTORY_HOME!, "config.yaml");
+    writeFileSync(configFile, "workspaces:\n  - {id: team-a, name: Team A}\n");
+    let team: Awaited<ReturnType<typeof runFlow>>;
+    try {
+      team = await runFlow(flow, { task: "t", repo, runsDir, claudeBin, config, workspace: "team-a" });
+    } finally {
+      rmSync(configFile, { force: true });
+    }
     const plain = await runFlow(flow, { task: "t", repo, runsDir, claudeBin, config });
     await usageIdle();
-    expect(JSON.parse(readFileSync(join(runsDir, team.runId, "run.json"), "utf8")).workspace).toBe("team-a");
+    // a run of a workspace other than default lives in the workspace's own runs folder (#824)
+    expect(JSON.parse(readFileSync(join(tmp, "workspaces", "team-a", "runs", team.runId, "run.json"), "utf8")).workspace).toBe("team-a");
+    expect(existsSync(join(runsDir, team.runId))).toBe(false);
     expect("workspace" in JSON.parse(readFileSync(join(runsDir, plain.runId, "run.json"), "utf8"))).toBe(false);
     const of = (id: string) => got.filter((e) => e.runId === id);
     expect(of(team.runId).map((e) => e.workspace)).toEqual(of(team.runId).map(() => "team-a"));

@@ -17,6 +17,7 @@ import { dataHome } from "../auth/store.js";
 import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skills/payload.js";
 import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant, type SessionTools, type ToolCheck } from "../skills/tool-policy.js";
 import { ghConfigDir, removeGhConfigDir } from "../engine/repo-access.js";
+import { lockRoot } from "../engine/running.js";
 import { sandboxedRun, sandboxHomeEnv, sandboxProfile, stepSandboxPaths } from "../engine/os-sandbox.js";
 import { shortEnv, shortEnvRun } from "../engine/short-env.js";
 import { applyRepoRequests, repoRequestsEnv } from "../engine/repo-requests.js";
@@ -146,6 +147,8 @@ async function runOn(t: Target, step: ClaudeStep, scope: Scope, engine: Engine, 
           workspaceReadOnly: readOnly,
           requestsDir: env.FACTORY_REPO_REQUESTS ? dirname(env.FACTORY_REPO_REQUESTS) : undefined,
           pushLogDir: env.FACTORY_PUSH_LOG ? dirname(env.FACTORY_PUSH_LOG) : undefined,
+          runsDir: engine.runsDir,
+          lockDir: lockRoot(engine.summary.workspace),
         }),
       );
     }
