@@ -1,0 +1,5 @@
+title: Web app
+description: A simple web app of one page with a form that stores what you enter.
+test: node --test
+needs:
+  - node

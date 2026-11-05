@@ -1,0 +1,7 @@
+builds:
+  - name: web-app
+    on: [macos, linux]
+    requires: [tar]
+    run: mkdir -p out && tar -czf out/web-app.tar.gz server.mjs README.md
+    artifacts:
+      - out/web-app.tar.gz
