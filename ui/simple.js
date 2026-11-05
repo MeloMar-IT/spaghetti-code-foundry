@@ -3,6 +3,7 @@ import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { projectsModel } from "./simple-model.js";
+import { githubSignInKind, moveController } from "./simple-move.js";
 import { FINAL, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
 
 // The Simple view: My projects (#/home) and the project page (#/repos/<id>). All text comes from the word list.
@@ -275,7 +276,7 @@ async function live(main, { a, draw }) {
       return { repos, runs: await withActive(a, runs, queue), pending: queue?.pending };
     },
     draw: ({ repos, runs, pending }) => {
-      const nodes = draw(projectsModel(repos, runs, pending), () => poll.refresh());
+      const nodes = draw(projectsModel(repos, runs, pending), () => poll.refresh(), repos);
       keepScroll(box, () => mount(box, ...nodes, states.alert, states.note));
     },
     every: REFRESH_MS,
@@ -322,19 +323,23 @@ export function renderSimpleHome(main, { a = api } = {}) {
 }
 
 /** The project page for repository `id`. */
-export async function renderSimpleProject(main, { id, a = api, onName, actions = [], host = globalThis.location?.hostname ?? "", tryEvery = 2000 } = {}) {
+export async function renderSimpleProject(main, { id, a = api, onName, actions = [], admin = false, host = globalThis.location?.hostname ?? "", tryEvery = 2000 } = {}) {
   let doneOpen = false;
   let previewRead = false;
   const local = isLocalHost(host);
   const ctl = tryController({ id, a, local, every: tryEvery });
-  const order = ["change", "tryIt", "final"];
+  const mv = moveController({ id, a });
+  const order = ["change", "tryIt", "final", "github"];
   const all = [...actions.filter((x) => x.id !== "tryIt"), { id: "tryIt", node: ctl.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id));
   const off = await live(main, {
     a,
-    draw: (projects, refresh) => {
+    draw: (projects, refresh, repos) => {
       const p = projects.find((x) => String(x.id) === String(id));
+      // The move removes the local record: while it runs and after it worked, its box stays even though the project is gone.
+      if (!p && mv.keepsPage()) return [h("a", { class: "simple-back", href: "#/home" }, WORDS.back), mv.node];
       if (!p) return [h("a", { class: "simple-back", href: "#/home" }, WORDS.back), h("p", {}, WORDS.notFound)];
       onName?.(p.name);
+      mv.setContext({ kind: githubSignInKind(repos), name: p.name });
       ctl.setChoices(p.todo.filter((c) => c.tryRun).map((c) => ({ runId: c.tryRun, title: c.title })));
       // the first successful render reads the preview once, even when the first list read failed
       if (!previewRead && local) {
@@ -351,8 +356,8 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
         refresh?.();
         return true;
       };
-      return projectView(p, { actions: all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide });
+      return projectView(p, { actions: admin && p.local ? [...all, { id: "github", node: mv.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id)) : all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide });
     },
   });
-  return () => { off(); ctl.stop(); };
+  return () => { off(); ctl.stop(); mv.stop(); };
 }

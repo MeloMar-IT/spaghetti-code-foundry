@@ -112,6 +112,7 @@ export function projectModel(repo, all, runs, pending) {
   return {
     id: repo.id,
     name: projectName(repo, all),
+    local: repo?.method === "local",
     todo: groups.check,
     groups,
     state: stateLine({ needs: groups.check.length, needsAnswer: answer, building: groups.building.length, planned: groups.planned.length, done: groups.done.length }),

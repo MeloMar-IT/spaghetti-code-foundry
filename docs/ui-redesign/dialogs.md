@@ -65,6 +65,7 @@ The call-site count is only where to start. One site can serve several dialogs; 
 | `ui/refinement.js` | Rename session | Rename on the session page | title | Save | `modal` |
 | `ui/repo-connect.js` | Add repository | Add repository on `#/repos` | step 1 address; step 2 method and 3 details (method list from `methodsFor`, fields change with the method); then the read-back of the automatic connection test | Next / Back / Add repository / Done (also Change details, Test again) | `modal` (`repoDialog`) |
 | `ui/repo-connect.js` | Change authentication | Next step on a row, or Connection on `#/repos/:id` | method; fields change with the method; a confirm step with a checkbox before every change | Continue / Back / Replace the sign-in / Done | `modal` (`repoDialog` with `repo`) |
+| `ui/repo-move.js` | Move to GitHub | Move to GitHub on an own local row of `#/repos` | target (one of my GitHub repositories, or a new name), Private, Also move closed stories | Check / Move / Cancel (Close after a move) | `modal` (`moveDialog`) |
 | `ui/repos.js` | Definition of Ready | Overview on `#/repos/:id` | none (read-only list) | none; the ✕ closes it | `modal` |
 | `ui/repos.js` | Remove repository | Dangerous actions on `#/repos/:id` | none | Remove | `confirmDialog` (`ui/dom.js`) |
 | `ui/repos.js` | Generate a new key | Dangerous actions on `#/repos/:id` (deploy key only) | none | Generate a new key | `confirmDialog` (`ui/dom.js`) |

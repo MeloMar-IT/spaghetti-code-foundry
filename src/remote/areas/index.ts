@@ -36,7 +36,7 @@ export const API_ONLY: Record<string, string> = {
   "GET restart": "the state the Settings page shows next to its restart box; the restart itself is asked for in the interface",
   "POST restart": "restarts the server when no story is running; asked for in the interface after a settings change",
   "DELETE restart": "cancels that wait; done in the interface",
-  "POST repos/:id/move-to-github": "moves a local project to GitHub (#806, part 2 of 3 of #601); the move page that uses it comes with a later part, so there is no command line use yet",
+  "POST repos/:id/move-to-github": "moves a local project to GitHub (#806, #807); the Move to GitHub dialog under My repositories and the Simple project page use it, so there is no command line use yet",
   "GET repos/:id/epics":"the data of the Epics view; no command line use yet (a later part of #408 adds the view)",
   "GET repos/:id/epics/:issue": "the data of the epic page; no command line use yet (a later part of #408 adds the view)",
   "POST repos/:id/preview": "starts a preview of the project (#789, part of #608); the Try it page that uses it comes in a later part",

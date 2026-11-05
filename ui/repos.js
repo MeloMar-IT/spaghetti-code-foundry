@@ -4,6 +4,7 @@ import { defaultGo, filterBar, filterGone, matchesRepo, splitHash, without, with
 import { confirmDialog, h, modal, mount, table, timeAgo, toast } from "./dom.js";
 import { integrationBlock, integrationOf } from "./integration.js";
 import { repoDialog } from "./repo-connect.js";
+import { MOVE_TITLE, moveDialog } from "./repo-move.js";
 import { onWish, takeWish } from "./palette-data.js";
 import { FILTER_FROM, activeRuns, attentionCount, attentionSummary, matchesText, readCompact, repoAttention, repoName, sortByAttention, writeCompact } from "./repo-status.js";
 import { safeStore } from "./shell.js";
@@ -493,6 +494,16 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
     const testing = att.action === "test" || att.action === "install";
     // the one next action sits in the Next step cell and is left out of the Actions cell; other accounts' rows only offer the test
     const promoted = !scope.own ? (testing ? testBtn : null) : att.action === "auth" ? authBtn : testing ? (link ?? testBtn) : null;
+    // an own local project can move to GitHub; the list loads again after a real move call, worked or not
+    const moveBtn = scope.own && !readOnly && repo.method === "local"
+      ? h("button", { class: "small", "data-focus": `move-${repo.id}`, onClick: async () => {
+        const r = await moveDialog(repo, { repos: state.repos, errorText: plainError });
+        if (r?.called) {
+          void reposChanged();
+          reload();
+        }
+      } }, MOVE_TITLE)
+      : null;
     const runs = h("td", { "data-runs": repo.id });
     fillRuns(runs, state.runs, repo);
     return h("tr", { "data-repo": repo.id },
@@ -505,7 +516,7 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
         h("span", { class: att.level === "ok" ? "pill ok" : att.level === "warn" ? "pill locked" : "pill fail" }, att.text),
         att.detail ? h("div", { class: "muted", title: att.detail }, att.detail) : null,
         !readOnly && promoted ? h("div", {}, promoted) : null),
-      h("td", {}, h("a", { class: "btn small", href: repoHref(repo) }, "Open")));
+      h("td", {}, h("a", { class: "btn small", href: repoHref(repo) }, "Open"), moveBtn));
   };
   const setFilters = (next) => {
     state.filters = next;
