@@ -77,6 +77,8 @@ export function cardOf(entry) {
     card.todo = words.todo;
     const l = recordLink(n, "user", idOf(entry));
     if (l) card.link = { href: l.href, external: !!l.external };
+    // a real run that waits for a check can be opened with Try it ("the version being checked")
+    if (run && !n.final && idOf(entry)) card.tryRun = idOf(entry);
     // "Make this version final": the card decides by itself (the run page is not a Simple page); the stories in plain words.
     if (n.final && idOf(entry)) {
       card.todo = FINAL.yes;

@@ -57,6 +57,7 @@ beforeEach(() => {
       gets.push(url);
       if (url === "/api/repos/methods") return reply({ methods: ["github-token", "ssh-deploy-key", "none"], githubApp: { available: false } });
       if (url.startsWith("/api/runs")) return reply([]);
+      if (url.endsWith("/preview")) return reply({ state: "stopped" });
       if (url === "/api/watchers") return watchers === "fail" ? reply({ error: "x" }, 500) : reply(watchers);
       if (url === "/api/flows") return reply([{ name: "issue-gitflow" }]);
       if (url === "/api/repos") return reply(all.filter((r) => r.owner === ME).map(({ settings: _s, ready: _r, account: _a, ...pub }) => pub));
@@ -132,7 +133,7 @@ const show = async (r: any, opts: object = {}) => {
 describe("the admin view", () => {
   it("draws the sections in order, with Transfer inside the danger section", async () => {
     await show(rec());
-    expect(ids()).toEqual(["overview", "connection", "outcomes", "branches", "run-settings", "release-recipe", "watchers", "danger"]);
+    expect(ids()).toEqual(["overview", "connection", "outcomes", "preview", "branches", "run-settings", "release-recipe", "watchers", "danger"]);
     expect(button(section("danger"), "Transfer")).toBeDefined();
     expect(button(section("danger"), "Remove")).toBeDefined();
     expect(section("branches").textContent).toContain("develop");
@@ -158,7 +159,7 @@ describe("the admin view", () => {
     const r = rec();
     all = [r];
     await view.renderRepo(main(), { id: r.id, nav: () => {} });
-    expect(ids()).toEqual(["overview", "connection", "outcomes", "danger"]);
+    expect(ids()).toEqual(["overview", "connection", "outcomes", "preview", "danger"]);
     expect(gets.filter((u) => u.startsWith("/api/admin/") || u.startsWith("/api/watchers") || u.startsWith("/api/flows"))).toEqual([]);
   });
 
@@ -199,6 +200,13 @@ describe("a foreign repository", () => {
     expect(button(main(), "Test connection")).toBeDefined();
     expect(walk(main()).find((e) => e.tag === "a" && e.textContent === "Repositories")!.attrs.href).toBe("#/all-repos");
     expect(button(section("danger"), "Transfer")).toBeDefined();
+  });
+
+  it("shows the Preview section for another account's repository", async () => {
+    await show(rec({ owner: "other", account: { name: "Bob", email: "bob@example.com", role: "user", status: "active" } }));
+    await settle();
+    expect(section("preview").textContent).toContain("No preview is running.");
+    expect(gets.some((u) => u.endsWith("/preview"))).toBe(true);
   });
 
   it("names the owner's sign-in state instead of a button when the owner must sign in", async () => {

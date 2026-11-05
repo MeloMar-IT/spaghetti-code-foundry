@@ -133,11 +133,52 @@ function outcomes(ctx) {
   return ctx.part(`outcomes:${name}`, () => outcomesSection({ load: api.outcomes, note: outcomesNote, repo: name, admin: ctx.viewerAdmin, embedded: true })).el;
 }
 
+/** The only address linked in the Preview section: the preview of this computer. */
+const PREVIEW_URL = /^http:\/\/127\.0\.0\.1:\d{1,5}\/$/;
+
+/** The Preview section: the state, the version, the address and the output (redacted by the server), all as text. */
+function previewPart(id) {
+  const el = h("div", {});
+  let loads = 0;
+  const draw = (v) => {
+    if (!v?.version) {
+      mount(el, h("p", { class: "muted" }, "No preview is running."), h("button", { type: "button", onClick: reload }, "Read again"));
+      return;
+    }
+    const ok = v.state === "ready" ? "pill ok" : v.state === "failed" ? "pill fail" : "pill";
+    const url = typeof v.url === "string" && PREVIEW_URL.test(v.url)
+      ? h("a", { href: v.url, target: "_blank", rel: "noopener noreferrer" }, v.url)
+      : "—";
+    const items = [
+      { label: "State", value: h("span", { class: ok }, String(v.state ?? "unknown")) },
+      { label: "Version", value: v.version === "checking" && v.runId ? `checking (run ${v.runId})` : String(v.version) },
+      v.reason ? { label: "Reason", value: v.detail ? `${v.reason}: ${v.detail}` : String(v.reason) } : null,
+      { label: "Address", value: url },
+      v.startedAt ? { label: "Started", value: timeAgo(v.startedAt) } : null,
+    ].filter(Boolean);
+    const output = typeof v.output === "string" ? v.output : "";
+    mount(el,
+      statusSummary({ label: "Preview", items }),
+      output ? h("pre", { class: "mono preview-output" }, output) : h("p", { class: "muted" }, "No output yet."),
+      h("button", { type: "button", onClick: reload }, "Read again"));
+  };
+  function reload() {
+    const my = ++loads;
+    mount(el, loadingState("Loading the preview…", { rows: 2 }));
+    Promise.resolve().then(() => api.preview(id)).then(
+      (v) => { if (my === loads) draw(v); },
+      (e) => { if (my === loads) mount(el, outcomesNote("the preview", e, reload)); });
+  }
+  reload();
+  return { el };
+}
+
 /** The sections of the view, in order: { id, title, tone?, show(ctx), draw(ctx) }. "danger" stays last; new sections go before it. */
 export const SECTIONS = [
   { id: "overview", title: "Overview", show: () => true, draw: overview },
   { id: "connection", title: "Connection", show: () => true, draw: connection },
   { id: "outcomes", title: "Outcomes", show: () => true, draw: outcomes },
+  { id: "preview", title: "Preview", show: () => true, draw: (ctx) => ctx.part(`preview:${ctx.repo.id}`, () => previewPart(ctx.repo.id)).el },
   { id: "danger", title: "Dangerous actions", tone: "fail", show: () => true, draw: danger },
 ];
 

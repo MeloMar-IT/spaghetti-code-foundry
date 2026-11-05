@@ -252,6 +252,9 @@ export const api = {
       .map((k) => `${k}=${enc(String(p[k]))}`).join("&");
     return req("GET", text ? `/api/outcomes?${text}` : "/api/outcomes");
   },
+  preview: (id) => req("GET", `/api/repos/${enc(id)}/preview`),
+  startPreview: (id, version, runId) => req("POST", `/api/repos/${enc(id)}/preview`, runId ? { version, runId } : { version }),
+  stopPreview: (id) => req("DELETE", `/api/repos/${enc(id)}/preview`),
   evals: () => req("GET", "/api/evals"),
   clean: (opts) => req("POST", "/api/clean", opts),
   // Ask SCF. `stay`: a typed question must survive a session that ended.
