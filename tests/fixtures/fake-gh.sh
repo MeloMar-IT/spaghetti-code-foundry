@@ -7,6 +7,9 @@
 # answers from it ($FAKE_GH_REVIEWERS_FAIL=1 makes that view fail).
 # $FAKE_GH_AUTH_LOG=<file>: every call appends one line, tab separated: GH_TOKEN, GITHUB_TOKEN, GH_ENTERPRISE_TOKEN (each "-" when unset),
 # $FAKE_GH_OVERRULE_SEARCH: the answer of "issue list --search 'overrule in:comments …'" (the /overrule sweep); default [].
+# "repo create <owner/name|name> --private|--public" logs "--- repo create <owner/name> <flag>" and keeps the name in $FAKE_GH_LOG.repos (a bare name gets
+# $FAKE_GH_LOGIN, default foundry-owner); a name that is kept already, or $FAKE_GH_REPO_EXISTS=1, fails with "Name already exists".
+# "repo view <owner/name> --json name" succeeds for a kept name or with $FAKE_GH_REPO_EXISTS=1, else "Could not resolve to a Repository"; $FAKE_GH_VIEW_ERROR=1 fails it with HTTP 401.
 # $FAKE_GH_LIST_LIMIT=<n>: "issue list" (not --search, not --state closed) returns at most the first n issues.
 # "host" when GH_CONFIG_DIR is unset (else the number of entries in that folder), and the arguments.
 if [ -n "$FAKE_GH_AUTH_LOG" ]; then
@@ -310,7 +313,12 @@ esac
 case "$all" in "api rate_limit") if [ -n "$FAKE_GH_RATE_LIMIT" ]; then printf '%s\n' "$FAKE_GH_RATE_LIMIT"; else echo '{"resources":{}}'; fi; exit 0 ;; esac
 case "$1 $2" in
   "repo view")
-    case "$*" in *--jq*|*nameWithOwner*) echo "repo: owner/repo"; echo "default branch: main" ;;
+    case "$*" in
+      *"--json name") # "repo view <owner/name> --json name": does the repository exist? (see the header)
+        if [ "$FAKE_GH_VIEW_ERROR" = 1 ]; then echo "HTTP 401: Bad credentials (https://api.github.com/graphql)" >&2; exit 1; fi
+        if [ "$FAKE_GH_REPO_EXISTS" = 1 ] || grep -qxF "$3" "$FAKE_GH_LOG.repos" 2>/dev/null; then echo "$3"
+        else echo "GraphQL: Could not resolve to a Repository with the name '$3'. (repository)" >&2; exit 1; fi ;;
+      *--jq*|*nameWithOwner*) echo "repo: owner/repo"; echo "default branch: main" ;;
       *defaultBranchRef*) echo '{"defaultBranchRef":{"name":"main"}}' ;;
       *) echo "repo: owner/repo" ;;
     esac ;;
@@ -383,6 +391,12 @@ console.log(JSON.stringify({number:i.number,title:i.title,state:(fs.existsSync(c
                  case "$*" in *"--body-file -"*) title=""; prev=""; for a in "$@"; do [ "$prev" = "--title" ] && title="$a"; prev="$a"; done
                    node -e 'const f=process.argv[1],fs=require("fs");const m=fs.existsSync(f)?JSON.parse(fs.readFileSync(f,"utf8")):{};const u=process.argv[2];const old=m[u]||{title:""};m[u]={title:process.argv[3]||old.title,body:fs.readFileSync(process.argv[4],"utf8")};fs.writeFileSync(f,JSON.stringify(m))' "$FAKE_GH_LOG.bodies.json" "$3" "$title" "$FAKE_GH_LOG.lastbody" ;; esac ;;
   "pr ready")    if [ -n "$FAKE_GH_FAIL_PR_READY" ]; then echo "boom" >&2; exit 1; fi ;;
+  "repo create") rc_name="$3"; case "$rc_name" in */*) ;; *) rc_name="${FAKE_GH_LOGIN:-foundry-owner}/$rc_name" ;; esac
+                 echo "--- repo create $rc_name $4" >> "$FAKE_GH_LOG"
+                 if [ "$FAKE_GH_REPO_EXISTS" = 1 ] || grep -qxF "$rc_name" "$FAKE_GH_LOG.repos" 2>/dev/null; then
+                   echo "GraphQL: Name already exists on this account (createRepository)" >&2; exit 1
+                 fi
+                 echo "$rc_name" >> "$FAKE_GH_LOG.repos"; echo "https://github.com/$rc_name" ;;
   "repo clone")  # the folder is $4; the flags after "--" go to git clone, as in the real gh (the remote is a local folder, so any GIT_ALLOW_PROTOCOL is dropped)
                  dest="$4"; shift 4; [ "$1" = "--" ] && shift
                  ( unset GIT_ALLOW_PROTOCOL; git clone "$@" "$FAKE_GH_REMOTE" "$dest" ) ;;

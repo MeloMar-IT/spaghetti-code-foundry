@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withAuthLock } from "../src/auth/store.js";
 import { WatcherSchema } from "../src/config.js";
 import {
-  OWNER_BLOCKED, addRepoWatcher, configIdProblem, effectiveRepoWatchers, fileWatcherProblem, listRepoWatchers, localWatcherProblem, removeOrphanWatchers, removeRepoWatcher, removeWatchersOfRepos, removeWatchersOfReposLocked, repoWatchersPath, updateRepoWatcher, watcherRepoProblem,
+  OWNER_BLOCKED, addRepoWatcher, configIdProblem, effectiveRepoWatchers, fileWatcherProblem, listRepoWatchers, localWatcherProblem, moveRepoWatchers, removeOrphanWatchers, removeRepoWatcher, removeWatchersOfRepos, removeWatchersOfReposLocked, repoWatchersMtime, repoWatchersPath, updateRepoWatcher, watcherRepoProblem,
 } from "../src/repos/watchers.js";
 
 let home: string;
@@ -357,5 +357,33 @@ describe("fileWatcherProblem", () => {
     expect(fileWatcherProblem([w("a")], [w("a")])).toBeUndefined();
     expect(fileWatcherProblem([mon], [])).toBeUndefined();
     expect(fileWatcherProblem([], [w("a")])).toBeUndefined();
+  });
+});
+
+describe("moveRepoWatchers", () => {
+  it("moves only the watchers of one repository, keeps ids and options, sets the label on issues watchers", () => {
+    addRepoWatcher(repo, { id: "a", label: "mine", every: "10m" }, { repoName: "Acme/App" });
+    addRepoWatcher(repo, { id: "b", label: "other" });
+    addRepoWatcher(other, { id: "c", label: "keep" });
+    const to = randomUUID();
+    const moved = moveRepoWatchers(repo, to, "build-me");
+    expect(moved.map((w) => w.id)).toEqual(["a", "b"]);
+    const now = listRepoWatchers();
+    expect(now.map((w) => [w.id, w.repoId])).toEqual([["a", to], ["b", to], ["c", other]]);
+    expect(now[0]).toMatchObject({ label: "build-me", every: "10m" });
+    expect(now[0]).not.toHaveProperty("repoName");
+    expect(now[1]).toMatchObject({ label: "build-me" });
+    expect(now[2]).toMatchObject({ label: "keep" });
+  });
+
+  it("keeps the label when none is given, and a second call returns nothing and writes nothing", () => {
+    addRepoWatcher(repo, { id: "a", label: "mine" });
+    const to = randomUUID();
+    expect(moveRepoWatchers(repo, to)[0]).toMatchObject({ label: "mine" });
+    const bytes = readFileSync(repoWatchersPath(), "utf8");
+    const mtime = repoWatchersMtime();
+    expect(moveRepoWatchers(repo, to, "x")).toEqual([]);
+    expect(readFileSync(repoWatchersPath(), "utf8")).toBe(bytes);
+    expect(repoWatchersMtime()).toBe(mtime);
   });
 });

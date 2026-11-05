@@ -134,6 +134,7 @@ export const RULES: Rule[] = [
   r("GET", "repos/methods", "yes", "the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App"),
   r("POST", "repos", "yes", "add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`)"),
   r("PUT", "repos/:id/auth", "yes", "change the method, user name, token or address of your repository, or make a new deploy key"),
+  r("POST", "repos/:id/move-to-github", "no", "move your local project to GitHub: create a private repository with your GitHub token sign-in (or use one of your GitHub repositories), push all branches and tags (never forced), move the stories, then move the watchers and settings and remove the local record; `dryRun` changes nothing; safe to repeat"),
   r("POST", "repos/:id/test", "yes", "test the connection of your repository (an admin: any repository); the result is saved as its connection status"),
   r("GET", "repos/:id/ready", "yes", "the Definition of Ready of your repository (an admin: any repository)"),
   r("GET", "repos/:id/epics", "yes", "the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository)"),
