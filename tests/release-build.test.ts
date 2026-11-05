@@ -89,6 +89,17 @@ describe("buildEnv", () => {
     });
   });
 
+  it("passes the workspace and its test-slot limit only when both are valid (#819)", () => {
+    const ok = buildEnv({ ...source, FACTORY_WORKSPACE: "team-a", FACTORY_WORKSPACE_TEST_SLOTS: "2" }, r, deniedNames());
+    expect(ok.FACTORY_WORKSPACE).toBe("team-a");
+    expect(ok.FACTORY_WORKSPACE_TEST_SLOTS).toBe("2");
+    for (const bad of [{ FACTORY_WORKSPACE: "../x", FACTORY_WORKSPACE_TEST_SLOTS: "2" }, { FACTORY_WORKSPACE: "team-a", FACTORY_WORKSPACE_TEST_SLOTS: "x" }, { FACTORY_WORKSPACE: "team-a" }]) {
+      const e = buildEnv({ ...source, ...bad }, r, deniedNames());
+      expect(e.FACTORY_WORKSPACE).toBeUndefined();
+      expect(e.FACTORY_WORKSPACE_TEST_SLOTS).toBeUndefined();
+    }
+  });
+
   it("passes a numeric SCF_TEST_WORKERS and drops a bad one", () => {
     expect(buildEnv({ ...source, SCF_TEST_WORKERS: "4" }, r, deniedNames()).SCF_TEST_WORKERS).toBe("4");
     expect(buildEnv({ ...source, SCF_TEST_WORKERS: "x" }, r, deniedNames()).SCF_TEST_WORKERS).toBeUndefined();

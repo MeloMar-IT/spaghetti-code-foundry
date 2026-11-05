@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import type { RunPlanCheck, RunSkillCarry } from "./plan-carry.js";
 import type { Flow, Step } from "../flow/schema.js";
 import type { RunAutonomy } from "../governance/autonomy.js";
@@ -522,6 +523,41 @@ export function spentTodayByProject(runsDir: string, project: ProjectRef, now = 
   }
   return total;
 }
+const monthCache = new Map<string, { mtimeMs: number; size: number; startedAt: string; workspace: string; cost: number }>();
+
+/**
+ * Total spend of the runs of one workspace that started in the current UTC calendar month (#819). A run without a
+ * `workspace` counts for "default". Costs that are not finite and files that cannot be read are skipped. Never throws.
+ * Every run is looked at: run ids are made when a job is queued, not when it starts, so the list order says nothing
+ * about start times. A small cache keyed by the file's mtime and size keeps a look to one stat per run.
+ */
+export function spentThisMonthByWorkspace(runsDir: string, workspace: string, now = new Date()): number {
+  try {
+    const from = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const to = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+    let total = 0;
+    for (const id of listRunIds(runsDir)) {
+      try {
+        const file = runFile(join(runsDir, id));
+        const st = statSync(file);
+        let e = monthCache.get(file);
+        if (!e || e.mtimeMs !== st.mtimeMs || e.size !== st.size) {
+          const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
+          e = { mtimeMs: st.mtimeMs, size: st.size, startedAt: String(s.startedAt), workspace: validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE, cost: s.totalCostUsd };
+          monthCache.set(file, e);
+        }
+        const at = Date.parse(e.startedAt);
+        if (e.workspace === workspace && at >= from && at < to && Number.isFinite(e.cost)) total += e.cost;
+      } catch {
+        continue;
+      }
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
 /** A stop that the Foundry answers with a retry after a step ran out of time (see engine/auto-retry.ts). */
 export const isTimeLimitStop = (reason?: string): boolean => /^ran out of time in /.test(reason ?? "");
 
