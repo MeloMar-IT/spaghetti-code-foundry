@@ -238,9 +238,26 @@ describe("template", () => {
   });
 });
 
+describe("config: simple starters settings", () => {
+  const simple = (s: Record<string, unknown>) => ConfigSchema.safeParse({ simple: s });
+  it("hidden_starters is a list of ids and defaults to empty", () => {
+    expect(simple({ hidden_starters: ["website", "web-app"] }).success).toBe(true);
+    expect(simple({ hidden_starters: ["Bad_Id"] }).success).toBe(false);
+    expect(simple({ hidden_starters: ["a".repeat(41)] }).success).toBe(false);
+  });
+  it("projects_folder is an absolute, normalised path outside the data folder", () => {
+    expect(simple({ projects_folder: "/tmp/x" }).success).toBe(true);
+    expect(simple({ projects_folder: "rel/x" }).success).toBe(false);
+    expect(simple({ projects_folder: "/a/../b" }).success).toBe(false);
+    expect(simple({ projects_folder: "/a\nb" }).success).toBe(false);
+    expect(simple({ projects_folder: join(process.env.FACTORY_HOME!, "p") }).success).toBe(false);
+    expect(simple({ projects_folder: process.env.FACTORY_HOME! }).success).toBe(false);
+  });
+});
+
 describe("config: simple.help_contact", () => {
   it("defaults to an empty group and trims the text", () => {
-    expect(ConfigSchema.parse({}).simple).toEqual({});
+    expect(ConfigSchema.parse({}).simple).toEqual({ hidden_starters: [] });
     expect(ConfigSchema.parse({ simple: { help_contact: "  Ann, ann@example.com " } }).simple.help_contact).toBe("Ann, ann@example.com");
   });
   it("refuses 301 characters, control characters and unknown keys", () => {

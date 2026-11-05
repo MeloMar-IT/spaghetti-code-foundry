@@ -16,6 +16,8 @@ export const API_ONLY: Record<string, string> = {
   "POST onboarding/test-call": "one tiny call that checks Claude Code or Codex works; done from the Setup check page",
   "GET onboarding/agents": "the onboarding answers about Claude Code and Codex (#769); there is no command for them yet",
   "PUT onboarding/agents": "saves the onboarding answers about Claude Code and Codex and writes the settings they give (#769); there is no command for them yet",
+  "GET starters": "the starters a new project can be made from; no page uses it yet (the onboarding pages will call it), the command line has no command for it yet",
+  "POST starters/:id/project": "makes a project folder on the server's computer from a starter and connects it; no page uses it yet (the onboarding pages will call it), the command line has no command for it yet",
   "GET plugins/ui": "the pages and menu links plugins add to the web interface (#787); the command line has no pages",
   "GET me/view": "the view of the web interface (#595): it changes only what the interface shows; the command line has no views",
   "PUT me/view": "chooses that view; done with the switch in the top bar",

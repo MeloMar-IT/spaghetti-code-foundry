@@ -180,3 +180,13 @@ export function setLevel(kind: AutonomyKind, id: string, level: AutonomyLevel, b
 
 /** `addRepo`'s `beforeSave`: a newly connected repository starts at `guarded-write`. Runs under the lock. */
 export const connectLevel = (id: string): void => void setLevelLocked("repos", id, NEW_REPO_LEVEL, SYSTEM_CONNECT);
+
+/** Removes the stored entry of one repository or flow (it is `delivery-handoff` again). Does nothing when there is none. Under the data-folder lock. */
+export function forgetLevel(kind: AutonomyKind, id: string): void {
+  withAuthLock(() => {
+    const store = readAutonomy();
+    if (!Object.hasOwn(store[kind], id)) return;
+    const rest = Object.fromEntries(Object.entries(store[kind]).filter(([k]) => k !== id));
+    writeAtomic(autonomyFile(), serializeAutonomy({ ...store, [kind]: rest }));
+  });
+}

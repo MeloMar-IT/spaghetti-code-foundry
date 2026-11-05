@@ -1,0 +1,7 @@
+builds:
+  - name: site
+    on: [macos, linux]
+    requires: [tar]
+    run: mkdir -p out && tar -czf out/site.tar.gz -C site .
+    artifacts:
+      - out/site.tar.gz
