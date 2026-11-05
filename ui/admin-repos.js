@@ -285,7 +285,7 @@ export const projectLabel = (repo) => repo.github ?? repo.localName ?? repo.url;
 export const projectsOf = (repos, ownerId) =>
   repos.filter((r) => r.owner === ownerId).sort((a, b) => String(projectLabel(a)).localeCompare(String(projectLabel(b))));
 
-const placeholderOf = (b) => (typeof b.defaultUsd === "number" ? `default: $${b.defaultUsd}` : "no cap");
+const emptyHint = (b) => (typeof b.defaultUsd === "number" ? `default: $${b.defaultUsd}` : "no cap");
 
 function projectRow(repo, b, readOnly) {
   const label = projectLabel(repo);
@@ -293,7 +293,7 @@ function projectRow(repo, b, readOnly) {
   const capNode = h("span", {}, capText(b));
   const spent = h("span", { class: "mono" }, spentText(b));
   if (readOnly) return { label, spent, cap: capNode, edit: null };
-  const input = h("input", { name: "cap", inputmode: "decimal", autocomplete: "off", value: typeof b.dailyBudgetUsd === "number" ? String(b.dailyBudgetUsd) : "", placeholder: placeholderOf(b), "aria-label": `Daily cap of ${label}` });
+  const input = h("input", { name: "cap", inputmode: "decimal", autocomplete: "off", value: typeof b.dailyBudgetUsd === "number" ? String(b.dailyBudgetUsd) : "", placeholder: emptyHint(b), "aria-label": `Daily cap of ${label}` });
   const err = h("p", { class: "status bad flush", role: "alert" });
   const save = h("button", { type: "button", onClick: async () => {
     const r = readCap(input.value);
@@ -307,7 +307,7 @@ function projectRow(repo, b, readOnly) {
       Object.assign(b, next);
       capNode.textContent = capText(next);
       input.value = typeof next.dailyBudgetUsd === "number" ? String(next.dailyBudgetUsd) : "";
-      input.placeholder = placeholderOf(next);
+      input.placeholder = emptyHint(next);
       toast(r.value === null ? "Cap cleared" : "Cap saved");
     } catch (e) {
       showError(err, plainError(e), { fields: [input], field: input });
