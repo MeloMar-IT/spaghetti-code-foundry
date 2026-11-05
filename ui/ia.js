@@ -25,6 +25,7 @@ export const PAGES = [
   { id: "home", path: "#/home", title: "Home", area: "home", dest: "home", parent: null, nav: "primary", label: { admin: "Home", user: "Home" }, roles: AU },
   { id: "setup", path: "#/setup", title: "Setup check", area: "home", dest: "home", parent: null, nav: "secondary", label: { admin: "Setup check", user: "Setup check" }, roles: AU },
   { id: "agents", path: "#/agents", title: "Claude and Codex", area: "home", dest: null, parent: null, nav: "secondary", label: { admin: "Claude and Codex", user: "Claude and Codex" }, roles: AU },
+  { id: "start-guide", path: "#/start-guide", title: "Get started", area: "home", dest: null, parent: null, nav: "secondary", label: { user: "Get started" }, roles: ["user"] },
   { id: "help", path: "#/help", title: "Help", area: "home", dest: null, parent: null, nav: "secondary", label: { user: "Help" }, roles: ["user"] },
   { id: "board", path: "#/board", title: "Board", area: "work", dest: "board", parent: null, nav: "primary", label: { admin: "Board" }, roles: A, scope: true },
   { id: "board-repo", path: "#/board/:id", title: "Board", area: "work", dest: "board", parent: "board", nav: "detail", label: {}, roles: A, scope: true },

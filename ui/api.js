@@ -230,6 +230,10 @@ export const api = {
     const v = from ? configVersions.get(from) : undefined;
     return req("PUT", "/api/onboarding/agents", { answers, replace }, false, false, v ? { "x-config-version": v } : undefined);
   },
+  // Where this account is in the Get started guide: { step, answers }.
+  onboardingProgress: () => req("GET", "/api/onboarding/progress"),
+  saveOnboardingProgress: (p) => req("PUT", "/api/onboarding/progress", p),
+  clearOnboardingProgress: () => req("DELETE", "/api/onboarding/progress"),
   onboardingSignIn: (tool) => req("POST", "/api/onboarding/sign-in", { tool }),
   onboardingTestCall: (tool) => req("POST", "/api/onboarding/test-call", { tool }),
   setupCheck: (needs = []) => req("GET", "/api/setup-check" + (needs.length ? "?need=" + encodeURIComponent(needs.join(",")) : "")),

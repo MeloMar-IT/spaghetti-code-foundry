@@ -60,6 +60,45 @@ export const WORDS = {
   actions: { change: "Ask for a change", tryIt: "Try it", final: "Make this version final", github: "Put this project on GitHub" },
 };
 
+/** The Get started guide (#/start-guide). Plain words; none of them is on the forbidden list. */
+export const GUIDE = {
+  title: "Get started",
+  getStarted: "Get started",
+  back: "Back",
+  next: "Continue",
+  again: "Start again",
+  againConfirm: { title: "Start again?", text: "Your place and your answers in this guide are cleared, and you begin at the first step.", confirm: "Start again", cancel: "Keep my place" },
+  stepOf: (label) => label,
+  loading: "Loading your place",
+  loadFailed: "Your place in the guide could not be loaded.",
+  notSaved: "Your place could not be saved just now. You can go on.",
+  done: "My projects",
+  welcome: {
+    title: "Welcome",
+    lines: [
+      "The Foundry builds software with AI helpers on your own computer.",
+      "You tell it what you want, and it plans the work, builds it, tests it and checks it.",
+      "It asks you only when it needs a decision. This guide gets your computer ready, one step at a time.",
+    ],
+  },
+  computer: {
+    title: "Your computer",
+    checking: "Checking this computer",
+    ready: "Every line is green. This computer is ready.",
+    notReady: "Continue turns on when every line is green. Fix what is marked, then check again.",
+    checkAgain: "Check again",
+    couldNotCheck: "The check could not be made.",
+    askAdmin: "This check looks at the computer the Foundry lives on. Ask the person who looks after it (an admin) to do this step. You can go on.",
+  },
+  agents: {
+    askAdmin: "Claude and Codex are set up on the computer the Foundry lives on. Ask the person who looks after it (an admin) to do this step. You can go on.",
+  },
+  later: {
+    title: (n) => `Step ${n}`,
+    text: "This step is coming next. For now you can go on or go back.",
+  },
+};
+
 /**
  * Put this project on GitHub (an admin's local project). Fixed texts only; the server's answer is never shown. The functions take
  * the name on GitHub; a name with a forbidden word in it (for example "o/issues") is left out of the sentence.

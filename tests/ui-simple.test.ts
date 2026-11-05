@@ -264,6 +264,32 @@ describe("the pages", () => {
     }
   });
 
+  it("always has a Get started link, with projects and without", () => {
+    for (const ps of [projects(), []]) {
+      const link = walk(box(view.projectsView(ps))).find((e) => e.attrs["data-focus"] === "simple-get-started");
+      expect(link?.attrs.href).toBe("#/start-guide");
+      expect(link?.textContent).toBe("Get started");
+    }
+  });
+
+  it("opens the guide once when the first load shows no project, never with projects, and not after the page was left", async () => {
+    const make = (list: any[]): any => ({ repos: vi.fn(async () => list), runs: vi.fn(async () => []), queue: vi.fn(async () => ({ active: [], pending: [] })), run: vi.fn() });
+    const openGuide = vi.fn();
+    (await view.renderSimpleHome(new FakeElement("div"), { a: make([]), openGuide }))();
+    expect(openGuide).toHaveBeenCalledTimes(1);
+    const none = vi.fn();
+    (await view.renderSimpleHome(new FakeElement("div"), { a: make(repos), openGuide: none }))();
+    expect(none).not.toHaveBeenCalled();
+    // the person left before the empty answer came in
+    const late = vi.fn();
+    (await view.renderSimpleHome(new FakeElement("div"), { a: make([]), openGuide: late, alive: () => false }))();
+    expect(late).not.toHaveBeenCalled();
+    // a throwing callback does not break the page
+    const main = new FakeElement("div");
+    (await view.renderSimpleHome(main, { a: make([]), openGuide: () => { throw new Error("x"); } }))();
+    expect(main.textContent).toContain("No projects yet");
+  });
+
   it("renders My projects and the project page from the API, and shows an error state", async () => {
     const a: any = { repos: vi.fn(async () => repos), runs: vi.fn(async () => forbiddenRuns), queue: vi.fn(async () => ({ active: [], pending: [] })), run: vi.fn() };
     const main = new FakeElement("div");

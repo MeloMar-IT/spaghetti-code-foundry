@@ -18,6 +18,15 @@ const read = (p: string) => readFileSync(p, "utf8");
 const navLinks = (html: string) => [...html.matchAll(/<a href="([^"]+)" data-nav="([\w-]+)"([^>]*)>([^<]+)</g)].map((m) => ({ href: m[1]!, id: m[2]!, attrs: m[3]!, label: m[4]!.trim() }));
 const files = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : []));
 
+describe("the Get started guide page", () => {
+  it("is a page of the user display only, and the user display has an address for it", () => {
+    expect(ia.resolve("user", "#/start-guide")).toMatchObject({ page: { id: "start-guide", title: "Get started" }, redirected: false });
+    expect(ia.resolve("admin", "#/start-guide").redirected).toBe(true);
+    expect(auth.isUserHash("#/start-guide")).toBe(true);
+    expect(auth.userPage("#/start-guide").section).toBe("start-guide");
+  });
+});
+
 describe("resolve with a query", () => {
   const a = (h: any) => ia.resolve("admin", h);
 
@@ -270,8 +279,8 @@ describe("the data", () => {
     // the set-password link is read by the sign-in screen (ui/auth.js) before any page exists; the command line prints it for an admin to pass on
     found.delete("#/set-password");
     for (const h of found) {
-      // #/help is a page of the user display only
-      const to = ia.resolve(h === "#/help" ? "user" : "admin", h);
+      // #/help and #/start-guide are pages of the user display only
+      const to = ia.resolve(h === "#/help" || h === "#/start-guide" ? "user" : "admin", h);
       expect([null, "alias"], h).toContain(to.reason);
     }
   });
@@ -327,7 +336,7 @@ describe("commandsFor", () => {
 
   it("gives a user four pages and two actions, without board, flows or users", () => {
     const { goTo, actions } = ia.commandsFor("user");
-    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Setup check", "Claude and Codex", "Help", "Epics", "Refinement", "My runs", "My repositories"]);
+    expect(goTo.map((c: any) => c.label)).toEqual(["Home", "Setup check", "Claude and Codex", "Get started", "Help", "Epics", "Refinement", "My runs", "My repositories"]);
     expect(actions.map((a: any) => a.label)).toEqual(["Start work", "New refinement session"]);
     expect(actions[1]).toMatchObject({ href: "#/refinement", intent: "refinement", key: null });
   });

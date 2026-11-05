@@ -345,6 +345,76 @@ describe("the summary", () => {
   });
 });
 
+describe("inside the Get started guide", () => {
+  const SAVED = { draft: { have: "claude", plans: { claude: "pro" }, share: "auto", busy: "little" }, step: "busy" };
+
+  it("resumes at the saved question with the saved choices pressed", async () => {
+    const { box } = await draw(make(), { resume: SAVED });
+    expect(box.textContent).toContain("How busy may the Foundry be?");
+    expect(pressed(box)).toEqual(["A little"]);
+  });
+
+  it("resumes an unfinished draft even when answers are already saved on the server", async () => {
+    const { box } = await draw(make({ onboardingAgents: vi.fn(async () => view()) }), { resume: SAVED });
+    expect(box.textContent).toContain("How busy may the Foundry be?");
+    expect(pressed(box)).toEqual(["A little"]);
+  });
+
+  it("ignores a draft that is not there, and shows the saved answers", async () => {
+    const { box } = await draw(make({ onboardingAgents: vi.fn(async () => view()) }), { resume: null });
+    expect(buttons(box, "Change").length).toBeGreaterThan(0);
+  });
+
+  it("reports the draft and the question on every answer, the last one before the save, and the completed draft on the summary", async () => {
+    const seen: any[] = [];
+    const a = make();
+    a.saveOnboardingAgents.mockRejectedValueOnce(Object.assign(new Error("nope"), { status: 500 }));
+    const { box } = await draw(a, { onDraft: (d: any) => seen.push(d) });
+    await press(box, "Claude Code");
+    expect(seen.at(-1)).toEqual({ draft: { have: "claude", plans: {}, share: "auto", busy: "normal" }, step: "plans:claude" });
+    await press(box, "Pro");
+    await press(box, "Next");
+    await press(box, "Next");
+    expect(seen.at(-1).step).toBe("busy");
+    await press(box, "A little");
+    // the save failed: the last answer is in the draft all the same
+    expect(box.textContent).toContain("could not be saved");
+    expect(seen.at(-1)).toEqual({ draft: { have: "claude", plans: { claude: "pro" }, share: "auto", busy: "little" }, step: "busy" });
+    await press(box, "Retry");
+    expect(seen.at(-1)).toEqual({ draft: { have: "claude", plans: { claude: "pro" }, share: "auto", busy: "little" }, step: null, done: true });
+  });
+
+  it("shows the completed draft from the guide, not the answers on the server, and never reports a null", async () => {
+    const seen: any[] = [];
+    const DONE = { draft: { have: "claude", plans: { claude: "pro" }, share: "auto", busy: "little" }, step: null, done: true };
+    const { box } = await draw(make({ onboardingAgents: vi.fn(async () => view({ answers: { have: "both", plans: { claude: "max", codex: "plus" }, share: "even", busy: "fast" } })) }), { resume: DONE, onDraft: (d: any) => seen.push(d) });
+    // the summary line is the person's own ("Claude Code, Pro plan"), not the sharing line of the answers on the server
+    expect(box.textContent).toContain("Claude Code, Pro plan");
+    expect(box.textContent).not.toContain("How they share the work");
+    expect(seen).toEqual([DONE]);
+  });
+
+  it("starts the questions again with the answers on the server chosen, and clears nothing", async () => {
+    const a = make({ onboardingAgents: vi.fn(async () => view()) });
+    const { box } = await draw(a, { resume: { fresh: true } });
+    expect(box.textContent).toContain("Which do you have?");
+    expect(pressed(box)).toEqual(["Both"]);
+    expect(a.saveOnboardingAgents).not.toHaveBeenCalled();
+  });
+
+  it("is not broken by a callback that throws", async () => {
+    const { box } = await draw(make(), { onDraft: () => { throw new Error("x"); } });
+    await press(box, "Claude Code");
+    expect(box.textContent).toContain("Which Claude plan do you have?");
+  });
+
+  it("leaves out its own Start again button with again: false", async () => {
+    const a = make({ onboardingAgents: vi.fn(async () => view()) });
+    expect(buttons((await draw(a, { again: false })).box, "Start again")).toHaveLength(0);
+    expect(buttons((await draw(a)).box, "Start again")).toHaveLength(1);
+  });
+});
+
 describe("conflicts and errors", () => {
   it("on a 409 reads the page again, resends nothing and asks again for a replacement", async () => {
     const other = view({ answers: { ...ANSWERS, busy: "fast" }, kept: ["default_model"] });
