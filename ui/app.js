@@ -243,7 +243,7 @@ async function route() {
       else off(); // the person went on to another page meanwhile
     }
     else if (section === "users") {
-      const off = await renderUsers(main, { me: S.me, readOnly });
+      const off = await renderUsers(main, { me: S.me, readOnly, query: to.query, go });
       if (mine === routeGen) S.cleanup = off;
       else off(); // the person went on to another page meanwhile
     }

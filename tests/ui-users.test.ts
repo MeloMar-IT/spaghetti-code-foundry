@@ -251,16 +251,16 @@ describe("the list", () => {
   it("shows the columns and one row per account, with no action buttons", async () => {
     users.push(user({ id: "u2", name: "Bob", status: "blocked", lastSignIn: null }), user({ id: "u3", name: "Cy", hasPassword: false, lastSignIn: null }));
     await show();
-    expect(main().all("th").map((t) => t.textContent)).toEqual(["Name", "E-mail", "Role", "Status", "Last sign-in", "Runs", "Limits"]);
+    expect(main().all("th").map((t) => t.textContent)).toEqual(["Name", "E-mail", "Role", "View", "Status", "Last sign-in", "Runs", "Limits"]);
     const cells = (n: string) => rowOf(n).all("td").map((t) => t.textContent);
-    expect(cells("Root").slice(0, 4)).toEqual(["Root (you)", "root@example.com", "admin", "active"]);
-    expect(cells("Ann").slice(0, 7)).toEqual(["Ann", "ann@example.com", "user", "active", "just now", "2", "no limits"]);
-    expect(cells("Bob")[3]).toBe("blocked");
-    expect(cells("Bob")[4]).toBe("never");
-    expect(cells("Cy")[3]).toBe("no password yet");
+    expect(cells("Root").slice(0, 3)).toEqual(["Root (you)", "root@example.com", "admin"]);
+    expect(cells("Ann")).toEqual(["Ann", "ann@example.com", "user", "", "active", "just now", "2", "no limits"]);
+    expect(cells("Bob")[4]).toBe("blocked");
+    expect(cells("Bob")[5]).toBe("never");
+    expect(cells("Cy")[4]).toBe("no password yet");
     for (const r of rows()) expect(r.all("button"), r.textContent).toHaveLength(0);
     expect(main().all("table")[0]!.all("button")).toHaveLength(0);
-    expect(main().all("input")).toHaveLength(0);
+    expect(main().all("input").map((i) => i.attrs.name)).toEqual(["simpleOnly"]); // only the filter; nothing in the table
   });
 
   it("the name links to the account's page", async () => {
@@ -311,7 +311,7 @@ describe("Add user", () => {
     press(button(root(), "Done"));
     await flush();
     expect(gets).toBe(2);
-    expect(rowOf("Dee").all("td")[3]!.textContent).toBe("no password yet");
+    expect(rowOf("Dee").all("td")[4]!.textContent).toBe("no password yet");
     for (const t of [main().textContent, toastText(), root().textContent]) expect(t).not.toContain(TOKEN);
   });
 
@@ -349,8 +349,8 @@ describe("Limits on the list", () => {
   it("shows defaults, and an own value marked (own)", async () => {
     limits = { defaults: { maxConcurrent: 2 }, users: { u1: { maxConcurrent: 9, dailyBudgetUsd: 5 } } };
     await show();
-    expect(rowOf("Root").all("td")[6]!.textContent).toBe("2 at a time");
-    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("9 at a time (own) · $5 a day (own)");
+    expect(rowOf("Root").all("td")[7]!.textContent).toBe("2 at a time");
+    expect(rowOf("Ann").all("td")[7]!.textContent).toBe("9 at a time (own) · $5 a day (own)");
   });
   it("Default limits sends the defaults", async () => {
     await show();
@@ -361,7 +361,7 @@ describe("Limits on the list", () => {
     await flush();
     expect(sent).toEqual([{ method: "PUT", url: "/api/users/limits", body: { dailyBudgetUsd: 12.5 } }]);
     expect(toastText()).toBe("Saved");
-    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("$12.5 a day");
+    expect(rowOf("Ann").all("td")[7]!.textContent).toBe("$12.5 a day");
   });
   it("Default limits shows a problem and a server error in the dialog", async () => {
     await show();
@@ -381,7 +381,7 @@ describe("Limits on the list", () => {
     limitsFail = true;
     await show();
     expect(rows()).toHaveLength(2);
-    expect(rowOf("Ann").all("td")[6]!.textContent).toBe("not available");
+    expect(rowOf("Ann").all("td")[7]!.textContent).toBe("not available");
     expect(button(main(), "Default limits")!.attrs.disabled).toBe("");
   });
 });

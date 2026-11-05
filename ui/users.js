@@ -1,6 +1,8 @@
 import { api } from "./api.js";
 import { errorText, linkHash } from "./auth.js";
 import { fieldFor, h, modal, mount, showError, timeAgo, toast } from "./dom.js";
+import { renderSimpleProjects } from "./admin-repos.js";
+import { defaultGo } from "./filters.js";
 import { table } from "./kit/display.js";
 import { emptyState, loadingState, staleNote } from "./states.js";
 
@@ -13,6 +15,10 @@ export const browserPage = {
   reload: () => location.reload(),
   go: (to) => location.assign(to),
 };
+
+/** True when the account uses the Simple view (a row without `view` does not). */
+export const isSimple = (u) => u?.view === "simple";
+export const VIEW_TEXT = { simple: "Simple", advanced: "Advanced", admin: "Admin" };
 
 /** True while the account is locked after too many wrong tries (`lockedUntil` is a time in the future). */
 export const isLocked = (u, now = Date.now()) => !!u.lockedUntil && Date.parse(u.lockedUntil) > now;
@@ -412,7 +418,8 @@ const noticeLine = (notice) => (notice ? h("p", { class: "status ok", role: "sta
 let reloads = 0; // the newest reload wins
 
 /** The Users page. `me` is the signed-in account's id; `notice` ({ text }) is a line kept from the last block. `data` is a list already loaded. Returns a cleanup. */
-export async function renderUsers(main, { me = "", notice, page = browserPage, data, readOnly = false } = {}) {
+export async function renderUsers(main, { me = "", notice, page = browserPage, data, readOnly = false, query = {}, go = defaultGo } = {}) {
+  const simpleOnly = query?.view === "simple";
   const mine = ++generation;
   if (!data && onPage()) mount(main, h("div", { class: "toolbar" }, h("h1", {}, "Users")), loadingState("Loading users…", { rows: 5, shape: "table" }));
   const [users, limits] = data ?? await loadUsers();
@@ -429,7 +436,7 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
       if (my === reloads && mine === generation && onPage()) mount(note, noticeLine(next), staleNote(at, { failed: true, onRetry: () => reload(next) }));
       return;
     }
-    if (my === reloads && mine === generation && onPage()) await renderUsers(main, { me, notice: next, page, data: fresh, readOnly });
+    if (my === reloads && mine === generation && onPage()) await renderUsers(main, { me, notice: next, page, data: fresh, readOnly, query, go });
   };
 
   const add = async () => {
@@ -446,17 +453,29 @@ export async function renderUsers(main, { me = "", notice, page = browserPage, d
     { key: "name", label: "Name", cell: (u) => [h("a", { href: `#/users/${encodeURIComponent(u.id)}` }, u.name), u.id === me ? h("span", { class: "muted" }, " (you)") : null] },
     { key: "email", label: "E-mail", cell: (u) => h("span", { class: "mono" }, u.email) },
     { key: "role", label: "Role" },
+    { key: "view", label: "View", cell: (u) => (isSimple(u) ? h("span", { class: "pill" }, "Simple") : h("span", { class: "muted" }, VIEW_TEXT[u.view] ?? "")) },
     { key: "status", label: "Status", cell: (u) => h("span", { class: pillClass(u) }, statusText(u)) },
     { key: "lastSignIn", label: "Last sign-in", cell: (u) => h("span", { class: "muted" }, lastSignInText(u)) },
     { key: "runs", label: "Runs", cell: (u) => h("span", { class: "mono" }, String(u.runs ?? 0)) },
     { key: "limits", label: "Limits", cell: (u) => h("span", {}, limitsCell(limits, u.id)) },
   ];
+  const shown = simpleOnly ? users.filter(isSimple) : users;
+  const toggle = () => {
+    go(simpleOnly ? "#/users" : "#/users?view=simple");
+    renderUsers(main, { me, notice, page, data: [users, limits], readOnly, query: simpleOnly ? {} : { view: "simple" }, go });
+  };
+  const filter = h("label", { class: "field-inline" }, h("input", { type: "checkbox", name: "simpleOnly", checked: simpleOnly, onChange: toggle }), " Only Simple accounts");
+  const box = h("div", {});
   mount(main,
-    h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"),
-      ...(readOnly ? [] : [h("span", { class: "spacer" }), h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
+    h("div", { class: "toolbar" }, h("h1", {}, "Users"), h("span", { class: "muted" }, "Who can sign in"), h("span", { class: "spacer" }), filter,
+      ...(readOnly ? [] : [" ", h("button", { disabled: limits === null, onClick: defaultLimits }, "Default limits"), " ",
         h("button", { class: "primary", onClick: add }, "+ Add user")])),
     note,
-    users.length === 0 ? (readOnly ? emptyState("No users yet.") : emptyState("No users yet.", { label: "+ Add user", onClick: add })) : table({ caption: "Users", hideCaption: true, columns, rows: users, class: "table-box" }));
+    users.length === 0 ? (readOnly ? emptyState("No users yet.") : emptyState("No users yet.", { label: "+ Add user", onClick: add }))
+      : simpleOnly && shown.length === 0 ? emptyState("No account uses the Simple view.")
+      : table({ caption: "Users", hideCaption: true, columns, rows: shown, class: "table-box" }),
+    simpleOnly && shown.length > 0 ? box : null);
+  if (simpleOnly && shown.length > 0) renderSimpleProjects(box, shown, { readOnly, live: () => mine === generation && onPage() });
   return () => {
     generation++;
   };

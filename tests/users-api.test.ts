@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditPath } from "../src/auth/audit.js";
-import { getUser, listUsers, setStatus, usersPath } from "../src/auth/users.js";
+import { getUser, listUsers, setStatus, setView, usersPath } from "../src/auth/users.js";
 import type { ServerOptions, startServer } from "../src/server/server.js";
 import { fakeKeychain, fakeToken, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
@@ -126,20 +126,23 @@ describe("users API", () => {
   const runStatus = (s: Srv, id: string) => JSON.parse(readFileSync(join(s.runsDir, id, "run.json"), "utf8")).status;
   const zeros = { queued: 0, running: 0, waiting: 0 };
 
-  it("lists accounts with ten keys and never a secret", async () => {
+  it("lists accounts with eleven keys and never a secret", async () => {
     const { s, admin, ann, walk } = await world();
     await walk(ann);
     const made = await call(s, admin, "POST", "/api/users", { name: "Cy", email: "cy@example.com", role: "user" });
     expect(made.status).toBe(201);
     await setStatus(ann.user.id, "blocked", { stopWork: true });
+    setView(ann.user.id, "simple");
     const r = await call(s, admin, "GET", "/api/users");
     expect(r.status).toBe(200);
     const list = r.json() as Record<string, unknown>[];
     expect(list).toHaveLength(4);
-    for (const u of list) expect(Object.keys(u).sort()).toEqual(["created", "email", "hasPassword", "id", "lastSignIn", "lockedUntil", "name", "role", "runs", "status"]);
+    for (const u of list) expect(Object.keys(u).sort()).toEqual(["created", "email", "hasPassword", "id", "lastSignIn", "lockedUntil", "name", "role", "runs", "status", "view"]);
     for (const u of list) expect(u.lockedUntil).toBeNull();
     const by = (email: string) => list.find((u) => u.email === email)!;
-    expect(by("cy@example.com")).toMatchObject({ hasPassword: false, lastSignIn: null, runs: 0 });
+    expect(by("cy@example.com")).toMatchObject({ hasPassword: false, lastSignIn: null, runs: 0, view: "advanced" });
+    expect(by("ann@example.com").view).toBe("simple");
+    expect(list.find((u) => u.id === admin.user.id)!.view).toBe("admin");
     expect(by("ann@example.com")).toMatchObject({ hasPassword: true, runs: 1, status: "blocked" });
     expect(by("ann@example.com").lastSignIn).not.toBeNull();
     expect(r.text).not.toMatch(/scrypt\$|passwordHash|passwordLink|stopWork/);
@@ -518,7 +521,7 @@ describe("users API", () => {
       expect(r.status).toBe(200);
       const body = r.json();
       expect(Object.keys(body).sort()).toEqual(["expires", "token", "user"]);
-      expect(Object.keys(body.user).sort()).toEqual(["created", "email", "hasPassword", "id", "lastSignIn", "lockedUntil", "name", "role", "runs", "status"]);
+      expect(Object.keys(body.user).sort()).toEqual(["created", "email", "hasPassword", "id", "lastSignIn", "lockedUntil", "name", "role", "runs", "status", "view"]);
       expect(body.user.hasPassword).toBe(false);
       for (const bad of ["passwordHash", "passwordLink", "scrypt$", createHash("sha256").update(body.token).digest("hex")]) expect(r.text).not.toContain(bad);
       expect((await call(s, ann, "GET", "/api/runs")).status).toBe(401);

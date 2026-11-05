@@ -3,6 +3,7 @@ import { fieldFor, h, modal, mount, showError, toast } from "./dom.js";
 import { defaultGo } from "./filters.js";
 import { plainError, renderRepos } from "./repos.js";
 import { repoAttention } from "./repo-status.js";
+import { table } from "./kit/display.js";
 
 const lines = (s) => String(s ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
 const PATTERN_HINT = '"*" matches any text, ? one character.';
@@ -256,5 +257,95 @@ export const ALL_SCOPE = {
 /** The admin page with the repositories of all accounts: the Repositories list with the All scope. Returns a cleanup. */
 export function renderAllRepos(main, { query = {}, go = defaultGo } = {}) {
   return renderRepos(main, { admin: true, switcher: true, scope: ALL_SCOPE, query, go });
+}
+
+export const CAP_PROBLEM = "The cap must be a number above 0, or empty to use the default.";
+const CAP_MAX = 1000000;
+
+/** Reads the text of a cap field: { value: null } for empty (use the default), { value: number }, or { problem }. */
+export function readCap(text) {
+  const t = String(text ?? "").trim();
+  if (t === "") return { value: null };
+  if (!/^\d+(\.\d+)?$/.test(t)) return { problem: CAP_PROBLEM };
+  const n = Number(t);
+  return Number.isFinite(n) && n > 0 && n <= CAP_MAX ? { value: n } : { problem: CAP_PROBLEM };
+}
+
+/** The cap in effect for a project of a Simple account: its own, else the default, else none. */
+export function capText(b) {
+  if (typeof b?.dailyBudgetUsd === "number") return `$${b.dailyBudgetUsd} (own)`;
+  if (typeof b?.defaultUsd === "number") return `$${b.defaultUsd} (default)`;
+  return "no cap";
+}
+
+export const spentText = (b) => `$${(b?.spentTodayUsd ?? 0).toFixed(2)}`;
+export const projectLabel = (repo) => repo.github ?? repo.localName ?? repo.url;
+
+/** The repositories of one owner (account id), sorted by label. */
+export const projectsOf = (repos, ownerId) =>
+  repos.filter((r) => r.owner === ownerId).sort((a, b) => String(projectLabel(a)).localeCompare(String(projectLabel(b))));
+
+const placeholderOf = (b) => (typeof b.defaultUsd === "number" ? `default: $${b.defaultUsd}` : "no cap");
+
+function projectRow(repo, b, readOnly) {
+  const label = projectLabel(repo);
+  if (!b) return { label, spent: h("span", { class: "muted" }, "not available"), cap: h("span", { class: "muted" }, "not available"), edit: null };
+  const capNode = h("span", {}, capText(b));
+  const spent = h("span", { class: "mono" }, spentText(b));
+  if (readOnly) return { label, spent, cap: capNode, edit: null };
+  const input = h("input", { name: "cap", inputmode: "decimal", autocomplete: "off", value: typeof b.dailyBudgetUsd === "number" ? String(b.dailyBudgetUsd) : "", placeholder: placeholderOf(b), "aria-label": `Daily cap of ${label}` });
+  const err = h("p", { class: "status bad flush", role: "alert" });
+  const save = h("button", { type: "button", onClick: async () => {
+    const r = readCap(input.value);
+    if (r.problem) return showError(err, r.problem, { fields: [input], field: input });
+    showError(err, "", { fields: [input] });
+    save.disabled = true;
+    try {
+      const a = await api.setRepoBudget(repo.id, r.value);
+      // The server's answer is the truth: a default that was switched off (null) must not keep its old value.
+      const next = a ? { ...b, ...a } : { ...b, dailyBudgetUsd: r.value };
+      Object.assign(b, next);
+      capNode.textContent = capText(next);
+      input.value = typeof next.dailyBudgetUsd === "number" ? String(next.dailyBudgetUsd) : "";
+      input.placeholder = placeholderOf(next);
+      toast(r.value === null ? "Cap cleared" : "Cap saved");
+    } catch (e) {
+      showError(err, plainError(e), { fields: [input], field: input });
+    } finally {
+      save.disabled = false;
+    }
+  } }, "Save");
+  return { label, spent, cap: capNode, edit: h("div", {}, input, " ", save, err) };
+}
+
+/** Draws the projects of the given (Simple) accounts into `box`, with today's spend and the daily cap. Late answers are dropped when `live()` is false. */
+export async function renderSimpleProjects(box, accounts, { readOnly = false, live = () => true } = {}) {
+  mount(box, h("p", { class: "muted" }, "Loading projects…"));
+  let repos;
+  try {
+    repos = await api.allRepos();
+  } catch {
+    if (live()) mount(box, h("p", { class: "status bad", role: "alert" }, "The projects could not be loaded."));
+    return;
+  }
+  const ids = new Set(accounts.map((a) => a.id));
+  const budgets = new Map(await Promise.all(repos.filter((r) => ids.has(r.owner)).map(async (r) => [r.id, await api.repoBudget(r.id).catch(() => null)])));
+  if (!live()) return;
+  const off = [...budgets.values()].some((b) => b && b.enforced === false);
+  const blocks = accounts.map((a) => {
+    const mine = projectsOf(repos, a.id);
+    const head = h("h3", {}, `${a.name} (${a.email})`);
+    if (mine.length === 0) return h("div", {}, head, h("p", { class: "muted" }, "No projects."));
+    const rows = mine.map((r) => projectRow(r, budgets.get(r.id), readOnly));
+    const columns = [
+      { key: "project", label: "Project", cell: (x) => h("span", { class: "mono" }, x.label) },
+      { key: "spent", label: "Spent today", cell: (x) => x.spent },
+      { key: "cap", label: "Cap in effect", cell: (x) => x.cap },
+      ...(readOnly ? [] : [{ key: "edit", label: "Daily cap ($)", cell: (x) => x.edit ?? h("span", { class: "muted" }, "not available") }]),
+    ];
+    return h("div", {}, head, table({ caption: `Projects of ${a.name}`, hideCaption: true, columns, rows, class: "table-box" }));
+  });
+  mount(box, h("h2", {}, "Projects of Simple accounts"),
+    off ? h("p", { class: "muted" }, "Cost limits are off in Settings: these caps are not enforced now.") : null, ...blocks);
 }
 

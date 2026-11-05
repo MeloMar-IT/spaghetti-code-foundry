@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { AppReposError, getAppRepos, setAppRepos } from "../auth/app-repos.js";
 import { auditAction } from "../auth/audit.js";
+import { viewOf } from "../auth/views.js";
 import { checkLimitsPatch, getLimits, setDefaultLimits, setUserLimits, type LimitsChange } from "../auth/limits.js";
 import { StoreError } from "../auth/store.js";
 import {
@@ -63,11 +64,11 @@ function runCounts(ctx: ApiContext): Map<string, number> {
   return counts;
 }
 
-/** The account as the API shows it: ten fields picked one by one, never a hash or a token. */
+/** The account as the API shows it: eleven fields picked one by one, never a hash or a token. */
 function view(ctx: ApiContext, u: PublicUser, runs: number, hasPassword: boolean) {
   const until = throttlesOf(ctx).accounts.lockedUntilOf(u.email);
   const lockedUntil = until === undefined ? null : new Date(until).toISOString();
-  return { id: u.id, name: u.name, email: u.email, role: u.role, status: u.status, created: u.created, lastSignIn: u.lastSignIn, runs, hasPassword, lockedUntil };
+  return { id: u.id, name: u.name, email: u.email, role: u.role, view: viewOf(u), status: u.status, created: u.created, lastSignIn: u.lastSignIn, runs, hasPassword, lockedUntil };
 }
 
 /** Cancels the account's work at once; a queue.json that cannot be written is logged in fixed words only. */
