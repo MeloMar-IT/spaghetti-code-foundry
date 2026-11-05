@@ -37,6 +37,10 @@ describe("the word list", () => {
     for (const k of KINDS) expect(typeof words.KIND_WORDS[k]?.line, k).toBe("string");
   });
 
+  it("says the exact sentence when the project reached its daily cap (#792)", () => {
+    expect(words.kindWords("project_limit", "A time limit").line).toBe("The Foundry has done enough for today; it continues tomorrow.");
+  });
+
   it("has a button label for every kind that can wait for the person", () => {
     for (const k of ["questions", "planner_questions", "owner_action", "approve_plan", "approve_split", "approval", "stopped", "release", "failed", "monitor_needs_you", "red_base"]) {
       expect(words.KIND_WORDS[k].todo, k).toBeTruthy();

@@ -61,6 +61,7 @@ import { moveConfigWatchers } from "../repos/migrate-watchers.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { settleFinished } from "../refinement/architect.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
+import { startProjectBudgetSweep } from "./project-budget-sweep.js";
 import { refinementBacklogRoutes } from "./api-refinement-backlog.js";
 import { HELP_SWEEP_MS, helpRoutes, helpSweeper, helpTurnsOf } from "./api-help.js";
 import { previewsOf } from "./api-preview.js";
@@ -104,6 +105,8 @@ export interface ServerOptions {
   accountSweepMs?: number;
   /** How often dropped refinement sessions past their 30 days are removed, in ms (default 600000). */
   refinementSweepMs?: number;
+  /** How often stopped runs that the daily cap of their project stopped are looked at again, in ms (#792; default 300000). */
+  projectBudgetSweepMs?: number;
   /** The clock of the sign-in waits and locks, in ms (default Date.now). A test moves it. */
   signInClock?: () => number;
   /** The clock of the "view as user" previews, in ms (default Date.now). A test moves it. */
@@ -325,6 +328,8 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   const refinementSweep = refinementSweeper(log);
   refinementSweep();
   // Ask SCF: a reply that a stopped server left unfinished is marked as interrupted, and the retention policy is applied.
+  // Stopped runs of a project at its daily cap go on by themselves the next day (#792): at start, then every few minutes.
+  const stopProjectSweep = startProjectBudgetSweep({ scheduler, runsDir: opts.runsDir, log: sink }, opts.projectBudgetSweepMs);
   const helpSweep = helpSweeper(log, () => ctx.config().help.keep_days);
   helpSweep();
   const auditSweep = auditSweeper(() => ctx.config().audit.retention_days, ctx.diagLog);
@@ -509,6 +514,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       clearInterval(adoptTimer);
       clearInterval(sweepTimer);
       clearInterval(refinementTimer);
+      stopProjectSweep();
       clearInterval(helpTimer);
       helpTurnsOf(ctx).stopAll();
       void previewsOf(ctx).stopAll();

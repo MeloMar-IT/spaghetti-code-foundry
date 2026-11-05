@@ -230,6 +230,42 @@ describe("admin repositories API", () => {
     expect((await withProblem(own.id)).watcherProblem).toBeUndefined();
   });
 
+  describe("daily spending cap (#792)", () => {
+    const BUDGET = (id: string) => `/api/admin/repos/${id}/budget`;
+    const audited = () =>
+      (existsSync(auditPath()) ? readFileSync(auditPath(), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, string>) : []).filter(
+        (e) => e.action === "repo-change" && (e.detail ?? "").startsWith("daily budget"),
+      );
+    let repo: { id: string };
+
+    it("is for an admin only: 403, 404 and 400", async () => {
+      repo = await addFor(ann, "acme/budget");
+      expect((await call(ann, "GET", BUDGET(repo.id))).status).toBe(403);
+      expect((await call(ann, "PUT", BUDGET(repo.id), { dailyBudgetUsd: 5 })).status).toBe(403);
+      expect((await call(admin, "GET", BUDGET(UNKNOWN))).status).toBe(404);
+      expect((await call(admin, "PUT", BUDGET(UNKNOWN), { dailyBudgetUsd: 5 })).status).toBe(404);
+      for (const body of [{ dailyBudgetUsd: 0 }, { dailyBudgetUsd: -2 }, { dailyBudgetUsd: "5" }, { other: 1 }]) {
+        expect((await call(admin, "PUT", BUDGET(repo.id), body)).status).toBe(400);
+      }
+    });
+
+    it("reads and sets the cap, audits a change once and a no-op not at all, and hides it from the owner", async () => {
+      const before = audited().length;
+      const first = await call(admin, "GET", BUDGET(repo.id));
+      expect(first.status).toBe(200);
+      expect(first.json()).toMatchObject({ id: repo.id, dailyBudgetUsd: null, spentTodayUsd: 0 });
+      const set = await call(admin, "PUT", BUDGET(repo.id), { dailyBudgetUsd: 2.5 });
+      expect(set.json()).toMatchObject({ dailyBudgetUsd: 2.5 });
+      await call(admin, "PUT", BUDGET(repo.id), { dailyBudgetUsd: 2.5 });
+      expect((await call(admin, "GET", BUDGET(repo.id))).json().dailyBudgetUsd).toBe(2.5);
+      expect(audited().slice(before)).toHaveLength(1);
+      expect(audited().at(-1)).toMatchObject({ target: repo.id, detail: "daily budget: $2.5" });
+      expect((await call(ann, "GET", "/api/repos")).text).not.toContain("dailyBudgetUsd");
+      expect((await call(admin, "PUT", BUDGET(repo.id), { dailyBudgetUsd: null })).json().dailyBudgetUsd).toBeNull();
+      expect(audited().at(-1)).toMatchObject({ detail: "daily budget: cleared" });
+    });
+  });
+
   describe("Definition of Ready", () => {
     const READY = (id: string) => `/api/admin/repos/${id}/ready`;
     const audited = () =>

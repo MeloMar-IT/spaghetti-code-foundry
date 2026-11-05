@@ -109,7 +109,7 @@ export function columnOf(next: NextStep, phase?: Phase): ColumnId | undefined {
   switch (next.kind) {
     case "failed": return "failed";
     case "dependency": case "red_base": case "one_at_a_time": case "area_lock": case "bug_first": return "waiting";
-    case "usage_limit": case "daily_budget": case "user_limit": case "queued": case "checking": case "starting": case "restart": return "queued";
+    case "usage_limit": case "daily_budget": case "user_limit": case "project_limit": case "queued": case "checking": case "starting": case "restart": return "queued";
     case "running": return phase ?? "coding";
     case "done": return "done";
     case "superseded": case "issue_closed": case "parked": case "epic": return undefined;

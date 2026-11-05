@@ -582,6 +582,48 @@ describe("scheduler fair use", () => {
       expect(pending().map((p) => [p.runId, p.limit])).toEqual([[runId, "budget"]]);
     });
 
+    it("holds a job of a project at its cap (limit project), and starts other projects of the same owner (#792)", () => {
+      let spent = 5;
+      mk({ projectDailyBudget: (p) => (p.githubRepo === "acme/a" ? 1 : undefined), spentTodayByProject: () => spent });
+      concurrency = 5;
+      s.submit({ ...job(), vars: { github_repo: "acme/a" } }, { source: "a0", owner: A });
+      s.submit({ ...job(), vars: { github_repo: "acme/b" } }, { source: "b0", owner: A });
+      expect(active()).toEqual(["b0"]);
+      expect(pending()[0]!.limit).toBe("project");
+      spent = 0;
+      s.recheck();
+      expect(active().sort()).toEqual(["a0", "b0"]);
+    });
+
+    it("holds a resume and a chore of a project at its cap (#792)", async () => {
+      let spent = 0;
+      mk({ projectDailyBudget: () => 1, spentTodayByProject: () => spent });
+      concurrency = 1;
+      s.submit({ ...job(PLAIN), vars: { github_repo: "acme/a" } }, { source: "old", owner: A });
+      await waitFor(() => s.queue().active.length === 0 && s.list().length === 1);
+      const runId = s.list()[0]!.runId;
+      concurrency = 3;
+      spent = 5;
+      s.submit({ kind: "resume", runId }, { source: "resume" });
+      s.submit({ ...job(), vars: { github_repo: "acme/a" } }, { source: "watcher rel schedule", owner: A, lockKey: "acme/a#chore:rel" });
+      expect(active()).toEqual([]);
+      expect(pending().map((p) => p.limit)).toEqual(["project", "project"]);
+    });
+
+    it("a project cap is not applied with cost limits off, without a source, or when the hook throws (#792)", () => {
+      concurrency = 5;
+      s = new Scheduler({ runsDir: join(tmp, "runs"), config: () => ({ ...cfg(), cost_limits: false }), projectDailyBudget: () => 1, spentTodayByProject: () => 5 });
+      s.submit({ ...job(), vars: { github_repo: "acme/a" } }, { source: "a0", owner: A });
+      expect(active()).toEqual(["a0"]);
+      // the CLI and the evals have neither a limits source nor a hook: nobody is capped
+      s = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg, spentTodayByProject: () => 5 });
+      s.submit({ ...job(), vars: { github_repo: "acme/a" } }, { source: "a1", owner: A });
+      expect(active()).toEqual(["a1"]);
+      s = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg, projectDailyBudget: () => { throw new Error("x"); }, spentTodayByProject: () => 5 });
+      s.submit({ ...job(), vars: { github_repo: "acme/a" } }, { source: "a2", owner: A });
+      expect(active()).toEqual(["a2"]);
+    });
+
     it("is not held when cost limits are off, or without a cap", () => {
       limits[A] = { dailyBudgetUsd: 1 };
       concurrency = 5;

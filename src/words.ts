@@ -83,6 +83,10 @@ const GLOSSARY: Record<NextKind, Words> = {
     status: (f) => (f.user ? "paused — the administrator's limit was reached" : "paused — daily budget"),
     help: (f) => (f.user ? "The administrator's limit for today is reached. Nothing to do — it goes on tomorrow." : "Today's budget is used up. Nothing to do — it goes on tomorrow."),
   },
+  project_limit: {
+    status: "paused — the project's limit for today is reached",
+    help: "This project did as much work today as its daily limit allows. Nothing to do — it goes on by itself tomorrow.",
+  },
   user_limit: {
     status: (f) => (f.user
       ? (f.budget || f.perDay ? "waiting — your limit for today is reached" : "waiting — your limit of runs at the same time is reached")

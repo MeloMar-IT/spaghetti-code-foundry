@@ -136,7 +136,7 @@ describe("what is described", () => {
     expect(isCovered("simple.help_contact")).toBe(true);
     expect(described.find((d) => d.key === "simple.help_contact")).toMatchObject({ kind: "text", optional: true, effect: "now", control: "generated" });
     expect(described.find((d) => d.key === "simple.help_contact")?.default).toBeUndefined();
-    expect(described).toHaveLength(149);
+    expect(described).toHaveLength(150);
   });
 
   it("describes governance.auto_demote as a generated boolean that defaults to true", () => {

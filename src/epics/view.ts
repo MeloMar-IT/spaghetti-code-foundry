@@ -119,7 +119,7 @@ export function epicKeyOf(param: string): string | undefined {
   return /^label:.{1,200}$/.test(key) && epicIdOf(key) === param ? key : undefined;
 }
 
-const LIMIT_KINDS = new Set<NextStep["kind"]>(["usage_limit", "daily_budget", "user_limit"]);
+const LIMIT_KINDS = new Set<NextStep["kind"]>(["usage_limit", "daily_budget", "user_limit", "project_limit"]);
 
 /**
  * What holds the open stories up now. A story is in one hold-up only; stories with the same words are grouped.

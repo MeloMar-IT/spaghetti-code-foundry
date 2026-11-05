@@ -96,6 +96,7 @@ export const KIND_WORDS = {
   usage_limit: { line: "It is paused for now and goes on by itself." },
   daily_budget: { line: "It is paused for now and goes on by itself." },
   user_limit: { line: "It is paused for now and goes on by itself." },
+  project_limit: { line: "The Foundry has done enough for today; it continues tomorrow." },
   restart: { line: "It is paused for now and goes on by itself." },
   bug_first: { line: "A repair goes first." },
   interrupted: { line: "It was cut off and goes on later." },

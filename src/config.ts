@@ -397,6 +397,8 @@ export const ConfigSchema = z
     cost_limits: z.boolean().default(true),
     /** Stop starting new work once today's spend reaches this. */
     daily_budget_usd: z.number().positive().optional(),
+    /** Default daily cap in USD of a project whose owner uses the Simple view (#792); 0: no default. A project's own cap wins. */
+    simple_project_daily_budget_usd: z.number().min(0).default(5),
     /** Max runs executing at the same time (across all repos). */
     concurrency: z.number().int().positive().default(2),
     /** Pushes to these branches are refused (glob patterns). */
