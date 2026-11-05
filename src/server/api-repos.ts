@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename } from "node:path";
 import { auditAction, auditActions } from "../auth/audit.js";
 import { changeDetail, watcherChanges } from "../auth/audit-changes.js";
-import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, getRepo, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
+import { spentTodayByProject, type ProjectRef } from "../engine/state.js";
+import { REPO_METHODS, type RepoRecord, RepoError, addRepo, checkNewRepo, checkRepoAuth, checkRepoBudget, getRepo, projectDailyBudget, setRepoBudget, listAllRepos, listRepos, readRepoSecret, removeGithubRepo, removeRepo, setRepoAuth, setRepoReady, setRepoConnection, setRepoSettings, transferRepo, watchersRemovedDetail } from "../auth/repos.js";
 import { checkRepoSettings } from "../auth/repo-settings.js";
 import { RecipeError, parseRecipe } from "../release/recipe.js";
 import { readyView } from "../refinement/ready-list.js";
@@ -173,6 +174,22 @@ function checkReleaseRecipe(body: unknown): void {
 }
 
 /** The admin calls (the permission table lets only an admin through): all repositories, their settings, and transfer. */
+/** The daily cap of a repository for an admin: its own, the Simple default, the cap in effect and today's spend (#792). */
+function budgetView(ctx: ApiContext, rec: RepoRecord) {
+  const defaultUsd = ctx.config().simple_project_daily_budget_usd || null;
+  const github = tryParseRepoUrl(rec.url)?.github;
+  const ref: ProjectRef = github ? { githubRepo: github } : { repoId: rec.id };
+  const effective = ctx.config().cost_limits ? projectDailyBudget(ref, rec.owner, defaultUsd ?? undefined) : undefined;
+  return {
+    id: rec.id,
+    dailyBudgetUsd: rec.dailyBudgetUsd ?? null,
+    defaultUsd,
+    effectiveUsd: effective ?? null,
+    spentTodayUsd: spentTodayByProject(ctx.opts.runsDir, ref),
+    enforced: !!ctx.config().cost_limits,
+  };
+}
+
 async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, by: string): Promise<boolean> {
   if (seg[1] !== "repos") return false;
   if (seg.length === 2 && method === "GET") {
@@ -203,6 +220,22 @@ async function adminRepos(ctx: ApiContext, req: IncomingMessage, res: ServerResp
     }
     const row = adminRow(r.repo);
     return send(res, 200, row, publicKeys([row])), true;
+  }
+  if (seg.length === 4 && seg[3] === "budget" && (method === "GET" || method === "PUT")) {
+    let rec: RepoRecord | undefined;
+    if (method === "GET") {
+      rec = guardedRepos(ctx, () => getRepo(seg[2]!));
+      if (!rec) throw new HttpError(404, "no such repository");
+    } else {
+      const body = await readJson(req);
+      const r = guardedRepos(ctx, () => setRepoBudget(seg[2]!, checkRepoBudget(body)));
+      rec = r.repo;
+      if (r.changed) {
+        auditAction(ctx.diagLog, by, "repo-change", r.repo.id, r.repo.dailyBudgetUsd === undefined ? "daily budget: cleared" : `daily budget: $${r.repo.dailyBudgetUsd}`);
+        ctx.scheduler.recheck();
+      }
+    }
+    return send(res, 200, budgetView(ctx, rec)), true;
   }
   if (seg.length === 4 && seg[3] === "transfer" && method === "POST") {
     const body = await readJson(req);

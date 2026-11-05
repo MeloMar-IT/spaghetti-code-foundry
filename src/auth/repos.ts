@@ -13,6 +13,8 @@ import { RepoSettingsSchema, checkRepoSettings } from "./repo-settings.js";
 import { type ParsedRepoUrl, RepoError, type RepoErrorCode, githubKey, parseRepoUrl, tryParseRepoUrl, validGithubName } from "./repo-url.js";
 import { StoreError, authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "./store.js";
 import { type User, UserError, checkEmail, findUserByEmail, getUser } from "./users.js";
+import { viewOf } from "./views.js";
+import type { ProjectRef } from "../engine/state.js";
 
 export { RepoError };
 export { readRepoSecret } from "./repo-connection.js";
@@ -58,6 +60,8 @@ const RecordSchema = z
     settings: RepoSettingsSchema.optional(),
     /** The Definition of Ready; absent means the default list. */
     definitionOfReady: ReadyListSchema.optional(),
+    /** The project's daily spending cap in USD (#792); absent: the Simple default, or none. */
+    dailyBudgetUsd: z.number().positive().max(1_000_000).optional(),
     connection: ConnectionSchema.optional(),
   })
   .strict()
@@ -121,8 +125,8 @@ const FileV1 = z
 export type RepoRecord = z.infer<typeof RecordSchema>;
 type RepoFile = z.infer<typeof FileV2>;
 /** What a user may see: the record without the admin's settings. */
-export type PublicRepo = Omit<RepoRecord, "settings" | "definitionOfReady">;
-const strip = ({ settings: _s, definitionOfReady: _d, ...rest }: RepoRecord): PublicRepo => ({ ...rest });
+export type PublicRepo = Omit<RepoRecord, "settings" | "definitionOfReady" | "dailyBudgetUsd">;
+const strip = ({ settings: _s, definitionOfReady: _d, dailyBudgetUsd: _b, ...rest }: RepoRecord): PublicRepo => ({ ...rest });
 
 /** The same id for the same old entry on every read, so a link to it keeps working until the file is rewritten. */
 function legacyId(owner: string, name: string): string {
@@ -489,6 +493,7 @@ function authPlan(file: RepoFile, userId: string, id: string, input: AuthChange,
     added: rec.added,
     ...(rec.settings ? { settings: rec.settings } : {}),
     ...(rec.definitionOfReady ? { definitionOfReady: rec.definitionOfReady } : {}),
+    ...(rec.dailyBudgetUsd !== undefined ? { dailyBudgetUsd: rec.dailyBudgetUsd } : {}),
   };
   // the status stays only for a call that changes nothing about how the repository is reached
   if (rec.connection && !secret && JSON.stringify(bare(next)) === JSON.stringify(bare(rec))) next.connection = rec.connection;
@@ -621,8 +626,8 @@ export function setRepoConnection(rec: RepoRecord, result: ConnectionResult, ins
       const type = now.method === "ssh-deploy-key" ? "ssh-key" : "token";
       if (!listCredentials(now.owner).some((c) => c.id === now.credentialId && c.name === secretName(now) && c.type === type)) return "changed";
     }
-    const { settings: _a, definitionOfReady: _c, ...was } = bare(rec);
-    const { settings: _b, definitionOfReady: _d, ...is } = bare(now);
+    const { settings: _a, definitionOfReady: _c, dailyBudgetUsd: _e, ...was } = bare(rec);
+    const { settings: _b, definitionOfReady: _d, dailyBudgetUsd: _f, ...is } = bare(now);
     if (JSON.stringify(was) !== JSON.stringify(is)) return "changed";
     // a new installation (the app was installed again) is kept with the status; it is never taken from a request
     const id = now.method === "github-app" && installationId ? { installationId } : {};
@@ -728,4 +733,57 @@ export function transferRepo(id: string, emailInput: unknown, opts: TransferOpti
     save(file.repos.map((r) => (r === rec ? next : r)));
     return { repo: { ...next }, oldKeysLeft, moved: true };
   });
+}
+
+// ---- the daily spending cap of a project (#792) ----------------------------------------------------
+
+const BUDGET_MAX = 1_000_000;
+
+/** Checks the body of the budget route: only `dailyBudgetUsd`, a number above 0 (up to a million), or null. */
+export function checkRepoBudget(body: unknown): number | null {
+  const bad = () => new RepoError("bad-settings", "dailyBudgetUsd must be a number above 0, or null");
+  if (typeof body !== "object" || body === null || Array.isArray(body)) throw bad();
+  const keys = Object.keys(body);
+  if (keys.length !== 1 || keys[0] !== "dailyBudgetUsd") throw bad();
+  const v = (body as { dailyBudgetUsd: unknown }).dailyBudgetUsd;
+  if (v === null) return null;
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > BUDGET_MAX) throw bad();
+  return v;
+}
+
+/** Sets (a number above 0) or clears (null) the daily cap of any repository. Saves only on a change. */
+export function setRepoBudget(id: string, usd: number | null): { repo: RepoRecord; changed: boolean } {
+  return withAuthLock(() => {
+    const file = read();
+    const rec = file.repos.find((r) => r.id === id);
+    if (!rec) throw new RepoError("not-found", "no such repository");
+    const { dailyBudgetUsd: _old, ...rest } = rec;
+    const next: RepoRecord = usd === null ? rest : { ...rest, dailyBudgetUsd: usd };
+    const changed = rec.dailyBudgetUsd !== (usd ?? undefined);
+    if (changed) save(file.repos.map((r) => (r === rec ? next : r)));
+    return { repo: { ...next }, changed };
+  });
+}
+
+/** The record of a project: a local one by its id, a GitHub one by the run owner's record of the repository. */
+export function projectRecord(p: ProjectRef, owner?: string): RepoRecord | undefined {
+  if (p.githubRepo) return owner ? findOwnedRepo(owner, p.githubRepo) : undefined;
+  return p.repoId ? getRepo(p.repoId) : undefined;
+}
+
+/**
+ * The daily cap in USD of a project: its own, else the Simple default when the record owner uses the Simple view.
+ * Never throws: any error (a broken file, a bad name) means no cap, as for the account limits.
+ */
+export function projectDailyBudget(p: ProjectRef, owner: string | undefined, simpleDefault: number | undefined): number | undefined {
+  try {
+    const rec = projectRecord(p, owner);
+    if (!rec) return undefined;
+    if (rec.dailyBudgetUsd !== undefined) return rec.dailyBudgetUsd;
+    if (simpleDefault === undefined || !(simpleDefault > 0)) return undefined;
+    const u = getUser(rec.owner);
+    return u && viewOf(u) === "simple" ? simpleDefault : undefined;
+  } catch {
+    return undefined;
+  }
 }

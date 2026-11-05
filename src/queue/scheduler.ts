@@ -6,11 +6,12 @@ import type { Config } from "../config.js";
 import type { ApprovalDecision } from "../engine/execute.js";
 import { cancelStoppedRun, cancelWaitingRun, newRunId, resumeRun, runFlow, saveAnswer } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
-import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, clearRunParked, spentTodayBy, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listRunBriefs, listRunBriefsAsync, listRunIds, loadRun, loadRunAsync, projectOfVars, readLiveLog, runUpdatedAt, setRunArchived, setRunParked, clearRunParked, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
 import { isRefinementRun } from "../auth/run-owner.js";
+import { projectDailyBudget as storedProjectBudget } from "../auth/repos.js";
 
 /**
  * A schedule chore of a watcher (the daily release, the daily report): `watcher <id> schedule`. Chores have their own lane:
@@ -87,7 +88,7 @@ interface Active {
 }
 
 /** Which per-user limit holds a job back. */
-export type UserLimit = "concurrent" | "per_day" | "budget";
+export type UserLimit = "concurrent" | "per_day" | "budget" | "project";
 
 export interface SchedulerOptions {
   runsDir: string;
@@ -107,6 +108,10 @@ export interface SchedulerOptions {
   accountActive?: (accountId: string) => boolean;
   /** The limits of an account. Without it, nobody is limited (CLI, evals). Runs already working are never stopped by a lower limit. */
   userLimits?: (accountId: string) => { maxConcurrent?: number; maxRunsPerDay?: number; dailyBudgetUsd?: number };
+  /** The daily cap in USD of a project (#792). Without it, the cap is read from the repository records when `userLimits` is set (the server), else there is none. Test hook / override. */
+  projectDailyBudget?: (project: ProjectRef, owner?: string) => number | undefined;
+  /** Spend of the runs of a project that started today. Default: read from the run files. Test hook. */
+  spentTodayByProject?: (project: ProjectRef) => number;
   /** Spend of an account's runs that started today. Default: read from the run files. */
   spentTodayBy?: (accountId: string) => number;
   /** New runs of an account that started today. Default: counted from the run files. */
@@ -761,15 +766,56 @@ export class Scheduler {
       for (const [id, s] of this.started) if (s.account === acc && s.day === now.toDateString()) ids.add(id);
       return ids.size;
     };
+    // The project of a job and its owner: a new run's vars, a resume's run file. Cached per pump.
+    const projects = new Map<string, { ref: ProjectRef; owner?: string } | undefined>();
+    const projectOf = (q: QueuedJob) => {
+      if (!projects.has(q.runId)) {
+        let v: { ref: ProjectRef; owner?: string } | undefined;
+        try {
+          if (q.job.kind === "run") {
+            const ref = projectOfVars(q.job.vars);
+            v = ref ? { ref, owner: q.owner } : undefined;
+          } else {
+            const run = loadRun(this.o.runsDir, q.runId);
+            const ref = projectOfVars(run?.vars);
+            v = ref ? { ref, owner: run?.owner ?? q.owner } : undefined;
+          }
+        } catch {
+          v = undefined;
+        }
+        projects.set(q.runId, v);
+      }
+      return projects.get(q.runId);
+    };
+    const projectSpends = new Map<string, number>();
+    const projectOver = (q: QueuedJob): boolean => {
+      const p = projectOf(q);
+      if (!p) return false;
+      const cap = this.projectDailyBudget(p.ref, p.owner);
+      if (cap === undefined) return false;
+      const key = JSON.stringify(p.ref);
+      let v = projectSpends.get(key);
+      if (v === undefined) {
+        try {
+          v = this.o.spentTodayByProject?.(p.ref) ?? spentTodayByProject(this.o.runsDir, p.ref);
+        } catch {
+          v = 0;
+        }
+        if (!Number.isFinite(v)) v = 0;
+        projectSpends.set(key, v);
+      }
+      return v >= cap;
+    };
     const limitOf = (q: QueuedJob): UserLimit | undefined => {
       const acc = accountOf(q);
-      if (!acc || !this.o.userLimits) return undefined;
-      const l = limitsOf(acc);
-      if (valid(l.maxConcurrent) && activeOf(acc) >= l.maxConcurrent) return "concurrent";
-      if (countable(q) && valid(l.maxRunsPerDay) && todayCount(acc) >= l.maxRunsPerDay) return "per_day";
-      const cap = this.userDailyBudget(acc);
-      if (cap !== undefined && spent(acc) >= cap) return "budget";
-      return undefined;
+      if (acc && this.o.userLimits) {
+        const l = limitsOf(acc);
+        if (valid(l.maxConcurrent) && activeOf(acc) >= l.maxConcurrent) return "concurrent";
+        if (countable(q) && valid(l.maxRunsPerDay) && todayCount(acc) >= l.maxRunsPerDay) return "per_day";
+        const cap = this.userDailyBudget(acc);
+        if (cap !== undefined && spent(acc) >= cap) return "budget";
+      }
+      return projectOver(q) ? "project" : undefined;
     };
     const locked = (q: QueuedJob) => {
       const active = [...this.active.values()].map((a) => a.queued);
@@ -795,7 +841,7 @@ export class Scheduler {
     // takes no story slot and does not wait for stories or a helper's cap; only its lock, the account's state and the
     // account's daily budget hold it. A concurrency of 0 (nothing starts) holds it too, and so does a cap of 0 for a new one.
     if (limit >= 1 && ![...this.active.values()].some((a) => isChoreRun(a.queued.source))) {
-      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && limitOf(p) !== "budget");
+      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && limitOf(p) !== "budget" && !projectOver(p));
       if (q) {
         const account = accountOf(q);
         this.pending.splice(this.pending.indexOf(q), 1);
@@ -843,7 +889,7 @@ export class Scheduler {
       }
     }
     this.limited = new Map();
-    if (this.o.userLimits) {
+    if (this.o.userLimits || this.o.projectDailyBudget) {
       for (const q of this.pending) {
         if (held(q)) continue;
         const l = limitOf(q);
@@ -873,6 +919,23 @@ export class Scheduler {
     try {
       if (!this.o.userLimits || !this.o.config().cost_limits) return undefined;
       const cap = this.o.userLimits(accountId)?.dailyBudgetUsd;
+      return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The daily cap in USD of a project (#792), or undefined: cost limits off, no source (CLI, evals) or no valid value. Never throws.
+   * The override option wins; else the repository records give it, but only when the server set a `userLimits` source.
+   */
+  projectDailyBudget(project: ProjectRef, owner?: string): number | undefined {
+    try {
+      const cfg = this.o.config();
+      if (!cfg.cost_limits) return undefined;
+      let cap: number | undefined;
+      if (this.o.projectDailyBudget) cap = this.o.projectDailyBudget(project, owner);
+      else if (this.o.userLimits) cap = storedProjectBudget(project, owner, cfg.simple_project_daily_budget_usd || undefined);
       return typeof cap === "number" && Number.isFinite(cap) && cap > 0 ? cap : undefined;
     } catch {
       return undefined;
@@ -932,6 +995,7 @@ export class Scheduler {
         emit({ type: "update", summary: a.summary });
       },
       // a job without an account falls to the first admin inside runFlow: it stays under the global budget only
+      projectDailyBudget: this.o.projectDailyBudget || this.o.userLimits ? (p: ProjectRef, o?: string) => this.projectDailyBudget(p, o) : undefined,
       userDailyBudget: this.o.userLimits && account ? (o: string) => this.userDailyBudget(o) : undefined,
       // evidence only: who asked, when it was queued, and who cancelled it
       actor: actorOf(q.source, queuerOf(q)),

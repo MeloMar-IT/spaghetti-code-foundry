@@ -1158,6 +1158,8 @@ For a code failure the *why* is one sentence written by a small model that read 
 failing output (see "The failure summary call" in Costs). The comment and the card then say so.
 If the model says the cause is the environment, the failure counts as a Foundry failure.
 
+**A daily cap per project.** Each repository can have its own daily cap in USD, set by an administrator (`PUT /api/admin/repos/:id/budget`, a number above 0, or null to clear it; every change writes an audit line). Without its own cap, a project whose owner uses the Simple view gets the default `simple_project_daily_budget_usd` (5 to start; 0 means no default). The runs that started today and belong to the project count: by GitHub repository for a GitHub project, by repository id for a local one. When the cap is reached, no new run or resume of the project starts, and a running run stops before its next step. The watcher continues it the next day. The cap holds only while `cost_limits` is on. People see no amount: Simple reads "The Foundry has done enough for today; it continues tomorrow."
+
 A usage limit, the daily budget, a sign-out and an unreachable AI service do not fail a run: they
 pause it, and it continues by itself (a sign-out needs you to sign in again first).
 
@@ -1260,6 +1262,7 @@ Every status in the app has a **?** that shows the two sentences from this table
 | paused — signed out | The Foundry is signed out of its AI account. Sign in again — the run then goes on by itself. |
 | paused — AI service not reachable | The AI service could not be reached. Nothing to do — the Foundry tries again later. |
 | paused — daily budget | Today's budget is used up. Nothing to do — it goes on tomorrow. |
+| paused — the project's limit for today is reached | This project did as much work today as its daily limit allows. Nothing to do — it goes on by itself tomorrow. |
 | checking for questions | The Foundry reads the new issues and looks for questions only you can answer. Nothing to do — an issue without questions starts after the check. |
 | starting soon | Nothing is in the way, it only waits for the watcher's next check. Nothing to do — it starts by itself. |
 | queued | It waits in the queue until a run finishes. Nothing to do — it starts by itself. |
@@ -5161,6 +5164,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/repos/:owner/:name` | yes | yes | remove a GitHub repository by name (old form) |
 | `GET /api/admin/repos` | yes | no | the repositories of all accounts, with their settings and autonomy level |
 | `PUT /api/admin/repos/:id/settings` | yes | no | set the test command, docs, protected branches, branch names, release-build recipe (`releaseRecipe`, YAML text up to 16384 characters, checked like `.factory/release-build.yaml`) and the decide-technical-questions switch (`questions: { decide_technical: boolean }`, on unless `false`) of a repository; writes an audit line |
+| `GET /api/admin/repos/:id/budget` | yes | no | the daily spending cap of a repository, the Simple default, the cap in effect and today's spend |
+| `PUT /api/admin/repos/:id/budget` | yes | no | set (a number above 0) or clear (null) the daily spending cap of a repository; writes an audit line |
 | `PUT /api/admin/repos/:id/ready` | yes | no | set the Definition of Ready of a repository, or put the default list back |
 | `POST /api/admin/repos/:id/transfer` | yes | no | move a repository to another account, by e-mail |
 | `GET /api/admin/repos/:id/watchers` | yes | no | the watchers of a repository, with status and holds |

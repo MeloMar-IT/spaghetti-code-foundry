@@ -6,7 +6,7 @@ import { claudeIsolated, codexSandbox, sessionToResume } from "../src/agents/run
 import { isQuotaError, isTransientError, KNOWN_KEY_VARS, parseSpec, providerKeyVars, resolveTarget, toTarget } from "../src/agents/targets.js";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { resumeRun, runFlow } from "../src/engine/runner.js";
-import { liveLogFile } from "../src/engine/state.js";
+import { PROJECT_BUDGET_REASON, liveLogFile } from "../src/engine/state.js";
 import { readTranscript } from "../src/engine/transcript.js";
 import { withModel } from "../src/evals.js";
 import { parseFlow } from "../src/flow/load.js";
@@ -432,6 +432,38 @@ steps:
     expect(s.status).toBe("succeeded");
     expect(s.history.map((h) => h.agent)).toEqual(["claude:anthropic", "codex:openai"]);
     expect(readFileSync(liveLogFile(s.runDir), "utf8")).toMatch(/the owner's daily budget reached — agent steps continue on/);
+  });
+
+  it("the daily cap of the project stops the run although a free fallback is configured or already active (#792)", async () => {
+    const flow = parseFlow(`
+name: t
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: "SAY paid"}
+  - {id: b, type: claude, prompt: "SAY free"}
+  - {id: c, type: claude, prompt: "SAY more"}
+`);
+    const run = (config: Config, cap: () => number | undefined) => runFlow(flow, {
+      task: "t", repo, runsDir, claudeBin, owner: "u1", vars: { github_repo: "acme/a" }, projectDailyBudget: cap, config,
+    });
+    const conf = (over: Record<string, unknown>) => cfg({ bot: { name: "Bot", email: "bot@example.com" }, ...over });
+    // a free fallback is configured: the owner budget would use it, the project cap does not
+    const s = await run(conf({ router: { fallback: ["codex"] } }), () => 0.005);
+    expect(s.status).toBe("stopped");
+    expect(s.reason).toBe(PROJECT_BUDGET_REASON);
+    expect(s.history).toHaveLength(1);
+    // the fallback is already active (the run budget switched to it): the cap of the project still stops the run
+    const t = await runFlow(parseFlow(`
+name: t
+workspace: empty
+limits: {max_cost_usd: 0.005}
+steps:
+  - {id: a, type: claude, prompt: "SAY paid"}
+  - {id: b, type: claude, prompt: "SAY free"}
+  - {id: c, type: claude, prompt: "SAY more"}
+`), { task: "t", repo, runsDir, claudeBin, owner: "u1", vars: { github_repo: "acme/a" }, projectDailyBudget: () => 0.007, config: conf({ router: { fallback: ["codex"] } }) });
+    expect(t.status).toBe("stopped");
+    expect(t.reason).toBe(PROJECT_BUDGET_REASON);
   });
 
   it("does not resume a session across agents", async () => {

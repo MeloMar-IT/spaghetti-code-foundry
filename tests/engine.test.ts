@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { learningsFile, resumeRun, runFlow } from "../src/engine/runner.js";
 import { dockerCommand, TOOLS_DIR } from "../src/engine/guards.js";
-import { USER_BUDGET_REASON, liveLogFile, saveRun } from "../src/engine/state.js";
+import { PROJECT_BUDGET_REASON, USER_BUDGET_REASON, liveLogFile, saveRun } from "../src/engine/state.js";
 import { mirrorEnvPrefixes, withScfAliases } from "../src/engine/template.js";
 import { dropIssueStates, markIssueCheckFailed, saveIssueStates } from "../src/issue-states.js";
 import { notifyRun } from "../src/notify.js";
@@ -486,6 +486,47 @@ steps:
       const s = await mine(() => 0.01);
       const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, config: baseConfig(), userDailyBudget: () => 5 });
       expect(r.status).toBe("succeeded");
+    });
+  });
+
+  describe("the daily cap of the project", () => {
+    const two = `
+name: t
+workspace: empty
+steps:
+  - {id: a, type: claude, prompt: one}
+  - {id: sh, type: shell, run: "echo posted"}
+  - {id: b, type: claude, prompt: two}
+`;
+    const baseConfig = (over: Record<string, unknown> = {}): Config => ConfigSchema.parse({ protected_branches: [], bot: { name: "Bot", email: "bot@example.com" }, ...over });
+    const vars = { github_repo: "acme/a" };
+    const mine = (cap: () => number | undefined, config = baseConfig(), flow = two) =>
+      runFlow(parseFlow(flow), { task: "t", repo, runsDir, claudeBin, config, owner: "u1", vars, projectDailyBudget: cap });
+
+    it("stops at the next step boundary with no amount in the reason", async () => {
+      const s = await mine(() => 0.01);
+      expect(s.status).toBe("stopped");
+      expect(s.reason).toBe(PROJECT_BUDGET_REASON);
+      expect(s.reason).not.toContain("$");
+      expect(s.state.next).toBe("sh");
+      expect(s.history.map((h) => h.id)).toEqual(["a"]);
+      expect(runNextStep(s).kind).toBe("project_limit");
+    });
+
+    it("goes on when the cap is raised, and stops again while it is reached", async () => {
+      const s = await mine(() => 0.01);
+      const again = await resumeRun({ runId: s.runId, runsDir, claudeBin, config: baseConfig(), projectDailyBudget: () => 0.01 });
+      expect(again.reason).toBe(PROJECT_BUDGET_REASON);
+      const r = await resumeRun({ runId: s.runId, runsDir, claudeBin, config: baseConfig(), projectDailyBudget: () => 50 });
+      expect(r.status).toBe("succeeded");
+    });
+
+    it("is off with cost_limits: false, without a cap, without a project, or when the callback throws", async () => {
+      expect((await mine(() => 0.01, baseConfig({ cost_limits: false }))).status).toBe("succeeded");
+      expect((await mine(() => undefined)).status).toBe("succeeded");
+      expect((await mine(() => { throw new Error("x"); })).status).toBe("succeeded");
+      const none = await runFlow(parseFlow(two), { task: "t", repo, runsDir, claudeBin, config: baseConfig(), owner: "u1", projectDailyBudget: () => 0.01 });
+      expect(none.status).toBe("succeeded");
     });
   });
 });

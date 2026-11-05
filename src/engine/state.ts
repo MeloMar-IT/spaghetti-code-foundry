@@ -473,7 +473,49 @@ export function spentToday(runsDir: string, now = new Date()): number {
 
 /** The stop reason of a run that reached its owner's daily budget. It carries no amount: it reaches users. */
 export const USER_BUDGET_REASON = "your daily limit is reached — resume tomorrow";
-export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "");
+/** The stop reason of a run whose project reached its daily cap (#792). It carries no amount. */
+export const PROJECT_BUDGET_REASON = "the project's daily limit is reached — resume tomorrow";
+export const isProjectBudgetStop = (reason?: string): boolean => /^the project's daily limit is reached/.test(reason ?? "");
+/** A stop by a daily spending limit, the owner's or (#792) the project's; paused work that goes on by itself. */
+export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "") || isProjectBudgetStop(reason);
+
+/** A project: a GitHub repository (`vars.github_repo`) or a local one (`vars.repo_id`). */
+export interface ProjectRef {
+  githubRepo?: string;
+  repoId?: string;
+}
+
+export function projectOfVars(vars?: Record<string, string>): ProjectRef | undefined {
+  if (vars?.github_repo) return { githubRepo: vars.github_repo };
+  if (vars?.repo_id) return { repoId: vars.repo_id };
+  return undefined;
+}
+
+/**
+ * Total spend of the runs of one project that started today. Unlike spentTodayBy there is no 500-run window:
+ * a cap must not release a project because newer runs of others pushed today's runs out of the window.
+ */
+export function spentTodayByProject(runsDir: string, project: ProjectRef, now = new Date()): number {
+  const day = now.toDateString();
+  const want = project.githubRepo?.toLowerCase();
+  let total = 0;
+  for (const id of listRunIds(runsDir)) {
+    let s: RunSummary | undefined;
+    try {
+      s = loadRun(runsDir, id);
+    } catch {
+      continue;
+    }
+    if (!s) continue;
+    const at = new Date(s.startedAt);
+    if (at.toDateString() === day) {
+      const p = projectOfVars(s.vars);
+      const mine = want !== undefined ? p?.githubRepo?.toLowerCase() === want : project.repoId !== undefined && p?.repoId === project.repoId && !p.githubRepo;
+      if (mine && Number.isFinite(s.totalCostUsd)) total += s.totalCostUsd;
+    } else if (at < new Date(now.getTime() - 2 * 86_400_000)) break; // sorted newest first
+  }
+  return total;
+}
 /** A stop that the Foundry answers with a retry after a step ran out of time (see engine/auto-retry.ts). */
 export const isTimeLimitStop = (reason?: string): boolean => /^ran out of time in /.test(reason ?? "");
 

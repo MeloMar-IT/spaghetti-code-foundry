@@ -9,7 +9,7 @@ const EXPLAIN = "how risky it is to create the smaller issues without you lookin
 
 describe("glossary", () => {
   it("has 35 distinct kinds", () => {
-    expect(new Set(KINDS).size).toBe(35);
+    expect(new Set(KINDS).size).toBe(36);
   });
 
   const rows: [NextKind, WordFacts, string][] = [
