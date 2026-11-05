@@ -44,6 +44,9 @@ function setup() {
     ...gate,
     FACTORY_TEST_SLOT_POLL_MS: "50",
     FACTORY_IN_TEST_SLOT: "",
+    // On a busy machine the slot that runs this test adds a worker limit to these two variables; the fake wrappers must start clean.
+    GRADLE_OPTS: "",
+    JDK_JAVA_OPTIONS: "",
     ...extra,
   });
   const slots = join(d, "test-slots");
