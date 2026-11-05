@@ -789,6 +789,17 @@ The move refuses to start, and changes nothing, when:
 
 **Known limit.** If the Foundry stops after GitHub has created an issue but before the story file records its number, the next run creates that story's issue again. Check the target repository for a duplicate and close the extra one before you run the move again.
 
+#### Move the whole project
+
+`POST /api/repos/:id/move-to-github` (admin only, like local repositories) moves the local project itself. Its body is `target` (either `{ "create": { "name": "name" or "owner/name", "private": true } }`, where `private` is true by default, or `{ "repoId": "..." }` for a GitHub repository you already have under **My repositories**), with optional `includeClosed` and `dryRun`. The steps, in order:
+
+1. **Target.** With `create`, the Foundry makes the repository with `gh repo create` and your GitHub token sign-in, then connects it under the same owner and sign-in method. If the repository already exists, it is used. With no GitHub sign-in at all, the answer is "connect GitHub first: add a GitHub repository with a token under My repositories, then move again".
+2. **Push.** Every branch and tag of the folder is pushed, including `scf/stories`. The push never forces: a ref that GitHub refuses stops the move with the reason, and nothing is switched.
+3. **Stories.** The stories move as described above. A story that cannot be read, or whose comments are too large, stops the move before the switch, so its watchers stay on the local project.
+4. **Switch.** The watchers of the local project move to the GitHub repository, the run settings are copied (the GitHub repository's own values win where both have one), and the local record is removed. The folder and its `.scf/stories/` files stay as history.
+
+A dry run returns whether the repository would be created, the branches and tags that would be pushed and the story plan. It changes nothing. A move that stopped at any step can be run again: an existing repository, refs that are already up to date and stories that are already moved are skipped.
+
 ### Work page (redesign, off by default)
 
 The redesigned pages are still being built. An admin turns them on in **Settings → Redesign** with the box "Show the redesigned pages (still being built)". Reload the page after you change it. With the box off, **Board** is exactly as described above.
@@ -5234,6 +5245,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `GET /api/repos/methods` | yes | yes | the sign-in methods you may choose (`none` and `local` only for an admin), and the link to install the GitHub App |
 | `POST /api/repos` | yes | yes | add a repository (a URL, and a token or a deploy key for it; an admin may also add `local`: the absolute path of a git repository on this machine, whose stories stay in `.scf/stories/`) |
 | `PUT /api/repos/:id/auth` | yes | yes | change the method, user name, token or address of your repository, or make a new deploy key |
+| `POST /api/repos/:id/move-to-github` | yes | no | move your local project to GitHub: create a private repository with your GitHub token sign-in (or use one of your GitHub repositories), push all branches and tags (never forced), move the stories, then move the watchers and settings and remove the local record; `dryRun` changes nothing; safe to repeat |
 | `POST /api/repos/:id/test` | yes | yes | test the connection of your repository (an admin: any repository); the result is saved as its connection status |
 | `GET /api/repos/:id/ready` | yes | yes | the Definition of Ready of your repository (an admin: any repository) |
 | `GET /api/repos/:id/epics` | yes | yes | the epics of your repository with counts, growth, the expected finish and what holds each up, from what the watchers saved (no call to GitHub); saves the day's forecast (an admin: any repository) |

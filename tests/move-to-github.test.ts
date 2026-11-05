@@ -12,7 +12,7 @@ import { isBot, isStatusComment } from "../src/github.js";
 import { addRepoWatcher } from "../src/repos/watchers.js";
 import { type Entry, UNREADABLE_TITLE } from "../src/stories/local-map.js";
 import {
-  CONNECT_FIRST, issueLabels, mapRefs, MAX_COMMENT_CHARS, moveLockFile, MOVED_COMMENTS_MARKER, movedComments, moveToGithub, planFrom, withFrontMatterLinks,
+  CONNECT_FIRST, issueLabels, mapRefs, MAX_COMMENT_CHARS, moveLockFile, moveRefusal, MOVED_COMMENTS_MARKER, movedComments, moveToGithub, planFrom, withFrontMatterLinks,
 } from "../src/stories/move-to-github.js";
 import { type FileStory, formatStoryFile, parseStoryFile, storyFileName } from "../src/stories/story-file.js";
 import { fakeGithub } from "./helpers/fake-github.js";
@@ -201,6 +201,27 @@ describe("moveToGithub", () => {
     await mv();
     expect(gh.bugIssues()[0]!.labels.map((l) => l.name)).toEqual(["Factory_go"]);
     expect(gh.labels()).toContain("Factory_go");
+  });
+
+  it("buildLabel wins over the label of the target's watcher", async () => {
+    const rec = target();
+    addRepoWatcher(rec.id, { id: "a-w", label: "Factory_go" });
+    put(story(1, { state: "go" }));
+    await mv({ buildLabel: "build-me" });
+    expect(gh.bugIssues()[0]!.labels.map((l) => l.name)).toEqual(["build-me"]);
+  });
+
+  it("moveRefusal gives both sentences, or nothing", () => {
+    const moved = (o: Partial<FileStory>) => entry(story(1, o));
+    expect(moveRefusal([moved({}), moved({ githubIssue: 3, githubRepo: "acme/app" })], "ACME/app")).toBeUndefined();
+    expect(moveRefusal([moved({ githubIssue: 3, githubRepo: "other/x" })], "acme/app")).toBe("this project was already moved to other/x");
+    expect(moveRefusal([moved({ githubIssue: 3 })], "acme/app")).toContain("has github_issue but no github_repo");
+  });
+
+  it("the project lock has its own file, and the default name stays the same", () => {
+    expect(moveLockFile(dir, "project")).not.toBe(moveLockFile(dir));
+    expect(moveLockFile(dir, "project")).toMatch(/project-[0-9a-f]{32}\.lock$/);
+    expect(moveLockFile(dir)).toMatch(/move-[0-9a-f]{32}\.lock$/);
   });
 
   it("a repeat creates nothing, posts no comment, and leaves a removed label and a reopened issue alone", async () => {

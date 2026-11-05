@@ -232,6 +232,7 @@ const EXAMPLES: Record<string, Example> = {
   "GET repos/methods": { path: "repos/methods", user: 200, admin: 200 },
   "POST repos": { path: "repos", body: {}, user: 400, admin: 400 },
   "PUT repos/:id/auth": { path: `repos/${UNKNOWN}/auth`, body: {}, user: 400, admin: 400 },
+  "POST repos/:id/move-to-github": no(`repos/${UNKNOWN}/move-to-github`, 404, {}),
   "POST repos/:id/test": { path: `repos/${UNKNOWN}/test`, body: {}, user: 404, admin: 404 },
   "GET repos/:id/ready": { path: `repos/${UNKNOWN}/ready`, user: 404, admin: 404 },
   "GET repos/:id/epics": { path: `repos/${UNKNOWN}/epics`, user: 404, admin: 404 },

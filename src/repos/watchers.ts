@@ -157,6 +157,26 @@ export function removeRepoWatcher(repoId: string, id: string): StoredWatcher {
   });
 }
 
+/**
+ * Gives the watchers of one repository to another (same ids and options; a local-name `repoName` is dropped). With `label`, an
+ * issues watcher gets that label. Writes nothing when there is nothing to change; returns the moved watchers as they are now.
+ */
+export function moveRepoWatchers(fromRepoId: string, toRepoId: string, label?: string): StoredWatcher[] {
+  return withAuthLock(() => {
+    const all = read();
+    const moved: StoredWatcher[] = [];
+    const next = all.map((w) => {
+      if (w.repoId !== fromRepoId) return w;
+      const { repoName: _n, ...rest } = w;
+      const m: StoredWatcher = { ...rest, repoId: toRepoId, ...(label !== undefined && w.source === "issues" ? { label } : {}) };
+      moved.push(m);
+      return m;
+    });
+    if (moved.length) save(next);
+    return moved;
+  });
+}
+
 /** Removes the watchers of these repositories and returns them. Writes nothing when there are none. */
 export function removeWatchersOfRepos(repoIds: string[]): StoredWatcher[] {
   if (!repoIds.length) return [];

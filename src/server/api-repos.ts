@@ -11,6 +11,8 @@ import { githubNameOf, tryParseRepoUrl } from "../auth/repo-url.js";
 import { type InstallProblem, type RepoApp, installUrl, repoApp, repoInstallation } from "../github-app.js";
 import { type Code, ConnectError, TEST_TIMEOUT_MS, blockedResult, testConnection } from "../repos/connect.js";
 import { StoreError } from "../auth/store.js";
+import { ProjectMoveError, moveProjectToGithub, parseMoveBody } from "../repos/move-to-github.js";
+import { MoveError } from "../stories/move-to-github.js";
 import { allAppRepos, appRepoAllowed, getAppRepos, onAppList } from "../auth/app-repos.js";
 import { type User, getUser, listUsers } from "../auth/users.js";
 import { KeyError } from "../credentials/keychain.js";
@@ -345,6 +347,34 @@ export async function testRepo(ctx: ApiContext, user: User, id: string): Promise
   }
 }
 
+const MOVE_STATUS = { "bad-input": 400, "not-found": 404 } as const;
+
+/** `POST /api/repos/<id>/move-to-github`: moves the caller's local project to GitHub (see repos/move-to-github.ts). */
+async function moveLocalProject(ctx: ApiContext, req: IncomingMessage, user: User, id: string) {
+  const rec = guardedRepos(ctx, () => getRepo(id));
+  if (!rec || rec.owner !== user.id || rec.method !== "local") throw new HttpError(404, "no such local project");
+  const body = await readJson(req);
+  try {
+    const r = await moveProjectToGithub({
+      ...parseMoveBody(body), localId: rec.id, owner: user.id, config: ctx.config, beforeSave: connectLevel,
+      onAdded: (added) => auditAction(ctx.diagLog, user.id, "repo-add", added.id, added.url),
+    });
+    if (r.switched && r.repoId) {
+      auditAction(ctx.diagLog, user.id, "repo-change", r.repoId, `moved from local project ${basename(rec.url)}`);
+      auditAction(ctx.diagLog, user.id, "repo-remove", rec.id, rec.url);
+    }
+    return r;
+  } catch (e) {
+    if (e instanceof ProjectMoveError) throw new HttpError(e.code in MOVE_STATUS ? MOVE_STATUS[e.code as keyof typeof MOVE_STATUS] : 409, e.message);
+    if (e instanceof MoveError) throw new HttpError(409, e.message);
+    return guardedRepos(ctx, () => {
+      throw e;
+    });
+  } finally {
+    ctx.watchers.sync();
+  }
+}
+
 /** The caller's own repositories: list, add, change how to reach one, remove. A token is only ever accepted, a private key never leaves the server. */
 export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   if (seg[0] === "admin") return adminRepos(ctx, req, res, seg, method, caller.id);
@@ -406,6 +436,9 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   }
   if (seg.length === 3 && seg[2] === "test" && method === "POST") {
     return send(res, 200, await testRepo(ctx, user, seg[1]!)), true;
+  }
+  if (seg.length === 3 && seg[2] === "move-to-github" && method === "POST") {
+    return send(res, 200, await moveLocalProject(ctx, req, user, seg[1]!)), true;
   }
   if (seg.length === 3 && seg[2] === "ready" && method === "GET") {
     const rec = guardedRepos(ctx, () => getRepo(seg[1]!));
