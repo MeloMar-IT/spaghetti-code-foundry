@@ -144,15 +144,24 @@ export function recordApprovedRef(
   sourceId: string,
   repositoryKey: string,
   commit: string,
-  opts: { home?: string; at?: Date; claimed?: boolean } = {},
-): "recorded" | "unchanged" {
+  opts: { home?: string; at?: Date; claimed?: boolean; expectedPrevious?: string | null } = {},
+): "recorded" | "unchanged" | "stale" {
   if (!SKILL_ID_RE.test(sourceId)) throw new Error("recordApprovedRef: bad source id");
   if (!COMMIT_RE.test(commit)) throw new Error("recordApprovedRef: bad commit id");
   if (!repositoryKey) throw new Error("recordApprovedRef: bad repository key");
   const at = (opts.at ?? new Date()).toISOString();
+  let stale = false;
   const r = updateSourceApprovals(
     (cur) => {
       const old = cur[sourceId];
+      // `expectedPrevious` (a commit, or null for none): the stored ref must still be that one, else nothing is written.
+      if (opts.expectedPrevious !== undefined) {
+        const stored = old && old.repositoryKey === repositoryKey ? old.ref?.approved ?? null : null;
+        if (stored !== opts.expectedPrevious && stored !== commit) {
+          stale = true;
+          return undefined;
+        }
+      }
       if (old && old.repositoryKey === repositoryKey && old.ref?.approved === commit) return undefined;
       const base: SourceApprovals = old && old.repositoryKey === repositoryKey ? old : { repositoryKey, releases: [] };
       cur[sourceId] = { ...base, ref: { approved: commit, at } };
@@ -160,7 +169,7 @@ export function recordApprovedRef(
     },
     { home: opts.home, claimed: opts.claimed },
   );
-  return r === "written" ? "recorded" : "unchanged";
+  return stale ? "stale" : r === "written" ? "recorded" : "unchanged";
 }
 
 export interface MergedApprovals {

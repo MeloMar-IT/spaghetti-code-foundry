@@ -336,6 +336,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
     },
     log,
     findingsIdle: (fn) => watchers.monitorIdle(fn),
+    skills: () => ctx.config().skills,
   });
   // Skill gap issues (skills.authoring): empty repository means off. Reads at most the 500 newest recent runs once an hour.
   gapSweep = skillGapSweeper({
