@@ -104,6 +104,16 @@ describe("pure functions", () => {
     expect("pushRemote" in ui.settingsBody()).toBe(false);
   });
 
+  it("publishRemoteText names both destinations, the tags and that it goes on by itself", () => {
+    const p = { develop: { branch: "develop", remote: "origin", addresses: ["https://***@example.com/a.git"] }, main: { branch: "trunk", remote: "release", addresses: ["/bare/main.git", "/bare/second.git"] }, tags: true };
+    const text = ui.publishRemoteText(p).join("\n");
+    expect(text).toContain('The develop branch "develop" goes to the remote "origin" (https://***@example.com/a.git).');
+    expect(text).toContain('The main branch "trunk" goes to the remote "release" (/bare/main.git, /bare/second.git).');
+    expect(text).toContain("Tags");
+    expect(text).toContain("without asking again");
+    expect(ui.publishRemoteText({ develop: p.develop, main: null }).join("\n")).toContain("The main branch has no remote to go to; it is not pushed.");
+  });
+
   it("settingsBody clears the test command, develop branch and release recipe for a skill library", () => {
     const body = ui.settingsBody({ kind: "skill-library", testCommand: "npm test", developBranch: "develop", releaseRecipe: "builds: []", mainBranch: "main" });
     expect(body).toMatchObject({ kind: "skill-library", testCommand: "", developBranch: "", releaseRecipe: "", mainBranch: "main" });

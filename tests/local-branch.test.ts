@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { grantedBranch, isProtectedBranch, pushOwnerBranch, pushTagToOwner, scrubCredentials, updateOwnerBranch, worktrees } from "../src/repos/local-branch.js";
+import { grantedBranch, isProtectedBranch, ownerPushTarget, pushOwnerBranch, pushTagToOwner, scrubCredentials, updateOwnerBranch, worktrees } from "../src/repos/local-branch.js";
 
 const ENV = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
 const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, env: ENV, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -373,5 +373,30 @@ describe("helpers", () => {
     expect(scrubCredentials("fatal: first\nfatal: unable to access 'https://user:secret@host/x.git/': nope\n")).toBe("fatal: unable to access 'https://***@host/x.git/': nope");
     expect(scrubCredentials("x".repeat(500)).length).toBe(300);
     expect(scrubCredentials("")).toBe("");
+  });
+});
+
+describe("ownerPushTarget (#796)", () => {
+  it("is undefined without a remote", () => {
+    expect(ownerPushTarget(owner, "develop")).toBeUndefined();
+  });
+
+  it("shows the push address without its sign-in, and resolves each branch on its own remote", () => {
+    git(owner, "remote", "add", "origin", "https://user:secret@example.com/a/b.git");
+    git(owner, "remote", "add", "other", join(root, "other.git"));
+    git(owner, "config", "branch.main.remote", "other");
+    const dev = ownerPushTarget(owner, "develop");
+    expect(dev).toEqual({ remote: "origin", urls: ["https://user:secret@example.com/a/b.git"], shown: ["https://***@example.com/a/b.git"] });
+    expect(JSON.stringify(dev?.shown)).not.toContain("secret");
+    expect(ownerPushTarget(owner, "main")).toMatchObject({ remote: "other", shown: [join(root, "other.git")] });
+  });
+
+  it("lists every push destination of a remote, since git push goes to all of them", () => {
+    git(owner, "remote", "add", "origin", join(root, "one.git"));
+    git(owner, "remote", "set-url", "--add", "--push", "origin", join(root, "one.git"));
+    git(owner, "remote", "set-url", "--add", "--push", "origin", join(root, "two.git"));
+    const t = ownerPushTarget(owner, "develop");
+    expect(t?.urls).toEqual([join(root, "one.git"), join(root, "two.git")]);
+    expect(t?.shown).toEqual([join(root, "one.git"), join(root, "two.git")]);
   });
 });

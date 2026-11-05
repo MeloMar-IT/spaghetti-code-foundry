@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { PUBLISH_TOKEN, fingerprint } from "./publish-grants.js";
 import { localRepoName } from "../auth/local-name.js";
 import { githubNameOf, validGithubName } from "../auth/repo-url.js";
 import type { RepoSettings } from "../auth/repo-settings.js";
@@ -12,7 +13,7 @@ import type { Config } from "../config.js";
 import { appTokenAccess } from "../engine/repo-access.js";
 import { gh, ghLogin, withGhEnv } from "../github.js";
 import { repoGhIdentity } from "../queue/gh-identity.js";
-import { GO_LABEL, scan } from "../stories/local-map.js";
+import { GO_LABEL, type Entry, scan } from "../stories/local-map.js";
 import { type MoveResult, MoveError, moveRefusal, moveToGithub, planFrom, takeMoveLock } from "../stories/move-to-github.js";
 import { STORIES_BRANCH } from "../stories/story-commit.js";
 import { gitAuth } from "./connect.js";
@@ -26,7 +27,7 @@ import { listRepoWatchers, moveRepoWatchers, watcherRepoProblem } from "./watche
 
 export const CONNECT_GITHUB_FIRST = "connect GitHub first: add a GitHub repository with a token under My repositories, then move again";
 
-export type ProjectMoveCode = "bad-input" | "not-found" | "no-sign-in" | "push-failed" | "rewrites" | "github" | "stories-skipped";
+export type ProjectMoveCode = "bad-input" | "not-found" | "no-sign-in" | "push-failed" | "rewrites" | "github" | "stories-skipped" | "changed";
 export class ProjectMoveError extends Error {
   constructor(readonly code: ProjectMoveCode, message: string) {
     super(message);
@@ -35,7 +36,13 @@ export class ProjectMoveError extends Error {
 }
 
 export type MoveTarget = { create: { name: string; private: boolean } } | { repoId: string };
-export interface MoveRequest { target: MoveTarget; includeClosed: boolean; dryRun: boolean }
+export interface MoveRequest {
+  target: MoveTarget;
+  includeClosed: boolean;
+  dryRun: boolean;
+  /** The token of the check; a real move needs it (the route takes it). */
+  confirm?: string;
+}
 
 const bad = (message: string) => new ProjectMoveError("bad-input", message);
 const BARE_NAME = /^[A-Za-z0-9._-]{1,100}$/;
@@ -54,7 +61,7 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 /** Checks the body of the call; every problem is a `bad-input` with a sentence. */
 export function parseMoveBody(body: unknown): MoveRequest {
   if (!isObject(body)) throw bad("the body must be an object");
-  onlyKeys(body, ["target", "includeClosed", "dryRun"], "");
+  onlyKeys(body, ["target", "includeClosed", "dryRun", "confirm"], "");
   const t = body.target;
   if (!isObject(t)) throw bad("target is needed: { create: { name } } or { repoId }");
   onlyKeys(t, ["create", "repoId"], " in target");
@@ -78,7 +85,14 @@ export function parseMoveBody(body: unknown): MoveRequest {
     if (!fine || /\.git$/i.test(name)) throw bad('create.name must be "name" or "owner/name" (letters, digits, "-", "_" and ".")');
     target = { create: { name, private: c.private === undefined ? true : flag(c, "private") } };
   }
-  return { target, includeClosed: flag(body, "includeClosed"), dryRun: flag(body, "dryRun") };
+  const dryRun = flag(body, "dryRun");
+  let confirm: string | undefined;
+  if (body.confirm !== undefined) {
+    if (dryRun) throw bad("confirm is only for a real move, not for a dry run");
+    if (typeof body.confirm !== "string" || !PUBLISH_TOKEN.test(body.confirm)) throw bad("confirm must be the token of the check");
+    confirm = body.confirm;
+  }
+  return { target, includeClosed: flag(body, "includeClosed"), dryRun, ...(confirm !== undefined ? { confirm } : {}) };
 }
 
 /** The owner's `github-token` record to sign in with: one whose GitHub owner is `owner` comes first, else the first one added. */
@@ -123,6 +137,30 @@ export async function listLocalRefs(dir: string, git = "git"): Promise<string[]>
   return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
 }
 
+/** The branches and tags of the folder with the object each points to. Sorted by name. */
+export async function listLocalRefIds(dir: string, git = "git"): Promise<{ ref: string; id: string }[]> {
+  const r = await runGit(git, dir, [...GIT_OPTIONS, "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/tags"], plainEnv(), SHORT_MS);
+  if (r.code !== 0) throw new ProjectMoveError("push-failed", `the branches of your folder could not be listed: ${scrubCredentials(r.stderr) || "git failed"}`);
+  return r.stdout.split("\n").map((l) => l.trim()).filter(Boolean).flatMap((l) => {
+    const at = l.indexOf(" ");
+    return at > 0 ? [{ ref: l.slice(at + 1), id: l.slice(0, at) }] : [];
+  }).sort((a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
+}
+
+/**
+ * What a move publishes and where, as a fingerprint: the GitHub name, every ref with its object id, and the number and a hash of
+ * the content of each story that would be created. A check and the move that follows must give the same value.
+ */
+export function moveWhat(github: string, refs: readonly { ref: string; id: string }[], plan: readonly { number: number; status: string }[], entries: readonly Entry[]): string {
+  const stories = plan.filter((p) => p.status === "create").map((p) => {
+    const e = entries.find((x) => x.n === p.number);
+    return { n: p.number, h: fingerprint(e && e.ok ? e.story : null) };
+  });
+  return fingerprint({ github: github.toLowerCase(), refs: refs.map((r) => `${r.ref}@${r.id}`), stories });
+}
+
+export const PUBLISH_CHANGED = "Nothing was published: the branches, tags or stories changed since the check; run the check again and look at it";
+
 /** The lines of `git push --porcelain`: flag, destination ref and the rest of the line. */
 export function parsePorcelain(stdout: string): { flag: string; ref: string; summary: string }[] {
   const out: { flag: string; ref: string; summary: string }[] = [];
@@ -154,6 +192,8 @@ export interface ProjectMoveOptions extends MoveRequest {
   beforeSave?: (id: string) => void;
   /** Called as soon as the GitHub record is added, so the audit line exists even when a later step fails. */
   onAdded?: (repo: PublicRepo) => void;
+  /** The `what` of the check that was confirmed. Checked before anything is created or pushed; a difference is a `changed` error. */
+  expectWhat?: string;
   git?: string;
 }
 export interface ProjectMoveResult {
@@ -163,6 +203,8 @@ export interface ProjectMoveResult {
   repository: "create" | "created" | "exists" | "picked";
   refs: RefPush[];
   stories: MoveResult;
+  /** Internal: the fingerprint of what the move publishes (see moveWhat). The route keeps it and never sends it. */
+  what?: string;
   switched?: { watchers: string[]; settings: "merged" | "kept" | "none"; kept: string[]; removed: string };
 }
 
@@ -210,7 +252,7 @@ async function pushSecret(owner: string, rec: RepoRecord, github: string, config
 }
 
 /** Pushes the refs to the record's address, each as its own `ref:ref` (never forced). A refused ref stops the move. */
-async function pushRefs(o: ProjectMoveOptions, dir: string, rec: RepoRecord, github: string, refs: string[]): Promise<RefPush[]> {
+async function pushRefs(o: ProjectMoveOptions, dir: string, rec: RepoRecord, github: string, refs: { ref: string; id: string }[]): Promise<RefPush[]> {
   if (!refs.length) return [];
   const secret = await pushSecret(o.owner, rec, github, o.config);
   const temp = mkdtempSync(join(tmpdir(), "scf-move-"));
@@ -221,7 +263,7 @@ async function pushRefs(o: ProjectMoveOptions, dir: string, rec: RepoRecord, git
     const done = new Map<string, RefPush["status"]>();
     for (let i = 0; i < refs.length; i += CHUNK) {
       const part = refs.slice(i, i + CHUNK);
-      const r = await runGit(git, dir, [...auth.args, ...GIT_OPTIONS, "push", "--porcelain", "--no-verify", rec.url, ...part.map((x) => `${x}:${x}`)], auth.env, PUSH_MS);
+      const r = await runGit(git, dir, [...auth.args, ...GIT_OPTIONS, "push", "--porcelain", "--no-verify", rec.url, ...part.map((x) => `${x.id}:${x.ref}`)], auth.env, PUSH_MS);
       const lines = parsePorcelain(r.stdout);
       const refused = lines.find((l) => l.flag === "!");
       if (refused) {
@@ -230,7 +272,7 @@ async function pushRefs(o: ProjectMoveOptions, dir: string, rec: RepoRecord, git
       if (r.code !== 0) throw new ProjectMoveError("push-failed", `the push to ${github} failed: ${redact(scrubCredentials(r.stderr)) || "git failed"}`);
       for (const l of lines) done.set(l.ref, l.flag === "=" ? "up-to-date" : "pushed");
     }
-    return refs.map((ref) => ({ ref, status: done.get(ref) ?? "pushed" }));
+    return refs.map(({ ref }) => ({ ref, status: done.get(ref) ?? "pushed" }));
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
@@ -260,7 +302,8 @@ export async function moveProjectToGithub(o: ProjectMoveOptions): Promise<Projec
     if (!local || local.owner !== o.owner || local.method !== "local") throw new ProjectMoveError("not-found", "no such local project");
     const localName = localRepoName({ id: local.id, url: local.url });
     await refuseRewrites(dir, git);
-    const refs = await listLocalRefs(dir, git);
+    const refIds = await listLocalRefIds(dir, git);
+    const refs = refIds.map((x) => x.ref);
 
     // -- the target: a record of the owner, or a repository to create --
     let rec: RepoRecord | undefined;
@@ -302,13 +345,18 @@ export async function moveProjectToGithub(o: ProjectMoveOptions): Promise<Projec
     const refusal = moveRefusal(scan(dir), github);
     if (refusal) throw new MoveError(refusal);
 
+    // what the check approved must still be what goes: names, object ids and the stories to create
+    const entries = scan(dir);
+    const what = moveWhat(github, refIds, planFrom(entries, o.includeClosed), entries);
+    if (o.expectWhat !== undefined && o.expectWhat !== what) throw new ProjectMoveError("changed", PUBLISH_CHANGED);
+
     if (!rec) {
       const visibility = "create" in o.target && !o.target.create.private ? "--public" : "--private";
       const exists = await withGhEnv(session, () => repoExists(github));
       if (o.dryRun) {
         return {
           dryRun: true, github, repository: exists ? "exists" : "create", refs: refs.map((ref) => ({ ref, status: "push" })),
-          stories: { target: github, dryRun: true, plan: planFrom(scan(dir), o.includeClosed), created: [], done: [] },
+          stories: { target: github, dryRun: true, plan: planFrom(entries, o.includeClosed), created: [], done: [] }, what,
         };
       }
       how = "exists";
@@ -330,11 +378,11 @@ export async function moveProjectToGithub(o: ProjectMoveOptions): Promise<Projec
     const base = { local: localName, target: github, owner: o.owner, config: o.config, includeClosed: o.includeClosed, buildLabel: label };
     if (o.dryRun) {
       const stories = await moveToGithub({ ...base, dryRun: true });
-      return { dryRun: true, github, repoId: rec.id, repository: how === "picked" ? "picked" : "exists", refs: refs.map((ref) => ({ ref, status: "push" })), stories };
+      return { dryRun: true, github, repoId: rec.id, repository: how === "picked" ? "picked" : "exists", refs: refs.map((ref) => ({ ref, status: "push" })), stories, what };
     }
 
     // -- push, stories, push the story commits --
-    const pushed = await pushRefs(o, dir, rec, github, refs);
+    const pushed = await pushRefs(o, dir, rec, github, refIds);
     const stories = await moveToGithub(base);
     // A story that was skipped (unreadable, or its comments too large for one GitHub comment) never reaches GitHub: the switch
     // would take its watchers and the local record away from it. Stop here; the local record and the watchers stay.
@@ -343,8 +391,10 @@ export async function moveProjectToGithub(o: ProjectMoveOptions): Promise<Projec
       throw new ProjectMoveError("stories-skipped", `the stories ${left.map((p) => `#${p.number}`).join(", ")} were not moved (${left.map((p) => p.status === "unreadable" ? "the file cannot be read" : "its comments are too large for one GitHub comment").join("; ")}). Fix or remove them, then move again; nothing was switched`);
     }
     const storiesRef = `refs/heads/${STORIES_BRANCH}`;
-    if ((await listLocalRefs(dir, git)).includes(storiesRef)) {
-      const again = await pushRefs(o, dir, rec, github, [storiesRef]);
+    // the story commits are made by the move itself (not part of the check), so this one is pushed by its new id
+    const storiesId = (await listLocalRefIds(dir, git)).find((x) => x.ref === storiesRef);
+    if (storiesId) {
+      const again = await pushRefs(o, dir, rec, github, [storiesId]);
       const mine = pushed.find((p) => p.ref === storiesRef);
       if (mine && again[0]?.status === "pushed") mine.status = "pushed";
       else if (!mine) pushed.push(...again);

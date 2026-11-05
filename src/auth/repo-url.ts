@@ -1,4 +1,4 @@
-export type RepoErrorCode = "bad-name" | "bad-url" | "bad-auth" | "duplicate" | "taken" | "limit" | "not-found" | "no-owner" | "bad-settings" | "bad-owner" | "blocked" | "no-credential" | "bad-ready";
+export type RepoErrorCode = "bad-name" | "bad-url" | "bad-auth" | "duplicate" | "taken" | "limit" | "not-found" | "no-owner" | "bad-settings" | "bad-owner" | "blocked" | "no-credential" | "bad-ready" | "needs-publish";
 
 /** A problem with what the caller asked for. The message is safe to show and never holds a token. */
 export class RepoError extends Error {

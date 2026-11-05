@@ -228,6 +228,21 @@ export function ownerRemote(ownerDir: string, branch: string, git = "git"): stri
   return names.length === 1 ? names[0] : undefined;
 }
 
+/**
+ * Where "Also push" would send `branch`: the remote (chosen like ownerRemote), every push address git pushes to (`git push`
+ * uses all of them, not only the first), and those addresses with any sign-in part replaced by `***` (the only form that may be
+ * shown). Undefined when there is no remote or no address.
+ */
+export function ownerPushTarget(ownerDir: string, branch: string, git = "git"): { remote: string; urls: string[]; shown: string[] } | undefined {
+  const remote = ownerRemote(ownerDir, branch, git);
+  if (!remote) return undefined;
+  const r = run(git, ownerDir, ["remote", "get-url", "--push", "--all", remote], { owner: true, ms: 10_000 });
+  const urls = r.ok ? r.out.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+  if (!urls.length) return undefined;
+  const shown = urls.map((url) => url.replace(/([A-Za-z][A-Za-z0-9+.-]*:\/\/)[^\s/@]*@/g, "$1***@"));
+  return { remote, urls, shown };
+}
+
 /** A plain `git push` of `branch` from the owner's folder. Inherits the step's environment (the Foundry's pre-push hook). */
 export function pushOwnerBranch(o: { ownerDir: string; branch: string; tags?: string[]; git?: string; timeoutMs?: number }): RemotePush {
   const git = o.git ?? "git";

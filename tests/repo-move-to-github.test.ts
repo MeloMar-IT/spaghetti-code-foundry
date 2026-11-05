@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { localRepoName } from "../src/auth/local-name.js";
-import { addRepo, findOwnedRepo, getRepo, listAllRepos, removeRepo, setRepoSettings } from "../src/auth/repos.js";
+import { addRepo, allowRemotePush, findOwnedRepo, getRepo, listAllRepos, removeRepo, setRepoSettings } from "../src/auth/repos.js";
 import { createUser, getUser } from "../src/auth/users.js";
 import { ConfigSchema } from "../src/config.js";
 import {
@@ -64,7 +64,8 @@ const setup = async () => {
   src = addRepo(admin.id, { url: "acme/tools", method: "github-token", token: TOKEN });
   addRepoWatcher(local.id, { id: "w1", label: "build-me" }, { local: true });
   addRepoWatcher(local.id, { id: "w2", label: "build-me" }, { local: true });
-  setRepoSettings(local.id, { testCommand: "npm test", pushRemote: true, questions: { decide_technical: false } });
+  setRepoSettings(local.id, { testCommand: "npm test", questions: { decide_technical: false } });
+  allowRemotePush(local.id, admin.id);
   put(story(1, { state: "go", body: "Do A." }));
   put(story(2, { body: "Do B." }));
 };
@@ -314,5 +315,65 @@ describe("moveProjectToGithub", () => {
     expect(u.repository).toBe("exists");
     expect(u.switched).toBeDefined();
     expect(getRepo(rec.id)).toBeUndefined();
+  });
+});
+
+describe("parseMoveBody and confirm (#796)", () => {
+  const token = "A".repeat(43);
+  it("takes the token of the check for a real move only", () => {
+    expect(parseMoveBody({ target: { repoId: "abc" }, confirm: token }).confirm).toBe(token);
+    expect(parseMoveBody({ target: { repoId: "abc" } })).not.toHaveProperty("confirm");
+    for (const b of [{ confirm: token, dryRun: true }, { confirm: "short" }, { confirm: 5 }]) {
+      expect(() => parseMoveBody({ target: { repoId: "abc" }, ...b }), JSON.stringify(b)).toThrow(expect.objectContaining({ code: "bad-input" }));
+    }
+  });
+});
+
+describe("expectWhat: what the check approved is what goes (#796)", () => {
+  beforeEach(setup);
+  afterEach(teardown);
+  const nothingSent = () => {
+    expect(remoteRefs()).toBe("");
+    expect(repoCreates()).toBe(0);
+    expect(createdCalls()).toBe(0);
+    expect(getRepo(local.id)).toBeDefined();
+  };
+
+  it("a dry run gives a stable fingerprint, and the real move with it pushes every ref", async () => {
+    const a = await mv({ dryRun: true });
+    const b = await mv({ dryRun: true });
+    expect(a.what).toMatch(/^[0-9a-f]{64}$/);
+    expect(b.what).toBe(a.what);
+    const r = await mv({ expectWhat: a.what });
+    expect(r.switched).toBeDefined();
+    const refs = new Map(remoteRefs().split("\n").map((l) => l.split(" ") as [string, string]));
+    for (const ref of ["refs/heads/main", "refs/heads/feature", "refs/tags/v1"]) expect(refs.get(ref), ref).toBe(run(dir, "rev-parse", ref));
+  });
+
+  it("stops with `changed` and sends nothing for a new branch, a new commit, a moved tag, new story text and another name", async () => {
+    const change: [string, () => void][] = [
+      ["a new branch", () => run(dir, "branch", "extra")],
+      ["a new commit", () => run(dir, "commit", "-q", "--allow-empty", "-m", "more")],
+      ["a moved tag", () => run(dir, "tag", "-f", "v1", "feature")],
+      ["story text", () => put(story(2, { body: "Do B differently." }))],
+    ];
+    run(dir, "commit", "-q", "--allow-empty", "-m", "so that the tag can move");
+    run(dir, "branch", "-f", "feature");
+    for (const [name, edit] of change) {
+      const check = await mv({ dryRun: true });
+      edit();
+      await expect(mv({ expectWhat: check.what }), name).rejects.toMatchObject({ code: "changed" });
+      nothingSent();
+    }
+    const check = await mv({ dryRun: true });
+    await expect(mv({ expectWhat: check.what, target: { create: { name: "acme/other", private: true } } })).rejects.toMatchObject({ code: "changed" });
+    nothingSent();
+  });
+
+  it("pushes the approved object ids", async () => {
+    const check = await mv({ dryRun: true });
+    const r = await mv({ expectWhat: check.what });
+    expect(r.refs.every((x) => x.status === "pushed")).toBe(true);
+    expect(remoteRefs().split("\n").find((l) => l.startsWith("refs/heads/main "))).toBe(`refs/heads/main ${run(dir, "rev-parse", "main")}`);
   });
 });
