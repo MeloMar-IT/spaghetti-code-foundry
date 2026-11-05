@@ -222,7 +222,9 @@ The answer is 201 with `repo` and `connection`. If any step fails, the folder is
 
 **Where projects go.** The setting `simple.projects_folder` is an absolute path outside the Foundry data folder; when it is not set, new projects go to `scf-projects` in the home folder of the person who runs the Foundry. A `parent` inside the data folder is refused.
 
-**Checks.** The Foundry's tests run every built-in starter: the files and limits, a project made in a temporary folder, its test and release commands (the artifacts must exist), and its preview on a free port. They need no network.
+**Try it.** Every built-in starter has a `.factory/preview.yaml` with `port: auto`, so **Try it** works right away. The Foundry sets `PORT` and `HOST` for the app and waits for the `ready` path to answer. The Website starter listens on `HOST` when it is set and on `127.0.0.1` otherwise, so its preview is reachable only from the computer that runs the Foundry.
+
+**Checks.** The Foundry's tests run every built-in starter: the files and limits, a project made in a temporary folder, its test and release commands (the artifacts must exist), its preview file, and its preview on a free port. They need no network.
 
 ### Old and new interface
 

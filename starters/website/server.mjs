@@ -49,6 +49,7 @@ export function createSiteServer(root = ROOT) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT) || 3000;
   const server = createSiteServer();
-  server.listen(port, "127.0.0.1", () => console.log(`Listening on http://127.0.0.1:${server.address().port}`));
+  const host = process.env.HOST || "127.0.0.1";
+  server.listen(port, host, () => console.log(`Listening on http://${host}:${server.address().port}`));
   for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => server.close(() => process.exit(0)));
 }

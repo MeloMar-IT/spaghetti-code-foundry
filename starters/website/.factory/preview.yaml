@@ -1,2 +1,4 @@
+# Try it: the Foundry sets PORT and HOST, and server.mjs listens there.
 command: node server.mjs
+port: auto
 ready: /
