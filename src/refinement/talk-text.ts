@@ -15,6 +15,7 @@ export const TALK_FIRST_LINE = {
   impact: "This is the talk of a refinement session. What is asked: the architect's view of a story draft.",
   ready: "This is the talk of a refinement session. What is asked: a judgment of the readiness of a story draft.",
   split: "This is the talk of a refinement session. What is asked: ways to split a story draft.",
+  understand: "This is the talk of a refinement session. What is asked: story drafts from the idea.",
 } as const;
 export type TalkKind = "round" | "question";
 
@@ -62,7 +63,7 @@ function answerOf(q: Question): string {
   return "I don't know yet";
 }
 
-function roundPart(talk: Talk, index: number): string {
+export function roundPart(talk: Talk, index: number): string {
   const r = talk.rounds[index]!;
   const last = index === talk.rounds.length - 1;
   const lines = [`### Round ${index + 1}`];
@@ -77,7 +78,7 @@ function roundPart(talk: Talk, index: number): string {
 
 export const list = (items: string[]) => (items.length ? items.map((t) => `- ${t}`).join("\n") : "(none)");
 
-function mapPart(talk: Talk): string {
+export function mapPart(talk: Talk): string {
   return [
     "## The map of the story so far",
     `### ${LIST_TITLE.rule}\n${list(talk.map.rules.map((e) => e.text))}`,

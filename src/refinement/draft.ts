@@ -16,6 +16,8 @@ export const CRITERIA_MAX = 50;
 export const CRITERION_MAX = 500;
 export const LONG_TEXT_MAX = 5000;
 export const DEPENDS_MAX = 20;
+/** The longest one-sentence summary the architect writes with a draft it understood from the idea. */
+export const UNDERSTOOD_SUMMARY_MAX = 300;
 
 export const SOURCES = ["typed", "accepted", "accepted-edited"] as const;
 export type Source = (typeof SOURCES)[number];
@@ -59,6 +61,8 @@ export const DRAFT_LOG_KINDS = [
   "architect-reviewed",
   "impact-asked",
   "architect-impact",
+  "understand-asked",
+  "architect-understood",
   "split-asked",
   "architect-split",
   "draft-split",
@@ -179,6 +183,8 @@ const DraftSchema = z
     splitInto: z.array(z.uuid()).min(1).max(6).optional(),
     /** Set on a part: the draft it was split from and the one-sentence hint of the plan. */
     part: z.object({ of: z.uuid(), hint: text(SPLIT_TEXT_MAX, true).optional() }).strict().optional(),
+    /** Set on a draft the architect wrote from the idea; a new `understand` run replaces it while it is not published. */
+    understood: z.object({ summary: text(UNDERSTOOD_SUMMARY_MAX, true) }).strict().optional(),
     addReviewLabel: z.literal(true).optional(),
     readiness: ReadinessSchema.optional(),
     acceptedAnyway: AcceptedSchema.optional(),

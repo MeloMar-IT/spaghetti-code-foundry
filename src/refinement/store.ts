@@ -10,6 +10,7 @@ import { getUser } from "../auth/users.js";
 import { RefinementError } from "./errors.js";
 import { END_NO_IMPACT_DRAFT, setImpact, setReviewLabel, type ImpactRefs } from "./draft-impact.js";
 import { confirmSplit, mergeDrafts, moveCriterion } from "./draft-parts.js";
+import { applyUnderstood } from "./understand-text.js";
 import { END_NO_SPLIT_DRAFT, refuseSplit, setSplit, type SplitRefs } from "./draft-split.js";
 import { acceptAnyway, checkReady, clearAll, clearChanged, openMark, removeAccepted, sessionState, setJudged, type ReadyRefs } from "./draft-ready.js";
 import { CLOSED, ReplacedBySchema, ReplacingSchema, markOf, replaceStarted, replaceState, withDone, withJournal, withLabels, withReplaced, withWrite, type Closed, type Found, type WriteEvidence } from "./replace-journal.js";
@@ -23,7 +24,7 @@ export { RefinementError, type RefinementErrorCode } from "./errors.js";
 export { markOf } from "./replace-journal.js";
 export { ASKED_LOG_LINES, ROUND_LOG_LINES } from "./talk.js";
 
-export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review", "impact", "ready", "split"] as const;
+export const ARCHITECT_KINDS = ["brief", "round", "question", "suggest", "review", "impact", "ready", "split", "understand"] as const;
 export type ArchitectKind = (typeof ARCHITECT_KINDS)[number];
 
 const validSessionRepo = (n: string): boolean => validGithubName(n) || isLocalRepoName(n);
@@ -543,8 +544,10 @@ export function setArchitectRun(actor: Actor, id: string, runId: string, ask: Ar
             ? { at, by: actor.id, what: "review-asked" }
             : kind === "impact"
               ? { at, by: actor.id, what: "impact-asked" }
-              : kind === "split"
-                ? { at, by: actor.id, what: "split-asked" }
+              : kind === "understand"
+                ? { at, by: actor.id, what: "understand-asked" }
+                : kind === "split"
+                  ? { at, by: actor.id, what: "split-asked" }
                 : kind === "ready"
                   ? { at, by: actor.id, what: "ready-asked" }
                   : { at, by: actor.id, what: kind === "round" ? "round-started" : "architect-started", detail: runId };
@@ -565,7 +568,7 @@ export function noteArchitectResumed(id: string, runId: string, opts: StoreOptio
   }
 }
 
-export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { reviewed: unknown; refs?: ReviewRefs } | { impact: unknown; refs?: ImpactRefs } | { split: unknown; refs?: SplitRefs } | { judged: unknown; refs?: ReadyRefs } | { failed: string };
+export type ArchitectEnd = { brief: { text: string; at: string; branch?: string } } | { round: RoundInput } | { answer: string } | { suggested: unknown; refs?: SuggestRefs } | { reviewed: unknown; refs?: ReviewRefs } | { impact: unknown; refs?: ImpactRefs } | { split: unknown; refs?: SplitRefs } | { judged: unknown; refs?: ReadyRefs } | { understood: unknown } | { failed: string };
 
 /**
  * The run of `runId` ended. A brief replaces the stored one; a round is added to the talk; an answer is stored with the own question;
@@ -634,6 +637,23 @@ export function endArchitectRun(id: string, runId: string, end: ArchitectEnd, op
       } catch (e) {
         if (!(e instanceof RefinementError)) throw e;
         return fail(END_BAD_FORM);
+      }
+    }
+    if ("understood" in end) {
+      if (a.kind !== "understand") return fail(END_BAD_FORM);
+      if (s.state === "published") return fail(END_ON_GITHUB);
+      const list = (opts.readyList ?? defaultReadyList)(s.owner, s.repo);
+      const before = { drafts: s.drafts, epic: s.epic };
+      try {
+        const c = applyUnderstood(before, end.understood);
+        const drafts = clearChanged(before, c);
+        // A draft that is on GitHub stays as it is, also when the change reaches it through another draft.
+        if (s.drafts.some((d) => d.published && JSON.stringify(drafts.find((x) => x.id === d.id)) !== JSON.stringify(d))) return fail(END_BAD_FORM);
+        const state = stateOf(s.state, s.drafts.length > 0, drafts, list);
+        return { ...rest, drafts, state, updated: at, log: logged(s, at, "architect-understood", c.line?.detail) };
+      } catch (e) {
+        if (!(e instanceof RefinementError)) throw e;
+        return fail(e.code === "limit" ? END_NO_ROOM : END_BAD_FORM);
       }
     }
     if ("judged" in end) {
