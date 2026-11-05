@@ -60,6 +60,21 @@ export const WORDS = {
   actions: { change: "Ask for a change", tryIt: "Try it", final: "Make this version final" },
 };
 
+/** Try it on the project page: the words of the choice, the states and the notes. */
+export const TRY = {
+  which: "Which version do you want to open?",
+  current: "The current version",
+  checking: "The version being checked",
+  checkingOf: (t) => `The version being checked: ${t}`,
+  notNow: "Not now",
+  starting: "Starting…",
+  open: "Open it",
+  stop: "Stop",
+  failed: "It could not start. The Foundry will look into it.",
+  didNotWork: "That did not work. Try again.",
+  elsewhere: "Try it works on the computer where the Foundry is installed.",
+};
+
 /** The card of a finished version that waits for the owner's OK (the daily release of a local project). */
 export const FINAL = {
   line: "A new version of your project is ready.",

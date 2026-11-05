@@ -22,6 +22,7 @@ let methodsAnswer: any;
 let repoGets: (Answer | undefined)[];
 let gates: { reposGet?: (() => void)[]; put?: (() => void)[]; test?: (() => void)[] };
 let testResult: any;
+let previewAnswer: any; // the GET of /preview; "fail" answers 500
 const realFetch = globalThis.fetch;
 const APP_URL = "https://github.com/apps/foundry-app/installations/new";
 const SSH = "git@github.com:o/a.git";
@@ -49,6 +50,7 @@ beforeEach(() => {
   repoGets = [];
   gates = {};
   testResult = goodConn();
+  previewAnswer = { state: "stopped" };
   methodsAnswer = { methods: ["github-token", "https-token", "ssh-deploy-key", "none"], githubApp: { available: false } };
   delete (globalThis as any).location;
   (document as any).getElementById("modal-root").replaceChildren();
@@ -61,6 +63,7 @@ beforeEach(() => {
       const status = new URL(url, "http://x").searchParams.get("status");
       return reply(runsAnswer.filter((r) => !status || r.status === status));
     }
+    if (init.method === "GET" && url.endsWith("/preview")) return previewAnswer === "fail" ? reply({ error: "down" }, 500) : reply(previewAnswer);
     if (init.method === "GET" && url.startsWith("/api/outcomes")) return reply({ values: { flows: [] }, definitions: [], measures: [] });
     if (init.method === "GET" && url.endsWith("/ready")) return reply({ items: [{ id: "a", text: "first" }], isDefault: true });
     if (init.method === "GET") {
@@ -144,7 +147,7 @@ describe("a source that returns foreign and back", () => {
 describe("the sections", () => {
   it("draws Overview, Connection and Dangerous actions in that order, the last one as a fail card", async () => {
     await show(rec());
-    expect(titles()).toEqual(["overview", "connection", "outcomes", "danger"]);
+    expect(titles()).toEqual(["overview", "connection", "outcomes", "preview", "danger"]);
     expect(section("danger").attrs.class).toContain("scf-card--fail");
     expect(section("overview").attrs.class).toContain("scf-card--neutral");
     expect(button(section("danger"), "Generate a new key")).toBeUndefined();
@@ -305,7 +308,7 @@ describe("the sections", () => {
       ...view.SECTIONS,
     ];
     await show(rec(), { sections });
-    expect(titles()).toEqual(["one", "overview", "connection", "outcomes", "danger"]);
+    expect(titles()).toEqual(["one", "overview", "connection", "outcomes", "preview", "danger"]);
     expect(view.SECTIONS.at(-1).id).toBe("danger");
   });
 });
@@ -344,7 +347,7 @@ describe("unknown repository, name and loading", () => {
   it("tolerates a failed methods call", async () => {
     methodsAnswer = undefined;
     await show(rec());
-    expect(titles()).toEqual(["overview", "connection", "outcomes", "danger"]);
+    expect(titles()).toEqual(["overview", "connection", "outcomes", "preview", "danger"]);
   });
 });
 
@@ -353,7 +356,7 @@ describe("read-only", () => {
     methodsAnswer = { methods: ["github-app"], githubApp: { available: true, installUrl: APP_URL } };
     const c = { ...badConn(), checks: [{ check: "github-api", ok: false, code: "app-not-installed", message: "The app is not installed." }] };
     await show(rec({ method: "github-app", connection: c }), { readOnly: true });
-    expect(titles()).toEqual(["overview", "connection", "outcomes", "danger"]);
+    expect(titles()).toEqual(["overview", "connection", "outcomes", "preview", "danger"]);
     expect(buttons()).toEqual([]);
     expect(walk(main()).some((e) => e.attrs.href === APP_URL)).toBe(false);
     expect(section("danger").textContent).toContain("Remove is not available in a read-only view.");
@@ -624,5 +627,66 @@ describe("shared helpers", () => {
     ui.fillRuns(el, [{ status: "running", vars: { github_repo: "o/a" } }], { github: "o/a" });
     expect(el.textContent).toBe("1");
     expect(el.attrs.title).toBeUndefined();
+  });
+});
+
+describe("the Preview section", () => {
+  const settle = async () => { for (let i = 0; i < 5; i++) await flush(); };
+
+  it("shows a failed preview with its output as text, never as HTML", async () => {
+    previewAnswer = { state: "failed", version: "develop", reason: "exited", detail: "code 1", output: "<b>bold</b> line\nERROR boom", startedAt: new Date().toISOString() };
+    await show(rec());
+    await settle();
+    const s = section("preview");
+    expect(s.textContent).toContain("failed");
+    expect(s.textContent).toContain("exited: code 1");
+    expect(walk(s).filter((e) => e.tag === "b")).toHaveLength(0);
+    expect(walk(s).find((e) => e.tag === "pre")!.textContent).toBe("<b>bold</b> line\nERROR boom");
+  });
+
+  it("says so when no preview is running", async () => {
+    await show(rec());
+    await settle();
+    expect(section("preview").textContent).toContain("No preview is running.");
+  });
+
+  it("links only the address of this computer, with rel noopener", async () => {
+    previewAnswer = { state: "ready", version: "checking", runId: "run1", url: "http://127.0.0.1:4100/", output: "" };
+    await show(rec());
+    await settle();
+    const link = walk(section("preview")).find((e) => e.tag === "a")!;
+    expect(link.attrs.href).toBe("http://127.0.0.1:4100/");
+    expect(link.attrs.rel).toBe("noopener noreferrer");
+    expect(link.attrs.target).toBe("_blank");
+    expect(section("preview").textContent).toContain("checking (run run1)");
+    expect(section("preview").textContent).toContain("No output yet.");
+  });
+
+  it("gives no link for another address", async () => {
+    previewAnswer = { state: "ready", version: "develop", url: "http://evil.example/", output: "x" };
+    await show(rec());
+    await settle();
+    expect(walk(section("preview")).filter((e) => e.tag === "a")).toHaveLength(0);
+  });
+
+  it("shows an error with Retry when loading fails, and the rest of the page is drawn", async () => {
+    previewAnswer = "fail";
+    await show(rec());
+    await settle();
+    expect(section("preview").textContent).toContain("Could not load the preview.");
+    expect(section("overview").textContent).toContain("https://github.com/o/a");
+    previewAnswer = { state: "stopped" };
+    press(button(section("preview"), "Retry"));
+    await settle();
+    expect(section("preview").textContent).toContain("No preview is running.");
+  });
+
+  it("reads again on the button", async () => {
+    await show(rec());
+    await settle();
+    previewAnswer = { state: "starting", version: "develop" };
+    press(button(section("preview"), "Read again"));
+    await settle();
+    expect(section("preview").textContent).toContain("starting");
   });
 });

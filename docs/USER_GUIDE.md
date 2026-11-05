@@ -261,7 +261,13 @@ Simple shows your work per project, in plain words. Home is **My projects**; the
 
 1. **What you need to do**: the questions to answer and the results to check, each with its button. With nothing waiting it says "Nothing — the Foundry is working."
 2. **What is being made**: four groups, **Planned**, **Being built**, **Ready for you to check** and **Done**. A card shows the title, one sentence about the work and, for **Being built**, the step, e.g. "Step 2 of 4: testing". **Done** shows five cards; **Show all done** shows the rest and stays open while the page refreshes.
-3. The buttons **Ask for a change**, **Try it** and **Make this version final** come with later parts. The page does not show them yet.
+3. **Try it** starts your project so you can see it (see **Try it on the project page** below). The buttons **Ask for a change** and **Make this version final** come with later parts. The page does not show them yet.
+
+**Try it on the project page.** Press **Try it** to start your project's app. The page says "Starting…" and reads the state again every few seconds. When the app is ready, a big **Open it** link opens your project in a new tab, and **Stop** ends the preview. If the app does not start, the page says "It could not start. The Foundry will look into it." and **Try it** is shown again. Simple never shows the app's output or the reason; Advanced and Admin show them on the repository page. A new start replaces the running preview of the project, and the preview also stops on its own after 30 minutes without use (see **Try it: preview** below).
+
+When a change waits for your check, **Try it** first asks "Which version do you want to open?": **The current version** (the `develop` branch) or **The version being checked** (the change that waits for you; with more than one change waiting, its name follows). **Not now** goes back without starting anything. While a start or a stop runs, the buttons are off.
+
+**Try it** works only on the computer where the Foundry is installed, because the address it opens is on that computer (`http://127.0.0.1:<port>/`). When you open the page from another computer, the page says "Try it works on the computer where the Foundry is installed." and shows no button.
 
 Both pages refresh every 30 seconds and use the same lists as Home (repositories, runs and the queue), so Simple shows no data that Home does not. Work that is cancelled, superseded or parked, and epics, are not listed.
 
@@ -927,6 +933,8 @@ The state is `starting`, `ready`, `stopped` or `failed`. When it is not ready, t
 | `stopped` | you stopped it, or the server shut down |
 
 Only an owner of the repository and an admin can use the preview routes. `GET` also returns the app's output: at most 64 KiB, with the known secrets of the Foundry removed. A user who is not allowed gets "not found" on all three routes, and no output.
+
+**Where you see it.** Simple's **Try it** button uses this preview (see [Simple: My projects and the project page](#simple-my-projects-and-the-project-page)). On the repository page, Advanced and Admin show a **Preview** section: the state, the version (with the run's id when it is a check), the address when the preview is ready, the start time, the reason, and the output as plain text, with **Read again**. The address is shown as a link only when it is `http://127.0.0.1:<port>/`.
 
 ### Repository context
 

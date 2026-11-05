@@ -434,3 +434,323 @@ describe("the Help page", () => {
     }
   });
 });
+
+describe("Try it", () => {
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const until = async (cond: () => boolean) => {
+    for (let i = 0; i < 300 && !cond(); i++) await tick();
+    expect(cond()).toBe(true);
+  };
+  const URL_OK = "http://127.0.0.1:5173/";
+  const labels = (p: FakeElement) => p.all("button").map((b) => b.textContent);
+  const btn = (p: FakeElement, text: string) => p.all("button").find((b) => b.textContent === text)!;
+
+  it("uses only words of the list", () => {
+    for (const [k, v] of Object.entries<any>(words.TRY)) expect(words.forbiddenIn(typeof v === "function" ? v("Show the weather") : v), k).toEqual([]);
+  });
+
+  it("draws every phase of tryItView in plain words and passes the audit", () => {
+    const choices = [{ runId: "a", title: "Show the weather" }];
+    const one = (s: any, o: any = {}) => box(view.tryItView(s, { local: true, choices, ...o }));
+    expect(labels(one({ phase: "idle" }))).toEqual(["Try it"]);
+    const starting = one({ phase: "starting" });
+    expect(starting.textContent).toContain("Starting…");
+    expect(labels(starting)).toEqual(["Stop"]);
+    const ready = one({ phase: "ready", url: URL_OK });
+    const link = ready.all("a")[0]!;
+    expect(link.attrs.href).toBe(URL_OK);
+    expect(link.attrs.target).toBe("_blank");
+    expect(link.attrs.rel).toBe("noopener noreferrer");
+    expect(link.textContent).toBe("Open it (opens in a new tab)");
+    expect(labels(ready)).toEqual(["Stop"]);
+    const failed = one({ phase: "failed" });
+    expect(failed.textContent).toContain("It could not start. The Foundry will look into it.");
+    expect(labels(failed)).toEqual(["Try it"]);
+    const choosing = one({ phase: "choosing" });
+    expect(labels(choosing)).toEqual(["The current version", "The version being checked", "Not now"]);
+    expect(choosing.textContent).toContain("Which version do you want to open?");
+    expect(labels(one({ phase: "choosing" }, { choices: [{ runId: "a", title: "One" }, { runId: "b", title: "Two" }] }))).toEqual(
+      ["The current version", "The version being checked: One", "The version being checked: Two", "Not now"]);
+    const away = one({ phase: "idle" }, { local: false });
+    expect(away.textContent).toBe("Try it works on the computer where the Foundry is installed.");
+    expect(away.all("button")).toHaveLength(0);
+    expect(one({ phase: "idle", error: true }).textContent).toContain("That did not work. Try again.");
+    expect(btn(one({ phase: "starting", busy: true }), "Stop").attrs.disabled).toBe("");
+    for (const s of [{ phase: "idle" }, { phase: "starting" }, { phase: "ready", url: URL_OK }, { phase: "failed", error: true }, { phase: "choosing" }]) {
+      const p = one(s);
+      expect(audit(p)).toEqual([]);
+      expect(words.forbiddenIn(texts(p).join("\n"))).toEqual([]);
+    }
+  });
+
+  it("maps the server's view to a phase and trusts only the loopback address", () => {
+    const p = view.phaseOfPreview;
+    expect(p({ state: "ready", url: "http://127.0.0.1:4000/" })).toBe("ready");
+    expect(p({ state: "ready", url: "http://evil.example/" })).toBe("failed");
+    expect(p({ state: "ready", url: "javascript:alert(1)" })).toBe("failed");
+    expect(p({ state: "ready" })).toBe("failed");
+    expect(p({ state: "failed" })).toBe("failed");
+    expect(p({ state: "starting" })).toBe("starting");
+    expect(p({ state: "stopped" })).toBe("idle");
+    expect(p(undefined)).toBe("idle");
+  });
+
+  it("knows the computer of the Foundry by the host name", () => {
+    for (const h of ["localhost", "127.0.0.1", "[::1]", "::1", "LOCALHOST"]) expect(view.isLocalHost(h), h).toBe(true);
+    for (const h of ["foundry.example.com", "", undefined, "127.0.0.1.evil.com"]) expect(view.isLocalHost(h), String(h)).toBe(false);
+  });
+
+  it("marks a real run that waits for a check, not a final card or a queued job", () => {
+    expect(model.cardOf({ run: run("a", "approve_plan"), job: null }).tryRun).toBe("a");
+    expect(model.cardOf({ run: run("a", "approval"), job: null }).tryRun).toBe("a");
+    expect(model.cardOf({ run: run("a", "running"), job: null }).tryRun).toBeUndefined();
+    expect(model.cardOf({ run: null, job: { runId: "j", next: nextStep("queued", { runId: "j" } as any) } }).tryRun).toBeUndefined();
+    const message = "Make this version final?\n- #1 Build me";
+    const fin = { runId: "f1", flow: "release-daily", task: "daily", status: "waiting", startedAt: iso(5), vars: { github_repo: "o/app" }, history: [], waiting: { stepId: "make_final", message, since: iso(5) },
+      next: nextStep("approval", { runId: "f1", repo: "o/app", title: "Make this version final" } as any, { message, final: true }) };
+    expect(model.cardOf({ run: fin, job: null }).tryRun).toBeUndefined();
+  });
+
+  /** The project page "r1" with a fake API; `preview` answers come from the `answers` list (the last one repeats; an Error is thrown). */
+  const open = async (o: { runs?: any[]; answers?: any[]; host?: string; start?: any; stop?: any; withPreview?: boolean } = {}) => {
+    const answers = [...(o.answers ?? [{ state: "stopped" }])];
+    const a: any = {
+      repos: vi.fn(async () => repos), runs: vi.fn(async () => o.runs ?? []), queue: vi.fn(async () => ({ active: [], pending: [] })), run: vi.fn(),
+      preview: vi.fn(async () => { const x = answers.length > 1 ? answers.shift() : answers[0]; if (x instanceof Error) throw x; return x; }),
+      startPreview: o.start ?? vi.fn(async () => ({ state: "starting" })),
+      stopPreview: o.stop ?? vi.fn(async () => ({ state: "stopped" })),
+    };
+    if (o.withPreview === false) { delete a.preview; delete a.startPreview; delete a.stopPreview; }
+    const main = new FakeElement("div");
+    const off = await view.renderSimpleProject(main, { id: "r1", a, host: o.host ?? "127.0.0.1", tryEvery: 1 });
+    return { a, main, off, answers };
+  };
+  const waiting = () => [run("w", "approval")];
+
+  it("starts the current version, shows Starting…, then the link, and stops reading", async () => {
+    const { a, main, off } = await open({ answers: [{ state: "stopped" }, { state: "starting" }, { state: "starting" }, { state: "ready", url: URL_OK, output: "SECRET" }] });
+    expect(main.textContent).toContain("Try it");
+    btn(main, "Try it").click();
+    await until(() => main.textContent.includes("Starting…"));
+    expect(a.startPreview).toHaveBeenCalledWith("r1", "develop", undefined);
+    await until(() => main.all("a").some((l) => l.attrs.href === URL_OK));
+    const link = main.all("a").find((l) => l.attrs.href === URL_OK)!;
+    expect(link.attrs.rel).toBe("noopener noreferrer");
+    expect(link.attrs.target).toBe("_blank");
+    expect(main.textContent).not.toContain("SECRET");
+    const reads = a.preview.mock.calls.length;
+    for (let i = 0; i < 10; i++) await tick();
+    expect(a.preview.mock.calls.length).toBe(reads);
+    off();
+  });
+
+  it("stops the preview and brings the Try it button back", async () => {
+    const { a, main, off } = await open({ answers: [{ state: "ready", url: URL_OK }] });
+    await until(() => labels(main).includes("Stop"));
+    btn(main, "Stop").click();
+    await until(() => labels(main).includes("Try it"));
+    expect(a.stopPreview).toHaveBeenCalledWith("r1");
+    off();
+  });
+
+  it("shows a preview that is already running when the page opens", async () => {
+    const { main, off } = await open({ answers: [{ state: "ready", url: URL_OK }] });
+    await until(() => main.all("a").some((l) => l.attrs.href === URL_OK));
+    off();
+  });
+
+  it("shows none of the output, reason or detail when it failed", async () => {
+    const { main, off } = await open({ answers: [{ state: "failed", reason: "exited", detail: "code 9", output: "SECRET <b>x</b> log" }] });
+    await until(() => main.textContent.includes("It could not start. The Foundry will look into it."));
+    for (const bad of ["SECRET", "exited", "code 9", " log"]) expect(main.textContent).not.toContain(bad);
+    expect(labels(main)).toContain("Try it");
+    off();
+  });
+
+  it("asks which version to open when a change waits, and sends the right body", async () => {
+    const { a, main, off } = await open({ runs: waiting() });
+    btn(main, "Try it").click();
+    await until(() => main.textContent.includes("Which version do you want to open?"));
+    expect(a.startPreview).not.toHaveBeenCalled();
+    btn(main, "The version being checked").click();
+    await until(() => a.startPreview.mock.calls.length === 1);
+    expect(a.startPreview).toHaveBeenLastCalledWith("r1", "checking", "w");
+    await until(() => labels(main).includes("Stop") && !btn(main, "Stop").attrs.disabled);
+    btn(main, "Stop").click();
+    await until(() => labels(main).includes("Try it"));
+    btn(main, "Try it").click();
+    await until(() => labels(main).includes("The current version"));
+    btn(main, "The current version").click();
+    await until(() => a.startPreview.mock.calls.length === 2);
+    expect(a.startPreview).toHaveBeenLastCalledWith("r1", "develop", undefined);
+    off();
+  });
+
+  it("goes back to the Try it button when Not now is pressed", async () => {
+    const { a, main, off } = await open({ runs: waiting() });
+    btn(main, "Try it").click();
+    await until(() => labels(main).includes("Not now"));
+    btn(main, "Not now").click();
+    await until(() => labels(main).includes("Try it"));
+    expect(a.startPreview).not.toHaveBeenCalled();
+    off();
+  });
+
+  it("names each waiting change when there are several", async () => {
+    const two = [run("w1", "approval", { task: "One (#1)\n\nx.", next: nextStep("approval", { runId: "w1", repo: "o/app", title: "One" } as any) }),
+      run("w2", "approve_plan", { task: "Two (#2)\n\nx.", next: nextStep("approve_plan", { runId: "w2", repo: "o/app", title: "Two" } as any) })];
+    const { main, off } = await open({ runs: two });
+    btn(main, "Try it").click();
+    await until(() => labels(main).includes("Not now"));
+    expect(labels(main).filter((l) => l?.startsWith("The version being checked: "))).toEqual(["The version being checked: One", "The version being checked: Two"]);
+    off();
+  });
+
+  it("a refused start of the checked version (no branch) says so in plain words and offers the choice again", async () => {
+    const start = vi.fn(async (_id: string, version: string) => {
+      if (version === "checking") throw Object.assign(new Error("this run has no branch to try"), { status: 409 });
+      return { state: "starting" };
+    });
+    const { a, main, off } = await open({ runs: waiting(), start });
+    btn(main, "Try it").click();
+    await until(() => labels(main).includes("The version being checked"));
+    btn(main, "The version being checked").click();
+    await until(() => main.textContent.includes("That did not work. Try again."));
+    expect(main.textContent).not.toContain("no branch");
+    expect(labels(main)).toContain("The current version");
+    btn(main, "The current version").click();
+    await until(() => main.textContent.includes("Starting…"));
+    expect(a.startPreview).toHaveBeenLastCalledWith("r1", "develop", undefined);
+    off();
+  });
+
+  it("a refused start keeps the Try it button; a refused stop keeps the preview", async () => {
+    const { main, off } = await open({ start: vi.fn(async () => { throw new Error("no"); }) });
+    btn(main, "Try it").click();
+    await until(() => main.textContent.includes("That did not work. Try again."));
+    expect(labels(main)).toEqual(["Try it"]);
+    off();
+    const r = await open({ answers: [{ state: "ready", url: URL_OK }], stop: vi.fn(async () => { throw new Error("no"); }) });
+    await until(() => labels(r.main).includes("Stop"));
+    btn(r.main, "Stop").click();
+    await until(() => r.main.textContent.includes("That did not work. Try again."));
+    expect(r.main.all("a").some((l) => l.attrs.href === URL_OK)).toBe(true);
+    expect(labels(r.main)).toEqual(["Stop"]);
+    r.off();
+  });
+
+  it("sends one start for a double click, and disables the controls while it is on its way", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const start = vi.fn(async () => { await gate; return { state: "starting" }; });
+    const { main, off } = await open({ start, answers: [{ state: "stopped" }, { state: "ready", url: URL_OK }] });
+    const b = btn(main, "Try it");
+    b.click();
+    b.click();
+    await until(() => start.mock.calls.length === 1);
+    expect(btn(main, "Stop").attrs.disabled).toBe("");
+    release();
+    await until(() => main.all("a").some((l) => l.attrs.href === URL_OK));
+    expect(start).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("a read that was on its way does not replace the answer of a Stop", async () => {
+    let letRead!: (v: any) => void;
+    let n = 0;
+    const a: any = {
+      repos: async () => repos, runs: async () => [], queue: async () => ({ active: [], pending: [] }), run: vi.fn(),
+      preview: vi.fn(() => (++n === 1 ? Promise.resolve({ state: "starting" }) : new Promise((r) => { letRead = r; }))),
+      startPreview: vi.fn(), stopPreview: vi.fn(async () => ({ state: "stopped" })),
+    };
+    const main = new FakeElement("div");
+    const off = await view.renderSimpleProject(main, { id: "r1", a, host: "localhost", tryEvery: 1 });
+    await until(() => a.preview.mock.calls.length === 2);
+    btn(main, "Stop").click();
+    await until(() => labels(main).includes("Try it"));
+    letRead({ state: "ready", url: URL_OK });
+    for (let i = 0; i < 10; i++) await tick();
+    expect(labels(main)).toEqual(["Try it"]);
+    expect(main.all("a").some((l) => l.attrs.href === URL_OK)).toBe(false);
+    off();
+  });
+
+  it("keeps reading after a failed read while it starts, and recovers", async () => {
+    const { a, main, off } = await open({ answers: [{ state: "starting" }, new Error("down"), new Error("down"), { state: "ready", url: URL_OK }] });
+    await until(() => main.textContent.includes("That did not work. Try again."));
+    expect(main.textContent).toContain("Starting…");
+    await until(() => main.all("a").some((l) => l.attrs.href === URL_OK));
+    expect(main.textContent).not.toContain("That did not work");
+    expect(a.preview.mock.calls.length).toBeGreaterThanOrEqual(4);
+    off();
+  });
+
+  it("reads the preview after a retry when the first project list read failed", async () => {
+    let listFails = true;
+    const a: any = {
+      repos: vi.fn(async () => { if (listFails) throw new Error("down"); return repos; }),
+      runs: vi.fn(async () => []), queue: vi.fn(async () => ({ active: [], pending: [] })), run: vi.fn(),
+      preview: vi.fn(async () => ({ state: "ready", url: URL_OK })),
+      startPreview: vi.fn(), stopPreview: vi.fn(async () => ({ state: "stopped" })),
+    };
+    const main = new FakeElement("div");
+    const off = await view.renderSimpleProject(main, { id: "r1", a, host: "127.0.0.1", tryEvery: 1 });
+    expect(a.preview).not.toHaveBeenCalled();
+    listFails = false;
+    const retry = main.all("button").find((b) => b.textContent === "Retry")!;
+    retry.click();
+    await until(() => main.all("a").some((l) => l.attrs.href === URL_OK));
+    expect(a.preview).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("keeps the Try it button when the first read fails", async () => {
+    const { a, main, off } = await open({ answers: [new Error("down")] });
+    await until(() => a.preview.mock.calls.length === 1);
+    await tick();
+    expect(labels(main)).toEqual(["Try it"]);
+    off();
+  });
+
+  it("stops reading when the page is left, also with a read on its way", async () => {
+    let letRead!: (v: any) => void;
+    let n = 0;
+    const a: any = {
+      repos: async () => repos, runs: async () => [], queue: async () => ({ active: [], pending: [] }), run: vi.fn(),
+      preview: vi.fn(() => (++n < 3 ? Promise.resolve({ state: "starting" }) : new Promise((r) => { letRead = r; }))),
+    };
+    const main = new FakeElement("div");
+    const off = await view.renderSimpleProject(main, { id: "r1", a, host: "127.0.0.1", tryEvery: 1 });
+    await until(() => a.preview.mock.calls.length === 3);
+    off();
+    letRead({ state: "starting" });
+    const reads = a.preview.mock.calls.length;
+    for (let i = 0; i < 10; i++) await tick();
+    expect(a.preview.mock.calls.length).toBe(reads);
+  });
+
+  it("shows a note and no button on another computer, and reads nothing", async () => {
+    const { a, main, off } = await open({ host: "foundry.example.com" });
+    expect(main.textContent).toContain("Try it works on the computer where the Foundry is installed.");
+    expect(labels(main)).toEqual([]);
+    expect(a.preview).not.toHaveBeenCalled();
+    off();
+  });
+
+  it("still draws the button when the API has no preview calls", async () => {
+    const { main, off } = await open({ withPreview: false });
+    expect(labels(main)).toEqual(["Try it"]);
+    btn(main, "Try it").click();
+    await until(() => main.textContent.includes("That did not work. Try again."));
+    off();
+  });
+
+  it("keeps the other actions of the caller and puts Try it between them", async () => {
+    const a: any = { repos: async () => repos, runs: async () => [], queue: async () => ({ active: [], pending: [] }), run: vi.fn() };
+    const main = new FakeElement("div");
+    const off = await view.renderSimpleProject(main, { id: "r1", a, host: "localhost", actions: [{ id: "final", href: "#/y" }, { id: "change", href: "#/x" }] });
+    const row = walk(main).find((e) => e.attrs.class === "simple-actions")!;
+    expect(row.textContent).toBe("Ask for a changeTry itMake this version final");
+    off();
+  });
+});

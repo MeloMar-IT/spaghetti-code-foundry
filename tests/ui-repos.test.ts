@@ -87,6 +87,7 @@ beforeEach(() => {
     if (init.method === "GET" && url.endsWith("/ready")) {
       return readyAnswer ? reply(readyAnswer) : reply({ error: "no such repository" }, 404);
     }
+    if (init.method === "GET" && url.endsWith("/preview")) return reply({ state: "stopped" });
     if (init.method === "GET") {
       gets++;
       const snapshot = [...repos];

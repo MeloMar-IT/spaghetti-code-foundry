@@ -3,7 +3,7 @@ import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { projectsModel } from "./simple-model.js";
-import { FINAL, HELP, TERM_MEANINGS, WORDS, termWords } from "./simple-words.js";
+import { FINAL, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
 
 // The Simple view: My projects (#/home) and the project page (#/repos/<id>). All text comes from the word list.
 
@@ -90,8 +90,147 @@ function decideCard(c, onDecide) {
     status);
 }
 
+// ---- Try it ----
+
+/** The only address Simple links to: the preview of this computer. */
+export const TRY_URL = /^http:\/\/127\.0\.0\.1:\d{1,5}\/$/;
+const LOCAL_HOSTS = ["127.0.0.1", "localhost", "::1", "[::1]"];
+/** Is the page opened on the computer where the Foundry runs? */
+export const isLocalHost = (host) => LOCAL_HOSTS.includes(String(host ?? "").toLowerCase());
+
+/** The server's preview view as a phase: "idle" | "starting" | "ready" | "failed". A ready preview with a strange address is failed. */
+export function phaseOfPreview(v) {
+  const state = v?.state;
+  if (state === "starting") return "starting";
+  if (state === "ready") return TRY_URL.test(String(v?.url ?? "")) ? "ready" : "failed";
+  if (state === "failed") return "failed";
+  return "idle";
+}
+
 /**
- * The project page. `actions`: the action row, [{ id: "change" | "tryIt" | "final", href?, onClick? }]; nothing is drawn
+ * The Try it part, as nodes. `s`: { phase: "idle" | "choosing" | "starting" | "ready" | "failed", url?, error?, busy? };
+ * `busy`: a start or stop is on its way, so the buttons wait. Never shows the preview's output, reason or detail.
+ */
+export function tryItView(s, { local = true, choices = [], onTry, onPick, onNotNow, onStop } = {}) {
+  if (!local) return [h("p", { class: "simple-try-note" }, TRY.elsewhere)];
+  const off = s.busy ? true : undefined;
+  const big = (label, focus, onClick) => h("button", { type: "button", class: "simple-big", "data-focus": focus, disabled: off, onClick }, label);
+  const stop = () => h("button", { type: "button", "data-focus": "simple-try-stop", disabled: off, onClick: () => onStop?.() }, TRY.stop);
+  const note = s.error ? h("p", { class: "muted", "aria-live": "polite" }, TRY.didNotWork) : null;
+  let body;
+  if (s.phase === "starting") {
+    body = [h("p", { "aria-live": "polite" }, TRY.starting), stop()];
+  } else if (s.phase === "ready") {
+    body = [linkNode({ href: s.url, external: true, label: TRY.open }, "btn primary simple-big", "simple-try-open"), stop()];
+  } else if (s.phase === "choosing") {
+    body = [h("div", { role: "group", "aria-label": TRY.which },
+      h("p", {}, TRY.which),
+      big(TRY.current, "simple-try-current", () => onPick?.({ version: "develop" })),
+      choices.map((c, i) => big(choices.length > 1 ? TRY.checkingOf(c.title) : TRY.checking, `simple-try-checking-${i}`, () => onPick?.({ version: "checking", runId: c.runId }))),
+      h("button", { type: "button", "data-focus": "simple-try-notnow", disabled: off, onClick: () => onNotNow?.() }, TRY.notNow))];
+  } else {
+    body = [s.phase === "failed" ? h("p", {}, TRY.failed) : null, big(WORDS.actions.tryIt, "simple-action-tryIt", () => onTry?.())];
+  }
+  return [...body, note];
+}
+
+/**
+ * Runs Try it for one project: keeps the state, reads the preview again every `every` ms while it starts, and lets one start or
+ * stop run at a time (reads wait, and an older answer never replaces a newer one). `node` is drawn again by itself.
+ */
+function tryController({ id, a, local, every }) {
+  const node = h("div", { class: "simple-try" });
+  const s = { phase: "idle", url: "", error: false, busy: false };
+  let choices = [];
+  let timer;
+  let dead = false;
+  let seq = 0;
+  const call = (fn) => Promise.resolve().then(fn);
+  const draw = () => mount(node, ...tryItView(s, { local, choices, onTry, onPick: start, onNotNow, onStop: stop }));
+  const schedule = () => {
+    clearTimeout(timer);
+    if (!dead && !s.busy && s.phase === "starting") timer = setTimeout(load, every);
+  };
+  const apply = (v) => {
+    s.phase = phaseOfPreview(v);
+    s.url = s.phase === "ready" ? String(v.url) : "";
+    s.error = false;
+    draw();
+    schedule();
+  };
+  /** Reads the preview. A failed read keeps the last state, says so while it starts, and tries again. */
+  async function load() {
+    if (dead || s.busy) return;
+    const mine = ++seq;
+    try {
+      const v = await call(() => a.preview(id));
+      if (dead || mine !== seq) return;
+      if (s.phase === "choosing" && phaseOfPreview(v) === "idle") return;
+      apply(v);
+    } catch {
+      if (dead || mine !== seq) return;
+      if (s.phase === "starting") s.error = true;
+      draw();
+      schedule();
+    }
+  }
+  /** One mutation at a time: reads in flight are dropped, the timer waits, the controls are off. */
+  async function mutate(fn, { next, shown }) {
+    if (dead || s.busy || !local) return;
+    const before = s.phase;
+    seq += 1;
+    clearTimeout(timer);
+    s.busy = true;
+    s.error = false;
+    if (shown) s.phase = shown;
+    draw();
+    try {
+      const v = await call(fn);
+      if (dead) return;
+      s.busy = false;
+      if (next) { s.phase = next; s.url = ""; s.error = false; draw(); schedule(); } else apply(v);
+    } catch {
+      if (dead) return;
+      s.busy = false;
+      s.phase = before;
+      s.error = true;
+      draw();
+      schedule();
+    }
+  }
+  function start(body) {
+    return mutate(() => a.startPreview(id, body.version, body.runId), { shown: "starting" });
+  }
+  function stop() {
+    return mutate(() => a.stopPreview(id), { next: "idle" });
+  }
+  function onTry() {
+    if (s.busy) return;
+    s.error = false;
+    if (choices.length) { s.phase = "choosing"; draw(); } else start({ version: "develop" });
+  }
+  function onNotNow() {
+    if (s.busy) return;
+    s.phase = "idle";
+    draw();
+  }
+  draw();
+  return {
+    node,
+    setChoices(list) {
+      choices = list;
+      if (s.phase === "choosing" && !s.busy) draw();
+    },
+    load,
+    stop() {
+      dead = true;
+      clearTimeout(timer);
+    },
+  };
+}
+
+/**
+ * The project page. `actions`: the action row, [{ id: "change" | "tryIt" | "final", href?, onClick?, node? }] (`node`: drawn as it is); nothing is drawn
  * without actions. `doneOpen` and `onToggle` keep the "Show all done" box open across a refresh.
  */
 export function projectView(model, { actions = [], doneOpen = false, onToggle, onDecide } = {}) {
@@ -110,7 +249,7 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
       h("h2", {}, WORDS.making),
       GROUPS.map(([key, title]) => groupView(key, title, model.groups[key], { doneOpen, onToggle }))),
     actions.length
-      ? h("div", { class: "simple-actions" }, actions.filter((x) => WORDS.actions[x.id]).map((x) => x.href
+      ? h("div", { class: "simple-actions" }, actions.filter((x) => WORDS.actions[x.id]).map((x) => x.node ? x.node : x.href
         ? h("a", { class: "btn simple-big", href: x.href, "data-focus": `simple-action-${x.id}` }, WORDS.actions[x.id])
         : h("button", { type: "button", class: "simple-big", "data-focus": `simple-action-${x.id}`, onClick: x.onClick }, WORDS.actions[x.id])))
       : null,
@@ -183,14 +322,25 @@ export function renderSimpleHome(main, { a = api } = {}) {
 }
 
 /** The project page for repository `id`. */
-export function renderSimpleProject(main, { id, a = api, onName, actions = [] } = {}) {
+export async function renderSimpleProject(main, { id, a = api, onName, actions = [], host = globalThis.location?.hostname ?? "", tryEvery = 2000 } = {}) {
   let doneOpen = false;
-  return live(main, {
+  let previewRead = false;
+  const local = isLocalHost(host);
+  const ctl = tryController({ id, a, local, every: tryEvery });
+  const order = ["change", "tryIt", "final"];
+  const all = [...actions.filter((x) => x.id !== "tryIt"), { id: "tryIt", node: ctl.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id));
+  const off = await live(main, {
     a,
     draw: (projects, refresh) => {
       const p = projects.find((x) => String(x.id) === String(id));
       if (!p) return [h("a", { class: "simple-back", href: "#/home" }, WORDS.back), h("p", {}, WORDS.notFound)];
       onName?.(p.name);
+      ctl.setChoices(p.todo.filter((c) => c.tryRun).map((c) => ({ runId: c.tryRun, title: c.title })));
+      // the first successful render reads the preview once, even when the first list read failed
+      if (!previewRead && local) {
+        previewRead = true;
+        ctl.load();
+      }
       // The answer goes to the run's own approve / reject call; the page is read again after it worked.
       const onDecide = async (runId, approved, note) => {
         try {
@@ -201,7 +351,8 @@ export function renderSimpleProject(main, { id, a = api, onName, actions = [] } 
         refresh?.();
         return true;
       };
-      return projectView(p, { actions, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide });
+      return projectView(p, { actions: all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide });
     },
   });
+  return () => { off(); ctl.stop(); };
 }
