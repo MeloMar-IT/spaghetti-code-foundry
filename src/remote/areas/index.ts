@@ -19,6 +19,7 @@ export const API_ONLY: Record<string, string> = {
   "GET starters": "the starters a new project can be made from; no page uses it yet (the onboarding pages will call it), the command line has no command for it yet",
   "POST starters/:id/project": "makes a project folder on the server's computer from a starter and connects it; no page uses it yet (the onboarding pages will call it), the command line has no command for it yet",
   "GET plugins/ui": "the pages and menu links plugins add to the web interface (#787); the command line has no pages",
+  "PUT admin/repos/:id/workspace": "puts a repository in a workspace (#816); only the API for now, a command is a follow-up with the other parts of #784",
   "GET me/view": "the view of the web interface (#595): it changes only what the interface shows; the command line has no views",
   "PUT me/view": "chooses that view; done with the switch in the top bar",
   "POST help/conversations/:id/actions": "a button of a reply in the Ask SCF drawer: it opens a page, runs a read-only check, or previews an action Ask SCF proposed (#568); the command line has none of these",

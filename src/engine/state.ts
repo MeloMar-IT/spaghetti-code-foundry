@@ -93,6 +93,8 @@ export interface TimeLimitEvent { at: string; step: string; attempt: number; of:
 
 export interface RunSummary {
   runId: string;
+  /** The workspace (#816). Absent: "default" (also older runs). */
+  workspace?: string;
   flow: string;
   /** The flow definition the run started with, so resumes behave the same. */
   flowDef: Flow;

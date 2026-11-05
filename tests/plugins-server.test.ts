@@ -43,7 +43,7 @@ describe("plugins at server start", () => {
       expect(r.status).toBe(200);
       const text = await r.text();
       expect(text).not.toContain("SECRET-OPT");
-      expect(JSON.parse(text)).toMatchObject({ apiVersion: "0.2", plugins: [{ label: "order-a.mjs", version: "1.0.0" }, { label: "order-b.mjs", version: "2.0.0" }], problems: [] });
+      expect(JSON.parse(text)).toMatchObject({ apiVersion: "0.3", plugins: [{ label: "order-a.mjs", version: "1.0.0" }, { label: "order-b.mjs", version: "2.0.0" }], problems: [] });
       const user = await signInAs(s.base, { email: "user@example.com", role: "user", name: "User" });
       expect((await call(s.base, user, "GET", "/api/plugins")).status).toBe(403);
       expect((await fetch(`${s.base}/api/plugins`)).status).toBe(401);
@@ -104,7 +104,7 @@ describe("plugins at server start", () => {
 
   describe("usage handlers", () => {
     const got = () => ((globalThis as { __scfUsage?: { instance: number; event: unknown }[] }).__scfUsage ??= []);
-    const event = (id: string) => ({ id, time: "2026-11-04T10:00:00.000Z", runId: "r", workspace: "", name: "run.started" }) as never;
+    const event = (id: string) => ({ id, time: "2026-11-04T10:00:00.000Z", runId: "r", workspace: "default", name: "run.started" }) as never;
 
     it("gets events while the server runs, and none after close()", async () => {
       const { emitUsage, usageIdle } = await import("../src/usage/hub.js");

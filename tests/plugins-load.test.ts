@@ -182,7 +182,7 @@ describe("problems and the view", () => {
 });
 
 describe("api.onUsage", () => {
-  const event = (id: string) => ({ id, time: "2026-11-04T10:00:00.000Z", runId: "r", workspace: "", name: "run.started" }) as never;
+  const event = (id: string) => ({ id, time: "2026-11-04T10:00:00.000Z", runId: "r", workspace: "default", name: "run.started" }) as never;
   const load = (registers: ((api: any) => unknown)[], extra: Partial<Parameters<typeof loadPlugins>[1]> = {}) =>
     loadPlugins(registers.map((_, i) => entry(`/abs/p${i}.mjs`)), {
       blockedDirs: [],
@@ -192,7 +192,7 @@ describe("api.onUsage", () => {
     });
 
   it("reports version 0.2 and lists the handlers in `registered`", async () => {
-    expect(PLUGIN_API_VERSION).toBe("0.2");
+    expect(PLUGIN_API_VERSION).toBe("0.3");
     const reg = await load([(api) => (api.onUsage(() => {}), api.onUsage(() => {}))]);
     expect(reg.plugins[0]!.registered).toEqual([{ point: "usage", name: "onUsage" }, { point: "usage", name: "onUsage" }]);
     reg.dispose!();

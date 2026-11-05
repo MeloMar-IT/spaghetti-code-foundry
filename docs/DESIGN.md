@@ -205,6 +205,35 @@ loaded ones, or cannot be read, the health line shows it. `PUT /api/config` refu
 (400), and a save without the key keeps the stored list (`withStoredPlugins`), so the settings page
 cannot change it. The settings inventory lists `plugins.*` as exceptions: the file is the only place to set them.
 
+### Workspaces (#816)
+
+A workspace is a team. Each repository record, each watcher's runs and each queue entry belongs to exactly one
+workspace; a run without a repository is in `default`. `src/workspaces/list.ts` holds the schema of the list
+(`WorkspaceListSchema`, used by `ConfigSchema` as `workspaces`, so a bad entry stops the config from being read),
+the id rule (`WORKSPACE_ID_RE`, `default` reserved) and the one supplier slot that `api.workspaces(store)` takes
+(`supplyWorkspaces()`). The file imports only zod, so `config.ts`, `usage/schema.ts` and `plugins/load.ts` can
+use it without an import cycle.
+
+`src/workspaces/index.ts` answers the lookups and never throws: `workspacesOf(userId)` (an account may be in
+several workspaces; none gives `default`), `workspaceOfRepo(id)`, `workspaceOfRun(runId)`, `limitsOf(id)` and
+`knownWorkspace(id)`. `currentWorkspaces()` reads the plugin's list when one supplies it (a list that fails the
+check, or a `list()` that throws or returns a promise, is empty and is reported once), else the list of
+`config.yaml`. `workspaceForJob()` looks the repository up by its name, and by the owner when several accounts
+have a record of it.
+
+The workspace is decided once, when the scheduler queues a job (`Scheduler.workspaceFor()`), from the variables
+the run will use (`freezeRunVars()` freezes them at the same time). It is stored on `QueuedJob` and passed to
+`runFlow` as `workspace`, and `run.json` keeps it only when it is not `default`, so older runs and installs
+read as before. The flow's own `workspace` setting (`empty`, `repository`, …) says where a run checks out code and
+plays no part here. Usage events take the run's workspace (`common()` in `usage/events.ts`), and the schema
+refuses an empty value.
+
+The limits (`max_concurrent`, `test_slots`, `monthly_budget_usd`) are stored and read only. Part 4 of #784 enforces
+them; the Settings page has no control for the list yet (`workspaces.*` are in `settings/exceptions.ts`).
+`setRepoWorkspace()` in `auth/repos.ts` is the only writer of the record field, behind the admin route
+`PUT /api/admin/repos/:id/workspace`. `authPlan()` and `transferRepo()` keep the field, so a change of sign-in
+or an owner change does not move a repository.
+
 ---
 
 ## 4. Flows and the engine

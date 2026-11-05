@@ -12,6 +12,7 @@ import { BASELINE_POLICY_ID, BASELINE_RULE_IDS } from "./policy/baseline.js";
 import { PATTERN_LIMIT, PATTERN_MAX, usablePattern } from "./help/patterns.js";
 import { ContextSettingsSchema } from "./context/settings.js";
 import { MAX_PLUGINS, pluginModuleProblem } from "./plugins/load.js";
+import { WorkspaceListSchema } from "./workspaces/list.js";
 import { CATALOGUE_COST, CATALOGUE_DEFAULTS, CATALOGUE_RANGE } from "./skills/catalogue-rules.js";
 import { CANONICAL_LIMITS } from "./skills/canonical-rules.js";
 import { RESOLVE_DEFAULTS, RESOLVE_RANGE } from "./skills/resolve-rules.js";
@@ -845,6 +846,8 @@ export const ConfigSchema = z
       })
       .strict()
       .prefault({}),
+    /** Workspaces (#816): teams with members and limits. There is always an implicit "default". A plugin may supply the list instead. */
+    workspaces: WorkspaceListSchema.default([]),
     /** Plugins: code loaded once when the server starts, in this order. Set in config.yaml only; applies after a restart. */
     plugins: z
       .array(PluginEntrySchema)
