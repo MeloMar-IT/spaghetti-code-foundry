@@ -181,6 +181,8 @@ export const SETTING_TEXTS: Record<string, Text> = {
   "auto_retry.timeouts": N("Retries after a time limit", "How often a story of a watcher is tried again by itself when a step ran out of time, counted per story over all its runs, where 0 turns it off and a time limit then goes to Needs you as before, and a run you start yourself is never retried."),
   "promotion.enforce": N("Use only promoted versions", "Whether a new run checks that its flow, sub-flows, policy packs, model routes and tool profile are promoted (scf promote): off does not check, warn logs what is not promoted, on refuses the run, and scf run --local-test is always allowed."),
   "simple.help_contact": G("Help contact", "Who people in the Simple view can ask, shown as plain text on their Help page, for example a name and an e-mail address; empty hides the line."),
+  "simple.hidden_starters": G("Hidden starters", "Ids of built-in starters that are not offered for a new project, where an own starter of yours is always offered and an empty list offers all."),
+  "simple.projects_folder": G("Projects folder", "An absolute path outside the Foundry data folder where new projects from a starter are made; not set means scf-projects in the home folder of the person who runs the Foundry."),
   "help.enabled": G("Ask SCF", "Switch on the help assistant; off, nobody can ask."),
   "help.paused": G("Pause Ask SCF", "Emergency stop: nobody can ask, try again or check a page; running answers finish and history stays readable."),
   "help.audience": G("Who may ask", "Every account, administrators only, or administrators and the pilot accounts; not set means every account."),

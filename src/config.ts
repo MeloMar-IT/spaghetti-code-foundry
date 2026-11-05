@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse } from "yaml";
 import { z } from "zod";
@@ -376,6 +376,9 @@ const PluginEntrySchema = z
   .strict();
 export type PluginConfig = z.infer<typeof PluginEntrySchema>;
 
+/** The id of a starter (the name of its folder). */
+export const STARTER_ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+
 export const ConfigSchema = z
   .object({
     /** Where and for whom the web UI is reachable. */
@@ -418,6 +421,17 @@ export const ConfigSchema = z
     simple: z.object({
       help_contact: z.string().trim().max(300, "at most 300 characters")
         .refine((s) => !/[\u0000-\u001f\u007f]/.test(s), "has a control character").optional(),
+      /** Ids of built-in starters that are not offered (an admin's own starter is always offered). */
+      hidden_starters: z.array(z.string().regex(STARTER_ID_RE, "a starter id uses a-z, 0-9 and - only (1–40 characters, not starting with -)")).max(50, "at most 50 ids").default([]),
+      /** Where new projects from a starter go: an absolute path outside the data folder; not set means ~/scf-projects. */
+      projects_folder: z.string().trim().min(1).max(1000, "at most 1000 characters")
+        .refine((s) => !/[\u0000-\u001f\u007f-\u009f]/.test(s), "has a control character")
+        .refine((s) => isAbsolute(s), "must be an absolute path")
+        .refine((s) => resolve(s) === s, "must be normalised (no .. or double slashes)")
+        .refine((s) => {
+          const home = resolve(process.env.FACTORY_HOME ?? FACTORY_HOME);
+          return s !== home && !s.startsWith(home.endsWith(sep) ? home : home + sep);
+        }, "must not be inside the Foundry data folder").optional(),
     }).strict().prefault({}),
     /**
      * Load governor: how much of the machine the processes of a run (steps, broker commands, builds) take. `low` and `background` start them behind nice and taskpolicy.

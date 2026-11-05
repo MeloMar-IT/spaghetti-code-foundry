@@ -175,6 +175,32 @@ for no password or key and never shows the tool's output; it answers in plain wo
 with the same body makes one tiny call (no tools, a fixed prompt) and answers `ok`, `missing`, `signed-out` or
 `failed`. Use it after you sign in to check that the tool works. The page has no buttons for these routes yet.
 
+### Starters
+
+A **starter** is a ready project folder: it has its files, a README in plain words, a test command, a preview (**Try it**) and a release recipe, so the first result comes quickly and the agents build on a known base. Part 1 ships one starter, **Website** (a one-page static site with no npm dependencies; its test command is `node --test`; its release is a `.tar.gz` made with `tar` on macOS and Linux). Starters are for admins only for now; no page uses them yet, and the routes are below.
+
+**Where starters come from.**
+
+- **Built-in** starters are in the `starters/<id>/` folder of the Foundry package.
+- **Your own** starters are folders in `starters/<id>/` inside the Foundry data folder. An own starter with the same id as a built-in one replaces it.
+- A starter needs `starter.yaml` (`title`, `description` in plain words, `test` and `needs`, where `needs` may only be `node`), `README.md`, `.factory/preview.yaml` and `.factory/release-build.yaml`. It may hold at most 200 files and 2 MB, and no links or git data. Its id is lowercase letters, digits and `-` (1–40 characters, not starting with `-`).
+- An own starter that fails these checks is listed with a plain `problem` and cannot be used. The list never shows a folder path.
+- Hide a built-in starter with the setting `simple.hidden_starters` (a list of ids; empty offers all).
+
+**Making a project.** `POST /api/starters/<id>/project` with `{ "name": "…", "parent": "…" }` (optional `parent`):
+
+1. checks the name (1–60 characters, no control characters) and makes a lowercase folder name from it;
+2. creates the folder with a non-recursive `mkdir`; if it exists, the answer is 409 and nothing is overwritten;
+3. copies the starter without `starter.yaml`, and `gitignore` becomes `.gitignore`;
+4. runs `git init` with `main`, makes one commit "Start from the <title> starter" with the Foundry's identity, and creates `develop`, which is checked out;
+5. connects the folder as a **local** repository (see [Local projects](#local-projects)) with the starter's test command, and tests the connection.
+
+The answer is 201 with `repo` and `connection`. If any step fails, the folder is removed and nothing is left half done. The new project gets no watcher, as with any manually connected local repository. Git runs without the `GIT_*` variables of your environment, with its hooks off and a time limit.
+
+**Where projects go.** The setting `simple.projects_folder` is an absolute path outside the Foundry data folder; when it is not set, new projects go to `scf-projects` in the home folder of the person who runs the Foundry. A `parent` inside the data folder is refused.
+
+**Checks.** The Foundry's tests run every built-in starter: the files and limits, a project made in a temporary folder, its test and release commands (the artifacts must exist), and its preview on a free port. They need no network.
+
 ### Old and new interface
 
 **How to switch.** There is nothing to switch. After the update every account sees the new interface. A setting to go back is not built.
@@ -4400,6 +4426,8 @@ it; paused runs continue the next day. An admin can also set a daily budget per 
 
 **Simple view (Help contact)** — `simple.help_contact` is the line under "Who to ask" on the Help page of the Simple view: a name and an e-mail address, for example. It is up to 300 characters, without line breaks or control characters, and shown as plain text. Empty (the default) hides the line. The control is the **Simple view** card on the Settings page, between Ask SCF and Delivery. Users read the text through `GET /api/me/view` (field `helpContact`); they cannot change it.
 
+**Starters (`simple.hidden_starters`, `simple.projects_folder`)** — `simple.hidden_starters` is a list of ids of built-in starters that are not offered for a new project (an own starter is always offered; empty offers all, at most 50 ids). `simple.projects_folder` is an absolute path outside the Foundry data folder where new projects from a starter go; not set means `scf-projects` in the home folder of the person who runs the Foundry. See [Starters](#starters) in section 1.
+
 **Lowest runs at the same time (load governor)** — `governor.floor` is the lowest number of runs at once the load governor may go down to, from 0 to Runs at the same time (`concurrency`). Not set, it is half of that number, at least 2, as before. `0` means that when the machine is overloaded no new run starts (an architect run and a schedule chore too), while the runs that are going on, and the runs that resume, go on. Starts come back when the machine is calmer. A value above the configured number counts as that number, and the setting is never rejected: lowering `concurrency` later does not make the configuration invalid. `scf governor report` and `scf governor status` say "0 runs at once, so nothing new starts" for a cap of 0. The governor's cap still ends four minutes after its last check, so a governor that stops cannot keep 0 for good.
 
 **Slow down at this share of a weekly limit (load governor)** — `governor.usage_percent` is a whole number from 1 to 100. Once about this share of the Claude or Codex weekly limit is used (from the reading, see "Usage limits" under Helper processes), the limits helper keeps the runs at once at 1, or at `governor.floor` when that is set and higher, until the reset. It works only with `scf limits auto on` and a reading (`scf limits set`), and only while the threshold holds: below it, the forecast alone decides. The cap is global, so one tool at the threshold slows all runs, Codex runs included. The `scf limits` report says "at or above your threshold" for each tool at or above it. Not set, the setting does nothing and only the forecast slows down.
@@ -5128,6 +5156,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
 | `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
+| `GET /api/starters` | yes | no | the starters you can make a project from (`id`, `title`, `description`, `needs`, `source`: `built-in` or `own`) and the broken own ones (`id`, `source`, `problem`); never a folder path; admins only |
+| `POST /api/starters/:id/project` | yes | no | make a new project from a starter (`name`, optional `parent`, an existing absolute folder outside the data folder): a git folder with `main` and `develop`, connected as a local repository with the starter's test command and tested; answers 201 with `repo` and `connection`; 409 when the folder exists or the starter is broken, 404 for an unknown or hidden starter; any failure removes what it made; writes the audit line `repo-add`; admins only |
 | `POST /api/onboarding/test-call` | yes | no | one tiny call through Claude Code (`haiku`) or Codex (its default model, low effort) (`tool`): no tools, no personal hooks or setup, a fixed prompt; answers `ok`, `missing`, `signed-out` or `failed` with a plain explanation, never the tool's output; admins only |
 | `GET /api/setup-check` | yes | no | the setup check: whether git, Claude Code, Codex and their sign-ins (and with `need=node` Node.js) are ready on this computer, in plain words with a command or link to fix each; runs only fixed version, help and sign-in checks; admins only, as it describes the server machine |
 | `POST /api/providers/test` | yes | no | test a provider |

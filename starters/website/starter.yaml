@@ -1,0 +1,5 @@
+title: Website
+description: A simple website of one page that you can change and look at right away.
+test: node --test
+needs:
+  - node
