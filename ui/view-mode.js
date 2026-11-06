@@ -7,7 +7,7 @@ import { resolve, splitHash } from "./ia.js";
 
 export const VIEW_LABELS = { simple: "Simple", advanced: "Advanced", admin: "Admin" };
 /** The pages of the Simple view (the first part of the hash path): My projects, the project page and the setup check. Later parts of the Easy epic may change this. */
-export const SIMPLE_SECTIONS = ["home", "setup", "agents", "repos", "help"];
+export const SIMPLE_SECTIONS = ["home", "start-guide", "setup", "agents", "repos", "help"];
 /** The navigation links Simple keeps (`data-nav` names), in the menu and the top bar. */
 export const SIMPLE_NAV = ["home", "help"];
 /** Links only Simple shows; the other views hide them. */

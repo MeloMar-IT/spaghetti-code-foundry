@@ -307,6 +307,19 @@ Both pages refresh every 30 seconds and use the same lists as Home (repositories
 
 Simple never shows costs, tokens, models, agents, logs, transcripts, branch or commit names, flow names, labels or issue numbers. Its text comes from one word list, so "story" reads as "change", "run" as "work", "failed" as "got stuck" and "release" as "final version". A local project (without GitHub) is listed and shown like the others. An admin sees one more box on its project page, **Put this project on GitHub**, which moves it in plain steps: choose a name (step 1 of 2), then check and put it on GitHub (step 2 of 2). The box is shown only to an admin. Without a GitHub sign-in on any repository, it says to connect GitHub first in the Advanced view, and it never has a token field. With a GitHub sign-in it makes a new place on GitHub or uses one with the chosen name, and it says what goes along (changes, saved versions). When the move works, the box says "Your project is on GitHub now." If it stops halfway, the box says that it may have stopped or worked, and asks you not to try again on this page; look at the list of projects in the Advanced view. The move itself is the one described under "Move a local project to GitHub" in the Work section.
 
+### Simple: Get started
+
+**Get started** (`#/start-guide`) is a step-by-step guide in Simple. It shows one step at a time, and each step has **Back**. **Continue** goes on to the next step.
+
+1. **Welcome.** Three sentences on what the Foundry does.
+2. **Your computer.** The Setup check rows. For an admin, **Continue** turns on only when every row is green, the optional ones too (Codex included). Check again after you fix a row. For any other account the page says "Ask your admin" and **Continue** is on.
+3. **Claude and Codex** (shown as step 2b). The six questions of [Claude and Codex in plain words](#claude-and-codex-in-plain-words), shown inside the guide. The "Ask your admin" note is shown here too for accounts that are not admins.
+4. Steps 3 to 7 are placeholders that say "This step is coming next". They are filled in by later parts.
+
+Your place and your answers are saved for your account on the Foundry, not on the computer. Leave the page and come back, on any computer, and the guide opens at the step where you stopped. **Start again** clears the saved place and answers and begins at the first step; it asks first.
+
+The guide starts by itself the first time you open **My projects** when you have no project. When you have a project, **My projects** shows a **Get started** link at the top instead, and does not open the guide. A message that the progress could not be saved or loaded does not stop you: you can go on.
+
 ### Simple: the Help page
 
 The **Help** link in the top bar, next to Home, opens `#/help`. It is written in plain words and has three parts:
@@ -4943,7 +4956,9 @@ run and a run without an owner all answer `404 {"error":"run not found"}`, so a 
 nothing. A run started by a watcher belongs to the watcher's `owner` (an account's e-mail, set by
 an admin; empty: the first admin). Runs from the command line and from evals belong to the first
 admin. A queued run that has not started yet already counts as its owner's. An admin may use
-every run.
+every run. A user also sees and acts only on the runs, repositories and watchers in their own
+workspaces (see "Workspaces" below): one outside them answers the same `404`, and the lists leave
+them out.
 
 **After an upgrade.** Runs from older versions have no owner. The first admin gets them at the
 next server start, when the first admin is created on the setup page, and within a minute of
@@ -5297,6 +5312,9 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/monitor/retry` | yes | no | let the monitor try again for a finding that waits for a person (two bug stories did not fix it) |
 | `POST /api/clean` | yes | no | clean up old runs |
 | `GET /api/providers` | yes | no | agent providers |
+| `GET /api/onboarding/progress` | yes | yes | where this account is in the Get started guide: `{ step, answers, at }`, or `{ step: null, answers: {} }` when nothing is saved; only your own account |
+| `PUT /api/onboarding/progress` | yes | yes | save where this account is in the Get started guide (`step`: one of the guide's steps; optional `answers`: an object of at most 20 keys, each a lowercase name, at most 16384 bytes as JSON and nested at most 8 deep); a bad body answers 400, answers that are too large 413; replaces the saved entry; only your own account |
+| `DELETE /api/onboarding/progress` | yes | yes | clear where this account is in the Get started guide; answers 200 also when nothing is saved; only your own account |
 | `POST /api/onboarding/sign-in` | yes | no | start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine |
 | `GET /api/onboarding/agents` | yes | no | the answers about Claude Code and Codex (which tools, which plan, how to share, how busy), the settings they give, the current values of those six settings, the ones kept because an admin set them by hand, and a summary in plain words; admins only |
 | `PUT /api/onboarding/agents` | yes | no | save the answers (`answers`) and write the settings they give to `config.yaml` (`concurrency`, `governor.usage_percent`, `governor.priority`, `default_model`, `router.fallback`, `router.rules`); a setting an admin set by hand is kept and listed in `kept` unless `replace` names it; the same answers again change nothing; bad answers answer 400; with an `X-Config-Version` header a stale version is refused with 409; admins only |
@@ -5417,7 +5435,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/refinement/:id/restore` | yes | yes | restore your dropped refinement session |
 | `POST /api/refinement/:id/source/remove-build-label` | yes | yes | remove the build label from the issue your refinement session came from, with the repository's sign-in (an admin who is not the owner: 403) |
 | `POST /api/refinement/:id/architect` | yes | yes | ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time) |
-| `POST /api/refinement/:id/round` | yes | yes | ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time) |
+| `POST /api/refinement/:id/round` | yes | yes | ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time); `words: "simple"` asks for plain words |
+| `POST /api/refinement/:id/understand` | yes | yes | ask the architect to write 1 to 5 story drafts from the idea, the brief and the answered questions of your refinement session, linked by Depends on, or resume a paused run (one architect run per account at a time); `words: "simple"` asks for plain words; drafts it wrote before that are not on GitHub are replaced |
 | `POST /api/refinement/:id/ask` | yes | yes | ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time) |
 | `POST /api/refinement/:id/questions/:qid/answer` | yes | yes | answer a question of the architect in your refinement session: an option, your own text, or "I don't know yet" |
 | `POST /api/refinement/:id/proposals/:pid/accept` | yes | yes | accept a proposed entry of your refinement session: it goes into its rules, examples or open questions |
@@ -7437,6 +7456,10 @@ workspaces:
   or `null` for `default`). A transfer to another account keeps it. A repository without one is in `default`.
 - A run takes the workspace of its repository; a run without a repository (a local run) is in `default`.
   Usage events carry the workspace.
+- A user sees only the repositories, watchers' runs, runs and refinement sessions of their own workspaces. A
+  team member does not see `default`, and an account in no team sees `default` only. An object of another
+  workspace answers `404`, as an unknown id does; lists, search, the board and the usage view leave it out.
+  An admin sees all workspaces. A user cannot start work on a repository outside their workspaces.
 - An invalid entry, or a second entry with the same id, stops the config from being read. A plugin can supply
   the list instead (`api.workspaces`, see [PLUGIN_API.md](PLUGIN_API.md#workspaces)).
 - The Settings page does not show the list yet; edit it in `config.yaml`.
@@ -8575,7 +8598,8 @@ A session keeps the talk with the architect, so it is not lost. The session page
 **Where it is kept.** In `refinements.json` in the data folder (mode 0600). It survives a restart and is copied unchanged when the data folder moves. If the file cannot be read, the calls answer "the refinement sessions are not working; see the server log", and an account cannot be deleted until the file is repaired.
 
 **Rounds and questions from a session.** Two calls, both for the owner only (another user gets 404, an admin 403; a dropped session or a repository that is not in My repositories gets 409). Both answer 202 with the session, and its `architect` part has `kind`: `brief`, `round` or `question`.
-- `POST /api/refinement/:id/round` asks the architect for a round of questions. It needs a context brief ("ask the architect to look at the code first") and an answer to every question of the last round ("answer every question of the last round first; \"I don't know yet\" is an answer"). You can ask for as many rounds as you like.
+- `POST /api/refinement/:id/round` asks the architect for a round of questions. It needs a context brief ("ask the architect to look at the code first") and an answer to every question of the last round ("answer every question of the last round first; \"I don't know yet\" is an answer"). You can ask for as many rounds as you like. An optional body `{ "words": "simple" }` asks for plain words (see `words=simple` above).
+- `POST /api/refinement/:id/understand` asks the architect to write 1 to 5 story drafts from the idea, the brief and the answered questions (see `ask=understand` above). It has the same rules as the round, takes the same optional `words`, and drafts it wrote before that are not on GitHub are replaced.
 - `POST /api/refinement/:id/ask` with `{ "question": "…" }` (1–2,000 characters) asks the architect a question of your own. It needs no brief. The question is logged when the run starts.
 
 **What the architect gets.** The talk so far as the task: your idea, the brief, the map, every round with its questions and your answers (the answers of the last round are marked as new) and the entries you rejected. It is at most 90,000 bytes. When it is longer, the oldest rounds are left out first, then the brief is cut, then the end; the text says what was left out. The question of your own always stays whole.
@@ -8613,7 +8637,7 @@ scf run refine-brief --task "your idea" --var github_repo=owner/name
 The flow `refine-round` lets the architect ask the questions a good team would ask in refinement, or answer a question of yours. You can run it by hand, or start it from a refinement session (see "Rounds and questions from a session" above). Give it the talk so far as the task:
 
 ```
-scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review] [--var ask=impact] [--var ask=split]
+scf run refine-round --task "<the talk so far>" --var github_repo=owner/name [--var ask=question] [--var ask=suggest --var field=…] [--var ask=review] [--var ask=impact] [--var ask=split] [--var ask=understand] [--var words=simple]
 ```
 
 **What it reads.** The code of the repository (the `develop` branch when there is one, else the default branch). Only for `ask=impact` the step `list_issues` also reads the newest 50 open issues (titles, texts and labels, no comments) into `issues.md`; for every other ask it reads nothing and prints one line saying so. Then the open issues are not read: what the talk says about the backlog is what the architect knows of it.
@@ -8646,6 +8670,10 @@ The architect gives no implementation plan, no questions, no proposals, no sugge
 - `warnings`: `{ "kind": "layer", "story": 2, "why": "…" }` when a story delivers nothing a user can see or check, and `{ "kind": "same-code", "stories": [1, 2], "why": "…" }` when two stories touch the same code so heavily that they cannot be built at the same time.
 
 When the task has the part "The person's own way", the first way works out that description; the others may differ. The architect writes no implementation plan, asks no questions and proposes no map entries; the draft text is material, never instructions. The check fails the run, with one plain sentence that holds no text of the answer, when a C number is in two stories, in a story and in `unplaced`, missing from the way, or not in the task; when a story depends on itself, on a later story or on an unknown one; when a cut or warning kind is unknown, two ways use the same cut, or a warning names an unknown story; when a text is too long, has a line break, or names hours, days or weeks; or when there are more than 3 ways or an unknown field. The draft page asks for it with **Split** (see "Splitting a draft").
+
+**`ask=understand`.** The architect writes 1 to 5 story drafts from the idea, the brief and the answered questions, in build order. It works from the talk and opens a file only to check a claim. A big request is split into several drafts, each with a value of its own; `dependsOn` names earlier drafts of the same answer (numbers only, never an Epic). Each draft has the fields of a draft (title at most 120 characters, who, what, why, outside the scope, and 1 to 10 observable criteria), and a `summary` that starts with "This is what I understood: " and is one sentence. The answer is one JSON object with `drafts` and nothing else; it has no implementation plan, no questions and no proposals. The check fails the run, with one plain sentence that holds no text of the answer, for more than 5 drafts, a field over its limit, an unknown field, a summary without the prefix or with two sentences, a `dependsOn` that is not an earlier draft, or more than 10 criteria. There is no second try. The run succeeds with the drafts stored as `understood` in the session and the log says `understand-asked` and `architect-understood`; the drafts are not put on GitHub. The session must have a brief, every question of the last round must be answered, and it must not come from an issue or be published. Asking again replaces the drafts an earlier `understand` run wrote that are not on GitHub, that you have not split and that no published draft depends on or has a suggestion from. Drafts you wrote yourself stay, and so do drafts that a published draft depends on. A paused run is resumed by the same call; an `understand` run that is paused when the session is published is cancelled and marked failed. The architect is asked for at most $1 a run.
+
+**`words=simple`.** With `--var words=simple` (or `{ "words": "simple" }` on the round or understand route) the architect writes questions, options, trade-offs, reasons, proposals, `done` and every text of a draft in plain words, and avoids the Foundry's terms, as the Simple view does. The words are checked only in the prompt, not by the check tool, so a Foundry term can still get through. An empty value (the default) keeps the usual words. Any other value is refused with `bad-text` (400 on the route) before a run starts. A route body that is not JSON, is too large, or is not sent as `application/json` is refused with 400, 413 or 415 before a run starts; a request with no body is an ordinary ask.
 
 **Limits.** The step `check_round` prints the checked JSON, with known fields only. It keeps the first 5 questions and 20 proposals. Texts are cut at: question `text` and `why` 500 characters, option `text` and `tradeoff` 300, proposal `text` 500, `done` 500, `answer` 8,000.
 

@@ -4,6 +4,7 @@ import { isRefinementFlow } from "../flow/usage.js";
 import type { Flow } from "../flow/schema.js";
 import { HttpError, NAME_RE } from "./http.js";
 import type { ApiContext } from "./server.js";
+import { checkScope } from "./workspace-scope.js";
 
 /**
  * Who may make which API call. An admin may make every call in the table; a user only the calls marked `yes`,
@@ -20,9 +21,38 @@ export interface Rule {
   user: UserAccess;
   /** One short line for the table in the guide. */
   note: string;
+  /** How the rule is kept to the caller's workspaces (#817). */
+  scope: RuleScope;
 }
 
-const r = (method: string, path: string, user: UserAccess, note: string): Rule => ({ method, path, user, note });
+/**
+ * How a rule is kept to workspaces (#817): `admin` (admin-only route, install-wide), `run` (names one run; `authorize()` checks the
+ * run's workspace), `repo` (names a repository by id), `repo-name` (by `owner/name`), `session` (names a refinement session),
+ * `list` (a list, search, count, or a repository or run named in the body or query; the handler filters), `none` (not about
+ * runs, repositories or sessions of a workspace).
+ */
+export type RuleScope = "admin" | "run" | "repo" | "repo-name" | "session" | "list" | "none";
+
+/** The scope of every `yes` rule that is not a `repo`, `session` or `none` rule by its path (see scopeOfYes). */
+const LIST_PATHS = new Set(["queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
+const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "credentials", "credentials/:id", "repos/methods", "onboarding/progress"]);
+
+function scopeOfYes(path: string): RuleScope | undefined {
+  if (path === "repos/methods") return "none";
+  if (path === "repos/:owner/:name") return "repo-name";
+  if (path.startsWith("repos/:id")) return "repo";
+  if (path.startsWith("refinement/:id")) return "session";
+  if (LIST_PATHS.has(path)) return "list";
+  if (NONE_PATHS.has(path) || path.startsWith("help/")) return "none";
+  return undefined;
+}
+
+/** A rule. `scope` defaults to `admin` for `no` and `run` for `own`; a `yes` rule needs one (given, or from scopeOfYes), else it cannot be built. */
+const r = (method: string, path: string, user: UserAccess, note: string, scope?: RuleScope): Rule => {
+  const s = scope ?? (user === "no" ? "admin" : user === "own" ? "run" : scopeOfYes(path));
+  if (s === undefined) throw new Error(`rule ${method} ${path} needs a scope`);
+  return { method, path, user, note, scope: s };
+};
 
 export const RULES: Rule[] = [
   r("GET", "info", "no", "server settings and today's cost"),
@@ -51,6 +81,9 @@ export const RULES: Rule[] = [
   r("POST", "monitor/retry", "no", "let the monitor try again for a finding that waits for a person (two bug stories did not fix it)"),
   r("POST", "clean", "no", "clean up old runs"),
   r("GET", "providers", "no", "agent providers"),
+  r("GET", "onboarding/progress", "yes", "where this account is in the Get started guide: `{ step, answers, at }`, or `{ step: null, answers: {} }` when nothing is saved; only your own account"),
+  r("PUT", "onboarding/progress", "yes", "save where this account is in the Get started guide (`step`: one of the guide's steps; optional `answers`: an object of at most 20 keys, each a lowercase name, at most 16384 bytes as JSON and nested at most 8 deep); a bad body answers 400, answers that are too large 413; replaces the saved entry; only your own account"),
+  r("DELETE", "onboarding/progress", "yes", "clear where this account is in the Get started guide; answers 200 also when nothing is saved; only your own account"),
   r("POST", "onboarding/sign-in", "no", "start the sign-in of Claude Code (`claude auth login`) or Codex (`codex login`) on the computer that runs the Foundry (`tool`: `claude` or `codex`); its window opens there; fixed arguments, no shell, closed stdin, a 5-minute limit, one at a time per tool, stopped when the server stops; answers `started`, `done`, `missing` or `failed` in plain words, never the tool's output; admins only, as it runs on the server machine"),
   r("GET", "onboarding/agents", "no", "the answers about Claude Code and Codex (which tools, which plan, how to share, how busy), the settings they give, the current values of those six settings, the ones kept because an admin set them by hand, and a summary in plain words; admins only"),
   r("PUT", "onboarding/agents", "no", "save the answers (`answers`) and write the settings they give to `config.yaml` (`concurrency`, `governor.usage_percent`, `governor.priority`, `default_model`, `router.fallback`, `router.rules`); a setting an admin set by hand is kept and listed in `kept` unless `replace` names it; the same answers again change nothing; bad answers answer 400; with an `X-Config-Version` header a stale version is refused with 409; admins only"),
@@ -170,7 +203,8 @@ export const RULES: Rule[] = [
   r("POST", "refinement/:id/restore", "yes", "restore your dropped refinement session"),
   r("POST", "refinement/:id/source/remove-build-label", "yes", "remove the build label from the issue your refinement session came from, with the repository's sign-in (an admin who is not the owner: 403)"),
   r("POST", "refinement/:id/architect", "yes", "ask the architect to read the repository for your refinement session, or resume a paused read (one read per account at a time)"),
-  r("POST", "refinement/:id/round", "yes", "ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time)"),
+  r("POST", "refinement/:id/round", "yes", "ask the architect for a round of questions in your refinement session, or resume a paused round (one architect run per account at a time); `words: \"simple\"` asks for plain words"),
+  r("POST", "refinement/:id/understand", "yes", "ask the architect to write 1 to 5 story drafts from the idea, the brief and the answered questions of your refinement session, linked by Depends on, or resume a paused run (one architect run per account at a time); `words: \"simple\"` asks for plain words; drafts it wrote before that are not on GitHub are replaced"),
   r("POST", "refinement/:id/ask", "yes", "ask the architect a question of your own in your refinement session, or resume a paused answer (one architect run per account at a time)"),
   r("POST", "refinement/:id/questions/:qid/answer", "yes", "answer a question of the architect in your refinement session: an option, your own text, or \"I don't know yet\""),
   r("POST", "refinement/:id/proposals/:pid/accept", "yes", "accept a proposed entry of your refinement session: it goes into its rules, examples or open questions"),
@@ -232,13 +266,15 @@ export function findRule(method: string, seg: string[]): Rule | undefined {
 
 /**
  * Throws 403 when the user may not make the call, and 404 for a run that is not theirs. An admin always passes. Ownership is read from the run (or its
- * queue entry), never from the request.
+ * queue entry), never from the request. Then the rule's scope is checked (see workspace-scope.ts): an object of the user's that is outside their
+ * workspaces answers 404, the same as an unknown one.
  */
 export function authorize(ctx: ApiContext, user: User, rule: Rule, seg: string[]): void {
-  if (user.role === "admin" || rule.user === "yes") return;
+  if (user.role === "admin") return;
   if (rule.user === "no") throw new HttpError(403, "not allowed for your role");
   // The same answer as for a run that does not exist: a guessed id tells nothing.
-  if (ctx.scheduler.ownerOf(seg[1] ?? "") !== user.id) throw new HttpError(404, "run not found");
+  if (rule.user === "own" && ctx.scheduler.ownerOf(seg[1] ?? "") !== user.id) throw new HttpError(404, "run not found");
+  checkScope(ctx, user, rule.scope, seg);
 }
 
 /**

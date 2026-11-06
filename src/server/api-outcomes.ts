@@ -7,6 +7,7 @@ import { OutcomeFactsCache, type OutcomeFacts } from "../outcome-facts.js";
 import { OUTCOME_DEFINITIONS, computeOutcomes, type OutcomeDefinition, type OutcomeValue, type OutcomeWindow } from "../outcomes.js";
 import { checkedRunAsync } from "./api-runs.js";
 import { guardedRepos } from "./api-repos.js";
+import { callerWorkspaces, inWorkspaces, scopedRepos } from "./workspace-scope.js";
 import { HttpError, send } from "./http.js";
 import { runFilterValues } from "./run-filter.js";
 import type { ApiContext, Route } from "./server.js";
@@ -66,13 +67,13 @@ export function briefWorkKey(b: RunBrief): string {
   return b.runId;
 }
 
-export interface OutcomeScope { owner?: string; repos?: ReadonlySet<string>; repo?: string; flow?: string }
+export interface OutcomeScope { owner?: string; repos?: ReadonlySet<string>; /** The workspaces of a user (#817); a run in another one is left out. */ workspaces?: ReadonlySet<string>; repo?: string; flow?: string }
 
 /** The briefs the caller may see. With `owner` (a user): own runs on repositories in `repos` (lower case). Without: all. */
-export function visibleBriefs(briefs: readonly RunBrief[], scope: Pick<OutcomeScope, "owner" | "repos">): RunBrief[] {
+export function visibleBriefs(briefs: readonly RunBrief[], scope: Pick<OutcomeScope, "owner" | "repos" | "workspaces">): RunBrief[] {
   if (scope.owner === undefined) return [...briefs];
   const repos = scope.repos ?? new Set<string>();
-  return briefs.filter((b) => b.owner === scope.owner && typeof b.githubRepo === "string" && repos.has(b.githubRepo.toLowerCase()));
+  return briefs.filter((b) => b.owner === scope.owner && inWorkspaces(scope.workspaces, b.workspace) && typeof b.githubRepo === "string" && repos.has(b.githubRepo.toLowerCase()));
 }
 
 const stampOf = (t: string | undefined): number => (typeof t === "string" ? Date.parse(t) : NaN);
@@ -201,8 +202,8 @@ export const outcomeRoutes: Route = async (ctx, req, res, seg, method, user) => 
   const admin = user.role === "admin";
   const filter = parseOutcomeFilter(new URL(req.url ?? "/", "http://x").searchParams);
   if (!admin && (filter.model !== undefined || filter.policy !== undefined)) throw new HttpError(403, ADMIN_ONLY_TEXT);
-  const repos = admin ? undefined : new Set(guardedRepos(ctx, () => listRepos(user.id)).flatMap((r) => githubNameOf(r.url)?.toLowerCase() ?? []));
-  const visible = visibleBriefs(await ctx.scheduler.briefsAsync(), { owner: admin ? undefined : user.id, repos });
+  const repos = admin ? undefined : new Set(guardedRepos(ctx, () => scopedRepos(user, listRepos(user.id))).flatMap((r) => githubNameOf(r.url)?.toLowerCase() ?? []));
+  const visible = visibleBriefs(await ctx.scheduler.briefsAsync(), { owner: admin ? undefined : user.id, repos, workspaces: callerWorkspaces(user) });
   const to = new Date();
   const from = new Date(to.getTime() - filter.days * DAY_MS);
   const window: OutcomeWindow = { from, to, previousFrom: new Date(from.getTime() - filter.days * DAY_MS) };

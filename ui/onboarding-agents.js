@@ -18,7 +18,13 @@ const call = (what, simple, e) => {
   return info;
 };
 
-export async function renderOnboardingAgents(box, { a = api, admin = false, readOnly = false, simple = false, credentialsHref = "#/credentials", clipboard = pageClipboard(), notify = toast, ask = confirmDialog } = {}) {
+// Options for the Get started guide:
+// - `resume`: `{ draft, step }` starts at a saved, unfinished draft (it wins over the answers on the server); `{ draft, done: true }` shows the
+//   summary of that completed draft (the account's own answers, even when another admin changed the settings since); `{ fresh: true }` starts
+//   the questions again at the first one, with the answers on the server chosen and nothing cleared.
+// - `onDraft`: `{ draft, step }` on every question, `{ draft, step: null, done: true }` on the summary.
+// - `again: false` leaves out the summary's own "Start again" button.
+export async function renderOnboardingAgents(box, { a = api, admin = false, readOnly = false, simple = false, credentialsHref = "#/credentials", clipboard = pageClipboard(), notify = toast, ask = confirmDialog, resume = null, onDraft = null, again = true } = {}) {
   if (!admin || readOnly) {
     mount(box, h("div", { class: "card" }, h("h1", {}, "Claude and Codex"), h("p", {}, ASK_ADMIN)));
     return () => {};
@@ -52,18 +58,31 @@ export async function renderOnboardingAgents(box, { a = api, admin = false, read
       opt.link && h("p", {}, h("a", { href: opt.link.url, target: "_blank", rel: "noopener noreferrer" }, opt.link.label)),
       extra);
 
+  // The answers the summary shows; Back from the first question of a change goes back to them, and nothing typed since is kept.
+  let base = null;
+  const copyDraft = (d) => ({ ...d, plans: { ...d.plans } });
   const back = () => {
     if (at > 0) at--;
-    else if (view?.answers) {
-      draft = draftFrom(view);
+    else if (base) {
+      draft = copyDraft(base);
       mode = "summary";
     } else return;
     draw();
   };
-  const backButton = () => (at > 0 || view?.answers ? h("button", { type: "button", "data-focus": "back", onClick: back }, "Back") : null);
+  const backButton = () => (at > 0 || base ? h("button", { type: "button", "data-focus": "back", onClick: back }, "Back") : null);
+  const emit = (step, done = false) => {
+    try {
+      if (done) onDraft?.({ draft: copyDraft(draft), step: null, done: true });
+      else if (step) onDraft?.({ draft: copyDraft(draft), step });
+    } catch {
+      // the guide's bookkeeping must not break the questions
+    }
+  };
   const next = () => {
-    if (at + 1 >= chain.length) save();
-    else {
+    if (at + 1 >= chain.length) {
+      emit(chain[at]); // the last answer is kept even when the save fails
+      save();
+    } else {
       at++;
       draw();
     }
@@ -238,7 +257,7 @@ export async function renderOnboardingAgents(box, { a = api, admin = false, read
       h("ul", { class: "setup-rows" }, items),
       keptLine && h("p", {}, keptLine, " ", h("button", { type: "button", "data-focus": "replace", onClick: replaceKept }, "Use my answers for these too")),
       draft.have === "none" && h("p", {}, h("a", { href: "#/setup" }, "Open the setup check")),
-      h("p", {}, h("button", { type: "button", "data-focus": "again", onClick: () => startChain(["have"]) }, "Start again")),
+      again && h("p", {}, h("button", { type: "button", "data-focus": "again", onClick: () => startChain(["have"]) }, "Start again")),
       settings);
   };
 
@@ -250,8 +269,13 @@ export async function renderOnboardingAgents(box, { a = api, admin = false, read
 
   function draw() {
     if (gone) return;
-    if (mode === "summary") return summary();
+    if (mode === "summary") {
+      base = copyDraft(draft);
+      emit(null, true);
+      return summary();
+    }
     const step = chain[at];
+    emit(step);
     const pick = (key) => (v) => {
       if (key === "plans") draft.plans = { ...draft.plans, [step.slice(6)]: v };
       else draft[key] = v;
@@ -278,7 +302,21 @@ export async function renderOnboardingAgents(box, { a = api, admin = false, read
     }
     if (gone) return;
     draft = draftFrom(view);
-    if (view.answers) {
+    base = view.answers ? copyDraft(draft) : null;
+    if (resume?.done && resume.draft) {
+      // a completed draft of this account is its summary, even when the answers on the server changed since
+      draft = copyDraft(resume.draft);
+      mode = "summary";
+      draw();
+      refreshReport();
+    } else if (resume?.draft) {
+      // an unfinished draft of this account wins over the answers saved earlier
+      draft = { ...draft, ...resume.draft, plans: { ...resume.draft.plans } };
+      const steps = stepsFor(draft);
+      startChain(steps, Math.max(0, steps.indexOf(resume.step)));
+    } else if (resume?.fresh) {
+      startChain(["have"]); // the answers on the server stay chosen, and nothing is cleared
+    } else if (view.answers) {
       mode = "summary";
       draw();
       refreshReport();

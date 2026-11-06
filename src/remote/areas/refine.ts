@@ -193,6 +193,7 @@ export const REFINE: Cmd[] = [
   // the talk with the architect
   cmd("brief", "POST", ":id/architect", { args: S, show: showSession, help: `ask the architect to read the repository, or resume a paused read (${RUN})` }),
   cmd("round", "POST", ":id/round", { args: S, show: showSession, help: `ask the architect for a round of questions, or resume a paused round (${RUN})` }),
+  cmd("understand", "POST", ":id/understand", { args: S, show: showSession, help: `ask the architect to write 1 to 5 story drafts from the idea and the answers, or resume a paused run (${RUN})` }),
   cmd("ask", "POST", ":id/ask", { args: ["id", "question"], show: showSession, help: "ask the architect a question of your own; the answer is in: scf refine show <id> --json (talk.asked)" }),
   cmd("question-answer", "POST", ":id/questions/:qid/answer", {
     args: ["id", "qid"],

@@ -4,7 +4,7 @@ import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { projectsModel } from "./simple-model.js";
 import { githubSignInKind, moveController } from "./simple-move.js";
-import { FINAL, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
+import { FINAL, GUIDE, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
 
 // The Simple view: My projects (#/home) and the project page (#/repos/<id>). All text comes from the word list.
 
@@ -26,7 +26,7 @@ export function projectsView(projects) {
       h("p", { class: "simple-state" }, p.state),
       linkNode(p.next, "btn primary simple-big", `simple-next-${p.id}`))))
     : h("p", { class: "simple-empty" }, WORDS.empty);
-  return [h("h1", {}, WORDS.myProjects), body];
+  return [h("h1", {}, WORDS.myProjects), h("p", {}, h("a", { href: "#/start-guide", "data-focus": "simple-get-started" }, GUIDE.getStarted)), body];
 }
 
 function cardView(c) {
@@ -317,9 +317,27 @@ export async function renderSimpleHelp(main, { a = api } = {}) {
   return () => {};
 }
 
-/** My projects; never rejects; returns a cleanup. */
-export function renderSimpleHome(main, { a = api } = {}) {
-  return live(main, { a, draw: projectsView });
+/**
+ * My projects; never rejects; returns a cleanup. `openGuide()` is called once, when the first successful load shows no project and
+ * `alive()` still says this page is the one on screen (a slow answer that arrives after the person left must not move them).
+ */
+export function renderSimpleHome(main, { a = api, openGuide, alive = () => true } = {}) {
+  let first = true;
+  return live(main, {
+    a,
+    draw: (projects) => {
+      const empty = first && projects.length === 0;
+      first = false;
+      if (empty && alive()) {
+        try {
+          openGuide?.();
+        } catch {
+          // the page stays as it is
+        }
+      }
+      return projectsView(projects);
+    },
+  });
 }
 
 /** The project page for repository `id`. */

@@ -14,6 +14,7 @@ import { DELETED_OWNER, ownerNames } from "../auth/run-owner.js";
 import { statusName, watcherState, type WatcherState } from "../words.js";
 import { send } from "./http.js";
 import { answerBlock, userRecord, userTask } from "./user-view.js";
+import { inWorkspaces, userWorkspaces } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
 
 /** Why the server waits to restart, and since when. */
@@ -321,7 +322,9 @@ export interface OwnJob { runId: string; kind: string; enqueuedAt: string; waiti
 /** GET /api/queue for a user: their own queued jobs, each with the number of other accounts' jobs in front of it. */
 export function ownQueue(ctx: ApiContext, userId: string): { pending: OwnJob[]; active: { runId: string }[] } {
   const q = queueWithNext(ctx, true);
-  const mine = (id: string) => ctx.scheduler.ownerOf(id) === userId;
+  const ws = userWorkspaces(userId);
+  // Their own jobs in their own workspaces only (#817).
+  const mine = (id: string) => ctx.scheduler.ownerOf(id) === userId && inWorkspaces(ws, ctx.scheduler.workspaceOf(id));
   const pending: OwnJob[] = [];
   let ahead = 0;
   for (const p of q.pending) {

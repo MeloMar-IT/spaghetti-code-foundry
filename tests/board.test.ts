@@ -293,6 +293,7 @@ function stub(o: { watchers?: Record<string, unknown>[]; runs?: RunSummary[]; tr
       list: (n = 100) => runs.slice(0, n),
       get: (id: string) => runs.find((r) => r.runId === id),
       ownerOf: (id: string) => runs.find((r) => r.runId === id)?.owner ?? o.owners?.[id],
+      workspaceOf: (id: string) => runs.find((r) => r.runId === id)?.workspace ?? "default",
       briefs: () => briefsOf(runs),
       queue: () => ({ pending: o.pending ?? [], active: (o.active ?? []).map((runId) => ({ runId })) }),
     },

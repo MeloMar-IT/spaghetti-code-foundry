@@ -217,6 +217,22 @@ export class Scheduler {
     return typeof q?.owner === "string" ? q.owner : undefined;
   }
 
+  /** The workspace of a run, also while it is still queued (#817). "default" for an unknown run or an older one. Never throws. */
+  workspaceOf(runId: string): string {
+    try {
+      const ws = this.get(runId)?.workspace;
+      if (validWorkspaceId(ws)) return ws;
+    } catch {
+      // a run.json that cannot be read has no workspace
+    }
+    try {
+      const q = [...this.pending, ...[...this.active.values()].map((a) => a.queued)].find((p) => p.runId === runId);
+      return q ? queuedWorkspace(q) : DEFAULT_WORKSPACE;
+    } catch {
+      return DEFAULT_WORKSPACE;
+    }
+  }
+
   /** New runs that started today per account, counted as the per-day limit counts them: every run folder plus runs just started in memory. */
   startedTodayByOwner(now = new Date()): Map<string, number> {
     const day = now.toDateString();

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Check the form of the architect's answer in a question round (flow refine-round) and pass it on.
 // Reads: $FACTORY_OUT_ROUND (the answer; the JSON is taken from the first { to the last }), $FACTORY_VAR_ASK
-// (`round`, the default, `question`, `suggest`, `review`, `impact`, `ready` or `split`), for `suggest` $FACTORY_VAR_FIELD (title, who, what, why,
+// (`round`, the default, `question`, `suggest`, `review`, `impact`, `ready`, `split` or `understand`), for `suggest` $FACTORY_VAR_FIELD (title, who, what, why,
 // criteria, outOfScope, dependsOn or notes) and, for `ready`, $FACTORY_VAR_ITEMS (the ids of the items to judge, comma separated).
 // Prints: the checked JSON on one line (known fields only, texts cut at their limits), exit 0 — or one plain
 // sentence and exit 1. A sentence never holds text of the answer.
@@ -19,6 +19,9 @@
 // For `split` it prints { "ways": [ { cut, stories: [ { title, sentence, criteria, dependsOn } ], first, unplaced, warnings } ] }: 1 to 3 ways,
 // each C number of the task in exactly one story or in `unplaced`. The C numbers are the lines `- C<n>: ` of the part "Acceptance criteria"
 // under "## The draft to split" in $FACTORY_TASK (read here, never by the shell). Nothing is cut: a wrong form or a longer text fails.
+// For `understand` it prints { "drafts": [ { title, who, what, why, criteria, outOfScope, dependsOn, summary } ] }: 1 to 5 drafts, 1 to 10
+// criteria each, `dependsOn` holds numbers of earlier drafts, the summary is one sentence that starts with "This is what I understood: ".
+// Nothing is cut: a wrong form or a longer text fails.
 import { readFileSync } from "node:fs";
 
 const READY_ITEMS_MAX = 20, READY_REASON_MAX = 300, READY_RESULTS = ["met", "not-met", "unsure"];
@@ -370,9 +373,54 @@ function checkSplit(obj, task) {
   return { ways };
 }
 
+const UNDERSTOOD_PREFIX = "This is what I understood: ";
+const UNDERSTAND_DRAFTS_MAX = 5, UNDERSTAND_CRITERIA_MAX = 10, UNDERSTOOD_SUMMARY_MAX = 300;
+const DRAFT_TITLE_MAX = 120, DRAFT_PART_MAX = 500, DRAFT_CRITERION_MAX = 500, DRAFT_LONG_MAX = 5000;
+// eslint-disable-next-line no-control-regex
+const HAS_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+// eslint-disable-next-line no-control-regex
+const ONE_LINE_BAD = new RegExp(`[\\u0000-\\u0009\\u000b-\\u001f\\u007f-\\u009f${String.fromCharCode(0x2028, 0x2029)}]`);
+
+// One text of a draft: trimmed, never cut or cleaned; a text that breaks a rule fails. A sentence never holds the text.
+function draftText(v, what, name, max, { oneLine = false, empty = false } = {}) {
+  if (typeof v !== "string") bad(`${what} has no ${name}`);
+  const t = v.trim();
+  if (!t && !empty) bad(`${what} has no ${name}`);
+  if ([...t].length > max) bad(`${what} has a ${name} of more than ${max} characters`);
+  if (oneLine ? ONE_LINE_BAD.test(t) || t.includes("\n") : HAS_CONTROL.test(t)) bad(`${what} has a ${name} with characters that are not allowed`);
+  return t;
+}
+
+// The drafts the architect wrote from the idea: 1 to 5, in build order. Nothing is cut.
+function checkUnderstand(obj) {
+  if (noExtra(obj, ["drafts"])) bad("the architect's answer has more than the drafts that were asked for");
+  if (!Array.isArray(obj.drafts) || !obj.drafts.length) bad("the answer has no drafts");
+  if (obj.drafts.length > UNDERSTAND_DRAFTS_MAX) bad(`the answer has more than ${UNDERSTAND_DRAFTS_MAX} drafts`);
+  const drafts = obj.drafts.map((d, i) => {
+    const D = `draft ${i + 1}`;
+    if (!isObject(d)) bad(`${D} is not an object`);
+    if (noExtra(d, ["title", "who", "what", "why", "criteria", "outOfScope", "dependsOn", "summary"])) bad(`${D} has an unknown field`);
+    const title = draftText(d.title, D, "title", DRAFT_TITLE_MAX, { oneLine: true });
+    const who = draftText(d.who, D, "who", DRAFT_PART_MAX);
+    const what = draftText(d.what, D, "what", DRAFT_PART_MAX);
+    const why = draftText(d.why, D, "why", DRAFT_PART_MAX);
+    if (!Array.isArray(d.criteria) || !d.criteria.length) bad(`${D} has no criteria`);
+    if (d.criteria.length > UNDERSTAND_CRITERIA_MAX) bad(`${D} has more than ${UNDERSTAND_CRITERIA_MAX} criteria`);
+    const criteria = d.criteria.map((c) => draftText(c, D, "criterion", DRAFT_CRITERION_MAX));
+    const outOfScope = d.outOfScope === undefined ? "" : draftText(d.outOfScope, D, "out of scope text", DRAFT_LONG_MAX, { empty: true });
+    const dependsOn = d.dependsOn === undefined ? [] : Array.isArray(d.dependsOn) ? d.dependsOn : bad(`${D} has a depends-on list that is not a list`);
+    if (dependsOn.some((n) => !Number.isInteger(n) || n < 1 || n > i) || new Set(dependsOn).size !== dependsOn.length) bad(`${D} depends on a later or unknown draft`);
+    const summary = draftText(d.summary, D, "summary", UNDERSTOOD_SUMMARY_MAX, { oneLine: true });
+    if (!summary.startsWith(UNDERSTOOD_PREFIX)) bad(`${D} has a summary that does not start with "${UNDERSTOOD_PREFIX}"`);
+    if (sentences(summary) !== 1) bad(`${D} has a summary of more than one sentence`);
+    return { title, who, what, why, criteria, outOfScope, dependsOn: [...dependsOn], summary };
+  });
+  return { drafts };
+}
+
 function check(raw, ask, field, items, task) {
   const kind = ask || "round";
-  if (!["round", "question", "suggest", "review", "impact", "ready", "split"].includes(kind)) bad("set the variable ask to round, question, suggest, review, impact, ready or split");
+  if (!["round", "question", "suggest", "review", "impact", "ready", "split", "understand"].includes(kind)) bad("set the variable ask to round, question, suggest, review, impact, ready, split or understand");
   if (kind === "suggest" && !FIELDS.includes(field)) bad("set the variable field to title, who, what, why, criteria, outOfScope, dependsOn or notes");
   const a = raw.indexOf("{"), b = raw.lastIndexOf("}");
   let obj;
@@ -386,6 +434,7 @@ function check(raw, ask, field, items, task) {
   if (kind === "review") return checkReview(obj);
   if (kind === "impact") return checkImpact(obj);
   if (kind === "split") return checkSplit(obj, task ?? "");
+  if (kind === "understand") return checkUnderstand(obj);
   if (kind === "ready") return checkReady(obj, (items ?? "").split(",").map((x) => x.trim()).filter(Boolean));
   if (kind === "question") {
     if (listOf(obj.questions, "questions").length || listOf(obj.proposals, "proposals").length) bad("the architect's answer has questions or proposals, but only an answer was asked for");

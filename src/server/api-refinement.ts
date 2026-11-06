@@ -58,6 +58,7 @@ import { getConversation } from "../help/store.js";
 import { HttpError, readJson, readOptionalJson, send } from "./http.js";
 import { asParam } from "./view-as.js";
 import { importIssue, removeBuildLabel } from "./api-refinement-import.js";
+import { callerWorkspaces, findScopedProject, inWorkspaces, sessionInScope } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the refinement sessions are not working; see the server log";
@@ -120,9 +121,10 @@ const deps = (ctx: ApiContext): ArchitectDeps => ({ scheduler: ctx.scheduler, re
 export { deps as architectDeps };
 
 /** The GitHub repositories of an account, as the names a new session takes. */
-export function githubNames(userId: string): string[] {
+export function githubNames(userId: string, ws?: ReadonlySet<string>): string[] {
   const out: string[] = [];
   for (const r of listRepos(userId)) {
+    if (!inWorkspaces(ws, r.workspace)) continue;
     const name = githubNameOf(r.url);
     if (name !== undefined) out.push(name);
   }
@@ -130,9 +132,10 @@ export function githubNames(userId: string): string[] {
 }
 
 /** The names a new idea session takes: the GitHub repositories and the local projects of an account, in the order they were added. */
-export function sessionRepoNames(userId: string): string[] {
+export function sessionRepoNames(userId: string, ws?: ReadonlySet<string>): string[] {
   const out: string[] = [];
   for (const r of listRepos(userId)) {
+    if (!inWorkspaces(ws, r.workspace)) continue;
     const name = r.method === "local" ? localRepoName(r) : githubNameOf(r.url);
     if (name !== undefined) out.push(name);
   }
@@ -284,7 +287,7 @@ export function refinementSweeper(log: (msg: string) => void): () => void {
 /** The session when the account may see it: its owner, or an admin. Undefined for another account's session and for one that does not exist. */
 export function sessionFor(user: Pick<User, "id" | "role">, id: string): Session | undefined {
   const s = getSession(id);
-  return s && (s.owner === user.id || user.role === "admin") ? s : undefined;
+  return s && (s.owner === user.id || user.role === "admin") && sessionInScope(user, s) ? s : undefined;
 }
 
 export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) => {
@@ -304,7 +307,7 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
         if (!names.has(id)) names.set(id, getUser(id)?.name ?? "a removed account");
         return names.get(id)!;
       };
-      return { sessions: listSessions(admin ? undefined : user.id).map((s) => summary(s, user, ownerName)), repos: sessionRepoNames(user.id) };
+      return { sessions: listSessions(admin ? undefined : user.id).filter((s) => sessionInScope(user, s)).map((s) => summary(s, user, ownerName)), repos: sessionRepoNames(user.id, callerWorkspaces(user)) };
     });
     return send(res, 200, body), true;
   }
@@ -321,6 +324,18 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
       return send(res, 201, guarded(ctx, () => view(ctx, made, user))), true;
     }
     const fromHelp = helpOrigin(user.id, body.fromHelp);
+    // A repository of the account that is outside its workspaces is refused like one that is not theirs (#817).
+    if (!admin && typeof body.repo === "string") {
+      guarded(ctx, () => {
+        let outside = false;
+        try {
+          outside = !!findOwnedProject(user.id, body.repo as string) && !findScopedProject(user, body.repo as string);
+        } catch {
+          return; // a bad name or an unreadable store: createSession answers it
+        }
+        if (outside) throw new RefinementError("not-yours", "that is not one of your GitHub repositories");
+      });
+    }
     const s = guarded(ctx, () => view(ctx, createSession(user.id, { repo: body.repo, idea: body.idea, title: body.title, ...(fromHelp ? { fromHelp } : {}) }), user));
     return send(res, 201, s), true;
   }
@@ -365,7 +380,11 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
     return send(res, 202, body), true;
   };
   if (seg.length === 3 && seg[2] === "architect" && method === "POST") return startRun({ kind: "brief" });
-  if (seg.length === 3 && seg[2] === "round" && method === "POST") return startRun({ kind: "round" });
+  if (seg.length === 3 && (seg[2] === "round" || seg[2] === "understand") && method === "POST") {
+    // The body is optional: `{ "words": "simple" }` asks for plain words. A body that is there must be JSON.
+    const body = await readOptionalJson(req);
+    return startRun({ kind: seg[2], words: body.words });
+  }
   if (seg.length === 3 && seg[2] === "ask" && method === "POST") {
     const body = await readJson(req);
     return startRun({ kind: "question", question: body.question });
