@@ -35,7 +35,7 @@ export type RuleScope = "admin" | "run" | "repo" | "repo-name" | "session" | "li
 
 /** The scope of every `yes` rule that is not a `repo`, `session` or `none` rule by its path (see scopeOfYes). */
 const LIST_PATHS = new Set(["queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
-const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "credentials", "credentials/:id", "repos/methods"]);
+const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "credentials", "credentials/:id", "repos/methods", "onboarding/progress"]);
 
 function scopeOfYes(path: string): RuleScope | undefined {
   if (path === "repos/methods") return "none";
