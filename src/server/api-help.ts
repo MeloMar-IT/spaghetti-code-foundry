@@ -44,6 +44,7 @@ import { CheckNotStored, liveEvidence, offerConversation, runOffer } from "./hel
 import { ActionRefused, cancelAction, confirmAction, prepareAction, type ActionDeps } from "./help-actions.js";
 import { FLOW_GUIDE_PATH } from "./generate.js";
 import { HttpError, readJson, send } from "./http.js";
+import { scopedRepos } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
 import { asParam } from "./view-as.js";
 
@@ -114,7 +115,9 @@ const shortName = (url: string): string => url.split(/[/\\:]/).filter(Boolean).p
 /** The projects of an account, for the links of a Simple turn: none when the account is gone. */
 export function helpProjects(owner: string): SimpleProject[] {
   if (!currentAccount({ id: owner, role: "user" })) return [];
-  return listRepos(owner).map((r) => ({ id: r.id, name: shortName(r.url) }));
+  const account = getUser(owner);
+  const repos = listRepos(owner);
+  return (account?.role === "admin" ? repos : scopedRepos({ id: owner, role: "user" }, repos)).map((r) => ({ id: r.id, name: shortName(r.url) }));
 }
 
 const services = new WeakMap<ApiContext, HelpTurns>();

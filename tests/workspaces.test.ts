@@ -214,6 +214,25 @@ describe("the queue", () => {
     expect(f(fromFlow).workspace).toBe("team-a");
     expect(again.queue().pending).toHaveLength(4);
   });
+  it("workspaceOf gives a queued job's workspace, a run.json's, and default for an unknown id or an older run", () => {
+    const { make, job } = setup();
+    const s = make();
+    const queued = s.submit(job({ github_repo: "acme/none" }), { owner: ANN, workspace: "team-a" });
+    const plain = s.submit(job({ github_repo: "acme/none" }), { owner: ANN });
+    expect(s.workspaceOf(queued)).toBe("team-a");
+    expect(s.workspaceOf(plain)).toBe("default");
+    expect(s.workspaceOf("unknown-run")).toBe("default");
+    const withFile = (id: string, extra: Record<string, unknown>) => {
+      mkdirSync(join(home, "runs", id), { recursive: true });
+      writeFileSync(join(home, "runs", id, "run.json"), JSON.stringify({ runId: id, flow: "slow", status: "succeeded", startedAt: "2026-01-01T00:00:00.000Z", runDir: join(home, "runs", id), ...extra }));
+    };
+    withFile("stored-run", { workspace: "team-b" });
+    withFile("older-run", {});
+    withFile("bad-run", { workspace: "Bad Id" });
+    expect(s.workspaceOf("stored-run")).toBe("team-b");
+    expect(s.workspaceOf("older-run")).toBe("default");
+    expect(s.workspaceOf("bad-run")).toBe("default");
+  });
 });
 
 describe("the queue reads a run's variables once", () => {

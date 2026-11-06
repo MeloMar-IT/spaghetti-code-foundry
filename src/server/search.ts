@@ -14,6 +14,7 @@ import { boardFor } from "./board.js";
 import { HttpError, NAME_RE, send } from "./http.js";
 import { nextFor, ownRecord, queuedJobNext } from "./next.js";
 import { hidePaths, userRecord } from "./user-view.js";
+import { briefInScope, callerWorkspaces, runInScope, scopedRepos, sessionInScope } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
 
 export type SearchType = "run" | "issue" | "refinement" | "repo" | "flow";
@@ -165,9 +166,10 @@ function runGroup(env: Env, sel: Sel): Out {
   const { ctx, user, admin, clean } = env;
   const owner = admin ? undefined : user.id;
   const all = ctx.scheduler.briefs();
-  const briefs = all.filter((b) => admin || b.owner === user.id);
+  const ws = callerWorkspaces(user);
+  const briefs = all.filter((b) => briefInScope(user, ws, b));
   const shown = (s: Pick<RunSummary, "workdir" | "runDir" | "repo">, text: string) => cut(admin ? clean(text) : hidePaths(clean(text), s));
-  const mine = (rid: string) => ctx.scheduler.ownerOf(rid) === user.id;
+  const mine = (rid: string) => runInScope(ctx, user, rid);
 
   // Records, built once for a request: one per archive state, with the list of that state only when a hit has succeeded.
   const nexts = new Map<boolean, (r: RunSummary) => NextStep>();
@@ -228,7 +230,7 @@ function runGroup(env: Env, sel: Sel): Out {
   for (const p of ctx.scheduler.queue().pending) {
     if (p.kind !== "run" || dirs.has(p.runId) || ("ids" in sel && !sel.ids.includes(p.runId))) continue;
     const who = queuedOwner(ctx, p.runId);
-    if (!admin && who !== user.id) continue;
+    if (!admin && !runInScope(ctx, user, p.runId)) continue;
     const task = firstLine(p.task);
     const hide = { repo: p.repo, workdir: ctx.opts.repo };
     const shownJob = (text: string) => cut(admin ? clean(text) : hidePaths(clean(text), hide));
@@ -282,7 +284,7 @@ function issueGroup(env: Env, sel: Sel): Out {
 }
 
 function sessionGroup(env: Env, sel: Sel): Out {
-  const cands = listSessions(env.admin ? undefined : env.user.id).map((s) => {
+  const cands = listSessions(env.admin ? undefined : env.user.id).filter((s) => sessionInScope(env.user, s)).map((s) => {
     const title = env.clean(s.title);
     const hit = hitOf("refinement", { id: s.id, title, href: `#/refinement/${s.id}`, status: s.state, repo: s.repo, owner: env.admin ? env.ownerName(s.owner) : undefined, at: s.updated });
     return cand(sel, hit, { text: [title, s.repo, s.id] });
@@ -296,7 +298,7 @@ function repoTitle(url: string): string {
 }
 
 function repoGroup(env: Env, sel: Sel): Out {
-  const cands = (env.admin ? listAllRepos() : listRepos(env.user.id)).map((r) => {
+  const cands = (env.admin ? listAllRepos() : scopedRepos(env.user, listRepos(env.user.id))).map((r) => {
     const title = env.clean(repoTitle(r.url));
     const hit = hitOf("repo", { id: r.id, title, href: r.owner === env.user.id ? "#/repos" : "#/all-repos", owner: env.admin ? env.ownerName(r.owner) : undefined, at: r.added });
     return cand(sel, hit, { text: [title] });

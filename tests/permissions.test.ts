@@ -8,6 +8,7 @@ import { parse, stringify } from "yaml";
 import { userCommand } from "../src/auth/cli.js";
 import { parseFlow } from "../src/flow/load.js";
 import { HttpError } from "../src/server/http.js";
+import { disposeWorkspaces, supplyWorkspaces } from "../src/workspaces/list.js";
 import { RULES, authorizePlugin, checkReleaseRef, findPluginRule, findRule, isReleaseBuildFlow, permissionTable, ruleKey } from "../src/server/permissions.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
@@ -392,6 +393,26 @@ describe("the table", () => {
 
   it("has an example for every rule and a rule for every example", () => {
     expect(Object.keys(EXAMPLES).sort()).toEqual(RULES.map(ruleKey).sort());
+  });
+
+  it("gives every rule a scope that fits it (#817)", () => {
+    const scopes = ["admin", "run", "repo", "repo-name", "session", "list", "none"];
+    for (const r of RULES) {
+      expect(scopes, ruleKey(r)).toContain(r.scope);
+      expect(r.user === "no", ruleKey(r)).toBe(r.scope === "admin");
+      if (r.user === "own") expect(r.scope, ruleKey(r)).toBe("run");
+      if (r.path.startsWith("refinement/:id")) expect(r.scope, ruleKey(r)).toBe("session");
+      if (r.user === "yes" && r.path.startsWith("repos/:id")) expect(r.scope, ruleKey(r)).toBe("repo");
+    }
+  });
+
+  it("never leaves a run, repository or watcher route without scoping", () => {
+    const groups = new Set(["runs", "run-owners", "run-filters", "queue", "outcomes", "search", "repos", "refinement", "watchers", "next", "board", "your-turn", "stats"]);
+    const exempt = new Set(["GET repos/methods"]);
+    for (const r of RULES) {
+      if (exempt.has(ruleKey(r))) continue;
+      if (groups.has(r.path.split("/")[0]!) || r.path.startsWith("admin/repos")) expect(r.scope, ruleKey(r)).not.toBe("none");
+    }
   });
 
   it("names every route group of the source in a rule (or session, setup and set-password)", () => {
@@ -1127,5 +1148,152 @@ describe("starting release-build through the server", () => {
     expect(like.status).toBe(403);
     expect(like.error()).toContain('not "feature"');
     await ctx.scheduler.idle();
+  });
+});
+
+describe("workspaces", () => {
+  const ids = { annA: "ann-a-run", annB: "ann-b-run", bobB: "bob-b-run" };
+  let annDefault: string;
+  let cyRun: string;
+  let annSession: string;
+  let appId: string;
+  let movedId: string;
+  let thingId: string;
+
+  const repoId = async (who: TestSession, name: string) => {
+    const list = (await call(who, "GET", "/api/repos")).json() as { id: string; github?: string }[];
+    return list.find((r) => r.github === name)!.id;
+  };
+  /** A copy of a real run.json with another id, owner, workspace and repository. */
+  const fabricate = (from: string, id: string, owner: string, workspace: string, githubRepo: string) => {
+    mkdirSync(join(runsDir, id), { recursive: true });
+    const real = runJson(from);
+    writeFileSync(join(runsDir, id, "run.json"), JSON.stringify({ ...real, runId: id, runDir: join(runsDir, id), owner, workspace, vars: { ...(real.vars ?? {}), github_repo: githubRepo } }));
+  };
+  const runIds = async (who: TestSession, path = "/api/runs") => ((await call(who, "GET", path)).json() as { runId: string }[]).map((r) => r.runId);
+  const hitIds = async (who: TestSession, q: string) => ((await call(who, "GET", `/api/search?q=${q}`)).json() as { groups: { hits: { id: string }[] }[] }).groups.flatMap((g) => g.hits.map((h) => h.id));
+
+  beforeAll(async () => {
+    // before the teams exist: Ann's second repository and a refinement session on it, a run each for Ann and Cy
+    expect((await call(ann, "POST", "/api/repos", { name: "acme/moved" })).status).toBe(201);
+    const made = await call(ann, "POST", "/api/refinement", { repo: "acme/moved", idea: "an idea" });
+    expect(made.status).toBe(201);
+    annSession = (made.json() as { id: string }).id;
+    annDefault = await waitingRun(ann);
+    cyRun = await waitingRun(cy);
+    fabricate(annDefault, ids.annA, ann.user.id, "team-a", "acme/app");
+    fabricate(annDefault, ids.annB, ann.user.id, "team-b", "acme/moved");
+    fabricate(annDefault, ids.bobB, bob.user.id, "team-b", "other/thing");
+    const list = [
+      { id: "team-a", name: "A", members: [ann.user.id] },
+      { id: "team-b", name: "B", members: [bob.user.id] },
+    ];
+    // the ids are read before the teams exist: afterwards the default-workspace repositories are hidden from team members
+    appId = await repoId(ann, "acme/app");
+    movedId = await repoId(ann, "acme/moved");
+    thingId = await repoId(bob, "other/thing");
+    expect(supplyWorkspaces({ owner: "test", plugin: "test", store: { list: () => list }, report: () => {} })).toBe("ok");
+    for (const [id, workspace] of [[appId, "team-a"], [movedId, "team-b"], [thingId, "team-b"]] as const) {
+      expect((await call(admin, "PUT", `/api/admin/repos/${id}/workspace`, { workspace })).status).toBe(200);
+    }
+  });
+  afterAll(() => disposeWorkspaces("test"));
+
+  it("answers 404 for every run rule on a run outside the caller's workspaces, and not for one inside", async () => {
+    const rules = RULES.filter((r) => r.scope === "run");
+    expect(rules.length).toBeGreaterThan(0);
+    for (const rule of rules) {
+      const path = (id: string) => `/api/${rule.path.replace(":id", id).replace(":n", "0")}`;
+      const send = (id: string) => (rule.path.endsWith("/events") ? streamStatus(ann, path(id)).then((r) => ({ status: r.status, text: r.text })) : call(ann, rule.method, path(id), rule.method === "POST" ? {} : undefined));
+      for (const id of [ids.annB, ids.bobB, annDefault]) {
+        const x = await send(id);
+        expect(x.status, `${ruleKey(rule)} ${id}`).toBe(404);
+        expect(JSON.parse(x.text), `${ruleKey(rule)} ${id}`).toEqual({ error: "run not found" });
+      }
+    }
+    expect((await call(ann, "GET", `/api/runs/${ids.annA}`)).status).toBe(200);
+  });
+
+  it("answers 404 for every repository rule on a repository outside the caller's workspaces, and nothing is removed", async () => {
+    const rules = RULES.filter((r) => r.scope === "repo");
+    expect(rules.length).toBeGreaterThan(0);
+    for (const rule of rules) {
+      const path = (id: string) => `/api/${rule.path.replace(":id", id).replace(":issue", "1")}`;
+      const send = (id: string) => call(ann, rule.method, path(id), rule.method === "GET" || rule.method === "DELETE" ? undefined : {});
+      const moved = await send(movedId);
+      expect([moved.status, moved.error()], `${ruleKey(rule)} moved`).toEqual([404, "no such repository"]);
+      // Bob's repository is answered by the handler as before (#817 changes nothing there); `PUT repos/:id/auth` checks the body first, so the empty body gives 400.
+      expect([400, 404], `${ruleKey(rule)} bob's`).toContain((await send(thingId)).status);
+    }
+    const byName = await call(ann, "DELETE", "/api/repos/acme/moved");
+    expect([byName.status, byName.error()]).toEqual([404, "no such repository"]);
+    expect((await call(admin, "GET", "/api/admin/repos")).text).toContain("acme/moved");
+    expect((await call(ann, "GET", `/api/repos/${appId}/ready`)).status).toBe(200);
+  });
+
+  it("answers 404 for every refinement rule on a session whose repository is outside the caller's workspaces", async () => {
+    const rules = RULES.filter((r) => r.scope === "session");
+    expect(rules.length).toBeGreaterThan(0);
+    for (const rule of rules) {
+      const path = `/api/${rule.path.replace(":id", annSession).replace(/:[a-z]+/g, "x")}`;
+      const x = await call(ann, rule.method, path, rule.method === "GET" || rule.method === "DELETE" ? undefined : {});
+      expect([x.status, x.error()], ruleKey(rule)).toEqual([404, "no such refinement session"]);
+    }
+  });
+
+  it("leaves other workspaces out of the lists", async () => {
+    for (const path of ["/api/runs", "/api/runs?archived=1"]) {
+      const got = await runIds(ann, path);
+      expect(got, path).not.toContain(ids.annB);
+      expect(got, path).not.toContain(ids.bobB);
+    }
+    expect(await runIds(ann)).toContain(ids.annA);
+    expect(await runIds(ann)).not.toContain(annDefault);
+    expect((await call(ann, "GET", "/api/run-filters")).text).not.toContain("acme/moved");
+    expect(await hitIds(ann, "ann-b-run")).toEqual([]);
+    expect(await hitIds(ann, "moved")).toEqual([]);
+    expect((await call(ann, "GET", "/api/repos")).text).not.toContain("acme/moved");
+    const sessions = (await call(ann, "GET", "/api/refinement")).json() as { sessions: { id: string }[]; repos: string[] };
+    expect(sessions.sessions.map((s) => s.id)).not.toContain(annSession);
+    expect(sessions.repos).not.toContain("acme/moved");
+    const outcomes = await call(ann, "GET", "/api/outcomes?days=90&repo=acme/moved");
+    expect(outcomes.text).not.toContain(ids.annB);
+    expect(await runIds(bob)).toEqual([ids.bobB]);
+  });
+
+  it("refuses to start work on a repository outside the caller's workspaces", async () => {
+    expect((await call(admin, "PUT", "/api/flows/wsflow", { yaml: QUICK("wsflow", "vars:\n  github_repo: owner/repo\n", "empty", ["github_repo"]), scope: "repo" })).status).toBe(200);
+    const run = await call(ann, "POST", "/api/runs", { flow: "wsflow", vars: { github_repo: "acme/moved" } });
+    expect([run.status, run.error()]).toEqual([403, '"acme/moved" is not one of your repositories']);
+    expect((await call(ann, "POST", "/api/refinement", { repo: "acme/moved", idea: "again" })).status).toBe(403);
+    expect((await call(ann, "GET", "/api/refinement/backlog?repo=acme/moved")).status).toBe(403);
+  });
+
+  it("keeps strict membership: a team member does not see default, an account in no team does", async () => {
+    expect((await call(ann, "GET", `/api/runs/${annDefault}`)).status).toBe(404);
+    expect((await call(cy, "GET", `/api/runs/${cyRun}`)).status).toBe(200);
+    expect(await runIds(cy)).toContain(cyRun);
+  });
+
+  it("uses the viewed user's workspaces in a view of a user's display", async () => {
+    expect((await call(admin, "POST", "/api/admin/view-as", { userId: ann.user.id })).status).toBe(200);
+    try {
+      const as = `?as=${ann.user.id}`;
+      const got = await runIds(admin, `/api/runs${as}`);
+      expect(got).toContain(ids.annA);
+      expect(got).not.toContain(ids.annB);
+      expect((await call(admin, "GET", `/api/runs/${ids.annB}${as}`)).status).toBe(404);
+      expect((await call(admin, "GET", `/api/refinement/backlog?repo=acme/moved&as=${ann.user.id}`)).status).toBe(403);
+    } finally {
+      expect((await call(admin, "DELETE", "/api/admin/view-as")).status).toBe(200);
+    }
+  });
+
+  it("leaves an admin install-wide, and the admin-only routes unchanged", async () => {
+    expect((await call(admin, "GET", `/api/runs/${ids.annB}`)).status).toBe(200);
+    expect((await call(admin, "GET", `/api/runs/${ids.bobB}`)).status).toBe(200);
+    const all = (await call(admin, "GET", "/api/admin/repos")).text;
+    for (const name of ["acme/app", "acme/moved", "other/thing"]) expect(all).toContain(name);
+    for (const path of ["board", "next", "your-turn", "run-owners", "stats"]) expect((await call(ann, "GET", `/api/${path}`)).status, path).toBe(403);
   });
 });

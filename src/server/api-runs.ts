@@ -9,7 +9,7 @@ import { runContextView } from "./context-view.js";
 import { runEvidenceView } from "./evidence-view.js";
 import { auditAction } from "../auth/audit.js";
 import type { User } from "../auth/users.js";
-import { findOwnedRepo, ownsRepo } from "../auth/repos.js";
+import { briefInScope, callerWorkspaces, findScopedRepo, inWorkspaces, runInScope, userWorkspaces } from "./workspace-scope.js";
 import { DELETED_OWNER, isRefinementRun, ownerNames } from "../auth/run-owner.js";
 import { isRefinementFlow } from "../flow/usage.js";
 import { AnswerRefused, effectiveVars } from "../engine/runner.js";
@@ -59,10 +59,14 @@ export async function checkedRunAsync(scheduler: ApiContext["scheduler"], dirNam
   }
 }
 
-/** The newest 200 runs of one archive state (of one account when `owner` is given), the list the records are built from. */
+/**
+ * The newest 200 runs of one archive state (of one account when `owner` is given), the list the records are built from.
+ * An `owner` is always a user account: only its runs in its own workspaces are listed (#817).
+ */
 export function runsListFor(ctx: ApiContext, owner?: string, archived = false): RunSummary[] {
+  const ws = owner === undefined ? undefined : userWorkspaces(owner);
   return ctx.scheduler.briefs()
-    .filter((b) => (owner === undefined || b.owner === owner) && !!b.archived === archived)
+    .filter((b) => (owner === undefined || (b.owner === owner && inWorkspaces(ws, b.workspace))) && !!b.archived === archived)
     .slice(0, 200)
     .flatMap((b) => checkedRun(ctx.scheduler, b.dirName, owner) ?? []);
 }
@@ -118,7 +122,8 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const { opts, scheduler } = ctx;
   const admin = user.role === "admin";
   // What a user sees of a record: another account's run is not named in it.
-  const mine = (rid: string) => scheduler.ownerOf(rid) === user.id;
+  const mine = (rid: string) => runInScope(ctx, user, rid);
+  const ws = callerWorkspaces(user);
   const view = admin ? (n: NextStep) => n : (n: NextStep) => userRecord(ownRecord(n, mine));
   // What a user sees of a run: no costs and no setup (see user-view.ts).
   const shape: (r: RunSummary & { next?: NextStep; superseded?: boolean; ownerName?: string; canAnswer?: boolean; skillView?: RunSkillView; paused?: { since: string } }) => unknown = admin ? adminRun : userRun;
@@ -150,7 +155,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   }
   if (seg[0] === "run-filters" && !seg[1] && method === "GET") {
     // A user gets the values of their own runs only.
-    return send(res, 200, runFilterValues(scheduler.briefs().filter((b) => admin || b.owner === user.id))), true;
+    return send(res, 200, runFilterValues(scheduler.briefs().filter((b) => briefInScope(user, ws, b)))), true;
   }
   if (seg[0] !== "runs") return false;
   const id = seg[1];
@@ -162,7 +167,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     // The archive choice, the owner and q, repo, flow, status and since are applied before the cap. Loaded by folder name;
     // with an owner, the runId and owner inside the file must agree with it, else the run is left out.
     const runs = scheduler.briefs()
-      .filter((b) => matchesRun(b, filter))
+      .filter((b) => matchesRun(b, filter) && briefInScope(user, ws, b))
       .slice(0, 200)
       .flatMap((b) => readRun(scheduler, b.dirName, want) ?? []);
     const replaced = supersededRuns(runs);
@@ -227,19 +232,19 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
       if (given === undefined) {
         // A repository from the flow or the folder is fine only when it is one of the user's own.
         const dflt = runVars.github_repo;
-        if (dflt !== undefined && !guardedRepos(ctx, () => ownsRepo(user.id, dflt))) {
+        if (dflt !== undefined && !guardedRepos(ctx, () => findScopedRepo(user, dflt) !== undefined)) {
           const input = flow.publish?.vars.github_repo?.mode === "input";
           throw new HttpError(403, input ? 'set the var "github_repo" to one of your repositories' : "this flow works on a repository that is not one of yours");
         }
       } else if (given === "" || given.toLowerCase() === "owner/repo") {
         throw new HttpError(403, 'set the var "github_repo" to one of your repositories');
-      } else if (!guardedRepos(ctx, () => ownsRepo(user.id, given))) {
+      } else if (!guardedRepos(ctx, () => findScopedRepo(user, given) !== undefined)) {
         throw new HttpError(403, `"${given}" is not one of your repositories`);
       }
       // release-build: a user builds the default branch only (the repository's mainBranch setting, else main).
       if (isReleaseBuildFlow(flow)) {
         const repoName = runVars.github_repo ?? "";
-        const dflt = guardedRepos(ctx, () => findOwnedRepo(user.id, repoName)?.settings?.mainBranch) ?? "main";
+        const dflt = guardedRepos(ctx, () => findScopedRepo(user, repoName)?.settings?.mainBranch) ?? "main";
         runVars = checkReleaseRef(flow, vars, runVars, dflt);
       }
     }

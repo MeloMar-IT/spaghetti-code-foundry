@@ -4,7 +4,7 @@ import type { User } from "../auth/users.js";
 import { readForecasts, saveMissingForecasts } from "../epics/forecast-store.js";
 import type { Forecast } from "../epics/forecast.js";
 import { epicKeyOf, epicView, epicsView, type EpicsViewInput } from "../epics/view.js";
-import { medianRunMs } from "../estimate.js";
+import { buildHistory, medianRunMs } from "../estimate.js";
 import type { NextStep } from "../next-step.js";
 import { readIssueList } from "../queue/issue-list.js";
 import { labelNames } from "../queue/watcher.js";
@@ -14,8 +14,10 @@ import { HttpError, send } from "./http.js";
 import { historyFor, ownRecord } from "./next.js";
 import type { ApiContext, Route } from "./server.js";
 import { userRecord } from "./user-view.js";
+import { callerWorkspaces, inWorkspaces, runInScope } from "./workspace-scope.js";
 
 const SAVE_WAIT_MS = 500;
+const HISTORY_RUNS = 500;
 
 /** What the pure view needs, from the saved files and the watchers' records. No call to GitHub. */
 function epicsInput(ctx: ApiContext, user: User, repoId: string, now: Date): EpicsViewInput {
@@ -38,16 +40,20 @@ function epicsInput(ctx: ApiContext, user: User, repoId: string, now: Date): Epi
 
   // The same reconciliation as the board: a newer live run beats a stale watcher snapshot, queued jobs count.
   const admin = user.role === "admin";
-  const mine = (id: string) => ctx.scheduler.ownerOf(id) === user.id;
+  const mine = (id: string) => runInScope(ctx, user, id);
+  // A run that stayed in another workspace gives no state and no timing (#817).
+  const ws = callerWorkspaces(user);
+  const runVisible = (id: string | undefined) => id === undefined || inWorkspaces(ws, ctx.scheduler.workspaceOf(id));
   const picked = new Map<number, { rank: number; next: NextStep }>();
   for (const s of boardSources(ctx, now, !admin).sources) {
-    if (s.next.repo.toLowerCase() !== name || s.next.issue === undefined) continue;
+    if (s.next.repo.toLowerCase() !== name || s.next.issue === undefined || !runVisible(s.next.runId)) continue;
     const have = picked.get(s.next.issue);
     const rank = s.rank ?? 1;
     if (!have || rank < have.rank) picked.set(s.next.issue, { rank, next: admin ? s.next : userRecord(ownRecord(s.next, mine)) });
   }
   base.states = new Map([...picked].map(([n, p]) => [n, p.next]));
-  const median = medianRunMs(historyFor(ctx), first.github_repo);
+  const history = ws === undefined ? historyFor(ctx) : buildHistory(ctx.scheduler.list(HISTORY_RUNS).filter((r) => inWorkspaces(ws, r.workspace)));
+  const median = medianRunMs(history, first.github_repo);
   if (median !== undefined) base.medianStoryMs = median;
   return base;
 }

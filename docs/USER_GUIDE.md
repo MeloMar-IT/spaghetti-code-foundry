@@ -4939,7 +4939,9 @@ run and a run without an owner all answer `404 {"error":"run not found"}`, so a 
 nothing. A run started by a watcher belongs to the watcher's `owner` (an account's e-mail, set by
 an admin; empty: the first admin). Runs from the command line and from evals belong to the first
 admin. A queued run that has not started yet already counts as its owner's. An admin may use
-every run.
+every run. A user also sees and acts only on the runs, repositories and watchers in their own
+workspaces (see "Workspaces" below): one outside them answers the same `404`, and the lists leave
+them out.
 
 **After an upgrade.** Runs from older versions have no owner. The first admin gets them at the
 next server start, when the first admin is created on the setup page, and within a minute of
@@ -7426,6 +7428,10 @@ workspaces:
   or `null` for `default`). A transfer to another account keeps it. A repository without one is in `default`.
 - A run takes the workspace of its repository; a run without a repository (a local run) is in `default`.
   Usage events carry the workspace.
+- A user sees only the repositories, watchers' runs, runs and refinement sessions of their own workspaces. A
+  team member does not see `default`, and an account in no team sees `default` only. An object of another
+  workspace answers `404`, as an unknown id does; lists, search, the board and the usage view leave it out.
+  An admin sees all workspaces. A user cannot start work on a repository outside their workspaces.
 - An invalid entry, or a second entry with the same id, stops the config from being read. A plugin can supply
   the list instead (`api.workspaces`, see [PLUGIN_API.md](PLUGIN_API.md#workspaces)).
 - The Settings page does not show the list yet; edit it in `config.yaml`. The limits take effect in a later part.

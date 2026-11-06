@@ -15,6 +15,7 @@ import { needsUser } from "../your-turn.js";
 import { guardedRepos } from "./api-repos.js";
 import { HttpError, readJson, send } from "./http.js";
 import { nextFor } from "./next.js";
+import { runInScope } from "./workspace-scope.js";
 import type { ApiContext } from "./server.js";
 
 const services = new WeakMap<ApiContext, PreviewService>();
@@ -107,7 +108,7 @@ export async function previewRoutes(ctx: ApiContext, req: IncomingMessage, res: 
     if (typeof runId !== "string" || !RUN_ID.test(runId)) throw new HttpError(400, "runId is needed for the version checking");
     const run = ctx.scheduler.get(runId);
     // another account's run is not named to a user, as in the run routes: only its owner or an admin may preview its work
-    const mine = user.role === "admin" || ctx.scheduler.ownerOf(runId) === user.id;
+    const mine = runInScope(ctx, user, runId);
     if (!run || !mine || !projectRun(rec, run)) throw new HttpError(404, "no such run of this project");
     if (!needsUser(nextFor(ctx, undefined, true)(run))) throw new HttpError(409, "this work is not waiting for your check");
     const branch = runBranch(run);

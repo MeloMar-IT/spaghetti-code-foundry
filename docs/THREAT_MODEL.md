@@ -33,6 +33,10 @@ covered by pattern search only, not read line by line.
 - A user's run of a `worktree` flow never runs a step and never calls `git worktree add`; it fails with "This flow works in a branch of the server's folder, so only an admin can run it." This holds on start, resume, approve, reject, answer and the queue, like `inplace` (`src/engine/runner.ts`, `src/engine/isolation.ts`). `POST /api/runs` answers 403 and the flow is not listed for users (`src/server/api-runs.ts`, `src/server/api-flows.ts`).
 - The server's git calls for a workspace (`prepareWorkspace`, `repoRoot` in `src/engine/workspace.ts`) run with a clean environment and `-c core.hooksPath=/dev/null -c core.fsmonitor=false`, so a hook or `fsmonitor` setting in the repository does not run.
 
+**Fixed in #817.**
+- A user's run, repository, watcher and refinement session outside their workspaces answers 404, the same as an unknown id, on every route that names one, and the lists, search, board, outcomes, usage and epics leave them out. The check is `authorize()` plus `src/server/workspace-scope.ts`, with a scope on every route rule in `src/server/permissions.ts`; a `yes` rule without a scope does not load. An admin is not limited, and the admin-only routes do not change. Plugin routes stay role-only. Tests: `tests/permissions.test.ts`, `tests/workspace-scope.test.ts`.
+- Limit: the check covers the API only. Files in the data folder are not split by workspace (SR-O7 still applies). A repository added by a team member lands in `default` until an admin moves it.
+
 **Still open.**
 - SR-O1 is fixed in #302; the limits that remain are under "OS sandbox for steps of a user's run".
 - Files in the data folder that every step can write (SR-O7).
