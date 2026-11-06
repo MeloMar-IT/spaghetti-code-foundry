@@ -13,6 +13,7 @@ import type { NextStep } from "../next-step.js";
 import { allNext, nextFor, ownQueue, ownRecord, queueWithNext } from "./next.js";
 import { authorize, findRule } from "./permissions.js";
 import type { ApiContext } from "./server.js";
+import { runInScope, scopedRepos } from "./workspace-scope.js";
 import { userRecord, userRun } from "./user-view.js";
 
 /**
@@ -130,7 +131,7 @@ export function runWithNext(ctx: ApiContext, user: User, id: string): { run: Run
   let next: NextStep | undefined;
   try {
     const rec = nextFor(ctx, undefined, user.role !== "admin")(s);
-    next = user.role === "admin" ? rec : userRecord(ownRecord(rec, (rid) => ctx.scheduler.ownerOf(rid) === user.id));
+    next = user.role === "admin" ? rec : userRecord(ownRecord(rec, (rid) => runInScope(ctx, user, rid)));
   } catch {
     next = undefined;
   }
@@ -180,7 +181,7 @@ const ADAPTERS: Record<SnapshotKind, Adapter> = {
   // settings of a repository are left out for both roles.
   repository: (ctx, user, id, guard) => {
     if (!UUID.test(id)) return undefined;
-    const rec = user.role === "admin" && allowed(ctx, user, ["admin", "repos"]) ? listAllRepos().find((r) => r.id === id) : allowed(ctx, user, ["repos"]) ? listRepos(user.id).find((r) => r.id === id) : undefined;
+    const rec = user.role === "admin" && allowed(ctx, user, ["admin", "repos"]) ? listAllRepos().find((r) => r.id === id) : allowed(ctx, user, ["repos"]) ? scopedRepos(user, listRepos(user.id)).find((r) => r.id === id) : undefined;
     if (!rec) return undefined;
     const name = rec.url.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "");
     return make("repository", id, `the repository ${name}`, { name, signIn: rec.method, added: rec.added, connectionOk: rec.connection?.ok, connectionCheckedAt: rec.connection?.at },

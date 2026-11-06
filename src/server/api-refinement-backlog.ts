@@ -10,6 +10,7 @@ import { isLocalRepoName } from "../auth/local-name.js";
 import { guardedAsync } from "./api-refinement.js";
 import { GH_TIMEOUT_MS, labelsOf, whatHappened, whyBuilding } from "./api-refinement-import.js";
 import { sessionUser } from "./api-auth.js";
+import { findScopedRepo } from "./workspace-scope.js";
 import { HttpError, send } from "./http.js";
 import { asOwnedRepo } from "./repo-sign-in.js";
 import type { Route } from "./server.js";
@@ -21,7 +22,7 @@ const MAX_NUMBER = 2_147_483_647;
  * The open issues of one of the caller's repositories that the Foundry is not building and has not built, newest first, each with the four
  * quick checks. Only GitHub is read (with the owner's sign-in); no architect run starts, nothing is queued, and nothing is written.
  */
-export const refinementBacklogRoutes: Route = async (ctx, req, res, seg, method) => {
+export const refinementBacklogRoutes: Route = async (ctx, req, res, seg, method, viewer) => {
   if (seg.length !== 2 || seg[0] !== "refinement" || seg[1] !== "backlog" || method !== "GET") return false;
   const body = await guardedAsync(ctx, async () => {
     // The signed-in account, not the one an admin views as: the list is read with the owner's GitHub sign-in.
@@ -29,7 +30,9 @@ export const refinementBacklogRoutes: Route = async (ctx, req, res, seg, method)
     const given = new URL(req.url ?? "/", "http://x").searchParams.get("repo");
     if (given !== null && isLocalRepoName(given)) throw new RefinementError("bad-repo", LOCAL_ISSUE_REFUSAL);
     if (given === null || !validGithubName(given)) throw new RefinementError("bad-repo", "give a GitHub repository as owner/name");
-    const rec = findOwnedRepo(user.id, given);
+    // The workspace check is made for the effective user (the viewed one under view-as), before any GitHub access (#817).
+    let rec = findScopedRepo(viewer, given);
+    if (rec && viewer.id !== user.id) rec = findOwnedRepo(user.id, given);
     const name = rec ? githubNameOf(rec.url) : undefined;
     if (name === undefined) throw new RefinementError("not-yours", "that is not one of your GitHub repositories");
     const timeout = ctx.opts.ghTimeoutMs ?? GH_TIMEOUT_MS;

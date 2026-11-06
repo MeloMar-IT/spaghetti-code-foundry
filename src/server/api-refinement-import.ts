@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import { findOwnedRepo } from "../auth/repos.js";
+import { findScopedRepo } from "./workspace-scope.js";
 import { githubKey, githubNameOf, validGithubName } from "../auth/repo-url.js";
 import type { WatcherConfig } from "../config.js";
 import type { RestIssue } from "../github.js";
@@ -77,7 +77,7 @@ export async function importIssue(ctx: ApiContext, req: IncomingMessage, body: R
   if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 2_147_483_647) throw bad("give the issue number as a whole number from 1");
   if (body.idea !== undefined || body.title !== undefined) throw bad("send an idea or an issue number, not both");
 
-  const rec = findOwnedRepo(user.id, body.repo);
+  const rec = findScopedRepo(user, body.repo);
   if (!rec) throw new RefinementError("not-yours", "that is not one of your GitHub repositories");
   const repo = githubNameOf(rec.url);
   if (repo === undefined) throw new RefinementError("not-yours", "that is not one of your GitHub repositories");

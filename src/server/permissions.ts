@@ -4,6 +4,7 @@ import { isRefinementFlow } from "../flow/usage.js";
 import type { Flow } from "../flow/schema.js";
 import { HttpError, NAME_RE } from "./http.js";
 import type { ApiContext } from "./server.js";
+import { checkScope } from "./workspace-scope.js";
 
 /**
  * Who may make which API call. An admin may make every call in the table; a user only the calls marked `yes`,
@@ -20,9 +21,38 @@ export interface Rule {
   user: UserAccess;
   /** One short line for the table in the guide. */
   note: string;
+  /** How the rule is kept to the caller's workspaces (#817). */
+  scope: RuleScope;
 }
 
-const r = (method: string, path: string, user: UserAccess, note: string): Rule => ({ method, path, user, note });
+/**
+ * How a rule is kept to workspaces (#817): `admin` (admin-only route, install-wide), `run` (names one run; `authorize()` checks the
+ * run's workspace), `repo` (names a repository by id), `repo-name` (by `owner/name`), `session` (names a refinement session),
+ * `list` (a list, search, count, or a repository or run named in the body or query; the handler filters), `none` (not about
+ * runs, repositories or sessions of a workspace).
+ */
+export type RuleScope = "admin" | "run" | "repo" | "repo-name" | "session" | "list" | "none";
+
+/** The scope of every `yes` rule that is not a `repo`, `session` or `none` rule by its path (see scopeOfYes). */
+const LIST_PATHS = new Set(["queue", "runs", "run-filters", "outcomes", "search", "repos", "refinement", "refinement/backlog", "help/context", "help/conversations/:id/actions", "help/conversations/:id/actions/confirm", "help/conversations/:id/handoffs"]);
+const NONE_PATHS = new Set(["plugins/ui","flows", "password", "me/view", "credentials", "credentials/:id", "repos/methods"]);
+
+function scopeOfYes(path: string): RuleScope | undefined {
+  if (path === "repos/methods") return "none";
+  if (path === "repos/:owner/:name") return "repo-name";
+  if (path.startsWith("repos/:id")) return "repo";
+  if (path.startsWith("refinement/:id")) return "session";
+  if (LIST_PATHS.has(path)) return "list";
+  if (NONE_PATHS.has(path) || path.startsWith("help/")) return "none";
+  return undefined;
+}
+
+/** A rule. `scope` defaults to `admin` for `no` and `run` for `own`; a `yes` rule needs one (given, or from scopeOfYes), else it cannot be built. */
+const r = (method: string, path: string, user: UserAccess, note: string, scope?: RuleScope): Rule => {
+  const s = scope ?? (user === "no" ? "admin" : user === "own" ? "run" : scopeOfYes(path));
+  if (s === undefined) throw new Error(`rule ${method} ${path} needs a scope`);
+  return { method, path, user, note, scope: s };
+};
 
 export const RULES: Rule[] = [
   r("GET", "info", "no", "server settings and today's cost"),
@@ -236,13 +266,15 @@ export function findRule(method: string, seg: string[]): Rule | undefined {
 
 /**
  * Throws 403 when the user may not make the call, and 404 for a run that is not theirs. An admin always passes. Ownership is read from the run (or its
- * queue entry), never from the request.
+ * queue entry), never from the request. Then the rule's scope is checked (see workspace-scope.ts): an object of the user's that is outside their
+ * workspaces answers 404, the same as an unknown one.
  */
 export function authorize(ctx: ApiContext, user: User, rule: Rule, seg: string[]): void {
-  if (user.role === "admin" || rule.user === "yes") return;
+  if (user.role === "admin") return;
   if (rule.user === "no") throw new HttpError(403, "not allowed for your role");
   // The same answer as for a run that does not exist: a guessed id tells nothing.
-  if (ctx.scheduler.ownerOf(seg[1] ?? "") !== user.id) throw new HttpError(404, "run not found");
+  if (rule.user === "own" && ctx.scheduler.ownerOf(seg[1] ?? "") !== user.id) throw new HttpError(404, "run not found");
+  checkScope(ctx, user, rule.scope, seg);
 }
 
 /**

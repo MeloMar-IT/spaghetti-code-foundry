@@ -30,6 +30,7 @@ import { watcherState } from "../words.js";
 import { knownWorkspace } from "../workspaces/index.js";
 import { watchersWithNext } from "./next.js";
 import { HttpError, readJson, send } from "./http.js";
+import { scopedRepos } from "./workspace-scope.js";
 import { previewRoutes } from "./api-preview.js";
 import { checkRepoMethod } from "./permissions.js";
 import type { ApiContext, Route } from "./server.js";
@@ -490,7 +491,7 @@ export const repoRoutes: Route = async (ctx, req, res, seg, method, caller) => {
   const user = caller;
   if (seg.length === 1 && method === "GET") {
     const level = repoLevels();
-    const repos = guardedRepos(ctx, () => listRepos(user.id)).map((r) => ({ ...shown(r), autonomy: level(r.id) }));
+    const repos = scopedRepos(user, guardedRepos(ctx, () => listRepos(user.id))).map((r) => ({ ...shown(r), autonomy: level(r.id) }));
     return send(res, 200, repos, publicKeys(repos)), true;
   }
   if (seg.length === 2 && seg[1] === "methods" && method === "GET") {
