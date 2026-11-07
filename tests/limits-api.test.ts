@@ -166,3 +166,48 @@ describe("limits API", () => {
     expect((await call(admin, "GET", "/api/users/limits")).json().users[cy.user.id]).toBeUndefined();
   });
 });
+
+describe("the issue limit of a run (#786)", () => {
+  const put = (id: string, vars: Record<string, string>, cost: number) => {
+    const runDir = join(tmp, "runs", id);
+    mkdirSync(join(runDir, "logs"), { recursive: true });
+    writeFileSync(
+      join(runDir, "run.json"),
+      JSON.stringify({ runId: id, runDir, flow: "t", flowDef: { name: "t", steps: [] }, task: "t", repo: "", startedAt: "2026-11-01T10:00:00Z", status: "stopped", totalCostUsd: cost, vars, history: [], state: { steps: {}, visits: {}, next: null }, owner: ann.user.id }),
+    );
+  };
+  const overrides = () => (existsSync(join(tmp, "issue-limits.json")) ? JSON.parse(readFileSync(join(tmp, "issue-limits.json"), "utf8")) : {});
+
+  it("an admin reads the state, sets and clears the limit, and every change is an audit line", async () => {
+    put("20261101-100000-il01", { github_repo: "acme/app", issue: "5" }, 0.5);
+    const before = limitLines().length;
+    let r = await call(admin, "GET", "/api/runs/20261101-100000-il01/issue-limit");
+    expect(r.status).toBe(200);
+    expect(r.json()).toMatchObject({ issue: 5, root: 5, spentUsd: 0.5, overrideUsd: null, defaultUsd: null, limitUsd: null, enforced: false });
+    r = await call(admin, "PUT", "/api/runs/20261101-100000-il01/issue-limit", { limitUsd: 1 });
+    expect(r.status).toBe(200);
+    expect(overrides()["github:acme/app#5"]).toMatchObject({ usd: 1, by: admin.user.id });
+    expect(r.json().overrideUsd).toBe(1);
+    expect(limitLines().length).toBe(before + 1);
+    expect(limitLines().at(-1)).toMatchObject({ target: "github:acme/app#5", detail: "issue limit: $1" });
+    // the same value again changes nothing
+    await call(admin, "PUT", "/api/runs/20261101-100000-il01/issue-limit", { limitUsd: 1 });
+    expect(limitLines().length).toBe(before + 1);
+    r = await call(admin, "PUT", "/api/runs/20261101-100000-il01/issue-limit", { limitUsd: null });
+    expect(r.json().overrideUsd).toBeNull();
+    expect(overrides()).toEqual({});
+    expect(limitLines().at(-1)).toMatchObject({ detail: "issue limit: cleared" });
+  });
+
+  it("refuses a bad body with 400, a user with 403, and a run without an issue with 404", async () => {
+    put("20261101-100000-il02", { github_repo: "acme/app", issue: "6" }, 0);
+    put("20261101-100000-il03", { github_repo: "acme/app" }, 0);
+    for (const body of [{ limitUsd: 0 }, { limitUsd: "1" }, {}, { limitUsd: 1, x: 1 }]) {
+      expect((await call(admin, "PUT", "/api/runs/20261101-100000-il02/issue-limit", body)).status).toBe(400);
+    }
+    expect((await call(ann, "GET", "/api/runs/20261101-100000-il02/issue-limit")).status).toBe(403);
+    expect((await call(ann, "PUT", "/api/runs/20261101-100000-il02/issue-limit", { limitUsd: 1 })).status).toBe(403);
+    expect((await call(admin, "GET", "/api/runs/20261101-100000-il03/issue-limit")).status).toBe(404);
+    expect(overrides()).toEqual({});
+  });
+});

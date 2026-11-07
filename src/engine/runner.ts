@@ -52,7 +52,9 @@ import { autonomyOfRun, autonomyRefuses } from "../governance/autonomy.js";
 import { dropRunEvidence, finalizeRunEvidence } from "../evidence/finalize.js";
 import { governanceCheckFailed, isProductionRun, type GovernanceDecision } from "../promotion/governance.js";
 import { flowFileId } from "../promotion/flow-id.js";
-import { loadRunPacks, runPolicy, type LoadedPack, type RunPolicy } from "./policy-hooks.js";
+import { baseFacts, loadRunPacks, repositoryFact, runPolicy, type LoadedPack, type RunPolicy } from "./policy-hooks.js";
+import { issueLimitStop } from "./issue-limit.js";
+import { askPluginChecks, hasPluginChecks, type CheckPoint, type PluginCheckInput } from "../plugins/checks.js";
 import type { ProcessMeter } from "../steps/process.js";
 import { actorOf, runRecorder, stepIdentity, SYSTEM_ACTOR, type RunRecorder } from "../evidence/record.js";
 import { snapshotToolProfile } from "../tool-profile/session.js";
@@ -253,6 +255,10 @@ export async function runFlow(flow: Flow, opts: RunOptions): Promise<RunSummary>
   const start = policy?.at("run.start");
   if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: null, lastOutput: "" });
   if (refused) return finish(summary, opts, config, { outcome: "failed", reason: refused, next: null, lastOutput: "" });
+  // plugin checks (#786) are asked here too, before the workspace is made: a stop touches no repository. No workspace exists
+  // yet, so there is nothing to resume: the run ends as failed and a new run asks again.
+  const pluginBefore = await runBeforeStop(summary, log);
+  if (pluginBefore) return finish(summary, opts, config, { outcome: "failed", reason: pluginBefore, next: null, lastOutput: "" });
   const ungoverned = await governanceStop(summary, opts, config, log, evidence, packs);
   if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: null, lastOutput: "" });
   if (await promotionRefused(summary, opts, config, log, packs)) return finish(summary, opts, config, { outcome: "failed", reason: PROMOTION_REFUSED, next: null, lastOutput: "" });
@@ -406,6 +412,9 @@ async function drive(
     if (start?.denied) return finish(summary, opts, config, { outcome: "failed", reason: refuseRunByPolicy({ log, evidence }, start.denied), next: summary.state.next, lastOutput: "" });
     const ungoverned = await governanceStop(summary, opts, config, log, evidence, packs);
     if (ungoverned) return finish(summary, opts, config, { outcome: "failed", reason: ungoverned, next: summary.state.next, lastOutput: "" });
+    // a resume asks the plugin checks again (#786); the run waits at the step it was at
+    const pluginBefore = await runBeforeStop(summary, log);
+    if (pluginBefore) return finish(summary, opts, config, { outcome: "stopped", reason: pluginBefore, next: resume?.startAt ?? summary.state.next, lastOutput: "" });
   }
   // a user's run in the server's own folder or a branch of it never runs a step (start, resume, approve, reject, answer and the queue all pass here)
   const refused = workspaceRefused(summary.flowDef?.workspace, summary.owner) ?? skillWriteRefused(summary.flowDef?.name, summary.owner);
@@ -522,6 +531,17 @@ async function drive(
       return left.length ? Math.min(...left) : undefined;
     },
     runLoop: (scope, startAt) => loop(engine, scope, startAt, opts.runsDir, userLeft, projectLeft),
+    pluginSeen: new Set<string>(),
+    // the issue's spending limit (agent steps only; a free fallback does not lift it) and the plugin checks (#786)
+    stepGate: async (step, scope, visit) => {
+      if (step.type !== "shell" && step.type !== "approval") {
+        const stop = issueLimitStop(opts.runsDir, summary, config);
+        if (stop) return stop;
+      }
+      if (!hasPluginChecks("step.before")) return undefined;
+      const r = await askPluginChecks("step.before", checkInput(summary, "step.before", { step, scope, visit }), log, engine.pluginSeen);
+      return r.stop ? `stopped by plugin ${r.stop.plugin}: ${r.stop.reason}` : undefined;
+    },
   };
 
   const scope: Scope = {
@@ -699,6 +719,31 @@ function resumePoint(step: Step, scope: Scope, engine: Engine): string {
   return mine.at(-2)?.id.slice(scope.prefix.length) ?? step.id;
 }
 
+/** What a plugin check gets (#786): ids, names and counts only. No task, issue text or paths. */
+function checkInput(summary: RunSummary, point: CheckPoint, at?: { step: { id: string; type: string }; scope: Scope; visit: number }): PluginCheckInput {
+  const facts = baseFacts(summary);
+  const n = Number(summary.vars?.issue);
+  const repository = repositoryFact(summary.vars);
+  return {
+    point,
+    runId: summary.runId,
+    flow: String(facts.flow ?? summary.flow),
+    workspace: summary.workspace ?? "default",
+    owner: facts.owner as PluginCheckInput["owner"],
+    ...(repository ? { repository } : {}),
+    ...(Number.isInteger(n) && n > 0 ? { issue: n } : {}),
+    ...(at ? { step: `${at.scope.prefix}${at.step.id}`, stepType: at.step.type, visit: at.visit } : {}),
+    runCostUsd: Number.isFinite(summary.totalCostUsd) ? summary.totalCostUsd : 0,
+  };
+}
+
+/** The run.before check (#786): the reason that stops the run, or undefined. */
+async function runBeforeStop(summary: RunSummary, log: (l: string) => void): Promise<string | undefined> {
+  if (!hasPluginChecks("run.before")) return undefined;
+  const r = await askPluginChecks("run.before", checkInput(summary, "run.before"), log);
+  return r.stop ? `stopped by plugin ${r.stop.plugin}: ${r.stop.reason}` : undefined;
+}
+
 async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDir: string, userLeft: () => number | undefined, projectLeft: () => number | undefined): Promise<LoopResult> {
   const { flow, ctx, visits } = scope;
   const { summary, config } = engine;
@@ -736,6 +781,15 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
     if (pl !== undefined && pl <= 0) {
       engine.log(`■ stopped before "${scope.prefix}${step.id}": the project's daily limit is reached`);
       return { outcome: "stopped", reason: PROJECT_BUDGET_REASON, ...here() };
+    }
+
+    // The spending limit of the issue and the plugin checks (#786): a stop here is not a failure. Inside a sub-flow the
+    // parent loop ends the run too (engine.nestedStop), so `on_failure` is not followed.
+    const gate = await engine.stepGate?.(step, scope, (visits[step.id] ?? 0) + 1);
+    if (gate) {
+      engine.log(`■ stopped before "${scope.prefix}${step.id}": ${gate}`);
+      if (!top) engine.nestedStop ??= gate;
+      return { outcome: "stopped", reason: gate, ...here() };
     }
 
     const runCap = config.cost_limits ? summary.flowDef.limits.max_cost_usd : undefined;
@@ -835,6 +889,15 @@ async function loop(engine: Engine, scope: Scope, startAt: string | null, runsDi
       return { outcome: "stopped", reason, next: step.id, lastOutput };
     }
     if (engine.signal?.aborted) return { outcome: "cancelled", reason: stopReason(`cancelled during step "${step.id}"`), ...here() };
+    if (engine.nestedStop !== undefined) {
+      // a limit or plugin stop inside a parallel step or a sub-flow: each loop up to the top one stops here, and only the
+      // top loop clears it, so the parent of a sub-flow never sees an ordinary failure (on_failure is not followed)
+      const reason = engine.nestedStop;
+      if (top) engine.nestedStop = undefined;
+      visits[step.id] = visit - 1;
+      setNext(step.id);
+      return { outcome: "stopped", reason, next: step.id, lastOutput };
+    }
 
     const routed = res.ok ? step.routes?.find((r) => new RegExp(r.if, "m").test(res.output))?.goto : undefined;
     // A story handed over for being too big: only a real split or a real question goes on.

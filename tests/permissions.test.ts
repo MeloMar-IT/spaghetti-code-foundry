@@ -186,6 +186,8 @@ const EXAMPLES: Record<string, Example> = {
   "POST autonomy/demote": no("autonomy/demote", 400, {}),
   "POST runs": { path: "runs", body: {}, user: 400, admin: 400 },
   "GET runs/:id": { path: "runs/nope", user: 404, admin: 404 },
+  "GET runs/:id/issue-limit": no("runs/nope/issue-limit", 404),
+  "PUT runs/:id/issue-limit": no("runs/nope/issue-limit", 404, { limitUsd: 1 }),
   "POST runs/:id/cancel": { path: "runs/nope/cancel", body: {}, user: 404, admin: 200 },
   "POST runs/:id/archive": { path: "runs/nope/archive", body: {}, user: 404, admin: 404 },
   "POST runs/:id/unarchive": { path: "runs/nope/unarchive", body: {}, user: 404, admin: 404 },

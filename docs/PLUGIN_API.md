@@ -44,7 +44,8 @@ The public names are (plugin API `0.3`):
 
 Plugin points are added to this list and this file when they ship, and the plugin API version rises
 with them. Version `0.2` added `api.onUsage` (see [Usage events](#usage-events)). Version `0.3` added
-`api.workspaces(store)` (see [Workspaces](#workspaces)).
+`api.workspaces(store)` (see [Workspaces](#workspaces)) and `api.check(point, fn)` (see
+[Checks before a run or a step](#checks-before-a-run-or-a-step)).
 
 The arguments and results of these names are the types in the package's `.d.ts` files. The
 exported names and their kinds are kept in `tests/public-api.snapshot.json`; a test fails when
@@ -80,6 +81,7 @@ export function register(api) {
   [The ui point](#the-ui-point).
 - `api.onUsage(handler)` gets the usage events of the runs. See [Usage events](#usage-events).
 - `api.workspaces(store)` supplies the list of workspaces. See [Workspaces](#workspaces).
+- `api.check(point, fn)` adds a check before a run or a step. See [Checks before a run or a step](#checks-before-a-run-or-a-step).
 - A plugin fails the start when it cannot be found or imported, has no `register`, throws, or does
   not finish `register` within 30 seconds. The server then does not start at all.
 - Refused: a relative path, a URL, a built-in Node module, and a module inside a runs folder or a
@@ -231,6 +233,38 @@ export function register(api) {
 - A `list()` that throws, returns a promise or returns a list that is not valid puts every account in
   `default`. The reason is reported once, in the problem list.
 - A plugin that does not supply the list leaves `config.yaml` in charge.
+
+## Checks before a run or a step
+
+`api.check(point, fn)` asks your function before work starts. `point` is `"run.before"` (once per run
+start, before the run's workspace is made) or `"step.before"` (before each step). It may be called
+at most 10 times per plugin, and only while `register(api)` runs.
+
+```js
+export function register(api) {
+  api.check("step.before", (input) => {
+    if (input.runCostUsd > 5 && input.stepType === "claude") {
+      return { outcome: "warn", reason: "this run has cost over $5" };
+    }
+    return "allow";
+  });
+}
+```
+
+- `fn` gets a frozen copy of: `point`, `runId`, `flow`, `workspace`, `owner` (`admin`, `user` or `none`),
+  and, when known, `repository`, `issue`, `step`, `stepType`, `visit`, and `runCostUsd` (the cost of the
+  run so far). It gets no text of the issue, the prompt or the output.
+- The answer is `"allow"` (or nothing), or `{ outcome, reason }` where `outcome` is `"allow"`, `"warn"` or
+  `"stop"`. `reason` is one line of up to 200 characters.
+- `stop` ends the run at that point, with the reason in the run log. A `run.before` stop at the start of a
+  new run ends it as `failed`; a resume asks again and stops the run at its step. `warn` and `allow` let it go on.
+  The first `stop` of all checks wins.
+- The answer appears in the run log the same way as a policy decision: `· plugin <name> · step.before <step>: stop — <reason>`.
+- **Fail open.** A check that throws, takes longer than 5 seconds, or answers something that is not valid
+  is logged (`the check failed`) and listed in the problem list (`scf plugins`, `GET /api/plugins`); the
+  run goes on. A check that still has three calls running is not asked again; the call is skipped, with the same log line.
+- The built-in limits (`limits.issue_cost_usd`, `limits.monthly_budget_usd`) are not plugin checks: they
+  fail closed, see [the user guide](USER_GUIDE.md#8-costs-dashboard-and-evals).
 
 ## Semantic versioning
 

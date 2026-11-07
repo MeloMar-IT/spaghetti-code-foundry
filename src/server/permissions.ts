@@ -116,6 +116,8 @@ export const RULES: Rule[] = [
   r("POST", "autonomy/demote", "no", "lower an autonomy level at once (`kind`, `id`, `to`, `reason`); any admin, no gate; the component can go up again only through promote and approve; writes an audit line"),
   r("POST", "runs", "yes", "start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref)"),
   r("GET", "runs/:id", "own", "read a run (a user: without costs and setup)"),
+  r("GET", "runs/:id/issue-limit", "no", "the spending limit of the run's issue: what the issue, its split parts and retries cost, the default, the override and the limit in effect"),
+  r("PUT", "runs/:id/issue-limit", "no", "set (`limitUsd` above 0) or clear (`null`) the spending limit of the run's issue and its split parts; writes an audit line"),
   r("POST", "runs/:id/cancel", "own", "cancel a run that runs, is queued, waits or is stopped"),
   r("POST", "runs/:id/archive", "own", "archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted"),
   r("POST", "runs/:id/unarchive", "own", "take a run out of the archive again"),

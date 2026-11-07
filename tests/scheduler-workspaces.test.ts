@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigSchema, type Config } from "../src/config.js";
 import { parseFlow } from "../src/flow/load.js";
-import { spentThisMonthByWorkspace } from "../src/engine/state.js";
+import { spentThisMonth, spentThisMonthByWorkspace } from "../src/engine/state.js";
 import { Scheduler, type Job, type SchedulerOptions } from "../src/queue/scheduler.js";
 import { disposeWorkspaces, supplyWorkspaces } from "../src/workspaces/list.js";
 import { nextStep } from "../src/next-step.js";
@@ -28,7 +28,8 @@ describe("scheduler workspace limits (#819)", () => {
   let spend: Record<string, number> = {};
   let s: Scheduler | undefined;
   let GATE = gateFlow("");
-  const cfg = (): Config => ({ ...ConfigSchema.parse({}), concurrency, cost_limits: costLimits });
+  let installCap: number | undefined;
+  const cfg = (): Config => ({ ...ConfigSchema.parse({ limits: installCap === undefined ? {} : { monthly_budget_usd: installCap } }), concurrency, cost_limits: costLimits });
   const mk = (extra: Partial<SchedulerOptions> = {}) =>
     (s = new Scheduler({ runsDir: join(tmp, "runs"), config: cfg, workspaceLimits: (w) => limits[w] ?? {}, spentThisMonthByWorkspace: (w) => spend[w] ?? 0, ...extra }));
   const job = (flow = GATE): Job => ({ kind: "run", flow, task: "t", repo: tmp, vars: {} });
@@ -56,6 +57,7 @@ describe("scheduler workspace limits (#819)", () => {
     costLimits = true;
     limits = {};
     spend = {};
+    installCap = undefined;
     // the workspaces the tests use are in the list; a workspace that is not in the list is read-only (#824)
     supplyWorkspaces({
       owner: "base", plugin: "base", report: () => undefined,
@@ -164,6 +166,80 @@ describe("scheduler workspace limits (#819)", () => {
     await waitFor(() => active().includes("a1"));
   });
 
+  describe("the monthly budget of the whole install (#786)", () => {
+    it("holds every pending job when the month's spend reaches the cap, and lets it start under the cap", async () => {
+      concurrency = 3;
+      installCap = 5;
+      mk({ spentThisMonth: () => 5 });
+      submit("a1", "default");
+      expect(active()).toEqual([]);
+      expect(limitOfPending("a1")).toBe("install_budget");
+      s!.close();
+      mk({ spentThisMonth: () => 4.99 });
+      submit("a2", "default");
+      await waitFor(() => active().includes("a2"));
+    });
+
+    it("does not hold with cost_limits false, without a cap, or in a local test", async () => {
+      concurrency = 3;
+      installCap = 5;
+      costLimits = false;
+      mk({ spentThisMonth: () => 99 });
+      submit("a1", "default");
+      await waitFor(() => active().includes("a1"));
+      s!.close();
+      costLimits = true;
+      installCap = undefined;
+      mk({ spentThisMonth: () => 99 });
+      submit("a2", "default");
+      await waitFor(() => active().includes("a2"));
+      s!.close();
+      installCap = 5;
+      mk({ spentThisMonth: () => 99, localTest: true });
+      submit("a3", "default");
+      await waitFor(() => active().includes("a3"));
+    });
+
+    it("holds when the spend cannot be read (fail closed)", () => {
+      concurrency = 3;
+      installCap = 5;
+      mk({ spentThisMonth: () => { throw new Error("unreadable"); } });
+      submit("a1", "default");
+      expect(active()).toEqual([]);
+      expect(limitOfPending("a1")).toBe("install_budget");
+    });
+
+    it("holds a workspace job too, and looks again without any event", async () => {
+      concurrency = 3;
+      installCap = 5;
+      let over = true;
+      mk({ monthRecheckMs: 20, spentThisMonth: () => (over ? 6 : 0) });
+      submit("a1", "team-a");
+      expect(active()).toEqual([]);
+      over = false; // the new month
+      await waitFor(() => active().includes("a1"));
+    });
+
+    it("a workspace spend that cannot be read holds the job (fail closed)", () => {
+      concurrency = 3;
+      limits = { "team-a": { monthly_budget_usd: 5 } };
+      mk({ spentThisMonthByWorkspace: () => { throw new Error("unreadable"); } });
+      submit("a1", "team-a");
+      expect(active()).toEqual([]);
+      expect(limitOfPending("a1")).toBe("workspace_budget");
+    });
+
+    it("words: no amount, and different for admins and users", () => {
+      expect(statusName("user_limit", { month: true, budget: true })).toBe("waiting — this month's budget");
+      expect(statusName("user_limit", { month: true, budget: true, user: true })).toBe("waiting — the limit for this month is reached");
+      for (const forUser of [true, false]) {
+        const n = nextStep("user_limit", {}, { userLimit: "install_budget", forUser });
+        expect(n.until).toBe("next month");
+        expect(`${n.why} ${n.say} ${statusHelp("user_limit", { month: true, user: forUser })}`).not.toMatch(/[$\d]/);
+      }
+    });
+  });
+
   it("close() stops the monthly timer", () => {
     concurrency = 3;
     limits = { "team-a": { monthly_budget_usd: 5 } };
@@ -270,11 +346,14 @@ steps:
 });
 
 describe("spentThisMonthByWorkspace", () => {
+  let base: string;
   let runs: string;
   beforeEach(() => {
-    runs = mkdtempSync(join(tmpdir(), "factory-month-"));
+    base = mkdtempSync(join(tmpdir(), "factory-month-"));
+    runs = join(base, "runs");
+    mkdirSync(runs);
   });
-  afterEach(() => rmSync(runs, { recursive: true, force: true }));
+  afterEach(() => rmSync(base, { recursive: true, force: true }));
   const put = (id: string, o: Record<string, unknown>) => {
     mkdirSync(join(runs, id), { recursive: true });
     writeFileSync(join(runs, id, "run.json"), JSON.stringify({ runId: id, ...o }));
@@ -287,11 +366,52 @@ describe("spentThisMonthByWorkspace", () => {
     put("20261110-000000-cccc", { workspace: "team-a", startedAt: "2026-11-10T00:00:00Z", totalCostUsd: Number.NaN });
     put("20261111-000000-dddd", { startedAt: "2026-11-11T00:00:00Z", totalCostUsd: 2 });
     put("20261112-000000-eeee", { workspace: "team-b", startedAt: "2026-11-12T00:00:00Z", totalCostUsd: 4 });
-    mkdirSync(join(runs, "20261113-000000-ffff"));
-    writeFileSync(join(runs, "20261113-000000-ffff", "run.json"), "{ not json");
     expect(spentThisMonthByWorkspace(runs, "team-a", now)).toBe(1.5);
     expect(spentThisMonthByWorkspace(runs, "default", now)).toBe(2);
     expect(spentThisMonthByWorkspace(runs, "team-b", now)).toBe(4);
+    expect(spentThisMonth(runs, now)).toBe(7.5);
+  });
+
+  it("throws when a run file cannot be read (the callers hold work)", () => {
+    mkdirSync(join(runs, "20261113-000000-ffff"));
+    writeFileSync(join(runs, "20261113-000000-ffff", "run.json"), "{ not json");
+    expect(() => spentThisMonthByWorkspace(runs, "team-a", now)).toThrow();
+    expect(() => spentThisMonth(runs, now)).toThrow();
+  });
+
+  it("counts runs kept in a workspace folder", () => {
+    const wsRuns = join(base, "workspaces", "team-a", "runs");
+    mkdirSync(join(wsRuns, "20261105-000000-wsrun"), { recursive: true });
+    writeFileSync(join(wsRuns, "20261105-000000-wsrun", "run.json"), JSON.stringify({ runId: "20261105-000000-wsrun", workspace: "team-a", startedAt: "2026-11-05T00:00:00Z", totalCostUsd: 3 }));
+    put("20261101-000000-aaaa", { workspace: "team-a", startedAt: "2026-11-01T00:00:00Z", totalCostUsd: 1 });
+    expect(spentThisMonthByWorkspace(runs, "team-a", now)).toBe(4);
+    expect(spentThisMonth(runs, now)).toBe(4);
+  });
+
+  it("throws when the workspace folders cannot be listed, and not for an absent folder", () => {
+    expect(spentThisMonth(runs, now)).toBe(0); // no workspaces folder: nothing to count
+    const container = join(base, "workspaces");
+    mkdirSync(join(container, "team-a"), { recursive: true });
+    expect(spentThisMonth(runs, now)).toBe(0); // a workspace without runs is unused
+    if (process.getuid?.() === 0) return; // root can read everything
+    chmodSync(container, 0o000);
+    try {
+      expect(() => spentThisMonth(runs, now)).toThrow();
+    } finally {
+      chmodSync(container, 0o755);
+    }
+  });
+
+  it("throws when a workspace's runs folder cannot be listed", () => {
+    if (process.getuid?.() === 0) return;
+    const wsRuns = join(base, "workspaces", "team-a", "runs");
+    mkdirSync(wsRuns, { recursive: true });
+    chmodSync(wsRuns, 0o000);
+    try {
+      expect(() => spentThisMonthByWorkspace(runs, "default", now)).toThrow();
+    } finally {
+      chmodSync(wsRuns, 0o755);
+    }
   });
 
   it("counts a run with an old id that started this month (ids are made at queue time)", () => {

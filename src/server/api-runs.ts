@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { actorOf } from "../evidence/record.js";
 import { CANNOT_READ, redactedJson } from "../credentials/redact.js";
 import { supersededRuns } from "../stats.js";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { checkIssueLimitBody, issueKey, issueLimitState, issueOfRun, setIssueLimit } from "../engine/issue-limit.js";
 import { workspaceSkillsDir } from "../home.js";
 import { runDiff } from "../engine/diff.js";
 import { readTranscript } from "../engine/transcript.js";
@@ -372,6 +373,33 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
     if (!Number.isInteger(n) || !rec) throw new HttpError(404, "no such step");
     if (!rec.logFile.startsWith(s.runDir)) throw new HttpError(400, "bad log path");
     return send(res, 200, hide({ step: rec.id, type: rec.type, events: readTranscript(rec.logFile) })), true;
+  }
+  if (action === "issue-limit" && !seg[3] && (method === "GET" || method === "PUT")) {
+    if (!admin) throw new HttpError(403, "only an admin can see or change the spending limit of an issue");
+    const home = dirname(opts.runsDir);
+    const ref = issueOfRun(s);
+    if (!ref) throw new HttpError(404, "this run has no issue");
+    let usd: number | null | undefined;
+    if (method === "PUT") {
+      try {
+        usd = checkIssueLimitBody(await readJson(req));
+      } catch (e) {
+        if (e instanceof HttpError) throw e;
+        throw new HttpError(400, (e as Error).message);
+      }
+    }
+    try {
+      const config = ctx.config();
+      if (usd !== undefined) {
+        const state = issueLimitState(opts.runsDir, s, config, home);
+        const key = issueKey({ project: ref.project, issue: state?.root ?? ref.issue });
+        if (setIssueLimit(key, usd, user.id, home).changed) auditAction(ctx.diagLog, user.id, "limits-change", key, usd === null ? "issue limit: cleared" : `issue limit: $${usd}`);
+      }
+      return send(res, 200, issueLimitState(opts.runsDir, s, config, home)), true;
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw new HttpError(500, "the spending of this issue could not be read");
+    }
   }
   return false;
 };

@@ -5355,6 +5355,8 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `POST /api/autonomy/demote` | yes | no | lower an autonomy level at once (`kind`, `id`, `to`, `reason`); any admin, no gate; the component can go up again only through promote and approve; writes an audit line |
 | `POST /api/runs` | yes | yes | start a run (a user: a published flow and own repositories; an admin with `likeUser: true` follows the same rules; a release-build flow: a user may build only the repository's default branch (its `mainBranch` setting, else `main`), also when the published flow fixes the ref) |
 | `GET /api/runs/:id` | yes | own runs | read a run (a user: without costs and setup) |
+| `GET /api/runs/:id/issue-limit` | yes | no | the spending limit of the run's issue: what the issue, its split parts and retries cost, the default, the override and the limit in effect |
+| `PUT /api/runs/:id/issue-limit` | yes | no | set (`limitUsd` above 0) or clear (`null`) the spending limit of the run's issue and its split parts; writes an audit line |
 | `POST /api/runs/:id/cancel` | yes | own runs | cancel a run that runs, is queued, waits or is stopped |
 | `POST /api/runs/:id/archive` | yes | own runs | archive a finished run: it leaves the list of runs (`GET /api/runs?archived=1` lists the archived ones); nothing is deleted |
 | `POST /api/runs/:id/unarchive` | yes | own runs | take a run out of the archive again |
@@ -8020,6 +8022,34 @@ Before a new version of a skill replaces the pinned one, keep this evidence with
 3. The skill context stays within the declared budget (`max_tokens`, `max_attached_tokens`).
 4. The same suite run on each agent that is configured (Claude, Codex, a local model). Say which were run and which were not.
 5. The report file or the eval run IDs, linked in the pull request that changes the pin.
+
+### Spending limits per issue and per month
+
+Two limits stop money from running out on one issue or in one month. Both are off until you set them
+in `config.yaml` (or with **Settings → Spending limits**, where an empty field means no limit). Both
+apply only while `cost_limits` is on:
+
+```yaml
+limits:
+  issue_cost_usd: 5       # the most one issue may cost, with its split parts and all their retries
+  monthly_budget_usd: 150 # the most all runs may cost in one UTC month
+```
+
+- **Per issue.** The cost of the issue, of its split parts (nested ones too) and of all their runs and
+  retries counts together. Before each agent step, a run whose issue has reached the limit stops with a
+  reason that gives the amount spent and the limit. An administrator raises or clears the limit of that
+  issue with **Raise the issue's limit** on the run page, with `scf runs issue-limit` and
+  `scf runs set-issue-limit`, or with `GET` and `PUT /api/runs/:id/issue-limit`. Each change writes a
+  `limits-change` audit line with the amounts. People see no amounts, only that the issue reached its limit.
+  If the spend of the issue cannot be read, the run stops too (the limit is not guessed).
+- **Per month.** When the cost of all runs this UTC month reaches `monthly_budget_usd`, every pending job
+  waits until the next month, and the Work page says so ("waiting — this month's budget" for an admin,
+  "waiting — the limit for this month is reached" for others). A workspace's own `monthly_budget_usd`
+  (see [Workspaces](#workspaces)) holds its runs the same way. If a run folder cannot be read, the work
+  waits rather than starting.
+- **Plugin checks.** A plugin can also ask before a run or a step with `api.check` and stop it with a
+  reason. A plugin check that fails is logged and the run goes on. See
+  [Checks before a run or a step](PLUGIN_API.md#checks-before-a-run-or-a-step).
 
 ---
 

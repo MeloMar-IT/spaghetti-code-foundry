@@ -47,11 +47,51 @@ export async function decisionDialog(kind, send) {
   return answer === true;
 }
 
+const usd = (n) => `$${Number(n).toFixed(2)}`;
+
+/**
+ * The dialog that raises the spending limit of an issue (#786). `info` is the answer of GET issue-limit; `send(n)` saves the
+ * new limit. A refusal shows its sentence in the dialog, which stays open. Resolves true once saved.
+ */
+export async function issueLimitDialog(info, send) {
+  let busy = false;
+  const spent = Number(info?.spentUsd ?? 0);
+  const limit = Number(info?.limitUsd ?? info?.defaultUsd ?? 0);
+  const answer = await modal("Raise the issue's limit", (close) => {
+    const field = h("input", { type: "number", name: "limit", step: "0.01", min: String(Math.round((spent + 0.01) * 100) / 100), value: String(Math.round((limit + (info?.defaultUsd ?? limit)) * 100) / 100), "aria-label": "New limit in dollars" });
+    const err = h("p", { class: "status bad flush", role: "alert" });
+    const submitBtn = h("button", { type: "submit", class: "primary" }, "Save and continue");
+    const closeBtn = h("button", { type: "button", onClick: () => { if (!busy) close(false); } }, "Not now");
+    const submit = async (e) => {
+      e?.preventDefault?.();
+      if (busy) return;
+      busy = true;
+      submitBtn.disabled = true;
+      err.textContent = "";
+      try {
+        await send(Number(field.value));
+        busy = false;
+        close(true);
+      } catch (ex) {
+        busy = false;
+        submitBtn.disabled = false;
+        err.textContent = errorText(ex);
+      }
+    };
+    return h("form", { class: "run-dialog", onSubmit: submit },
+      h("p", {}, `This issue, its split parts and retries cost ${usd(spent)}; the limit is ${usd(limit)}.`),
+      h("label", { class: "field" }, h("span", {}, "New limit ($)"), field),
+      err,
+      h("div", { class: "row" }, submitBtn, closeBtn));
+  }, { busy: () => busy });
+  return answer === true;
+}
+
 /**
  * The actions of the administrator's run page. Returns run(kind, from): kind is "approve", "reject", "resume", "rerun"
  * (with `from`, a step id) or "cancel". It never rejects; it resolves true when the call was sent and accepted.
  */
-export function adminRunActions(runId, { a = api, ask = confirmDialog, decide = decisionDialog, setAlert = () => {}, onDialogClosed = () => {}, onDone = () => {} } = {}) {
+export function adminRunActions(runId, { a = api, ask = confirmDialog, decide = decisionDialog, raise = issueLimitDialog, setAlert = () => {}, onDialogClosed = () => {}, onDone = () => {} } = {}) {
   let acting = false;
   const sentence = (e) => { setAlert(errorText(e)); return false; };
   const asked = async (opts) => {
@@ -69,6 +109,15 @@ export function adminRunActions(runId, { a = api, ask = confirmDialog, decide = 
         } finally { onDialogClosed(); }
         if (!sent) return false;
         toast(kind === "approve" ? "Approved — continuing" : "Rejected");
+      } else if (kind === "raise-limit") {
+        let info;
+        try { info = await a.issueLimit(runId); } catch (e) { return sentence(e); }
+        let saved;
+        try {
+          saved = await raise(info, async (n) => { await a.setIssueLimit(runId, n); await a.resumeRun(runId); });
+        } finally { onDialogClosed(); }
+        if (!saved) return false;
+        toast("Limit raised — continuing");
       } else if (kind === "cancel") {
         if (!(await asked({ title: "Cancel this run?", text: "You can resume it later.", confirm: "Cancel the run", cancel: "Keep running" }))) return false;
         try {
