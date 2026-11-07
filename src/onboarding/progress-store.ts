@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { z } from "zod";
 import { authLockHeld, dataHome, readJsonFile, withAuthLock, writeJsonFile } from "../auth/store.js";
 import { getUser } from "../auth/users.js";
+import { STARTER_ID_RE } from "../config.js";
 
 // Where each account is in the "Get started" guide, and the answers so far. One file, keyed by account id.
 // The file is in the data folder itself (not in onboarding/): writeJsonFile only writes next to auth.lock.
@@ -27,7 +29,7 @@ export interface GuideProgress {
 /** `bad`: 400. `too-large`: 413. `gone`: the account no longer exists (404). Messages name a field, never a value. */
 export class ProgressError extends Error {
   constructor(
-    public code: "bad" | "too-large" | "gone",
+    public code: "bad" | "too-large" | "gone" | "stale",
     message: string,
   ) {
     super(message);
@@ -53,10 +55,64 @@ export function answersProblem(answers: unknown): { code: "bad" | "too-large"; m
   if (!isPlain(answers)) return { code: "bad", message: "answers must be an object" };
   const keys = Object.keys(answers);
   if (keys.length > MAX_ANSWER_KEYS) return { code: "bad", message: `answers may have at most ${MAX_ANSWER_KEYS} keys` };
-  if (keys.some((k) => !KEY_RE.test(k))) return { code: "bad", message: "an answers key must be 1 to 40 characters: a lowercase letter, then lowercase letters, digits or hyphens" };
+  if (keys.some((k) => !(KEY_RE.test(k) || k === "repoId"))) return { code: "bad", message: "an answers key must be 1 to 40 characters: a lowercase letter, then lowercase letters, digits or hyphens (or repoId)" };
   // a value sits one level below the object, so the object itself is level 1
   if (!jsonWithin(answers, MAX_ANSWER_DEPTH)) return { code: "bad", message: `answers must be JSON nested at most ${MAX_ANSWER_DEPTH} levels deep` };
   if (Buffer.byteLength(JSON.stringify(answers)) > MAX_ANSWERS_BYTES) return { code: "too-large", message: `answers may be at most ${MAX_ANSWERS_BYTES} bytes` };
+  return null;
+}
+
+/** The longest texts of the guide's answers. The UI has the same numbers (`GUIDE_LIMITS`). */
+export const GUIDE_TEXT_LIMITS = { who: 200, what: 2000, style: 200, name: 100 } as const;
+/**
+ * Answers only the server sets: the made project (`repoId`), the token of a project being made (`making`) and the id of the
+ * repository record being written (`creating`), so a restart can undo it. A PUT cannot change them.
+ */
+export const SERVER_KEYS = ["repoId", "making", "creating"] as const;
+
+// Bumped on every Start again (clearProgress, deleteUser). A guide request takes the number when it arrives; one that runs after
+// a reset sees a different number and makes nothing. In memory: a restart drops the queued requests with it.
+const generations = new Map<string, number>();
+/** The current guide generation of an account (see generations). */
+export const guideGeneration = (userId: string): number => generations.get(userId) ?? 0;
+
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** What is wrong with the guide's own answers (only the keys that are present), or null. Names the field, never the value. */
+export function guideAnswersProblem(answers: Answers): string | null {
+  const text = (v: unknown, field: string, max: number, multiline = false): string | null => {
+    if (typeof v !== "string") return `${field} must be text`;
+    if (v.length > max) return `${field} may be at most ${max} characters`;
+    const rest = multiline ? v.replace(/[\n\r\t]/g, "") : v;
+    if (CONTROL.test(rest)) return `${field} has a control character`;
+    return null;
+  };
+  if ("starter" in answers && !(typeof answers.starter === "string" && STARTER_ID_RE.test(answers.starter))) return "starter is not a starter id";
+  if ("about" in answers) {
+    const about = answers.about;
+    if (!isPlain(about)) return "about must be an object";
+    for (const k of Object.keys(about)) if (k !== "who" && k !== "what") return "about may have only who and what";
+    if ("who" in about) {
+      const p = text(about.who, "who", GUIDE_TEXT_LIMITS.who);
+      if (p) return p;
+    }
+    if ("what" in about) {
+      const p = text(about.what, "what", GUIDE_TEXT_LIMITS.what, true);
+      if (p) return p;
+    }
+  }
+  if ("name" in answers) {
+    const p = text(answers.name, "name", GUIDE_TEXT_LIMITS.name);
+    if (p) return p;
+  }
+  if ("style" in answers) {
+    const p = text(answers.style, "style", GUIDE_TEXT_LIMITS.style);
+    if (p) return p;
+  }
+  if ("where" in answers && answers.where !== "local" && answers.where !== "github") return "where must be local or github";
+  for (const k of SERVER_KEYS) if (k in answers && !(typeof answers[k] === "string" && UUID_RE.test(answers[k]))) return `${k} must be an id`;
   return null;
 }
 
@@ -69,6 +125,8 @@ export function parseProgressRequest(body: unknown): { step: GuideStep; answers:
   const answers = body.answers === undefined ? {} : body.answers;
   const problem = answersProblem(answers);
   if (problem) throw new ProgressError(problem.code, problem.message);
+  const own = guideAnswersProblem(answers as Answers);
+  if (own) throw new ProgressError("bad", own);
   return { step: step as GuideStep, answers: answers as Answers };
 }
 
@@ -101,7 +159,14 @@ export function saveProgress(userId: string, p: { step: GuideStep; answers: Answ
   return withAuthLock(() => {
     if (!getUser(userId)) throw new ProgressError("gone", "no such account");
     const file = read();
-    const entry = { step: checked.step as string, answers: checked.answers, at: now.toISOString() };
+    // the server's own answers stay as stored: a late or forged PUT can neither add nor remove them
+    const answers: Answers = { ...checked.answers };
+    for (const k of SERVER_KEYS) delete answers[k];
+    const stored = file.users[userId]?.answers ?? {};
+    for (const k of SERVER_KEYS) if (k in stored) answers[k] = stored[k] as JsonValue;
+    const problem = answersProblem(answers);
+    if (problem) throw new ProgressError(problem.code, problem.message);
+    const entry = { step: checked.step as string, answers, at: now.toISOString() };
     save({ ...file, users: { ...file.users, [userId]: entry } });
     return entry;
   });
@@ -115,10 +180,69 @@ export function clearProgress(userId: string): boolean {
 /** Removes the entry of an account (only inside withAuthLock). Returns true when there was one; writes nothing otherwise. */
 export function removeProgressLocked(userId: string): boolean {
   if (!authLockHeld()) throw new Error("removeProgressLocked must run inside withAuthLock");
+  generations.set(userId, guideGeneration(userId) + 1);
   const file = read();
   if (!(userId in file.users)) return false;
   const users = { ...file.users };
   delete users[userId];
   save({ ...file, users });
   return true;
+}
+
+/**
+ * Starts making a guide project for an account. Under the lock: when the entry holds a `repoId` whose repository still exists
+ * (`exists`), that id is returned and nothing is written; otherwise a new `making` token is stored (and a dead `repoId` dropped)
+ * after the merged answers pass the same limits as a PUT. Nothing is made before this succeeded.
+ */
+export function beginGuideProject(userId: string, exists: (repoId: string) => boolean, now = new Date()): { existing: string } | { token: string } {
+  return withAuthLock(() => {
+    if (!getUser(userId)) throw new ProgressError("gone", "no such account");
+    const file = read();
+    const entry = file.users[userId];
+    const old = entry?.answers.repoId;
+    if (typeof old === "string" && exists(old)) return { existing: old };
+    const answers: Answers = { ...((entry?.answers ?? {}) as Answers) };
+    delete answers.repoId;
+    delete answers.creating; // the caller has undone an interrupted record first; with no repository left there is nothing to undo
+    const token = randomUUID();
+    answers.making = token;
+    const problem = answersProblem(answers);
+    if (problem) throw new ProgressError(problem.code, problem.message);
+    save({ ...file, users: { ...file.users, [userId]: { step: entry?.step ?? "step-5", answers, at: now.toISOString() } } });
+    return { token };
+  });
+}
+
+/**
+ * Records, inside the lock that writes the repository record (addRepo's beforeSave), the id of the record being written. Only with
+ * the current token: otherwise `stale` and nothing is written. After a restart a `creating` id whose record exists is undone
+ * before the next make (see recordGuideProject, which clears it once the project is complete).
+ */
+export function recordCreatingLocked(userId: string, token: string, repoId: string, now = new Date()): void {
+  if (!authLockHeld()) throw new Error("recordCreatingLocked must run inside withAuthLock");
+  const file = read();
+  const entry = file.users[userId];
+  if (!entry || entry.answers.making !== token) throw new ProgressError("stale", "the guide was started again");
+  const answers: Answers = { ...(entry.answers as Answers), creating: repoId };
+  const problem = answersProblem(answers);
+  if (problem) throw new ProgressError(problem.code, problem.message);
+  save({ ...file, users: { ...file.users, [userId]: { step: entry.step, answers, at: now.toISOString() } } });
+}
+
+/**
+ * Records the made project: sets `repoId` and removes `making`, only when `making` still equals `token`. After Start again (or
+ * another begin) it throws `stale` and writes nothing. Called once the project is complete, so `repoId` never names a half-made one.
+ */
+export function recordGuideProject(userId: string, token: string, repoId: string, now = new Date()): void {
+  withAuthLock(() => {
+    const file = read();
+    const entry = file.users[userId];
+    if (!entry || entry.answers.making !== token) throw new ProgressError("stale", "the guide was started again");
+    const answers: Answers = { ...(entry.answers as Answers), repoId };
+    delete answers.making;
+    delete answers.creating;
+    const problem = answersProblem(answers);
+    if (problem) throw new ProgressError(problem.code, problem.message);
+    save({ ...file, users: { ...file.users, [userId]: { step: entry.step, answers, at: now.toISOString() } } });
+  });
 }

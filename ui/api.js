@@ -64,6 +64,11 @@ const enc = encodeURIComponent;
 /** How long a call about the view may take; a stalled server must not hold the page. */
 export const VIEW_TIMEOUT_MS = 10000;
 
+/** How long making a project from a starter may take (the git copy and the connection test). */
+export const START_TIMEOUT_MS = 180000;
+/** How long a read or save of the guide's place may take: a stalled one must not hold the guide's buttons. */
+export const PROGRESS_TIMEOUT_MS = 15000;
+
 /** The audit filters as a query: only the ones that are set, in the order user, action, from, to. "" for none. */
 const auditQuery = (f = {}) => {
   const q = ["user", "action", "from", "to"].filter((k) => f[k]).map((k) => `${k}=${enc(f[k])}`).join("&");
@@ -232,8 +237,10 @@ export const api = {
     return req("PUT", "/api/onboarding/agents", { answers, replace }, false, false, v ? { "x-config-version": v } : undefined);
   },
   // Where this account is in the Get started guide: { step, answers }.
-  onboardingProgress: () => req("GET", "/api/onboarding/progress"),
-  saveOnboardingProgress: (p) => req("PUT", "/api/onboarding/progress", p),
+  starters: () => req("GET", "/api/starters"),
+  startProject: (id, body) => req("POST", `/api/starters/${enc(id)}/project`, body, false, false, undefined, AbortSignal.timeout(START_TIMEOUT_MS)),
+  onboardingProgress: () => req("GET", "/api/onboarding/progress", undefined, false, false, undefined, AbortSignal.timeout(PROGRESS_TIMEOUT_MS)),
+  saveOnboardingProgress: (p) => req("PUT", "/api/onboarding/progress", p, false, false, undefined, AbortSignal.timeout(PROGRESS_TIMEOUT_MS)),
   clearOnboardingProgress: () => req("DELETE", "/api/onboarding/progress"),
   onboardingSignIn: (tool) => req("POST", "/api/onboarding/sign-in", { tool }),
   onboardingTestCall: (tool) => req("POST", "/api/onboarding/test-call", { tool }),

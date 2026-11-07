@@ -7,6 +7,8 @@ import { repoDialog } from "./repo-connect.js";
 import { MOVE_TITLE, moveDialog } from "./repo-move.js";
 import { onWish, takeWish } from "./palette-data.js";
 import { FILTER_FROM, activeRuns, attentionCount, attentionSummary, matchesText, readCompact, repoAttention, repoName, sortByAttention, writeCompact } from "./repo-status.js";
+import { guideReturnView } from "./onboarding-guide-model.js";
+import { backToGuide, guideReturnNode } from "./onboarding-project.js";
 import { safeStore } from "./shell.js";
 import { banner, errorState, explainError, loadingState, permissionState, staleNote } from "./states.js";
 
@@ -466,10 +468,12 @@ export async function renderRepos(main, { admin = false, notice, readOnly = fals
   const head= (canAdd) => h("div", { class: "toolbar" }, h("h1", {}, scope.title),
     h("span", { class: "muted" }, scope.hint),
     switcher ? scopeSwitch(scope.id) : null,
+    guideReturnNode({ store, toGuide: () => backToGuide(store), notify: toast }),
     h("span", { class: "spacer" }), canAdd ? h("button", { class: "primary", "data-focus": "add-toolbar", onClick: add }, "+ Add repository") : null);
   const add = async () => {
     const created = await repoDialog({ admin, options: state.options });
     if (created?.id && !state.repos.some((r) => r.id === created.id)) state.repos = [...state.repos, created];
+    if (created?.id && guideReturnView(store)) { const r = await backToGuide(store); if (r === "") return; if (r) toast(r); }
     return reload();
   };
   const row = (repo) => {
