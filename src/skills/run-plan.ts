@@ -2,6 +2,7 @@ import type { Config } from "../config.js";
 import type { RunSummary } from "../engine/state.js";
 import { gapLinksFor, gapLinkSentence, readGapLedger, unknownTopicIds } from "./gap-issues.js";
 import { discoverSkills } from "./registry.js";
+import { workspaceSkillsDir } from "../home.js";
 import { FlowSkillsSchema } from "../flow/schema.js";
 import { planHashOf } from "./run-lock.js";
 import { PLAN_CHECK_STEP, PLAN_PHASE_STEPS, planGateRecord, planSkillRequest, SKILL_REQUEST_GATES, SkillRequestError, type SkillRequest } from "./request.js";
@@ -94,7 +95,7 @@ function check(run: RunSummary, config: Config, stepId: string, log: (m: string)
     return undefined;
   } else {
     try {
-      const registry = (deps.discover ?? discoverSkills)(config.skills, { repo: run.workdir ?? run.repo });
+      const registry = (deps.discover ?? discoverSkills)(config.skills, { repo: run.workdir ?? run.repo, skillsDir: workspaceSkillsDir(run.workspace) });
       const resolution = resolveSkills(registry, ids, { role: "coder", ...resolveOptionsFrom(config.skills) });
       plan = assessSkills(resolution, registry, config.skills.unresolved);
       if (plan.action !== "stop" && resolution.selected.length > 0) {

@@ -293,8 +293,35 @@ and a `workspaces/<id>`, `runs` or `locks` link that leaves the data folder. `sr
   memory and writes them once the run exists, so a restart before that loses them.
 
 **Known gaps for part 2 (#818).** These still read one runs folder and see only `<data>/runs`: `scf ops`, evidence
-(`evidence` and delivery verify), `lifecycle-cli`, `release-cli`, `analyst/cli`, `ops/usage.ts` and `ops/flaky.ts`.
-Runs of other workspaces are invisible to them until part 2 changes them.
+(`evidence` and delivery verify), `analyst/cli`, `ops/usage.ts` and `ops/flaky.ts`. Runs of other workspaces are
+invisible to them until a later change covers them. `lifecycle-cli` and `release-cli` read every runs folder since #825.
+
+### Workspace skills folders (#825)
+
+A workspace other than `default` has its own administrator skills folder, `<data>/workspaces/<id>/skills/`.
+`workspaceSkillsDir(ws, data?)` (`src/home.ts`) gives it for a valid id other than `default`, and `<data>/skills` for
+`default`, no workspace or an invalid id. `workspaceSkillsFolderIn()` (`src/engine/state.ts`) builds the path and
+throws when a `workspaces/<id>` or `skills` link leaves the data folder.
+
+- **Registry.** `DiscoverOptions.skillsDir` replaces the first source, the data-folder root, in `buildSources()`
+  (`src/skills/registry.ts`). The release store, `skills.roots`, the built-in skills and the repository stay
+  install-wide, and so do the pins (`skills.lock.json`), the lifecycle record and the release manifests. The cache
+  of `cachedSkillRegistryAt()` keys on the home, the repository and the skills folder, and holds up to 16 registries
+  (`MAX_CACHED`) instead of one.
+- **Callers.** A run uses the registry of its own workspace in the skill catalogue (`src/agents/run.ts`), the skill
+  lock and draft list (`src/engine/skill-lock.ts`), the plan check (`src/skills/run-plan.ts`), the run page's skill
+  view (`src/server/api-runs.ts`) and the allowance (`src/server/api-skills.ts`). `scf skills` takes `--workspace <id>`
+  for `list`, `pin` and `lifecycle` (`src/skills/cli.ts`); `allow-run` takes none.
+- **Finding a run.** `chosenRunDirs()` (`src/skills/lifecycle-cli.ts`) maps each run id of every runs folder
+  (`allRunsDirs()`) to one folder. The first folder with a `run.json` wins, as in `runDirOf()`; a folder with only a
+  skill lock counts only when no folder has a `run.json` for that id. `runsLocking()` (used when a lifecycle state
+  changes) and `releaseList()` (`src/skills/release-cli.ts`) use it, so a team's run is listed.
+- **Allowance.** `applyAllowance()` takes a registry per workspace. `runWorkspace()` reads the workspace from the
+  run's `run.json` and uses `default` when it is missing or invalid. A run that is not found is checked against the
+  `default` registry and answers `no-run`; the allowance never falls through to another folder's lock.
+- **Tests.** `tests/workspace-skills.test.ts` (folders, link check, cache, run lookup, allowance, CLI flags) and
+  `tests/workspace-skills-run.test.ts` (a team run with its skill, the run page, an allowance through the team
+  registry, the catalogue).
 
 ---
 
@@ -2041,6 +2068,7 @@ Everything is in the data folder (`~/.spaghetti-code-foundry`):
 | `queue.json` | Queued jobs |
 | `locks/` | Code-area and run locks (`default`) |
 | `workspaces/<id>/locks/` | Code-area and run locks of a workspace other than `default` (#824) |
+| `workspaces/<id>/skills/` | The administrator skills of a workspace other than `default` (#825); `skills/` in the data folder is the one of `default` |
 | `users.json`, `sessions.json` | Accounts and sign-in sessions |
 | `notifications.json` | What was already notified |
 | `help.json` | The Ask SCF conversations of every account (mode 0600) |

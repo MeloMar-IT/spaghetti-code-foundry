@@ -7,7 +7,8 @@ import {
   acquireLock, dropEmptyHomeVars, explicitHome, jsonFiles, lockHolder, lockPath, pidAlive, releaseLock, removeTree,
   replacePath, runningRuns, sameSnapshot, sleepSync, snapshot, type RunningRun,
 } from "./home-migrate.js";
-import { allRunsDirs, workspaceFolderIn } from "./engine/state.js";
+import { allRunsDirs, workspaceFolderIn, workspaceSkillsFolderIn } from "./engine/state.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "./workspaces/list.js";
 import { RESTART_CODE } from "./supervise.js";
 
 export { explicitHome, dropEmptyHomeVars, runningRuns };
@@ -20,6 +21,11 @@ function runningInAll(home: string): RunningRun[] {
 /** `<data>/workspaces/<id>`, the folder of a workspace other than `default` (#824). Throws for a bad id or a link that leaves the data folder. */
 export function workspaceHome(id: string): string {
   return workspaceFolderIn(process.env.FACTORY_HOME ?? FACTORY_HOME, id);
+}
+
+/** The administrator skills folder of a workspace (#825): `<data>/workspaces/<id>/skills`, or `<data>/skills` for `default`, none or a bad id. Throws when the folder is a link that leaves the data folder. */
+export function workspaceSkillsDir(ws?: string, data: string = process.env.FACTORY_HOME ?? FACTORY_HOME): string {
+  return ws === undefined || ws === DEFAULT_WORKSPACE || !validWorkspaceId(ws) ? join(data, "skills") : workspaceSkillsFolderIn(data, ws);
 }
 
 export const NOTE_NAME = "MOVED-TO-SPAGHETTI-CODE-FOUNDRY.txt";
