@@ -8,6 +8,7 @@ import { parseFlow } from "../src/flow/load.js";
 import { Scheduler, type Job, type SchedulerOptions } from "../src/queue/scheduler.js";
 import { setCap } from "../src/ops/caps.js";
 import { TEST_PASSWORD } from "./helpers/session.js";
+import { waitForFile } from "./helpers/gate-wait.js";
 
 const PLAIN = parseFlow(`name: plain
 workspace: empty
@@ -19,7 +20,7 @@ steps:
 const gateFlow = (dir: string) => parseFlow(`name: slow
 workspace: empty
 steps:
-  - {id: a, type: shell, run: 'while [ ! -e "${dir}/$FACTORY_RUN_ID" ]; do sleep 0.05; done'}
+  - {id: a, type: shell, run: '${waitForFile(dir, "$FACTORY_RUN_ID")}'}
 `);
 
 type Limits = { maxConcurrent?: number; maxRunsPerDay?: number; dailyBudgetUsd?: number };

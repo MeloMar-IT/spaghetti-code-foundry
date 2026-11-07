@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { waitForFile } from "./helpers/gate-wait.js";
 
 // The pause of tools/test-slot: with a fresh <slots>/pause every command except the one of slot-1 is stopped (SIGSTOP on its group).
 const tool = resolve("tools/test-slot");
@@ -61,7 +62,7 @@ describe("tools/test-slot pause", () => {
 
   /** A command that writes its pid, then works (short sleeps, so a stop shows) until `<w>/<name>.go` exists. */
   function launch(slots: string, w: string, name: string, extra: Record<string, string> = {}, script?: string) {
-    const body = script ?? `while [ ! -e "${w}/${name}.go" ]; do sleep 0.05; done`;
+    const body = script ?? waitForFile(w, `${name}.go`);
     const c = spawn(tool, [slots, "sh", "-c", `echo $$ > "${w}/${name}.pid"; ${body}`], {
       env: { ...process.env, FACTORY_TEST_SLOT_POLL_MS: "50", FACTORY_TEST_NICE: "0", FACTORY_VAR_TEST_SLOTS: "2", ...extra },
       stdio: ["ignore", "pipe", "inherit"],

@@ -9,12 +9,13 @@ import { Scheduler, type Job, type SchedulerOptions } from "../src/queue/schedul
 import { disposeWorkspaces, supplyWorkspaces } from "../src/workspaces/list.js";
 import { nextStep } from "../src/next-step.js";
 import { statusHelp, statusName } from "../src/words.js";
+import { waitForFile } from "./helpers/gate-wait.js";
 
 /** A flow that works until the test creates the file `<dir>/<run id>`. */
 const gateFlow = (dir: string) => parseFlow(`name: slow
 workspace: empty
 steps:
-  - {id: a, type: shell, run: 'while [ ! -e "${dir}/$FACTORY_RUN_ID" ]; do sleep 0.05; done'}
+  - {id: a, type: shell, run: '${waitForFile(dir, "$FACTORY_RUN_ID")}'}
 `);
 
 type Lim = { max_concurrent?: number; test_slots?: number; monthly_budget_usd?: number };
@@ -243,7 +244,7 @@ describe("scheduler workspace limits (#819)", () => {
       const envFlow = parseFlow(`name: env
 workspace: empty
 steps:
-  - {id: a, type: shell, run: 'echo "$FACTORY_WORKSPACE $FACTORY_WORKSPACE_TEST_SLOTS" > "${out}"; while [ ! -e "${join(tmp, "gates")}/$FACTORY_RUN_ID" ]; do sleep 0.05; done'}
+  - {id: a, type: shell, run: 'echo "$FACTORY_WORKSPACE $FACTORY_WORKSPACE_TEST_SLOTS" > "${out}"; ${waitForFile(join(tmp, "gates"), "$FACTORY_RUN_ID")}'}
 `);
       s.submit(job(envFlow), { source: "a1", workspace: "team-a" });
       s.submit(job(), { source: "a2", workspace: "team-a" });
