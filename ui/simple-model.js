@@ -77,6 +77,8 @@ export function cardOf(entry) {
     card.todo = words.todo;
     const l = recordLink(n, "user", idOf(entry));
     if (l) card.link = { href: l.href, external: !!l.external };
+    // a question card can be answered in place when the page finds the run among the items the person may answer
+    if (ANSWER.has(n.kind) && idOf(entry)) card.ask = idOf(entry);
     // a real run that waits for a check can be opened with Try it ("the version being checked")
     if (run && !n.final && idOf(entry)) card.tryRun = idOf(entry);
     // "Make this version final": the card decides by itself (the run page is not a Simple page); the stories in plain words.

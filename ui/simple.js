@@ -1,9 +1,10 @@
-import { api } from "./api.js";
+import { api, keepPage } from "./api.js";
 import { h, mount } from "./dom.js";
 import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { projectsModel } from "./simple-model.js";
 import { githubSignInKind, moveController } from "./simple-move.js";
+import { askCard, hasUnsentAnswers } from "./simple-turn.js";
 import { FINAL, GUIDE, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
 
 // The Simple view: My projects (#/home) and the project page (#/repos/<id>). All text comes from the word list.
@@ -234,14 +235,14 @@ function tryController({ id, a, local, every }) {
  * The project page. `actions`: the action row, [{ id: "change" | "tryIt" | "final", href?, onClick?, node? }] (`node`: drawn as it is); nothing is drawn
  * without actions. `doneOpen` and `onToggle` keep the "Show all done" box open across a refresh.
  */
-export function projectView(model, { actions = [], doneOpen = false, onToggle, onDecide } = {}) {
+export function projectView(model, { actions = [], doneOpen = false, onToggle, onDecide, turns = [], answer } = {}) {
   return [
     h("a", { class: "simple-back", href: "#/home", "data-focus": "simple-back" }, WORDS.back),
     h("h1", {}, model.name),
     h("section", { class: "simple-todo" },
       h("h2", {}, WORDS.todo),
       model.todo.length
-        ? h("ul", { class: "simple-list" }, model.todo.map((c) => c.decide ? decideCard(c, onDecide) : h("li", { class: "simple-card" },
+        ? h("ul", { class: "simple-list" }, model.todo.map((c) => c.decide ? decideCard(c, onDecide) : (c.ask && answer && askCard(c, turns, answer)) || h("li", { class: "simple-card" },
           h("strong", {}, c.title),
           c.line ? h("p", { class: "muted" }, c.line) : null,
           c.link ? linkNode({ ...c.link, label: c.todo }, "btn primary simple-big", `simple-todo-${c.id}`) : null)))
@@ -258,7 +259,7 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
 }
 
 /** Loads the three lists and polls them; `draw(projects)` gets the projects. Returns a cleanup. */
-async function live(main, { a, draw }) {
+async function live(main, { a, draw, turns = false }) {
   const box = h("div", { class: "simple" });
   mount(main, box);
   let poll;
@@ -272,11 +273,13 @@ async function live(main, { a, draw }) {
   });
   poll = poller({
     load: async () => {
-      const [repos, runs, queue] = await Promise.all([a.repos(), a.runs(), a.queue()]);
-      return { repos, runs: await withActive(a, runs, queue), pending: queue?.pending };
+      // the items the person may answer; a failed or missing read gives none, so no card has an answer button
+      const mine = turns ? Promise.resolve().then(() => a.myTurn()).then((v) => (Array.isArray(v?.items) ? v.items : []), () => []) : [];
+      const [repos, runs, queue, mineItems] = await Promise.all([a.repos(), a.runs(), a.queue(), mine]);
+      return { repos, runs: await withActive(a, runs, queue), pending: queue?.pending, mineItems };
     },
-    draw: ({ repos, runs, pending }) => {
-      const nodes = draw(projectsModel(repos, runs, pending), () => poll.refresh(), repos);
+    draw: ({ repos, runs, pending, mineItems }) => {
+      const nodes = draw(projectsModel(repos, runs, pending), () => poll.refresh(), repos, mineItems);
       keepScroll(box, () => mount(box, ...nodes, states.alert, states.note));
     },
     every: REFRESH_MS,
@@ -344,14 +347,18 @@ export function renderSimpleHome(main, { a = api, openGuide, alive = () => true 
 export async function renderSimpleProject(main, { id, a = api, onName, actions = [], admin = false, host = globalThis.location?.hostname ?? "", tryEvery = 2000 } = {}) {
   let doneOpen = false;
   let previewRead = false;
+  let answer;
   const local = isLocalHost(host);
   const ctl = tryController({ id, a, local, every: tryEvery });
   const mv = moveController({ id, a });
   const order = ["change", "tryIt", "final", "github"];
   const all = [...actions.filter((x) => x.id !== "tryIt"), { id: "tryIt", node: ctl.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id));
+  // typed answers wait in memory: a 401 (of any call, a poll too) must not reload the page and throw them away
+  keepPage(hasUnsentAnswers);
   const off = await live(main, {
     a,
-    draw: (projects, refresh, repos) => {
+    turns: true,
+    draw: (projects, refresh, repos, turns) => {
       const p = projects.find((x) => String(x.id) === String(id));
       // The move removes the local record: while it runs and after it worked, its box stays even though the project is gone.
       if (!p && mv.keepsPage()) return [h("a", { class: "simple-back", href: "#/home" }, WORDS.back), mv.node];
@@ -364,6 +371,8 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
         previewRead = true;
         ctl.load();
       }
+      // Questions are read and answered through Your turn; the page is read again after an answer worked.
+      answer = { detail: (k) => a.turnDetail(k), act: (b) => a.actTurn(b), done: () => refresh?.() };
       // The answer goes to the run's own approve / reject call; the page is read again after it worked.
       const onDecide = async (runId, approved, note) => {
         try {
@@ -374,8 +383,8 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
         refresh?.();
         return true;
       };
-      return projectView(p, { actions: admin && p.local ? [...all, { id: "github", node: mv.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id)) : all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide });
+      return projectView(p, { actions: admin && p.local ? [...all, { id: "github", node: mv.node }].sort((x, y) => order.indexOf(x.id) - order.indexOf(y.id)) : all, doneOpen, onToggle: (open) => { doneOpen = open; }, onDecide, turns, answer });
     },
   });
-  return () => { off(); ctl.stop(); mv.stop(); };
+  return () => { keepPage(null); off(); ctl.stop(); mv.stop(); };
 }
