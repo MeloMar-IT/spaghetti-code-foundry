@@ -4,7 +4,8 @@ import { withActive } from "./home.js";
 import { keepScroll, liveStates, poller } from "./live.js";
 import { projectsModel } from "./simple-model.js";
 import { githubSignInKind, moveController } from "./simple-move.js";
-import { askCard, hasUnsentAnswers } from "./simple-turn.js";
+import { openAsk } from "./ask-handoff.js";
+import { askCard, checkCard, hasUnsentAnswers, stuckCard } from "./simple-turn.js";
 import { FINAL, GUIDE, HELP, TERM_MEANINGS, TRY, WORDS, termWords } from "./simple-words.js";
 
 // The Simple view: My projects (#/home) and the project page (#/repos/<id>). All text comes from the word list.
@@ -224,6 +225,9 @@ function tryController({ id, a, local, every }) {
       if (s.phase === "choosing" && !s.busy) draw();
     },
     load,
+    tryRun(runId) {
+      return start({ version: "checking", runId });
+    },
     stop() {
       dead = true;
       clearTimeout(timer);
@@ -242,7 +246,8 @@ export function projectView(model, { actions = [], doneOpen = false, onToggle, o
     h("section", { class: "simple-todo" },
       h("h2", {}, WORDS.todo),
       model.todo.length
-        ? h("ul", { class: "simple-list" }, model.todo.map((c) => c.decide ? decideCard(c, onDecide) : (c.ask && answer && askCard(c, turns, answer)) || h("li", { class: "simple-card" },
+        ? h("ul", { class: "simple-list" }, model.todo.map((c) => c.decide ? decideCard(c, onDecide) : (c.ask && answer && askCard(c, turns, answer))
+          || (c.approve && answer && checkCard(c, turns, answer)) || (c.stuck && answer && stuckCard(c, turns, answer)) || h("li", { class: "simple-card" },
           h("strong", {}, c.title),
           c.line ? h("p", { class: "muted" }, c.line) : null,
           c.link ? linkNode({ ...c.link, label: c.todo }, "btn primary simple-big", `simple-todo-${c.id}`) : null)))
@@ -372,7 +377,12 @@ export async function renderSimpleProject(main, { id, a = api, onName, actions =
         ctl.load();
       }
       // Questions are read and answered through Your turn; the page is read again after an answer worked.
-      answer = { detail: (k) => a.turnDetail(k), act: (b) => a.actTurn(b), done: () => refresh?.() };
+      answer = {
+        detail: (k) => a.turnDetail(k), act: (b) => a.actTurn(b), done: () => refresh?.(),
+        approveRun: (rid, note) => a.approveRun(rid, note), rejectRun: (rid, note) => a.rejectRun(rid, note), resumeRun: (rid) => a.resumeRun(rid),
+        tryIt: local ? (runId) => ctl.tryRun(runId) : null,
+        help: () => { if (!openAsk()) globalThis.location.hash = "#/help"; },
+      };
       // The answer goes to the run's own approve / reject call; the page is read again after it worked.
       const onDecide = async (runId, approved, note) => {
         try {

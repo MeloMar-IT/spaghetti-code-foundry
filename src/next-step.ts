@@ -65,6 +65,8 @@ export interface NextStep {
   issueUnchecked?: true;
   /** The flow of the run is gone: it cannot be resumed. */
   retired?: true;
+  /** An enabled watcher follows this run (it is answered on the issue). Set by the server's run records only. */
+  watched?: true;
   /** `cancelled`: the run was cancelled while it was stopped, so nothing continues it. */
   ended?: true;
   /** `approval`: the daily release of a local project waits for "Make this version final" (the run's own approval, not a comment). */
