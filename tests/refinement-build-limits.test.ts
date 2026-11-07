@@ -66,6 +66,10 @@ describe("buildLimitsOf", () => {
 });
 
 describe("buildLabelOf", () => {
+  it("is `go` for a local project, with or without watchers", () => {
+    expect(buildLabelOf("local:app-0123abcd", [])).toBe("go");
+    expect(buildLabelOf("local:app-0123abcd", [w()])).toBe("go");
+  });
   it("is undefined for no watcher, a disabled one, another repository or a watcher that is not for issues", () => {
     expect(buildLabelOf("acme/app", [])).toBeUndefined();
     expect(buildLabelOf("acme/app", [w({ enabled: false })])).toBeUndefined();

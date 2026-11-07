@@ -1,6 +1,8 @@
+import { isLocalRepoName } from "../auth/local-name.js";
 import { githubKey } from "../auth/repo-url.js";
 import type { WatcherConfig } from "../config.js";
 import { DEFAULT_FLOWS } from "../queue/watcher.js";
+import { GO_LABEL } from "../stories/local-map.js";
 
 export interface BuildLimits {
   flow?: string;
@@ -23,8 +25,9 @@ function candidatesOf(githubRepo: string, watchers: WatcherConfig[], ownerId?: s
     .map((x) => x.w);
 }
 
-/** The build label of a repository: the label of its first enabled `issues` watcher (same order as the build limits); undefined when there is none. */
+/** The build label of a repository (`go` for a local project, which has no watcher label): the label of its first enabled `issues` watcher (same order as the build limits); undefined when there is none. */
 export function buildLabelOf(githubRepo: string, watchers: WatcherConfig[], ownerId?: string): string | undefined {
+  if (isLocalRepoName(githubRepo)) return GO_LABEL;
   return candidatesOf(githubRepo, watchers, ownerId).find((w) => w.source === "issues")?.label;
 }
 

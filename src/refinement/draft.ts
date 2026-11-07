@@ -98,8 +98,8 @@ const field = (max: number, oneLine = false) => z.object({ text: text(max, oneLi
 /** `tie`: the id of the rule or example of the map that a criterion comes from. */
 const CriterionSchema = z.object({ id: z.uuid(), text: text(CRITERION_MAX), from: z.enum(SOURCES), tie: z.uuid().optional() }).strict();
 const IssueNumber = z.number().int().min(1);
-/** The link of a GitHub issue: https://github.com/<owner>/<name>/issues/<n>. */
-export const ISSUE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*$/;
+/** The link of a GitHub issue: https://github.com/<owner>/<name>/issues/<n>; of a story in a local project: its path .scf/stories/<file>.md. */
+export const ISSUE_URL = /^(?:https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/issues\/[1-9][0-9]*|\.scf\/stories\/[A-Za-z0-9_-][A-Za-z0-9_.-]*\.md)$/;
 const PublishedSchema = z.object({ issue: IssueNumber.max(Number.MAX_SAFE_INTEGER), url: z.string().max(300).regex(ISSUE_URL), at: z.iso.datetime() }).strict();
 const DependsSchema = z
   .object({ id: z.uuid(), issue: IssueNumber.optional(), draft: z.uuid().optional(), from: z.enum(SOURCES) })
