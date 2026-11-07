@@ -162,7 +162,7 @@ export const RULES: Rule[] = [
   r("DELETE", "users/:id", "no", "delete an account with its sessions, repositories, refinement sessions, Ask SCF conversations and stored credentials"),
   r("GET", "skills/lifecycle", "no", "the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read"),
   r("POST", "skills/lifecycle", "no", "set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409)"),
-  r("POST", "skills/lifecycle/allow-run", "no", "let one run go on with a quarantined skill version (`runId`, `key`, `reason`); 409 for a revoked version or a run that does not lock it; resume the run afterwards"),
+  r("POST", "skills/lifecycle/allow-run", "no", "let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards"),
   r("GET", "audit", "no", "read the audit log, newest first, with filters"),
   r("GET", "audit/export", "no", "download the audit log as CSV, with the same filters"),
   r("GET", "repos", "yes", "your repositories, each with its autonomy level"),
