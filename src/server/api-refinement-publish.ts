@@ -1,5 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { auditAction } from "../auth/audit.js";
+import { isLocalRepoName } from "../auth/local-name.js";
+import { GO_LABEL } from "../stories/local-map.js";
 import { buildLabelOf } from "../refinement/build-limits.js";
 import { acceptedLines } from "../refinement/draft-ready.js";
 import { readyListOf, type ReadyItem } from "../refinement/ready-list.js";
@@ -15,7 +17,7 @@ import { GH_TIMEOUT_MS, labelsOf as labelNamesOf, whatHappened, whyBuilding } fr
 import { sessionUser } from "./api-auth.js";
 import { partsOf, replaceState } from "../refinement/replace-journal.js";
 import { auditLines, checkOriginal, leftBehindOf, newLedger, replaceOriginal, replacePlan, type Ledger } from "./api-refinement-replace.js";
-import { asOwnedRepo } from "./repo-sign-in.js";
+import { asOwnedProject, stillOwnsProject } from "./repo-sign-in.js";
 import type { ApiContext, Route } from "./server.js";
 
 
@@ -37,7 +39,10 @@ async function readRepoLabels(ctx: ApiContext, s: Session, list: ReadyItem[]) {
   let names: string[];
   try {
     names = await storeFor(s.repo).labels(ctx.opts.ghTimeoutMs ?? GH_TIMEOUT_MS);
+    // A local project always has the build label `go` (it is a state there, not a label of a file).
+    if (isLocalRepoName(s.repo)) names = [...new Set([...names, GO_LABEL])];
   } catch (e) {
+    if (isLocalRepoName(s.repo)) throw new HttpError(502, `could not read the stories of the local project: ${whatHappened(e)}`);
     throw new HttpError(502, `could not read the labels on GitHub: ${whatHappened(e)} — check the repository's sign-in under My repositories and try again`);
   }
   return { names, list };
@@ -53,7 +58,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
   }
   const body = await guardedAsync(ctx, async () => {
     const { s, by } = ownedSession(ctx, req, seg[1]!);
-    const labels = await asOwnedRepo(ctx, s.owner, s.repo, (rec) => readRepoLabels(ctx, s, readyListOf(rec.definitionOfReady)));
+    const labels = await asOwnedProject(ctx, s.owner, s.repo, (rec) => readRepoLabels(ctx, s, readyListOf(rec.definitionOfReady)));
 
     const buildLabel = buildLabelOf(s.repo, ctx.config().watchers, s.owner);
     const reviewLabel = limitsOf(ctx, s).reviewLabel;
@@ -76,7 +81,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
     let changedOnGithub: ChangedOnGithub | undefined;
     if (did !== undefined && s.source) {
       const n = s.source.issue;
-      const now = await asOwnedRepo(ctx, s.owner, s.repo, async () => {
+      const now = await asOwnedProject(ctx, s.owner, s.repo, async () => {
         try {
           return await storeFor(s.repo).get(n, timeout);
         } catch (e) {
@@ -86,7 +91,7 @@ export const refinementPublishRoutes: Route = async (ctx, req, res, seg, method)
       // A missing issue or a pull request adds nothing: publish refuses those itself.
       if (now && !now.pull_request) changedOnGithub = changeOf(s, did, now, mineOf(s, items, did));
     }
-    const replacing = replaces ? { ...replaces, ...(await asOwnedRepo(ctx, s.owner, s.repo, () => replacePlan(ctx, s, replaces, timeout))) } : undefined;
+    const replacing = replaces ? { ...replaces, ...(await asOwnedProject(ctx, s.owner, s.repo, () => replacePlan(ctx, s, replaces, timeout))) } : undefined;
     return {
       repo: s.repo,
       items,
@@ -346,7 +351,7 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
 
     const timeout = ctx.opts.ghTimeoutMs ?? GH_TIMEOUT_MS;
     // One sign-in for all the calls to GitHub of this publish.
-    return await asOwnedRepo(ctx, s.owner, s.repo, (rec) => inRepo(rec.definitionOfReady));
+    return await asOwnedProject(ctx, s.owner, s.repo, (rec) => inRepo(rec.definitionOfReady));
 
     async function inRepo(stored: Parameters<typeof readyListOf>[0]) {
     const labelsOf = await readRepoLabels(ctx, s, readyListOf(stored));
@@ -417,17 +422,28 @@ async function publish(ctx: ApiContext, req: IncomingMessage, id: string, input:
       } catch (e) {
         throw new HttpError(502, `could not read the issues on GitHub: ${whatHappened(e)}; ${ledger.text()}.`);
       }
+      // A local project: ownership is checked under the story lock, right before each write.
+      const guard = isLocalRepoName(s.repo) ? () => stillOwnsProject(s.owner, s.repo) : undefined;
       for (const did of willCreate) {
         const d = byId.get(did)!;
         const marked: RestIssue | undefined = issueWithMarker(recent, s.id, did);
         let made: Made;
-        if (marked) made = { draft: did, issue: marked.number, url: issueUrl(s.repo, marked.number, marked.html_url), found: true };
-        else {
+        if (marked) {
+          // A story saved by an earlier publish whose commit failed is committed now.
+          try {
+            await storeFor(s.repo).commitCreated?.(marked.number, timeout, guard);
+          } catch (e) {
+            if (e instanceof RefinementError) throw e;
+            throw new HttpError(502, `could not save the story: ${whatHappened(e)}; ${ledger.text()}. Fix the problem and publish again, after a moment.`);
+          }
+          made = { draft: did, issue: marked.number, url: issueUrl(s.repo, marked.number, marked.html_url), found: true };
+        } else {
           const text = issueText(d, { ...s, drafts: live }, { accepted: acceptedLines(d, labelsOf.list), by, date, numberOf });
           let issue: RestIssue;
           try {
-            issue = await storeFor(s.repo).create({ title: text.title, body: `${text.body}\n\n${refinedMarker(s.id, did)}`, labels: labels.get(did)! }, timeout);
+            issue = await storeFor(s.repo).create({ title: text.title, body: `${text.body}\n\n${refinedMarker(s.id, did)}`, labels: labels.get(did)! }, timeout, guard);
           } catch (e) {
+            if (e instanceof RefinementError) throw e;
             throw new HttpError(502, `GitHub did not make the issue: ${whatHappened(e)}; ${ledger.text()}. Fix the problem and publish again, after a moment.`);
           }
           made = { draft: did, issue: issue.number, url: issueUrl(s.repo, issue.number, issue.html_url), found: false };

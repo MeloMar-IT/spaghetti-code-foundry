@@ -352,6 +352,10 @@ describe("the hidden marker", () => {
 });
 
 describe("issueUrl", () => {
+  it("gives the story path for a local project, else its name and number", () => {
+    expect(issueUrl("local:app-0123abcd", 3, ".scf/stories/3-x.md")).toBe(".scf/stories/3-x.md");
+    for (const bad of ["https://github.com/acme/app/issues/3", "../x", 3, undefined]) expect(issueUrl("local:app-0123abcd", 3, bad)).toBe("local:app-0123abcd#3");
+  });
   it("keeps the link of this repository and number, also in another case", () => {
     expect(issueUrl("acme/app", 7, "https://github.com/acme/app/issues/7")).toBe("https://github.com/acme/app/issues/7");
     expect(issueUrl("acme/app", 7, "https://github.com/Acme/App/issues/7")).toBe("https://github.com/Acme/App/issues/7");

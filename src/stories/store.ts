@@ -78,7 +78,10 @@ export interface StoryStore {
   get(issue: number, timeoutMs?: number): Promise<RestIssue | undefined>;
   states(numbers: number[], o?: { timeoutMs?: number; before?: () => void; env?: NodeJS.ProcessEnv }): Promise<Map<number, StoryState>>;
   state(issue: number, o?: { timeoutMs?: number; env?: NodeJS.ProcessEnv }): Promise<StoryState>;
-  create(o: { title: string; body: string; labels: string[] }, timeoutMs?: number): Promise<RestIssue>;
+  /** `guard` (local stores only) runs under the lock before the first write; it throws to stop the write. */
+  create(o: { title: string; body: string; labels: string[] }, timeoutMs?: number, guard?: () => void): Promise<RestIssue>;
+  /** Local stores only: commit a created story (and the number file) that was saved but whose commit failed. `guard` runs under the lock, before any write. */
+  commitCreated?(issue: number, timeoutMs?: number, guard?: () => void): Promise<void>;
   edit(issue: number, o: { title?: string; body: string }, timeoutMs?: number): Promise<RestIssue>;
   setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number): Promise<void>;
   ensureLabel(name: string, color: string, description: string): Promise<void>;
