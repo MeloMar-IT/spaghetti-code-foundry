@@ -7466,6 +7466,16 @@ workspaces:
   the list instead (`api.workspaces`, see [PLUGIN_API.md](PLUGIN_API.md#workspaces)).
 - The Settings page does not show the list yet; edit it in `config.yaml`.
 
+**Where the files go.** The `default` workspace keeps its runs in `runs/` and its area locks in `locks/` under
+the data folder, as before. Each other workspace keeps its runs in `workspaces/<id>/runs/` and its locks in
+`workspaces/<id>/locks/`. Nothing is moved when you add a workspace; the Foundry finds runs in `runs/` first,
+then in each workspace folder. A run's steps can only write to their own workspace's lock folder, and the
+sandbox denies every runs folder.
+
+**A workspace removed from `config.yaml`.** Its runs stay listed and readable, but it becomes read-only: a new
+run or a resume in it fails with `WORKSPACE_REMOVED`, and answers, parking and archiving are refused. Cancelling
+a run still works, and `scf clean` can still remove its old runs. Put the workspace back in the list to use it again.
+
 ### Plugins
 
 A plugin adds behaviour to the Foundry without a change to its code. List them in `config.yaml`:

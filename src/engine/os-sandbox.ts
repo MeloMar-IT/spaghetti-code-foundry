@@ -65,6 +65,8 @@ export interface SandboxPaths {
   data: string;
   /** The folder with all run folders. */
   runs: string;
+  /** More folders with runs or workspace folders, denied like `runs` (#824). */
+  runsRoots?: string[];
   runDir: string;
   tools: string;
   /** The compiled code the tools load (`dist/`, read-only) and the files that tell node how to read it (`package.json`). */
@@ -167,7 +169,7 @@ export function sandboxProfile(paths: SandboxPaths, real: Real = realpathSync): 
     if (!isAbsolute(p)) throw new Error(READ_DENY_REFUSED);
     return deepReal(p, real);
   });
-  const denied = [home, data, runs, ...(temp ? [temp] : []), ...denyRead];
+  const denied = [...new Set([home, data, runs, ...(paths.runsRoots ?? []).map((p) => deepReal(p, real)), ...(temp ? [temp] : []), ...denyRead])];
   const compiledDir = paths.compiled ? deepReal(paths.compiled.dir, real) : undefined;
   const compiledFiles = (paths.compiled?.files ?? []).map((f) => deepReal(f, real));
   const subpathReads = [runDir, tools, hooks, lockDir, ...(ghDir ? [ghDir] : []), ...(compiledDir ? [compiledDir] : [])];
@@ -241,7 +243,7 @@ function onPath(name: string, path = process.env.PATH ?? ""): string | undefined
 }
 
 /** The profile paths of one step of a run (see the notes in `sandboxProfile`). */
-export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?: string; claudeBin?: string; codexBin?: string; userRead?: string[]; agentBin?: string; workspaceReadOnly?: boolean; requestsDir?: string; pushLogDir?: string }): SandboxPaths {
+export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?: string; claudeBin?: string; codexBin?: string; userRead?: string[]; agentBin?: string; workspaceReadOnly?: boolean; requestsDir?: string; pushLogDir?: string; runsDir?: string; lockDir?: string }): SandboxPaths {
   const data = process.env.FACTORY_HOME ?? FACTORY_HOME;
   const programs = [process.execPath, onPath("git"), o.claudeBin ? (isAbsolute(o.claudeBin) ? o.claudeBin : onPath(o.claudeBin)) : onPath("claude"), o.codexBin ? (isAbsolute(o.codexBin) ? o.codexBin : onPath(o.codexBin)) : onPath("codex")];
   const limit = evaluationLimits();
@@ -249,12 +251,13 @@ export function stepSandboxPaths(o: { runDir: string; learnings: string; ghDir?:
     home: homedir(),
     data,
     runs: dirname(o.runDir),
+    runsRoots: [join(data, "runs"), join(data, "workspaces"), ...(o.runsDir ? [o.runsDir, join(dirname(o.runsDir), "workspaces")] : [])],
     runDir: o.runDir,
     tools: TOOLS,
     compiled: { dir: join(TOOLS, "../dist"), files: [join(TOOLS, "../package.json")] },
     hooks: join(data, "hooks"),
     learnings: o.learnings,
-    lockDir: process.env.SCF_LOCK_DIR || process.env.FACTORY_LOCK_DIR || join(data, "locks"),
+    lockDir: o.lockDir ?? (process.env.SCF_LOCK_DIR || process.env.FACTORY_LOCK_DIR || join(data, "locks")),
     temp: tmpdir(),
     ghDir: o.ghDir,
     programs: programs.filter((p): p is string => Boolean(p)),

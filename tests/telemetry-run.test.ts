@@ -49,7 +49,7 @@ steps:
   - {id: write, type: claude, prompt: "WRITE out.txt hello"}
   - {id: check, type: shell, run: "grep -q hello out.txt"}
 `;
-const start = (config: Config, runId?: string) => runFlow(parseFlow(FLOW), { task: "the task", repo, runsDir, claudeBin, config, ...(runId ? { runId } : {}) });
+const start = (config: Config, runId?: string, afterClaim?: () => void) => runFlow(parseFlow(FLOW), { task: "the task", repo, runsDir, claudeBin, config, ...(runId ? { runId } : {}), ...(afterClaim ? { afterClaim } : {}) });
 const telemetryFiles = () => (existsSync(join(home, "telemetry")) ? readdirSync(join(home, "telemetry")) : []);
 const lines = (s: Pick<RunSummary, "runId">): TelemetryEvent[] => {
   flushTelemetry();
@@ -84,8 +84,8 @@ describe("telemetry of a run", () => {
 
   it("still gives telemetry, without evidence, when the evidence stream has stopped", async () => {
     const runId = "run-stopped-evidence";
-    mkdirSync(join(runsDir, runId, "evidence.jsonl"), { recursive: true });
-    const s = await start(cfg(), runId);
+    // made once the run has reserved its folder (a run folder that exists is refused)
+    const s = await start(cfg(), runId, () => mkdirSync(join(runsDir, runId, "evidence.jsonl")));
     expect(s.status).toBe("succeeded");
     const t = lines(s);
     expect(t.filter((e) => e.name !== "policy.decided" && e.name !== "governance.decided" && e.name !== "run.autonomy").map((e) => e.name)).toEqual(["run.created", "run.started", "step.started", "model.routed", "step.profiled", "tool.called", "step.completed", "step.started", "step.completed", "run.completed", "run.measured"]);
