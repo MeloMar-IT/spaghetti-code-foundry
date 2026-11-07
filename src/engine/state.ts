@@ -493,6 +493,13 @@ export function spentToday(runsDir: string, now = new Date()): number {
 export const USER_BUDGET_REASON = "your daily limit is reached — resume tomorrow";
 /** The stop reason of a run whose project reached its daily cap (#792). It carries no amount. */
 export const PROJECT_BUDGET_REASON = "the project's daily limit is reached — resume tomorrow";
+/** The stop reason of a run whose issue reached its spending limit (#786). It carries amounts: only admins see run reasons. */
+export const ISSUE_LIMIT_START = "the issue's spending limit";
+export function issueLimitReason(spentUsd: number, limitUsd: number): string {
+  return `${ISSUE_LIMIT_START} is reached: $${spentUsd.toFixed(2)} spent of $${limitUsd.toFixed(2)} (the issue, its split parts and retries) — an administrator can raise it on the run page`;
+}
+export const ISSUE_LIMIT_UNCHECKED = `${ISSUE_LIMIT_START} could not be checked — an administrator can look at the run and resume it`;
+export const isIssueLimitStop = (reason?: string): boolean => (reason ?? "").startsWith(ISSUE_LIMIT_START);
 export const isProjectBudgetStop = (reason?: string): boolean => /^the project's daily limit is reached/.test(reason ?? "");
 /** A stop by a daily spending limit, the owner's or (#792) the project's; paused work that goes on by itself. */
 export const isUserBudgetStop = (reason?: string): boolean => /^your daily limit is reached/.test(reason ?? "") || isProjectBudgetStop(reason);
@@ -537,36 +544,89 @@ export function spentTodayByProject(runsDir: string, project: ProjectRef, now = 
 const monthCache = new Map<string, { mtimeMs: number; size: number; startedAt: string; workspace: string; cost: number }>();
 
 /**
- * Total spend of the runs of one workspace that started in the current UTC calendar month (#819). A run without a
- * `workspace` counts for "default". Costs that are not finite and files that cannot be read are skipped. Never throws.
- * Every run is looked at: run ids are made when a job is queued, not when it starts, so the list order says nothing
- * about start times. A small cache keyed by the file's mtime and size keeps a look to one stat per run.
+ * The runs folders for spend accounting (#786): the given one, then the `runs` folder of every workspace folder. Unlike
+ * allRunsDirs it THROWS when the workspaces cannot be listed or a workspace's `runs` cannot be looked at: an absent folder is
+ * unused, but a failed look would understate the total and release work (fail closed).
+ */
+export function accountingRunsDirs(runsDir: string): string[] {
+  const data = dirname(runsDir);
+  const container = join(data, WORKSPACES_DIR);
+  const out = [runsDir];
+  try {
+    lstatSync(container);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT" || (e as NodeJS.ErrnoException).code === "ENOTDIR") return out;
+    throw e;
+  }
+  // a container that leaves the data folder is not followed (the same rule as allRunsDirs)
+  if (!realInside(data, container)) return out;
+  for (const d of readdirSync(container, { withFileTypes: true })) {
+    if (!d.isDirectory() || !validWorkspaceId(d.name) || d.name === DEFAULT_WORKSPACE) continue;
+    const runs = join(container, d.name, "runs");
+    try {
+      if (lstatSync(runs).isDirectory()) out.push(runs);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT" && (e as NodeJS.ErrnoException).code !== "ENOTDIR") throw e;
+    }
+  }
+  return out;
+}
+
+/** The ids with a run.json in one folder; THROWS when the folder exists but cannot be listed. */
+export function accountingRunIds(dir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw e;
+  }
+  return names.filter((d) => {
+    try {
+      statSync(runFile(join(dir, d)));
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT" || (e as NodeJS.ErrnoException).code === "ENOTDIR") return false;
+      throw e;
+    }
+  });
+}
+
+/** Every run.json of the accounting folders, parsed with the mtime/size cache. THROWS when a file cannot be read. */
+function monthSpend(runsDir: string, now: Date, keep: (workspace: string) => boolean): number {
+  const from = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+  const to = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+  let total = 0;
+  for (const dir of accountingRunsDirs(runsDir)) {
+    for (const id of accountingRunIds(dir)) {
+      const file = runFile(join(dir, id));
+      const st = statSync(file);
+      let e = monthCache.get(file);
+      if (!e || e.mtimeMs !== st.mtimeMs || e.size !== st.size) {
+        const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
+        e = { mtimeMs: st.mtimeMs, size: st.size, startedAt: String(s.startedAt), workspace: validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE, cost: s.totalCostUsd };
+        monthCache.set(file, e);
+      }
+      const at = Date.parse(e.startedAt);
+      if (keep(e.workspace) && at >= from && at < to && Number.isFinite(e.cost)) total += e.cost;
+    }
+  }
+  return total;
+}
+
+/**
+ * Total spend of the runs of one workspace that started in the current UTC calendar month (#819), also those kept in
+ * workspace folders (#824). A run without a `workspace` counts for "default". Costs that are not finite are skipped. THROWS
+ * when a folder or a run file cannot be read: a caller that holds work treats that as "over" (fail closed). A small cache
+ * keyed by the file's mtime and size keeps a look to one stat per run.
  */
 export function spentThisMonthByWorkspace(runsDir: string, workspace: string, now = new Date()): number {
-  try {
-    const from = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
-    const to = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
-    let total = 0;
-    for (const id of listRunIds(runsDir)) {
-      try {
-        const file = runFile(join(runsDir, id));
-        const st = statSync(file);
-        let e = monthCache.get(file);
-        if (!e || e.mtimeMs !== st.mtimeMs || e.size !== st.size) {
-          const s = JSON.parse(readFileSync(file, "utf8")) as RunSummary;
-          e = { mtimeMs: st.mtimeMs, size: st.size, startedAt: String(s.startedAt), workspace: validWorkspaceId(s.workspace) ? s.workspace : DEFAULT_WORKSPACE, cost: s.totalCostUsd };
-          monthCache.set(file, e);
-        }
-        const at = Date.parse(e.startedAt);
-        if (e.workspace === workspace && at >= from && at < to && Number.isFinite(e.cost)) total += e.cost;
-      } catch {
-        continue;
-      }
-    }
-    return total;
-  } catch {
-    return 0;
-  }
+  return monthSpend(runsDir, now, (w) => w === workspace);
+}
+
+/** Total spend of all runs of all workspaces that started in the current UTC month (#786). May throw, like spentThisMonthByWorkspace. */
+export function spentThisMonth(runsDir: string, now = new Date()): number {
+  return monthSpend(runsDir, now, () => true);
 }
 
 /** A stop that the Foundry answers with a retry after a step ran out of time (see engine/auto-retry.ts). */

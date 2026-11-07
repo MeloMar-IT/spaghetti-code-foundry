@@ -9,7 +9,7 @@ import { knownWorkspace, limitsOf as workspaceLimitsOf, workspaceForJob } from "
 import { DEFAULT_WORKSPACE, validWorkspaceId, type WorkspaceLimits } from "../workspaces/list.js";
 import { AnswerRefused, cancelStoppedRun, cancelWaitingRun, effectiveVars, newRunId, resumeRun, runFlow, saveAnswer, skillWriteRefused } from "../engine/runner.js";
 import { RESTART_INTERRUPT } from "../engine/running.js";
-import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, projectOfVars, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
+import { listAllRunIds, listRunBriefs, listRunBriefsAsync, loadRun, loadRunAsync, projectOfVars, readLiveLog, runDirOf, runIdTaken, runUpdatedAt, WORKSPACE_REMOVED, setRunArchived, setRunParked, clearRunParked, spentThisMonth, spentThisMonthByWorkspace, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
 import type { Flow } from "../flow/schema.js";
 import { redactText } from "../credentials/redact.js";
 import { withGhEnv } from "../github.js";
@@ -96,7 +96,7 @@ interface Active {
 }
 
 /** Which per-user limit holds a job back. */
-export type UserLimit = "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget";
+export type UserLimit = "concurrent" | "per_day" | "budget" | "project" | "workspace" | "workspace_budget" | "install_budget";
 
 export interface SchedulerOptions {
   runsDir: string;
@@ -126,6 +126,8 @@ export interface SchedulerOptions {
   workspaceLimits?: (workspaceId: string) => Readonly<WorkspaceLimits>;
   /** Spend of the runs of a workspace that started this UTC month. Default: read from the run files. Test hook. */
   spentThisMonthByWorkspace?: (workspaceId: string) => number;
+  /** Spend of all runs that started this UTC month, for `limits.monthly_budget_usd` (#786). Default: read from the run files. Test hook. */
+  spentThisMonth?: () => number;
   /** Test hook: the clock for the month rollover timer. */
   now?: () => Date;
   /** Test hook: milliseconds until the scheduler looks again while a workspace's monthly budget holds jobs back (default: the start of the next UTC month, at most 12 hours). */
@@ -921,12 +923,29 @@ export class Scheduler {
         try {
           v = this.o.spentThisMonthByWorkspace?.(ws) ?? spentThisMonthByWorkspace(this.o.runsDir, ws);
         } catch {
-          v = 0;
+          v = Infinity; // a spend that cannot be read holds the work (fail closed)
         }
-        if (!Number.isFinite(v)) v = 0;
+        if (typeof v !== "number" || Number.isNaN(v)) v = Infinity;
         wsSpends.set(ws, v);
       }
       return v >= cap;
+    };
+    // The monthly budget of the whole install (#786): every pending job waits, chores too. Looked at once per pump.
+    let installCap: boolean | undefined;
+    const installOver = (): boolean => {
+      if (installCap !== undefined) return installCap;
+      installCap = false;
+      if (this.o.localTest) return false;
+      try {
+        const c = this.o.config();
+        const cap = c.limits?.monthly_budget_usd;
+        if (!c.cost_limits || typeof cap !== "number" || !Number.isFinite(cap) || cap <= 0) return false;
+        const v = this.o.spentThisMonth?.() ?? spentThisMonth(this.o.runsDir);
+        installCap = typeof v !== "number" || Number.isNaN(v) || v >= cap;
+      } catch {
+        installCap = true; // a spend that cannot be read holds the work (fail closed)
+      }
+      return installCap;
     };
     /** The workspace limit that holds a job, if any. Chores are held by it too (they count as active jobs of the workspace). */
     const wsHold = (q: QueuedJob): "workspace" | "workspace_budget" | undefined => {
@@ -945,7 +964,7 @@ export class Scheduler {
         const cap = this.userDailyBudget(acc);
         if (cap !== undefined && spent(acc) >= cap) return "budget";
       }
-      return wsHold(q) ?? (projectOver(q) ? "project" : undefined);
+      return wsHold(q) ?? (installOver() ? "install_budget" : undefined) ?? (projectOver(q) ? "project" : undefined);
     };
     const locked = (q: QueuedJob) => {
       const active = [...this.active.values()].map((a) => a.queued);
@@ -971,7 +990,7 @@ export class Scheduler {
     // takes no story slot and does not wait for stories or a helper's cap; only its lock, the account's state and the
     // account's daily budget hold it. A concurrency of 0 (nothing starts) holds it too, and so does a cap of 0 for a new one.
     if (limit >= 1 && ![...this.active.values()].some((a) => isChoreRun(a.queued.source))) {
-      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && limitOf(p) !== "budget" && !wsHold(p) && !projectOver(p));
+      const q = this.pending.find((p) => isChoreRun(p.source) && !(capped < 1 && p.job.kind === "run") && !locked(p) && !held(p) && limitOf(p) !== "budget" && !wsHold(p) && !installOver() && !projectOver(p));
       if (q) {
         const account = accountOf(q);
         this.pending.splice(this.pending.indexOf(q), 1);
@@ -1024,7 +1043,7 @@ export class Scheduler {
       }
     }
     this.limited = new Map();
-    if (this.o.userLimits || this.o.projectDailyBudget || this.o.workspaceLimits || this.pending.some((q) => queuedWorkspace(q) !== DEFAULT_WORKSPACE)) {
+    if (this.o.userLimits || this.o.projectDailyBudget || this.o.workspaceLimits || installOver() || this.pending.some((q) => queuedWorkspace(q) !== DEFAULT_WORKSPACE)) {
       for (const q of this.pending) {
         if (held(q)) continue;
         const l = limitOf(q);
@@ -1050,7 +1069,7 @@ export class Scheduler {
       this.capTimer = undefined;
     }
     // A monthly budget ends without an event: with nothing active no run ends, so nothing calls pump() when the month changes.
-    if ([...this.limited.values()].includes("workspace_budget")) {
+    if ([...this.limited.values()].some((l) => l === "workspace_budget" || l === "install_budget")) {
       if (!this.monthTimer) {
         const now = this.o.now?.() ?? new Date();
         const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);

@@ -24,6 +24,8 @@ export interface WordFacts {
   budget?: boolean;
   /** `user_limit`: a limit of the workspace (with `budget`: its monthly budget; else its limit of runs at the same time). */
   workspace?: boolean;
+  /** `user_limit`: the monthly budget of the whole install (#786). */
+  month?: boolean;
   /** `cancelled`: cancelled while stopped, so nothing continues the run. */
   ended?: boolean;
   /** `area_lock`: the run waits for the develop branch (its merge turn), not for a code area. */
@@ -90,14 +92,20 @@ const GLOSSARY: Record<NextKind, Words> = {
     help: "This project did as much work today as its daily limit allows. Nothing to do — it goes on by itself tomorrow.",
   },
   user_limit: {
-    status: (f) => (f.workspace
+    status: (f) => (f.month
+      ? (f.user ? "waiting — the limit for this month is reached" : "waiting — this month's budget")
+      : f.workspace
       ? (f.user
         ? (f.budget ? "waiting — your workspace's limit for this month is reached" : "waiting — your workspace's limit of runs at the same time is reached")
         : (f.budget ? "waiting — the workspace's monthly budget" : "waiting — the workspace's limit of runs at the same time"))
       : f.user
       ? (f.budget || f.perDay ? "waiting — your limit for today is reached" : "waiting — your limit of runs at the same time is reached")
       : (f.budget ? "waiting — the owner's daily budget" : f.perDay ? "waiting — the owner's limit of runs per day" : "waiting — the owner's limit of runs at the same time")),
-    help: (f) => (f.workspace
+    help: (f) => (f.month
+      ? (f.user
+        ? "The administrator's limit for this month is reached. Nothing to do — it goes on by itself next month."
+        : "This month's budget is used up. Nothing to do — it goes on next month, or sooner when the limit is raised.")
+      : f.workspace
       ? (f.budget
         ? (f.user
           ? "Your workspace used as much this month as the administrator allows. Nothing to do — it goes on by itself next month."

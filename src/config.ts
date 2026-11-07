@@ -403,6 +403,18 @@ export const ConfigSchema = z
     daily_budget_usd: z.number().positive().optional(),
     /** Default daily cap in USD of a project whose owner uses the Simple view (#792); 0: no default. A project's own cap wins. */
     simple_project_daily_budget_usd: z.number().min(0).default(5),
+    /**
+     * Spending limits (#786); both are off by default and do not apply with `cost_limits: false`.
+     * `issue_cost_usd`: the most one issue may cost, counting the issue, its split parts and all their runs and retries.
+     * `monthly_budget_usd`: the most all runs may cost in a UTC month; new runs wait when it is reached.
+     */
+    limits: z
+      .object({
+        issue_cost_usd: z.number().positive().finite().optional(),
+        monthly_budget_usd: z.number().positive().finite().optional(),
+      })
+      .strict()
+      .prefault({}),
     /** Max runs executing at the same time (across all repos). */
     concurrency: z.number().int().positive().default(2),
     /** Pushes to these branches are refused (glob patterns). */

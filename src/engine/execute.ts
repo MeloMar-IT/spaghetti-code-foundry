@@ -91,6 +91,15 @@ export interface Engine {
   signal?: AbortSignal;
   /** Asked before each top-level step: a non-empty answer stops the run there with that reason (the step runs on resume). */
   stopBefore?: (stepId: string) => string | undefined;
+  /**
+   * The spending limit of the issue and the plugin checks (#786), asked before every step, also those inside a parallel step
+   * and a sub-flow. A string stops the run there with that reason.
+   */
+  stepGate?: (step: Pick<Step, "id" | "type">, scope: Scope, visit: number) => Promise<string | undefined>;
+  /** A stop inside a parallel step or a sub-flow: the loop above ends the run with this reason and does not follow `on_failure`. */
+  nestedStop?: string;
+  /** The plugin check lines that were written for this run start already (an allow is logged once). */
+  pluginSeen?: Set<string>;
   /** Set once a budget is used up and a free fallback exists: all agent steps run there. */
   budgetFallback?: Target;
   /** Today's spend in US dollars, for the policy's daily budget rule. Only set when a daily budget is in effect. */
@@ -539,6 +548,12 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
           const started = new Date();
           const lf = newLogFile(engine, scope.prefix + id);
           const identity = stepIdentity(sub, scope.prefix, visit);
+          const gate = await engine.stepGate?.(sub, scope, visit);
+          if (gate) {
+            engine.nestedStop ??= gate;
+            scope.visits[id] = visit - 1;
+            return { id, res: { ok: false, output: "", error: gate } as StepResult };
+          }
           const began = beginStep(engine, scope, sub, identity);
           const meter: ProcessMeter = {};
           let res: StepResult;
@@ -590,6 +605,7 @@ export async function executeStep(step: Step, scope: Scope, engine: Engine, logF
       engine.log(`  ↳ sub-flow ${flow.name}`);
       const r = await engine.runLoop(subScope, null);
       const ok = r.outcome === "succeeded";
+      // a limit or plugin stop inside the sub-flow sets engine.nestedStop: the parent loop ends the run there, `on_failure` is not followed
       return { ok, output: r.lastOutput, error: ok ? undefined : `sub-flow ${flow.name} ${r.outcome}${r.reason ? `: ${r.reason}` : ""}` };
     }
 
