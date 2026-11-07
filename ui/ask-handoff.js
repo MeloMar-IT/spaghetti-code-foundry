@@ -75,8 +75,14 @@ export function recordsOf(conversation, messageId, role) {
     .map((r) => ({ text: `You took this answer to ${TARGET_WORDS[r.where].title}`, href: pageLink(role, r.page)?.href ?? null, at: r.at }));
 }
 
-/** The event that opens the drawer on one conversation (the link back from a session). */
+/** The event that opens the drawer: on one conversation with `detail.id` (the link back from a session), else on a new conversation. */
 export const ASK_OPEN_EVENT = "scf-ask-open";
+
+/** Opens the drawer on a new conversation. True when a drawer took the event (it calls preventDefault). */
+export function openAsk() {
+  if (typeof CustomEvent !== "function" || typeof globalThis.dispatchEvent !== "function") return false;
+  return globalThis.dispatchEvent(new CustomEvent(ASK_OPEN_EVENT, { detail: {}, cancelable: true })) === false;
+}
 
 export function openAskConversation(id) {
   if (typeof CustomEvent === "function") globalThis.dispatchEvent?.(new CustomEvent(ASK_OPEN_EVENT, { detail: { id } }));

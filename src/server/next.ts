@@ -220,7 +220,8 @@ export function nextFor(ctx: ApiContext, runs?: RunSummary[], forUser = false): 
     if (out.kind === "done" || out.kind === "superseded") return out;
     const timing = out.kind === "running" && run.status === "running" ? runTiming(run, historyFor(ctx)) : runProgress(run);
     const withTiming = timing ? { ...out, timing } : out;
-    return queued ? withTiming : unchecked(withTiming, run);
+    const res = queued ? withTiming : unchecked(withTiming, run);
+    return w && !res.watched ? { ...res, watched: true as const } : res;
   };
 }
 
