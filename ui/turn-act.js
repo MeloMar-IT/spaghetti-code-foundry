@@ -5,7 +5,7 @@ import { aiProps, h, modal, mount, toast } from "./dom.js";
 // comment on the issue (the server posts it); the panels only collect the text.
 
 const SHOW = { questions: "Show questions", planner_questions: "Show questions", owner_action: "Show question", approve_plan: "Show plan", approve_split: "Show split", approval: "Show request" };
-const FILLER = "Go with the recommendation.";
+export const FILLER ="Go with the recommendation.";
 
 /** Buttons for an item with `acts`; `onAct(body)` posts and returns a promise. */
 export function actButtons(item, onAct) {

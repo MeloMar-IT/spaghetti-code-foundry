@@ -247,6 +247,7 @@ export const api = {
   dismissTurn: (key) => req("POST", "/api/your-turn/dismiss", { key }),
   // Without a key every dismissed item comes back; only a missing key means "all".
   restoreTurn: (key) => req("POST", "/api/your-turn/restore", key === undefined ? {} : { key }),
+  myTurn: () => req("GET", "/api/your-turn/mine"),
   turnDetail: (key) => req("GET", `/api/your-turn/detail?key=${enc(key)}`),
   actTurn: (body) => req("POST", "/api/your-turn/act", body),
   clarity: () => req("GET", "/api/clarity"),
