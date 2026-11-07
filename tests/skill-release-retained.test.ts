@@ -302,11 +302,16 @@ describe("scf skills with the release store", () => {
     writeRunSkillLock(join(runs, "r1"), lockOf("x", "1.0.0", d));
     writeRunSkillLock(join(runs, "r3"), lockOf("x", "1.1.0", "sha256:" + "e".repeat(64)));
     writeFileSync(join(runs, "r2", "skill-lock.json"), "{ not json");
+    // a run of a workspace counts too (#825)
+    const r4 = join(home, "workspaces", "team-a", "runs", "r4");
+    mkdirSync(r4, { recursive: true });
+    writeFileSync(join(r4, "run.json"), JSON.stringify({ runId: "r4", workspace: "team-a" }));
+    writeRunSkillLock(r4, lockOf("x", "1.0.0", d));
     const r = await run(["release", "list"], cfg([a]));
     expect(r.code).toBe(0);
     const text = r.lines.join("\n");
     expect(r.lines[0]).toMatch(/^RELEASE c@1\.1\.0 sha256:[0-9a-f]{64} unapproved 1 skill, not locked by any run$/);
-    expect(r.lines[1]).toBe(`RELEASE c@1.0.0 ${(await run(["release", "list"], cfg([a]))).lines[1]!.split(" ")[2]} approved 1 skill, locked by 1 run (source catalogue)`);
+    expect(r.lines[1]).toBe(`RELEASE c@1.0.0 ${(await run(["release", "list"], cfg([a]))).lines[1]!.split(" ")[2]} approved 1 skill, locked by 2 runs (source catalogue)`);
     expect(r.lines.some((l) => l.startsWith("PIN "))).toBe(false);
     expect(r.lines.at(-1)).toBe("OK 2 releases");
     expect(text).not.toContain("x@1.1.0 sha256");

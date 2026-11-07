@@ -10,6 +10,7 @@ import { personalAgentPath } from "./registry-util.js";
 import { approvalSignatureState, approvalText, decodeBase64Exact, ed25519PublicKey, rawPublicKey, releaseSignatureToken, signApproval, type ReleaseKey } from "./release-signature.js";
 import { listStoredReleases, publishRelease, readReleaseContent, ReleaseStoreError, releaseStorePath, type StoredRelease } from "./release-store.js";
 import { readRunSkillLock } from "./run-lock.js";
+import { chosenRunDirs } from "./lifecycle-cli.js";
 import { verifyRelease } from "./release-verify.js";
 import { artifactPathProblem, SKILL_ID_RE, SKILL_VERSION_RE } from "./schema.js";
 
@@ -295,19 +296,16 @@ export function releaseDiff(old: Target, next: Target, out: (line: string) => vo
 export function releaseList(out: (line: string) => void, opts: { home: string; runsDir: string; approved: readonly ApprovedRelease[]; keys?: readonly ReleaseKey[] }): number {
   // `id@version digest` → names of the runs whose lock holds it
   const locked = new Map<string, Set<string>>();
-  try {
-    for (const d of readdirSync(opts.runsDir, { withFileTypes: true })) {
-      if (!d.isDirectory() || d.name.startsWith(".")) continue;
-      const r = readRunSkillLock(join(opts.runsDir, d.name));
-      if (!r.ok) continue;
-      for (const s of r.lock.skills) {
-        const k = `${s.id}@${s.version} ${s.digest}`;
-        (locked.get(k) ?? locked.set(k, new Set()).get(k)!).add(d.name);
-      }
+  const chosen = chosenRunDirs(opts.runsDir);
+  for (const [id, dir] of chosen.dirs) {
+    const r = readRunSkillLock(dir);
+    if (!r.ok) continue;
+    for (const s of r.lock.skills) {
+      const k = `${s.id}@${s.version} ${s.digest}`;
+      (locked.get(k) ?? locked.set(k, new Set()).get(k)!).add(id);
     }
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") out("NOTE the runs folder cannot be read; run locks are not checked");
   }
+  if (chosen.unreadable) out("NOTE the runs folder cannot be read; run locks are not checked");
   const listing = listStoredReleases(opts.home);
   if (listing.refused) out(`NOTE skill-releases is ${listing.refused.replace(", not scanned", "; it is not read")}`);
   if (listing.unreadable) out(`PROBLEM ${listing.unreadable} catalogue folder${listing.unreadable === 1 ? "" : "s"} in skill-releases cannot be read; their releases are not listed`);

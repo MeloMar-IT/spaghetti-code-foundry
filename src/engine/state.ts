@@ -638,6 +638,19 @@ export function workspaceFolderIn(data: string, id: string): string {
   return dir;
 }
 
+/** `<data>/workspaces/<id>/skills` (#825). Refuses a link that leaves the data folder; a bad skills link does not block the rest of the workspace. */
+export function workspaceSkillsFolderIn(data: string, id: string): string {
+  const dir = join(workspaceFolderIn(data, id), "skills");
+  let realData: string;
+  try {
+    realData = realpathSync(data);
+  } catch {
+    return dir;
+  }
+  refuseEscapingLink(realData, dir);
+  return dir;
+}
+
 export const workspaceDir = (runsDir: string, id: string): string => workspaceFolderIn(dirname(runsDir), id);
 
 /** The runs folder of a workspace; the given runs folder for `default` or none. */

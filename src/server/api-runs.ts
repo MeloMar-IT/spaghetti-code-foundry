@@ -3,6 +3,7 @@ import { actorOf } from "../evidence/record.js";
 import { CANNOT_READ, redactedJson } from "../credentials/redact.js";
 import { supersededRuns } from "../stats.js";
 import { resolve } from "node:path";
+import { workspaceSkillsDir } from "../home.js";
 import { runDiff } from "../engine/diff.js";
 import { readTranscript } from "../engine/transcript.js";
 import { runContextView } from "./context-view.js";
@@ -135,7 +136,7 @@ export const runRoutes: Route = async (ctx, req, res, seg, method, user) => {
   const hide = <T,>(v: T): T => (admin ? v : hideForeign(v, mine));
   // The skills of a run for its page (see skill-view.ts); the list of runs does not carry it. The registry is the one-minute cache health uses.
   const withSkills = <T extends RunSummary>(r: T): T & { skillView?: RunSkillView } => {
-    const skillView = runSkillView(r, { admin, registry: () => cachedSkillRegistryAt(ctx.config().skills, Date.now(), undefined, { repo: opts.repo }) });
+    const skillView = runSkillView(r, { admin, registry: () => cachedSkillRegistryAt(ctx.config().skills, Date.now(), undefined, { repo: opts.repo, skillsDir: workspaceSkillsDir(r.workspace) }) });
     return skillView ? { ...r, skillView } : r;
   };
   // Present only when an answer sent now would be accepted. The active check is left out on purpose: finish() sends its last update while the run is still active.

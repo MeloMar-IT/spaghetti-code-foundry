@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type { SkillsConfig } from "../config.js";
 import { discoverSkills, type SkillRegistry } from "../skills/registry.js";
+import { workspaceSkillsDir } from "../home.js";
 import { renderReviewPayload, renderSkillPayload, type PayloadSkill, type ReviewSkill, type SkillPayload } from "../skills/payload.js";
 import type { StepSkillRole } from "../skills/schema.js";
 import { flowSkillSource } from "../skills/run-plan.js";
@@ -108,7 +109,7 @@ function ensure(engine: Pick<Engine, "summary" | "config" | "log" | "save">, dep
   const gate = src.mode === "explicit" ? undefined : planGateRecord({ history: s.history ?? [], flowDef: s.flowDef });
   // An explicit flow was checked with the repository in view (run-plan); locking and verifying see the same registry.
   const repo = src.mode === "explicit" ? { repo: s.workdir ?? s.repo } : {};
-  const discover: Discover = deps.discover ?? ((skills) => discoverSkills(skills, repo));
+  const discover: Discover = deps.discover ?? ((skills) => discoverSkills(skills, { ...repo, skillsDir: workspaceSkillsDir(s.workspace) }));
   const read = readRunSkillLock(s.runDir);
   const kept = s.skillLock;
 
@@ -315,7 +316,7 @@ export function skillSession(engine: SessionEngine, deps: SkillLockDeps = {}, ro
       let draft = false;
       if (out.lock) list = lockList(out.lock, out.reg);
       else if (!planGateRecord({ history: engine.summary.history ?? [], flowDef: engine.summary.flowDef })) {
-        reg = (deps.discover ?? ((skills) => discoverSkills(skills)))(engine.config.skills);
+        reg = (deps.discover ?? ((skills) => discoverSkills(skills, { skillsDir: workspaceSkillsDir(engine.summary.workspace) })))(engine.config.skills);
         list = draftList(engine, reg, deps);
         draft = true;
       }

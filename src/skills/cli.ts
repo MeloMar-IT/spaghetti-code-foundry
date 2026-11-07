@@ -1,6 +1,8 @@
 import { resolve } from "node:path";
 import { loadConfig, type Config } from "../config.js";
 import { dataHome } from "../auth/store.js";
+import { workspaceSkillsDir } from "../home.js";
+import { DEFAULT_WORKSPACE, validWorkspaceId } from "../workspaces/list.js";
 import { OVERRIDES_FILE, PINS_FILE } from "./choice-rules.js";
 import { choiceDigest, type SkillChoice, type SkillOverride } from "./choices.js";
 import { readChoiceFile } from "./project-pins.js";
@@ -54,6 +56,7 @@ import { assessWorkflows, connectorProfile, type WorkflowFlow } from "./workflow
 
 export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                              List skills, their trust and pin state, and problems
        scf skills pin <id@version> <sha256:digest> [--replace]   Approve the listed package (copy the digest from the list)
+       (list, pin and lifecycle also take --workspace <id>: use that workspace's skills folder)
        scf skills pin --builtin                                  Pin the built-in skills that have no pin
        scf skills unpin <id@version>                             Remove a pin
        scf skills sources check [<file>]                         Check a skill source list (default: ${SOURCES_FILE})
@@ -88,7 +91,7 @@ export const SKILLS_USAGE = `usage: scf skills [--repo <dir>]                   
        scf skills allow-run <run-id> <id@version> --reason <text> [--runs-dir <dir>]  Let one run go on with a quarantined version (then resume the run)
        scf skills discover [<export-file> [<file>]]              Propose sources from a saved Skills.sh export (never approves)`;
 
-const ALLOWED: Record<string, string[]> = { list: ["repo"], pin: ["repo", "replace", "builtin"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], effect: [], gate: [], release: ["key"], releases: [], lifecycle: ["reason", "replacement", "runs-dir"], "allow-run": ["reason", "runs-dir"] };
+const ALLOWED: Record<string, string[]> = { list: ["repo", "workspace"], pin: ["repo", "replace", "builtin", "workspace"], unpin: ["repo"], sources: [], profiles: [], selections: [], connectors: [], overrides: [], "project-pins": [], scan: [], assess: [], compare: [], promote: [], overlap: [], review: ["markdown"], score: ["agent"], effect: [], gate: [], release: ["key"], releases: [], lifecycle: ["reason", "replacement", "runs-dir", "workspace"], "allow-run": ["reason", "runs-dir"] };
 
 export interface SkillsCommandOptions extends DiscoverOptions {
   skills?: Config["skills"];
@@ -567,6 +570,8 @@ export async function skillsCommand(
   for (const [k, v] of Object.entries(args.values)) {
     if (v !== undefined && !allowed.includes(k)) throw syntax(`scf skills${sub === "list" ? "" : " " + sub}: unexpected option --${k}`);
   }
+  const wsOpt = args.values.workspace;
+  if (wsOpt !== undefined && !validWorkspaceId(wsOpt)) throw syntax("scf skills: --workspace must be a workspace id");
   const builtin = args.values.builtin === true;
   const replace = args.values.replace === true;
   if (sub === "list" && args.positionals.length) throw syntax("scf skills: unexpected operand");
@@ -768,13 +773,17 @@ export async function skillsCommand(
     return 1;
   }
 
-  const reg = discoverSkills(skills ?? loadConfig().skills, discover);
+  const cfgSkills = skills ?? loadConfig().skills;
+  // A workspace has its own administrator skills folder (#825); pins and lifecycle states stay install-wide.
+  const forWorkspace = (ws: string): DiscoverOptions => (ws === DEFAULT_WORKSPACE ? discover : { ...discover, skillsDir: workspaceSkillsDir(ws, discover.home ?? dataHome()) });
+  const reg = discoverSkills(cfgSkills, typeof wsOpt === "string" ? forWorkspace(wsOpt) : discover);
   if (sub === "lifecycle" || sub === "allow-run") {
     const home = opts.home ?? dataHome();
     const runsDir = resolve(typeof args.values["runs-dir"] === "string" ? (args.values["runs-dir"] as string) : join(home, "runs"));
-    const o = { reg, runsDir, home };
     const v = { reason: args.values.reason as string | undefined, replacement: args.values.replacement as string | undefined };
-    return sub === "lifecycle" ? lifecycleCommand(operands, v, out, o) : allowRunCommand(operands, v, out, o);
+    if (sub === "lifecycle") return lifecycleCommand(operands, v, out, { reg, runsDir, home });
+    // the registry of the run's own workspace
+    return allowRunCommand(operands, v, out, { reg: (ws) => (ws === DEFAULT_WORKSPACE ? reg : discoverSkills(cfgSkills, forWorkspace(ws))), runsDir, home });
   }
   if (sub === "pin") {
     if (builtin) {

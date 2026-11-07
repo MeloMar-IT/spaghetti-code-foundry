@@ -5395,7 +5395,7 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/users/:id` | yes | no | delete an account with its sessions, repositories, refinement sessions, Ask SCF conversations and stored credentials |
 | `GET /api/skills/lifecycle` | yes | no | the skill versions that are deprecated, quarantined, retired or revoked (a release revocation wins over a local state), and a `problem` when the lifecycle record cannot be read |
 | `POST /api/skills/lifecycle` | yes | no | set the lifecycle state of one approved or built-in skill version (`key`, `state`, `reason`, optional `replacement`); the answer has the `transition` and the `lockedRuns`; a revoked version never changes again (409) |
-| `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); 409 for a revoked version or a run that does not lock it; resume the run afterwards |
+| `POST /api/skills/lifecycle/allow-run` | yes | no | let one run go on with a quarantined skill version (`runId`, `key`, `reason`); the version is checked against the skills folder of the run's own workspace; 409 for a revoked version or a run that does not lock it; resume the run afterwards |
 | `GET /api/audit` | yes | no | read the audit log, newest first, with filters |
 | `GET /api/audit/export` | yes | no | download the audit log as CSV, with the same filters |
 | `GET /api/repos` | yes | yes | your repositories, each with its autonomy level |
@@ -5583,7 +5583,7 @@ Not yet in the Foundry: an improve signal for a gate that blocks an automatic up
 
 #### Write a skill
 
-1. Make a folder `<data folder>/skills/<id>/`, or one under a folder of `skills.roots`. Optional sub-folders are `references`, `scripts`, `assets` and `evals`.
+1. Make a folder `<data folder>/skills/<id>/`, or one under a folder of `skills.roots`. Optional sub-folders are `references`, `scripts`, `assets` and `evals`. For a team, use `<data folder>/workspaces/<id>/skills/<id>/` instead (see [Workspaces](#workspaces)): only that team's runs see it.
 2. Write `SKILL.md`: frontmatter with `name` (the same as the id) and `description` (at most 1024 characters), then the instructions. At most 64 KiB. Only the description and the instructions reach a session.
 3. Write `skill.yaml`:
 
@@ -5624,7 +5624,7 @@ Two installed skills with the same description and instructions are the same tex
 
 #### Trust
 
-- **Sources** come in this order: the data folder, the approved releases in `skill-releases/` (see "Retained releases" below), `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned.
+- **Sources** come in this order: the data folder, the approved releases in `skill-releases/` (see "Retained releases" below), `skills.roots`, the built-in skills, and the repository (only with `skills.repository: true`). Personal `.claude` and `.codex` folders are never scanned. The first source is the `skills` folder of the run's workspace: `<data folder>/skills` for `default`, and `<data folder>/workspaces/<id>/skills` for another workspace (see [Workspaces](#workspaces)). The other sources are the same for every workspace.
 - **Releases.** A folder in the data folder or in `skills.roots` is a catalogue release: it holds `catalogue-release.json` (`schema: 1`, `catalogue`, `version`, `createdAt`, `source` with `repository` and a full `commit`, and `skills` with `id`, `version` and `digest`). It loads only if its catalogue, version and digest are listed in `skills.releases.approved`, and its packages match the manifest exactly. Otherwise the whole folder is refused (`root-refused`) and none of its packages load. `scf skills` shows a `RELEASE` line for each. Skills are never fetched from the network during a run or a resume.
 - **Retained releases.** Every release folder `skill-releases/<catalogue>/<version>/` that is listed in `skills.releases.approved` is loaded, as the source `release <catalogue>@<version>`. Within one catalogue the newest version is read first, so its packages are the active ones. An older approved version stays loaded for exact lookups: a run locked to `id@version` and digest still resumes after a newer version is published and approved, and `scf skills release verify` and the resolver find it. A retained package that a newer one shadows is never offered to a catalogue or chosen for a new plan. A folder in the store that is not approved is not loaded, and `scf skills` prints a `NOTE` for it (not a problem). Publish and discovery never delete a release, so every approved version is kept. A `skills.roots` entry that points inside `skill-releases/` is ignored with a `NOTE`; list the release in `skills.releases.approved` instead.
   - **Approval is the pin.** An approved, verified release lists the digest of each package, so its packages are selectable with those digests (source `catalogue`, trust `approved`, pin `pinned`). They need no entry in `skills.lock.json` and no `scf skills pin`. A hand pin for the same `id@version` with another digest is still a `mismatch`, and the stricter rule wins. Data folder and `skills.roots` packages still need their own pin. A run locked to an older approved release keeps its exact `id@version` and digest, so it still resumes after a newer release is approved. A run lock written before this change, with source `admin` for the same package, still verifies.
@@ -5660,7 +5660,7 @@ An administrator can change the state of one approved or built-in skill version.
 | `retired` | not selected (`ineligible`) | goes on; the run log names the replacement |
 | `revoked` | not selected (`ineligible`) | always stops with `skill integrity: … is revoked` |
 
-- **Commands.** `scf skills lifecycle` lists the skills that are not active, with their state and replacement. `scf skills lifecycle <id@version>` prints the history of one skill: one `#seq` line per change, and a `release` line when a release revokes it. `scf skills lifecycle <id@version> <state> --reason <text> [--replacement <id@version>]` sets a state. It prints the transition (`kafka@1.0.0: active → quarantined (#3)`), one `RUN <id> locks kafka@1.0.0: <effect>` line per run whose skill lock holds the version, then `OK`. `scf skills allow-run <run-id> <id@version> --reason <text>` lets one run go on with a quarantined version; it prints `ALLOWED <run-id> <id@version> (#5). Resume the run to go on.` Use `--runs-dir <dir>` to point at another runs folder. Without it, the runs folder of the data folder is searched.
+- **Commands.** `scf skills lifecycle` lists the skills that are not active, with their state and replacement. `scf skills lifecycle <id@version>` prints the history of one skill: one `#seq` line per change, and a `release` line when a release revokes it. `scf skills lifecycle <id@version> <state> --reason <text> [--replacement <id@version>]` sets a state. It prints the transition (`kafka@1.0.0: active → quarantined (#3)`), one `RUN <id> locks kafka@1.0.0: <effect>` line per run whose skill lock holds the version, then `OK`. `scf skills allow-run <run-id> <id@version> --reason <text>` lets one run go on with a quarantined version; it prints `ALLOWED <run-id> <id@version> (#5). Resume the run to go on.` Use `--runs-dir <dir>` to point at another runs folder. Without it, the runs of the data folder and of every workspace are searched, so a run of a team is listed too. `allow-run` looks the version up in the skills folder of the run's own workspace; `--workspace` is for `list`, `pin` and `lifecycle`.
 - **Who.** Only administrators may change the record or allow a run. The admin API has the same actions: `GET /api/skills/lifecycle`, `POST /api/skills/lifecycle` and `POST /api/skills/lifecycle/allow-run` (see the permissions table in section 7).
 - **What can change.** Only approved and built-in versions have a lifecycle. A repository skill, or a version that is not installed, is refused. A state cannot be set again to the state it already has, and a `revoked` version never changes again.
 - **Replacement.** Optional for `deprecated`, `quarantined`, `retired` and `revoked`. It must be an installed, approved version that is not quarantined, retired or revoked. Retiring the active version of an id, with no replacement installed and pinned, blocks that id for new plans. There is no fallback to another version of the same id; the message names the replacement.
@@ -5744,7 +5744,7 @@ skills:
   repository: false    # also read <repo>/.claude-factory/skills (default: false)
 ```
 
-- **Sources, highest first:** `<data folder>/skills`, then each entry of `roots` in order, then the built-in skills, then the repository's skills (only when `repository: true`).
+- **Sources, highest first:** `<data folder>/skills` (for a team workspace, `<data folder>/workspaces/<id>/skills`, see [Workspaces](#workspaces)), then each entry of `roots` in order, then the built-in skills, then the repository's skills (only when `repository: true`).
 - **Same id and version twice:** the one from the higher source is kept. The other is dropped and reported as a duplicate.
 - **Same id, other version:** the highest source wins and its version is the active one. The other versions stay in the list, marked as shadowed.
 - **Problems are never silent:** a missing, unreadable or refused folder, an invalid package and a symlinked package are each named in health and in `scf skills`.
@@ -7472,6 +7472,8 @@ the data folder, as before. Each other workspace keeps its runs in `workspaces/<
 then in each workspace folder. A run's steps can only write to their own workspace's lock folder, and the
 sandbox denies every runs folder.
 
+**Skills of a workspace.** Each workspace other than `default` has its own administrator skills folder, `<data folder>/workspaces/<id>/skills/`, with the same layout as `<data folder>/skills/`. A run of the workspace takes its administrator skills only from that folder, so a team's skills are used only by its runs. The `default` workspace uses `<data folder>/skills/`, and a team workspace does not see it. The other skill sources (approved releases, `skills.roots`, the built-in skills and the repository) are the same for every workspace, and so are the pins and the skill lifecycle. The skill card of a run shows the skills of that run's workspace. To list a team's skills, use `scf skills --workspace <id>`; `scf skills pin <id@version> <digest> --workspace <id>` takes the package from that folder. `--workspace` with an id that is not valid is refused.
+
 **A workspace removed from `config.yaml`.** Its runs stay listed and readable, but it becomes read-only: a new
 run or a resume in it fails with `WORKSPACE_REMOVED`, and answers, parking and archiving are refused. Cancelling
 a run still works, and `scf clean` can still remove its old runs. Put the workspace back in the list to use it again.
@@ -8036,7 +8038,7 @@ The command is `scf`. `factory` still works as an alias and prints a short note.
 | `scf autonomy demote <repos\|flows> <id> <to> --reason "…" [--yes]` | Lower a level at once, any admin, no gate ([Change a level](#change-a-level)) |
 | `scf promote <kind> <id> [--live]` | Check that the newest safety reports allow promoting a component; read-only; prints `PASSED` and `PROMOTABLE`, or `BLOCKED` per problem; exits 1 when blocked ([Promote a component](#promote-a-component)) |
 | `scf new <name> [--from <flow>] [--global]` | Create a flow from a template |
-| `scf skills [--repo dir]` | List skill packages with trust, pin state, digest and effect (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
+| `scf skills [--repo dir] [--workspace <id>]` | List skill packages with trust, pin state, digest and effect (`--workspace` lists that workspace's skills folder) (`effect helps\|no-effect\|harms\|not-measured\|invalid`, from the newest record of the digest), plus notes and problems with full paths; exits 1 when there are problems (also a changed pinned package) |
 | `scf skills pin <id@version> <digest> [--replace]` | Approve a listed package by its digest; `--replace` accepts a changed package. Refused for repository skills |
 | `scf skills pin --builtin` | Pin the built-in skills that have no pin; exits 1 when one has changed since its pin |
 | `scf skills unpin <id@version>` | Remove a pin; exits 1 when there is none |

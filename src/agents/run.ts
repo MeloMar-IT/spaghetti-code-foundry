@@ -13,6 +13,8 @@ import { evaluationLimits } from "../engine/eval-limits.js";
 import { skillSession } from "../engine/skill-lock.js";
 import { catalogueTaskText, CATALOGUE_ISSUE_STEP, runSkillCatalogue, type RunCatalogue } from "../skills/run-catalogue.js";
 import { liveCanonicalDeps } from "../skills/run-canonical.js";
+import { discoverSkills } from "../skills/registry.js";
+import { workspaceSkillsDir } from "../home.js";
 import { dataHome } from "../auth/store.js";
 import { attachSkillPayload, withSkillPayload, type SkillPayload } from "../skills/payload.js";
 import { sessionToolGrant, sessionTools, sessionToolsLine, type SessionToolGrant, type SessionTools, type ToolCheck } from "../skills/tool-policy.js";
@@ -532,7 +534,7 @@ export async function runAgentStep(step: ClaudeStep, scope: Scope, engine: Engin
     step.skills === "catalog"
       ? runSkillCatalogue(
           { workdir: engine.summary.workdir, config, task: catalogueTaskText(scope.ctx.task as string | undefined, String(scope.ctx.steps?.[CATALOGUE_ISSUE_STEP]?.output ?? "")) },
-          canon ? { canonical: canon } : {},
+          { discover: (skills) => discoverSkills(skills, { skillsDir: workspaceSkillsDir(engine.summary.workspace) }), ...(canon ? { canonical: canon } : {}) },
         )
       : undefined;
   if (catalogue) engine.log(`    · ${catalogue.log}`);
