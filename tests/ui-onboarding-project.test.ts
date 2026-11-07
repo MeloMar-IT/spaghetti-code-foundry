@@ -271,7 +271,8 @@ describe("step 5", () => {
     expect(order).toEqual(["save"]);
     slow.resolve();
     await flush();
-    expect(order).toEqual(["save", "make", "save"]);
+    // after the make: the save of step 6 (the place), then the one step 6 awaits before it makes its session
+    expect(order).toEqual(["save", "make", "save", "save"]);
   });
 
   it("does not call again when the project is known: Back then Continue, and resuming", async () => {

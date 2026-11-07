@@ -182,6 +182,10 @@ export const api = {
   restoreRefinement: (id) => req("POST", `/api/refinement/${enc(id)}/restore`, {}),
   removeBuildLabel: (id) => req("POST", `/api/refinement/${enc(id)}/source/remove-build-label`, {}),
   askArchitect: (id) => req("POST", `/api/refinement/${enc(id)}/architect`, {}),
+  askUnderstand: (id, words) => req("POST", `/api/refinement/${enc(id)}/understand`, words ? { words } : {}),
+  // The guide's own session (Get started, step 6): made once per account from the saved answers.
+  guideSession: () => req("POST", "/api/refinement", { guide: true }, true),
+  repoWatchers: (repoId) => req("GET", `/api/admin/repos/${enc(repoId)}/watchers`),
   askRound: (id) => req("POST", `/api/refinement/${enc(id)}/round`, {}),
   askOwnQuestion: (id, question) => req("POST", `/api/refinement/${enc(id)}/ask`, { question }),
   answerQuestion: (id, qid, body) => req("POST", `/api/refinement/${enc(id)}/questions/${enc(qid)}/answer`, body),

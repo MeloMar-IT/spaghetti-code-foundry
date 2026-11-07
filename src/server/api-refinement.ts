@@ -59,6 +59,7 @@ import { HttpError, readJson, readOptionalJson, send } from "./http.js";
 import { asParam } from "./view-as.js";
 import { importIssue, removeBuildLabel } from "./api-refinement-import.js";
 import { callerWorkspaces, findScopedProject, inWorkspaces, sessionInScope } from "./workspace-scope.js";
+import { guideSession } from "./api-starters.js";
 import type { ApiContext, Route } from "./server.js";
 
 const INTERNAL = "the refinement sessions are not working; see the server log";
@@ -313,6 +314,13 @@ export const refinementRoutes: Route = async (ctx, req, res, seg, method, user) 
   }
   if (seg.length === 1 && method === "POST") {
     const body = await readJson(req);
+    if (body.guide !== undefined) {
+      // The guide's own session (Get started, step 6): the server builds the idea from the saved answers; nothing else may be sent.
+      if (body.guide !== true) throw new HttpError(400, "guide must be true");
+      for (const k of ["repo", "idea", "title", "issue", "fromHelp"]) if (body[k] !== undefined) throw new HttpError(400, `guide cannot be combined with ${k}`);
+      const made = await guardedAsync(ctx, () => guideSession(ctx, user));
+      return send(res, made.existing ? 200 : 201, guarded(ctx, () => view(ctx, made.session, user))), true;
+    }
     if (body.issue !== undefined) {
       let made: Session;
       try {
