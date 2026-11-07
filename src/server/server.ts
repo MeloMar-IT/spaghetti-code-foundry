@@ -8,7 +8,7 @@ import { SKILL_UPDATE_TICK_MS, skillUpdateSweeper } from "./skill-update-sweep.j
 import { GAP_RUN_LIMIT, GAP_TICK_MS, skillGapSweeper, type SkillGapSweeper } from "./skill-gap-sweep.js";
 import { discoverSkills } from "../skills/registry.js";
 import { readFindings } from "../monitor/findings.js";
-import { loadRun, type RunSummary } from "../engine/state.js";
+import { allRunsDirs, loadRun, type RunSummary } from "../engine/state.js";
 import { hideKeyVars, redactText } from "../credentials/redact.js";
 import { providerKeyVars } from "../agents/targets.js";
 import { TOKEN_MIN } from "../credentials/store.js";
@@ -159,6 +159,11 @@ const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRout
 
 type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
 
+/** Folders a plugin may not read: the runs folders and the workspace folders, of the runs folder and of the data folder (#824). */
+export function pluginBlockedDirs(runsDir: string, home: string, repo: string): string[] {
+  return [runsDir, join(home, "runs"), join(dirname(runsDir), "workspaces"), join(home, "workspaces"), repo];
+}
+
 export async function startServer(given: ServerOptions): Promise<StartedServer> {
   const loaded: { plugins?: PluginRegistry } = {};
   try {
@@ -213,7 +218,7 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   let plugins: PluginRegistry;
   try {
     plugins = await loadPlugins(config.plugins, {
-      blockedDirs: [opts.runsDir, join(process.env.FACTORY_HOME ?? FACTORY_HOME, "runs"), opts.repo],
+      blockedDirs: pluginBlockedDirs(opts.runsDir, process.env.FACTORY_HOME ?? FACTORY_HOME, opts.repo),
       log,
       pluginSettings: () => config.plugin_settings,
     });
@@ -232,7 +237,12 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
   };
   renewBusy(config.governor.busy_runs);
   // a deploy key that a crash left in a run folder is removed now, not only when the run is resumed
-  const swept = sweepSignInDirs(opts.runsDir);
+  const swept = { removed: 0, failed: 0 };
+  for (const dir of allRunsDirs(opts.runsDir)) {
+    const part = sweepSignInDirs(dir);
+    swept.removed += part.removed;
+    swept.failed += part.failed;
+  }
   if (swept.removed > 0) log(`${swept.removed} leftover sign-in folder(s) of interrupted runs removed`);
   if (swept.failed > 0) log(`! ${swept.failed} leftover sign-in folder(s) could not be removed; delete the folder "sign-in" in those run folders`);
   // a crash leaves markers and code-area locks of runs that no longer run: free them before anything can wait for them

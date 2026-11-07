@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isLocalRepoName } from "../auth/local-name.js";
 import { BOT_MARKER } from "../github.js";import { cleanBody, splitSections } from "./issue-import.js";
 import { bad, isObject, oneLine, preview, type Draft } from "./draft.js";
 import { chars } from "./talk.js";
@@ -303,6 +304,8 @@ export function issueWithMarker<T extends { number: number; body?: string | null
 
 /** The link stored for an issue: the one GitHub reported when it is the link of this repository and number; else the link built from them. */
 export function issueUrl(repo: string, issue: number, reported: unknown): string {
+  // A local project has no web address: the story's path in the folder, else `<name>#<number>`.
+  if (isLocalRepoName(repo)) return typeof reported === "string" && reported.startsWith(".scf/stories/") ? reported : `${repo}#${issue}`;
   const own = `https://github.com/${repo}/issues/${issue}`;
   return typeof reported === "string" && reported.toLowerCase() === own.toLowerCase() ? reported : own;
 }

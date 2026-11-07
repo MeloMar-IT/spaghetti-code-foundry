@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { dataHome } from "./auth/store.js";
 import { prunePlanRecords } from "./skills/plan-record.js";
 import { unlockRunContext } from "./engine/run-context.js";
-import { listRunIds, loadRun, type RunSummary } from "./engine/state.js";
+import { listAllRunIds, loadRun, type RunSummary } from "./engine/state.js";
 import { EVIDENCE_DIFF_FILE, EVIDENCE_EVENTS_FILE, EVIDENCE_INCOMPLETE_FILE, EVIDENCE_MANIFEST_FILE } from "./evidence/version.js";
 
 export interface CleanOptions {
@@ -112,7 +112,8 @@ export function cleanRuns(o: CleanOptions): CleanResult {
   const res: CleanResult = { workspaces: [], runs: [], freedMb: 0, kept: [], evidence: [] };
   const evidenceDays = o.evidenceOlderThanDays;
   const evidenceCutoff = evidenceDays !== undefined && evidenceDays >= 0 ? Date.now() - evidenceDays * 86_400_000 : undefined;
-  for (const id of listRunIds(o.runsDir)) {
+  for (const { id, runsDir: folder } of listAllRunIds(o.runsDir)) {
+    const dir = join(folder, id); // the folder it was found in, never the one run.json names
     const s = loadRun(o.runsDir, id);
     if (!s) continue;
     const when = new Date(s.finishedAt ?? s.startedAt).getTime();
@@ -125,14 +126,14 @@ export function cleanRuns(o: CleanOptions): CleanResult {
       res.kept.push({ runId: id, why: `${s.status} (can be resumed)` });
       continue;
     }
-    const ownWorkspace = !!s.workdir && s.workdir.startsWith(s.runDir) && existsSync(s.workdir);
+    const ownWorkspace = !!s.workdir && s.workdir.startsWith(dir) && existsSync(s.workdir);
     if (o.purge) {
-      res.freedMb += sizeMb(s.runDir);
+      res.freedMb += sizeMb(dir);
       res.runs.push(id);
       if (!o.dryRun) {
         if (ownWorkspace) removeWorkspace(s);
-        unlockRunContext(s.runDir);
-        rmSync(s.runDir, { recursive: true, force: true });
+        unlockRunContext(dir);
+        rmSync(dir,{ recursive: true, force: true });
       }
     } else if (ownWorkspace) {
       res.freedMb += sizeMb(s.workdir!);
@@ -140,8 +141,8 @@ export function cleanRuns(o: CleanOptions): CleanResult {
       if (!o.dryRun) removeWorkspace(s);
     }
     // The run stays: its evidence goes when it is past its own age. (A purge removed it with the run.)
-    if (!o.purge && evidenceCutoff !== undefined && when <= evidenceCutoff && hasEvidence(s.runDir)) {
-      if (o.dryRun || removeEvidence(s.runDir)) res.evidence.push(id);
+    if (!o.purge && evidenceCutoff !== undefined && when <= evidenceCutoff && hasEvidence(dir)) {
+      if (o.dryRun || removeEvidence(dir)) res.evidence.push(id);
     }
   }
   const home = o.planRecordsHome ?? (resolve(o.runsDir) === resolve(join(dataHome(), "runs")) ? dataHome() : undefined);

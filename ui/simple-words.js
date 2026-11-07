@@ -165,6 +165,54 @@ export const FINAL = {
   failed: "That did not work. Try again.",
 };
 
+/** The words of the question cards on the project page. Fixed text: a test keeps it free of forbidden terms. */
+export const ANSWER = {
+  open: "Answer the questions",
+  loading: "Loading the questions…",
+  loadFailed: "The questions could not be loaded. Try again.",
+  question: (n) => `Question ${n}`,
+  titled: (n, t) => (t ? `Question ${n}: ${t}` : `Question ${n}`),
+  oneQuestion: "The Foundry's question",
+  suggestion: (t) => `Use the suggestion: ${t}`,
+  useSuggestion: "Use the Foundry's suggestion",
+  yourAnswer: (n) => `Your answer to question ${n}`,
+  ownOne: "Your answer",
+  noPlain: "This question uses words of the Advanced view. Switch to the Advanced view with View at the top to read it.",
+  needs: (n) => `Question ${n} needs an answer.`,
+  needsOne: "Write an answer first.",
+  send: "Send my answers",
+  sending: "Sending…",
+  sent: "Thank you. The Foundry goes on by itself.",
+  failed: "That did not work. Try again.",
+};
+
+/** The words of the check cards on the project page. Fixed text: a test keeps it free of forbidden terms. */
+export const CHECK = {
+  made: "The Foundry made something for you and waits for your OK.",
+  loading: "Loading…",
+  loadFailed: "This could not be loaded. Try again.",
+  reload: "Load it again",
+  yes: "This is good",
+  no: "Something is not right",
+  what: "What is not right?",
+  needsWhat: "Write what is not right first.",
+  send: "Send",
+  sending: "Sending…",
+  sent: "Thank you. The Foundry goes on by itself.",
+  changed: "This changed meanwhile. Look at it again.",
+  failed: "That did not work. Try again.",
+};
+
+/** The words of the stuck cards on the project page. Fixed text, free of forbidden terms. */
+export const STUCK = {
+  line: "This got stuck: the Foundry could not finish it by itself.",
+  again: "Try again",
+  help: "Ask for help",
+  sending: "Starting again…",
+  sent: "The Foundry tries again.",
+  failed: "That did not work. Try again, or ask for help.",
+};
+
 const NEEDS_YOU = { todo: "Take a look", line: "It needs you." };
 
 /** Per kind of next step: `todo` is the button label (kinds a person can act on), `line` the card sentence ("" for kinds Simple hides). */

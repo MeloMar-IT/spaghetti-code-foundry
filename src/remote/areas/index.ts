@@ -11,6 +11,7 @@ export const ALL: Cmd[] = [...SYSTEM, ...WORK, ...SETUP, ...PEOPLE, ...REFINE, .
 
 /** Calls of the server that have no command, each with the reason. A test fails when a call is in neither list. */
 export const API_ONLY: Record<string, string> = {
+  "GET your-turn/mine": "the items the Simple view's cards act on (#826); the cards come in the next parts of #607, and an admin reads the whole list with `scf turn list`",
   "GET setup-check": "the Setup check page; on the machine itself `scf doctor --simple` prints the same",
   "POST onboarding/sign-in": "starts the sign-in of Claude Code or Codex on the server's computer; done from the Setup check page, or in a terminal with `claude` then `/login`, or `codex login`",
   "POST onboarding/test-call": "one tiny call that checks Claude Code or Codex works; done from the Setup check page",

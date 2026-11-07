@@ -219,8 +219,8 @@ describe("finalizing a run", () => {
 
   it("a run whose evidence could not be written ends as before, with no manifest and one loud line", async () => {
     const runId = "20260131-120000-bbbb";
-    mkdirSync(join(runsDir, runId, "evidence.jsonl"), { recursive: true });
-    const s = await start(TWO, { runId });
+    // made once the run has reserved its folder (a run folder that exists is refused)
+    const s = await start(TWO, { runId, afterClaim: () => mkdirSync(join(runsDir, runId, "evidence.jsonl")) });
     expect(s.status).toBe("succeeded");
     expect(hasManifest(s)).toBe(false);
     expect(liveLog(s).match(/! evidence:/g)).toHaveLength(1);

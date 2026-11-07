@@ -529,6 +529,8 @@ export function createAsk(role, {
   // the link back from a refinement session: open the drawer on that conversation
   const onOpenAsk = (e) => {
     const cid = e?.detail?.id;
+    // no id: open on a new conversation (Ask for help on a Simple card)
+    if (cid === undefined) { e?.preventDefault?.(); leave(); open(); fresh(); return; }
     if (!isConversationId(cid)) return;
     open();
     void openConversation(cid);

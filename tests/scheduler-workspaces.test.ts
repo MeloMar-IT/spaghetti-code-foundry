@@ -56,8 +56,14 @@ describe("scheduler workspace limits (#819)", () => {
     costLimits = true;
     limits = {};
     spend = {};
+    // the workspaces the tests use are in the list; a workspace that is not in the list is read-only (#824)
+    supplyWorkspaces({
+      owner: "base", plugin: "base", report: () => undefined,
+      store: { list: () => ["team-a", "team-b"].map((id) => ({ id, name: id, limits: {} })) },
+    });
   });
   afterEach(async () => {
+    disposeWorkspaces("base");
     if (s) {
       for (const p of s.queue().pending) s.cancel(p.runId);
       for (const a of s.queue().active) open(a.runId);
@@ -235,6 +241,7 @@ describe("scheduler workspace limits (#819)", () => {
   it("reads the limits from the workspace list and gives a shell step the workspace and its test slots", async () => {
     concurrency = 3;
     const out = join(tmp, "env.txt");
+    disposeWorkspaces("base");
     supplyWorkspaces({
       owner: "t", plugin: "t", report: () => undefined,
       store: { list: () => [{ id: "team-a", name: "A", limits: { max_concurrent: 1, test_slots: 2 } }] },

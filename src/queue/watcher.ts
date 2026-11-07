@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { watcherOwner } from "../auth/run-owner.js";
 import type { WatcherConfig } from "../config.js";
 import { isTimeLimitNote, retryComment, retryNoteMarker } from "../engine/auto-retry.js";
-import { OVERRULED_REASON, appendLiveLog, isOverruledStop, isStoppedCancel, isProjectBudgetStop, isTimeLimitStop, isUserBudgetStop, loadRun, readLiveLog, spentToday, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
+import { OVERRULED_REASON, appendLiveLog, isOverruledStop, isStoppedCancel, isProjectBudgetStop, isTimeLimitStop, isUserBudgetStop, loadRun, readLiveLog, runDirOf, spentToday, spentTodayBy, spentTodayByProject, type ProjectRef, type RunBrief, type RunSummary } from "../engine/state.js";
 import { errorLine, explainError } from "../errors.js";
 import { ActorSchema, RepositorySchema } from "../evidence/identity.js";
 import { watcherRef } from "../telemetry/envelope.js";
@@ -948,12 +948,27 @@ export class Watcher {
 
   /** Keys of the overrules that a run of this issue planned again (the live logs of all its runs). */
   private plannedOverrules(n: number): Set<string> {
+    this.flushPlanned();
     const keys = new Set<string>();
     for (const b of this.d.scheduler.briefs()) {
       if (b.githubRepo !== this.repo || b.issue !== String(n)) continue;
-      for (const k of plannedKeys(readLiveLog(join(this.d.runsDir, b.dirName)))) keys.add(k);
+      const dir = runDirOf(this.d.runsDir, b.dirName);
+      if (!dir) continue;
+      for (const k of plannedKeys(readLiveLog(dir))) keys.add(k);
     }
+    for (const ks of this.plannedPending.values()) for (const k of ks) keys.add(k);
     return keys;
+  }
+
+  /** Planned lines that waited for their run folder (see plannedAgain): written as soon as the folder is there. */
+  private plannedPending = new Map<string, string[]>();
+  private flushPlanned(): void {
+    for (const [runId, keys] of [...this.plannedPending]) {
+      const dir = runDirOf(this.d.runsDir, runId);
+      if (!dir) continue;
+      for (const k of keys) appendLiveLog(dir, PLANNED_LINE(k));
+      this.plannedPending.delete(runId);
+    }
   }
 
   /** The overrules whose ack is posted but whose run was not planned again: in memory, plus those the issue and the run logs still show. Saved back to memory. */
@@ -1122,9 +1137,13 @@ export class Watcher {
 
   /** The run was submitted for these overrules: say so in its log (the proof after a restart) and forget them. */
   private plannedAgain(n: number, runId: string, list: Overrule[]) {
-    const dir = join(this.d.runsDir, runId);
-    try { mkdirSync(dir, { recursive: true }); } catch { /* the line is best effort */ }
-    for (const o of list) appendLiveLog(dir, PLANNED_LINE(o.key));
+    // The run folder is reserved by the run itself (#824), so it is never made here: the lines wait in memory until it exists.
+    const dir = runDirOf(this.d.runsDir, runId);
+    if (dir) for (const o of list) appendLiveLog(dir, PLANNED_LINE(o.key));
+    else {
+      this.plannedPending.set(runId, [...(this.plannedPending.get(runId) ?? []), ...list.map((o) => o.key)]);
+      for (const old of [...this.plannedPending.keys()].slice(0, Math.max(0, this.plannedPending.size - 200))) this.plannedPending.delete(old);
+    }
     const keys = new Set(list.map((o) => o.key));
     const rest = (this.overruleAcked.get(n) ?? []).filter((o) => !keys.has(o.key));
     if (rest.length) this.overruleAcked.set(n, rest);
