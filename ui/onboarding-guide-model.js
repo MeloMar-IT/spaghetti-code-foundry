@@ -9,8 +9,8 @@ export const GUIDE_STEPS = [
   { id: "step-3", number: "3" },
   { id: "step-4", number: "4" },
   { id: "step-5", number: "5" },
-  { id: "step-6", number: "6", later: true },
-  { id: "step-7", number: "7", later: true },
+  { id: "step-6", number: "6" },
+  { id: "step-7", number: "7" },
 ];
 export const STEP_IDS = GUIDE_STEPS.map((s) => s.id);
 
@@ -36,6 +36,7 @@ export function canContinue(id, { admin = false, report = null, failed = false, 
   if (step === "step-3") return !admin || made || starterIds.includes(answers.starter);
   if (step === "step-4") return made || aboutProblem(answers) === null;
   if (step === "step-5") return !admin || made || (typeof answers.starter === "string" && aboutProblem(answers) === null && (answers.where !== "github" || github));
+  if (step === "step-6") return !admin || answers.plan === "built";
   return true;
 }
 
@@ -167,3 +168,84 @@ export function cleanAgentsDraft(x) {
   const steps = stepsFor(draft);
   return { draft, step: steps.includes(x.step) ? x.step : steps[0] };
 }
+
+// ---- step 6: the plan ------------------------------------------------------------------------------------------
+
+/** The reason the guide gives when it takes an item of the readiness check as it is. Fixed text, shown in the session log. */
+export const ACCEPT_REASON = "Taken as it is in the Get started guide.";
+
+/** The most actions one build makes before it stops (a guard against a loop that never ends). */
+export const MAX_BUILD_ACTIONS = 80;
+
+const TRANSIENT = /being stored/i;
+
+/** True while the architect works, or has finished and its answer is not stored yet. */
+export function architectBusy(session) {
+  const a = session?.architect;
+  if (!a) return false;
+  if (a.state === "queued" || a.state === "running") return true;
+  return a.state === "failed" && TRANSIENT.test(String(a.reason ?? ""));
+}
+
+/** True when the architect stopped without an answer: it failed, or it was paused. */
+export const architectStopped = (session) => {
+  const s = session?.architect?.state;
+  return (s === "failed" || s === "paused") && !architectBusy(session);
+};
+
+const liveDrafts = (session) => (Array.isArray(session?.drafts) ? session.drafts.filter((d) => d && d.state !== "split") : []);
+
+/**
+ * Where step 6 is: "none" (no session), "working", "stopped" (the architect failed or paused), "need-brief", "need-plan" or "plan".
+ * A session whose drafts are all published counts as "plan" too: the build is done.
+ */
+export function planPhase(session) {
+  if (!session || typeof session.id !== "string") return "none";
+  if (architectBusy(session)) return "working";
+  if (architectStopped(session)) return "stopped";
+  if (liveDrafts(session).length > 0) return "plan";
+  return session.brief ? "need-plan" : "need-brief";
+}
+
+/** The cards of the plan: plain titles and texts (never a number or a label), and whether each is on its way. */
+export function planItems(session, { title = (s) => String(s ?? ""), what = (s) => String(s ?? "") } = {}) {
+  return liveDrafts(session).map((d) => ({
+    id: d.id,
+    title: title(d.title?.text) || "A part of your project",
+    what: what(d.what?.text),
+    published: d.published !== undefined,
+  }));
+}
+
+const noPlanItems = (session) => new Set((Array.isArray(session?.readyList) ? session.readyList : []).filter((i) => i?.rule === "no-plan").map((i) => i.id));
+
+/**
+ * The next thing the build has to do, worked out from the session alone (so a build can stop and go on at any point):
+ * `wait`, `stopped`, `empty`, `done`, `check` (draft), `accept` (draft, item), `blocked` (draft, item) or `publish` (drafts).
+ */
+export function nextBuildAction(session) {
+  if (architectBusy(session)) return { type: "wait" };
+  if (architectStopped(session)) return { type: "stopped" };
+  const live = liveDrafts(session);
+  if (live.length === 0) return { type: "empty" };
+  const todo = live.filter((d) => d.published === undefined);
+  if (todo.length === 0) return { type: "done" };
+  const never = noPlanItems(session);
+  for (const d of todo) {
+    if (d.state === "ready") continue;
+    if (!d.readiness || d.readiness.stale) return { type: "check", draft: d.id };
+    const accepted = new Set((d.acceptedAnyway ?? []).map((x) => x.id));
+    const unmet = (d.readiness.items ?? []).filter((i) => i.result !== "met" && !accepted.has(i.id));
+    const stuck = unmet.find((i) => never.has(i.id));
+    if (stuck) return { type: "blocked", draft: d.id, item: stuck.id };
+    if (unmet.length) return { type: "accept", draft: d.id, item: unmet[0].id };
+    return { type: "check", draft: d.id };
+  }
+  return { type: "publish", drafts: todo.map((d) => d.id) };
+}
+
+/** The id of the watcher the guide adds: `guide-` and the first 8 characters of the project's id. */
+export const guideWatcherId = (repoId) => `guide-${String(repoId).slice(0, 8)}`;
+
+/** The watcher that builds the stories of a project: an enabled one for stories (issues). Rows are the answer of the watchers route. */
+export const issuesWatcherOf = (rows) => (Array.isArray(rows) ? rows : []).find((w) => w && w.source === "issues" && w.enabled !== false);

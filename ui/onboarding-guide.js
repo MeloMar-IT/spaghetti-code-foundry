@@ -3,6 +3,7 @@ import { confirmDialog, h, mount, toast } from "./dom.js";
 import { allGreen, canContinue, cleanAgentsDraft, clearGuideReturn, isId, knownStep, makeOutcome, markGuideReturn, nextStep, prevStep, progressFrom, requestOf, stepInfo, stepLabel, withAnswer } from "./onboarding-guide-model.js";
 import { renderOnboardingAgents } from "./onboarding-agents.js";
 import { aboutStep, makeStep, whereStep } from "./onboarding-project.js";
+import { growStep, planStep } from "./onboarding-plan.js";
 import { safeStore } from "./shell.js";
 import { chooseView } from "./view-mode.js";
 import { pageClipboard, setupRowNode, setupRows } from "./setup-check.js";
@@ -25,6 +26,7 @@ const text = (s) => (forbiddenIn(s).length ? "" : s);
 export async function renderOnboardingGuide(box, {
   a = api, admin = false, readOnly = false, credentialsHref = "#/credentials", clipboard = pageClipboard(), notify = toast, ask = confirmDialog,
   go = (hash) => { location.hash = hash; }, agents = renderOnboardingAgents, simple = false, store = safeStore(), choose = chooseView,
+  wait = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
   let gone = false;
   let epoch = 0; // changes with every step and every restart: an answer that arrives for an older one is dropped
@@ -56,6 +58,12 @@ export async function renderOnboardingGuide(box, {
       () => { if (live(mine) && status) setStatus(""); },
       () => { if (!gone) setStatus(GUIDE.notSaved); },
     );
+  };
+
+  // Saves the progress after the saves asked before it, and answers when it is stored. A failed save rejects: the caller decides what to do.
+  const persist = () => {
+    const body = requestOf(progress);
+    return enqueue(() => a.saveOnboardingProgress(body)).then(() => { if (!gone && status) setStatus(""); });
   };
 
   const drawNav = () => {
@@ -202,8 +210,8 @@ export async function renderOnboardingGuide(box, {
     const mine = ++epoch;
     const info = stepInfo(progress.step);
     mount(label, stepLabel(info.id));
-    const env = { a, admin: admin && !readOnly, box: stepBox, answers: () => progress.answers, setAnswer, saveNow: save, redrawNav: () => { if (live(mine)) drawNav(); }, live: () => live(mine), goTo, making: () => !!makePromise, make: makeProject, connectGithub };
-    const maker = { "step-3": makeStep, "step-4": aboutStep, "step-5": whereStep }[info.id];
+    const env = { a, admin: admin && !readOnly, box: stepBox, answers: () => progress.answers, setAnswer, saveNow: save, persist, redrawNav: () => { if (live(mine)) drawNav(); }, live: () => live(mine), goTo, go, ask, wait, making: () => !!makePromise, make: makeProject, connectGithub };
+    const maker = { "step-3": makeStep, "step-4": aboutStep, "step-5": whereStep, "step-6": planStep, "step-7": growStep }[info.id];
     if (maker) {
       current = maker(env);
       stopStep = () => current?.stop?.();

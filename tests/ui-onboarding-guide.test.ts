@@ -97,6 +97,10 @@ describe("the model", () => {
     expect(can({ admin: false })).toBe(true);
     expect(model.canContinue("welcome", {})).toBe(true);
     expect(model.canContinue("step-7", { admin: true })).toBe(false);
+    // step 6 holds an admin until the plan is built; someone who is not an admin can go on
+    expect(model.canContinue("step-6", { admin: true })).toBe(false);
+    expect(model.canContinue("step-6", { admin: true, answers: { plan: "built" } })).toBe(true);
+    expect(model.canContinue("step-6", { admin: false })).toBe(true);
   });
 
   it("reads and builds the saved progress", () => {
@@ -321,12 +325,13 @@ describe("the steps", () => {
     });
   });
 
-  it("walks the placeholders with Continue and Back; the last step has no Continue", async () => {
+  it("walks steps 6 and 7 with Continue and Back for someone who is not an admin; the last step has no Continue", async () => {
     const a = make({ onboardingProgress: vi.fn(async () => ({ step: "step-6", answers: {} })) });
-    const { box } = await draw(a);
-    expect(box.textContent).toContain("coming next");
+    const { box } = await draw(a, { admin: false });
+    expect(box.textContent).toContain(words.GUIDE.plan.askAdmin);
     await press(box, "guide-continue");
     expect(box.textContent).toContain("Step 7 of 7");
+    expect(box.textContent).toContain(words.GUIDE.grow.askAdmin);
     expect(button(box, "guide-continue")).toBeUndefined();
     expect(button(box, "guide-back")).toBeDefined();
     await press(box, "guide-back");
@@ -381,7 +386,7 @@ describe("saving", () => {
     const order: string[] = [];
     a.saveOnboardingProgress.mockImplementationOnce(async (p: any) => { order.push(`start ${p.step}`); await first.promise; order.push(`end ${p.step}`); });
     a.saveOnboardingProgress.mockImplementation(async (p: any) => { order.push(`start ${p.step}`); order.push(`end ${p.step}`); });
-    const { box } = await draw(a);
+    const { box } = await draw(a, { admin: false });
     await press(box, "guide-continue");
     await press(box, "guide-back");
     expect(order).toEqual(["start step-7"]);
@@ -396,7 +401,7 @@ describe("saving", () => {
     const order: string[] = [];
     a.saveOnboardingProgress.mockImplementation(async (p: any) => { order.push(`save ${p.step}`); await slow.promise; });
     a.clearOnboardingProgress.mockImplementation(async () => { order.push("clear"); });
-    const { box } = await draw(a);
+    const { box } = await draw(a, { admin: false });
     await press(box, "guide-continue");
     await press(box, "guide-again");
     expect(order).toEqual(["save step-7"]);
@@ -409,11 +414,11 @@ describe("saving", () => {
     const slow = deferred();
     const a = make({ onboardingProgress: vi.fn(async () => ({ step: "step-6", answers: {} })) });
     a.saveOnboardingProgress.mockImplementation(async () => { await slow.promise; });
-    const first = await draw(a);
+    const first = await draw(a, { admin: false });
     await press(first.box, "guide-continue");
     first.cleanup();
     const box = new FakeElement("div");
-    const reopened = ui.renderOnboardingGuide(box, { a, admin: true, agents: agentsStub(), go: vi.fn(), ask: vi.fn() });
+    const reopened = ui.renderOnboardingGuide(box, { a, admin: false, agents: agentsStub(), go: vi.fn(), ask: vi.fn() });
     await flush();
     expect(a.onboardingProgress).toHaveBeenCalledTimes(1); // only the first open has read so far
     slow.resolve();

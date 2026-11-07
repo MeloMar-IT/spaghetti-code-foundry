@@ -68,7 +68,7 @@ export const GUIDE_TEXT_LIMITS = { who: 200, what: 2000, style: 200, name: 100 }
  * Answers only the server sets: the made project (`repoId`), the token of a project being made (`making`) and the id of the
  * repository record being written (`creating`), so a restart can undo it. A PUT cannot change them.
  */
-export const SERVER_KEYS = ["repoId", "making", "creating"] as const;
+export const SERVER_KEYS = ["repoId", "making", "creating", "session"] as const;
 
 // Bumped on every Start again (clearProgress, deleteUser). A guide request takes the number when it arrives; one that runs after
 // a reset sees a different number and makes nothing. In memory: a restart drops the queued requests with it.
@@ -113,6 +113,8 @@ export function guideAnswersProblem(answers: Answers): string | null {
   }
   if ("where" in answers && answers.where !== "local" && answers.where !== "github") return "where must be local or github";
   for (const k of SERVER_KEYS) if (k in answers && !(typeof answers[k] === "string" && UUID_RE.test(answers[k]))) return `${k} must be an id`;
+  if ("build" in answers && typeof answers.build !== "boolean") return "build must be true or false";
+  if ("plan" in answers && answers.plan !== "built") return "plan must be built";
   return null;
 }
 
@@ -203,6 +205,7 @@ export function beginGuideProject(userId: string, exists: (repoId: string) => bo
     if (typeof old === "string" && exists(old)) return { existing: old };
     const answers: Answers = { ...((entry?.answers ?? {}) as Answers) };
     delete answers.repoId;
+    delete answers.session; // a new project gets a new plan
     delete answers.creating; // the caller has undone an interrupted record first; with no repository left there is nothing to undo
     const token = randomUUID();
     answers.making = token;
@@ -245,4 +248,41 @@ export function recordGuideProject(userId: string, token: string, repoId: string
     if (problem) throw new ProgressError(problem.code, problem.message);
     save({ ...file, users: { ...file.users, [userId]: { step: entry.step, answers, at: now.toISOString() } } });
   });
+}
+
+/**
+ * Records the id of the guide's refinement session as the answer `session`, under the lock. Only while the entry still names
+ * `repoId` as its project: otherwise `stale` (the guide was started again) and nothing is written. `gone`: no such account.
+ */
+export function recordGuideSession(userId: string, repoId: string, sessionId: string, now = new Date()): void {
+  withAuthLock(() => {
+    if (!getUser(userId)) throw new ProgressError("gone", "no such account");
+    const file = read();
+    const entry = file.users[userId];
+    if (!entry || entry.answers.repoId !== repoId) throw new ProgressError("stale", "the guide was started again");
+    const answers: Answers = { ...(entry.answers as Answers), session: sessionId };
+    const problem = answersProblem(answers);
+    if (problem) throw new ProgressError(problem.code, problem.message);
+    save({ ...file, users: { ...file.users, [userId]: { step: entry.step, answers, at: now.toISOString() } } });
+  });
+}
+
+const oneLine = (s: unknown) => (typeof s === "string" ? s.replace(/\s+/g, " ").trim() : "");
+
+/**
+ * The idea text and title of the guide's session, built from the saved answers. It is data for the architect, never part of a command.
+ * The title is the project name (or "My project"), at most 120 characters.
+ */
+export function guideIdea(answers: Answers, starterTitle?: string): { title: string; idea: string } {
+  const name = oneLine(answers.name);
+  const about = isPlain(answers.about) ? answers.about : {};
+  const who = oneLine(about.who);
+  const what = typeof about.what === "string" ? about.what.replace(/\r\n/g, "\n").trim() : "";
+  const style = oneLine(answers.style);
+  const kind = oneLine(starterTitle) || "project";
+  const lines = [`Make the first version of "${name || "My project"}", a new ${kind} made from a starter.`];
+  if (who) lines.push(`Who it is for: ${who}`);
+  lines.push("What it should do:", what);
+  if (style) lines.push(`Colours or style: ${style}`);
+  return { title: (name || "My project").slice(0, 120), idea: lines.join("\n") };
 }

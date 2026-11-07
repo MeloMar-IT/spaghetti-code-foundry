@@ -2,11 +2,14 @@ import { auditAction } from "../auth/audit.js";
 import { addRepo, getRepo, removeRepo, setRepoSettings } from "../auth/repos.js";
 import { StoreError } from "../auth/store.js";
 import type { User } from "../auth/users.js";
-import { ProgressError, beginGuideProject, guideGeneration, readProgress, recordCreatingLocked, recordGuideProject } from "../onboarding/progress-store.js";
+import { ProgressError, beginGuideProject, guideGeneration, guideIdea, readProgress, recordCreatingLocked, recordGuideProject, recordGuideSession } from "../onboarding/progress-store.js";
+import { localRepoName } from "../auth/local-name.js";
+import { createSession, dropSession, getSession, type Session } from "../refinement/store.js";
 import { connectLevel, forgetLevel } from "../governance/autonomy-store.js";
 import { type ListOptions, type Starter, StarterError, type StarterErrorCode, createProject, getStarter, listStarters } from "../starters/starters.js";
 import { HttpError, readJson, send } from "./http.js";
 import { guardedRepos, testRepo } from "./api-repos.js";
+import { findScopedProject, sessionInScope } from "./workspace-scope.js";
 import type { ApiContext, Route } from "./server.js";
 
 const STATUS: Record<StarterErrorCode, number> = { "bad-name": 400, "bad-folder": 400, "not-found": 404, broken: 409, exists: 409, failed: 500 };
@@ -177,6 +180,50 @@ async function makeProject(ctx: ApiContext, user: User, starterId: string, body:
     const { repo } = made.result;
     auditAction(ctx.diagLog, user.id, "repo-add", repo.id, repo.url);
     return made.result;
+  });
+}
+
+/**
+ * `POST /api/refinement` with `guide: true`: the refinement session of the guide's project, made once per account. The session id is
+ * kept in the guide answers (`session`), so a second tab or a return to the step finds the same session. The project must be the guide's
+ * own local project, the caller's and inside their workspaces. A session whose id could not be recorded is dropped again.
+ */
+export async function guideSession(ctx: ApiContext, user: User): Promise<{ session: Session; existing: boolean }> {
+  const generation = guideGeneration(user.id);
+  return oneAtATime(user.id, async () => {
+    if (guideGeneration(user.id) !== generation) throw new HttpError(409, "the guide was started again meanwhile; nothing was made");
+    const first = new HttpError(409, "make the project of the guide first");
+    const actor = { id: user.id, admin: user.role === "admin" };
+    let created: Session | undefined;
+    try {
+      const answers = readProgress(user.id)?.answers ?? {};
+      const repoId = answers.repoId;
+      const rec = typeof repoId === "string" ? getRepo(repoId) : undefined;
+      if (!rec || rec.owner !== user.id || rec.method !== "local") throw first;
+      const name = localRepoName(rec);
+      if (!findScopedProject(user, name)) throw first;
+      const known = typeof answers.session === "string" ? getSession(answers.session) : undefined;
+      if (known && known.owner === user.id && known.repo === name && known.state !== "dropped" && sessionInScope(user, known)) return { session: known, existing: true };
+      let starterTitle: string | undefined;
+      try {
+        starterTitle = typeof answers.starter === "string" ? getStarter(answers.starter, listOptions(ctx, {})).title : undefined;
+      } catch {
+        starterTitle = undefined; // the starter is only a word in the idea
+      }
+      const made = createSession(user.id, { repo: name, ...guideIdea(answers, starterTitle) });
+      created = made;
+      recordGuideSession(user.id, repoId as string, made.id);
+      return { session: made, existing: false };
+    } catch (e) {
+      if (created) {
+        try {
+          dropSession(actor, created.id);
+        } catch {
+          ctx.diagLog?.("starters: the guide's session could not be dropped");
+        }
+      }
+      throw guideHttp(ctx, e);
+    }
   });
 }
 
