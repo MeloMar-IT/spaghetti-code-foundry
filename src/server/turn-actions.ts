@@ -1,11 +1,14 @@
 import { auditAction, type EventAction } from "../auth/audit.js";
 import type { User } from "../auth/users.js";
 import { canWrite, commentsAfter, ghActsAsApp, ghLogin, isBot, mayWrite, repoPermission, withGhEnv } from "../github.js";
-import { storeFor } from "../stories/store.js";
+import { createHash } from "node:crypto";
+import { isLocalRepoName, isStoryRepoName, storeFor } from "../stories/store.js";
+import { StoryCommitError } from "../stories/local-store.js";
+import type { NextStep } from "../next-step.js";
 import { labelNames } from "../queue/watcher.js";
-import { gateRun } from "../run-gate.js";
+import { CLOSED_MESSAGE, gateRun } from "../run-gate.js";
 import { commentDigest, composeComment, findComment, parseProposal, parseQuestions, visibleText, type ComposeAction, type Proposal, type Question } from "../turn-actions.js";
-import type { TurnAct, YourTurn } from "../your-turn.js";
+import type { TurnAct, TurnItem } from "../your-turn.js";
 import { HttpError, readJson, send, str } from "./http.js";
 import type { ApiContext, Route } from "./server.js";
 import { markActed, turnFor, wasActed, yourTurn } from "./your-turn.js";
@@ -16,7 +19,6 @@ const GH_TIMEOUT_MS = 15_000;
 const KICK_MS = 1000;
 /** GitHub's comment limit is 65 536 characters; the text also travels in a command line. */
 const MAX_TEXT = 60_000;
-const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 const ACTIONS: readonly TurnAct[] = ["defaults", "answer", "approve", "reject", "retry", "retry_hint"];
 const AUDIT_ACTION: Record<TurnAct, EventAction> = {
   defaults: "turn-answer",
@@ -54,15 +56,46 @@ interface Guards { busy: Set<string>; hinted: Map<string, { since: string; at: s
 const guards = new WeakMap<ApiContext, Guards>();
 const guardsOf = (ctx: ApiContext) => guards.get(ctx) ?? guards.set(ctx, { busy: new Set(), hinted: new Map() }).get(ctx)!;
 
-function findItem(ctx: ApiContext, key: string, now: Date) {
-  const item = turnFor(ctx, now).all.find((i) => i.key === key);
-  if (!item) throw new HttpError(404, "no such item");
+/** One entry of `GET your-turn/mine`: no repository name, no comment text. */
+export interface MineItem { key: string; kind: NextStep["kind"]; runId?: string; acts: TurnAct[] }
+
+/** A key that hides the repository name (the raw key holds it). Not a secret: every use is authorized. */
+export const opaqueKey = (key: string) => "m-" + createHash("sha256").update(key).digest("hex").slice(0, 24);
+
+/**
+ * May this person read and act on the item? An admin: always. A user: only on an item of a stored watcher they own;
+ * on GitHub not when the watcher uses the server's own login.
+ */
+export function mayActOn(ctx: ApiContext, item: Pick<TurnItem, "watcher">, user: Pick<User, "id">, admin: boolean): boolean {
+  if (admin) return true;
+  const cfg = ctx.watchers.tracked().find((t) => t.watcher.id === item.watcher)?.watcher;
+  if (!cfg || cfg.repoId === undefined || !cfg.ownerId || cfg.ownerId !== user.id) return false;
+  if (isLocalRepoName(cfg.github_repo)) return true;
+  try {
+    const id = ctx.watchers.identityOf(cfg);
+    return !!id && !id.usesHostLogin();
+  } catch {
+    return false;
+  }
+}
+
+function findItem(ctx: ApiContext, key: string, user: Pick<User, "id">, admin: boolean, now: Date) {
+  const item = turnFor(ctx, now).all.find((i) => i.key === key || opaqueKey(i.key) === key);
+  if (!item || !mayActOn(ctx, item, user, admin)) throw new HttpError(404, "no such item");
   return item;
+}
+
+/** The items this person may act on, with opaque keys. */
+export function turnMine(ctx: ApiContext, user: Pick<User, "id">, admin: boolean, now = new Date()): { items: MineItem[] } {
+  const items = turnFor(ctx, now).all
+    .filter((i) => i.acts.length > 0 && !wasActed(ctx, i.key, i.stamp, now) && mayActOn(ctx, i, user, admin))
+    .map((i): MineItem => ({ key: opaqueKey(i.key), kind: i.next.kind, ...(i.next.runId ? { runId: i.next.runId } : {}), acts: i.acts }));
+  return { items };
 }
 
 function target(item: { next: { repo: string; issue?: number } }) {
   const { repo, issue } = item.next;
-  if (issue === undefined || !REPO_RE.test(repo)) throw new HttpError(409, "this item has no issue to act on");
+  if (issue === undefined || !isStoryRepoName(repo)) throw new HttpError(409, "this item has no issue to act on");
   return { repo, issue };
 }
 
@@ -75,6 +108,7 @@ const unreachable = (what: string, e: unknown) => new HttpError(502, `${what}: $
 async function asRepo<T>(ctx: ApiContext, watcherId: string | undefined, fn: () => Promise<T>): Promise<T> {
   const cfg = ctx.watchers.tracked().find((t) => t.watcher.id === watcherId)?.watcher;
   if (!cfg) throw new HttpError(409, "the watcher no longer waits for this — look again in a moment");
+  if (isLocalRepoName(cfg.github_repo)) return fn();
   let session;
   try {
     session = await ctx.watchers.identityOf(cfg)?.prepare();
@@ -87,6 +121,17 @@ async function asRepo<T>(ctx: ApiContext, watcherId: string | undefined, fn: () 
 /** Reads the issue and finds the Foundry's comment. Only comments by the account the Foundry posts as count: the marker alone can be copied by anyone. */
 async function foundryComment(repo: string, issue: number, kind: string, runId?: string) {
   let comments;
+  if (isLocalRepoName(repo)) {
+    let list;
+    try {
+      list = await storeFor(repo).comments(issue, GH_TIMEOUT_MS);
+    } catch (e) {
+      throw unreachable("could not read the story", e);
+    }
+    const c = findComment(list.filter((x) => x.viewerDidAuthor === true), kind, runId, undefined);
+    if (!c) throw new HttpError(409, "the Foundry's comment was not found on the story");
+    return { c, list };
+  }
   try {
     if (ghActsAsApp()) {
       // An app has no user to ask for: gh says which comments the app wrote itself.
@@ -106,8 +151,8 @@ async function foundryComment(repo: string, issue: number, kind: string, runId?:
 }
 
 /** The questions, plan or split of an item, read from its comment on the issue. */
-export async function turnDetail(ctx: ApiContext, key: string, now = new Date()): Promise<TurnDetail> {
-  const item = findItem(ctx, key, now);
+export async function turnDetail(ctx: ApiContext, user: Pick<User, "id">, admin: boolean, key: string, now = new Date()): Promise<TurnDetail> {
+  const item = findItem(ctx, key, user, admin, now);
   if (!item.acts.length) throw new HttpError(409, "there is nothing to show for this item here");
   const base = { stamp: item.stamp, acts: item.acts, kind: item.next.kind };
   if (item.next.kind === "failed") return { ...base, text: item.next.text };
@@ -149,14 +194,15 @@ export function readAct(body: Record<string, unknown>): ActRequest {
 }
 
 /** Posts what the user decided as a normal comment on the issue (or removes the failed label); returns nothing: the page reloads. */
-export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, req: ActRequest, now = new Date()): Promise<void> {
-  const item = findItem(ctx, req.key, now);
+export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, admin: boolean, req: ActRequest, now = new Date()): Promise<void> {
+  const item = findItem(ctx, req.key, user, admin, now);
   if (!item.acts.includes(req.action)) throw new HttpError(409, "that is not possible for this item");
   if (wasActed(ctx, item.key, item.stamp, now)) throw new HttpError(409, "this is done already — it is continuing");
   if (req.stamp !== undefined && req.stamp !== item.stamp) throw new HttpError(409, "this item changed meanwhile — look at it again");
   const name = (user.name ?? "").replace(/\s+/g, " ").trim() || "a Foundry user";
   if (isBot({ body: name })) throw new HttpError(400, "the account name holds a Foundry marker");
   const { repo, issue } = target(item);
+  const local = isLocalRepoName(repo);
   const tracked = ctx.watchers.tracked().find((t) => t.watcher.id === item.watcher);
   const hold = tracked?.status.holds?.find((h) => h.issue === issue && h.next.kind === item.next.kind && (h.next.runId ?? "") === (item.next.runId ?? ""));
   if (!tracked || !hold) throw new HttpError(409, "the watcher no longer waits for this — look again in a moment");
@@ -168,6 +214,14 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
   const g = guardsOf(ctx);
   if (g.busy.has(item.key)) throw new HttpError(409, "this is already being done — look again in a moment");
   g.busy.add(item.key);
+  /** The action is applied: "Done — continuing", the log and audit lines, and the watcher's check. */
+  const finish = () => {
+    markActed(ctx, item.key, item.stamp, now);
+    g.hinted.delete(item.key);
+    ctx.opts.log?.(`your turn: ${req.action} ${repo}#${issue} by account ${user.id}`);
+    auditAction(ctx.diagLog, user.id, AUDIT_ACTION[req.action], `${repo}#${issue}`);
+    ctx.watchers.kickRepo(repo, KICK_MS);
+  };
   try {
     // A closed issue is not retried: nothing is posted or labelled (see run-gate.ts).
     if (req.action === "retry" || req.action === "retry_hint") {
@@ -175,28 +229,40 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
       const found = runId ? ctx.scheduler.get(runId) : undefined;
       const vars = { ...found?.vars, github_repo: repo, issue: String(issue) };
       const run = { flow: "", source: undefined, owner: undefined, ...found, vars };
+      if (local) {
+        let st;
+        try {
+          st = await storeFor(repo).state(issue, { timeoutMs: GH_TIMEOUT_MS });
+        } catch (e) {
+          throw unreachable("could not read the story", e);
+        }
+        if (st === "closed") throw new HttpError(409, CLOSED_MESSAGE);
+      }
       const gate = await gateRun(run, ctx.config(), { timeoutMs: GH_TIMEOUT_MS });
       if (!gate.ok) throw new HttpError(409, gate.message);
     }
     // Everything that talks to GitHub runs as the watcher's repository (its token or app), like the watcher's own check.
     await asRepo(ctx, item.watcher, async () => {
-      const app = ghActsAsApp();
+      const app = !local && ghActsAsApp();
       // Someone may have answered or decided on GitHub since the watcher's last check: then the watcher takes that, not this.
       if (req.action !== "retry" && req.action !== "retry_hint") {
         const { c, list } = await foundryComment(repo, issue, item.next.kind, item.next.runId);
         const approval = item.next.kind === "approve_plan" || item.next.kind === "approve_split" || item.next.kind === "approval";
         if (req.digest !== commentDigest(c)) throw new HttpError(409, "the comment on the issue changed since you opened it — look at it again");
         let later = commentsAfter(list, (x) => x === c);
-        if (approval) {
+        if (approval && !local) {
           // Like the watcher: a /approve or /reject only counts from someone with write access (the app's own comment: gh says it is its own).
           later = later.filter((x) => /^\s*\/(approve|reject)\b/im.test(x.body));
           const ok: typeof later = [];
           for (const x of later) if ((app && x.viewerDidAuthor === true) || (await canWrite(repo, x.author.login))) ok.push(x);
           later = ok;
+        } else if (approval) {
+          // On this machine its owner has write access: every later /approve or /reject counts.
+          later = later.filter((x) => /^\s*\/(approve|reject)\b/im.test(x.body));
         }
-        if (later.length) throw new HttpError(409, `${approval ? "this was decided" : "this was answered"} on GitHub already — look again in a moment`);
+        if (later.length) throw new HttpError(409, `${approval ? "this was decided" : "this was answered"} ${local ? "on the story" : "on GitHub"} already — look again in a moment`);
       }
-      if ((req.action === "approve" || req.action === "reject") && !app) {
+      if ((req.action === "approve" || req.action === "reject") && !app && !local) {
         let login: string;
         try {
           login = await ghLogin(GH_TIMEOUT_MS);
@@ -218,7 +284,18 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
         try {
           await storeFor(repo).comment(issue, body, GH_TIMEOUT_MS);
         } catch (e) {
-          throw unreachable("could not post on the issue", e);
+          if (local && e instanceof StoryCommitError) {
+            // The comment is saved on the story (the watcher reads the file), so the action counts as done: the audit line,
+            // "Done — continuing" and the kick are recorded, and a repeat is refused as done. Only a retry_hint stays open:
+            // its hint is remembered and the failed label is still to be removed.
+            if (req.action === "retry_hint") {
+              g.hinted.set(item.key, { since: item.stamp, at: now.toISOString() });
+              throw new HttpError(502, "saved on the story, but the change could not be committed — press Retry again; the hint is not posted twice");
+            }
+            finish();
+            throw new HttpError(502, "saved on the story, but the change could not be committed; the watcher takes it from the story");
+          }
+          throw unreachable(local ? "could not post on the story" : "could not post on the issue", e);
         }
         if (req.action === "retry_hint") g.hinted.set(item.key, { since: item.stamp, at: now.toISOString() });
       }
@@ -233,11 +310,7 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
         }
       }
     });
-    markActed(ctx, item.key, item.stamp, now);
-    g.hinted.delete(item.key);
-    ctx.opts.log?.(`your turn: ${req.action} ${repo}#${issue} by account ${user.id}`);
-    auditAction(ctx.diagLog, user.id, AUDIT_ACTION[req.action], `${repo}#${issue}`);
-    ctx.watchers.kickRepo(repo, KICK_MS);
+    finish();
   } finally {
     g.busy.delete(item.key);
   }
@@ -245,15 +318,16 @@ export async function turnAct(ctx: ApiContext, user: Pick<User, "id" | "name">, 
 
 export const turnActionRoutes: Route = async (ctx, req, res, seg, method, user) => {
   if (seg[0] !== "your-turn") return false;
+  const admin = user.role === "admin";
   if (seg[1] === "detail" && !seg[2] && method === "GET") {
     const key = new URL(req.url ?? "/", "http://x").searchParams.get("key");
     if (!key) throw new HttpError(400, `"key" is required`);
-    return send(res, 200, await turnDetail(ctx, key)), true;
+    return send(res, 200, await turnDetail(ctx, user, admin, key)), true;
   }
   if (seg[1] === "act" && !seg[2] && method === "POST") {
-    await turnAct(ctx, user, readAct(await readJson(req)));
-    const data: YourTurn = yourTurn(ctx);
-    return send(res, 200, data), true;
+    await turnAct(ctx, user, admin, readAct(await readJson(req)));
+    return send(res, 200, admin ? yourTurn(ctx) : turnMine(ctx, user, false)), true;
   }
+  if (seg[1] === "mine" && !seg[2] && method === "GET") return send(res, 200, turnMine(ctx, user, admin)), true;
   return false;
 };
