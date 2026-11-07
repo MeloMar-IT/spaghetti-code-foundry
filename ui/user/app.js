@@ -104,7 +104,7 @@ async function route() {
       });
     } else if (page.section === "start-guide") {
       guideOffered = true;
-      done = await renderOnboardingGuide(box, { admin: ownAdmin, readOnly, credentialsHref: "/#/credentials" });
+      done = await renderOnboardingGuide(box, { admin: ownAdmin, readOnly, simple, credentialsHref: "/#/credentials" });
     }
     else if (simple && page.section === "repos") done = await renderSimpleProject(box, { id: page.id, admin: ownAdmin, onName: (n) => { if (mine === generation) namePage(n); } });
     else if (page.section === "help") done = await renderSimpleHelp(box);
