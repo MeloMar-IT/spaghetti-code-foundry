@@ -12,7 +12,7 @@ import { disposeWorkspaces, supplyWorkspaces } from "../src/workspaces/list.js";
 import { RULES, authorizePlugin, checkReleaseRef, findPluginRule, findRule, isReleaseBuildFlow, permissionTable, ruleKey } from "../src/server/permissions.js";
 import { fakeKeychain, type FakeKeychain } from "./helpers/keychain.js";
 import { startTestServer } from "./helpers/port.js";
-import { signInAs, type TestSession } from "./helpers/session.js";
+import { TEST_PASSWORD, signInAs, type TestSession } from "./helpers/session.js";
 
 let base: string;
 let tmp: string;
@@ -797,6 +797,32 @@ describe("a role change", () => {
     expect((await call(dana, "GET", "/api/runs")).status).toBe(200);
     expect(await userCommand({ positionals: ["role", "dana@example.com", "admin"], values: {} }, io)).toBe(0);
     expect((await call(dana, "GET", "/api/config")).status).toBe(200);
+  });
+});
+
+describe("an invited Simple account (#823)", () => {
+  it("is made by an admin, sets its password with the link, and asks its admin for a project", async () => {
+    const before = (await call(admin, "GET", "/api/users")).json().length;
+    for (const view of ["boss", "admin"]) {
+      expect((await call(admin, "POST", "/api/users", { name: "Ivy", email: "ivy@example.com", role: "user", view })).status).toBe(400);
+    }
+    expect((await call(admin, "GET", "/api/users")).json()).toHaveLength(before);
+    const made = await call(admin, "POST", "/api/users", { name: "Ivy", email: "ivy@example.com", role: "user", view: "simple" });
+    expect(made.status).toBe(201);
+    expect(made.json().user.view).toBe("simple");
+    const set = await fetch(`${base}/api/set-password`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: made.json().token, password: TEST_PASSWORD }),
+    });
+    expect(set.status).toBe(200);
+    expect(await set.json()).toEqual({ ok: true, guide: true });
+    const ivy = await signInAs(base, { email: "ivy@example.com", create: false });
+    expect((await call(ivy, "GET", "/api/starters")).status).toBe(403);
+    expect((await call(ivy, "POST", "/api/starters/website/project", { name: "Site" })).status).toBe(403);
+    const progress = await call(ivy, "GET", "/api/onboarding/progress");
+    expect(progress.status).toBe(200);
+    expect(progress.json().step).toBeNull();
   });
 });
 

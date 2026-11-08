@@ -251,7 +251,8 @@ async function setPasswordWithLink(ctx: ApiContext, req: IncomingMessage, res: S
     if (!user) throw new HttpError(400, DEAD_LINK);
     clientTry.giveBack();
     accounts.clear(user.email); // the wrong tries before the first password must not lock out the first sign-in
-    send(res, 200, { ok: true });
+    // an invited Simple account that has never signed in: the sign-in page then opens the Get started guide
+    send(res, 200, { ok: true, ...(viewOf(user) === "simple" && user.lastSignIn === null ? { guide: true } : {}) });
   });
 }
 

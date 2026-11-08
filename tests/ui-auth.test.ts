@@ -448,6 +448,37 @@ describe("ensureSignedIn on the fake DOM", () => {
       expect(a.signIn).toHaveBeenCalledExactlyOnceWith("ann@example.com", GOOD);
     });
 
+    it("after an answer with guide: true writes #/start-guide instead of clearing the address", async () => {
+      const { a, page } = await open({ setPassword: vi.fn(async () => ({ ok: true, guide: true })) });
+      const setHash = vi.fn();
+      Object.assign(page, { setHash });
+      fill([GOOD, GOOD]);
+      submit();
+      await vi.waitFor(() => expect(form().all("h2")[0]!.textContent).toBe("Sign in"));
+      expect(a.setPassword).toHaveBeenCalledTimes(1);
+      expect(setHash).toHaveBeenCalledExactlyOnceWith("#/start-guide");
+      expect(page.clearHash).not.toHaveBeenCalled();
+      expect(form().all("p").some((p) => p.textContent.includes("start the guide"))).toBe(true);
+    });
+
+    it("clears the address when the answer has no guide flag", async () => {
+      const { page } = await open({ setPassword: vi.fn(async () => ({ ok: true })) });
+      const setHash = vi.fn();
+      Object.assign(page, { setHash });
+      fill([GOOD, GOOD]);
+      submit();
+      await vi.waitFor(() => expect(form().all("h2")[0]!.textContent).toBe("Sign in"));
+      expect(setHash).not.toHaveBeenCalled();
+      expect(page.clearHash).toHaveBeenCalledTimes(1);
+    });
+
+    it("clears the address when the page cannot set a hash", async () => {
+      const { page } = await open({ setPassword: vi.fn(async () => ({ ok: true, guide: true })) });
+      fill([GOOD, GOOD]);
+      submit();
+      await vi.waitFor(() => expect(page.clearHash).toHaveBeenCalledTimes(1));
+    });
+
     it("on a failed call shows the text, enables the button and keeps the address", async () => {
       const { page } = await open({ setPassword: vi.fn(async () => { throw new Error("this link is not valid any more; ask your admin for a new one"); }) });
       fill([GOOD, GOOD]);

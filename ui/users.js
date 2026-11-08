@@ -63,7 +63,10 @@ export function userProblem({ name, email }) {
 }
 
 /** The body for a new account: trimmed; an unknown role becomes user. */
-export const newUserBody = ({ name, email, role }) => ({ name: text(name), email: text(email), role: role === "admin" ? "admin" : "user" });
+export const newUserBody = ({ name, email, role, simple }) =>
+  simple === true
+    ? { name: text(name), email: text(email), role: "user", view: "simple" }
+    : { name: text(name), email: text(email), role: role === "admin" ? "admin" : "user" };
 
 /** Only the fields that differ from the account; {} when nothing changed. An e-mail that differs only in case is not a change. */
 export function userChanges(u, { name, email, role }) {
@@ -183,13 +186,19 @@ const showLink = (user, page, lateText) => (answer, { close, closed, mountIn }) 
 
 const addDialog = (_u, { page }) => {
   const form = userForm();
+  const box = h("input", { type: "checkbox", name: "simple" });
+  box.addEventListener("change", () => {
+    if (box.checked) form.fields.role.value = "user";
+    form.fields.role.disabled = box.checked;
+  });
+  const read = () => ({ ...form.read(), simple: box.checked });
   return callDialog({
     title: "Add user",
-    body: form.nodes,
+    body: [...form.nodes, h("label", { class: "field" }, box, h("span", {}, "Simple account — for someone who is not an engineer: the Simple view, and the guide opens after the first password"))],
     fields: form.fields,
     fieldOf: form.fieldOf,
     label: "Add user",
-    prepare: () => userProblem(form.read()) || (() => api.addUser(newUserBody(form.read()))),
+    prepare: () => userProblem(read()) || (() => api.addUser(newUserBody(read()))),
     done: showLink(null, page, "The link was not shown. Use New link on the account to make one."),
   });
 };
