@@ -5440,6 +5440,14 @@ Change a role with `scf user role <e-mail> admin|user`, or create an admin with
 | `DELETE /api/admin/view-as` | yes | no | end the view of a user's display |
 | `GET /api/admin/credentials` | yes | no | the stored credentials of all accounts, without any secret |
 | `GET /api/admin/components` | yes | no | the kind, id, version, owner, risk, lifecycle, approved version, last review, evaluation suite and status of each component, and the read problems as fixed text; no paths |
+| `GET /api/changes` | yes | yes | your change requests on one repository (`repo` is required): each has a plain `state` (`thinking`, `questions`, `cards`, `planned` or `stuck`), no costs, models, run ids or labels; only your own |
+| `POST /api/changes` | yes | yes | ask for a change in plain words, `{ repo, text }` (text at most 10,000 characters; 403 `not-yours` for a project that is not yours); the architect then reads the code, asks its questions and writes the cards by itself (202, `thinking`) |
+| `GET /api/changes/:id` | yes | yes | one change request of yours, in its plain state: the open `questions` with their options, or the `cards` (title, what was understood, criteria in plain words); only the owner (an admin who is not the owner: 403) |
+| `POST /api/changes/:id/answers` | yes | yes | answer every open question of a change request at once, `{ answers: [{ question, option | text | unknown }] }`; the cards are then written (202); only the owner |
+| `PUT /api/changes/:id/cards/:did` | yes | yes | change the title and/or the criteria of a card of a change request; a card that is published is refused (409); only the owner |
+| `POST /api/changes/:id/build` | yes | yes | "Yes, build this": publishes every card and adds the build label (`Factory_go` on GitHub, state `go` locally); a repeat or a retry adds it once to each card; only the owner |
+| `POST /api/changes/:id/later` | yes | yes | "Not now": publishes every card without the build label; a later `build` adds it; only the owner |
+| `POST /api/changes/:id/retry` | yes | yes | starts the architect's step again after a change request is `stuck` (409 when it is not); only the owner |
 | `GET /api/refinement` | yes | yes | your refinement sessions and the repositories a new one can use: your GitHub names, then your local projects (`local:<slug>-<id8>`) (an admin: the sessions of all accounts, with the owner) |
 | `POST /api/refinement` | yes | yes | start a refinement session on one of your GitHub repositories or local projects, from an idea; from an open issue only on a GitHub repository (read with the repository's sign-in; 409 when the Foundry is building or has built the issue, or you have an open session for it; 400 `bad-repo` for a local name with an issue; 403 `not-yours` for a local project that is not yours; 400 `bad-repo` for a malformed name); with `guide: true` (and nothing else) the session of the Get started guide on the guide's local project, made once from the saved answers (201, then 200 with the same session; 409 without a project of the guide or outside your workspaces) |
 | `GET /api/refinement/backlog` | yes | yes | the open issues of one of your GitHub repositories (`?repo=owner/name`) that the Foundry is not building and has not built, newest first, each with four checks done by code: acceptance criteria, value sentence, "Depends on" issues exist, no open questions; read with the repository's sign-in; GitHub's newest 100 issues and pull requests are read, and `cut` says when that page was full so older open issues may be missing; no architect run starts and nothing is written (an admin who is not the owner: 403) |
@@ -8770,6 +8778,24 @@ When the task has the part "The person's own way", the first way works out that 
 - **Definition of Ready per repository.** Open the repository (Repositories → **All** → **Open**) and press **Edit Definition of Ready** in the section Run settings. Change, add, remove and reorder the items, or press **Back to the default**. A draft checked before the change shows "the Definition of Ready changed" and needs a new check. See chapter 7 for the limits and the API.
 - **The architect's model.** The architect steps use `claude-opus-5-5`. Change it with a routing rule on the Models page for each flow: `refine-brief`, `refine-round` and the other `refine-…` flows. These flows cannot be deleted. Every architect run is capped in cost and time (for example $3 and 30 minutes for a round).
 - **Where the cost is reported.** Architect runs are normal runs, marked **refinement**. They are in the Runs list (click the mark to open the session), in the dashboard and in the costs, and they count for the owner's daily budget and for "at the same time", but not for "runs per day". A user does not see amounts; an admin does. They are not on the board and not in notifications.
+
+### Ask for a change (API)
+
+One change request carries your words from the first question to the finished stories. Start it with `POST /api/changes` and `{ "repo": "owner/name", "text": "…" }` (text at most 10,000 characters). The architect then runs by itself: it reads the project, asks a round of questions in plain words, and writes the cards. A round without questions goes straight to the cards.
+
+Read the request with `GET /api/changes/:id` (or `GET /api/changes?repo=…` for the list). The `state` tells you what to do next:
+
+- `thinking`: the architect is working. Ask again later.
+- `questions`: answer every question of the round at once with `POST /api/changes/:id/answers`. Each question has its options and a recommended one.
+- `cards`: the drafts, each with a title, the sentence "This is what I understood" and its criteria. Change a card with `PUT /api/changes/:id/cards/:did`.
+- `planned`: the cards are published. Nothing more to do here.
+- `stuck`: the architect could not finish. `POST /api/changes/:id/retry` starts the step again.
+
+Then choose once:
+
+- **Yes, build this** (`POST /api/changes/:id/build`) publishes every card with the build label: `Factory_go` on GitHub, state `go` on a local project.- **Not now** (`POST /api/changes/:id/later`) publishes every card without the build label. The request is then `planned`. A later call to `build` adds the label to its stories.
+
+Both choices publish every card that has a title and is not a split original. They do not check the Definition of Ready; the build's own plan step still checks each story. Only the owner of the request can act on it.
 
 ---
 

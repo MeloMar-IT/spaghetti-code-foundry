@@ -83,7 +83,8 @@ export interface StoryStore {
   /** Local stores only: commit a created story (and the number file) that was saved but whose commit failed. `guard` runs under the lock, before any write. */
   commitCreated?(issue: number, timeoutMs?: number, guard?: () => void): Promise<void>;
   edit(issue: number, o: { title?: string; body: string }, timeoutMs?: number): Promise<RestIssue>;
-  setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number): Promise<void>;
+  /** `guard` (local stores only) runs under the story lock, right before the write; it throws to stop it. */
+  setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number, guard?: () => void): Promise<void>;
   ensureLabel(name: string, color: string, description: string): Promise<void>;
   createLabelIfMissing(name: string, color: string, description: string, timeoutMs?: number): Promise<void>;
   labels(timeoutMs?: number): Promise<string[]>;

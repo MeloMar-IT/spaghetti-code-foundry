@@ -16,6 +16,7 @@
 // For "What is asked of you now: split" it answers two ways (`step` and `rule`) built from the lines `- C<n>: ` of the acceptance criteria of the talk.
 // For "What is asked of you now: understand" it answers one story draft whose summary starts with "This is what I understood: ".
 // For a round whose prompt has the line "The words: simple" it asks one plain question ("Who will use this change?").
+// FAKE_UNDERSTAND replaces only the answer of "understand", FAKE_SIMPLE_ROUND only the answer of a round with "The words: simple"; both win over FAKE_ROUND.
 // For "What is asked of you now: impact" it answers a small draft: the README area, and (as `found`) an overlap with the first issue of issues.md.
 // "REQUEST <json>" appends the line to $FACTORY_REPO_REQUESTS (a repository request for the broker; nothing when the variable is unset).
 // Probes for the OS sandbox tests: "READ <path>", "CHILD READ <path>", "CHILD WRITE <path> <text>" (see the lines above).
@@ -272,7 +273,9 @@ if (prompt.includes("You are Ask SCF, the help assistant")) {
         proposals: [{ list: "example", text: found }],
         done: "",
       };
-  const r = process.env.FAKE_ROUND;
+  const isUnderstand = prompt.includes("What is asked of you now: understand");
+  const isSimple = !isUnderstand && /^The words: simple$/m.test(prompt);
+  const r = (isUnderstand ? process.env.FAKE_UNDERSTAND : undefined) ?? (isSimple ? process.env.FAKE_SIMPLE_ROUND : undefined) ?? process.env.FAKE_ROUND;
   canned = r === "ECHO" ? JSON.stringify({ ...round, echo: `args=${args.join(" ")}\ncwd=${process.cwd()}\ngh_token=${ghSeen}\nPROMPT<<${prompt}>>` }) : r ?? JSON.stringify(round);
 } else if (prompt.includes("You write one skill for a skill library")) {
   // skill-write: copies the skill folder FAKE_SKILL_SRC to skills/<FAKE_SKILL_NAME>/ (default demo-skill). FAKE_SKILL_BAD_ONCE (a marker path outside the folder):

@@ -290,8 +290,8 @@ export class LocalStore implements StoryStore {
     const r = await this.write(issue, "edited", { timeoutMs }, (s) => ({ story: { ...s, title: o.title ?? s.title, body: o.body }, out: undefined }));
     return toRest(r.entry);
   }
-  async setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number): Promise<void> {
-    await this.write(issue, "labels", { timeoutMs }, (s) => ({ story: withLabels(s, add, remove), out: undefined }));
+  async setLabels(issue: number, add: string | undefined, remove: string[], timeoutMs?: number, guard?: () => void): Promise<void> {
+    await this.write(issue, "labels", { timeoutMs }, (s) => { guard?.(); return { story: withLabels(s, add, remove), out: undefined }; });
   }
   async comment(issue: number, body: string, timeoutMs?: number): Promise<string | undefined> {
     const r = await this.write(issue, "comment", { timeoutMs }, (s, now) => this.addComment(s, now, body));

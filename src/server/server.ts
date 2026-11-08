@@ -61,6 +61,8 @@ import { getUser } from "../auth/users.js";
 import { moveConfigWatchers } from "../repos/migrate-watchers.js";
 import { isRefinementRun } from "../auth/run-owner.js";
 import { settleFinished } from "../refinement/architect.js";
+import { advanceChange } from "../refinement/change-request.js";
+import { changeRoutes } from "./api-changes.js";
 import { REFINEMENT_SWEEP_MS, refinementRoutes, refinementSweeper } from "./api-refinement.js";
 import { startProjectBudgetSweep } from "./project-budget-sweep.js";
 import { refinementBacklogRoutes } from "./api-refinement-backlog.js";
@@ -155,7 +157,7 @@ export interface ApiContext {
 /** A route handler: returns true when it handled the request. */
 export type Route = (ctx: ApiContext, req: IncomingMessage, res: ServerResponse, seg: string[], method: string, user: User) => Promise<boolean>;
 
-const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
+const ROUTES: Route[] = [passwordRoutes, meRoutes, monitorRoutes, credentialRoutes, repoRoutes, epicRoutes, refinementBacklogRoutes, refinementPublishRoutes, refinementRoutes, changeRoutes, helpRoutes, userRoutes, auditRoutes, skillRoutes, adminRoutes, outcomeRoutes, autonomyRoutes, flowRoutes, promotionRoutes, runRoutes, nextRoutes, yourTurnRoutes, turnActionRoutes, sinceRoutes, boardRoutes, searchRoutes, healthRoutes, clarityRoutes, viewAsRoutes, restartRoutes, busyRoutes, governorRoutes, onboardingRoutes, starterRoutes];
 
 type StartedServer = { url: string; port: number; close: () => void; ctx: ApiContext; notifier?: TurnNotifier };
 
@@ -261,7 +263,12 @@ async function start(given: ServerOptions, loaded: { plugins?: PluginRegistry })
       // A run that stopped for a missing skill may be the reason for a skill gap issue.
       if (s.status === "stopped" && s.skillPlan?.action === "stop") gapSweep?.kick();
       // The architect's read for a refinement session: the session takes in the end; no watcher has anything to do with it.
-      if (isRefinementRun(s.source)) return void settleFinished({ scheduler, repo: opts.repo, log: sink }, s);
+      if (isRefinementRun(s.source)) {
+        settleFinished({ scheduler, repo: opts.repo, log: sink }, s);
+        // A change request goes on by itself: its next step starts here, never by polling.
+        advanceChange({ scheduler, repo: opts.repo, log: sink }, s);
+        return;
+      }
       // When a run ends, the watchers of its repository check at once instead of at the next interval.
       // (A run that only stepped aside for a busy code area freed nothing: no check for that.)
       if (s.vars?.github_repo && !steppedAsideFor(s)) watchers.kickRepo(s.vars.github_repo);

@@ -273,6 +273,14 @@ const EXAMPLES: Record<string, Example> = {
   "POST help/conversations/:id/archive": { path: `help/conversations/${UNKNOWN}/archive`, body: {}, user: 404, admin: 404 },
   "POST help/conversations/:id/restore": { path: `help/conversations/${UNKNOWN}/restore`, body: {}, user: 404, admin: 404 },
   "DELETE help/conversations/:id": { path: `help/conversations/${UNKNOWN}`, user: 404, admin: 404 },
+  "GET changes": { path: "changes", user: 400, admin: 400 },
+  "POST changes": { path: "changes", body: {}, user: 400, admin: 400 },
+  "GET changes/:id": { path: `changes/${UNKNOWN}`, user: 404, admin: 404 },
+  "POST changes/:id/answers": { path: `changes/${UNKNOWN}/answers`, body: {}, user: 404, admin: 404 },
+  "PUT changes/:id/cards/:did": { path: `changes/${UNKNOWN}/cards/${UNKNOWN}`, body: {}, user: 404, admin: 404 },
+  "POST changes/:id/build": { path: `changes/${UNKNOWN}/build`, body: {}, user: 404, admin: 404 },
+  "POST changes/:id/later": { path: `changes/${UNKNOWN}/later`, body: {}, user: 404, admin: 404 },
+  "POST changes/:id/retry": { path: `changes/${UNKNOWN}/retry`, body: {}, user: 404, admin: 404 },
   "GET refinement": { path: "refinement", user: 200, admin: 200 },
   "POST refinement": { path: "refinement", body: {}, user: 400, admin: 400 },
   "GET refinement/backlog": { path: "refinement/backlog", user: 400, admin: 400 },
@@ -384,6 +392,13 @@ describe("the table", () => {
     expect(findRule("GET", ["audit", "export", "x"])).toBeUndefined();
     expect(findRule("POST", ["audit"])).toBeUndefined();
     expect(findRule("GET", ["refinement", "backlog"])?.path).toBe("refinement/backlog");
+    expect(findRule("GET", ["changes"])?.path).toBe("changes");
+    expect(findRule("GET", ["changes", "a"])?.path).toBe("changes/:id");
+    expect(findRule("POST", ["changes", "a", "answers"])?.path).toBe("changes/:id/answers");
+    expect(findRule("PUT", ["changes", "a", "cards", "b"])?.path).toBe("changes/:id/cards/:did");
+    expect(findRule("POST", ["changes", "a", "build"])?.path).toBe("changes/:id/build");
+    expect(findRule("POST", ["changes", "a", "later"])?.path).toBe("changes/:id/later");
+    expect(findRule("POST", ["changes", "a", "retry"])?.path).toBe("changes/:id/retry");
     expect(findRule("POST", ["refinement", "a", "drop"])?.path).toBe("refinement/:id/drop");
     expect(findRule("POST", ["refinement", "a", "source", "remove-build-label"])?.path).toBe("refinement/:id/source/remove-build-label");
     expect(findRule("POST", ["refinement", "a", "architect"])?.path).toBe("refinement/:id/architect");
@@ -410,7 +425,7 @@ describe("the table", () => {
       expect(scopes, ruleKey(r)).toContain(r.scope);
       expect(r.user === "no", ruleKey(r)).toBe(r.scope === "admin");
       if (r.user === "own") expect(r.scope, ruleKey(r)).toBe("run");
-      if (r.path.startsWith("refinement/:id")) expect(r.scope, ruleKey(r)).toBe("session");
+      if (r.path.startsWith("refinement/:id") || r.path.startsWith("changes/:id")) expect(r.scope, ruleKey(r)).toBe("session");
       if (r.user === "yes" && r.path.startsWith("repos/:id")) expect(r.scope, ruleKey(r)).toBe("repo");
     }
   });
